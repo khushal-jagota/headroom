@@ -4,6 +4,7 @@ import { dirname, join } from 'node:path';
 import { existsSync, readdirSync, readFileSync, readlinkSync } from 'node:fs';
 import { mkdir, writeFile, unlink, rename } from 'node:fs/promises';
 import { afterEach, expect, test, vi } from 'vitest';
+import { Readable } from 'node:stream';
 import { fixture, fixture_path } from '../tests/ticket_fixture.ts';
 import { file_fixture, held_upload } from './testing/files.ts';
 import { ConversationMessageFiles } from '../conversation/record/message_files.ts';
@@ -154,10 +155,12 @@ afterEach(async () => {
   faults.outside_reads = 0;
 });
 
-test('the exported 60-second stall replies while actual next, then return and cleanup remain owned', async () => {
+test('the exported stall destroys the silent Readable before return and completes real cleanup', async () => {
   vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
   const { service } = world();
   const held = held_upload(content.subarray(0, 5));
+  const destroyed = vi.spyOn(held.chunks, 'destroy');
+  const returned = vi.spyOn(held.chunks[Symbol.asyncIterator](), 'return');
   let replied = false;
   const receipt = service
     .upload(identity, manifest.sha256, { manifest, child }, manifest.byte_count, held.chunks)
@@ -171,7 +174,6 @@ test('the exported 60-second stall replies while actual next, then return and cl
         return error;
       },
     );
-  const late = new Error('fixture late next failure');
   try {
     await Promise.race([
       held.entered,
@@ -187,36 +189,29 @@ test('the exported 60-second stall replies while actual next, then return and cl
       message: 'the upload stopped moving; send it again',
     });
     expect(held.calls).toBe(2);
-    expect(held.returns).toBe(0);
-    expect(readdirSync(service.staging).some((name) => name.startsWith('.incoming-'))).toBe(true);
-    await expect(service.stop({ deadline: performance.now() / 1000 })).rejects.toMatchObject({
-      name: 'ShutdownDeadlineExceeded',
-    });
+    const stopped = await service
+      .stop({ deadline: performance.now() / 1000 + 5 })
+      .catch((error) => error);
+    const joined = await service.settled().catch((error) => error);
+    expect(joined).toBe(stopped);
+    if (joined !== undefined) expect(contains(joined, await receipt)).toBe(true);
+    await held.closed;
+    expect(destroyed.mock.invocationCallOrder[0]).toBeLessThan(
+      returned.mock.invocationCallOrder[0]!,
+    );
+    expect(held.chunks.destroyed).toBe(true);
+    expect(faults.handles.every((handle) => handle.fd === -1)).toBe(true);
     await expect(
       service.upload(identity, manifest.sha256, { manifest, child }, 12, held.chunks),
     ).rejects.toMatchObject({ name: 'ServerLifecycleError' });
-    let joined = false;
-    const actual = service.settled().then(
-      () => {
-        joined = true;
-        return null;
-      },
-      (error) => {
-        joined = true;
-        return error;
-      },
-    );
-    await Promise.resolve();
-    expect(joined).toBe(false);
-    held.reject(late);
-    expect(contains(await actual, late)).toBe(true);
     expect(held.returns).toBe(1);
     expect(readdirSync(service.staging).filter((name) => name.startsWith('.incoming-'))).toEqual(
       [],
     );
     expect(vi.getTimerCount()).toBe(0);
   } finally {
-    held.reject(late);
+    held.chunks.destroy();
+    await held.closed;
   }
 });
 
@@ -229,6 +224,7 @@ test('missing procfs refuses before content intake and closes the actual probe d
     const error = await service
       .upload(identity, manifest.sha256, { manifest, child }, 12, {
         [Symbol.asyncIterator]: () => ({ next }),
+        destroy() {},
       })
       .catch((error) => error);
     expect(error).toBeInstanceOf(ValueError);
@@ -240,20 +236,50 @@ test('missing procfs refuses before content intake and closes the actual probe d
   }
 });
 
+test('a late Readable destroy failure stays owned after local incoming cleanup', async () => {
+  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+  const { service } = world(),
+    held = held_upload(content.subarray(0, 5));
+  const late = new Error('fixture late source cleanup');
+  let complete: ((error: Error | null) => void) | undefined;
+  held.chunks._destroy = (_error, callback) => {
+    complete = callback;
+  };
+  const release = () => {
+    const callback = complete;
+    complete = undefined;
+    callback?.(late);
+  };
+  const receipt = service
+    .upload(identity, manifest.sha256, { manifest, child }, 12, held.chunks)
+    .catch((error) => error);
+  const actual = service.settled().catch((error) => error);
+  try {
+    await held.entered;
+    await vi.advanceTimersByTimeAsync(FILE_TRANSFER_STALL_SECONDS * 1000);
+    expect(await receipt).toMatchObject({ code: 'retry_later' });
+    await vi.waitFor(() => {
+      expect(faults.handles.every((handle) => handle.fd === -1)).toBe(true);
+      expect(readdirSync(service.staging)).toEqual([]);
+    });
+    await expect(service.stop({ deadline: performance.now() / 1000 })).rejects.toMatchObject({
+      name: 'ShutdownDeadlineExceeded',
+    });
+    release();
+    expect(contains(await actual, late)).toBe(true);
+  } finally {
+    held.chunks.destroy();
+    release();
+    await held.closed;
+  }
+});
+
 test('a staging close failure removes its created temporary and remains observable after work completes', async () => {
   const { service, staging, path } = world(),
     failure = new Error('fixture close failure');
   faults.close_error = failure;
   const error = await service
-    .upload(
-      identity,
-      manifest.sha256,
-      { manifest, child },
-      12,
-      (async function* () {
-        yield content;
-      })(),
-    )
+    .upload(identity, manifest.sha256, { manifest, child }, 12, Readable.from([content]))
     .catch((error) => error);
   expect(error).toBeInstanceOf(FileCleanupError);
   expect(error.cleanup_errors).toContain(failure);
@@ -289,7 +315,7 @@ test('a staging close failure removes its created temporary and remains observab
       ),
     ).rejects.toMatchObject({ code: 'EEXIST' });
     expect(readFileSync(join(staging.staging, 'unowned')).toString()).toBe('untouched');
-    unlink_at(parent, 'unowned');
+    await unlink_at(parent, 'unowned');
   } finally {
     await parent.close();
     await source_parent.close();

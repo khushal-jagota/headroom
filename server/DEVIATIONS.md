@@ -578,7 +578,13 @@ Python can replace the original exception when cleanup also fails.
 
 The upload timeout observer can return retry_later while a JS iterator read remains pending.
 Python's wait_for cancels and awaits that read before it returns its timeout.
-TypeScript retains the read, then calls iterator return and finishes descriptor cleanup serially.
-The routes slice must destroy its owned request stream after the observer returns or fails.
+TypeScript requires a cancellable upload source and destroys it before iterator return.
+It closes and removes the incoming file before it joins the source's actual cleanup.
+The routes slice must pass its owned request Readable with that destruction capability.
 Stop seals intake and observes actual work. The supplied media signal supplies the shared grace cutoff.
+The input lookup result must remain inside an independently anchored conversation root.
+The resolved target then passes through the same NOFOLLOW directory walk and regular-file open.
+Contained same-conversation leaf links keep Python behavior. Later substitutions refuse as not found.
+NUL artifact paths retain Python's exact `lstat: embedded null character in path` refusal.
+Ancestor symlink loops produce the clean `artifact path contains symlink` validation refusal, without raw Node errors.
 The Manager reviews these implementation differences before this slice merges.

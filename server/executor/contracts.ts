@@ -66,6 +66,10 @@ export interface InputFile {
   readonly chunks: AsyncIterable<Uint8Array>;
   close(): Promise<void>;
 }
+/** An owned upload stream: destruction cancels its outstanding iterator read. */
+export interface UploadSource extends AsyncIterable<Uint8Array> {
+  destroy(error?: Error): void;
+}
 export interface VpsFileInbox {
   authorize_upload(upload: WireTypes['FileUploadRequest']): void | Promise<void>;
   store_upload(

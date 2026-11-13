@@ -1,6 +1,6 @@
-/** Linux procfs capabilities: byte work is asynchronous; writer metadata/renames are bounded. */
-import { constants, lstatSync, renameSync, unlinkSync } from 'node:fs';
-import { lstat, mkdir, open } from 'node:fs/promises';
+/** Linux procfs capabilities: byte and namespace work is asynchronous; metadata reads are bounded. */
+import { constants, lstatSync } from 'node:fs';
+import { lstat, mkdir, open, rename, unlink } from 'node:fs/promises';
 import type { FileHandle } from 'node:fs/promises';
 import { basename, dirname, isAbsolute, join } from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
@@ -117,6 +117,7 @@ async function is_symlink(path: string): Promise<boolean> {
     return (await lstat(path)).isSymbolicLink();
   } catch (error) {
     if (has_code(error, 'ENOENT') || has_code(error, 'ENOTDIR')) return false;
+    if (has_code(error, 'ELOOP')) throw new ValueError('artifact path contains symlink');
     throw error;
   }
 }
@@ -344,11 +345,11 @@ export async function install_verified(
       await copy_verified(source, temporary, manifest, options);
       copied = true;
       check_aborted(options.signal);
-      rename_at(target.parent, temporary.leaf, target.parent, target.leaf);
+      await rename_at(target.parent, temporary.leaf, target.parent, target.leaf);
       await fsync_directory(target.parent);
     },
-    () => {
-      if (copied) unlink_at(target.parent, temporary.leaf, { missing_ok: true });
+    async () => {
+      if (copied) await unlink_at(target.parent, temporary.leaf, { missing_ok: true });
     },
   );
 }
@@ -393,7 +394,7 @@ export async function verified_version(
     throw error;
   }
 }
-/** These short synchronous primitives are the only filesystem work allowed in a writer. */
+/** Synchronous metadata only. Byte work and potentially slow namespace changes stay outside writers. */
 export function file_version_at(parent: DirectoryHandle, leaf: string): FileVersion | null {
   try {
     const status = lstatSync(at(parent, leaf), { bigint: true });
@@ -403,21 +404,21 @@ export function file_version_at(parent: DirectoryHandle, leaf: string): FileVers
     throw error;
   }
 }
-export function rename_at(
+export async function rename_at(
   from: DirectoryHandle,
   source_leaf: string,
   to: DirectoryHandle,
   target_leaf: string,
-): void {
-  renameSync(at(from, source_leaf), at(to, target_leaf));
+): Promise<void> {
+  await rename(at(from, source_leaf), at(to, target_leaf));
 }
-export function unlink_at(
+export async function unlink_at(
   parent: DirectoryHandle,
   leaf: string,
   options: { missing_ok?: boolean } = {},
-): void {
+): Promise<void> {
   try {
-    unlinkSync(at(parent, leaf));
+    await unlink(at(parent, leaf));
   } catch (error) {
     if (!options.missing_ok || !has_code(error, 'ENOENT')) throw error;
   }

@@ -11,7 +11,9 @@ import base64
 import hashlib
 import json
 import os
+import pty
 import shutil
+import stat
 import subprocess
 import time
 from collections.abc import AsyncIterator
@@ -79,26 +81,31 @@ def _safety(root: Path, manifest: wire.FileManifest) -> dict[str, Any]:
         target.rename(root / "target-held")
         target.symlink_to(outside, target_is_directory=True)
 
-        def copy(leaf: str, digest: str) -> bool:
-            descriptor = os.open("bytes", os.O_RDONLY | os.O_NOFOLLOW, dir_fd=incoming)
-            output = os.open(
-                leaf, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600, dir_fd=parent
-            )
+        held_source, held = root / "source-held", root / "target-held"
+        rewalk = []
+        for operation in (low.copy_verified, low.install_verified):
             try:
-                sha, count = low.copy_hashed(descriptor, output, byte_limit=len(CONTENT))
-                if (sha, count) != (digest, len(CONTENT)):
-                    os.unlink(leaf, dir_fd=parent)
-                    return False
-                os.fsync(output)
-                return True
-            finally:
-                os.close(descriptor)
-                os.close(output)
-
-        assert copy("copy", manifest.sha256)
-        corrupt = not copy("bad", "0" * 64)
-        assert copy("temporary", manifest.sha256)
-        os.replace("temporary", "installed", src_dir_fd=parent, dst_dir_fd=parent)
+                operation(source / "bytes", target / "rewalk", manifest)
+            except OSError as error:
+                rewalk.append({"type": type(error).__name__, "message": str(error)})
+            else:
+                raise AssertionError("Python unexpectedly followed substituted namespace")
+        low.copy_verified(held_source / "bytes", held / "copy", manifest)
+        with pytest.raises(ValueError, match="incomplete or corrupt file"):
+            low.copy_verified(
+                held_source / "bytes", held / "bad", replace(manifest, sha256="0" * 64)
+            )
+        low.install_verified(held_source / "bytes", held / "installed", manifest)
+        for leaf in ("hardlink", "device"):
+            destination = held / leaf
+            os.link(
+                outside / "sentinel", destination
+            ) if leaf == "hardlink" else destination.symlink_to("/dev/null")
+            with pytest.raises(FileExistsError):
+                low.copy_verified(held_source / "bytes", destination, manifest)
+            low.install_verified(held_source / "bytes", destination, manifest)
+            assert destination.read_bytes() == CONTENT and not destination.is_symlink()
+            destination.unlink()
         descriptor = os.open(
             "created", os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600, dir_fd=parent
         )
@@ -121,7 +128,6 @@ def _safety(root: Path, manifest: wire.FileManifest) -> dict[str, Any]:
         os.replace("bytes", "moved", src_dir_fd=incoming, dst_dir_fd=parent)
         os.unlink("moved", dir_fd=parent)
         os.fsync(parent)
-        held = root / "target-held"
         verified = low.verified_version(held / "installed", manifest)
         valid = verified is not None and verified == low.file_version(held / "installed")
         (held / "installed").write_bytes(b"changed")
@@ -132,7 +138,7 @@ def _safety(root: Path, manifest: wire.FileManifest) -> dict[str, Any]:
             namespace_refused = True
         return {
             "copied": (held / "copy").read_bytes() == CONTENT,
-            "corrupt": corrupt,
+            "corrupt": True,
             "cleaned": not (held / "bad").exists(),
             "leaf_refused": refusals[0],
             "exclusive": refusals[1],
@@ -142,12 +148,24 @@ def _safety(root: Path, manifest: wire.FileManifest) -> dict[str, Any]:
             "directory_mode": held.stat().st_mode & 0o777,
             "namespace_refused": namespace_refused,
             "outside": [[p.name, p.read_text()] for p in sorted(outside.iterdir())],
+            "rewalk": rewalk,
         }
 
 
 def test_unit22_vps_files(
     tmp_path: Path, request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    master, slave = pty.openpty()
+
+    def close_device() -> None:
+        try:
+            os.close(slave)
+        finally:
+            os.close(master)
+
+    request.addfinalizer(close_device)
+    device = Path(os.ttyname(slave))
+
     async def reference() -> tuple[dict[str, Any], dict[str, Any]]:
         source = tmp_path / "python"
         source.mkdir()
@@ -291,6 +309,46 @@ def test_unit22_vps_files(
             ],
             "uploads": [],
         }
+        peer_paths = [
+            (name, text, "")
+            for name, text in (
+                ("absolute", "/outside"),
+                ("parent", "../file"),
+                ("dot", "."),
+                ("empty", ""),
+                ("backslash", "a\\b"),
+                ("nul", "a\0b"),
+                ("percent-dot", "%2e/file"),
+                ("percent-slash", "%5c/file"),
+                ("long", "x" * 300),
+                ("middle", "middle/file"),
+            )
+        ] + [("ancestor-loop", "file", "loop/child")]
+        path_root = source / "paths"
+        path_root.mkdir()
+        (path_root / "middle").symlink_to(".", target_is_directory=True)
+        (path_root / "loop").symlink_to("loop")
+        expected["paths"] = [
+            dict(
+                name=name,
+                error=await _error(asyncio.to_thread(low.contained_path, path_root / prefix, text)),
+            )
+            for name, text, prefix in peer_paths
+        ]
+        before_device = device.lstat()
+        expected["device"] = dict(
+            error=await _error(
+                asyncio.to_thread(
+                    low.copy_verified, source / "safety" / "target-held" / "copy", device, manifest
+                )
+            ),
+            contained=low.contained_path(device.parent, device.name) == device,
+        )
+        after_device = device.lstat()
+        expected["device"]["unchanged"] = (before_device.st_dev, before_device.st_ino) == (
+            after_device.st_dev,
+            after_device.st_ino,
+        ) and stat.S_ISCHR(after_device.st_mode)
         try:
             for entry in cases:
                 error = await _error(
@@ -330,6 +388,20 @@ def test_unit22_vps_files(
             ]
             served = await service.input_file(IDENTITY, "prompt", kept.stored_file_id)
             expected["input"] = [served.sha256, served.byte_count]
+            held_path = served.path.with_name(served.path.name + "-held")
+            served.path.rename(held_path)
+            try:
+                served.path.symlink_to(held_path.name)
+                linked = await service.input_file(IDENTITY, "prompt", kept.stored_file_id)
+                expected["leaf_symlinks"] = [[linked.sha256, linked.byte_count]]
+                served.path.unlink()
+                served.path.symlink_to(source / "safety" / "outside" / "sentinel")
+                expected["leaf_symlinks"].append(
+                    await _error(service.input_file(IDENTITY, "prompt", kept.stored_file_id))
+                )
+            finally:
+                served.path.unlink(missing_ok=True)
+                held_path.rename(served.path)
             await mailbox.poll(IDENTITY, 0, 0)
             assert await service.input_file(IDENTITY, "prompt", kept.stored_file_id) == served
             expected["missing"] = [
@@ -391,6 +463,8 @@ def test_unit22_vps_files(
             served.path.write_bytes(b"replacement")
             expected["source_reopen"] = hashlib.sha256(served.path.read_bytes()).hexdigest()
             spec = {
+                "device": str(device),
+                "paths": peer_paths,
                 "root": str(candidate),
                 "path": str(aliases[1] / "vps.sqlite"),
                 "identity": wire.encode_value(IDENTITY),
@@ -427,11 +501,33 @@ def test_unit22_vps_files(
         text=True,
         capture_output=True,
         timeout=30,
-        check=True,
+        check=False,
     )
+    assert run.returncode == 0, run.stderr
     actual = json.loads(run.stdout)
+    assert expected["device"]["contained"] and actual["device"]["contained"]
+    assert expected["device"]["unchanged"] and actual["device"]["unchanged"]
+    assert expected["device"]["error"]["type"] == "FileExistsError"
+    assert "EEXIST" in actual["device"]["error"]["message"]
+    assert actual["safety"] == {
+        key: value for key, value in expected["safety"].items() if key != "rewalk"
+    }
+    assert len(expected["safety"]["rewalk"]) == 2
+    for source_case, candidate_path in zip(expected["paths"], actual["paths"], strict=True):
+        name = source_case["name"]
+        if name not in ("long", "ancestor-loop"):
+            assert candidate_path == source_case
+        elif name == "long":
+            assert "File name too long" in source_case["error"]["message"]
+            assert "ENAMETOOLONG" in candidate_path["error"]["message"]
+        else:
+            assert candidate_path["error"] == {
+                "type": "ValueError",
+                "message": "artifact path contains symlink",
+            }
+            assert source_case["error"]["type"] == "RuntimeError"
+            assert source_case["error"]["message"].startswith("Symlink loop from ")
     for key in (
-        "safety",
         "constants",
         "constructor_root",
         "filename_roots",
@@ -440,6 +536,7 @@ def test_unit22_vps_files(
         "staged",
         "served",
         "input",
+        "leaf_symlinks",
         "missing",
     ):
         assert actual[key] == expected[key], key

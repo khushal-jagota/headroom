@@ -11,11 +11,13 @@ import {
   unlink,
   writeFile,
   stat,
+  link,
 } from 'node:fs/promises';
 import type { FileHandle } from 'node:fs/promises';
 import { createReadStream } from 'node:fs';
 import { finished } from 'node:stream/promises';
-import { basename, join } from 'node:path';
+import { Readable } from 'node:stream';
+import { basename, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { Database } from '../../core/database/contracts.ts';
 import { createDatabase } from '../../core/database/index.ts';
@@ -67,37 +69,30 @@ export function file_fixture(database: Database, path: string) {
 }
 export function held_upload(first: Uint8Array) {
   let enter!: () => void,
-    resolve!: (value: IteratorResult<Uint8Array>) => void,
-    reject!: (error: Error) => void,
     calls = 0,
     returns = 0;
   const entered = new Promise<void>((ready) => {
     enter = ready;
   });
-  const pending = new Promise<IteratorResult<Uint8Array>>((accept, refuse) => {
-    resolve = accept;
-    reject = refuse;
-  });
-  void pending.catch(() => {});
-  const chunks: AsyncIterableIterator<Uint8Array> = {
-    [Symbol.asyncIterator]() {
-      return this;
-    },
-    next() {
-      if (++calls === 1) return Promise.resolve({ done: false, value: first });
-      enter();
-      return pending;
-    },
-    async return() {
-      returns++;
-      return { done: true, value: undefined };
-    },
+  const chunks = new Readable({ read() {} });
+  chunks.push(first);
+  const closed = finished(chunks, { cleanup: true }).catch(() => {});
+  const iterator = chunks[Symbol.asyncIterator]();
+  const next = iterator.next.bind(iterator),
+    end = iterator.return!.bind(iterator);
+  iterator.next = (...args) => {
+    if (++calls === 2) enter();
+    return next(...args);
   };
+  iterator.return = (...args) => {
+    returns++;
+    return end(...args);
+  };
+  chunks[Symbol.asyncIterator] = () => iterator;
   return {
     chunks,
     entered,
-    resolve,
-    reject,
+    closed,
     get calls() {
       return calls;
     },
@@ -165,6 +160,17 @@ async function safety(root: string, manifest: WireTypes['FileManifest']): Promis
       'incomplete or corrupt file',
     );
     await files.install_verified(held, dest('installed'), manifest);
+    for (const leaf of ['hardlink', 'device']) {
+      const path = join(target + '-held', leaf);
+      if (leaf === 'hardlink') await link(join(outside, 'sentinel'), path);
+      else await symlink('/dev/null', path);
+      if (!(await rejected(() => files.copy_verified(held, dest(leaf), manifest))))
+        throw new Error('Exclusive copy replaced destination entry');
+      await files.install_verified(held, dest(leaf), manifest);
+      if ((await readFile(path)).toString() !== 'result bytes')
+        throw new Error('Install did not replace entry');
+      await unlink(path);
+    }
     const created = await files.create_file_at(dest('created'));
     try {
       await created.write(Buffer.from('private'));
@@ -174,10 +180,10 @@ async function safety(root: string, manifest: WireTypes['FileManifest']): Promis
     await symlink(join(outside, 'sentinel'), join(target + '-held', 'link'));
     const leaf_refused = await rejected(() => files.regular_descriptor(dest('link')));
     const exclusive = await rejected(() => files.create_file_at(dest('link')));
-    files.unlink_at(parent, 'link');
-    files.unlink_at(parent, 'created');
-    files.rename_at(incoming, 'bytes', parent, 'moved');
-    files.unlink_at(parent, 'moved');
+    await files.unlink_at(parent, 'link');
+    await files.unlink_at(parent, 'created');
+    await files.rename_at(incoming, 'bytes', parent, 'moved');
+    await files.unlink_at(parent, 'moved');
     await files.fsync_directory(parent);
     const verified = await files.verified_version(dest('installed'), manifest);
     const version = files.file_version_at(parent, 'installed');
@@ -209,6 +215,8 @@ async function safety(root: string, manifest: WireTypes['FileManifest']): Promis
   return result;
 }
 type Spec = {
+  device: string;
+  paths: [string, string, string][];
   root: string;
   path: string;
   identity: WireTypes['ExecutorIdentity'];
@@ -234,6 +242,43 @@ async function main(raw: Spec): Promise<void> {
   const result: Record<string, unknown> = {};
   try {
     result.safety = await safety(join(spec.root, 'safety'), spec.manifest);
+    const device_before = await stat(spec.device, { bigint: true });
+    const device_parent = await files.directory_descriptor(dirname(spec.device));
+    const source_parent = await files.directory_descriptor(
+      join(spec.root, 'safety', 'target-held'),
+    );
+    try {
+      const error = await outcome(() =>
+        files.copy_verified(
+          location(source_parent, 'copy', ''),
+          location(device_parent, basename(spec.device), dirname(spec.device)),
+          spec.manifest,
+        ),
+      );
+      const device_after = await stat(spec.device, { bigint: true });
+      result.device = {
+        error,
+        contained:
+          (await files.contained_path(dirname(spec.device), basename(spec.device))) === spec.device,
+        unchanged:
+          device_before.dev === device_after.dev &&
+          device_before.ino === device_after.ino &&
+          device_after.isCharacterDevice(),
+      };
+    } finally {
+      await source_parent.close();
+      await device_parent.close();
+    }
+    const path_root = join(spec.root, 'paths');
+    await mkdir(path_root);
+    await symlink('.', join(path_root, 'middle'));
+    await symlink('loop', join(path_root, 'loop'));
+    result.paths = [];
+    for (const [name, text, prefix] of spec.paths)
+      (result.paths as unknown[]).push({
+        name,
+        error: await outcome(() => files.contained_path(join(path_root, prefix), text)),
+      });
     result.constructor_root =
       service.staging === join(spec.root, 'executor-uploads') &&
       staging.staging === service.staging;
@@ -249,7 +294,13 @@ async function main(raw: Spec): Promise<void> {
         if (entry.drop) throw new TypeError('fixture disconnect');
       }
       const error = await outcome(() =>
-        service.upload(spec.identity, entry.sha, entry.upload, entry.length, chunks()),
+        service.upload(
+          spec.identity,
+          entry.sha,
+          entry.upload,
+          entry.length,
+          Readable.from(chunks()),
+        ),
       );
       (result.uploads as unknown[]).push({
         name: entry.name,
@@ -295,6 +346,24 @@ async function main(raw: Spec): Promise<void> {
     const first = await input('prompt');
     result.input = [first.sha256, first.byte_count];
     await first.close();
+    await rename(first.path, first.path + '-held');
+    try {
+      await symlink(basename(first.path) + '-held', first.path);
+      const linked = await input('prompt');
+      result.leaf_symlinks = [[linked.sha256, linked.byte_count]];
+      await linked.close();
+      await unlink(first.path);
+      await symlink(join(spec.root, 'safety', 'outside', 'sentinel'), first.path);
+      (result.leaf_symlinks as unknown[]).push(
+        await outcome(async () => {
+          const file = await input('prompt');
+          await file.close();
+        }),
+      );
+    } finally {
+      await unlink(first.path);
+      await rename(first.path + '-held', first.path);
+    }
     await mailbox.poll(spec.identity, 0, 0);
     const delivered = await input('prompt');
     await delivered.close();
@@ -434,9 +503,7 @@ async function main(raw: Spec): Promise<void> {
           spec.manifest.sha256,
           { manifest: spec.manifest, child: spec.child },
           spec.manifest.byte_count,
-          (async function* () {
-            yield Buffer.from('result bytes');
-          })(),
+          Readable.from([Buffer.from('result bytes')]),
         ),
       );
       result.upload_swap = readdirSync(staging.staging + '-held').every(
@@ -483,8 +550,13 @@ async function main(raw: Spec): Promise<void> {
       ]);
       request.abort(new Error('fixture request gone'));
       const observer = await upload;
-      if (!is_shutdown_business_cancellation(observer) || held.calls !== 2 || held.returns !== 0)
-        throw new Error('request cancellation lost actual iterator');
+      if (
+        !is_shutdown_business_cancellation(observer) ||
+        held.calls !== 2 ||
+        held.returns !== 1 ||
+        !held.chunks.destroyed
+      )
+        throw new Error('request cancellation did not destroy and return the actual iterator');
       const close = service.stop({ deadline: performance.now() / 1000 });
       result.zero_budget = await rejected(() => close);
       let joined = false;
@@ -499,7 +571,6 @@ async function main(raw: Spec): Promise<void> {
       await Promise.resolve();
       if (joined) throw new Error('unconsumed capability escaped owner');
       media.abort();
-      held.resolve({ done: true, value: undefined });
       await service.settled();
       if (descriptors.some((fd) => descriptor_target(fd) === capability.path))
         throw new Error('cutoff settled without closing unused input');
@@ -511,7 +582,8 @@ async function main(raw: Spec): Promise<void> {
       result.sealed = await rejected(() => input('steer'));
     } finally {
       media.abort();
-      held.resolve({ done: true, value: undefined });
+      held.chunks.destroy();
+      await held.closed;
       await capability.close().catch((error) => {
         if (!is_shutdown_business_cancellation(error)) throw error;
       });

@@ -1,7 +1,7 @@
 /** Verified transfer custody. The served tree is published later by the inbox. */
 import { createHash, randomUUID } from 'node:crypto';
 import type { FileHandle } from 'node:fs/promises';
-import { basename, dirname, join } from 'node:path';
+import { basename, dirname, isAbsolute, join, relative } from 'node:path';
 import { PlannerError } from '../core/contracts.ts';
 import { stringify_python_json } from '../core/http/numeric_json.ts';
 import { resolve_path_sync } from '../core/path_resolution.ts';
@@ -15,6 +15,7 @@ import type {
   FileOperationOptions,
   HeldFileLocation,
   InputFile,
+  UploadSource,
   VpsFileInbox,
   VpsFilesOptions,
   WireValue,
@@ -243,7 +244,7 @@ export class VpsFiles {
     sha256: string,
     upload: WireValue<'FileUploadRequest'>,
     content_length: WireInteger | null,
-    chunks: AsyncIterable<Uint8Array>,
+    chunks: UploadSource,
     options: FileOperationOptions = {},
   ): Promise<void> {
     void identity; // The route admits the executor; the participant checks its child's assignment.
@@ -316,24 +317,28 @@ export class VpsFiles {
         this.remember_cleanup(error);
         errors.push(error);
       }
-      // A timeout/cancelled observer cannot cancel an arbitrary iterator's actual next().
-      if (pending) {
-        const [result] = await Promise.allSettled([pending]);
-        if (result.status === 'rejected') this.remember_cleanup(result.reason);
-        if (
-          result.status === 'rejected' &&
-          !errors.includes(result.reason) &&
-          !is_shutdown_business_cancellation(result.reason)
-        )
-          errors.push(result.reason);
-      }
-      if (!ended && iterator?.return) {
+      // Destroy the owned source before iterator return, which can queue behind next().
+      // Release the local file before joining the source's actual cancellation.
+      let returned: Promise<IteratorResult<Uint8Array>> | undefined;
+      if (!ended && iterator) {
         try {
-          await iterator.return();
+          chunks.destroy(new DOMException('Executor upload cancelled.', 'AbortError'));
         } catch (error) {
           this.remember_cleanup(error);
           this.cleanup_failures.add(error);
           if (!errors.includes(error)) errors.push(error);
+        }
+      }
+      if (!ended && iterator?.return) {
+        try {
+          returned = Promise.resolve(iterator.return());
+          void returned.catch(() => {});
+        } catch (error) {
+          this.remember_cleanup(error);
+          if (!is_shutdown_business_cancellation(error)) {
+            this.cleanup_failures.add(error);
+            if (!errors.includes(error)) errors.push(error);
+          }
         }
       }
       if (output) {
@@ -356,7 +361,7 @@ export class VpsFiles {
         }
       }
       try {
-        if (created) unlink_at(parent, leaf, { missing_ok: true });
+        if (created) await unlink_at(parent, leaf, { missing_ok: true });
       } catch (error) {
         this.cleanup_failures.add(error);
         errors.push(error);
@@ -366,6 +371,30 @@ export class VpsFiles {
       } catch (error) {
         this.cleanup_failures.add(error);
         errors.push(error);
+      }
+      // Retain the source's real work after releasing our incoming inode and descriptors.
+      if (pending) {
+        const [result] = await Promise.allSettled([pending]);
+        if (result.status === 'rejected') this.remember_cleanup(result.reason);
+        if (
+          result.status === 'rejected' &&
+          !errors.includes(result.reason) &&
+          !is_shutdown_business_cancellation(result.reason)
+        ) {
+          this.cleanup_failures.add(result.reason);
+          errors.push(result.reason);
+        }
+      }
+      if (returned) {
+        try {
+          await returned;
+        } catch (error) {
+          this.remember_cleanup(error);
+          if (!is_shutdown_business_cancellation(error)) {
+            this.cleanup_failures.add(error);
+            if (!errors.includes(error)) errors.push(error);
+          }
+        }
       }
       if (errors.length) throw failure(errors);
       reply.resolve();
@@ -401,8 +430,9 @@ export class VpsFiles {
           if (error instanceof ValueError) throw absent;
           throw error;
         }
-        this.message_files.path_of(command.child.conversation_id, stored_file_id);
-        const path = join(this.message_root, command.child.conversation_id, stored_file_id);
+        const path = this.message_files.path_of(command.child.conversation_id, stored_file_id);
+        const within = relative(join(this.message_root, command.child.conversation_id), path);
+        if (within === '..' || within.startsWith('../') || isAbsolute(within)) throw absent;
         await assert_file_support();
         incoming = await regular_descriptor(path);
         const [sha256, count] = await descriptor_hash(incoming, { signal });
@@ -413,7 +443,13 @@ export class VpsFiles {
         await held.finished;
       } catch (error) {
         this.remember_cleanup(error);
-        const errors = [error instanceof MessageFileMissing || missing(error) ? absent : error];
+        const unsafe_link =
+          error instanceof Error &&
+          'code' in error &&
+          (error.code === 'ELOOP' || error.code === 'ENOTDIR');
+        const errors = [
+          error instanceof MessageFileMissing || missing(error) || unsafe_link ? absent : error,
+        ];
         if (incoming) {
           try {
             await incoming.close();
