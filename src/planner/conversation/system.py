@@ -176,6 +176,7 @@ from planner.conversation.storage import (
     ConversationRecord,
     ConversationRecordNamesNoModel,
     ConversationStore,
+    RetainedRunEvidence,
     StoredConversationEvent,
 )
 from planner.conversation.workspace_admission import WorkspaceAdmission
@@ -614,11 +615,14 @@ class SqliteProcessConversationSystem:
         unix_time_now: Callable[[], float] = time.time,
         backend_snapshots: BackendSnapshotService | None = None,
         runtime_ownership: IO[bytes] | None = None,
+        retained_run_evidence: Mapping[str, RetainedRunEvidence] | None = None,
+        retained_runs: tuple[RetainedBackendRun, ...] | None = None,
     ) -> None:
         missing = sorted(set(ConversationBackendKey) - set(backend_child_factories))
         if missing:
             raise ValueError(f"no backend child factory for {missing}")
         self._store = store
+        self._retained_run_evidence = retained_run_evidence
         from planner.conversation.snapshot import BackendSnapshotService
 
         self._backend_snapshots = backend_snapshots or BackendSnapshotService()
@@ -647,7 +651,7 @@ class SqliteProcessConversationSystem:
         ] | None = None
         self._idle_child_janitor: asyncio.Task[None] | None = None
         self._signal = store.signal_coordinator
-        retained_runs = tuple(
+        retained_runs = retained_runs if retained_runs is not None else tuple(
             run
             for factory in {
                 id(value): value for value in self._backend_child_factories.values()
@@ -682,6 +686,7 @@ class SqliteProcessConversationSystem:
         except BaseException:
             self._runtime_ownership.close()
             raise
+        self._retained_run_evidence = None
         if self._signal is not None:
             self._signal.bind_runtime(self._runtime_turn)
         # Read before this process can start any child, so every task here ended with the
@@ -5060,15 +5065,25 @@ class SqliteProcessConversationSystem:
         from planner.core.db import connect
 
         conversation_id = state.record.conversation_id
-        conn = connect(self._store._db_path)
-        try:
-            facts = read_facts(conn, conversation_id)
-        finally:
-            conn.close()
+        evidence = (
+            None if self._retained_run_evidence is None
+            else self._retained_run_evidence[conversation_id]
+        )
+        if evidence is None:
+            conn = connect(self._store._db_path)
+            try:
+                facts = read_facts(conn, conversation_id)
+            finally:
+                conn.close()
+        else:
+            facts = evidence.facts
         user_input_questions = (
             {
                 event.payload.request_id: event.payload.questions
-                for event in self._store._read_events_after_sync(conversation_id, 0)
+                for event in (
+                    self._store._read_events_after_sync(conversation_id, 0)
+                    if evidence is None else evidence.events
+                )
                 if isinstance(event.payload, UserInputRequestedEventPayload)
             }
             if any(
@@ -5086,8 +5101,9 @@ class SqliteProcessConversationSystem:
             executor_process_current=retained.incarnation_current,
         )
         if running is not None:
-            running.memory_notice_only = self._store._open_turn_holds_only_memory_notices_sync(
-                conversation_id
+            running.memory_notice_only = (
+                self._store._open_turn_holds_only_memory_notices_sync(conversation_id)
+                if evidence is None else evidence.memory_notice_only
             )
         child: BackendChild | None = None
         sink = _CoreBackendEventSink(self, state)

@@ -69,7 +69,7 @@ The checkout stays private. File access and artifact transfers exclude it, and b
 
 Panels clears the complete Ticket folder seven days after the Ticket ends. The database keeps the end time and ownership after Ticket deletion. A reopened Ticket no longer qualifies. New activity on a Done Ticket starts a fresh seven-day wait. Grants belong to one physical workspace on one machine. Removal of a server mirror cannot displace the Mac checkout.
 
-Attached checkouts keep their local changes on resume. Cleanup detaches only the exact expired folder before slow deletion. Stop and backlog do not start the clock. Stage text and proposals survive, but links to deleted documents and evidence no longer work. Existing ended Tickets receive a full week from adoption because their historical end dates are unknown.
+Attached checkouts keep their local changes on resume. Server and CLI cleanup share exclusive access to each cleanup pass. Cleanup reads existing folder ownership and detaches only the exact expired folder before slow deletion. File preparation precedes the short database transaction that authorizes detach. Stop and backlog do not start the clock. Stage text and proposals survive, but links to deleted documents and evidence no longer work. Existing ended Tickets receive a full week from adoption because their historical end dates are unknown.
 
 Before removal, Panels checks that the Ticket is still ended and the work is safe on a remote. It never commits or pushes on a Worker's behalf. Uncommitted files, unpublished commits, or failed Git inspection preserve the folder and produce a report. Legacy scratch outside the Ticket files root remains in its original location for owner review. Worktrees with submodules also remain with an explicit reason. Ignored files, including environment files and local databases, expire with the folder.
 
@@ -96,6 +96,6 @@ Renaming the account, moving host state, or changing Tailscale Serve is operator
 - `src/planner/server_lifecycle/`: who may stop a server.
 - `ops/panels-environments/`: user units, timers, and the host wrapper.
 
-_Last verified: 2026-11-12._
-
 Named execution destinations and physical workspace identity are separate. A Ticket’s `machine_id` selects home execution or the original executor. `WorkspaceIdentity.machine_id` identifies one local physical data tree. Workspace registration binds its folder to the conversation on that destination. A display edit never rotates either identity.
+
+_Last verified: 2026-11-13._
