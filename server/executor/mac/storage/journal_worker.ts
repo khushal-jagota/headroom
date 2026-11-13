@@ -6,10 +6,11 @@ import {
   JOURNAL_CURSORS,
   JOURNAL_READERS,
   JOURNAL_INPUT_BYTES,
+  JOURNAL_RESULT_BYTES,
 } from './journal_limits.ts';
 import { JournalEngine } from './journal_engine.ts';
 import type { EncodedJournalRow } from './journal_engine.ts';
-import { journal_error, journal_error_properties } from './journal_worker_contracts.ts';
+import { journal_error, journal_error_properties, pack } from './journal_worker_contracts.ts';
 import { ServerLifecycleError } from '../../../lifecycle/contracts.ts';
 import type { DurableSidecarOpenFailure } from '../../../core/database/contracts.ts';
 import type {
@@ -21,6 +22,7 @@ import type {
   ReaderDescriptor,
 } from './journal_worker_contracts.ts';
 import type { JournalOutputPolicy } from './journal_contracts.ts';
+import type { MailboxCommand } from '../../wire.generated.ts';
 const port = parentPort!,
   data = workerData as JournalWorkerData;
 let engine: JournalEngine | undefined,
@@ -29,13 +31,25 @@ let engine: JournalEngine | undefined,
 const callbacks = new Map<number, { resolve(value?: bigint): void; reject(error: Error): void }>();
 const inputs = new Map<
   number,
-  { text: boolean; chunks: (ArrayBuffer | string)[]; bytes: number; value?: Buffer | string }
+  {
+    text: boolean;
+    limit: number;
+    chunks: (ArrayBuffer | string)[];
+    bytes: number;
+    value?: Buffer | string;
+  }
 >();
 const readers = new Map<number, { bytes: Buffer; offset: number; cursor?: number }>();
 const cursors = new Map<
   number,
-  { rows: (EncodedJournalRow | undefined)[]; offset: number; children: Set<number> }
+  {
+    rows: (EncodedJournalRow | undefined)[];
+    offset: number;
+    children: Set<number>;
+    decoded: boolean;
+  }
 >();
+let decode_command: (bytes: Buffer) => MailboxCommand;
 function callback(callback: 'permission' | 'flush' | 'clock'): Promise<bigint | undefined> {
   const id = ++sequence;
   const task = new Promise<bigint | undefined>((resolve, reject) =>
@@ -67,10 +81,10 @@ function close_cursor(id: number): void {
   for (const child of [...value.children]) close_reader(child);
   cursors.delete(id);
 }
-function cursor(rows: EncodedJournalRow[]): { cursor: number } {
+function cursor(rows: EncodedJournalRow[], decoded = false): { cursor: number } {
   require_cursor();
   const id = ++sequence;
-  cursors.set(id, { rows, offset: 0, children: new Set() });
+  cursors.set(id, { rows, offset: 0, children: new Set(), decoded });
   return { cursor: id };
 }
 function require_cursor(): void {
@@ -97,6 +111,7 @@ const ready = (async () => {
     if (Atomics.load(new Int32Array(data.health_fence), 0))
       throw new ServerLifecycleError('Spool resource failure seals journal mutations.');
   });
+  decode_command = (bytes) => protocol.decode_json(bytes, 'MailboxCommand');
   port.postMessage({ kind: 'ready' } satisfies JournalWorkerMessage);
 })();
 void ready.catch((error) =>
@@ -135,7 +150,7 @@ async function execute(action: JournalAction): Promise<unknown> {
       const now = await callback('clock');
       const result = engine!.record_poll_reply(raw, action.incarnation, action.after, now!);
       return {
-        ...cursor(result.rows),
+        ...cursor(result.rows, action.decoded ?? false),
         command_count: result.command_count,
         fresh_count: result.rows.length,
       };
@@ -178,8 +193,10 @@ async function execute(action: JournalAction): Promise<unknown> {
       return;
     case 'input_start': {
       if (inputs.size) throw new Error('journal already has a partial input');
+      if (action.limit !== JOURNAL_INPUT_BYTES && action.limit !== JOURNAL_RESULT_BYTES)
+        throw new RangeError('Unsupported journal input bound.');
       const id = ++sequence;
-      inputs.set(id, { text: action.text, chunks: [], bytes: 0 });
+      inputs.set(id, { text: action.text, limit: action.limit, chunks: [], bytes: 0 });
       return id;
     }
     case 'input_push': {
@@ -189,7 +206,7 @@ async function execute(action: JournalAction): Promise<unknown> {
         typeof action.chunk === 'string'
           ? Buffer.byteLength(action.chunk)
           : action.chunk.byteLength;
-      if (!size || size > FILE_CHUNK_BYTES || input.bytes + size > JOURNAL_INPUT_BYTES)
+      if (!size || size > FILE_CHUNK_BYTES || input.bytes + size > input.limit)
         throw new Error('journal input exceeds its chunk or native byte limit');
       input.bytes += size;
       input.chunks.push(action.chunk);
@@ -218,6 +235,11 @@ async function execute(action: JournalAction): Promise<unknown> {
         item.rows = [];
         if (item.children.size === 0) cursors.delete(action.cursor);
         return null;
+      }
+      if (item.decoded) {
+        const decoded = pack(decode_command(row.command!));
+        item.rows[item.offset++] = undefined;
+        return { command_id: row.command_id, decoded } satisfies CursorRowDescriptor;
       }
       if (readers.size + Number(!!row.command) + Number(!!row.result) > JOURNAL_READERS)
         throw new Error('journal reader capacity reached');

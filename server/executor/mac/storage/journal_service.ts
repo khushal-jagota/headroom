@@ -8,9 +8,10 @@ import {
   MAX_MAILBOX_POLL_BYTES,
   MAX_COMMAND_OUTCOMES_PER_REPORT,
 } from '../configuration.ts';
-import { JOURNAL_OPERATIONS, JOURNAL_INPUT_BYTES } from './journal_limits.ts';
+import { JOURNAL_OPERATIONS, JOURNAL_INPUT_BYTES, JOURNAL_RESULT_BYTES } from './journal_limits.ts';
 import { failure_name } from '../failure_name.ts';
-import { journal_error, journal_error_properties } from './journal_worker_contracts.ts';
+import { journal_error, journal_error_properties, unpack } from './journal_worker_contracts.ts';
+import type { MailboxCommand } from '../../wire.generated.ts';
 import type {
   JournalAction,
   JournalErrorBody,
@@ -26,6 +27,7 @@ import type {
   JournalSpoolOwner,
   SidecarOpenScope,
   FreshCommandCursor,
+  DecodedCommandCursor,
   UnpublishedJournalCommand,
   UnreportedJournalResult,
   SelectedJournalReport,
@@ -133,9 +135,11 @@ class Cursor<T> implements JournalCursor<T> {
   private readonly readers = new Set<Reader>();
   private issued = 0;
   private readonly fresh_count: number | undefined;
+  private readonly abandonable: boolean;
   private untrack = () => {};
   private get incomplete(): boolean {
     return (
+      !this.abandonable &&
       this.fresh_count !== undefined &&
       (this.issued < this.fresh_count || [...this.readers].some((reader) => reader.incomplete))
     );
@@ -148,14 +152,16 @@ class Cursor<T> implements JournalCursor<T> {
     service: CommandJournal,
     id: number,
     map: (row: CursorRowDescriptor, reader: (value: ReaderDescriptor) => Reader) => T,
-    fresh?: { command_count: number; fresh_count: number },
+    fresh?: { command_count: number; fresh_count: number; abandonable?: boolean },
   ) {
     this.service = service;
     this.id = id;
     this.map = map;
     this.command_count = fresh?.command_count ?? 0;
     this.fresh_count = fresh?.fresh_count;
-    if (this.fresh_count) this.untrack = service.track_delivery(() => this.incomplete);
+    this.abandonable = fresh?.abandonable ?? false;
+    if (this.fresh_count && !this.abandonable)
+      this.untrack = service.track_delivery(() => this.incomplete);
   }
   async *[Symbol.asyncIterator](): AsyncGenerator<T> {
     let complete = false;
@@ -504,13 +510,15 @@ export class CommandJournal implements AsyncCommandJournal {
   private with_input<T>(
     value: Uint8Array | string,
     work: (input: number) => Promise<T>,
+    limit = JOURNAL_RESULT_BYTES,
   ): Promise<T> {
-    if (value.length > JOURNAL_INPUT_BYTES)
+    if (value.length > limit || (typeof value === 'string' && Buffer.byteLength(value) > limit))
       return Promise.reject(new RangeError('Journal input exceeds the native byte limit.'));
     return this.enqueue(async () => {
       const input = (await this.raw({
         operation: 'input_start',
         text: typeof value === 'string',
+        limit,
       })) as number;
       try {
         const length = value.length,
@@ -540,28 +548,50 @@ export class CommandJournal implements AsyncCommandJournal {
     incarnation: string,
     polled_after: bigint,
   ): Promise<FreshCommandCursor> {
+    const value = await this.record_reply(bytes, incarnation, polled_after, false);
+    return new Cursor(
+      this,
+      value.cursor,
+      (row, reader) => ({ command_id: row.command_id, command: reader(row.command!) }),
+      value,
+    );
+  }
+  async record_decoded_poll_reply(
+    bytes: Uint8Array | string,
+    incarnation: string,
+    polled_after: bigint,
+  ): Promise<DecodedCommandCursor> {
+    const value = await this.record_reply(bytes, incarnation, polled_after, true);
+    return new Cursor(this, value.cursor, (row) => unpack(row.decoded!) as MailboxCommand, {
+      ...value,
+      abandonable: true,
+    });
+  }
+  private record_reply(
+    bytes: Uint8Array | string,
+    incarnation: string,
+    polled_after: bigint,
+    decoded: boolean,
+  ): Promise<{ cursor: number; command_count: number; fresh_count: number }> {
     if (
       bytes.length > MAX_MAILBOX_POLL_BYTES ||
       (typeof bytes === 'string' && Buffer.byteLength(bytes) > MAX_MAILBOX_POLL_BYTES)
     )
-      throw new RangeError('Mailbox poll reply exceeds its body limit.');
-    return this.with_input(bytes, async (input) => {
-      const value = (await this.raw({
-        operation: 'record_poll_reply',
-        input,
-        incarnation,
-        after: polled_after,
-      })) as { cursor: number; command_count: number; fresh_count: number };
-      return new Cursor(
-        this,
-        value.cursor,
-        (row, reader) => ({
-          command_id: row.command_id,
-          command: reader(row.command!),
-        }),
-        value,
-      );
-    });
+      return Promise.reject(new RangeError('Mailbox poll reply exceeds its body limit.'));
+    return this.with_input(
+      bytes,
+      async (input) => {
+        const value = (await this.raw({
+          operation: 'record_poll_reply',
+          input,
+          incarnation,
+          after: polled_after,
+          ...(decoded ? { decoded: true as const } : {}),
+        })) as { cursor: number; command_count: number; fresh_count: number };
+        return value;
+      },
+      JOURNAL_INPUT_BYTES,
+    );
   }
   async result_of(command_id: string): Promise<CanonicalReader | null> {
     const value = await this.call<ReaderDescriptor | null>({ operation: 'result_of', command_id });
@@ -585,10 +615,14 @@ export class CommandJournal implements AsyncCommandJournal {
         if (
           !Number.isSafeInteger(body.byte_count) ||
           body.byte_count < 0 ||
-          body.byte_count > JOURNAL_INPUT_BYTES
+          body.byte_count > JOURNAL_RESULT_BYTES
         )
           throw new RangeError('Journal stream exceeds the native byte limit.');
-        input = (await this.raw({ operation: 'input_start', text: false })) as number;
+        input = (await this.raw({
+          operation: 'input_start',
+          text: false,
+          limit: JOURNAL_RESULT_BYTES,
+        })) as number;
         let received = 0;
         for await (const chunk of body) {
           if (
