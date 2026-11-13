@@ -1,3 +1,5 @@
+import { require_usable_model } from '../conversation/backend_state.ts';
+import { require_conversation_backend_key } from '../conversation/contracts.ts';
 import type { FastifyPluginAsync } from 'fastify';
 import { dirname, resolve } from 'node:path';
 import type { AreaServices } from '../core/authority/register.ts';
@@ -132,6 +134,8 @@ export const routes: FastifyPluginAsync<AreaServices> = async (app, services) =>
     if (!dictionaryBody(request.body, reply)) return;
     const { skill = null, ...record } = request.body;
     const definition = definition_from_json(JSON.stringify(record));
+    const profile = definition.worker_profile;
+    database.read((sql) => require_usable_model(sql, require_conversation_backend_key(profile.default_backend), profile.default_model, 'vps')); 
     if (skill !== null && (typeof skill !== 'object' || Array.isArray(skill)))
       throw new PlannerError('validation', 'skill must be an object', {});
     service.save_worker_type_definition(

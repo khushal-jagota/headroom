@@ -163,7 +163,7 @@ async function _admitted_start_ready_worker_step(
           mode: 'queue',
           sender_message_id,
           worker_type_registry: options.worker_type_registry,
-          retain_backend_start_failure: !paired_opener,
+          retain_definite_start_refusal: !paired_opener,
           now: options.now(),
           signal: options.signal,
         },
@@ -183,7 +183,9 @@ async function _admitted_start_ready_worker_step(
       console.error(
         `worker step send was refused (ticket=${ticket_id} conversation=${conversation_id} reason=${fate.refusal_reason})`,
       );
-      if (!paired_opener && fate.refusal_reason === 'backend_did_not_start') {
+      if (!paired_opener &&
+        (fate.refusal_reason === 'backend_did_not_start' ||
+          fate.refusal_reason === 'model_resolution_failed')) {
         database.write((sql) =>
           tickets_data.mark_worker_step_claim_errored(sql, ticket_id, {
             expected_claim: taken_claim,
