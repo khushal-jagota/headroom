@@ -1,6 +1,7 @@
 /** Application identity and the pure database frontier. */
 import { AppManifestValidationFailure } from '../command_contracts.ts';
 import type { OwnedChildProcesses } from '../../lifecycle/contracts.ts';
+import type { AppManifest } from '../updates/contracts.ts';
 export type {
   AppManifest,
   NodeRuntimeContract,
@@ -18,6 +19,41 @@ export interface AppValidationOptions {
   require_runtime?: boolean;
   verify_artifact_digest?: boolean;
 }
+export interface AppBuildOptions {
+  readonly requested_sha: string;
+  readonly candidate_app: string;
+  readonly install_dependencies: boolean;
+}
+export interface ReleaseBuildDependencies {
+  readonly public_cli_entrypoint: string;
+}
+/** Null deadline is explicit standalone build policy, never a server default. */
+export interface ReleaseExecution {
+  readonly child_processes: OwnedChildProcesses;
+  readonly signal: AbortSignal;
+  readonly deadline: number | null;
+}
+export type PackagedLauncherArguments =
+  | { readonly operation: 'serve'; readonly mode: 'foreground' }
+  | {
+      readonly operation: 'serve';
+      readonly mode: 'managed-linux';
+      readonly runtime_directory: string;
+    };
+export type ArchiveUnpackRequest = {
+  readonly spool_root: string;
+  readonly destination: string;
+} & (
+  | {
+      readonly purpose: 'application';
+      readonly archive_sha256: string;
+      readonly expected_sha: string;
+    }
+  | { readonly purpose: 'source-export' }
+);
+export type ArchiveUnpackResult =
+  | { readonly type: 'result'; readonly manifest: AppManifest }
+  | { readonly type: 'source-export-result'; readonly source_sha256: string };
 export interface MigrationGraph {
   readonly version: 1;
   readonly source_digest: string;
@@ -70,11 +106,4 @@ export interface ElfDynamic {
 export interface ElfObject {
   readonly path: string;
   readonly dynamic: ElfDynamic;
-}
-
-/** Null deadline is explicit standalone build policy, never a server default. */
-export interface ReleaseExecution {
-  readonly child_processes: OwnedChildProcesses;
-  readonly signal: AbortSignal;
-  readonly deadline: number | null;
 }
