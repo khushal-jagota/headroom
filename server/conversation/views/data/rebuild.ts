@@ -24,6 +24,7 @@ function mapped(statement: string): string {
 }
 function staging(tx: TransactionSql): TransactionSql {
   return {
+    savepoint: (work) => tx.savepoint((nested) => work(staging(nested))),
     get: <Row>(statement: string, parameters?: SqlParameters) =>
       tx.get<Row>(mapped(statement), parameters),
     all: <Row>(statement: string, parameters?: SqlParameters) =>

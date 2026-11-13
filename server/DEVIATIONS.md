@@ -610,6 +610,32 @@ Presence commits are silent at the shared write door.
 After commit succeeds, the service publishes its cache before it emits the one presence change signal.
 Synchronous signal subscribers therefore read the committed presence state, with no cache update before a possible rollback.
 
+## Operator composition unavailable leaves — accepted, temporary
+
+The Manager authorized slice A while the release-side prerequisites remain unmerged.
+`environment app-build`, `environment run`, `serve`, and `restart` retain their
+canonical help but return exit 1 with `The NAME command is not yet available in this build.`
+No dependency, file, process, or network action precedes that refusal. The release-side
+Ticket owns native admission, builder, supervisor, and unit files. Slice B restores
+these four handlers after those prerequisites merge.
+
+## Operator manifest path consistency
+
+The Manager requires one admitted path for backup-current's manifest read and validation.
+Python reads the literal Click path, but its validator independently expands a leading `~`.
+If the current directory contains a directory named `~`, Python can validate a different file.
+TypeScript uses one absolute literal path for both operations and retains the literal error filename.
+App-identity retains Python's explicit validator expansion of `~`.
+
+## Server event-loop task inspection — accepted, deferred
+
+The Manager accepted explicit refusal because the TypeScript runtime cannot enumerate Promise await chains.
+The typed `server-event-loop-tasks` callback returns exit 1 and empty stdout.
+Human stderr is exactly `error: The TypeScript runtime cannot enumerate Promise await chains.\nThis diagnostic is unavailable in the TypeScript server.\n`.
+JSON stderr is the existing error envelope with code `unsupported`, the first sentence as its message, empty detail, and a newline.
+Await-chain inspection remains deferred. Resource counts do not replace this diagnostic.
+The public CLI binding remains open. Node's built-in diagnostic report is the operator alternative.
+
 ## VPS file descriptor custody
 
 The accepted executor plan uses Linux procfs descriptors for the VPS file module.
@@ -675,7 +701,9 @@ Both implementations refuse malformed JSON, with different parser error types an
 The direct proof is `tests/compare/direct/test_unit21_mac_updates.py::test_unit21_mac_updates_retained_archive_and_leased_report_sequence`.
 Its `unit21-mac-updates.json` report retains both outcomes and marks the accepted observations explicitly.
 Acceptance requires that the unchanged real Mac producer passes the hosted gate in `.github/workflows/typescript-lifecycle-native.yml`.
-The hosted result is **pending**. Its evidence will appear under `mac-producer-compatibility` in the existing native ABI artifact.
+The [first real producer proof](https://github.com/khushal-jagota/headroom/actions/runs/43466927540/job/132028428389) passed on the PR merge tree for head `37333bd6e`.
+Its 597,087,278-byte archive passed unchanged, with both direct children closed. Build plus inspection took 276.07 seconds.
+The final-head repeat after review repairs is **pending**. Evidence stays under `mac-producer-compatibility` in the existing native ABI artifact.
 If that producer fails any accepted policy, stop and ask the Manager before further work.
 
 ## Installer database and attempt paths — accepted

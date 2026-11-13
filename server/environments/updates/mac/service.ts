@@ -6,10 +6,13 @@ import { join } from 'node:path';
 import yauzl from 'yauzl';
 import type { ZipFile } from 'yauzl';
 import { inspect_mac_archive } from '../../release/archive.ts';
-import { MacArchiveInspectionError } from '../../release/contracts.ts';
+import {
+  MacArchiveInspectionError,
+  MacArchiveInspectionUnsettled,
+} from '../../release/contracts.ts';
 import { numeric_kind, numeric_value } from '../../../core/http/numeric_json.ts';
 import { python_json_equal } from '../../release/logic/manifest.ts';
-import { atomic_write_json, UpdateConflict } from '../attempts.ts';
+import { atomic_write_json, missing, UpdateConflict } from '../attempts.ts';
 import { attempt_to_dict, is_object, parse_attempt, parse_attempt_json } from '../codec.ts';
 import type { PublishedUpdate, UpdateAttempt } from '../contracts.ts';
 import { with_zip_member } from '../zip.ts';
@@ -28,12 +31,11 @@ import {
   MAC_UPDATE_SCHEMA_VERSION,
   MAX_MAC_RUNTIME_ARCHIVE_BYTES,
   MAX_MAC_UPDATE_DETAIL_CHARACTERS,
+  MAC_RUNTIME_INSPECTION_TIMEOUT_SECONDS,
 } from './configuration.ts';
 
 class InvalidMacArchive extends Error {}
 const target_states = new Set(['preparing', 'installing', 'done']);
-const missing = (error: unknown): boolean =>
-  error instanceof Error && 'code' in error && error.code === 'ENOENT';
 const file = (path: string): boolean => {
   try {
     return statSync(path).isFile();
@@ -42,10 +44,13 @@ const file = (path: string): boolean => {
     throw error;
   }
 };
-function json(path: string): unknown {
+function decode_json(bytes: Buffer): unknown {
   return parse_attempt_json(
-    new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(readFileSync(path)),
+    new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(bytes),
   );
+}
+function json(path: string): unknown {
+  return decode_json(readFileSync(path));
 }
 function fullmatch(pattern: RegExp, value: unknown): boolean {
   return typeof value === 'string' && pattern.exec(value)?.[0] === value;
@@ -55,25 +60,47 @@ function archive_failure(error: unknown): never {
   if (error instanceof Error && 'errno' in error && typeof error.errno === 'number') throw error;
   throw new InvalidMacArchive('The Mac runtime archive is invalid.', { cause: error });
 }
-async function zip_runtime_size(path: string): Promise<number> {
+async function zip_runtime_size(path: string, signal: AbortSignal): Promise<number> {
+  signal.throwIfAborted();
   let archive: ZipFile;
   try {
     archive = await new Promise<ZipFile>((resolve, reject) =>
       yauzl.open(
         path,
         { lazyEntries: true, autoClose: false, validateEntrySizes: true },
-        (error, value) => (error ? reject(error) : resolve(value!)),
+        (error, value) => {
+          if (error) reject(error);
+          else if (signal.aborted) {
+            try {
+              value!.close();
+              reject(signal.reason);
+            } catch (failure) {
+              reject(new AggregateError([signal.reason, failure], 'Mac ZIP cleanup failed'));
+            }
+          } else resolve(value!);
+        },
       ),
     );
   } catch (error) {
+    if ((signal.aborted && error === signal.reason) || error instanceof AggregateError) throw error;
     return archive_failure(error);
   }
+  let abort: (() => void) | undefined;
   try {
     return await new Promise<number>((resolve, reject) => {
       const names = new Set<string>();
       let duplicate = false,
         size: number | undefined;
-      archive.once('error', (error) => {
+      abort = () => {
+        try {
+          archive.close();
+          reject(signal.reason);
+        } catch (error) {
+          reject(new AggregateError([signal.reason, error], 'Mac ZIP cleanup failed'));
+        }
+      };
+      signal.addEventListener('abort', abort);
+      archive.on('error', (error) => {
         try {
           archive_failure(error);
         } catch (failure) {
@@ -81,6 +108,10 @@ async function zip_runtime_size(path: string): Promise<number> {
         }
       });
       archive.on('entry', (entry: yauzl.Entry) => {
+        if (signal.aborted) {
+          abort!();
+          return;
+        }
         if (names.has(entry.fileName)) duplicate = true;
         names.add(entry.fileName);
         if (entry.fileName === MAC_RUNTIME_ARCHIVE_NAME) size = entry.uncompressedSize;
@@ -98,9 +129,11 @@ async function zip_runtime_size(path: string): Promise<number> {
           reject(new UpdateConflict('The Mac runtime artifact is invalid.'));
         else resolve(size);
       });
-      archive.readEntry();
+      if (signal.aborted) abort();
+      else archive.readEntry();
     });
   } finally {
+    if (abort) signal.removeEventListener('abort', abort);
     archive.close();
   }
 }
@@ -110,6 +143,7 @@ export class MacUpdateService implements MacUpdateServiceContract {
   readonly provider: MacUpdateCompositionContext['provider'];
   readonly current_app_sha: string | null;
   private readonly child_processes: MacUpdateCompositionContext['child_processes'];
+  private readonly signal: AbortSignal;
   private readonly ready_release: () => PublishedUpdate | null;
   private readonly applied_path: string;
   private readonly emit: () => void;
@@ -120,9 +154,11 @@ export class MacUpdateService implements MacUpdateServiceContract {
     this.provider = context.provider;
     this.current_app_sha = context.current_app_sha;
     this.child_processes = context.child_processes;
+    this.signal = context.signal;
     this.ready_release = context.ready_release;
     this.emit = context.emit_change;
     this.applied_path = join(this.root, 'applied.json');
+    this.signal.throwIfAborted();
     this.retain_applied(this.attempts.read());
   }
   private archive_path(release: PublishedUpdate): string {
@@ -144,12 +180,29 @@ export class MacUpdateService implements MacUpdateServiceContract {
   }
   private async validate_archive(path: string, release: PublishedUpdate): Promise<void> {
     const mac = release.mac!;
-    const { manifest, python } = await inspect_mac_archive(
-      path,
-      mac.archive_sha256,
-      numeric_value(mac.archive_size)!,
-      this.child_processes,
-    );
+    let inspected;
+    try {
+      inspected = await inspect_mac_archive(
+        path,
+        mac.archive_sha256,
+        numeric_value(mac.archive_size)!,
+        {
+          child_processes: this.child_processes,
+          signal: this.signal,
+          deadline: performance.now() / 1000 + MAC_RUNTIME_INSPECTION_TIMEOUT_SECONDS,
+        },
+      );
+    } catch (error) {
+      if (!(error instanceof MacArchiveInspectionUnsettled)) throw error;
+      try {
+        await error.settled;
+      } catch (failure) {
+        if (failure !== error.cause)
+          throw new AggregateError([error.cause, failure], 'Mac inspection cleanup failed');
+      }
+      throw error.cause;
+    }
+    const { manifest, python } = inspected;
     if (
       !is_object(manifest) ||
       !python_json_equal(manifest.schema_version, 1) ||
@@ -169,11 +222,7 @@ export class MacUpdateService implements MacUpdateServiceContract {
       throw error;
     }
     try {
-      return parse_attempt(
-        parse_attempt_json(
-          new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(source),
-        ),
-      );
+      return parse_attempt(decode_json(source));
     } catch {
       return null;
     } // Source tolerates legacy request/invalid attempt JSON here only.
@@ -197,8 +246,12 @@ export class MacUpdateService implements MacUpdateServiceContract {
     }
   }
   prepare(release: PublishedUpdate): Promise<void> {
+    this.signal.throwIfAborted();
     // Reserve the queue before calling a provider. Every caller retains its own raw flight.
-    const actual = this.preparing.then(() => this.prepare_once(release));
+    const actual = this.preparing.then(() => {
+      this.signal.throwIfAborted();
+      return this.prepare_once(release);
+    });
     this.preparing = actual.catch(() => {});
     return actual;
   }
@@ -215,27 +268,55 @@ export class MacUpdateService implements MacUpdateServiceContract {
         throw new UpdateConflict('The Mac runtime provider is unavailable.');
       const parent = join(this.root, 'archives');
       await mkdir(parent, { recursive: true, mode: 0o700 });
+      this.signal.throwIfAborted();
       const temporary = await mkdtemp(join(parent, '.download-'));
       try {
+        this.signal.throwIfAborted();
         const downloaded = join(temporary, 'artifact.zip');
-        await this.provider.download_artifact(release.mac.artifact_id, downloaded);
-        if ((await zip_runtime_size(downloaded)) !== numeric_value(release.mac.archive_size))
+        await this.provider.download_artifact(release.mac.artifact_id, downloaded, this.signal);
+        this.signal.throwIfAborted();
+        if (
+          (await zip_runtime_size(downloaded, this.signal)) !==
+          numeric_value(release.mac.archive_size)
+        )
           throw new UpdateConflict('The Mac runtime artifact size differs.');
+        this.signal.throwIfAborted();
         const candidate = join(temporary, MAC_RUNTIME_ARCHIVE_NAME);
         const output = await open(candidate, 'wx');
         try {
           try {
             await with_zip_member(downloaded, MAC_RUNTIME_ARCHIVE_NAME, async (source) => {
-              for await (const chunk of source) await output.writeFile(chunk);
-              await output.sync();
+              const interruption =
+                this.signal.reason instanceof Error
+                  ? this.signal.reason
+                  : new DOMException('Mac prepare stopped', 'AbortError');
+              const abort = () => source.destroy(interruption);
+              this.signal.addEventListener('abort', abort);
+              try {
+                this.signal.throwIfAborted();
+                for await (const chunk of source) {
+                  this.signal.throwIfAborted();
+                  await output.writeFile(chunk);
+                }
+                this.signal.throwIfAborted();
+                await output.sync();
+              } catch (error) {
+                if (this.signal.aborted && error === interruption) throw this.signal.reason;
+                throw error;
+              } finally {
+                this.signal.removeEventListener('abort', abort);
+              }
             });
           } catch (error) {
+            if (this.signal.aborted && error === this.signal.reason) throw error;
             archive_failure(error);
           }
         } finally {
           await output.close();
         }
+        this.signal.throwIfAborted();
         await this.validate_archive(candidate, release);
+        this.signal.throwIfAborted();
         await rename(candidate, destination);
         const directory = openSync(parent, constants.O_RDONLY);
         try {

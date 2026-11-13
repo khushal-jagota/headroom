@@ -19,7 +19,6 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           ref: ${{ github.sha }}
-          fetch-depth: 2
           persist-credentials: false
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
         with:
@@ -39,29 +38,11 @@ jobs:
           trap 'rm -rf -- "$native_tmp"' EXIT
           mkdir -p "$native_root"/{home/.codex,home/.claude,home/.hermes,config,cache,data,state,runtime,logs,backups,workspace,files,tickets,app} "$native_evidence"
           printf '{}\n' > "$native_root/config.yaml"
-          # The producer gate follows runtime/producer changes, not type-only Mac contracts.
-          mac_producer_compatibility=0
-          if ! git diff --quiet HEAD^ HEAD -- \
-            .github/workflows/typescript-lifecycle-native.yml \
-            scripts/build_mac_runtime.py requirements.txt pyproject.toml \
-            src/planner/environments/mac_runtime_configuration.py \
-            src/planner/executor/update_configuration.py \
-            agent_backends/package.json agent_backends/package-lock.json \
-            server/package.json server/package-lock.json \
-            server/environments/updates/mac/configuration.ts \
-            server/environments/updates/mac/manifest.ts server/environments/updates/mac/service.ts \
-            server/environments/release/archive.ts server/environments/release/archive_unpack.ts \
-            server/environments/release/archive_unpack_main.ts \
-            server/environments/release/configuration.ts server/environments/release/contracts.ts \
-            server/environments/release/logic/archive_members.ts; then
-            mac_producer_compatibility=1
-          fi
           native_revision=$(git rev-parse HEAD)
           # Scrub before pip's editable build, npm lifecycle scripts, or any repository launcher.
           env -i PATH="$PATH" LANG=en_US.UTF-8 LC_ALL=en_US.UTF-8 \
             GITHUB_ACTIONS=true GITHUB_WORKSPACE="$GITHUB_WORKSPACE" \
             GITHUB_RUN_ID="$GITHUB_RUN_ID" MAC_SOURCE_REVISION="$native_revision" \
-            MAC_PRODUCER_COMPATIBILITY="$mac_producer_compatibility" \
             HOME="$native_root/home" \
             CODEX_HOME="$native_root/home/.codex" CLAUDE_CONFIG_DIR="$native_root/home/.claude" \
             HERMES_HOME="$native_root/home/.hermes" PLAN_HERMES_HOME="$native_root/home/.hermes" \
@@ -110,9 +91,9 @@ jobs:
             tests/compare/direct/test_unit21_release.py::test_unit21_release_identity_archive_and_frontier \
             --compare-report-dir "$NATIVE_EVIDENCE/comparison" \
             --basetemp "$TMPDIR/pytest" --junitxml "$NATIVE_EVIDENCE/results.xml"
-          if [[ "$MAC_PRODUCER_COMPATIBILITY" == 1 ]]; then
-            echo 'Mac producer compatibility fixture: unchanged native producer and production inspector'
-            node --input-type=module <<'MAC_COMPATIBILITY'
+          # The first native run measured 268.48s build + 7.59s inspection. Run on every job.
+          echo 'Mac producer compatibility fixture: unchanged native producer and production inspector'
+          node --input-type=module <<'MAC_COMPATIBILITY'
           import assert from 'node:assert/strict';
           import * as fs from 'node:fs/promises';
           import { join } from 'node:path';
@@ -122,6 +103,7 @@ jobs:
           const { ChildProcesses } = await load('server/lifecycle/owned_processes.ts');
           const { run_release_command } = await load('server/environments/release/process.ts');
           const { hash_archive, inspect_mac_archive } = await load('server/environments/release/archive.ts');
+          const { MacArchiveInspectionUnsettled } = await load('server/environments/release/contracts.ts');
           const { python_json_equal } = await load('server/environments/release/logic/manifest.ts');
           assert.equal(process.platform, 'darwin');
           assert.equal(process.arch, 'arm64');
@@ -163,6 +145,7 @@ jobs:
             });
             await fs.writeFile(join(evidence, 'producer.log'), build.stdout + build.stderr);
             const built = performance.now();
+            const inspectionDeadline = performance.now() / 1000 + 120;
             inspectionTimer = setTimeout(() => cancel(new Error('Mac inspection exceeded its original 120-second budget')), 120_000);
             const archive = join(output, 'panels-mac-runtime.tar.gz');
             const receiptPath = join(output, 'mac-runtime-publication.json');
@@ -174,7 +157,9 @@ jobs:
             controller.signal.throwIfAborted();
             assert.equal(before.sha256, receipt.archive_sha256);
             assert.equal(before.size, receipt.archive_size);
-            const result = await inspect_mac_archive(archive, before.sha256, before.size, owner);
+            const result = await inspect_mac_archive(archive, before.sha256, before.size, {
+              child_processes: owner, signal: controller.signal, deadline: inspectionDeadline,
+            });
             controller.signal.throwIfAborted();
             assert(python_json_equal(result.manifest, {
               schema_version: 1, application_revision: revision, platform: 'darwin', architecture: 'arm64',
@@ -196,8 +181,16 @@ jobs:
             }, null, 2) + '\n');
             controller.signal.throwIfAborted();
           } catch (error) {
-            await fs.writeFile(join(evidence, 'failure.txt'), String(error.stack ?? error) + '\n');
-            throw error;
+            let failure = error;
+            if (error instanceof MacArchiveInspectionUnsettled) {
+              try { await error.settled; }
+              catch (cleanup) {
+                if (cleanup !== error.cause)
+                  failure = new AggregateError([error.cause, cleanup], 'Mac inspection cleanup failed');
+              }
+            }
+            await fs.writeFile(join(evidence, 'failure.txt'), String(failure.stack ?? failure) + '\n');
+            throw failure;
           } finally {
             clearTimeout(inspectionTimer);
             owner.seal();
@@ -213,7 +206,12 @@ jobs:
             if (cleanupFailure) throw cleanupFailure;
           }
           MAC_COMPATIBILITY
-          fi
+          for mac_evidence in producer.log producer-receipt.json result.json children.json; do
+            if [[ ! -s "$NATIVE_EVIDENCE/mac-producer-compatibility/$mac_evidence" ]]; then
+              printf 'Mac compatibility evidence is missing or empty: %s\n' "$mac_evidence" >&2
+              exit 1
+            fi
+          done
           NATIVE
       - name: Preserve native ABI evidence
         if: always()

@@ -111,6 +111,21 @@ export interface MacArchiveInspection {
   readonly manifest: unknown;
   readonly python: boolean;
 }
+export interface MacInspectionExecution {
+  readonly child_processes: OwnedChildProcesses;
+  readonly signal: AbortSignal;
+  readonly deadline: number;
+}
+/** The observer ended while this promise still owns child, descriptor, and work cleanup. */
+export class MacArchiveInspectionUnsettled extends Error {
+  readonly settled: Promise<void>;
+  readonly cause: unknown;
+  constructor(settled: Promise<void>, cause: unknown) {
+    super('Mac archive inspection cleanup is still pending');
+    this.settled = settled;
+    this.cause = cause;
+  }
+}
 export type MacInspectionFailure = { type: 'mac-inspection-error'; message: string } & (
   | { kind: 'archive' | 'refusal' }
   | {

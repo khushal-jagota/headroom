@@ -88,6 +88,7 @@ export async function createEnvironmentRuntime(
     provider,
     current_app_sha: config.app_sha,
     child_processes: context.child_processes,
+    signal: context.one_shot_children.signal,
     ready_release: () => updates.ready_release(),
     emit_change: () => changes.emit(),
   });

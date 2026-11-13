@@ -227,6 +227,7 @@ export async function unpack_archive_child(
     const compressed_limit = inspection
       ? MAX_MAC_RUNTIME_ARCHIVE_BYTES
       : ARCHIVE_MAX_COMPRESSED_BYTES;
+    let checked_sha256: string;
     {
       const receipt = createHash('sha256');
       let bytes = 0;
@@ -249,7 +250,7 @@ export async function unpack_archive_child(
           'refusal',
           'The Mac runtime archive size differs from its publication.',
         );
-      const checked_sha256 = receipt.digest('hex');
+      checked_sha256 = receipt.digest('hex');
       if (checked_sha256 !== request.archive_sha256) {
         if (request.purpose === 'mac-inspection')
           throw new MacArchiveInspectionError(
@@ -260,6 +261,7 @@ export async function unpack_archive_child(
       }
     }
     const reader = new ArchiveMembers(inspection ? 'mac-inspection' : 'extraction');
+    const second_digest = createHash('sha256');
     let compressed = 0,
       expanded = 0,
       credit = 0,
@@ -275,6 +277,7 @@ export async function unpack_archive_child(
             if (magic.length === 2 && (magic[0] !== 0x1f || magic[1] !== 0x8b))
               throw new AppValidationError('app archive is not gzip data');
           }
+          second_digest.update(chunk);
           callback(null, chunk);
         } catch (error) {
           callback(error instanceof Error ? error : new Error(String(error)));
@@ -345,6 +348,14 @@ export async function unpack_archive_child(
           failure instanceof Error ? failure.message : String(failure),
         );
       throw failure;
+    }
+    if (second_digest.digest('hex') !== checked_sha256) {
+      if (inspection)
+        throw new MacArchiveInspectionError(
+          'refusal',
+          'The Mac runtime archive changed during inspection.',
+        );
+      throw new AppValidationError('app archive changed during extraction');
     }
     reader.finish();
     if (request.purpose === 'mac-inspection') {
