@@ -30,8 +30,10 @@ One absolute timeout covers connect, write, and response, including the transpor
 The client joins socket closure before it returns. It never retries a write.
 After possible emission, a transport or response-validation failure means unknown
 acceptance for write/retry. A valid reply retains its original submission identity.
-The existing CLI owns output and exit codes. `run` and `permissions` remain open
-host/platform bindings. No host or gateway is introduced by this client slice.
+The existing CLI owns output and exit codes. `run` remains an open supervisor binding.
+`permissions` previews lexical workspace/output scopes and touches them only with `--check`.
+Its explicit check reads one directory entry and writes, reads, closes, and removes one temporary output file.
+The fresh Python comparison checks bytes, exits, and cleanup. Actual macOS consent remains a later Mac check.
 
 The Mac executor uses `FilesService` for byte copies, hashes, directory creation, and durable flushes.
 Each caller owns its service instance and must pass the shared absolute shutdown deadline to `stop()`.

@@ -37,8 +37,10 @@ export async function run_executor_command(inv: Invocation): Promise<CommandResu
         throw new CliFailure(human_error(inv.command, python_text(response.error)));
       return { exit_code: 0, stdout: json(response.result) + '\n', stderr: '' };
     }
+    case 'permissions':
+      return (await import('./permissions.ts')).permissions(inv);
     default:
-      // run and permission operations bind with their host/platform slices.
+      // The run command binds with the fixed runtime supervisor.
       throw new CliFailure({
         exit_code: 1,
         stdout: '',
