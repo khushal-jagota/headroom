@@ -3210,6 +3210,7 @@ class SqliteProcessConversationSystem:
         take, and the conversation stays readable while they do.
         """
         from planner.conversation.backend_state import BackendStateStore
+        from planner.executor.worker_identity import ticket_id_of
 
         self.start_admission.bind((message.sender_message_id for message in messages), turn_token)
         try:
@@ -3217,17 +3218,23 @@ class SqliteProcessConversationSystem:
                 self.start_admission.persist_bindings, self._store._db_path, turn_token
             )
             requested_model = model_change or state.record.model
-            if requested_model is not None and not await run_on_worker_thread(
-                BackendStateStore(self._store._db_path).model_is_enabled,
-                state.record.backend_key,
-                requested_model,
-            ):
+            refusal = (
+                None
+                if requested_model is None
+                else await run_on_worker_thread(
+                    BackendStateStore(self._store._db_path).delivery_model_refusal,
+                    state.record.backend_key,
+                    requested_model,
+                    ticket_id_of(state.record.resolved_start()),
+                )
+            )
+            if refusal is not None:
                 await run_on_worker_thread(
                     self.start_admission.reject, self._store._db_path, turn_token
                 )
                 return _PromptDeliveryAttempt(
                     refusal_reason=PromptDeliveryRefusalReason.model_resolution_failed,
-                    refusal_detail=f"Model {requested_model} is disabled",
+                    refusal_detail=refusal,
                     record_refusal=True,
                 )
             effort_is_set = (

@@ -11,6 +11,7 @@ branch_labels = None
 depends_on = None
 
 ORIGINAL = "ee17b608-a449-4966-a808-a791ba7df1c7"
+HOME = "75a49e78-97de-4e28-8dc5-79646761c46f"
 
 
 def upgrade() -> None:
@@ -96,9 +97,14 @@ def upgrade() -> None:
         "CREATE INDEX executor_incarnations_machine ON "
         "executor_incarnations(machine_id,executor_incarnation)"
     )
-    # All retained catalogs came from the one original executor. A conflicting legacy
-    # catalog key is inconsistent evidence, so SQLite refuses rather than chooses one.
-    conn.execute("UPDATE machine_backend_snapshots SET machine_id=?", (ORIGINAL,))
+    # Staging retains the home's model list under vps as well as executor catalogs.
+    # Keep those observations separate. Conflicting executor keys still make SQLite
+    # refuse rather than choose one catalog.
+    conn.execute(
+        "UPDATE machine_backend_snapshots SET machine_id=CASE "
+        "WHEN machine_id='vps' THEN ? ELSE ? END",
+        (HOME, ORIGINAL),
+    )
 
 
 def downgrade() -> None:

@@ -4,10 +4,11 @@ from __future__ import annotations
 
 import sqlite3
 
-from planner.conversation.backend_state import require_enabled_model
+from planner.conversation.backend_state import require_usable_model
 from planner.conversation.contracts import ConversationBackendKey
 from planner.core.contracts import JsonDict
 from planner.core.errors import ErrorCode, PlannerError
+from planner.execution_identity import TicketLocale
 from planner.managers.contracts import ManagerLaunchConfiguration
 from planner.runtime.logic.conversation_start_resolution import (
     ConversationStartOverrides,
@@ -46,7 +47,12 @@ def validate_launch_configuration(
             'The legacy Codex model "sol" cannot run. Choose an explicit Codex model '
             "in this Manager's model settings before you retry.",
         )
-    require_enabled_model(conn, configuration.employee_backend, configuration.employee_launch_model)
+    require_usable_model(
+        conn,
+        configuration.employee_backend,
+        configuration.employee_launch_model,
+        TicketLocale.vps,
+    )
 
 
 def manager_reuse_overrides(

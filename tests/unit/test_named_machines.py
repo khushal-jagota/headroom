@@ -114,6 +114,12 @@ def test_populated_legacy_move_preserves_executor_authority(
             "INSERT INTO automatic_start_bindings VALUES "
             "('supervisor','supervisor','home','chief',1,NULL,NULL)"
         )
+        # Staging can retain both lists before named-machine migration. They must
+        # remain separate even when both snapshots describe the same backend.
+        conn.executemany(
+            "INSERT INTO machine_backend_snapshots VALUES (?, 'codex', ?)",
+            [("vps", '{"model":"home-only"}'), ("macos", '{"model":"mac-only"}')],
+        )
         tables = (
             "executor_incarnations",
             "mac_executor_presence",
@@ -191,6 +197,12 @@ def test_populated_legacy_move_preserves_executor_authority(
         assert dict(conn.execute("SELECT locale,machine_id FROM tickets")) == {
             "vps": HOME_MACHINE_ID,
             "macos": ORIGINAL_MAC_MACHINE_ID,
+        }
+        assert dict(conn.execute(
+            "SELECT machine_id,snapshot_json FROM machine_backend_snapshots"
+        )) == {
+            HOME_MACHINE_ID: '{"model":"home-only"}',
+            ORIGINAL_MAC_MACHINE_ID: '{"model":"mac-only"}',
         }
         for table, rows in before.items():
             columns = [str(row[1]) for row in conn.execute(f"PRAGMA table_info({table})")]

@@ -15,7 +15,9 @@ Review reads other records. Membership and order come from the navigation index,
 
 The proposal on a card is the same approval surface as on the Ticket page. Both keep one note box beside Approve and Send it back. The note goes with either decision. Skipping a card defers it for this visit only.
 
-An approval note must reach the Worker before approval proceeds. The browser keeps its message identity for that exact proposal across revisits and reloads. If delivery is uncertain, another Approve checks the same message without duplicate delivery. A confirmed note stays confirmed if approval itself fails.
+Approve and Send back submit the complete note with the exact visible proposal. The successful decision saves one attributed instruction for the Worker. A stale proposal fails without a success message. Retries keep the same decision identity and cannot duplicate the decision or its instruction.
+
+The conversation system delivers that instruction and shows it in Full history as a system message. It names the authenticated User, Chief, or Manager and the proposal. A busy Worker receives it through the existing queue. Queue admission does not prove receipt. Undelivered notes survive stage changes and restart. An uncertain delivery stops automatic replay. The existing explicit Worker Restart authorizes recovery, including another attempt when the previous delivery remains uncertain.
 
 If the index is not yet trustworthy, Review says it is unavailable instead of showing an empty queue that might be wrong.
 
@@ -34,4 +36,4 @@ Review is a primary destination in the browser, with a count. [Notifications](no
 - `src/planner/navigation/`: the index, and Review's membership and ordering (`review.py`, `review_logic.py`).
 - `web/src/routes/ReviewRoute.svelte` and `web/src/components/Review*.svelte`: the pass and its cards.
 
-_Last verified: 2026-11-08._
+_Last verified: 2026-11-13._

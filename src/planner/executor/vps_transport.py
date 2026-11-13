@@ -110,9 +110,7 @@ class VpsExecutor:
         )
         self.runs = MacRuns(db_path, self.presence, self.mailbox)
         self.inbox = MacInbox(db_path, clock, self.runs)
-        self.catalog = VpsCatalogRelay(
-            self.runs, self.presence, self.mailbox, machine_id=machine_id
-        )
+        self.catalog = VpsCatalogRelay(self.runs, self.presence, self.mailbox)
         self.message_files = ConversationMessageFiles(db_path)
         self.files = VpsFiles(db_path, self.inbox, self.mailbox, self.message_files)
         self.presence.incarnation_replaced = self.runs.incarnation_replaced

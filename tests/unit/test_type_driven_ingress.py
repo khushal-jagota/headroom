@@ -308,7 +308,11 @@ def test_retired_guidance_is_preserved_but_has_no_api_surface(app_db: AppDb) -> 
         )
         assert accepted.status_code == 200, accepted.json()
         _propose(client, ticket_id, "A current proposal")
-        rejected = client.post(path + "/reject", json={"message": "Revise this."})
+        current = client.get(read_path).json()
+        rejected = client.post(path + "/reject", json={
+            "message": "Revise this.",
+            "expected_proposal_revision": current["pending_proposal"]["revision"],
+        })
         assert rejected.status_code == 200, rejected.json()
         copied = client.get(path + "/copy-text")
         assert copied.status_code == 200

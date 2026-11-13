@@ -111,8 +111,8 @@ test and recording. It stops its server and task app when finished. It does not
 boot, shut down, erase or delete a simulator. `PANELS_LATEST_BASELINE=1` is only
 for recording the old behavior; it skips the new regression assertions.
 
-Evidence is retained outside the repository in
-`/Users/khushaljagota/Coding/firstmate/data/pios-latest-button/`: `before/` contains
+Evidence is retained outside the repository, in a proof directory
+that the author chose: `before/` contains
 the baseline clips; `final/` contains the final distance, streaming, and keyboard
 clips and the Xcode result bundle. Host output is in `host.log`. This is stub and
 simulator evidence. Physical-device smoothness, VoiceOver operation, and runtime
