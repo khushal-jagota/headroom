@@ -10,7 +10,7 @@ import { createHash } from 'node:crypto';
 import { MacService } from './service.ts';
 import type { MacHostBindings, MacHostContext, MacInvocation } from './contracts.ts';
 import { MacHttpClient } from '../transport/http.ts';
-import { MacCatalog } from '../catalog/index.ts';
+import { create_mac_catalog } from '../catalog/production.ts';
 import { ExecutorPaths } from '../configuration.ts';
 import { create_mac_adapter_host } from '../adapters.ts';
 import { request } from '../ipc_client.ts';
@@ -22,7 +22,6 @@ import type { BackendChild, BackendEventSink } from '../../../conversation/backe
 import type { CanonicalReader } from '../storage/journal_contracts.ts';
 import type { MacHttpOptions } from '../transport/contracts.ts';
 import type { ExecutorIdentity } from '../../../execution_identity.ts';
-import type { BackendSnapshot } from '../../../conversation/snapshot/contracts.ts';
 import { parse_identity } from '../../protocol.ts';
 import type { ItemBatch, CommandOutcome } from '../../wire.generated.ts';
 import { read_canonical_body } from '../mailbox/poll.ts';
@@ -310,21 +309,40 @@ test('composes the Mac invocation and joins HTTP, providers and workers before t
         },
       };
     },
-    catalog(_adapters, owners, on_failure) {
+    catalog(adapters, owners, on_failure) {
       assert.equal(owners.child_processes, invocation.child_processes);
       assert.equal(owners.one_shot_children, invocation.one_shot_children);
-      return new MacCatalog({
+      return create_mac_catalog({
+        host: adapters,
+        ...owners,
         on_failure,
-        async stop_sources() {},
-        snapshots: {
-          retained: () => null,
-          async snapshot(_backend_key, options) {
+        environment: {
+          executable_path: () => '/synthetic/codex',
+          configured_executable_path: () => null,
+          real_path: (path) => path,
+          user_local_npm_prefix: () => join(root, 'npm'),
+          prefix_is_owned_and_writable: () => false,
+          latest_released_version: async () => null,
+          async run(argv, options) {
+            if (argv[1] === '--version')
+              return { exit_code: 0, standard_output: 'codex 1.0.0', standard_error: '' };
+            assert.deepEqual(argv, ['/synthetic/codex', 'login', 'status']);
             probes++;
             const signal = options!.signal!;
             signal.throwIfAborted();
             catalog_entered.resolve();
-            return new Promise<BackendSnapshot>((_resolve, reject) =>
-              signal.addEventListener('abort', () => reject(signal.reason), { once: true }),
+            // The subprocess finishes at cancellation. No native catalog can start behind it.
+            return new Promise((resolve) =>
+              signal.addEventListener(
+                'abort',
+                () =>
+                  resolve({
+                    exit_code: 0,
+                    standard_output: '',
+                    standard_error: '',
+                  }),
+                { once: true },
+              ),
             );
           },
         },

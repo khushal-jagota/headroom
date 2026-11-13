@@ -85,6 +85,7 @@ export class BackendSnapshotService implements BackendSnapshotServiceContract {
       const reading_at = this.now();
       const codex_login = backend_key === 'codex' ? this.options.read_codex_login_standing() : null;
       let probed = await this.options.probe(backend_key, environment, {
+        signal: options.signal,
         refresh,
         discover_update_advisory: refresh && (options.discover_update_advisory ?? true),
         codex_login,
