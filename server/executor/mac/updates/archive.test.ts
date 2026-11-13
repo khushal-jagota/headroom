@@ -1,5 +1,4 @@
 /** Ordinary Node package installation and async cleanup use the existing file-worker host. */
-import { createHash } from 'node:crypto';
 import {
   existsSync,
   mkdtempSync,
@@ -13,10 +12,9 @@ import {
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { gzipSync } from 'node:zlib';
-import { Header } from 'tar';
 import { afterEach, expect, test } from 'vitest';
 import { FilesService } from '../files.ts';
+import { runtime_archive } from './testing/runtime_archive.ts';
 import { ShutdownDeadlineExceeded } from '../../../lifecycle/contracts.ts';
 
 const roots: string[] = [],
@@ -31,35 +29,10 @@ const manifest = {
 function fixture(unsafe = false) {
   const root = realpathSync(mkdtempSync(join(tmpdir(), 'mac-runtime-')));
   roots.push(root);
-  const members = unsafe
-    ? [{ path: '../escape', data: 'outside' }]
-    : [
-        { path: 'mac-runtime.json', data: JSON.stringify(manifest) },
-        { path: 'node/bin/node', data: 'synthetic executable', mode: 0o755 },
-        { path: 'server/executor/mac/entrypoint.ts', data: 'synthetic entrypoint' },
-        { path: 'bin/panels', data: '', link: '../server/executor/mac/entrypoint.ts' },
-      ];
-  const blocks: Buffer[] = [];
-  for (const member of members) {
-    const data = Buffer.from(member.data),
-      link = 'link' in member ? member.link : undefined;
-    const header = new Header({
-      path: member.path,
-      type: link ? 'SymbolicLink' : 'File',
-      size: data.length,
-      mode: 'mode' in member ? member.mode : 0o644,
-      mtime: new Date(0),
-      linkpath: link,
-    });
-    const encoded = Buffer.alloc(512);
-    header.encode(encoded);
-    blocks.push(encoded, data, Buffer.alloc((512 - (data.length % 512)) % 512));
-  }
-  const bytes = gzipSync(Buffer.concat([...blocks, Buffer.alloc(1024)]));
+  const { bytes, sha } = runtime_archive(revision, unsafe);
   const archive = join(root, 'archive.tar.gz'),
     releases = join(root, 'updates', 'releases');
   writeFileSync(archive, bytes);
-  const sha = createHash('sha256').update(bytes).digest('hex');
   const files = new FilesService();
   services.push(files);
   return {

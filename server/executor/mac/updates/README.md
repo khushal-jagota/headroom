@@ -13,3 +13,9 @@ Existing releases with the matching manifest and required executable files can b
 The producer format excludes hardlinks, alias-parent members, cycles, special modes, and backslash member names.
 The shared parser's limits and refusals remain unchanged. VPS archive inspection does not change.
 Darwin ABI and native durability still require the later Mac check.
+
+`MacUpdateController` consumes the latest lease offer without delay to the lease loop.
+Each apply and prefetch owns a dedicated update HTTP session with only the executor-ID header.
+A prepared update reuses a prefetched runtime, records pending selection and handoff, then requests supervisor exit.
+Trial admission waits for the leased current report and supervisor selection. Cancellation resumes safe prepared work.
+The host supplies explicit runtime settings and stops the controller before its separate files worker.
