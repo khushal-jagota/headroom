@@ -235,7 +235,7 @@ def compare_cli_sequence(
         "list": list_path.name,
         "candidate_backend": backend,
         "boundary": (
-            "Both modes: Python reference vs TS CLI on reference backend or real TS backend"
+            "Python baseline vs TS CLI: both modes on Python; human text on TS"
         ),
         "strategy": {"python": "CliRunner.invoke", "typescript": "subprocess"},
         "seed_capture_names": sorted(captures),
