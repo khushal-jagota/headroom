@@ -291,15 +291,17 @@ export class CodexAppServerClient {
     const output_done = new Promise<void>((resolve) => owned.child.stdout.once('end', resolve));
     try {
       if (
-        !(await observe_promise(
-          Promise.race([
-            owned.exited,
-            owned.output_failed.then(() => {
-              throw cli_version_error('codex', executable, 'check');
-            }),
-          ]),
-          VERSION_TIMEOUT_SECONDS * 1000,
-        )).completed
+        !(
+          await observe_promise(
+            Promise.race([
+              owned.exited,
+              owned.output_failed.then(() => {
+                throw cli_version_error('codex', executable, 'check');
+              }),
+            ]),
+            VERSION_TIMEOUT_SECONDS * 1000,
+          )
+        ).completed
       )
         throw cli_version_error('codex', executable, 'check');
       await observe_promise(output_done, PIPE_DRAIN_SECONDS * 1000);

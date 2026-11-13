@@ -472,8 +472,7 @@ export class CodexAppServerBackendChild implements B.BackendChild {
       throw error;
     }
     if (
-      !(await observe_promise(turn.ended.promise, CANCEL_SETTLING_TIMEOUT_SECONDS * 1000))
-        .completed
+      !(await observe_promise(turn.ended.promise, CANCEL_SETTLING_TIMEOUT_SECONDS * 1000)).completed
     )
       console.warn(
         `conversation ${this.resolved_start.conversation_id}: codex took the interrupt but never said the turn ended`,

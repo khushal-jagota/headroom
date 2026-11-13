@@ -131,7 +131,6 @@ export class ObservedStdout extends Transform {
   }
 }
 
-
 /** Python's stderr callback receives nonblank right-trimmed lines, not chunks. */
 export class ObservedStderr {
   private readonly decoder = new StringDecoder('utf8');

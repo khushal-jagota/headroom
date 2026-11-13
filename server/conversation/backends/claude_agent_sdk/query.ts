@@ -22,13 +22,7 @@ import {
 } from './configuration.ts';
 import type { ClaudeSdkClient, ClaudeSdkOptions, ClaudeSdkMessage } from './query_contracts.ts';
 import { ClaudeReceipts } from './receipts.ts';
-import {
-  ObservedStdout,
-  ObservedStderr,
-  Pending,
-  cancellation_uuid_set,
-  object,
-} from './wire.ts';
+import { ObservedStdout, ObservedStderr, Pending, cancellation_uuid_set, object } from './wire.ts';
 import { observe_promise } from '../../../core/promise_observer.ts';
 
 export type {
