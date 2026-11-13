@@ -32,6 +32,7 @@ export interface MacUpdateCompositionContext {
   readonly provider: UpdateProvider | null;
   readonly current_app_sha: string | null;
   readonly child_processes: OwnedChildProcesses;
+  readonly signal: AbortSignal;
   ready_release(): PublishedUpdate | null;
   emit_change(): void;
 }

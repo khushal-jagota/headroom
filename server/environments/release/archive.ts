@@ -17,6 +17,7 @@ import type { FileHandle } from 'node:fs/promises';
 import type { ChildProcess } from 'node:child_process';
 import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { tmpdir } from 'node:os';
 import { pipeline } from 'node:stream/promises';
 import { Pack } from 'tar';
 import type { OwnedChildProcesses } from '../../lifecycle/contracts.ts';
@@ -24,9 +25,22 @@ import { ShutdownDeadlineExceeded } from '../../lifecycle/contracts.ts';
 import { stop_one_shot_child } from '../../lifecycle/one_shot_children.ts';
 import { observe_shutdown } from '../../conversation/shutdown.ts';
 import { inside } from '../ticket_scratch/logic.ts';
-import type { AppManifest, ArchiveUnpackRequest, ReleaseExecution } from './contracts.ts';
+import type {
+  AppManifest,
+  ArchiveUnpackRequest,
+  ReleaseExecution,
+  MacArchiveInspection,
+  MacInspectionExecution,
+} from './contracts.ts';
 import { assert_release_execution } from './process.ts';
-import { AppValidationError } from './contracts.ts';
+import {
+  AppValidationError,
+  MacArchiveInspectionError,
+  MacArchiveInspectionUnsettled,
+  MacArchiveJsonError,
+} from './contracts.ts';
+import { decode_mac_manifest } from '../updates/mac/manifest.ts';
+import { MAX_MAC_RUNTIME_MANIFEST_BYTES } from '../updates/mac/configuration.ts';
 import {
   ARCHIVE_GZIP_LEVEL,
   FILE_CHUNK_BYTES,
@@ -132,16 +146,98 @@ export async function extract_git_export(
     execution,
   );
 }
+export async function inspect_mac_archive(
+  archive: string,
+  archive_sha256: string,
+  archive_size: number,
+  execution: MacInspectionExecution,
+): Promise<MacArchiveInspection> {
+  if (!Number.isFinite(execution.deadline))
+    throw new AppValidationError('Mac archive inspection requires a finite deadline');
+  execution.signal.throwIfAborted();
+  if (performance.now() / 1000 >= execution.deadline)
+    throw new AppValidationError('Mac archive inspection deadline expired before admission');
+  let interrupt: ((reason: unknown) => void) | undefined;
+  let stopped!: (reason: unknown) => void;
+  const interrupted = new Promise<never>((_resolve, reject) => {
+    stopped = reject;
+  });
+  const abort = () => {
+    interrupt?.(execution.signal.reason);
+    stopped(execution.signal.reason);
+  };
+  execution.signal.addEventListener('abort', abort);
+  const actual = extract_archive(
+    archive,
+    null,
+    { purpose: 'mac-inspection', archive_sha256, archive_size },
+    execution.child_processes,
+    filesystem_free_bytes,
+    undefined,
+    (cancel) => {
+      interrupt = cancel;
+    },
+  );
+  let complete = false;
+  void actual.then(
+    () => {
+      complete = true;
+    },
+    () => {
+      complete = true;
+    },
+  );
+  const settled = actual.then(() => {});
+  void settled.catch(() => {});
+  try {
+    await observe_shutdown(
+      Promise.race([actual, interrupted]),
+      execution,
+      'Mac archive inspection did not settle before its deadline',
+    );
+    return (await actual) as MacArchiveInspection;
+  } catch (error) {
+    interrupt?.(error);
+    if (!complete) throw new MacArchiveInspectionUnsettled(settled, error);
+    throw error;
+  } finally {
+    execution.signal.removeEventListener('abort', abort);
+  }
+}
+function inspection_error(message: Record<string, unknown>): Error {
+  if (typeof message.message !== 'string') throw new Error('invalid Mac inspection error');
+  if (message.kind === 'archive' || message.kind === 'refusal')
+    return new MacArchiveInspectionError(message.kind, message.message);
+  if (
+    !['os', 'json', 'unexpected'].includes(String(message.kind)) ||
+    typeof message.name !== 'string'
+  )
+    throw new Error('invalid Mac inspection error');
+  const error = Object.assign(new Error(message.message), { name: message.name });
+  if (message.kind === 'os') {
+    if (typeof message.code !== 'string' || !Number.isSafeInteger(message.errno))
+      throw new Error('invalid Mac inspection errno');
+    Object.assign(error, { code: message.code, errno: message.errno });
+    for (const key of ['syscall', 'path', 'dest']) {
+      if (key in message && typeof message[key] !== 'string')
+        throw new Error('invalid Mac inspection filesystem field');
+      if (key in message) Object.assign(error, { [key]: message[key] });
+    }
+  }
+  return error;
+}
 async function extract_archive(
   archive: string,
-  destination: string,
+  destination: string | null,
   purpose:
     | Omit<Extract<ArchiveUnpackRequest, { purpose: 'application' }>, 'spool_root' | 'destination'>
-    | { purpose: 'source-export' },
+    | { purpose: 'source-export' }
+    | { purpose: 'mac-inspection'; archive_sha256: string; archive_size: number },
   child_processes: OwnedChildProcesses,
   read_free_space: (path: string) => Promise<bigint>,
   execution?: ReleaseExecution,
-): Promise<AppManifest | string> {
+  register_cancel?: (cancel: (reason: unknown) => void) => void,
+): Promise<AppManifest | string | MacArchiveInspection> {
   let input: FileHandle | undefined, work: string | undefined, child: ChildProcess | undefined;
   let closed: Promise<void> | undefined,
     ended = false,
@@ -149,9 +245,10 @@ async function extract_archive(
     code: number | null = null;
   let ownOutput = false,
     success = false,
-    result: AppManifest | string | undefined,
+    result: AppManifest | string | MacArchiveInspection | undefined,
     failure: unknown;
   const errors: unknown[] = [];
+  const inspection = purpose.purpose === 'mac-inspection';
   const cancel = (reason: unknown): void => {
     failure ??= reason;
     if (child && !ended && !stop_requested) {
@@ -163,9 +260,12 @@ async function extract_archive(
       }
       child.stdin?.destroy();
     }
+    if (inspection)
+      child?.stdout?.destroy(reason instanceof Error ? reason : new Error(String(reason)));
   };
+  register_cancel?.(cancel);
   const abort = () => cancel(execution!.signal.reason);
-  let target = resolve(destination);
+  let target = destination === null ? '' : resolve(destination);
   const require_live = (): void => {
     if (failure !== undefined) throw failure;
     if (execution) assert_release_execution(execution);
@@ -181,7 +281,7 @@ async function extract_archive(
     require_live();
     if (typeof free !== 'bigint' || free < bytes) throw new AppValidationError(message);
   };
-  async function unpack(): Promise<AppManifest | string> {
+  async function unpack(): Promise<AppManifest | string | MacArchiveInspection> {
     try {
       require_live();
       input = await open(archive, constants.O_RDONLY | constants.O_NONBLOCK);
@@ -189,17 +289,23 @@ async function extract_archive(
       const info = await input.stat();
       require_live();
       if (!info.isFile()) throw new AppValidationError('app archive must be a regular file');
+      if (purpose.purpose === 'mac-inspection' && info.size !== purpose.archive_size)
+        throw new MacArchiveInspectionError(
+          'refusal',
+          'The Mac runtime archive size differs from its publication.',
+        );
       if (info.size > ARCHIVE_MAX_COMPRESSED_BYTES)
         throw new AppValidationError('app archive exceeds compressed size limit');
-      const parent = await resolved_path(dirname(target));
+      const parent = inspection ? tmpdir() : await resolved_path(dirname(target));
       require_live();
-      target = join(parent, basename(target));
+      if (!inspection) target = join(parent, basename(target));
       const ancestor = await existing_parent(parent);
-      await capacity(
-        ancestor,
-        BigInt(info.size) * 2n + BigInt(ARCHIVE_SPACE_RESERVE_BYTES),
-        'app archive has insufficient free space before spooling',
-      );
+      if (!inspection)
+        await capacity(
+          ancestor,
+          BigInt(info.size) * 2n + BigInt(ARCHIVE_SPACE_RESERVE_BYTES),
+          'app archive has insufficient free space before spooling',
+        );
       work = await mkdtemp(join(ancestor, '.app-unpack-'));
       require_live();
       await chmod(work, 0o700);
@@ -213,7 +319,11 @@ async function extract_archive(
           process.execPath,
           [
             fileURLToPath(new URL('./archive_unpack_main.ts', import.meta.url)),
-            JSON.stringify({ spool_root: work, destination: target, ...purpose }),
+            JSON.stringify({
+              spool_root: work,
+              ...(!inspection ? { destination: target } : {}),
+              ...purpose,
+            }),
           ],
           {
             cwd: work,
@@ -253,6 +363,27 @@ async function extract_archive(
       for await (const message of read_archive_messages(child.stdout!)) {
         if (failure !== undefined) throw failure;
         if (execution) assert_release_execution(execution);
+        if (inspection && message.type === 'mac-inspection-error') throw inspection_error(message);
+        if (
+          inspection &&
+          message.type === 'mac-inspection-result' &&
+          result === undefined &&
+          typeof message.python === 'boolean'
+        ) {
+          const bytes = message.manifest_bytes;
+          if (!(
+            bytes === null ||
+            (typeof bytes === 'string' &&
+              bytes.length <= Math.ceil(MAX_MAC_RUNTIME_MANIFEST_BYTES / 3) * 4 &&
+              Buffer.from(bytes, 'base64').toString('base64') === bytes &&
+              Buffer.from(bytes, 'base64').length <= MAX_MAC_RUNTIME_MANIFEST_BYTES)
+          ))
+            throw new Error('invalid Mac inspection manifest bytes');
+          // Decode only after the exact child's actual close, below.
+          result = { manifest: bytes, python: message.python };
+          continue;
+        }
+        if (inspection) throw new Error('invalid Mac inspection protocol');
         if (message.type === 'error') throw new AppValidationError(String(message.message));
         if (
           message.type === 'space' &&
@@ -353,11 +484,25 @@ async function extract_archive(
         `app archive cleanup failed; owned paths: ${work ?? ''} ${ownOutput ? target : ''}; ${errors.map(String).join('; ')}`,
       );
     if (failure !== undefined)
-      throw failure instanceof AppValidationError
+      throw inspection || failure instanceof AppValidationError
         ? failure
         : new AppValidationError(
             `app archive unpack failed: ${failure instanceof Error ? failure.message : String(failure)}`,
           );
+    if (inspection) {
+      const inspected = result as MacArchiveInspection;
+      try {
+        return {
+          manifest:
+            inspected.manifest === null
+              ? null
+              : decode_mac_manifest(Buffer.from(inspected.manifest as string, 'base64')),
+          python: inspected.python,
+        };
+      } catch (error) {
+        throw error instanceof MacArchiveJsonError ? error.original : error;
+      }
+    }
     return result!;
   }
   execution?.signal.addEventListener('abort', abort);
