@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Any, cast
 
 import pytest
-from tests.compare.direct.test_unit22_mac_journal import Oracle, _command, _digest as digest
+from tests.compare.direct.test_unit22_mac_journal import Oracle, _command, _digest
 from tests.support.synthetic_homes import create_synthetic_homes, synthetic_home_environment
 
 from planner.executor import mac_mailbox
@@ -83,14 +83,14 @@ def performance_spec(journal: CommandJournal) -> dict[str, Any]:
         journal.finish(identifier, result, outputs_owed=False)
         report = MacResultReporter(cast(MacHttpClient, None), journal)._report()
         reports.append(
-            digest(type_adapter(CommandOutcomeReport).dump_json(CommandOutcomeReport(report)))
+            _digest(type_adapter(CommandOutcomeReport).dump_json(CommandOutcomeReport(report)))
         )
         journal.mark_reported((identifier,))
     return dict(
         template=raw,
         text_bytes=text_bytes,
         raw_poll_bytes=len(poll),
-        canonical_command=digest(canonical),
+        canonical_command=_digest(canonical),
         reports=reports,
     )
 
@@ -262,7 +262,7 @@ async def reference(
 
         async def report_outcomes(self, report: CommandOutcomeReport) -> CommandOutcomeReply:
             nonlocal fault_mark
-            reports.append(digest(encoded(CommandOutcomeReport, report)))
+            reports.append(_digest(encoded(CommandOutcomeReport, report)))
             response = responses[len(reports) - 1]
             report_replies.append(encoded(CommandOutcomeReply, response).hex())
             if len(reports) == 1:
@@ -335,7 +335,7 @@ async def reference(
             catalog_reads=catalog_reads,
             reports=reports,
             stop_waited=stop_waited,
-            shutdown_result=digest(type_adapter(CommandResult).dump_json(stored)),
+            shutdown_result=_digest(type_adapter(CommandResult).dump_json(stored)),
         ), spec
     finally:
         release.set()
