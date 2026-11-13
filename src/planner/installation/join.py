@@ -91,6 +91,22 @@ def wait_for_lease(python: Path, root: Path, revision: str, *, timeout: float = 
     raise ValueError(f"Join did not complete: {detail}. Inspect {root / 'logs'}")
 
 
+def provider_environment(root: Path, isolated_providers: bool) -> dict[str, str]:
+    """Keep disposable executor credentials and skill links inside its selected root."""
+    if not isolated_providers:
+        return {}
+    environment = {}
+    for variable, name in (
+        ("CODEX_HOME", "codex"),
+        ("CLAUDE_CONFIG_DIR", "claude"),
+        ("PLAN_HERMES_HOME", "hermes"),
+    ):
+        path = root / "providers" / name
+        path.mkdir(parents=True, mode=0o700)
+        environment[variable] = str(path)
+    return environment
+
+
 def install_executor(
     *,
     archive: Path,
@@ -103,6 +119,7 @@ def install_executor(
     root: Path,
     signing_identity: str | None = None,
     label: str = "com.panels.executor",
+    isolated_providers: bool = False,
 ) -> None:
     """Create one independent Mac installation, then start and check only its service."""
     home_url = validate_server_url(home_url)
@@ -129,6 +146,7 @@ def install_executor(
             credential=credential,
             root=root.resolve(),
             label=label,
+            isolated_providers=isolated_providers,
         )
         return
     identity = check_mac_prerequisites(signing_identity)
@@ -191,6 +209,7 @@ def install_executor(
     write_credential(credential_path(data), credential)
     service_definition = plistlib.loads(render_launch_agent(configuration))
     service_environment = service_definition["EnvironmentVariables"]
+    service_environment.update(provider_environment(root, isolated_providers))
     service_environment["PLAN_APP_ROOT"] = str(runtime)
     service_environment["PLAN_APP_SHA"] = revision
     service_environment["PATH"] = (

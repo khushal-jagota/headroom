@@ -22,8 +22,9 @@ def install_linux_executor(
     credential: str,
     root: Path,
     label: str,
+    isolated_providers: bool = False,
 ) -> None:
-    from planner.installation.join import wait_for_lease
+    from planner.installation.join import provider_environment, wait_for_lease
 
     service = "panels-executor.service" if label == "com.panels.executor" else label
     if re.fullmatch(r"[A-Za-z0-9_-]+\.service", service) is None:
@@ -64,6 +65,18 @@ def install_linux_executor(
             credential_file=grant,
             unit_directory=units,
         )
+    private_environment = provider_environment(root, isolated_providers)
+    if private_environment:
+        # Insert only into this newly installed unit's Service section.
+        text = unit.read_text()
+        before, marker, after = text.partition("\n[Install]\n")
+        if not marker:
+            raise ValueError("The new executor unit has no Install section")
+        lines = []
+        for variable, value in private_environment.items():
+            quoted = value.replace("\\", "\\\\").replace('"', '\\"').replace("%", "%%")
+            lines.append(f'Environment="{variable}={quoted}"')
+        unit.write_text(before + "\n" + "\n".join(lines) + marker + after)
     subprocess.run(
         ["systemctl", "--user", "daemon-reload"], check=True, capture_output=True, timeout=15
     )

@@ -498,6 +498,7 @@ def main() -> None:
                     "revision": receipt["revision"],
                     "home_url": args.home,
                     "machine_id": args.machine_id,
+                    "isolated_providers": args.isolated_providers,
                     "credential": getpass.getpass("Private machine credential: "),
                     "root": str(args.root),
                     "signing_identity": args.signing_identity,
