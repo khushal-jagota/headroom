@@ -1,5 +1,6 @@
 /** The retained inventory script owns catalog JSON. This owner returns command facts. */
 import { fileURLToPath } from 'node:url';
+import { copy_environment } from '../../../core/environment.ts';
 import { constants } from 'node:os';
 import type { Readable } from 'node:stream';
 import type { CommandOutcome } from '../../snapshot/contracts.ts';
@@ -119,9 +120,7 @@ export class HermesModelCatalogOwner {
   private async run(probe: Probe, refresh: boolean): Promise<CommandOutcome> {
     let primary: unknown;
     const argv = refresh ? [...this.launch.argv, '--refresh'] : [...this.launch.argv];
-    const environment: Record<string, string> = {};
-    for (const [name, value] of Object.entries(process.env))
-      if (value !== undefined) environment[name] = value;
+    const environment = copy_environment(process.env);
     Object.assign(environment, Object.fromEntries(this.launch.environment_overrides));
     const timeout = new CatalogTimeout(`${argv[0]} did not answer within ${this.timeout_seconds}s`);
     const timer = setTimeout(() => {
