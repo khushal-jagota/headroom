@@ -12,7 +12,7 @@ import type { MessageDeliveryResult } from './contracts.ts';
 import { send_message } from './service.ts';
 import { request_recap } from './recap_request.ts';
 
-function principal(raw: unknown): Principal {
+export function principal(raw: unknown): Principal {
   if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) {
     throw new PlannerError('validation', 'target must be a principal object');
   }
@@ -39,7 +39,7 @@ function principal(raw: unknown): Principal {
   }
   return { kind: kind as Principal['kind'], id: id.trim() };
 }
-function result_json(result: MessageDeliveryResult): Record<string, unknown> {
+export function result_json(result: MessageDeliveryResult): Record<string, unknown> {
   return {
     target: result.recipient,
     conversation_id: result.conversation_id,
@@ -48,18 +48,24 @@ function result_json(result: MessageDeliveryResult): Record<string, unknown> {
       : delivery_fate_json(result.fate)),
   };
 }
+export function message_text(raw: unknown): string {
+  if (typeof raw !== 'string' || !raw.trim())
+    throw new PlannerError('validation', 'message must not be empty');
+  return raw;
+}
+export function message_delivery_mode(...values: [] | [unknown]): PromptDeliveryMode {
+  const mode = values.length === 0 ? 'steer' : values[0];
+  if (typeof mode !== 'string' || !['queue', 'steer', 'send_now'].includes(mode))
+    throw new PlannerError('validation', 'mode must be queue, steer, or send_now', { mode });
+  return mode as PromptDeliveryMode;
+}
 export const routes: FastifyPluginAsync<AreaServices> = async (app, services) => {
   app.post('/messages/send', async (request, reply) => {
     if (!dictionaryBody(request.body, reply)) return;
     const recipient = principal(request.body.target);
-    const message = request.body.message;
-    if (typeof message !== 'string' || !message.trim()) {
-      throw new PlannerError('validation', 'message must not be empty');
-    }
-    const mode = 'mode' in request.body ? request.body.mode : 'steer';
-    if (typeof mode !== 'string' || !['queue', 'steer', 'send_now'].includes(mode)) {
-      throw new PlannerError('validation', 'mode must be queue, steer, or send_now', { mode });
-    }
+    const message = message_text(request.body.message);
+    const mode =
+      'mode' in request.body ? message_delivery_mode(request.body.mode) : message_delivery_mode();
     if (!services.conversationSystem) throw new Error('conversation system is unavailable');
     return result_json(
       await send_message(
