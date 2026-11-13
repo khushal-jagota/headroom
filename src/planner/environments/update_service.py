@@ -165,15 +165,20 @@ class UpdateService:
             ) from exc
 
     def owns_preparation(self, attempt_id: str) -> bool:
-        """Exclude this process's real snapshot and bounded installer launch handshake."""
+        """Exclude local preparation, retained drain waits, and bounded launch startup."""
         with self._work_wake_lock:
             task = self._advance_task
             starting = self._installer_starting
-            return bool(
-                (self._paused_attempt_id == attempt_id and task is not None and not task.done())
-                or (starting is not None and starting[0] == attempt_id
-                    and self._now() < starting[1])
-            )
+            paused = self._paused_attempt_id == attempt_id
+            if ((paused and task is not None and not task.done())
+                    or (starting is not None and starting[0] == attempt_id
+                        and self._now() < starting[1])):
+                return True
+        if paused and self._update_barrier is not None and self._update_barrier.frozen:
+            current = self.attempts.read()
+            return (current is not None and current.attempt_id == attempt_id
+                    and current.state == "waiting")
+        return False
 
     def installer_observed(self, attempt_id: str) -> None:
         with self._work_wake_lock:
