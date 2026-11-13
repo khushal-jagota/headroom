@@ -30,7 +30,7 @@ That narrowness is the design. A Worker can run for a long time, a person can ta
 All of these must hold:
 
 - It is not backlogged.
-- It can run here: its stable destination names the home, or the original Mac destination has a present [executor](executor.md). Away work waits with its machine name.
+- It can run here: its stable destination names the home, or its registered extra destination has a present [executor](executor.md). Away work waits with its machine name.
 - The stage is not terminal and has a field for the Worker to fill.
 - The Ticket's status is empty. That one check keeps out parked proposals, blockers, a claim already out, and errors.
 - On a user-owned stage, this entry onto the stage has not had its opener yet.
@@ -40,7 +40,11 @@ The ceiling is not a readiness question. It decides what a finished proposal doe
 
 One more question goes to the conversation itself: is a turn already running? A busy conversation is left alone this pass, so automation never steers into an unrelated turn.
 
-Automatic starts share a launch gate with Manager wakes and recovery notices. The gate permits one new start per second and four starts awaiting acceptance. Workers use at most three slots, so Chief and Managers retain capacity. A slot ends on positive agent activity or definite refusal. A wire write or a local queue position alone does not prove acceptance. Messages that wait behind a turn or quarantine hold no start slot. At dequeue, a combined prompt takes one slot. Running turns have no limit from this gate. Explicit restart requests bypass automatic launch pacing. Preparation follows admission order, so its limit cannot hide the next eligible Worker. A deferred preparation loses its place when its Ticket no longer meets readiness or its conversation becomes busy.
+Automatic starts share the existing gate with Manager wakes and recovery notices. Each destination has its own pacing and pending capacity. The home reserves capacity for Chief and Managers. Extra destinations use their full capacity for Workers. A busy or absent destination cannot consume another destination's permits.
+
+Positive agent activity or definite refusal releases a slot. A wire write or a local queue position alone does not prove acceptance. Messages behind a turn or quarantine hold no start slot. At dequeue, a combined prompt takes one slot. Active turns have no limit from this gate. Explicit restart requests bypass automatic launch pacing.
+
+Preparation follows admission order, so its limit cannot hide the next eligible Worker. A deferred preparation loses its place when its Ticket no longer meets readiness or its conversation becomes busy.
 
 Automatic admission carries the same stable machine ID as the Ticket. A rename never changes a deferred start or claim. An absent executor holds no shared slot. Its pending starts retain their claims and command identities until receipts and ownership evidence settle them. On return, pending starts pass through the gate again. Durable bindings preserve this rule across a home restart. Control commands can pass unfetched deferred work without a new prompt or a change to conversation order.
 
@@ -81,4 +85,4 @@ Database work runs on worker threads, so a database wait does not stop the serve
 - `src/planner/tickets/data.py`: the claim writers.
 - `src/planner/runtime/conversation_start.py`: starting the conversation and sending.
 
-_Last verified: 2026-11-12._
+_Last verified: 2026-11-13._

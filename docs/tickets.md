@@ -72,9 +72,9 @@ Delete removes the Ticket's record and leaves its files. It is available from th
 
 ## Where the Worker runs
 
-The machine destination is chosen at creation and never changes. It defaults to the home. Settings → Machines edits its name, icon, and color. These display edits never move work. The home runs its Workers directly. The original Mac destination uses the existing executor and waits while it is away. Chief and Managers stay on the home.
+The machine destination is chosen at creation and never changes. It defaults to the home. Settings → Machines edits its name, icon, and color. These display edits never move work. The home runs its Workers directly. Registered extra destinations pull their own work and wait while they are away. Chief and Managers stay on the home.
 
-The browser and CLI use `machine_id`. Legacy `locale` requests remain compatible: `vps` names only the original home, and `macos` names only the original Mac. Requests that supply both must agree. Machine enrollment and several concurrent executors remain later work. See [Mac execution](executor.md).
+The browser and CLI use `machine_id`. Legacy `locale` requests remain compatible: `vps` names only the original home, and `macos` names only the original Mac. Requests that supply both must agree. The operator registers extra destinations without an enrollment screen. See [Extra machines](executor.md).
 
 ## Where it shows up
 
@@ -93,4 +93,4 @@ The Ticket page is the inspector: the stage ladder, the current gate with its pr
 - `src/planner/tickets/logic/`: the stage machine, proposal routing, and the resolver (`machine.py`, `proposal_routing.py`, `resolution.py`).
 - `web/src/routes/TicketRoute.svelte` and `web/src/components/WorkerProposalCard.svelte`: the Ticket page and its gate.
 
-_Last verified: 2026-11-04._
+_Last verified: 2026-11-13._
