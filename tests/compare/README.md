@@ -99,6 +99,10 @@ shards. When you add or remove a list, update the explicit filename tuples in
 unknown assignments before it applies pull request selection. Each selected list
 runs once. Empty shards run no lists. Direct checks and shared oracle checks run
 once per Node version, and both shards keep the existing report artifact layout.
+Shard 1 binds new host listeners in ports 10000–19999 and shard 2 in 20000–29999.
+The fixture binds each listener before the child starts and passes its file descriptor.
+A restart keeps its explicit port. The disjoint ranges prevent the other shard
+from taking that port while the stopped host restarts.
 
 ## Run a list
 

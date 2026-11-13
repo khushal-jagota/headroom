@@ -155,6 +155,8 @@ jobs:
           PYTHON
           run_shard() {
             local shard="$1"
+            local port_start=$((10000 * shard))
+            local port_end=$((10000 * (shard + 1)))
             local lists=() arguments=()
             mapfile -t lists < "$RUNNER_TEMP/comparison-lists-$shard"
             if [[ ${#lists[@]} -eq 0 ]]; then
@@ -164,7 +166,8 @@ jobs:
             for list in "${lists[@]}"; do
               arguments+=(--compare-list "$list")
             done
-            scripts/dev pytest tests/compare/test_compare.py "${arguments[@]}" \
+            PANELS_TEST_PORT_RANGE="$port_start:$port_end" \
+              scripts/dev pytest tests/compare/test_compare.py "${arguments[@]}" \
               --basetemp "$RUNNER_TEMP/comparison-shard-$shard-tmp" \
               --compare-report-dir "$RUNNER_TEMP/comparison"
           }
