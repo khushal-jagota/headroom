@@ -40,6 +40,14 @@ def clean_environment(root: Path) -> dict[str, str]:
 
 
 async def run_home(root: Path, ready: Path) -> None:
+    from planner.core.runtime_connections import reuse_connections
+
+    # This proof owns its application lifespan directly, bypassing core.server.
+    with reuse_connections(str(root / "home.sqlite")):
+        await _run_home(root, ready)
+
+
+async def _run_home(root: Path, ready: Path) -> None:
     from tests.integration.test_executor_end_to_end import (
         create_mac_ticket,
     )
@@ -50,6 +58,7 @@ async def run_home(root: Path, ready: Path) -> None:
     from planner.conversation.system import SqliteProcessConversationSystem
     from planner.core.clock import RealClock
     from planner.core.db import ChangeSignallingConnection, connect
+    from planner.core.runtime_connections import runtime_connection
     from planner.core.trusted_ingress import TrustedIngressConfig, TrustedIngressMiddleware
     from planner.executor.app_transport import build_executor_router
     from planner.executor.registry import VpsExecutorRegistry
@@ -70,12 +79,21 @@ async def run_home(root: Path, ready: Path) -> None:
     original_checkout = connect
 
     def checkout(*args: Any, **kwargs: Any) -> Any:
-        counts["logical_database_checkouts"] += 1
+        counts["fresh_connection_api_calls"] += 1
         return original_checkout(*args, **kwargs)
+
+    def runtime_checkout(*args: Any, **kwargs: Any) -> Any:
+        counts["runtime_connection_loans"] += 1
+        return runtime_connection(*args, **kwargs)
 
     for module in tuple(sys.modules.values()):
         if module is not None and getattr(module, "connect", None) is original_checkout:
-            setattr(module, "connect", checkout)
+            vars(module)["connect"] = checkout
+        if (
+            module is not None
+            and getattr(module, "runtime_connection", None) is runtime_connection
+        ):
+            vars(module)["runtime_connection"] = runtime_checkout
     # Count successful mutating commits and SQLite row changes, including triggers.
     # Hook the existing connection's final commit primitive; no runtime telemetry.
     original = ChangeSignallingConnection._sqlite_commit

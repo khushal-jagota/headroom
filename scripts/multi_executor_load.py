@@ -64,8 +64,10 @@ async def sample(root: Path, count: int, seconds: float) -> dict[str, object]:
                 "home_cpu_percent_one_core": 100 * cpu / wall,
                 "physical_database_opens": after.get("physical_database_opens", 0)
                 - before.get("physical_database_opens", 0),
-                "logical_database_checkouts": after.get("logical_database_checkouts", 0)
-                - before.get("logical_database_checkouts", 0),
+                "fresh_connection_api_calls": after.get("fresh_connection_api_calls", 0)
+                - before.get("fresh_connection_api_calls", 0),
+                "runtime_connection_loans": after.get("runtime_connection_loans", 0)
+                - before.get("runtime_connection_loans", 0),
                 "write_transactions": after.get("write_transactions", 0)
                 - before.get("write_transactions", 0),
                 "row_changes": after.get("row_changes", 0) - before.get("row_changes", 0),
