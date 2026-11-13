@@ -260,9 +260,14 @@ export class MacUpdateController {
       );
     } finally {
       try {
-        await files.unlink_at(root, name);
-      } finally {
-        await files.close_directory(root);
+        try {
+          await files.unlink_at(root, name);
+        } finally {
+          await files.close_directory(root);
+        }
+      } catch (error) {
+        this.fault(error);
+        throw error;
       }
     }
   }

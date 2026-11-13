@@ -98,5 +98,6 @@ temporary refusals until the release-side prerequisites merge in a later Ticket.
 Executor socket transport binds the same command handlers when `PLAN_EXECUTOR_ROOT`
 is set. Reads and registered mutations use the Unix client, including lookup-only
 retry and exit 3 for unconfirmed acceptance. `executor health` and `quiesce` use that
-client too. `executor run` and `permissions` still await the host/platform slices.
+client too. `executor permissions` previews lexical scopes and performs directory access only with `--check`.
+`executor run` still awaits the fixed runtime supervisor binding.
 This package does not switch the installed wrapper or deploy an application.
