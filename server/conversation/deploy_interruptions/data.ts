@@ -587,3 +587,34 @@ export function recovery_claim_revisions(
     )
     .map((row) => [row.id, row.worker_step_claim_revision] as const);
 }
+
+/** A rewritten never-ran prompt closes its Mac interruption and restores only the exact errored claim. */
+export function close_mac_interruption_of_turn(
+  tx: TransactionSql,
+  conversation_id: string,
+  turn_number: number | bigint,
+  now: number,
+  outcome: string,
+): void {
+  const rows = tx.all<{
+    interruption_id: string;
+    owner_kind: string;
+    owner_id: string | null;
+    claim_revision: number | null;
+  }>(
+    "SELECT interruption_id,owner_kind,owner_id,claim_revision FROM deploy_interruptions WHERE source_conversation_id=? AND turn_number=? AND deployment_id LIKE 'mac-process:%' AND recovery_state IN ('awaiting_action','unable_to_resume') ORDER BY rowid",
+    [conversation_id, turn_number],
+  );
+  for (const row of rows) {
+    tx.run(
+      "UPDATE deploy_interruptions SET recovery_state='closed',detail=detail||? WHERE interruption_id=?",
+      [' ' + outcome, row.interruption_id],
+    );
+    if (row.owner_kind === 'ticket' && row.owner_id !== null && row.claim_revision !== null)
+      tickets.restore_interrupted_worker_step_claim(tx, row.owner_id, {
+        conversation_id,
+        expected_claim_revision: row.claim_revision + 1,
+        now,
+      });
+  }
+}

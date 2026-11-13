@@ -21,7 +21,8 @@ export interface CapturedTurn {
   readonly owner_kind: OwnerKind;
   readonly owner_id: string | null;
   readonly claim_revision: number | null;
-  readonly claim: 'none' | 'out' | 'errored' | null;
+  /** Raw persisted evidence. Manifest publication validates its allowed values. */
+  readonly claim: string | null;
 }
 export interface CaptureManifest {
   readonly deployment_id: string;
