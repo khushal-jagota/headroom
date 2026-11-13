@@ -5,7 +5,6 @@ import { PlannerError } from '../core/contracts.ts';
 import type { TransactionSql } from '../core/database/contracts.ts';
 import { is_sqlite_error } from '../core/database/index.ts';
 import { is_os_error } from '../core/system_errors.ts';
-import { python_os_error_message } from '../core/os_errors.ts';
 import type { ExecutorIdentity } from '../execution_identity.ts';
 import type {
   AcceptedRecordEvent,
@@ -25,7 +24,7 @@ import {
   ValueError,
   KeyError,
 } from './protocol.ts';
-import { python_repr } from './protocol_errors.ts';
+import { inspect } from 'node:util';
 import type { WireValue, FileOperationOptions, HeldFileLocation } from './contracts.ts';
 import { FileCleanupError } from './files.ts';
 import { InboxStore, MissingFiles } from './data/inbox.ts';
@@ -178,7 +177,7 @@ export class MacInbox {
             stop: {
               sequence: envelope.sequence,
               reason: 'retry_later',
-              message: `The VPS could not save this yet: ${python_os_error_message(error as Error)}`,
+              message: `The VPS could not save this yet: ${(error as Error).message}`,
               missing_files: [],
             },
           };
@@ -290,9 +289,7 @@ export class MacInbox {
         result = await answer_by(task, deadline);
       } catch (error) {
         if (storage_error(error))
-          throw retry(
-            `The VPS could not save this item yet: ${python_os_error_message(error as Error)}`,
-          );
+          throw retry(`The VPS could not save this item yet: ${(error as Error).message}`);
         throw error;
       }
       if (result.done) return result.value;
@@ -443,7 +440,7 @@ export class MacInbox {
           );
           refusal = new PlannerError(
             'save_failed',
-            `The VPS could not save this item: ${python_repr(error)}`,
+            `The VPS could not save this item: ${error instanceof Error ? error.message : inspect(error)}`,
           );
         }
         return await this.record_refusal(envelope, identity, refusal);

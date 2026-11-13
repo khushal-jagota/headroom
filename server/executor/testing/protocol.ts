@@ -21,6 +21,7 @@ import {
 } from '../../execution_identity.ts';
 import {
   ValueError,
+  ValidationError,
   as_object,
   decode_bounded,
   decode_event_arguments,
@@ -84,6 +85,9 @@ function failure(name: string, error: unknown): Record<string, unknown> {
     type: error.name,
     message: error.message,
     value_error: error instanceof ValueError,
+    ...(error instanceof ValidationError
+      ? { issues: error.issues.map(({ type, loc }) => ({ type, loc })) }
+      : {}),
   };
 }
 // Deliberately malformed incoming sender values can cross only this test boundary.

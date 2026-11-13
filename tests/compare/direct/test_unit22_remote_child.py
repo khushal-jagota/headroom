@@ -138,9 +138,11 @@ def test_remote_child_consumers(tmp_path: Path, request: pytest.FixtureRequest) 
                 results.append(
                     {
                         "error": type(error).__name__,
-                        "message": "<command>"
-                        if type(error).__name__ == "RemoteCommandUncertain"
-                        else str(error),
+                        "message": (
+                            "<command>"
+                            if type(error).__name__ == "RemoteCommandUncertain"
+                            else str(error)
+                        ),
                     }
                 )
 
@@ -256,7 +258,20 @@ def test_remote_child_consumers(tmp_path: Path, request: pytest.FixtureRequest) 
     )
     assert run.returncode == 0, run.stderr
     actual = json.loads(run.stdout)
-    assert actual == expected
+
+    # Key/value diagnostics use native text. Keep refusal classes and all successful facts exact.
+    def comparable(result: dict[str, Any]) -> dict[str, Any]:
+        result = {
+            **result,
+            "results": [dict(row) if isinstance(row, dict) else row for row in result["results"]],
+        }
+        for row in result["results"]:
+            if isinstance(row, dict) and row.get("error") in {"KeyError", "ValueError"}:
+                assert isinstance(row["message"], str) and row["message"]
+                row["message"] = "<native diagnostic>"
+        return result
+
+    assert comparable(actual) == comparable(expected)
     assert actual["results"][4]["not_delivered"] is True
     assert {"type": "BackendSteerAccepted", "composed_content_delivered": False} in actual[
         "results"

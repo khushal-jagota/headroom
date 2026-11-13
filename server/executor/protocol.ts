@@ -8,12 +8,7 @@ import {
   ExecutorJSONSyntaxError,
   ordered_json_entries,
 } from './protocol_json.ts';
-import {
-  decode_json_value,
-  encode_value,
-  encode_typed_value,
-  ERROR_VERSION,
-} from './protocol_values.ts';
+import { decode_json_value, encode_value, encode_typed_value } from './protocol_values.ts';
 import type { WireInput } from './protocol_values.ts';
 import { ValidationError, PydanticSerializationError, ValueError } from './protocol_errors.ts';
 export { ProtocolRefused } from '../execution_identity.ts';
@@ -43,28 +38,22 @@ export function decode_json<K extends WireRootName>(
   options: { strict?: boolean } = {},
 ): WireTypes[K] {
   if (typeof body === 'string' && surrogate.test(body))
-    throw new ValidationError(
-      root,
-      [
-        {
-          type: 'string_unicode',
-          loc: [],
-          message: 'Input should be a valid string, unable to parse raw data as a unicode string',
-          input: body,
-        },
-      ],
-      ERROR_VERSION,
-    );
+    throw new ValidationError(root, [
+      {
+        type: 'string_unicode',
+        loc: [],
+        message: 'Input should be a valid string, unable to parse raw data as a unicode string',
+        input: body,
+      },
+    ]);
   let value: unknown;
   try {
     value = parse_executor_json(typeof body === 'string' ? Buffer.from(body) : body);
   } catch (error) {
     if (!(error instanceof ExecutorJSONSyntaxError)) throw error;
-    throw new ValidationError(
-      root,
-      [{ type: 'json_invalid', loc: [], message: 'Invalid JSON: ' + error.message, input: body }],
-      ERROR_VERSION,
-    );
+    throw new ValidationError(root, [
+      { type: 'json_invalid', loc: [], message: 'Invalid JSON: ' + error.message, input: body },
+    ]);
   }
   return decode_json_value(value, root, options.strict ?? false, 'json');
 }
@@ -115,17 +104,8 @@ function payload<K extends WireRootName>(
   };
   const invalid = find(encoded);
   if (invalid !== undefined) {
-    let index = 0,
-      code = '';
-    for (const character of invalid) {
-      if (surrogate.test(character)) {
-        code = character.codePointAt(0)!.toString(16).padStart(4, '0');
-        break;
-      }
-      index++;
-    }
     throw new PydanticSerializationError(
-      `Error serializing to JSON: UnicodeEncodeError: 'utf-8' codec can't encode character '\\u${code}' in position ${index}: surrogates not allowed`,
+      'Executor JSON text contains an unpaired Unicode surrogate',
     );
   }
   return Buffer.from(stringify_pydantic_json(encoded));

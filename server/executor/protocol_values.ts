@@ -1,3 +1,4 @@
+import { inspect } from 'node:util';
 /** The current executor schema grammar, source validation modes and value serializer. */
 import { pure_posix_path } from '../core/python_path.ts';
 import { JsonNumber, numeric_value, stringify_pydantic_json } from '../core/http/numeric_json.ts';
@@ -14,10 +15,9 @@ import {
   tag_tuple,
   ValidationError,
   KeyError,
-  python_repr,
   ValueError,
 } from './protocol_errors.ts';
-import type { FieldRepresentation, Issue } from './protocol_errors.ts';
+import type { Issue } from './protocol_errors.ts';
 export interface Schema {
   $ref?: string;
   type?: string;
@@ -39,9 +39,7 @@ export interface Schema {
 }
 const document = WIRE_SCHEMA as unknown as {
   $defs: Record<string, Schema>;
-  pydantic_error_version: string;
 };
-export const ERROR_VERSION = document.pydantic_error_version;
 const definitions = document.$defs;
 const json_value_items = definitions.JsonValue!.anyOf!.find(
   (schema) => schema.type === 'array',
@@ -74,7 +72,7 @@ function dereference(schema: Schema): Schema {
 }
 function expected(values: readonly unknown[]): string {
   return values
-    .map(python_repr)
+    .map((value) => inspect(value))
     .join(', ')
     .replace(/, ([^,]+)$/, ' or $1');
 }
@@ -84,33 +82,13 @@ function fail(
   message: string,
   input: unknown,
   loc: readonly (string | number)[],
-  url = true,
 ): typeof BAD {
-  ctx.issues.push({ type, message, input, loc: loc.slice(), url });
+  ctx.issues.push({ type, message, input, loc: loc.slice() });
   return BAD;
 }
-function field_repr(name: string, schema: Schema): FieldRepresentation {
-  schema = dereference(schema);
-  if (schema.anyOf) schema = dereference(schema.anyOf.find((s) => s.type !== 'null')!);
-  return {
-    name,
-    enumeration: schema['x-python-enum'],
-    path: schema.format === 'path',
-    floating: schema.type === 'number',
-  };
-}
 type Branch = { schema: Schema; label: string; fields: readonly string[]; name?: string };
-const fields_cache = new WeakMap<Schema, readonly FieldRepresentation[]>();
 const branch_cache = new WeakMap<Schema, readonly Branch[]>();
 const tags_cache = new WeakMap<Schema, readonly string[]>();
-function representations(schema: Schema): readonly FieldRepresentation[] {
-  let cached = fields_cache.get(schema);
-  if (!cached) {
-    cached = schema['x-python-fields']!.map((key) => field_repr(key, schema.properties![key]!));
-    fields_cache.set(schema, cached);
-  }
-  return cached;
-}
 function branches(schema: Schema): readonly Branch[] {
   let cached = branch_cache.get(schema);
   if (!cached) {
@@ -123,7 +101,7 @@ function branches(schema: Schema): readonly Branch[] {
         label:
           name && target['x-python-fields']
             ? name
-            : `literal[${(target.enum ?? [target.const]).map(python_repr).join(',')}]`,
+            : `literal[${(target.enum ?? [target.const]).map((value) => inspect(value)).join(',')}]`,
         fields: Object.keys(target.properties ?? {}),
       };
     });
@@ -158,14 +136,7 @@ function scalar(
       } catch {}
     }
     return schema.format === 'path'
-      ? fail(
-          ctx,
-          'path_type',
-          "Input is not a valid path for <class 'pathlib.Path'>",
-          value,
-          loc,
-          false,
-        )
+      ? fail(ctx, 'path_type', 'Expected a filesystem path string', value, loc)
       : fail(ctx, 'string_type', 'Input should be a valid string', value, loc);
   }
   if (schema.type === 'boolean') {
@@ -328,9 +299,7 @@ function node(
       return fail(
         ctx,
         'model_attributes_type',
-        ctx.origin === 'json'
-          ? 'Input should be an object'
-          : 'Input should be a valid dictionary or object to extract fields from',
+        ctx.origin === 'json' ? 'Input should be an object' : 'Expected an object',
         value,
         loc,
       );
@@ -347,7 +316,7 @@ function node(
         tag === undefined ? 'union_tag_not_found' : 'union_tag_invalid',
         tag === undefined
           ? "Unable to extract tag using discriminator 'kind'"
-          : `Input tag '${typeof tag === 'string' ? tag : python_repr(tag)}' found using 'kind' does not match any of the expected tags: ${choices.map(python_repr).join(', ')}`,
+          : `Input tag '${typeof tag === 'string' ? tag : inspect(tag)}' found using 'kind' does not match any of the expected tags: ${choices.map((value) => inspect(value)).join(', ')}`,
         value,
         loc,
       );
@@ -464,10 +433,10 @@ function node(
         fields
           ? ctx.origin === 'json'
             ? 'Input should be an object'
-            : `Input should be a dictionary or an instance of ${name}`
+            : `Expected an object or an instance of ${name}`
           : ctx.origin === 'json'
             ? 'Input should be an object'
-            : 'Input should be a valid dictionary',
+            : 'Expected an object',
         value,
         loc,
       );
@@ -487,7 +456,7 @@ function node(
         return fail(
           ctx,
           'value_error',
-          `Value error, ${python_repr(operation)} is not a valid ChildOperation`,
+          `${inspect(operation)} is not a valid ChildOperation`,
           original,
           loc,
         );
@@ -508,7 +477,7 @@ function node(
         return fail(
           ctx,
           'value_error',
-          'Value error, command operation conflicts with arguments',
+          'command operation conflicts with arguments',
           original,
           loc,
         );
@@ -554,7 +523,7 @@ function node(
         if (!fields.includes(key))
           fail(ctx, 'unexpected_keyword_argument', 'Unexpected keyword argument', v, [...loc, key]);
     if (ctx.issues.length !== count) return BAD;
-    tag_class(result, name!, representations(schema));
+    tag_class(result, name!);
     let problem: string | undefined;
     if (name === 'ChildCommand') {
       const args = result.arguments as Record<string, unknown>;
@@ -591,7 +560,7 @@ function node(
       )
         problem = 'mailbox command id conflicts with its child command';
     }
-    return problem ? fail(ctx, 'value_error', 'Value error, ' + problem, original, loc) : result;
+    return problem ? fail(ctx, 'value_error', '' + problem, original, loc) : result;
   }
   return scalar(schema, value, ctx, loc);
 }
@@ -604,7 +573,7 @@ export function decode_json_value<K extends WireRootName>(
 ): WireTypes[K] {
   const ctx: Context = { strict, origin, pythonInput: origin === 'python', issues: [], revalidate };
   const result = node(definitions[root]!, value, ctx, [], root);
-  if (ctx.issues.length) throw new ValidationError(root, ctx.issues, ERROR_VERSION);
+  if (ctx.issues.length) throw new ValidationError(root, ctx.issues);
   return result as WireTypes[K];
 }
 export function decode_value<K extends WireRootName>(value: unknown, root: K): WireTypes[K] {
