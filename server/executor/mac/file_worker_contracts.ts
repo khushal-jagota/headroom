@@ -13,6 +13,9 @@ export interface CapturedBlob {
   modified_ns: bigint;
 }
 export interface FileOperationArguments {
+  read_runtime_record: [path: string];
+  atomic_runtime_record: [path: string, text: string];
+  remove_runtime_record: [path: string];
   open_transfer: [path: string, mode: 'read' | 'write'];
   read_transfer: [handle: number, limit: number];
   write_transfer: [handle: number, bytes: Uint8Array];
@@ -43,6 +46,9 @@ export interface FileOperationArguments {
   ];
 }
 export interface FileOperationResults {
+  read_runtime_record: string | null;
+  atomic_runtime_record: void;
+  remove_runtime_record: void;
   open_transfer: number;
   read_transfer: Uint8Array;
   write_transfer: void;

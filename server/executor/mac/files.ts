@@ -106,6 +106,15 @@ export class FilesService {
       }
     });
   }
+  read_runtime_record(path: string): Promise<string | null> {
+    return this.request('read_runtime_record', [path]);
+  }
+  atomic_runtime_record(path: string, text: string): Promise<void> {
+    return this.request('atomic_runtime_record', [path, text]);
+  }
+  remove_runtime_record(path: string): Promise<void> {
+    return this.request('remove_runtime_record', [path]);
+  }
   file_digest(path: string) {
     return this.request('file_digest', [path]);
   }
