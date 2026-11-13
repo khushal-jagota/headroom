@@ -400,10 +400,13 @@ class MacService:
 
 
 class Installation:
-    def __init__(self, root: Path, attempt_id: str, service: str) -> None:
+    def __init__(
+        self, root: Path, attempt_id: str, service: str, *, lifetime_lock_fd: int | None = None,
+    ) -> None:
         self.root = root
         self.attempt_id = attempt_id
         self.service = service
+        self.lifetime_lock_fd = lifetime_lock_fd
         self.record_path = root / "data/update-attempt.json"
         self.lock_path = root / "data/update-attempt.json.lock"
         self.mac: MacService | None = None
@@ -458,6 +461,23 @@ class Installation:
                 current["detail"] = detail
             current["updated_at"] = now
             self.write(current)
+
+    def release_barrier(self) -> None:
+        """A terminal installer cannot leave the home frozen or remove another cut."""
+        path = self.root / "data/update-barrier.json"
+        with path.with_suffix(".json.lock").open("a+") as stream:
+            fcntl.flock(stream.fileno(), fcntl.LOCK_EX)
+            try:
+                if path.read_text().strip() != self.attempt_id:
+                    return
+            except FileNotFoundError:
+                return
+            path.unlink()
+        directory = os.open(self.root / "data", os.O_RDONLY | os.O_DIRECTORY)
+        try:
+            os.fsync(directory)
+        finally:
+            os.close(directory)
 
     def claim(self) -> dict[str, object] | None:
         """Read this attempt; only an `installing` attempt with this id may proceed."""
@@ -522,7 +542,31 @@ def installed_sha(app: Path) -> object:
 
 def install(arguments: argparse.Namespace) -> int:
     root: Path = arguments.current_root
-    installation = Installation(root, arguments.attempt_id, arguments.service)
+    with (root / "data/update-installer.lock").open("a+") as stream:
+        try:
+            fcntl.flock(stream.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            # The holder can still publish its identity, or retain old text.
+            # Recovery waits for the lock itself before it fails an orphan attempt.
+            print("Another installer still owns this update.", file=sys.stderr)
+            return 2
+        stream.seek(0)
+        stream.truncate()
+        stream.write(arguments.attempt_id + "\n")
+        stream.flush()
+        try:
+            return install_locked(arguments, lifetime_lock_fd=stream.fileno())
+        finally:
+            # A normal exit is terminal. SIGKILL/reboot release the lifetime lock,
+            # and startup uses that proof to remove any marker left behind.
+            Installation(root, arguments.attempt_id, arguments.service).release_barrier()
+
+
+def install_locked(arguments: argparse.Namespace, *, lifetime_lock_fd: int) -> int:
+    root: Path = arguments.current_root
+    installation = Installation(
+        root, arguments.attempt_id, arguments.service, lifetime_lock_fd=lifetime_lock_fd,
+    )
     attempt = installation.claim()
     if attempt is None:
         print("This update attempt is not waiting to install; nothing was changed.",
@@ -579,6 +623,7 @@ def install(arguments: argparse.Namespace) -> int:
             installation, arguments, attempt, reason,
             previous_moved=previous_moved, new_app_moved=new_app_moved,
         )
+    installation.release_barrier()
     installation.record("healthy")
     completion_detail = None
     if installation.mac is not None:
@@ -633,6 +678,7 @@ def roll_back(
             installation.mac.validate_running_home()
             if not healthy(arguments.health_url, from_sha, arguments.health_timeout_seconds):
                 raise InstallFailed("the unchanged home did not pass health after its stop failed")
+            installation.release_barrier()
             installation.mac.resume_auxiliaries()
             installation.record("failed", state="failed", detail=(
                 f"{reason}. The previous app kept running. Its auxiliary jobs were restored."
@@ -650,12 +696,22 @@ def roll_back(
         if restore_data:
             subprocess.run(
                 [
+                    # The alarm belongs to the restore process and survives exec.
+                    # It still fires if this installer dies before its run timeout.
+                    sys.executable, "-I", "-S", "-B", "-c",
+                    "import os,signal,sys; signal.signal(signal.SIGALRM,signal.SIG_DFL); "
+                    "signal.alarm(int(sys.argv[1])); os.execv(sys.argv[2],sys.argv[2:])",
+                    str(max(1, int(DATABASE_RESTORE_TIMEOUT_SECONDS))),
                     str(app / "bin/panels"), "environment", "restore",
                     "--snapshot", str(backup),
                     "--destination-db", str(root / "data/planner.db"),
                     "--live-stopped",
                 ],
                 check=True, stdin=subprocess.DEVNULL, timeout=DATABASE_RESTORE_TIMEOUT_SECONDS,
+                # The restore can outlive an installer killed by the operator or OS.
+                # Only this database writer inherits custody, never app/service children.
+                pass_fds=(() if installation.lifetime_lock_fd is None
+                          else (installation.lifetime_lock_fd,)),
             )
             installation.record("rollback_database_restored")
         installation.systemctl("start")
@@ -670,6 +726,7 @@ def roll_back(
             f"{reason}. Panels could not go back to the previous version: {problem}."
         ))
         return 1
+    installation.release_barrier()
     installation.record("rollback_healthy")
     backup_detail = ""
     if installation.mac is not None:

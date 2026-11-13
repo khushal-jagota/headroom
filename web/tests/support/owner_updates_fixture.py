@@ -69,7 +69,7 @@ class OwnerUpdatesFixture:
             if attempt_id != self.attempt["attempt_id"]:
                 return 409, {"detail": "The update changed."}
             if action == "cancel" and self.state == "waiting":
-                self.attempt, self.state = None, "available"
+                self.attempt, self.state, self.detail = None, "available", None
                 return 200, self.status()
             if action == "now" and self.state == "waiting":
                 assert body == {"confirm_activity": True}, body

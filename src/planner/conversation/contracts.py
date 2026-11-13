@@ -708,7 +708,19 @@ class ConversationSystem(Protocol):
         ...
 
     def workspace_activity(self) -> Literal["idle", "busy", "unknown"]:
-        """Return complete workspace activity without admitting new work."""
+        """Read complete activity from a worker thread without admitting new work."""
+        ...
+
+    async def prepare_update(self, mode: Literal["idle", "now"]) -> bool:
+        """Pause starts, settle local output, then close writes before a snapshot."""
+        ...
+
+    def update_waiting_work(self) -> tuple[str, ...]:
+        """Name active local and extra-machine work for update controls."""
+        ...
+
+    def cancel_update(self) -> bool:
+        """Reopen admission and invalidate this attempt's authority to snapshot."""
         ...
 
     async def run_with_workspace_admission(

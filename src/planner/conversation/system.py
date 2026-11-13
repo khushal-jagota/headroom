@@ -31,6 +31,7 @@ import asyncio
 import contextlib
 import logging
 import sqlite3
+import threading
 import time
 from collections import deque
 from collections.abc import AsyncIterator, Awaitable, Callable, Coroutine, Mapping
@@ -555,6 +556,7 @@ class _ConversationState:
     backend_event_queue: asyncio.Queue[_BackendEventHandler] = field(default_factory=asyncio.Queue)
     backend_event_pump: asyncio.Task[None] | None = None
     backend_event_in_progress: bool = False
+    backend_event_failures: int = 0
     child_event_sink: object | None = None
     settlement_tasks: set[asyncio.Task[Any]] = field(default_factory=set)
     steer_settlements: set[asyncio.Event] = field(default_factory=set)
@@ -647,9 +649,23 @@ class SqliteProcessConversationSystem:
         self._conversations: dict[str, _ConversationState] = {}
         self._conversations_lock = asyncio.Lock()
         self.workspace_admission = WorkspaceAdmission()
-        self._worker_cleanup_recheck: Callable[
-            [ChildReference, str], Awaitable[CleanupResult]
-        ] | None = None
+        self._update_lock = threading.RLock()
+        self._update_admission_owned = False
+        self._update_stop_failed = False
+        self._update_retirement: asyncio.Task[None] | None = None
+        self._update_metadata: dict[str, tuple[str, str]] | None = None
+        self._update_generation: object | None = None
+        self._update_retirement_generation: object | None = None
+        self._acknowledged_event_failures: dict[str, int] = {}
+        try:
+            self._runtime_loop: asyncio.AbstractEventLoop | None = asyncio.get_running_loop()
+        except RuntimeError:
+            self._runtime_loop = None
+        self._retiring_workspace_tickets: set[str] = set()
+        self._retiring_workspace_conversations: set[str] = set()
+        self._worker_cleanup_recheck: (
+            Callable[[ChildReference, str], Awaitable[CleanupResult]] | None
+        ) = None
         self._idle_child_janitor: asyncio.Task[None] | None = None
         self._signal = store.signal_coordinator
         retained_runs = retained_runs if retained_runs is not None else tuple(
@@ -702,8 +718,34 @@ class SqliteProcessConversationSystem:
 
     # --- the contract -------------------------------------------------------------------
 
+    def _runtime_read[T](self, operation: Callable[[], T]) -> T:
+        """Copy mutable runtime facts on their owner before a worker reads SQLite."""
+        owner = self._runtime_loop
+        if owner is None or not owner.is_running():
+            return operation()
+        try:
+            if asyncio.get_running_loop() is owner:
+                return operation()
+        except RuntimeError:
+            pass
+
+        async def read() -> T:
+            return operation()
+
+        future = asyncio.run_coroutine_threadsafe(read(), owner)
+        try:
+            return future.result(timeout=5)
+        except TimeoutError:
+            future.cancel()
+            raise RuntimeError("The conversation runtime did not answer its read.") from None
+
     def workspace_activity(self) -> Literal["idle", "busy", "unknown"]:
-        """Inspect every live conversation; uncertain delivery never counts as idle."""
+        activity = self._runtime_read(self._workspace_memory_activity)
+        if activity != "idle":
+            return activity
+        return "busy" if self._store.read_live_background_task_ids() else "idle"
+
+    def _workspace_memory_activity(self) -> Literal["idle", "busy", "unknown"]:
         if self._shutting_down or self.workspace_admission.closed:
             return "unknown"
         if self._store.blocked_local_conversations:
@@ -724,9 +766,216 @@ class SqliteProcessConversationSystem:
                 or any(not task.done() for task in state.settlement_tasks)
             ):
                 return "busy"
-        if self._store.read_live_background_task_ids():
-            return "busy"
         return "idle"
+
+    @staticmethod
+    def _state_has_update_work(state: _ConversationState) -> bool:
+        return bool(
+            state.lock.locked()
+            or state.phase is not _ConversationPhase.idle
+            or state.reserved_turn is not None
+            or state.running_turn is not None
+            or state.held_prompts
+            or state.admitted_sender_messages
+            or state.sender_messages_being_delivered
+            or state.steer_settlements
+            or state.late_steers
+            or state.backend_event_in_progress
+            or not state.backend_event_queue.empty()
+            or state.child_is_quarantined
+            or any(not task.done() for task in state.settlement_tasks)
+        )
+
+    def update_waiting_work(self) -> tuple[str, ...]:
+        """Read labels on a worker from an immutable owner-loop activity snapshot."""
+        background = frozenset(self._store.read_live_background_task_ids())
+
+        def snapshot() -> tuple[tuple[tuple[str, str], ...], dict[str, tuple[str, str]] | None]:
+            active = tuple(
+                (identity, str(state.record.backend_key))
+                for identity, state in self._conversations.items()
+                if self._state_has_update_work(state) or identity in background
+            )
+            with self._update_lock:
+                metadata = (dict(self._update_metadata)
+                            if self._update_admission_owned and self._update_metadata is not None
+                            else None)
+            return active, metadata
+
+        active, metadata = self._runtime_read(snapshot)
+        if metadata is None:
+            metadata = self._store.update_work_metadata(tuple(identity for identity, _ in active))
+        return tuple(dict.fromkeys(
+            metadata.get(identity, (f"{backend} conversation", HOME_MACHINE_ID))[0]
+            for identity, backend in active
+        ))
+
+    def _update_event_failed(self, state: _ConversationState) -> bool:
+        return state.backend_event_failures > self._acknowledged_event_failures.get(
+            state.record.conversation_id, 0
+        )
+
+    async def prepare_update(self, mode: Literal["idle", "now"]) -> bool:
+        self._runtime_loop = asyncio.get_running_loop()
+        with self._update_lock:
+            initialize = not self._update_admission_owned
+            if initialize:
+                if not self.workspace_admission.close_starts():
+                    raise RuntimeError("Another operation owns workspace admission.")
+                self._update_admission_owned = True
+                self._update_metadata = {}
+                self._update_generation = object()
+                self._update_stop_failed = False
+            generation = self._update_generation
+            preparation = self._update_metadata
+
+        def read_facts() -> tuple[dict[str, tuple[str, str]] | None, dict[str, tuple[str, ...]]]:
+            metadata = self._store.update_work_metadata() if initialize else preparation
+            return metadata, self._store.read_live_background_task_ids()
+
+        metadata, background = await asyncio.to_thread(read_facts)
+        with self._update_lock:
+            if self._update_generation is not generation or not self._update_admission_owned:
+                return False
+            if metadata is None:
+                raise RuntimeError("Update metadata is unavailable.")
+            self._update_metadata = metadata
+            old_retirement = self._update_retirement
+            if (old_retirement is not None
+                    and self._update_retirement_generation is not generation):
+                if not old_retirement.done():
+                    return False
+                self._update_retirement = None
+            if self._update_stop_failed:
+                self._update_retirement = None
+                self._update_stop_failed = False
+            local = tuple(
+                state for identity, state in self._conversations.items()
+                if metadata.get(identity, ("", HOME_MACHINE_ID))[1] == HOME_MACHINE_ID
+                and state.retained_child_reference is None
+                and not child_stops_outside_lock(state.child)
+            )
+            if self._update_retirement is None:
+                if self.workspace_admission.active:
+                    return False
+                if mode == "idle" and (
+                    self._store.blocked_local_conversations
+                    or any(self._state_has_update_work(state)
+                           or state.record.conversation_id in background for state in local)
+                ):
+                    return False
+
+                async def retire() -> None:
+                    try:
+                        for state in local:
+                            if self._update_generation is not generation:
+                                return
+                            if (state.child is None and state.local_child_retirement_proven
+                                    and not self._state_has_update_work(state)
+                                    and state.record.conversation_id not in background):
+                                continue
+                            await self._retire_update_child(state, generation)
+                        for state in local:
+                            await state.backend_event_queue.join()
+                            pending = tuple(
+                                task for task in state.settlement_tasks if not task.done()
+                            )
+                            if pending:
+                                await asyncio.gather(*(asyncio.shield(task) for task in pending))
+                        await self._store.finish_writes()
+                    except BaseException:
+                        with self._update_lock:
+                            if self._update_generation is generation:
+                                self._update_stop_failed = True
+                        raise
+
+                self._update_retirement_generation = generation
+                self._update_retirement = asyncio.create_task(retire())
+                self._update_retirement.add_done_callback(
+                    lambda task: None if task.cancelled() else task.exception()
+                )
+            retirement = self._update_retirement
+        await asyncio.shield(retirement)
+        with self._update_lock:
+            if self._update_generation is not generation:
+                return False
+            if self.workspace_admission.closed:
+                return True
+            return self.workspace_admission.claim(
+                lambda: None,
+                idle=lambda: not any(self._state_has_update_work(state) for state in local),
+                require_idle=True,
+            )
+
+    async def _retire_update_child(
+        self, state: _ConversationState, generation: object | None
+    ) -> None:
+        """Keep final callbacks live until the exact process and its output settle."""
+        state.being_killed = True
+        try:
+            await self._acquire_settled(state)
+            try:
+                if self._update_generation is not generation:
+                    return
+                await self._discard_held_prompts(state)
+                child = state.child
+            finally:
+                state.lock.release()
+            if child is not None:
+                if child_stops_outside_lock(child):
+                    raise RuntimeError("A remote child cannot enter local update retirement.")
+                # The backend can emit final durable callbacks during stop. The pump
+                # retains the live turn until those callbacks commit, before any ending.
+                await child.stop()
+                await state.backend_event_queue.join()
+                event_failed = self._update_event_failed(state)
+                async with state.lock:
+                    await self._confirm_local_child_stopped(state, child)
+                    state.child_is_quarantined = False
+                    if state.child is child:
+                        state.child = None
+                    running = state.running_turn
+                    if running is not None:
+                        await self._end_turn(
+                            state, running, ConversationTurnEnding.interrupted, None
+                        )
+                    self._settle_phase(state)
+                if event_failed:
+                    raise RuntimeError("A backend result did not settle before the update.")
+            # A canceled attempt cannot discard messages admitted after Cancel.
+            if self._update_generation is generation:
+                await self.kill(state.record.conversation_id)
+            if self._update_generation is generation and self._update_event_failed(state):
+                raise RuntimeError("A backend result did not settle before the update.")
+        except BaseException:
+            if state.child is not None:
+                self._quarantine_child(state)
+            raise
+        finally:
+            state.being_killed = False
+            if self._update_generation is not generation:
+                await self._drain_held_prompts(state)
+
+    def cancel_update(self) -> bool:
+        with self._update_lock:
+            self.workspace_admission.reopen()
+            self._update_admission_owned = False
+            self._update_generation = None
+            self._update_stop_failed = False
+            self._update_metadata = None
+            # Failures stay logged; a canceled attempt does not poison later updates.
+            self._acknowledged_event_failures = {
+                identity: state.backend_event_failures
+                for identity, state in self._conversations.items()
+            }
+            return True
+
+    def _workspace_is_retiring(self, state: _ConversationState) -> bool:
+        return (
+            state.record.conversation_id in self._retiring_workspace_conversations
+            or dict(state.record.identity_environment_variables).get("PLAN_TICKET_ID")
+            in self._retiring_workspace_tickets
+        )
 
     async def run_with_workspace_admission(
         self,
@@ -748,24 +997,33 @@ class SqliteProcessConversationSystem:
         operation: Callable[[], Path | str],
     ) -> Path | str:
         """Exclude starts until exact local children stop and the folder detaches."""
-        if not self.workspace_admission.claim(
-            lambda: None, idle=lambda: True, require_idle=True
-        ):
-            return "Workspace admission is busy or closed"
+        if ticket_id in self._retiring_workspace_tickets:
+            return "Ticket workspace retirement is already in progress"
+        self._retiring_workspace_tickets.add(ticket_id)
 
         async def owned() -> Path | str:
+            ids: tuple[str, ...] = ()
             try:
-                ids = await self._store.workspace_conversation_ids(ticket_id, identity)
-                for conversation_id in ids:
-                    await self.kill(conversation_id)
-                return await run_on_worker_thread(operation)
+                from planner.runtime.conversation_start import conversation_link_lock
+
+                # High-level Ticket starts hold this same lock through registration.
+                async with conversation_link_lock(f"ticket:{ticket_id}"):
+                    with self.workspace_admission.operation() as admitted:
+                        if not admitted:
+                            return "Owner update in progress"
+                        ids = await self._store.workspace_conversation_ids(ticket_id, identity)
+                        self._retiring_workspace_conversations.update(ids)
+                        for conversation_id in ids:
+                            await self.kill(conversation_id)
+                        return await run_on_worker_thread(operation)
             except Exception:
                 LOGGER.exception("Local workspace retirement failed")
                 return "Local child retirement failed"
             finally:
-                self.workspace_admission.reopen()
+                self._retiring_workspace_conversations.difference_update(ids)
+                self._retiring_workspace_tickets.discard(ticket_id)
 
-        # A canceled cleanup caller cannot reopen admission while detach still runs.
+        # Cancellation cannot remove the Ticket fence before its detach finishes.
         return await asyncio.shield(asyncio.create_task(owned()))
 
     async def run_if_idle(self, conversation_id: str, operation: Callable[[], None]) -> bool:
@@ -816,11 +1074,20 @@ class SqliteProcessConversationSystem:
         what follows only fills a gap: whatever is there is what this process is using, and
         replacing it would strand a live child that nothing can reach any more.
         """
-        with self.workspace_admission.operation() as admitted:
+        self._runtime_loop = asyncio.get_running_loop()
+        with self.workspace_admission.operation(starts=True) as admitted:
             if not admitted:
                 raise RuntimeError("Workspace admission is closed for an owner update.")
             self._require_runtime_ownership()
             resolved = resolve_conversation_start_request(request)
+            if (
+                resolved.role_materials is not None
+                and dict(resolved.role_materials.identity_environment_variables).get(
+                    "PLAN_TICKET_ID"
+                )
+                in self._retiring_workspace_tickets
+            ):
+                raise RuntimeError("Ticket workspace admission is closed for retirement.")
             record = await self._store.create_conversation(resolved)
             async with self._conversations_lock:
                 if record.conversation_id not in self._conversations:
@@ -855,7 +1122,7 @@ class SqliteProcessConversationSystem:
         that mints neither — every caller inside Panels today — leaves both absent and
         nothing about its rows changes.
         """
-        with self.workspace_admission.operation() as admitted:
+        with self.workspace_admission.operation(starts=True) as admitted:
             if not admitted:
                 raise RuntimeError("Workspace admission is closed for an owner update.")
             if record_refusal and sender_message_id is None:
@@ -866,6 +1133,8 @@ class SqliteProcessConversationSystem:
                     sender_message_id,
                     PromptDeliveryRefused(PromptDeliveryRefusalReason.no_such_conversation),
                 )
+            if self._workspace_is_retiring(state):
+                raise RuntimeError("Ticket workspace admission is closed for retirement.")
             return await self._own_settlement(
                 state,
                 self._send(
@@ -3984,6 +4253,7 @@ class SqliteProcessConversationSystem:
         async with state.lock:
             if (
                 state.being_killed
+                or self._workspace_is_retiring(state)
                 or state.child_is_quarantined
                 or state.phase is not _ConversationPhase.idle
                 or not state.held_prompts
@@ -4739,7 +5009,6 @@ class SqliteProcessConversationSystem:
             self._quarantine_child(state)
 
     async def _stop_child(self, state: _ConversationState, child: BackendChild) -> bool:
-        sink = state.child_event_sink
         try:
             await child.stop()
         except Exception:
@@ -4748,6 +5017,14 @@ class SqliteProcessConversationSystem:
                 state.record.conversation_id,
             )
             return False
+        await self._confirm_local_child_stopped(state, child)
+        return True
+
+    async def _confirm_local_child_stopped(
+        self, state: _ConversationState, child: BackendChild
+    ) -> None:
+        """Persist retirement only after native stop and required callback settlement."""
+        sink = state.child_event_sink
         await run_on_worker_thread(self.start_admission.retire_source, self._store._db_path, child)
         state.local_child_retirement_proven = True
         if isinstance(sink, _CoreBackendEventSink) and not child_stops_outside_lock(child):
@@ -4757,7 +5034,6 @@ class SqliteProcessConversationSystem:
         # News still queued from the stopped child is not about any child that follows.
         state.child_event_sink = None
         await self._background_tasks_ended_with_child(state)
-        return True
 
     async def _background_tasks_ended_with_child(self, state: _ConversationState) -> None:
         """The child is gone, and every background task it was running went with it.
@@ -4903,6 +5179,7 @@ class SqliteProcessConversationSystem:
             except asyncio.CancelledError:
                 raise
             except BaseException:
+                state.backend_event_failures += 1
                 # Anything but this pump's own cancellation is survived. A pump that ends
                 # here stops the conversation ever hearing that a turn finished, and a
                 # conversation that never hears that never empties its held line again —
@@ -4974,7 +5251,7 @@ class SqliteProcessConversationSystem:
                 LOGGER.exception("the idle conversation child sweep failed")
 
     async def _sweep_idle_children(self) -> None:
-        with self.workspace_admission.operation() as admitted:
+        with self.workspace_admission.operation(starts=True) as admitted:
             if admitted:
                 await self._sweep_admitted_idle_children()
 

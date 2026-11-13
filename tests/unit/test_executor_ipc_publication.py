@@ -116,7 +116,7 @@ async def ipc_service(
         executor.outbox.close()
 
 
-def write_request(child: RunningChild, identity: str, *, budget: float = 0.04) -> IpcRequest:
+def write_request(child: RunningChild, identity: str, *, budget: float = 5) -> IpcRequest:
     return IpcRequest(
         identity,
         IpcOperation.write,
@@ -416,6 +416,10 @@ def test_post_commit_cleanup_error_keeps_identity_and_retry_observes_original(
                     with pytest.raises(OSError, match="snapshot cleanup failed after commit"):
                         await publication[1]
             original = executor.outbox.pending()[0]
+            # A committed row can precede the thread's fault and publication cleanup.
+            # Retry reports preparing until that task settles, regardless of its deadline.
+            publications = tuple(task for _, task in executor.gateway._publishing.values())
+            await asyncio.gather(*publications, return_exceptions=True)
             retried = await executor.gateway.handle(
                 replace(retry_request(child, "original"), response_deadline=time.monotonic() + 5)
             )

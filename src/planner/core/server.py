@@ -75,6 +75,7 @@ from planner.environments.update_attempts import (
     attempt_path,
     import_legacy_request,
 )
+from planner.environments.update_barrier import UpdateBarrier
 from planner.environments.update_configuration import DEPLOYMENT_SUCCESS_DISPLAY_SECONDS
 from planner.environments.update_install import own_service_unit
 from planner.environments.update_provider import GitHubUpdateProvider
@@ -233,6 +234,7 @@ def create_app(
 
         recovery_task: asyncio.Task[None] | None = None
         attempt_observer: asyncio.Task[None] | None = None
+        work_release_task: asyncio.Task[None] | None = None
         video_cleanup_task: asyncio.Task[None] | None = None
         ticket_scratch_task: asyncio.Task[None] | None = None
         view_rebuild_task: asyncio.Task[None] | None = None
@@ -281,6 +283,8 @@ def create_app(
                 await attempt(stall_checker.close())
             if executor_registry is not None:
                 await attempt(executor_registry.close())
+            if work_release_task is not None:
+                await attempt(cancel_task(work_release_task))
             if attempt_observer is not None:
                 await attempt(cancel_task(attempt_observer))
             if failures:
@@ -340,6 +344,36 @@ def create_app(
                 defer_view_cleanup=True,
                 startup_audit=audit_startup_tickets,
             ) as conversation:
+                app.state.updates.bind_owner(asyncio.get_running_loop())
+
+                def recover_orphaned_cut() -> None:
+                    barrier = app.state.update_barrier
+                    if not barrier.frozen:
+                        return
+                    generation = barrier.generation
+                    interrupted = update_attempts.read()
+                    identity = "" if interrupted is None else interrupted.attempt_id
+                    if app.state.updates.owns_preparation(identity):
+                        return
+                    with barrier.installer_guard(identity) as active:
+                        if active:
+                            app.state.updates.installer_observed(identity)
+                            return
+                        if app.state.updates.owns_preparation(identity):
+                            return
+                        released = app.state.updates.recover_orphaned_attempt(identity, generation)
+                        if released is not None:
+                            barrier.remove(released)
+
+                async def recover_orphaned_barrier() -> None:
+                    await asyncio.to_thread(recover_orphaned_cut)
+
+                await recover_orphaned_barrier()
+                startup_frozen = app.state.update_barrier.frozen
+                if startup_frozen:
+                    conversation.system.workspace_admission.claim(
+                        lambda: None, idle=lambda: True, require_idle=False
+                    )
                 # Mac runs survive a VPS restart: their rows, assignments and commands
                 # are all in the database, and the conversation core adopts them.
                 executor_registry.configure(
@@ -351,18 +385,19 @@ def create_app(
                     lambda destination: destination == HOME_MACHINE_ID
                     or executor_registry.is_present(destination)
                 )
-                await executor_registry.start()
                 conversation.system.configure_machine_catalog(executor_registry)
                 app.state.conversation_system = (
                     conversation.system
                     if conversation_system_for_test is None
                     else conversation_system_for_test
                 )
+                app.state.conversation = conversation
 
                 async def release_normal_work() -> None:
                     nonlocal recovery_task, video_cleanup_task, ticket_scratch_task
                     nonlocal view_rebuild_task
                     nonlocal loops, metrics, stall_checker
+                    await executor_registry.start()
                     conversation.live_tail.views.cleanup_stale_epochs()
                     database_parent = Path(config.db_path).resolve().parent
                     if config.workspace_root is not None:
@@ -413,7 +448,6 @@ def create_app(
                             conversation.system.workspace_admission,
                         )
                     )
-                    app.state.conversation = conversation
                     await asyncio.to_thread(video_uploads.recover_and_cleanup)
                     video_cleanup_task = asyncio.create_task(_clean_video_uploads())
                     scratch_layout = ticket_scratch.layout_for(
@@ -484,11 +518,79 @@ def create_app(
                     app.state.updates.start(asyncio.get_running_loop())
                     change_signal.emit()
 
-                await release_normal_work()
+                normal_work_released = False
+
+                async def release_after_trial() -> None:
+                    nonlocal normal_work_released, work_release_task
+                    try:
+                        observed = update_attempts.read()
+                        identity = "" if observed is None else observed.attempt_id
+                        was_frozen = app.state.update_barrier.frozen
+                        app.state.update_barrier.refresh()
+                        if app.state.update_barrier.frozen:
+                            await recover_orphaned_barrier()
+                        if app.state.update_barrier.frozen:
+                            # Another installer event can request a check after this wait.
+                            work_release_task = None
+                            return
+                        if was_frozen or (startup_frozen and not normal_work_released):
+                            app.state.updates.reopen_trial_work(identity)
+                        if normal_work_released:
+                            work_release_task = None
+                            return
+                        await release_normal_work()
+                        normal_work_released = True
+                        work_release_task = None
+                    except Exception:
+                        logging.getLogger(__name__).exception(
+                            "Normal work could not resume after the update trial"
+                        )
+
+                next_trial_probe = 0.0
+                last_trial_probe: object = None
+
+                def trial_probe() -> object:
+                    nonlocal next_trial_probe, last_trial_probe
+                    barrier = app.state.update_barrier
+                    if not barrier.frozen:
+                        next_trial_probe = 0.0
+                        last_trial_probe = None
+                        return None
+                    now = _monotonic()
+                    if now < next_trial_probe:
+                        return last_trial_probe
+                    next_trial_probe = now + 2
+                    attempt = update_attempts.read()
+                    identity = "" if attempt is None else attempt.attempt_id
+                    local = app.state.updates.owns_preparation(identity)
+                    active = False if local else barrier.installer_active(identity)
+                    if active:
+                        app.state.updates.installer_observed(identity)
+                    last_trial_probe = (identity, None if attempt is None else attempt.state,
+                                        local, active)
+                    return last_trial_probe
+
+                def attempt_changed() -> None:
+                    nonlocal work_release_task
+                    change_signal.emit()
+                    # A failed release can leave partial producers. Log it once and
+                    # retain its task instead of starting those producers again.
+                    if work_release_task is None:
+                        work_release_task = asyncio.create_task(release_after_trial())
+
+                if not startup_frozen:
+                    await release_normal_work()
+                    normal_work_released = True
                 # The installer writes the attempt record from outside this process.
                 attempt_observer = asyncio.create_task(
-                    observe_path_changes(update_attempts.path, change_signal.emit)
+                    observe_path_changes(
+                        update_attempts.path, attempt_changed,
+                        additional_paths=(app.state.update_barrier.path,),
+                        additional_probe=trial_probe,
+                    )
                 )
+                if startup_frozen:
+                    attempt_changed()
                 await preview_runtime.start()
                 yield
 
@@ -591,6 +693,7 @@ def create_app(
         own_service_unit() if installed_app and update_unavailable_reason is None else None
     )
     update_attempts = FileUpdateAttemptStore(attempt_path(data_directory))
+    app.state.update_barrier = UpdateBarrier(data_directory / "update-barrier.json")
     import_legacy_request(update_attempts, data_directory, config.app_sha)
     update_provider = GitHubUpdateProvider.configured() if service_unit is not None else None
     app.state.mac_updates = MacUpdateService(
@@ -612,6 +715,7 @@ def create_app(
         health_url=f"http://{HOST}:{config.port}/api/health",
         service_unit=service_unit or "",
         unavailable_reason=update_unavailable_reason,
+        update_barrier=app.state.update_barrier,
         prepare_mac_update=app.state.mac_updates.prepare,
         mac_phase=app.state.mac_updates.phase,
         mac_reported_at=app.state.mac_updates.reported_at,

@@ -533,6 +533,39 @@ class ConversationStore:
                 self._insert_rows(conn, conversation_id, payloads)
         commit_without_change_signal(conn)
 
+    def update_work_metadata(
+        self, conversation_ids: tuple[str, ...] | None = None
+    ) -> dict[str, tuple[str, str]]:
+        """Read active-work labels, or the destination snapshot at barrier entry."""
+        from planner.machines.contracts import HOME_MACHINE_ID
+
+        if conversation_ids == ():
+            return {}
+        parameters = conversation_ids or ()
+        filter_sql = (
+            " AND conversation_id IN (" + ",".join("?" for _ in parameters) + ")"
+            if conversation_ids is not None else ""
+        )
+        with runtime_connection(self._db_path, self._busy_timeout_ms) as conn:
+            result = {
+                str(row[0]): (str(row[1]), str(row[2]))
+                for row in conn.execute(
+                    "SELECT conversation_id,title,machine_id FROM tickets "
+                    "WHERE conversation_id IS NOT NULL" + filter_sql,
+                    parameters,
+                )
+            }
+            for row in conn.execute(
+                "SELECT a.conversation_id,m.title FROM agents a "
+                "JOIN managers m ON a.agent_key='manager_' || m.id "
+                "WHERE a.conversation_id IS NOT NULL" + filter_sql.replace(
+                    "conversation_id IN", "a.conversation_id IN"
+                ),
+                parameters,
+            ):
+                result[str(row[0])] = (str(row[1]), HOME_MACHINE_ID)
+            return result
+
     async def workspace_conversation_ids(
         self,
         ticket_id: str,
