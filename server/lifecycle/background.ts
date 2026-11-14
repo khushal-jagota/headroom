@@ -155,10 +155,16 @@ export function compose_background_services(
     });
   };
   const dispatch = dispatcher_admitted(context.config, options.dispatcher_owned);
+  const notifications =
+    !context.config.test_mode &&
+    options.dispatcher_owned &&
+    (context.config.notifications_enabled ?? context.config.dispatch_enabled);
   const factoryContext: BackgroundCompositionContext = context;
-  if (dispatch) {
+  if (dispatch || notifications) {
     context.assert_database_owned();
     // Construction is side-effect free. Register each owner before starting it.
+  }
+  if (notifications) {
     if (options.notificationDelivery) own(() => options.notificationDelivery!(factoryContext));
   }
   // The production constructor supplies the real checker by default. Explicit test

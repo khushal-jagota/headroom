@@ -160,7 +160,7 @@ export class ServerServices {
     this.publication = publication;
     areas.bindPublication(publication);
     const integrity_issues = areas.prepare(database);
-    if (!config.test_mode && config.dispatch_enabled)
+    if (!config.test_mode && (config.dispatch_enabled || config.notifications_enabled))
       this.dispatcher = acquireLock(config.dispatcher_lock_path);
     const executor =
       options.createExecutor?.({

@@ -15,6 +15,7 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { homedir } from 'node:os';
+import { worker_read_only_paths, worker_unit_prefix } from '../../core/config.ts';
 import { randomUUID } from 'node:crypto';
 import { path_is_within } from '../../core/path_containment.ts';
 import type { ChildProcess } from 'node:child_process';
@@ -107,7 +108,9 @@ export class WorkerUnit {
     options: { child_processes: OwnedChildProcesses; slice_name?: string },
   ): Promise<WorkerUnit | null> {
     if (process.platform !== 'linux' || !environment.PLAN_TICKET_ID) return null;
-    const slice_name = options.slice_name ?? WORKER_SLICE;
+    const prefix = worker_unit_prefix();
+    const slice_name =
+      options.slice_name ?? (prefix === 'panels-worker-' ? WORKER_SLICE : `${prefix}workers.slice`);
     if (!/^[A-Za-z0-9_.-]+\.slice(?![\s\S])/.test(slice_name)) {
       throw new WorkerUnitError('Invalid Worker slice name');
     }
@@ -169,7 +172,7 @@ export class WorkerUnit {
       }
       const unit = new WorkerUnit({
         child_processes: options.child_processes,
-        name: `panels-worker-${randomUUID().replaceAll('-', '')}.service`,
+        name: `${prefix}${randomUUID().replaceAll('-', '')}.service`,
         directory,
         environment: child_environment,
         working_directory,
@@ -205,6 +208,7 @@ export class WorkerUnit {
       executable = found;
     }
     const directory = this.directory.replaceAll('%', '%%');
+    const read_only_paths = worker_read_only_paths();
     return [
       'systemd-run',
       '--user',
@@ -218,6 +222,11 @@ export class WorkerUnit {
       '--property=OOMPolicy=continue',
       '--property=KillMode=control-group',
       '--property=NoNewPrivileges=yes',
+      ...(read_only_paths.length
+        ? [
+            `--property=ReadOnlyPaths=${read_only_paths.map((path) => shell_quote(path.replaceAll('%', '%%'))).join(' ')}`,
+          ]
+        : []),
       `--property=EnvironmentFile=${directory}/environment`,
       `--property=WorkingDirectory=${this.working_directory.replaceAll('%', '%%')}`,
       `--property=ExecStopPost=/bin/rm -rf -- ${shell_quote(directory)}`,

@@ -28,3 +28,20 @@ Start rejects a symlinked application root, holds its physical working directory
 No unit is installed or proved here. Systemd's 90-second value applies separately to each stop command and the later service-stop phase. The real 60-second fallback, new-unit ExecStop/restart, failed control endpoint, pre-activation failure, capability exclusion and installer cutover require hosted acceptance. A genuine user manager is required. Mocked-clock or isolated control proofs do not close those service gates.
 
 Default production environment operations, actual installer/capture, and full public CLI binding remain open. An outside-payload scripted APP bootstrap must disclose its exact ExecStart override and hashes. It proves only that composition. Production cutover must settle the installed name and align Python caller admission if rollback retains that name. Authorized hosted rehearsals use no agents/providers or Python patch and disclose the Python caller-refusal gap under the new name. They prove installer/health/stop behavior, not caller-refusal parity. No Python caller guard or existing unit changes here.
+
+## Isolated trial settings
+
+`PLAN_WORKER_UNIT_PREFIX=panels-trial-` gives Worker services a separate namespace
+and uses `panels-trial-workers.slice`. Install that slice with CPUWeight at most 10.
+The process owner rejects cleanup handles from another namespace. The default stays
+`panels-worker-` and `panels-workers.slice`.
+
+`PLAN_WORKER_READ_ONLY_PATHS` is a colon-separated list of absolute paths mounted
+read-only in each Worker unit. The trial protects `/home/vps/Deployments/Panels`.
+The server's own unit needs the same protection for Manager and Chief children.
+
+`PLAN_NOTIFICATIONS_ENABLED=true` keeps notification delivery active when
+`PLAN_DISPATCH_ENABLED=false` disables automatic work. Notification delivery still
+requires production mode and the dispatcher lock. Without an explicit setting,
+notifications follow dispatch as before. These settings do not quiesce copied
+recovery records. Clear those in the copied database before the first trial start.
