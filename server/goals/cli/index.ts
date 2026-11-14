@@ -54,7 +54,9 @@ export async function run_goal_command(invocation: Invocation): Promise<CommandR
   const path = invocation.command.path.join(' ');
   switch (path) {
     case 'goal schema': {
-      const { goal_guidance } = await import('./guidance.ts');
+      const { default: goal_guidance } = await import('./guidance.json', {
+        with: { type: 'json' },
+      });
       return goal_response(goal_guidance[values.operation as keyof typeof goal_guidance], as_json);
     }
     case 'goal list': {

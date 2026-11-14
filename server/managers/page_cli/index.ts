@@ -24,7 +24,9 @@ export async function run_page_command(invocation: Invocation): Promise<CommandR
   const path = invocation.command.path.join(' ');
   switch (path) {
     case 'page schema': {
-      const { page_guidance } = await import('./guidance.ts');
+      const { default: page_guidance } = await import('./guidance.json', {
+        with: { type: 'json' },
+      });
       return response(page_guidance, as_json);
     }
     case 'page show':
