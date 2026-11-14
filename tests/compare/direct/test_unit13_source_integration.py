@@ -292,12 +292,28 @@ def test_unit13_source_integration(
         )
     )
     actual = normalized(actual)
+    native_expected = json.loads(json.dumps(expected))
+
+    def notice(text: str) -> str:
+        return text.replace(
+            f"Measure source {source.name!r} in ",
+            f"Measure source {json.dumps(source.name, ensure_ascii=False)} in ",
+        )
+
+    for case in native_expected:
+        for wake in case["tables"]["manager_wakes"]:
+            wake["summary"] = notice(wake["summary"])
+        for batch in case["tables"]["manager_wake_batches"]:
+            batch["message"] = notice(batch["message"])
+        for prompt in case.get("prompts", []):
+            prompt["text"] = notice(prompt["text"])
     report = {
         "kind": "direct",
         "case": "unit13-source-integration",
-        "equal": actual == expected,
+        "equal": actual == native_expected,
         "python": expected,
         "typescript": actual,
+        "comparison_rule": "Generated notice source names use native JSON quotes only.",
         "seconds": time.perf_counter() - started,
         "boundary": (
             "Canonical producer, batch admission, minimal durable conversation backend, "
@@ -311,4 +327,4 @@ def test_unit13_source_integration(
         (folder / "unit13-source-integration.json").write_text(
             json.dumps(report, indent=2) + "\n"
         )
-    assert actual == expected
+    assert actual == native_expected
