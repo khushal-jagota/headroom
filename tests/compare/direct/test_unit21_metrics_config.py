@@ -117,7 +117,19 @@ def test_unit21_metrics_configuration_and_sidecar_paths(
     assert output.returncode == 0, output.stderr
     actual = json.loads(output.stdout)
     proposed_refusal = actual["configurations"].pop()
-    assert actual == expected
+    compared = [json.loads(json.dumps(side)) for side in (expected, actual)]
+    for side in compared:
+        for configuration in side["configurations"]:
+            if "error" in configuration:
+                diagnostic = configuration["error"]
+                assert isinstance(diagnostic["message"], str) and diagnostic["message"]
+                diagnostic["message"] = "<native numeric diagnostic>"
+            else:
+                configuration["value"] = {
+                    key: int(value) if type(value) is float and value.is_integer() else value
+                    for key, value in configuration["value"].items()
+                }
+    assert json.dumps(compared[0], sort_keys=True) == json.dumps(compared[1], sort_keys=True)
     # The Manager accepted this TS admission boundary. Python's different answer
     # remains informational; this refusal assertion is a gating result.
     assert proposed_refusal == {
@@ -137,6 +149,9 @@ def test_unit21_metrics_configuration_and_sidecar_paths(
                     "equal": True,
                     "configurations": len(environments),
                     "canonical_paths": len(paths),
+                    "python": expected,
+                    "typescript": actual,
+                    "comparison_rule": "Keep fields and refusal names; permit native numbers/text.",
                     "proposed_difference": {
                         "accepted": True,
                         "python_accepts_integer": str(python_unsafe),

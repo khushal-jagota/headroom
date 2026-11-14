@@ -219,10 +219,12 @@ def _state(root: Path) -> dict[str, Any]:
         return value
 
     files = {
-        str(path.relative_to(root / "files")).replace(
+        str(path.relative_to(root / "files"))
+        .replace(
             next((identity for identity in ids if identity in str(path)), "IMPOSSIBLE"),
             next((label for identity, label in ids.items() if identity in str(path)), "IMPOSSIBLE"),
-        ): hashlib.sha256(path.read_bytes()).hexdigest()
+        ): hashlib.sha256(path.read_bytes())
+        .hexdigest()
         for path in (root / "files").rglob("*")
         if path.is_file()
     }
@@ -324,7 +326,18 @@ def test_unit21_registry_fixture_and_lifecycle_parity(
                 phase: {"refused": True, "producer_starts": 0, "data_parent_recreated": False}
                 for phase in ("reset", "remove")
             }
-            assert actual == python
+            # Native trim accepts a leading BOM. Locks and every other effect remain exact.
+            assert python["bom_git_marker"] == (
+                f"repository root is not a worktree: {root / 'invalid-repository'}"
+            )
+            assert python["bom_credentials"] == "malformed environment line 1"
+            assert actual["bom_git_marker"] == actual["bom_credentials"] == "NO ERROR"
+            native_expected = {
+                **python,
+                "bom_git_marker": "NO ERROR",
+                "bom_credentials": "NO ERROR",
+            }
+            assert actual == native_expected
             assert (
                 actual["fixture_unchanged"]
                 and actual["rename_unchanged"]
@@ -352,6 +365,11 @@ def test_unit21_registry_fixture_and_lifecycle_parity(
                         "One private actual TS server proves DB-owner admission. No browser."
                     ),
                     "result": actual,
+                    "python": python,
+                    "accepted_differences": {
+                        "bom_git_marker": "Native trim accepts a BOM before a gitdir marker.",
+                        "bom_credentials": "Native trim accepts a BOM before an environment key.",
+                    },
                     "server_owner": server_owner,
                     "mutation_authority": mutation_authority,
                 },

@@ -540,6 +540,7 @@ def test_unit12_populated_holder_pages(
         right = request.config.getoption("--compare-right-module") or "tests.compare.ts_launcher"
         report = runner.run_list(list_path, tmp_path / "comparison", right)
         report["calendar_boundary_seconds"] = max(phase_finished) - min(phase_started)
+
     report["risk"] = (
         "Existing HTTP cannot produce retained datasets before Unit 13. This reuses the existing "
         "paired full hosts with Python canonical seed writers to prove all six public page routes, "

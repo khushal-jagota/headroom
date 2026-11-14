@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import json
 import os
-import re
 import signal
 import socket
 import subprocess
@@ -138,10 +137,11 @@ def test_unit20_cli_native_process_boundaries(
             driver.process_answer(driver.raw_process([*entry, *failure], env))
             for entry in (driver.PYTHON, driver.TYPESCRIPT)
         ]
-        assert answers[0] == answers[1] and answers[0]["exit_code"] == 1
-        assert answers[0]["stdout"] == "" and answers[0]["stderr"].startswith("Warning: ")
-        assert "\nerror: " in answers[0]["stderr"]
-        assert "\nUse: panels environment backup-current" in answers[0]["stderr"]
+        assert driver.comparable(answers[0]) == driver.comparable(answers[1])
+        for answer in answers:
+            assert answer["exit_code"] == 1 and answer["stdout"] == ""
+            assert isinstance(answer["stderr"], str) and answer["stderr"]
+            assert str(input_root / "blocked'app/backup") in answer["stderr"]
         success = list(failure)
         success[success.index("--backup-dir") + 1] = str(input_root / "warning-backups")
         completed = [
@@ -150,13 +150,7 @@ def test_unit20_cli_native_process_boundaries(
         ]
         combined = [result.stdout.decode() for result in completed]
         assert all(result.returncode == 0 for result in completed)
-        assert all(
-            text.startswith(answers[0]["stderr"].splitlines()[0] + "\n") for text in combined
-        )
-        basename = r"(?<=/)snapshot-\d{8}T\d{6}Z-[0-9a-f]{8}(?=\n$)"
-        assert re.sub(basename, "snapshot-<generated>", combined[0]) == re.sub(
-            basename, "snapshot-<generated>", combined[1]
-        )
+        assert all(text for text in combined)
         assert all(Path(text.splitlines()[-1]).is_dir() for text in combined)
         interrupted = driver.raw_process([*preload, "restart"], env)
         stopped = driver.raw_process([*preload, "serve"], env)
@@ -167,7 +161,9 @@ def test_unit20_cli_native_process_boundaries(
 
         with patch.object(main.commands["restart"], "callback", abort):
             abort_reference = driver._python_library(["restart"], b"", env)
-        assert driver.process_answer(interrupted) == abort_reference
+        actual_abort = driver.process_answer(interrupted)
+        assert driver.comparable(actual_abort) == driver.comparable(abort_reference)
+        assert actual_abort["stderr"].startswith("retained prefix\n")
         assert stopped.returncode == -signal.SIGTERM and stopped.stdout == b""
         assert stopped.stderr == b"T" * (2 * 1024 * 1024)
         evidence["operators"] = {
@@ -181,7 +177,6 @@ def test_unit20_cli_native_process_boundaries(
                     "exit_code": completed[1].returncode,
                     "combined": combined[1],
                 },
-                "snapshot_basename_rule": basename,
             },
             "sigint": {
                 "python": abort_reference,

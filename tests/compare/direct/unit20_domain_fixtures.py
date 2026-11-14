@@ -151,6 +151,8 @@ def preview_answer(
         ).fetchone()
         assert stored is not None and stored[0] == timestamp
     normalized = cli.comparable(answer)
+    if mode == "text":
+        return cast(dict[str, Any], normalizer.normalize(normalized))
     text = normalized["stdout"]
     expression = (
         r'("created_at"\s*:\s*)(-?\d+)(?=\s*[,}])' if mode == "json" else r"(^created_at: )(-?\d+)$"

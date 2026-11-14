@@ -235,7 +235,17 @@ def test_unit21_unidentified_agent_refusal(
     assert actual["peers"][-1] == dict(is_owner=False, skipped_unreadable_processes=0)
     assert actual["peers"][:-1] == expected_peers[:-1]
     assert actual["requests"] == expected_requests
-    assert actual["configs"] == configs
+    # Native error quotes differ. All boolean decisions and ENV custody remain exact.
+    assert configs[-1] == dict(
+        error="invalid boolean for refuse_unidentified_agent_calls: 'invalid'", unchanged=True
+    )
+    native_configs = [
+        *configs[:-1],
+        dict(
+            error='invalid boolean for refuse_unidentified_agent_calls: "invalid"', unchanged=True
+        ),
+    ]
+    assert actual["configs"] == native_configs
     assert actual["consumed"] == consumed is True
     assert actual["invalid_retained"] == invalid_retained is True
     refused = next(
@@ -259,6 +269,10 @@ def test_unit21_unidentified_agent_refusal(
                         "and Fastify injection; no kernel connection or WS transport proof."
                     ),
                     result=actual,
+                    python_configs=configs,
+                    accepted_differences={
+                        "configs.invalid.error": "Native quotes around the invalid boolean."
+                    },
                 ),
                 indent=2,
             )

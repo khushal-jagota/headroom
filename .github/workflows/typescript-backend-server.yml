@@ -41,8 +41,12 @@ jobs:
       - name: Check new native-style violations
         if: matrix.node == '22'
         env:
-          STYLE_BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+          STYLE_BASE: ${{ github.event.pull_request.base.sha }}
         run: |
+          if [ -z "$STYLE_BASE" ]; then
+            git fetch origin feature/typescript-backend:refs/remotes/origin/feature/typescript-backend
+            STYLE_BASE=$(git merge-base HEAD origin/feature/typescript-backend)
+          fi
           scripts/dev check-node server
           node server/tools/native_style.ts "$STYLE_BASE"
       - name: Check formatting

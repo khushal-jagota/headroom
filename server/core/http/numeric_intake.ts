@@ -17,7 +17,12 @@ export function stringify_numeric_response(
       for (const child of Object.values(value)) pending.push({ value: child, depth: depth + 1 });
     }
   }
-  return JSON.stringify(payload);
+  // Unsafe whole-valued floats must not claim to be exact integer tokens.
+  return JSON.stringify(payload, (_key, value: unknown) =>
+    typeof value === 'number' && Number.isInteger(value) && !Number.isSafeInteger(value)
+      ? (JSON as unknown as { rawJSON(text: string): unknown }).rawJSON(value.toExponential())
+      : value,
+  );
 }
 /** Area-scoped intake retains numeric token kinds before validation and fingerprints. */
 export function install_numeric_json_parser(

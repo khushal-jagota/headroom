@@ -62,12 +62,12 @@ print(json.dumps([{'spaced':json.dumps(json.loads(raw),ensure_ascii=False),'leng
   ).toThrow('unsupported value');
 });
 
-// HTTP output must keep exact integers without exposing internal markers. Python
-// float spelling is cosmetic, while validation must still distinguish 1 from 1.0.
+// HTTP output keeps exact integer tokens and preserves unsafe computed float tokens.
+// Safe whole floats use native spelling without exposing internal numeric markers.
 test('HTTP JSON uses native float spelling and retains exact integer tokens', () => {
   const value = parse_numeric_json('{"integer":900719925474099312345,"float":50.0,"zero":-0.0}');
-  expect(stringify_numeric_response(value)).toBe(
-    '{"integer":900719925474099312345,"float":50,"zero":0}',
+  expect(stringify_numeric_response({ ...(value as object), reading: 9.007199254740993e20 })).toBe(
+    '{"integer":900719925474099312345,"float":50,"zero":0,"reading":9.007199254740993e+20}',
   );
   const cloned = clone_numeric_json(value) as Record<string, JsonNumber>;
   expect(cloned.float!.kind).toBe('float');

@@ -138,6 +138,9 @@ class Normalizer:
         path: str = "",
         apply_rules: bool = True,
     ) -> Any:
+        if apply_rules and context in self.rules.get("response_text", {}):
+            assert isinstance(value, str) and value, (context, value)
+            return "<native diagnostic>"
         if isinstance(value, dict):
             out = {}
             for key in sorted(value):

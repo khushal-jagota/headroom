@@ -2,6 +2,9 @@
   "ignore": {
     "attention_history_metadata.started_at": "Schema initialization reads real wall time."
   },
+  "response_text": {
+    "GET /api/navigation/view/snapshot?view=invalid.body.detail": "Native JSON parse diagnostics differ. Keep the nonempty string field, response shape and status."
+  },
   "response_tokens": {
     "body.coverage.revision": "Navigation revisions count commits. Compare continuity changes, not counter magnitude.",
     "body.ordering_generation": "TypeScript uses Intl.Collator under its own approved ordering generation.",
