@@ -401,6 +401,8 @@ A FIFO therefore refuses instead of blocking the event loop before that check, a
 Large copy, hash, and strict flush operations run in an owned worker with the shared shutdown deadline.
 The file formats, hashes, and successful publication behavior retain the Python contract.
 
+Mac workspace resolution refuses traversal through a non-directory with Python 3.13's ENOTDIR text; Python 3.12 accepts a file before `..`. The Manager approved this Mac-only difference. Shared resolver defaults remain unchanged.
+
 ### Command settlement and update stop proof identity
 
 The Manager requires withdrawal before invocation to preserve the active turn.
@@ -456,7 +458,7 @@ The Mac also refuses linked ancestors of its state root, including native `/tmp`
 New generation files receive strict full flushes, and their directories receive flushes before atomic generation publication.
 A damaged derived generation is preserved under a private `.invalid-*` name and rebuilt from the authoritative snapshot.
 Python instead refuses that existing generation. No source or provider user data is discarded by the rebuild.
-The successor host/storage maintenance work owns eventual removal of unreferenced generations and abandoned stages.
+The Mac host does not collect unreferenced generations or abandoned stages.
 This slice adds no generation sweeper. Native durability, Darwin directory ABI, and filesystem failure behavior remain later Mac checks.
 
 ## Mac outbox cleanup after commit
@@ -506,13 +508,6 @@ The Manager accepts native JavaScript order for cosmetic JSON maps. Integer-like
 Comparisons check parsed JSON fields, types, values, and CLI exit codes. They do not compare object-member order or Python number spelling.
 Arrays remain ordered. Declaration arrays preserve dataset fields and chart dimensions, and Ticket search follows workflow field order.
 Persisted dataset row identities and exact numeric values remain unchanged. Special names such as `__proto__` remain ordinary own properties.
-
-## CLI executor socket transport — accepted, temporary, owner: the executor unit
-
-HTTP-client commands currently refuse `PLAN_EXECUTOR_ROOT` with a validation error while Unit 22 supplies the executor socket route.
-Python routes those calls through its executor transport. Help and offline declarations do not need that route.
-This is a temporary implementation gap owned by Unit 22, with CLI binding in Unit 20.
-The migration Manager accepted this temporary refusal. It remains until the executor unit supplies the socket route.
 
 ## Executor message and core admission
 
@@ -733,3 +728,10 @@ data directory, and cancellation only after the owned restore witness closes.
 The configured helpers are disclosed Node witnesses, not a real installer rehearsal.
 `test_unit21_interruption_capture.py` separately exercises the actual stopped capture and
 restore entries. Hosted service, copy, health and rollback proofs remain later gates.
+
+## Mac Unix CLI trust and transport failures — Manager directed
+
+The TypeScript client refuses linked run/socket entries and sockets owned by another user before capability emission; Python follows those links.
+The ordinary CLI socket read/write/retry seam returns exit 2 for non-ValueError transport failures that Python can expose as a traceback.
+
+- Mac Node archives: the TypeScript VPS also admits a regular executable `node/bin/node` and regular `server/executor/mac/entrypoint.ts`; Python VPS acceptance of Node-only archives remains unsupported.

@@ -25,6 +25,8 @@ export async function run(
       return { exit_code: 0, stdout: render_help(parsed.command, commands), stderr: '' };
     invocation = { ...parsed, environment, stdin, write_stderr };
     switch (parsed.command.path[0]) {
+      case 'executor':
+        return await (await import('../executor/mac/cli.ts')).run_executor_command(invocation);
       case 'environment':
       case 'stalls':
       case 'serve':
@@ -85,7 +87,7 @@ async function write(stream: Writable, text: string): Promise<void> {
     stream.write(text, (error) => (error ? reject(error) : resolve())),
   );
 }
-if (is_entrypoint()) {
+export async function main(): Promise<void> {
   // Node emits stream errors asynchronously as well as invoking the write callback.
   const stream_error = (error: Error) => {
     if (broken_pipe(error)) process.exitCode = 1;
@@ -126,3 +128,4 @@ if (is_entrypoint()) {
     }
   }
 }
+if (is_entrypoint()) await main();

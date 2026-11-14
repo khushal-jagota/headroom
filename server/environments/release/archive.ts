@@ -373,7 +373,9 @@ async function extract_archive(
           inspection &&
           message.type === 'mac-inspection-result' &&
           result === undefined &&
-          typeof message.python === 'boolean'
+          typeof message.python === 'boolean' &&
+          typeof message.node === 'boolean' &&
+          typeof message.entrypoint === 'boolean'
         ) {
           const bytes = message.manifest_bytes;
           if (!(
@@ -385,7 +387,12 @@ async function extract_archive(
           ))
             throw new Error('invalid Mac inspection manifest bytes');
           // Decode only after the exact child's actual close, below.
-          result = { manifest: bytes, python: message.python };
+          result = {
+            manifest: bytes,
+            python: message.python,
+            node: message.node,
+            entrypoint: message.entrypoint,
+          };
           continue;
         }
         if (inspection) throw new Error('invalid Mac inspection protocol');
@@ -503,6 +510,8 @@ async function extract_archive(
               ? null
               : decode_mac_manifest(Buffer.from(inspected.manifest as string, 'base64')),
           python: inspected.python,
+          node: inspected.node,
+          entrypoint: inspected.entrypoint,
         };
       } catch (error) {
         throw error instanceof MacArchiveJsonError ? error.original : error;

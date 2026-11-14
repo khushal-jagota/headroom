@@ -114,6 +114,7 @@ export interface CodexLoginStanding {
   everything_a_card_reads(options: { now: Date }): readonly unknown[];
 }
 export interface SnapshotProbeOptions {
+  readonly signal?: AbortSignal;
   readonly refresh: boolean;
   readonly discover_update_advisory: boolean;
   readonly codex_login: CodexLoginStanding | null;

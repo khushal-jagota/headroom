@@ -1,10 +1,16 @@
 /** The Mac executor's only bridge to operating-system-specific paths and libc calls. */
 import { constants, openSync, closeSync, fstatSync } from 'node:fs';
 import { constants as os_constants, homedir } from 'node:os';
+import { getPriority, setPriority } from 'node:os';
 import { join, isAbsolute } from 'node:path';
 import { getSystemErrorName } from 'node:util';
 import { isMainThread } from 'node:worker_threads';
 import koffi from 'koffi';
+import { BackendCommands } from '../../conversation/snapshot/commands.ts';
+import { backend_io_is_test } from '../../conversation/snapshot/environment.ts';
+import type { OwnedOneShotChildren } from '../../lifecycle/contracts.ts';
+import { MAC_AGENT_PROCESS_PROBE_TIMEOUT_SECONDS } from '../configuration.ts';
+import { shell_quote } from '../../conversation/worker_unit/logic.ts';
 import { flock } from '../../core/locks/flock.ts';
 
 for (const name of ['O_NOFOLLOW', 'O_DIRECTORY', 'O_CREAT', 'O_EXCL', 'O_NONBLOCK'] as const) {
@@ -347,4 +353,224 @@ export function expand_executor_path(
   if (home === undefined)
     throw Object.assign(new Error('Could not determine home directory.'), { name: 'RuntimeError' });
   return home.replace(/\/+$/, '') + (slash < 0 ? '' : value.slice(slash)) || '/';
+}
+
+export interface AgentProcessIdentity {
+  readonly process_id: number;
+  readonly started: string;
+}
+export interface AgentProcessSnapshot extends AgentProcessIdentity {
+  readonly parent_process_id: number;
+}
+export interface AgentProcessPlatform {
+  snapshot(signal: AbortSignal): Promise<readonly AgentProcessSnapshot[]>;
+  lower_priority(
+    identity: AgentProcessIdentity,
+    nice: number,
+    signal: AbortSignal,
+  ): Promise<boolean>;
+  signal(
+    identity: AgentProcessIdentity,
+    signal: 'SIGTERM' | 'SIGKILL',
+    cancellation: AbortSignal,
+  ): Promise<void>;
+}
+export function parse_agent_process_snapshot(text: string): AgentProcessSnapshot[] {
+  const result: AgentProcessSnapshot[] = [];
+  for (const line of text.split('\n')) {
+    const fields = /^\s*(\d+)\s+(\d+)\s+(\S+)\s+(.+?)\s*$/.exec(line);
+    if (!fields || fields[3]!.startsWith('Z')) continue;
+    const process_id = Number(fields[1]),
+      parent_process_id = Number(fields[2]);
+    if (
+      Number.isSafeInteger(process_id) &&
+      process_id > 0 &&
+      Number.isSafeInteger(parent_process_id)
+    )
+      result.push({ process_id, parent_process_id, started: fields[4]! });
+  }
+  return result;
+}
+/** Production probes use the invocation's existing command and child ownership. */
+export function mac_agent_process_platform(children: OwnedOneShotChildren): AgentProcessPlatform {
+  if (native_platform() !== 'darwin' || backend_io_is_test())
+    throw new Error('Native Mac agent process probes require a production Darwin host.');
+  const commands = new BackendCommands(children);
+  const run = (args: readonly string[], signal: AbortSignal) =>
+    commands.run(['/bin/ps', ...args], {
+      timeout_seconds: MAC_AGENT_PROCESS_PROBE_TIMEOUT_SECONDS,
+      environment_overrides: { LC_ALL: 'C' },
+      signal,
+    });
+  const current = async (identity: AgentProcessIdentity, signal: AbortSignal) => {
+    const result = await run(['-o', 'stat=,lstart=', '-p', String(identity.process_id)], signal);
+    const fields = /^(\S+)\s+(.+)$/.exec(result.standard_output.trim());
+    return (
+      result.exit_code === 0 &&
+      fields !== null &&
+      !fields[1]!.startsWith('Z') &&
+      fields[2]!.trim() === identity.started
+    );
+  };
+  return {
+    async snapshot(signal) {
+      const result = await run(['-A', '-o', 'pid=,ppid=,stat=,lstart='], signal);
+      if (result.exit_code !== 0) throw new Error('Mac process snapshot failed.');
+      return parse_agent_process_snapshot(result.standard_output);
+    },
+    async lower_priority(identity, nice, signal) {
+      if (!(await current(identity, signal))) return false;
+      signal.throwIfAborted();
+      try {
+        if (getPriority(identity.process_id) < nice) setPriority(identity.process_id, nice);
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === 'ESRCH') return false;
+        throw error;
+      }
+      return true;
+    },
+    async signal(identity, signum, cancellation) {
+      if (!(await current(identity, cancellation))) return;
+      cancellation.throwIfAborted();
+      try {
+        process.kill(identity.process_id, signum);
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== 'ESRCH') throw error;
+      }
+    },
+  };
+}
+
+export function mac_installation_paths(home: string) {
+  if (!isAbsolute(home) || home.includes('\0'))
+    throw new Error('Mac installation HOME must be absolute.');
+  const install = join(home, 'Deployments/PanelsExecutorTypeScript');
+  const supervisor = join(install, 'supervisor'),
+    state = default_executor_root(home);
+  const app = join(home, 'Applications/Panels TypeScript.app');
+  return {
+    home,
+    install,
+    supervisor,
+    state,
+    app,
+    node: join(supervisor, 'node/bin/node'),
+    bootstrap: join(supervisor, 'server/executor/mac/entrypoint.ts'),
+    console: join(install, 'bin/panels'),
+    app_executable: join(app, 'Contents/MacOS/Panels'),
+    plist: join(home, 'Library/LaunchAgents/com.panels.executor.typescript.plist'),
+    job: 'com.panels.executor.typescript',
+    bundle_id: 'com.panels.executor.typescript.app',
+    stdout: join(state, 'logs/launch-agent.stdout.log'),
+    stderr: join(state, 'logs/launch-agent.stderr.log'),
+    socket: executor_socket_path(state),
+  };
+}
+type PlistValue = string | number | boolean | PlistValue[] | { [key: string]: PlistValue };
+function plist(value: Record<string, PlistValue>): string {
+  const escape = (text: string) =>
+    text
+      .replaceAll('&', '&amp;')
+      .replaceAll('<', '&lt;')
+      .replaceAll('>', '&gt;')
+      .replaceAll('"', '&quot;')
+      .replaceAll("'", '&apos;');
+  const element = (item: PlistValue): string => {
+    if (typeof item === 'string') return `<string>${escape(item)}</string>`;
+    if (typeof item === 'boolean') return item ? '<true/>' : '<false/>';
+    if (typeof item === 'number') return `<integer>${item}</integer>`;
+    if (Array.isArray(item)) return `<array>${item.map(element).join('')}</array>`;
+    return `<dict>${Object.entries(item)
+      .map(([key, child]) => `<key>${escape(key)}</key>${element(child)}`)
+      .join('')}</dict>`;
+  };
+  return (
+    '<?xml version="1.0" encoding="UTF-8"?>\n<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">\n<plist version="1.0">' +
+    element(value) +
+    '</plist>\n'
+  );
+}
+/** Generate candidate assets only. No compiler, signer, installation or launchctl runs. */
+export function mac_installation_assets(options: {
+  home: string;
+  revision: string;
+  executor_id: string;
+  server_url: string;
+  backend_path: string;
+}) {
+  const paths = mac_installation_paths(options.home);
+  if (!options.backend_path.split(':').every((part) => isAbsolute(part)))
+    throw new Error('Backend PATH must contain absolute directories.');
+  const info = plist({
+    CFBundleIdentifier: paths.bundle_id,
+    CFBundleName: 'Panels TypeScript',
+    CFBundleDisplayName: 'Panels TypeScript',
+    CFBundleExecutable: 'Panels',
+    CFBundlePackageType: 'APPL',
+    CFBundleVersion: '1',
+    PanelsApplicationRevision: options.revision,
+    LSUIElement: true,
+    NSDesktopFolderUsageDescription: 'Panels accesses your selected files on Desktop.',
+    NSDocumentsFolderUsageDescription: 'Panels accesses your selected files in Documents.',
+    NSDownloadsFolderUsageDescription: 'Panels accesses your selected files in Downloads.',
+  });
+  const launcher = `/* Fixed native requester. execve preserves PID, signals and argument boundaries. */
+#include <stdio.h>
+#include <stdlib.h>
+#include <unistd.h>
+extern char **environ;
+int main(int argc, char **argv) {
+  unsetenv("NODE_OPTIONS"); unsetenv("NODE_PATH");
+  char **args = calloc((size_t)argc + 2, sizeof(char *));
+  if (!args) { perror("Panels: arguments"); return 1; }
+  args[0] = ${JSON.stringify(paths.node)};
+  args[1] = ${JSON.stringify(paths.bootstrap)};
+  for (int i = 1; i < argc; i++) args[i + 1] = argv[i];
+  execve(args[0], args, environ);
+  perror("Panels: fixed Node runtime"); free(args); return 1;
+}
+`;
+  const launch_agent = plist({
+    Label: paths.job,
+    AssociatedBundleIdentifiers: [paths.bundle_id],
+    ProgramArguments: [
+      paths.app_executable,
+      'executor',
+      'run',
+      '--application-revision',
+      options.revision,
+      '--executor-id',
+      options.executor_id,
+      '--panels-server-url',
+      options.server_url,
+    ],
+    LimitLoadToSessionType: 'Aqua',
+    RunAtLoad: true,
+    KeepAlive: { SuccessfulExit: false },
+    ProcessType: 'Interactive',
+    ThrottleInterval: 10,
+    EnvironmentVariables: {
+      HOME: paths.home,
+      PLAN_EXECUTOR_ROOT: paths.state,
+      PATH: join(paths.supervisor, 'node/bin') + ':' + options.backend_path,
+    },
+    StandardOutPath: paths.stdout,
+    StandardErrorPath: paths.stderr,
+  });
+  const console =
+    '#!/bin/sh\nset -eu\nunset NODE_OPTIONS NODE_PATH\n' +
+    `if [ "\${PLAN_EXECUTOR_ROOT+x}" != x ]; then export PLAN_EXECUTOR_ROOT=${shell_quote(paths.state)}; fi\nif [ "\${PLAN_SERVER_URL+x}" != x ]; then export PLAN_SERVER_URL=${shell_quote(options.server_url)}; fi\nexec ${shell_quote(paths.app_executable)} "$@"\n`;
+  return {
+    paths,
+    files: {
+      'Panels TypeScript.app/Contents/Info.plist': { text: info, mode: 0o644 },
+      'launcher.c': { text: launcher, mode: 0o644 },
+      'bin/panels': { text: console, mode: 0o755 },
+      'com.panels.executor.typescript.plist': { text: launch_agent, mode: 0o600 },
+      'installation.json': {
+        text: JSON.stringify({ ...options, paths }, null, 2) + '\n',
+        mode: 0o600,
+      },
+    },
+  };
 }

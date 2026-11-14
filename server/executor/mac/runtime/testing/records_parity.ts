@@ -1,0 +1,165 @@
+/** One private-files sequence and one native-fault worker. No host or provider starts. */
+import fs, {
+  mkdirSync,
+  readFileSync,
+  readdirSync,
+  renameSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs';
+import { syncBuiltinESMExports } from 'node:module';
+import { join } from 'node:path';
+import { Worker, isMainThread, parentPort, workerData } from 'node:worker_threads';
+import { FilesService } from '../../files.ts';
+import { canonical_json, parse_attempt_json } from '../../../../environments/updates/codec.ts';
+import { atomic_record, read_record } from '../records.ts';
+
+if (!isMainThread) {
+  const root = workerData as string;
+  const operations = await import('../record_operations.ts');
+  const path = join(root, 'record.json');
+  writeFileSync(path, 'previous');
+  const original = fs.writeSync;
+  let failed = false;
+  try {
+    fs.writeSync = (() => {
+      throw new Error('Injected record write failure');
+    }) as typeof original;
+    syncBuiltinESMExports();
+    try {
+      operations.atomic_runtime_record(path, 'new');
+    } catch (error) {
+      failed = (error as Error).message === 'Injected record write failure';
+    }
+  } finally {
+    fs.writeSync = original;
+    syncBuiltinESMExports();
+  }
+  const preserved = readFileSync(path, 'utf8') === 'previous' && readdirSync(root).length === 1;
+  let cleanup_preserved = false,
+    temporary: string | undefined;
+  try {
+    fs.writeSync = (() => {
+      temporary = join(
+        root,
+        readdirSync(root).find((name) => name.startsWith('.record.json.'))!,
+      );
+      fs.unlinkSync(temporary);
+      mkdirSync(temporary);
+      throw new Error('Injected record write failure');
+    }) as typeof original;
+    syncBuiltinESMExports();
+    try {
+      operations.atomic_runtime_record(path, 'new');
+    } catch (error) {
+      cleanup_preserved =
+        error instanceof AggregateError &&
+        error.errors[0]?.message === 'Injected record write failure' &&
+        error.errors[1]?.syscall === 'unlinkat';
+    }
+  } finally {
+    fs.writeSync = original;
+    syncBuiltinESMExports();
+    if (temporary !== undefined) fs.rmdirSync(temporary);
+  }
+  const held = root + '-held',
+    foreign = root + '-foreign';
+  mkdirSync(foreign);
+  writeFileSync(join(foreign, 'record.json'), 'foreign');
+  let swapped = false;
+  try {
+    fs.writeSync = ((...args: Parameters<typeof original>) => {
+      if (!swapped) {
+        swapped = true;
+        renameSync(root, held);
+        symlinkSync(foreign, root);
+      }
+      return Reflect.apply(original, fs, args);
+    }) as typeof original;
+    syncBuiltinESMExports();
+    operations.atomic_runtime_record(path, 'retained');
+  } finally {
+    fs.writeSync = original;
+    syncBuiltinESMExports();
+  }
+  const contained =
+    readFileSync(join(held, 'record.json'), 'utf8') === 'retained' &&
+    readFileSync(join(foreign, 'record.json'), 'utf8') === 'foreign' &&
+    readdirSync(held).length === 1;
+  const close = fs.closeSync;
+  let close_failed = false;
+  try {
+    fs.closeSync = (fd) => {
+      if (!close_failed && fs.fstatSync(fd).isFile()) {
+        close_failed = true;
+        throw new Error('Injected record close failure');
+      }
+      close(fd);
+    };
+    syncBuiltinESMExports();
+    try {
+      operations.read_runtime_record(join(held, 'record.json'));
+    } catch {}
+  } finally {
+    fs.closeSync = close;
+    syncBuiltinESMExports();
+  }
+  const retained = operations.owns_record_handles();
+  operations.cleanup_record_handles();
+  parentPort!.postMessage({
+    failed,
+    preserved,
+    cleanup_preserved,
+    swapped,
+    contained,
+    close_failed,
+    retained,
+    cleared: !operations.owns_record_handles(),
+  });
+} else {
+  const root = process.argv[2]!,
+    began = performance.now();
+  const input = parse_attempt_json(readFileSync(join(root, 'input.json'), 'utf8')) as {
+    record: Record<string, unknown>;
+  };
+  const files = new FilesService();
+  const path = join(root, 'updates', 'selection.json');
+  const report: Record<string, unknown> = {};
+  try {
+    report.missing = await read_record(files, path);
+    await atomic_record(files, path, input.record);
+    report.bytes = readFileSync(path, 'utf8');
+    report.mode = fs.statSync(path).mode & 0o777;
+    report.value = await read_record(files, path);
+    await files.atomic_runtime_record(path, 'null');
+    try {
+      await read_record(files, path);
+    } catch (error) {
+      report.nonobject = { error: (error as Error).name, message: (error as Error).message };
+    }
+    await files.remove_runtime_record(path);
+    report.removed = await read_record(files, path);
+  } finally {
+    await files.stop({ deadline: performance.now() / 1000 + 10 });
+    await files.settled();
+  }
+  const fault = join(root, 'fault');
+  mkdirSync(fault);
+  const started = performance.now();
+  report.native = await new Promise((resolve, reject) => {
+    const worker = new Worker(new URL(import.meta.url), {
+      execArgv: [],
+      trackUnmanagedFds: false,
+      workerData: fault,
+    });
+    let result: unknown;
+    worker.on('message', (value) => (result = value));
+    worker.on('error', reject);
+    worker.on('exit', (code) =>
+      code === 0 && result ? resolve(result) : reject(new Error('Record fault worker failed.')),
+    );
+  });
+  report.native_worker_ms = performance.now() - started;
+  report.elapsed_seconds = (performance.now() - began) / 1000;
+  console.log(canonical_json(report));
+}

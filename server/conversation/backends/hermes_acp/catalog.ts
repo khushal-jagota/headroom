@@ -214,8 +214,9 @@ export class HermesModelCatalogOwner {
     return stopping;
   }
   /** Cancel current reads. A later read remains permitted until shutdown seals it. */
-  async cancel(): Promise<void> {
-    const reason = new BackendAdapterError('Hermes catalog read cancelled');
+  async cancel(
+    reason: unknown = new BackendAdapterError('Hermes catalog read cancelled'),
+  ): Promise<void> {
     const probes = [...this.active];
     const already_finished = new Set(probes.filter((probe) => probe.finished));
     for (const probe of probes) {
