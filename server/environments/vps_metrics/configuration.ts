@@ -65,30 +65,6 @@ const INTEGER_FIELDS = new Set([
   'history_points',
   'service_output_bytes',
 ]);
-function configured_number(raw: string, integer: boolean): number {
-  // int()/float() accept decimal Unicode digits and underscores between digits.
-  const text = raw
-    .replace(/\p{Decimal_Number}/gu, (character) => {
-      const point = character.codePointAt(0)!;
-      let first = point;
-      while (first > 0 && /\p{Decimal_Number}/u.test(String.fromCodePoint(first - 1))) first--;
-      return String((point - first) % 10);
-    })
-    .replace(/^\p{White_Space}+|\p{White_Space}+$/gu, '');
-  const valid = integer
-    ? /^[+-]?\d(?:_?\d)*$/.test(text)
-    : /^[+-]?(?:(?:\d(?:_?\d)*(?:\.(?:\d(?:_?\d)*)?)?|\.\d(?:_?\d)*)(?:e[+-]?\d(?:_?\d)*)?|inf(?:inity)?|nan)$/i.test(
-        text,
-      );
-  if (!valid)
-    throw new MetricsValueError(
-      integer
-        ? `Invalid integer: ${JSON.stringify(raw)}`
-        : `Invalid number: ${JSON.stringify(raw)}`,
-    );
-  if (/^[+-]?inf(?:inity)?$/i.test(text)) return text.startsWith('-') ? -Infinity : Infinity;
-  return Number(text.replaceAll('_', ''));
-}
 export function metrics_config(overrides: Partial<MetricsConfig> = {}): MetricsConfig {
   const config = { ...DEFAULT_METRICS_CONFIG, ...overrides };
   for (const [key, value] of Object.entries(config)) {
@@ -115,7 +91,9 @@ export function load_metrics_config(environment: NodeJS.ProcessEnv = process.env
     if (typeof fallback === 'string') overrides[key] = raw;
     else {
       const integer = INTEGER_FIELDS.has(key);
-      const value = configured_number(raw, integer);
+      const value = Number(raw);
+      if (integer && !Number.isInteger(value))
+        throw new MetricsValueError(`${key} must be an integer`);
       if (integer && !Number.isSafeInteger(value))
         throw new MetricsValueError(`${key} exceeds the supported exact integer range`);
       overrides[key] = value;

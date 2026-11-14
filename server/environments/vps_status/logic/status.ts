@@ -26,30 +26,6 @@ export function utc_iso(value: string | bigint): string {
   const base = new Date(Number(seconds) * 1000).toISOString().slice(0, 19);
   return base + (remainder ? '.' + String(remainder).padStart(6, '0') : '') + '+00:00';
 }
-/** Round the exact binary float, with Python's halfway-to-even rule. */
 export function round_percent(value: number): number {
-  if (!Number.isFinite(value) || value === 0) return value;
-  const buffer = new DataView(new ArrayBuffer(8));
-  buffer.setFloat64(0, Math.abs(value));
-  const bits = buffer.getBigUint64(0);
-  const exponent = Number((bits >> 52n) & 2047n);
-  let numerator = ((bits & ((1n << 52n) - 1n)) + (exponent ? 1n << 52n : 0n)) * 100n;
-  const shift = (exponent || 1) - 1023 - 52;
-  const denominator = shift < 0 ? 1n << BigInt(-shift) : 1n;
-  if (shift > 0) numerator <<= BigInt(shift);
-  let rounded = numerator / denominator;
-  const remainder = numerator % denominator;
-  if (remainder * 2n > denominator || (remainder * 2n === denominator && rounded % 2n !== 0n))
-    rounded++;
-  return ((value < 0 ? -1 : 1) * Number(rounded)) / 100;
-}
-
-export function decimal_integer(value: string): bigint {
-  const digits = Array.from(value, (character) => {
-    const code = character.codePointAt(0)!;
-    let first = code;
-    while (first > 0 && /\p{Decimal_Number}/u.test(String.fromCodePoint(first - 1))) first--;
-    return String((code - first) % 10);
-  });
-  return BigInt(digits.join(''));
+  return Math.round(value * 100) / 100;
 }

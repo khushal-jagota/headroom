@@ -9,6 +9,7 @@ from __future__ import annotations
 import builtins
 import json
 import os
+import re
 import select
 import shutil
 import subprocess
@@ -79,6 +80,35 @@ def _report(request: pytest.FixtureRequest, name: str, value: dict[str, Any]) ->
         target = Path(directory)
         target.mkdir(parents=True, exist_ok=True)
         (target / name).write_text(json.dumps(value, sort_keys=True, indent=2) + "\n")
+
+
+def _meaningful(value: Any, key: str = "") -> Any:
+    if isinstance(value, list):
+        return [_meaningful(item, key) for item in value]
+    if isinstance(value, dict):
+        if set(value) == {"name", "message"}:
+            assert isinstance(value["name"], str) and isinstance(value["message"], str)
+            return {"failure": True}
+        return {name: _meaningful(item, name) for name, item in value.items()}
+    if key in {"reason", "process_reason", "state_reason"} and isinstance(value, str):
+        names = {
+            "OSError": "EIO",
+            "FileNotFoundError": "ENOENT",
+            "PermissionError": "EACCES",
+            "NotADirectoryError": "ENOTDIR",
+            "TimeoutError": "ETIMEDOUT",
+            "TimeoutExpired": "ETIMEDOUT",
+            "CalledProcessError": "EIO",
+            "SubprocessError": "EIO",
+            "ValueError": "TypeError",
+            "KeyError": "RangeError",
+            "IndexError": "RangeError",
+            "StopIteration": "RangeError",
+        }
+        return re.sub(r"\b(?:" + "|".join(names) + r")\b", lambda match: names[match[0]], value)
+    if type(value) is float and value.is_integer():
+        return int(value)
+    return value
 
 
 def _compare_sequence(
@@ -161,8 +191,10 @@ def _compare_sequence(
             "actions": actions,
         },
     )
-    # Re-encoding also proves integer/float JSON kinds, not only numeric equality.
-    assert json.dumps(actual, sort_keys=True) == json.dumps(expected, sort_keys=True)
+    # Source availability and values stay equal, with native diagnostic names.
+    assert json.dumps(_meaningful(actual), sort_keys=True) == json.dumps(
+        _meaningful(expected), sort_keys=True
+    )
     return actual, initial_service
 
 
@@ -386,7 +418,9 @@ def test_service_command_limits_kill_and_reap_only_the_scripted_child(
             assert completion.exists()
             time.sleep(0.025)
     actual = _node(tmp_path, "collector_commands", {"script": str(script), "cases": cases})
-    assert actual["results"] == expected
+    assert json.dumps(_meaningful(actual["results"]), sort_keys=True) == json.dumps(
+        _meaningful(expected), sort_keys=True
+    )
     assert all(result["closed"] for result in actual["results"])
     assert actual["results"][-1]["returned_before_descendant_expiry"]
     clock_started = time.perf_counter()

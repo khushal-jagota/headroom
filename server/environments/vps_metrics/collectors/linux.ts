@@ -18,49 +18,33 @@ import { evidence_error, source_error } from './errors.ts';
 type Metrics = Record<string, Measurement>;
 function lines(value: string): string[] {
   if (!value) return [];
-  const rows = value.split(/\r\n|[\n\r\v\f\u001c-\u001e\u0085\u2028\u2029]/);
+  const rows = value.split(/\r?\n/);
   if (rows.at(-1) === '') rows.pop();
   return rows;
 }
-const words = (value: string): string[] => value.split(/[\s\u001c-\u001f\u0085]+/u).filter(Boolean);
-function decimal(value: string): string {
-  return value
-    .replace(/^[\s\u0085]+|[\s\u0085]+$/gu, '')
-    .replace(/\p{Decimal_Number}/gu, (character) => {
-      const point = character.codePointAt(0)!;
-      let first = point;
-      while (first > 0 && /\p{Decimal_Number}/u.test(String.fromCodePoint(first - 1))) first--;
-      return String((point - first) % 10);
-    });
-}
+const words = (value: string): string[] => value.trim().split(/\s+/u).filter(Boolean);
 const fail = (name: string): never => {
   throw evidence_error(name, 'invalid collection evidence');
 };
 function field<T>(values: readonly T[], index: number): T {
-  if (index >= values.length) return fail('IndexError');
+  if (index >= values.length) return fail('RangeError');
   return values[index]!;
 }
 function required(values: Record<string, number>, key: string): number {
-  if (!(key in values)) return fail('KeyError');
+  if (!(key in values)) return fail('RangeError');
   return values[key]!;
 }
 function integer(raw: string): MetricNumber {
-  const clean = decimal(raw);
-  if (!/^[+-]?\d(?:_?\d)*$/.test(clean)) return fail('ValueError');
-  const token = BigInt(clean.replaceAll('_', '')).toString(),
+  const clean = raw.trim();
+  if (!/^[+-]?[0-9]+$/.test(clean)) return fail('TypeError');
+  const token = BigInt(clean).toString(),
     value = Number(token);
   return Number.isSafeInteger(value) ? value : new JsonNumber(token);
 }
 function nonnegative(raw: string): number {
-  const clean = decimal(raw);
-  if (
-    !/^[+-]?(?:\d(?:_?\d)*(?:\.(?:\d(?:_?\d)*)?)?|\.\d(?:_?\d)*)(?:e[+-]?\d(?:_?\d)*)?$/i.test(
-      clean,
-    )
-  )
-    return fail('ValueError');
-  const value = Number(clean.replaceAll('_', ''));
-  if (!Number.isFinite(value) || value < 0) return fail('ValueError');
+  const clean = raw.trim();
+  const value = clean === '' ? NaN : Number(clean);
+  if (!Number.isFinite(value) || value < 0) return fail('TypeError');
   return value;
 }
 function pairs(text: string): Record<string, number> {
@@ -78,15 +62,6 @@ function key_values(parts: string[]): Record<string, string> {
     if (split >= 0) result[part.slice(0, split)] = part.slice(split + 1);
   }
   return result;
-}
-function ordered(a: string, b: string): number {
-  const left = [...a],
-    right = [...b];
-  for (let i = 0; i < Math.min(left.length, right.length); i++) {
-    const diff = left[i]!.codePointAt(0)! - right[i]!.codePointAt(0)!;
-    if (diff) return diff;
-  }
-  return left.length - right.length;
 }
 function group_for(text: string): [string, string] {
   for (const line of lines(text))
@@ -141,11 +116,7 @@ export class LinuxCollector implements Collector {
     try {
       metrics[key] = measure(parser(await this.read(path)), unit);
     } catch (error) {
-      metrics[key] = measure(
-        null,
-        unit,
-        source_error(error, ['OSError', 'ValueError', 'IndexError', 'KeyError']),
-      );
+      metrics[key] = measure(null, unit, source_error(error, ['EIO', 'TypeError', 'RangeError']));
     }
   }
   private rate(key: string, value: number, unit: string, scale = 1): Measurement {
@@ -172,7 +143,7 @@ export class LinuxCollector implements Collector {
       try {
         text = await this.read(path);
       } catch (error) {
-        const reason = source_error(error, ['OSError']);
+        const reason = source_error(error, ['EIO']);
         for (const kind of ['some', 'full'])
           for (const period of ['avg10', 'avg60', 'avg300'])
             metrics[`${prefix}${resource}.${kind}.${period}`] = measure(null, 'percent', reason);
@@ -185,13 +156,13 @@ export class LinuxCollector implements Collector {
         for (const period of ['avg10', 'avg60', 'avg300']) {
           const key = `${prefix}${resource}.${parts[0]}.${period}`;
           try {
-            if (!(period in fields)) fail('KeyError');
+            if (!(period in fields)) fail('RangeError');
             metrics[key] = measure(nonnegative(fields[period]!), 'percent');
           } catch (error) {
             metrics[key] = measure(
               null,
               'percent',
-              source_error(error, ['ValueError', 'KeyError']),
+              source_error(error, ['TypeError', 'RangeError']),
             );
           }
         }
@@ -206,7 +177,7 @@ export class LinuxCollector implements Collector {
       const cpu = words(field(rows, 0))
         .slice(1, 9)
         .map((value) => number(integer(value)));
-      if (cpu.length < 4 || cpu.some((value) => value < 0)) fail('ValueError');
+      if (cpu.length < 4 || cpu.some((value) => value < 0)) fail('TypeError');
       cores = rows.filter((line) => /^cpu\d/.test(line)).length;
       metrics.cpu_percent = host_cpu_percent(cpu, this.cpu, { same_identity: this.same_boot });
       if (metrics.cpu_percent.value !== null && this.elapsed > 0) {
@@ -219,7 +190,7 @@ export class LinuxCollector implements Collector {
       metrics.cpu_percent = measure(
         null,
         'percent_total_capacity',
-        source_error(error, ['OSError', 'ValueError', 'IndexError']),
+        source_error(error, ['EIO', 'TypeError', 'RangeError']),
       );
     }
     const memory = [
@@ -237,7 +208,7 @@ export class LinuxCollector implements Collector {
           source in values ? null : 'missing field',
         );
     } catch (error) {
-      const reason = source_error(error, ['OSError', 'ValueError']);
+      const reason = source_error(error, ['EIO', 'TypeError']);
       for (const [name] of memory) metrics[name] = measure(null, 'bytes', reason);
     }
     for (const [index, period] of [1, 5, 15].entries())
@@ -286,10 +257,10 @@ export class LinuxCollector implements Collector {
             values[index]!,
             'bytes_per_second',
           );
-      if (members.length === 0 || members.some((name) => !counters.has(name))) fail('ValueError');
+      if (members.length === 0 || members.some((name) => !counters.has(name))) fail('TypeError');
       for (const [index, direction] of ['read', 'write'].entries()) {
         const key = `disk.${direction}_bytes_per_second`,
-          identity = [...members].sort(ordered).join(',');
+          identity = [...members].sort().join(',');
         metrics[key] = this.rate(
           key + ':' + identity,
           members.reduce((sum, name) => sum + counters.get(name)![index]!, 0),
@@ -298,11 +269,11 @@ export class LinuxCollector implements Collector {
       }
     } catch (error) {
       members = [];
-      const reason = source_error(error, ['OSError', 'ValueError', 'IndexError']);
+      const reason = source_error(error, ['EIO', 'TypeError', 'RangeError']);
       for (const direction of ['read', 'write'])
         metrics[`disk.${direction}_bytes_per_second`] = measure(null, 'bytes_per_second', reason);
     }
-    return members.sort(ordered);
+    return members.sort();
   }
   private async network(metrics: Metrics): Promise<string[]> {
     const members: string[] = [];
@@ -310,7 +281,7 @@ export class LinuxCollector implements Collector {
       const totals = [0, 0];
       for (const row of lines(await this.read(join(this.paths.proc_root, 'net/dev'))).slice(2)) {
         const split = row.indexOf(':');
-        if (split < 0) fail('ValueError');
+        if (split < 0) fail('TypeError');
         const name = row.slice(0, split).trim(),
           fields = words(row.slice(split + 1)),
           values = [nonnegative(field(fields, 0)), nonnegative(field(fields, 8))];
@@ -325,17 +296,17 @@ export class LinuxCollector implements Collector {
           for (let i = 0; i < 2; i++) totals[i]! += values[i]!;
         }
       }
-      if (members.length === 0) fail('ValueError');
+      if (members.length === 0) fail('TypeError');
       for (const [index, direction] of ['receive', 'transmit'].entries()) {
         const key = `network.${direction}_bytes_per_second`;
         metrics[key] = this.rate(
-          key + ':' + [...members].sort(ordered).join(','),
+          key + ':' + [...members].sort().join(','),
           totals[index]!,
           'bytes_per_second',
         );
       }
     } catch (error) {
-      const reason = source_error(error, ['OSError', 'ValueError', 'IndexError']);
+      const reason = source_error(error, ['EIO', 'TypeError', 'RangeError']);
       for (const direction of ['receive', 'transmit'])
         metrics[`network.${direction}_bytes_per_second`] = measure(
           null,
@@ -343,7 +314,7 @@ export class LinuxCollector implements Collector {
           reason,
         );
     }
-    return members.sort(ordered);
+    return members.sort();
   }
   private async processes(
     boot: string,
@@ -354,10 +325,10 @@ export class LinuxCollector implements Collector {
     let paths: string[];
     try {
       paths = (await this.deps.directory(this.paths.proc_root))
-        .filter((name) => /^\p{Decimal_Number}+$/u.test(name))
-        .sort((a, b) => Number(decimal(a)) - Number(decimal(b)));
+        .filter((name) => /^[0-9]+$/.test(name))
+        .sort((a, b) => Number(a) - Number(b));
     } catch (error) {
-      return [[], 0, [source_error(error, ['OSError'])], groups];
+      return [[], 0, [source_error(error, ['EIO'])], groups];
     }
     const ticks = this.deps.clock_ticks(),
       pages = this.deps.page_size();
@@ -367,7 +338,7 @@ export class LinuxCollector implements Collector {
         const text = await this.read(join(path, 'stat')),
           start = text.indexOf('('),
           end = text.lastIndexOf(')');
-        if (start < 0 || end < 0) fail('ValueError');
+        if (start < 0 || end < 0) fail('TypeError');
         const fields = words(text.slice(end + 2)),
           pid = integer(name),
           start_ticks = integer(field(fields, 19));
@@ -386,10 +357,10 @@ export class LinuxCollector implements Collector {
           const row = lines(await this.read(join(path, 'status'))).find((line) =>
             line.startsWith('Uid:'),
           );
-          if (row === undefined) fail('StopIteration');
+          if (row === undefined) fail('RangeError');
           uid = integer(field(words(row!), 1));
         } catch (error) {
-          source_error(error, ['OSError', 'ValueError', 'IndexError', 'StopIteration']);
+          source_error(error, ['EIO', 'TypeError', 'RangeError']);
           errors.push(`PID ${JSON.stringify(pid)} uid unavailable`);
         }
         let io: Record<string, number> = {},
@@ -397,7 +368,7 @@ export class LinuxCollector implements Collector {
         try {
           io = pairs(await this.read(join(path, 'io')));
         } catch (error) {
-          io_error = source_error(error, ['OSError', 'ValueError']);
+          io_error = source_error(error, ['EIO', 'TypeError']);
         }
         for (const direction of ['read', 'write']) {
           const key = direction + '_bytes';
@@ -420,18 +391,18 @@ export class LinuxCollector implements Collector {
         try {
           [group, kind] = group_for(await this.read(join(path, 'cgroup')));
         } catch (error) {
-          source_error(error, ['OSError']);
+          source_error(error, ['EIO']);
           group = kind = 'unassigned';
           errors.push(`PID ${JSON.stringify(pid)} cgroup unavailable`);
         }
         const final_stat = await this.read(join(path, 'stat')),
           final_end = final_stat.lastIndexOf(')');
-        if (final_end < 0) fail('ValueError');
+        if (final_end < 0) fail('TypeError');
         if (
           JSON.stringify(integer(field(words(final_stat.slice(final_end + 2)), 19))) !==
           JSON.stringify(start_ticks)
         )
-          fail('ValueError');
+          fail('TypeError');
         groups.set(group, kind);
         records.push({
           identity: { boot_id: boot, pid, start_ticks },
@@ -443,7 +414,7 @@ export class LinuxCollector implements Collector {
           metrics,
         });
       } catch (error) {
-        source_error(error, ['OSError', 'ValueError', 'IndexError']);
+        source_error(error, ['EIO', 'TypeError', 'RangeError']);
         errors.push(`PID ${name} exited or stat unavailable`);
       }
     }
@@ -475,16 +446,7 @@ export class LinuxCollector implements Collector {
           ]);
         }
       } catch (error) {
-        this.state_errors.set(
-          scope,
-          source_error(error, [
-            'OSError',
-            'ValueError',
-            'SubprocessError',
-            'CalledProcessError',
-            'TimeoutExpired',
-          ]),
-        );
+        this.state_errors.set(scope, source_error(error, ['EIO', 'TypeError']));
       }
     }
     try {
@@ -500,7 +462,7 @@ export class LinuxCollector implements Collector {
         ),
       };
     } catch (error) {
-      const reason = source_error(error, ['OSError']);
+      const reason = source_error(error, ['EIO']);
       this.slow = {
         'filesystem.total_bytes': measure(null, 'bytes', reason),
         'filesystem.available_bytes': measure(null, 'bytes', reason),
@@ -516,7 +478,7 @@ export class LinuxCollector implements Collector {
       groups = new Map(source);
     for (const group of this.health_groups.keys())
       if (!groups.has(group)) groups.set(group, group.startsWith('/') ? 'service' : 'manager');
-    for (const [group, kind] of [...groups].sort(([a], [b]) => ordered(a, b))) {
+    for (const [group, kind] of [...groups].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))) {
       const metrics: Metrics = {},
         path = join(this.paths.cgroup_root, group.replace(/^\//, ''));
       if (kind === 'unassigned' || kind === 'manager')
@@ -536,7 +498,7 @@ export class LinuxCollector implements Collector {
           metrics.cpu_percent = measure(
             null,
             'percent_one_core',
-            source_error(error, ['OSError', 'ValueError', 'KeyError']),
+            source_error(error, ['EIO', 'TypeError', 'RangeError']),
           );
         }
         await this.value(join(path, 'memory.current'), 'memory_bytes', 'bytes_cgroup', metrics);
@@ -547,11 +509,11 @@ export class LinuxCollector implements Collector {
             const values: Record<string, string> = {};
             for (const item of words(row).slice(1)) {
               const split = item.indexOf('=');
-              if (split < 0) fail('ValueError');
+              if (split < 0) fail('TypeError');
               values[item.slice(0, split)] = item.slice(split + 1);
             }
             for (const key of Object.keys(totals)) {
-              if (!(key in values)) fail('KeyError');
+              if (!(key in values)) fail('RangeError');
               totals[key]! += nonnegative(values[key]!);
             }
           }
@@ -565,7 +527,7 @@ export class LinuxCollector implements Collector {
               'bytes_per_second',
             );
         } catch (error) {
-          const reason = source_error(error, ['OSError', 'ValueError', 'KeyError']);
+          const reason = source_error(error, ['EIO', 'TypeError', 'RangeError']);
           for (const direction of ['read', 'write'])
             metrics[direction + '_bytes_per_second'] = measure(null, 'bytes_per_second', reason);
         }
@@ -603,9 +565,9 @@ export class LinuxCollector implements Collector {
     let boot: string;
     try {
       boot = (await this.read(join(this.paths.proc_root, 'sys/kernel/random/boot_id'))).trim();
-      if (!boot) fail('ValueError');
+      if (!boot) fail('TypeError');
     } catch (error) {
-      source_error(error, ['OSError', 'ValueError']);
+      source_error(error, ['EIO', 'TypeError']);
       boot = 'unavailable';
     }
     this.same_boot = boot !== 'unavailable' && boot === this.boot;

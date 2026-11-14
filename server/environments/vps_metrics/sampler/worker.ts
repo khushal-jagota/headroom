@@ -20,7 +20,7 @@ function send(message: SamplerReply): void {
 }
 function reason(error: unknown): string {
   const value = error as Error & { code?: string };
-  return `${value.code?.startsWith('SQLITE_') ? 'OperationalError' : value.name}: ${value.message}`;
+  return `${value.code ?? value.name}: ${value.message}`;
 }
 function wait(seconds: number): Promise<void> {
   if (stopped) return Promise.resolve();

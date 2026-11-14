@@ -20,14 +20,9 @@ export function finished(ticket_id: string, states: TicketStates, now: number): 
   const state = states.get(ticket_id);
   return state === undefined || (state[0] === 'done' && state[1] <= now - SETTLE_SECONDS);
 }
-/** Python sorts Unicode code points and compares Path components separately. */
+/** Stable native lexical order for cleanup reports. */
 export function compare_strings(left: string, right: string): number {
-  const a = Array.from(left, (value) => value.codePointAt(0)!);
-  const b = Array.from(right, (value) => value.codePointAt(0)!);
-  for (let index = 0; index < Math.min(a.length, b.length); index++) {
-    if (a[index] !== b[index]) return a[index]! - b[index]!;
-  }
-  return a.length - b.length;
+  return left < right ? -1 : left > right ? 1 : 0;
 }
 export function compare_paths(left: string, right: string): number {
   const a = left.split('/'),

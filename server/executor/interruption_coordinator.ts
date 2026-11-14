@@ -4,10 +4,10 @@ import type { Database, ReadSql } from '../core/database/contracts.ts';
 import { import_captured_turns } from '../conversation/deploy_interruptions/data.ts';
 import { read_unresolved_turns } from '../conversation/deploy_interruptions/capture.ts';
 import { decode_json, KeyError } from './protocol.ts';
-import { python_repr } from './protocol_errors.ts';
+import { inspect } from 'node:util';
 import { close_child_in_transaction } from './data/runs.ts';
 const source_string = (value: unknown): string =>
-  typeof value === 'string' ? value : python_repr(value);
+  typeof value === 'string' ? value : inspect(value);
 function field(record: Record<string, unknown>, key: string): unknown {
   if (!Object.hasOwn(record, key)) throw new KeyError(key);
   return record[key];

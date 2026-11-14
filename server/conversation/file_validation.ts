@@ -58,18 +58,18 @@ export function validated_file_media_type(payload: Buffer, file_name: string): s
     throw new Error('a conversation text or data file must not contain NUL bytes');
   if (suffix === '.json') {
     try {
-      python_json_admission(text);
+      JSON.parse(text);
     } catch {
       throw new Error('a conversation JSON file must contain valid JSON');
     }
   }
   if (suffix === '.jsonl') {
     let count = 0;
-    for (const [index, line] of text.split(/\r\n|[\n\r\v\f\x1c-\x1e\x85\u2028\u2029]/u).entries()) {
+    for (const [index, line] of text.split(/\r?\n/).entries()) {
       if (!line.trim()) continue;
       count++;
       try {
-        python_json_admission(line);
+        JSON.parse(line);
       } catch {
         throw new Error(`a conversation JSONL file has invalid JSON on line ${index + 1}`);
       }
@@ -77,11 +77,4 @@ export function validated_file_media_type(payload: Buffer, file_name: string): s
     if (!count) throw new Error('a conversation JSONL file must contain a JSON value');
   }
   return media_type;
-}
-/** Python json.loads admits its three non-finite number literals. Only syntax matters here. */
-function python_json_admission(text: string): void {
-  const admitted = text.replace(/"(?:\\.|[^"\\])*"|-Infinity|Infinity|NaN/g, (token) =>
-    token.startsWith('"') ? token : 'null',
-  );
-  JSON.parse(admitted);
 }

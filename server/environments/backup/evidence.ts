@@ -152,12 +152,7 @@ export async function is_verified_snapshot(candidate: string): Promise<boolean> 
   );
 }
 function compare_strings(left: string, right: string): number {
-  const a = Array.from(left, (character) => character.codePointAt(0)!);
-  const b = Array.from(right, (character) => character.codePointAt(0)!);
-  for (let index = 0; index < Math.min(a.length, b.length); index++) {
-    if (a[index] !== b[index]) return a[index] - b[index];
-  }
-  return a.length - b.length;
+  return left < right ? -1 : left > right ? 1 : 0;
 }
 export async function verified_snapshots(backupDirectory: string): Promise<string[]> {
   const configured = expand_path(backupDirectory);
@@ -181,7 +176,7 @@ export async function verified_snapshots(backupDirectory: string): Promise<strin
         object(metadata) && typeof metadata.created_at === 'string' ? metadata.created_at : '',
     });
   }
-  // Python sorts raw strings, including malformed or offset timestamps. Age is separate.
+  // Order raw timestamp text, then names. Age and retention remain separate.
   snapshots.sort(
     (a, b) =>
       -compare_strings(a.created, b.created) ||

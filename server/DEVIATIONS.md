@@ -176,7 +176,7 @@ It applies to these ten integer environment overrides:
 
 Python parses these overrides with `int()` and can preserve values beyond JavaScript's exact integer range, subject to existing configuration checks.
 For example, Python accepts and retains `9007199254740993` for `history_points`.
-TS explicitly refuses values outside ±9,007,199,254,740,991 with `ValueError: <field> exceeds the supported exact integer range`.
+TypeScript refuses values outside ±9,007,199,254,740,991 with a native validation error that names the field and its exact integer limit.
 It does not silently round the example to `9007199254740992`.
 
 The boundary exceeds realistic worker/page counts and memory/database budgets.
@@ -471,35 +471,14 @@ The durable append and receipt behavior otherwise retain Python's contract.
 
 ## CLI workspace artifact field
 
-The migration Manager accepted this Unit 20 difference before the first CLI PR merges.
-The Python CLI reads `artifact['path']` at `src/planner/cli/main.py:1663`.
-Workspace artifact nodes instead supply `opens: string | null`, so a populated tree raises `KeyError: 'path'`.
-Python constructs the human output before it selects JSON output, so the same fault also prevents populated JSON workspace reads.
-
-TypeScript reads `opens` and prints one line per top-level artifact node.
-A folded index keeps its single openable path. A nonopenable group prints `None`, which matches Python's `str(None)`.
-The command does not flatten the tree. Its JSON output retains the complete workspace artifact nodes and children.
-This accepted Python fault is not reproduced.
-
-`server/cli/work_commands.test.ts` exercises the real CLI handler with one populated workspace wire response.
-It covers a file, a folded index, and a nonopenable group with a child in human and JSON modes, without another host.
+TypeScript reads workspace artifact `opens` values. Python reads the absent `path` field and fails for populated workspaces, including JSON output.
+The Manager accepted this correction. Human output prints `null` for a group without an openable path. JSON retains the complete tree and children.
 
 ## CLI nonfinite body-file input
 
-The migration Manager explicitly accepted this Unit 20 difference for nonfinite floating values in Ticket input files, including NaN, Infinity, and overflow such as `1e999`.
-Python `_read_json_object` accepts these constants through `json.loads`.
-`ticket_create` passes that body to `httpx.request`, whose `encode_json(..., allow_nan=False)` raises `ValueError` before transport.
-No request reaches the server. Python does not produce its normal CLI error envelope for this failure.
-
-TypeScript retains the existing shared numeric parser. After the syntax scanner accepts the Python constant,
-the input helper returns validation exit 1 with `non-finite JSON values are not allowed`.
-It also rejects nonfinite float leaves in nested objects and arrays. Huge integer markers remain valid, even if their approximate JavaScript number is infinite.
-The failure outcome matches Python, but the clean message and error envelope intentionally differ.
-The syntax scanner still reports no JSON syntax diagnostic for valid Python NaN/Infinity constants.
-The Python body-file fault is not reproduced. No shared parser policy changes form part of this acceptance.
-
-The host-free comparison in `tests/compare/direct/test_unit20_json_diagnostics.py` checks the clean TypeScript refusal
-and proves that Python HTTPX serialization fails before its transport method executes.
+TypeScript rejects nonfinite body-file values before transport, with validation exit 1 and the normal JSON error envelope.
+Native JSON parsing rejects `NaN` and `Infinity`. Numeric validation rejects overflow such as `1e999`, including nested values.
+Exact large integers remain valid. Python accepts these nonfinite inputs, then fails during HTTPX serialization without its normal error envelope.
 
 ## CLI TLS trust and configuration diagnostics
 
@@ -525,44 +504,10 @@ Python's file decoder instead prints an uncaught traceback. Both commands fail b
 
 ## Integer-like JSON map keys
 
-The migration Manager accepted native JavaScript index-key order for cosmetic JSON maps in Unit 20.
-Keys such as `2025` and `2024` appear in ascending numeric order in TypeScript maps.
-Python dictionaries retain their insertion order. Every key, value, and numeric token remains exact.
-Declaration arrays retain their original order and supply dataset dimension and field order.
-
-The audit checked dataset validation, retained SQL writes and reads, canonical row identity,
-source runtime conversions and repository scripts, dataset chart projections, CLI output,
-web chart adapters, tables, and export paths. Canonical `dimension_key` sorts an entries array,
-so object enumeration does not change row identity or deduplication. Charts select values by name.
-Tables and chart series use explicit arrays. The dataset CLI prints the complete response.
-
-The audit found one server meaning dependency. Ticket search now reads present values in the
-declared workflow field order, with Python's title, recap, newline separators, and proposal body.
-This repair changes only `list_ticket_summaries` in `server/tickets/views.ts` in the second CLI PR.
-Other consumers of the reconstructed Ticket field map use named access, declaration arrays,
-per-value validation, storage copies, or opaque record digests. Incoming edit requests and their
-first-error order are outside this cosmetic response-map acceptance.
-
-The preexisting web `compositionTotal` derives an unbound chart sum from object keys.
-That browser code uses the same JavaScript order with either backend and remains outside this PR.
-Dataset-bound charts use the backend summary instead. No web code changes form part of this acceptance.
-
-The existing retained dataset case declares `2025` then `2024` and keeps values `7.25` and `3.0`.
-Its named comparison rule changes only the order of those two original lexical member spans in
-one `results.0.rows.0.values` object, in JSON, text, and HTTP evidence. Raw outputs remain available.
-All other bytes, numeric spellings, row arrays, dimension declarations, and field declarations stay strict.
-The same owned hosts compare a populated Ticket search across two numeric fields in descending order.
-A second pass follows intermediate maps through their final readers. Human Ticket sections keep an
-explicit declared or requested sequence. Skills keep SQL row order, and category reading values keep
-chart declaration order. Those are parity repairs, not cosmetic map-order exceptions.
-The Goal read fixture also contains chart IDs `20`, `10`, `__proto__`, `constructor`, and `toString`.
-Its named rule promotes only the two numeric map keys at `body.charts` and `stdout.charts`.
-Non-index key order, value spans, public arrays, and every outside byte remain strict.
-Both projection accumulators retain special names as ordinary own keys. The CLI's field-value and
-approval lookups also require own keys, as Python dictionary access does.
-The wider assignment and error-order inventory remains in
-[the audit](/files/tickets/t_jt78h9xr/artifacts/data-key-enumeration-audit.md).
-No shared JSON parser or object representation changes form part of this acceptance.
+The Manager accepts native JavaScript order for cosmetic JSON maps. Integer-like keys use numeric order instead of Python insertion order.
+Comparisons check parsed JSON fields, types, values, and CLI exit codes. They do not compare object-member order or Python number spelling.
+Arrays remain ordered. Declaration arrays preserve dataset fields and chart dimensions, and Ticket search follows workflow field order.
+Persisted dataset row identities and exact numeric values remain unchanged. Special names such as `__proto__` remain ordinary own properties.
 
 ## Executor message and core admission
 

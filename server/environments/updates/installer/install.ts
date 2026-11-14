@@ -8,8 +8,6 @@ import {
   statSync,
 } from 'node:fs';
 import { join } from 'node:path';
-import { JsonNumber, stringify_python_json } from '../../../core/http/numeric_json.ts';
-import { python_string_repr } from '../../../core/python_repr.ts';
 import { is_object, parse_attempt_json } from '../codec.ts';
 import { assert_installer_path, PREVIOUS_APP_PREFIX, STAGED_APP_PREFIX } from './configuration.ts';
 import { error_detail } from './commands.ts';
@@ -22,27 +20,11 @@ export class InstallFailed extends Error {
     this.name = 'InstallFailed';
   }
 }
-function repr(value: unknown): string {
-  if (typeof value === 'string') return python_string_repr(value);
-  if (value === null || value === undefined) return 'None';
-  if (value === true || value === false) return value ? 'True' : 'False';
-  if (value instanceof JsonNumber) return stringify_python_json(value);
-  if (Array.isArray(value)) return '[' + value.map(repr).join(', ') + ']';
-  if (is_object(value))
-    return (
-      '{' +
-      Object.entries(value)
-        .map(([key, item]) => `${repr(key)}: ${repr(item)}`)
-        .join(', ') +
-      '}'
-    );
-  return String(value);
-}
 function field(attempt: Record<string, unknown>, key: string): string {
-  if (!Object.hasOwn(attempt, key))
-    throw Object.assign(new Error(python_string_repr(key)), { name: 'KeyError' });
+  if (!Object.hasOwn(attempt, key)) throw new TypeError(`Update attempt is missing ${key}`);
   const value = attempt[key];
-  return typeof value === 'string' ? value : repr(value);
+  if (typeof value !== 'string') throw new TypeError(`Update attempt ${key} must be a string`);
+  return value;
 }
 function directory(path: string): boolean {
   assert_installer_path(path);
@@ -78,13 +60,13 @@ function installed_sha(app: string): unknown {
     throw error;
   }
 }
-/** Python rmtree refuses symlinks and files, and never restores permissions. */
+/** Refuse links and files before recursive directory removal. */
 function rmtree(path: string, ignore_errors = false): void {
   assert_installer_path(path);
   try {
     const entry = lstatSync(path);
     if (entry.isSymbolicLink())
-      throw Object.assign(new Error('Cannot call rmtree on a symbolic link'), { name: 'OSError' });
+      throw new Error(`Cannot remove a symbolic link as a directory: ${path}`);
     if (!entry.isDirectory())
       throw Object.assign(new Error('Not a directory'), { code: 'ENOTDIR', path });
     rmSync(path, { recursive: true });

@@ -16,7 +16,7 @@ import {
   expression_references,
   phase_changed,
 } from '../measures/logic/evaluation.ts';
-import { float_number, parse_formula } from '../measures/logic/formulas.ts';
+import { parse_formula } from '../measures/logic/formulas.ts';
 import * as limits from './configuration.ts';
 import type {
   ChartBlock,
@@ -278,21 +278,6 @@ export function readings_json(
 ): Record<string, unknown> {
   return document_readings_json(sql, read_goal(sql, id), now, options);
 }
-// These public scalar fields are declared floats in Python, including whole-valued readings.
-function projection_json(projection: ChartProjection) {
-  if (projection.kind !== 'scalar') return projection;
-  return {
-    ...projection,
-    points: projection.points.map((point) => ({
-      ...point,
-      expected: {
-        ...point.expected,
-        value: point.expected.value === null ? null : float_number(point.expected.value),
-      },
-      difference: point.difference === null ? null : float_number(point.difference),
-    })),
-  };
-}
 export function document_readings_json(
   sql: ReadSql,
   subject: ReadingSubject,
@@ -391,8 +376,6 @@ export function document_readings_json(
     next_refresh_at: midnight,
     values,
     sources: [...sources.values()],
-    charts: Object.fromEntries(
-      Object.entries(projections).map(([id, projection]) => [id, projection_json(projection)]),
-    ),
+    charts: projections,
   };
 }

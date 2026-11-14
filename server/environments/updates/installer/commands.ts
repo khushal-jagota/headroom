@@ -2,8 +2,6 @@ import type { ChildProcess } from 'node:child_process';
 import { constants } from 'node:os';
 import { randomUUID } from 'node:crypto';
 import { join } from 'node:path';
-import { python_string_repr } from '../../../core/python_repr.ts';
-import { python_os_error_message } from '../../../core/os_errors.ts';
 import { is_os_error } from '../../../core/system_errors.ts';
 import { stop_one_shot_child } from '../../../lifecycle/one_shot_children.ts';
 import { run_release_command } from '../../release/process.ts';
@@ -27,8 +25,6 @@ import type {
   InstallerRequest,
 } from './contracts.ts';
 
-const command_repr = (argv: readonly string[]): string =>
-  '[' + argv.map(python_string_repr).join(', ') + ']';
 export class CalledProcessError extends Error {
   readonly argv: readonly string[];
   readonly returncode: number;
@@ -36,8 +32,8 @@ export class CalledProcessError extends Error {
   constructor(argv: readonly string[], returncode: number, signal: NodeJS.Signals | null) {
     super(
       signal === null
-        ? `Command '${command_repr(argv)}' returned non-zero exit status ${returncode}.`
-        : `Command '${command_repr(argv)}' died with <Signals.${signal}: ${constants.signals[signal]}>.`,
+        ? `Command ${JSON.stringify(argv)} exited with status ${returncode}.`
+        : `Command ${JSON.stringify(argv)} stopped with signal ${signal}.`,
     );
     this.name = 'CalledProcessError';
     this.argv = argv;
@@ -49,7 +45,7 @@ export class TimeoutExpired extends Error {
   readonly argv: readonly string[];
   readonly timeout_seconds: number;
   constructor(argv: readonly string[], timeout_seconds: number) {
-    super(`Command '${command_repr(argv)}' timed out after ${timeout_seconds.toFixed(1)} seconds`);
+    super(`Command ${JSON.stringify(argv)} timed out after ${timeout_seconds} seconds`);
     this.name = 'TimeoutExpired';
     this.argv = argv;
     this.timeout_seconds = timeout_seconds;
@@ -57,22 +53,6 @@ export class TimeoutExpired extends Error {
 }
 export function error_detail(error: unknown): { name: string; message: string } {
   if (!(error instanceof Error)) return { name: 'Error', message: String(error) };
-  if ('code' in error && typeof error.code === 'string') {
-    const names: Readonly<Record<string, string>> = {
-      ENOENT: 'FileNotFoundError',
-      EEXIST: 'FileExistsError',
-      EACCES: 'PermissionError',
-      EPERM: 'PermissionError',
-      ENOTDIR: 'NotADirectoryError',
-      EISDIR: 'IsADirectoryError',
-      EPIPE: 'BrokenPipeError',
-      ESRCH: 'ProcessLookupError',
-      ETIMEDOUT: 'TimeoutError',
-      ECONNREFUSED: 'ConnectionRefusedError',
-      ECONNRESET: 'ConnectionResetError',
-    };
-    return { name: names[error.code] ?? 'OSError', message: python_os_error_message(error) };
-  }
   return { name: error.name, message: error.message };
 }
 export function phase(execution: InstallerExecution, timeout_seconds: number): InstallerPhase {

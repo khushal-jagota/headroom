@@ -2,7 +2,7 @@
 import type { Database } from '../core/database/contracts.ts';
 import { is_os_error } from '../core/system_errors.ts';
 import { stringify_python_json } from '../core/http/numeric_json.ts';
-import { python_repr } from './protocol_errors.ts';
+import { inspect } from 'node:util';
 import { ConversationBackendKey } from '../conversation/contracts.ts';
 import { save_machine_model_list } from '../conversation/backend_state.ts';
 import type { BackendSnapshot, SnapshotOptions } from '../conversation/snapshot/contracts.ts';
@@ -196,7 +196,7 @@ export class VpsCatalogRelay implements RemoteCatalogSource {
       }
     } catch (error) {
       if (!is_os_error(error) && !(error instanceof ValueError)) throw error;
-      console.warn(`The Mac's ${backend_key} model list was not read: ${python_repr(error)}`);
+      console.warn(`The Mac's ${backend_key} model list was not read: ${inspect(error)}`);
     } finally {
       signal.removeEventListener('abort', start_cleanup);
       if (command_id !== null && (timed_out || signal.aborted)) {

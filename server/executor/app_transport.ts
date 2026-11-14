@@ -8,12 +8,11 @@ import { PlannerError } from '../core/contracts.ts';
 import { HttpError } from '../core/http/errors.ts';
 import { sendFile } from '../core/http/static.ts';
 import { trusted_ingress_login } from '../core/http/middleware.ts';
-import { python_os_error_message } from '../core/os_errors.ts';
 import { is_os_error } from '../core/system_errors.ts';
 import { integer_text, decimal_digit } from '../core/python_integer.ts';
 import { normalize_integer } from './integers.ts';
 import { strip_unicode_space } from '../core/whitespace.ts';
-import { JsonNumber, stringify_python_json } from '../core/http/numeric_json.ts';
+import { JsonNumber } from '../core/http/numeric_json.ts';
 import {
   admit_unidentified_call,
   websocket_refusal,
@@ -212,7 +211,7 @@ async function input_response(reply: FastifyReply, file: InputFile): Promise<voi
 }
 function update_failure(error: unknown): never {
   if (error instanceof UpdateConflict || error instanceof ValueError || is_os_error(error))
-    throw new HttpError(409, python_os_error_message(error as Error));
+    throw new HttpError(409, (error as Error).message);
   throw error;
 }
 /** No ordinary actor route can bypass the dedicated ingress admission below. */
@@ -385,7 +384,7 @@ export function create_executor_routes(services: ExecutorHttpServices): FastifyP
           identity,
           decode(await body(request, MAX_ENVELOPE_BYTES), 'LiveReadRequest', MAX_ENVELOPE_BYTES),
         );
-        return reply.type('application/json').send(stringify_python_json(value, { compact: true }));
+        return reply.type('application/json').send(JSON.stringify(value));
       }),
     );
     app.post(

@@ -1,7 +1,6 @@
 /** Source-compatible evidence and bypass rules. No filesystem or transport operations. */
 import { TYPESCRIPT_SERVICE_NAME } from '../../lifecycle/service_identity.ts';
 import { InvalidPeerEvidence } from './contracts.ts';
-import { PYTHON_SPACE, strip } from '../whitespace.ts';
 export { strip } from '../whitespace.ts';
 import type {
   UnidentifiedCallRequest,
@@ -10,11 +9,10 @@ import type {
 } from './contracts.ts';
 
 const REFUSAL = 'Unidentified caller refused. Restore PLAN_ACTOR and your Panels identity.';
-const WORD_BREAK = new RegExp(`${PYTHON_SPACE}+`, 'u');
-export const words = (value: string): string[] => strip(value).split(WORD_BREAK);
+export const words = (value: string): string[] => value.trim().split(/[ \t]+/);
 export function splitlines(text: string): string[] {
   if (!text) return [];
-  const lines = text.split(/\r\n|[\n\r\v\f\x1c-\x1e\x85\u2028\u2029]/u);
+  const lines = text.split(/\r?\n/);
   if (lines.at(-1) === '') lines.pop();
   return lines;
 }
@@ -114,7 +112,7 @@ export function integer(value: string | undefined, radix = 10): bigint {
 export function lookup_required(enabled: boolean, request: UnidentifiedCallRequest): boolean {
   if (!enabled || request.kind === 'other' || request.authenticated_owner) return false;
   const first = request.headers.find(([name]) => name.toLowerCase() === 'x-plan-actor');
-  if (first && strip(first[1])) return false;
+  if (first && first[1].trim()) return false;
   if (request.client !== null) {
     const address = address_bytes(request.client[0]);
     if (address !== null) {

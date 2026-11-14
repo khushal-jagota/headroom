@@ -2,8 +2,6 @@
 import { readFile } from 'node:fs/promises';
 import { isAbsolute } from 'node:path';
 import { posix_child_path } from '../core/python_path.ts';
-import { python_os_error_message as error_message } from '../core/os_errors.ts';
-import { JsonNumber } from '../core/http/numeric_json.ts';
 import { create_database_backup } from './backup/capture.ts';
 import { restore_database_snapshot } from './backup/restore.ts';
 import { AppManifestValidationFailure } from './command_contracts.ts';
@@ -48,7 +46,7 @@ const success = (stdout: string, stderr = ''): Result => ({
 const failed = (error: Error, stderr = ''): Result => ({
   exit_code: 1,
   stdout: '',
-  failure_message: error_message(error),
+  failure_message: error.message,
   stderr_prefix: stderr,
 });
 const json = (value: unknown) => JSON.stringify(value);
@@ -62,21 +60,7 @@ export async function environment_status(
     config.db_path = deps.admit_path(config.db_path);
     const payload = await collect_vps_status(config, resources.status_options);
     resources.require_active();
-    // Python round(float, 2) retains its float kind even at an integral percentage.
-    const percent = payload.disk.free_percent;
-    const document = {
-      ...payload,
-      disk: {
-        ...payload.disk,
-        free_percent:
-          typeof percent === 'number'
-            ? new JsonNumber(String(percent) + (Number.isInteger(percent) ? '.0' : ''))
-            : percent,
-      },
-    };
-    return success(
-      args.json ? json(document) : `${payload.overall_state}: ${payload.collected_at}`,
-    );
+    return success(args.json ? json(payload) : `${payload.overall_state}: ${payload.collected_at}`);
   });
 }
 export async function environment_cleanup(
@@ -188,10 +172,9 @@ export async function environment_backup_current(
       new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(source),
     );
     if (!is_object(value)) throw new TypeError('app manifest must be a mapping');
-    if (!Object.hasOwn(value, 'app_sha'))
-      throw Object.assign(new Error("'app_sha'"), { name: 'KeyError' });
+    if (!Object.hasOwn(value, 'app_sha')) throw new TypeError('app manifest is missing app_sha');
     const revision = (value as Record<string, unknown>).app_sha;
-    if (typeof revision !== 'string') throw new TypeError('expected string or bytes-like object');
+    if (typeof revision !== 'string') throw new TypeError('app manifest app_sha must be a string');
     if (!/^[0-9a-f]{40}$/.test(revision) || revision.length !== 40)
       throw new AppManifestValidationFailure(
         'value',
@@ -201,7 +184,7 @@ export async function environment_backup_current(
       await deps.validate_app_manifest(manifest_path);
     } catch (error) {
       if (!domain_error(error, { runtime: false, plain: false })) throw error;
-      warning = `Warning: ${error_message(error)}. Backup will continue.\n`;
+      warning = `Warning: ${error.message}. Backup will continue.\n`;
       if (deps.write_warning) {
         const output = warning;
         warning = '';

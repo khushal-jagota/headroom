@@ -62,8 +62,7 @@ ROW_ORDERS = {
     "conversation_view_lookups": ("conversation_id,lookup_kind,source_sequence,lookup_id"),
 }
 RANDOM_ID = re.compile(
-    r"(?<![0-9a-f])[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}"
-    r"-[0-9a-f]{4}-[0-9a-f]{12}(?![0-9a-f])"
+    r"(?<![0-9a-f])[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}" r"-[0-9a-f]{4}-[0-9a-f]{12}(?![0-9a-f])"
 )
 
 
@@ -544,6 +543,22 @@ def normalize(value: Any) -> Any:
 
     collect(value)
 
+    def canonical_input(text: str) -> str:
+        try:
+            return json.dumps(
+                json.loads(
+                    text,
+                    parse_float=lambda token: (
+                        int(number) if (number := float(token)).is_integer() else number
+                    ),
+                ),
+                sort_keys=True,
+                ensure_ascii=False,
+                separators=(",", ":"),
+            )
+        except json.JSONDecodeError:
+            return text
+
     def walk(item: Any, field: str = "") -> Any:
         if isinstance(item, dict):
             result = {}
@@ -551,6 +566,20 @@ def normalize(value: Any) -> Any:
                 raw = item[key]
                 if key in json_fields and isinstance(raw, str):
                     raw = json.loads(raw)
+                    if key == "payload" and item.get("kind") in {
+                        "tool_call_started",
+                        "permission_asked",
+                    }:
+                        # Tool inputs keep JSON content, not Python's whitespace and key order.
+                        if isinstance(raw.get("detail"), str):
+                            raw["detail"] = canonical_input(raw["detail"])
+                if key == "rest_summary" and isinstance(raw, str):
+                    summary = json.loads(raw)
+                    body = summary.get("body", {}).get("value")
+                    if isinstance(body, dict) and body.get("kind") == "tool_call":
+                        if isinstance(body.get("started_detail"), str):
+                            body["started_detail"] = canonical_input(body["started_detail"])
+                    raw = canonical_input(json.dumps(summary))
                 result[key] = walk(raw, key)
             return result
         if isinstance(item, list):
@@ -1102,6 +1131,7 @@ def test_unit18_adapter_real_core_parity(tmp_path: Path, request: pytest.Fixture
             "bare hexadecimal content compare literally. Only lifecycle attempt "
             "control identities map by conversation, turn, and operation."
         ),
+        "tool_detail_rule": "Compare JSON tool input fields, not Python formatting.",
         "not_proven": [
             "real provider turn or resume",
             "systemd containment (part 1 owns policy/byte proof)",

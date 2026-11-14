@@ -4,7 +4,7 @@ export const CAPTURE_VERSION = 1;
 export class CaptureValidationError extends Error {
   constructor(message: string) {
     super(message);
-    this.name = 'ValueError';
+    this.name = 'CaptureValidationError';
   }
 }
 export type CaptureState = 'captured' | 'unavailable';
