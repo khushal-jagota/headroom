@@ -47,8 +47,6 @@ export const INSTALLER_SOURCE_FILES = [
   'server/environments/release/logic/host.ts',
   'server/environments/release/logic/manifest.ts',
   'server/environments/release/native/configuration.ts',
-  'server/environments/ticket_scratch/logic.ts',
-  'server/environments/ticket_scratch/configuration.ts',
   'server/environments/backup/evidence.ts',
   'server/environments/paths.ts',
   'server/conversation/shutdown.ts',

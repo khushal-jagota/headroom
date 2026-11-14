@@ -1,5 +1,4 @@
 import type { TicketStates } from './contracts.ts';
-import { path_is_within } from '../../core/path_containment.ts';
 import { SETTLE_SECONDS } from './configuration.ts';
 
 const TICKET_ID = /t_[0-9abcdefghjkmnpqrstuvwxyz]{8}(?![a-z0-9])/;
@@ -38,8 +37,4 @@ export function compare_paths(left: string, right: string): number {
     if (order !== 0) return order;
   }
   return a.length - b.length;
-}
-/** Release callers retain this argument order until their shared-helper migration. */
-export function inside(path: string, root: string): boolean {
-  return path_is_within(root, path);
 }

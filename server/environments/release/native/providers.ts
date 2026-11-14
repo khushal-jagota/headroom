@@ -3,7 +3,7 @@ import { chmod, copyFile, mkdir, realpath, stat, utimes } from 'node:fs/promises
 import { dirname, isAbsolute, join, relative } from 'node:path';
 import type { CopiedNativeComponent, ElfObject, ReleaseExecution } from '../contracts.ts';
 import { is_file } from '../../backup/evidence.ts';
-import { inside } from '../../ticket_scratch/logic.ts';
+import { path_is_within } from '../../../core/path_containment.ts';
 import { RuntimeContractError } from '../../updates/logic/runtime_contract.ts';
 import {
   assert_release_execution,
@@ -132,7 +132,7 @@ export async function copied_component(
     throw new RuntimeContractError(`no license notice for copied library: ${source}`);
   const license = join(LICENSE_DIRECTORY, package_name.replaceAll(':', '_') + '.txt');
   const destination = join(app_root, license);
-  if (!inside(await resolved_path(destination), app_root))
+  if (!path_is_within(app_root, await resolved_path(destination)))
     throw new RuntimeContractError('native license path escapes archive');
   assert_release_execution(execution);
   await mkdir(dirname(destination), { recursive: true });

@@ -3,7 +3,7 @@ import { createHash } from 'node:crypto';
 import { lstat, readFile, readlink, realpath } from 'node:fs/promises';
 import { basename, dirname, isAbsolute, join, relative, sep } from 'node:path';
 import { is_file, missing, sha256_file } from '../backup/evidence.ts';
-import { inside } from '../ticket_scratch/logic.ts';
+import { path_is_within } from '../../core/path_containment.ts';
 import { AppValidationError } from './contracts.ts';
 import { app_tree_paths } from './identity.ts';
 import type {
@@ -48,7 +48,7 @@ export async function inventory_package_licenses(
   for (const path of paths) {
     if (basename(path) !== 'package.json') continue;
     const actual = await realpath(path);
-    if (!inside(actual, root) || !(await is_file(actual)))
+    if (!path_is_within(root, actual) || !(await is_file(actual)))
       throw new AppValidationError('package metadata must be a regular file inside the payload');
     const bytes = await readFile(actual);
     const value: unknown = JSON.parse(
@@ -87,7 +87,7 @@ export async function inventory_package_licenses(
     const slot = archive_path(path);
     if (!installed_slot(slot) || !(await lstat(path)).isSymbolicLink()) continue;
     const actual = await realpath(path);
-    if (!inside(actual, root)) throw new AppValidationError('package alias escapes the payload');
+    if (!path_is_within(root, actual)) throw new AppValidationError('package alias escapes the payload');
     const record = packages.get(actual);
     if (!record) throw new AppValidationError('package alias has no bundled package metadata');
     record.installed_slots.push(slot);
@@ -100,7 +100,7 @@ export async function inventory_package_licenses(
   }
   const owner = (path: string): MutablePackage | undefined => {
     let current = path;
-    while (inside(current, root)) {
+    while (path_is_within(root, current)) {
       const record = packages.get(current);
       if (record || current === root) return record;
       current = dirname(current);
@@ -131,7 +131,7 @@ export async function inventory_package_licenses(
       continue;
     }
     const record = owner(path);
-    if (!inside(actual, root) || owner(actual) !== record || !(await is_file(actual))) continue;
+    if (!path_is_within(root, actual) || owner(actual) !== record || !(await is_file(actual))) continue;
     const file = await retained(path, actual);
     (license
       ? (record?.license_files ?? source_license_files)
@@ -154,11 +154,11 @@ export async function inventory_package_licenses(
         if (owner(file) !== record) finding = 'outside-package';
         else {
           const actual = await realpath(file);
-          if (!inside(actual, root) || owner(actual) !== record) finding = 'outside-package';
+          if (!path_is_within(root, actual) || owner(actual) !== record) finding = 'outside-package';
           else if (!(await is_file(actual))) finding = 'not-file';
           else {
             const physical = join(await realpath(dirname(file)), basename(file));
-            if (!inside(physical, root) || owner(physical) !== record) finding = 'outside-package';
+            if (!path_is_within(root, physical) || owner(physical) !== record) finding = 'outside-package';
             else {
               const retained_file = await retained(physical, actual);
               if (!record.license_files.some((entry) => entry.path === retained_file.path))

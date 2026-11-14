@@ -18,7 +18,7 @@ const version = /^22\.(\d+)\.(\d+)$/.exec(process.versions.node);
 assert(version && Number(version[1]) >= 18, 'runtime requires Node 22 >=22.18.0');
 assert.equal(process.platform, 'linux');
 assert.equal(process.arch, 'x64');
-const { inside } = await import(${JSON.stringify(new URL('../ticket_scratch/logic.ts', import.meta.url).href)});
+const { path_is_within } = await import(${JSON.stringify(new URL('../../core/path_containment.ts', import.meta.url).href)});
 const system_directories = new Set(${JSON.stringify(SYSTEM_LIBRARY_DIRECTORIES)}
   .filter((path) => existsSync(path)).map((path) => realpathSync(path)));
 const glibc = new Set(${JSON.stringify(GLIBC_LIBRARIES)});
@@ -45,17 +45,17 @@ const loaded = () => [...new Set(readFileSync('/proc/self/maps', 'utf8').split('
 // All trusted host-only operations precede this baseline. No candidate module ran yet.
 const baseline = new Set(loaded());
 const worker = realpathSync(join(root, 'server/conversation/usage/usageWorker.ts'));
-assert(inside(worker, root) && statSync(worker).isFile(), 'usage worker must be a candidate regular file');
+assert(path_is_within(root, worker) && statSync(worker).isFile(), 'usage worker must be a candidate regular file');
 const require = createRequire(join(root, 'server/package.json'));
 const package_path = realpathSync(join(root, 'server/package.json'));
-assert(inside(package_path, root), 'server package metadata resolves outside candidate');
+assert(path_is_within(root, package_path), 'server package metadata resolves outside candidate');
 const dependencies = JSON.parse(readFileSync(package_path, 'utf8')).dependencies;
 assert(dependencies && typeof dependencies === 'object');
 const package_paths = {}, modules = new Map();
 for (const name of Object.keys(dependencies).sort()) {
   const url = import.meta.resolve(name, pathToFileURL(package_path).href);
   const path = realpathSync(fileURLToPath(url));
-  assert(inside(path, root), 'package resolves outside candidate: ' + name);
+  assert(path_is_within(root, path), 'package resolves outside candidate: ' + name);
   package_paths[name] = path;
   modules.set(name, await import(pathToFileURL(path).href));
 }
@@ -79,7 +79,7 @@ try {
   assert.equal(flock(descriptor, 8), 0);
 } finally { closeSync(descriptor); unlinkSync(lock_path); }
 for (const path of Object.keys(require.cache))
-  assert(inside(realpathSync(path), root), 'module loads outside candidate: ' + path);
+  assert(path_is_within(root, realpathSync(path)), 'module loads outside candidate: ' + path);
 const usage = new Worker(pathToFileURL(worker), {
   execArgv: [], workerData: { stateDir: state, injectedRates: true, injectedClock: true },
 });
@@ -100,11 +100,11 @@ try {
 const loaded_libraries = loaded();
 for (const path of loaded_libraries) {
   // Native addons are candidate payloads, never glibc or a permitted host baseline addon.
-  if (path.endsWith('.node')) assert(inside(path, root), 'addon loaded outside candidate: ' + path);
-  else assert(baseline.has(path) || inside(path, root) || (system_directories.has(dirname(path)) && glibc.has(basename(path))),
+  if (path.endsWith('.node')) assert(path_is_within(root, path), 'addon loaded outside candidate: ' + path);
+  else assert(baseline.has(path) || path_is_within(root, path) || (system_directories.has(dirname(path)) && glibc.has(basename(path))),
     'new library loaded outside candidate: ' + path);
 }
-assert(loaded_libraries.some((path) => path.endsWith('.node') && inside(path, root)),
+assert(loaded_libraries.some((path) => path.endsWith('.node') && path_is_within(root, path)),
   'native addon loads are absent from the library map');
 console.log(JSON.stringify({
   node_version: process.versions.node, native: 'passed', loaded_libraries, package_paths,
