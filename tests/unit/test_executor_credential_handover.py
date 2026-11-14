@@ -6,6 +6,7 @@ Use existing ASGI ingress and real owner services. No socket or browser host sta
 from __future__ import annotations
 
 import asyncio
+import sys
 from contextlib import closing
 from pathlib import Path
 from types import SimpleNamespace
@@ -26,6 +27,8 @@ from planner.executor.app_transport import build_executor_router
 from planner.executor.credential_file import read_credential
 from planner.executor.mac_http import MacHttpClient
 from planner.executor.vps_transport import VpsExecutor
+from planner.machines.contracts import ORIGINAL_MAC_MACHINE_ID
+from planner.machines.executor_credentials import executor_platform
 
 
 def test_automatic_handover_persists_secret_and_refuses_old_authority(tmp_path: Path) -> None:
@@ -83,6 +86,9 @@ def test_automatic_handover_persists_secret_and_refuses_old_authority(tmp_path: 
             assert (await http.get(
                 "/api/executor/update", headers={**headers, **client.authentication_headers()}
             )).status_code == 200
+            assert client.authentication_headers()["X-Panels-Executor-Platform"] == sys.platform
+            with closing(connect(database)) as conn:
+                assert executor_platform(conn, ORIGINAL_MAC_MACHINE_ID) == sys.platform
             assert (await http.get("/api/executor/update", headers=headers)).status_code == 403
             # Retry loads its durable copy and never asks the one-time endpoint again.
             await client.ensure_credential(path)

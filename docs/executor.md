@@ -4,7 +4,7 @@ Extra machines let Workers use files, apps, provider sign-ins, and permissions a
 
 Several extra machines can pull work from one home. Each Ticket names its destination. The home runs its own Workers directly. An extra machine receives only work for its destination. If that machine is away, its work waits. There is no fallback destination. The Chief and Managers stay at home.
 
-The current extra-machine runtime is the Mac executor. Additional platforms and enrollment screens remain outside this system.
+Mac arm64 and Linux x86_64 executors use the same pull link and Worker supervisor. Enrollment screens remain outside this system.
 
 ## The pieces
 
@@ -77,9 +77,10 @@ Each executor uses the shared Worker supervisor. It records exact process owners
 
 A machine update closes its admission, confirms exact child retirement, and saves pending output before replacement. Its replacement retains journal and outbox custody until the home accepts replay.
 
-The signed Mac launcher and fixed supervisor select a versioned runtime. The data folder retains journals, outboxes, credentials, files, and logs across updates. Update offers and progress belong to the requesting destination. Content-addressed archives can share storage without sharing update authority.
+The signed Mac launcher and the Linux systemd user service start a fixed supervisor that selects a versioned runtime. The data folder retains journals, outboxes, credentials, files, and logs across updates. Update offers and progress belong to the requesting destination. Each executor reports its platform with authenticated requests. Update offers select an archive for that platform and the executor role. Content-addressed archives can share storage without sharing update authority. Linux archive downloads start only for registered Linux machines. Their failures do not block home or Mac updates. The home remembers rejected archive bytes for its process lifetime. The home retains two Linux archives.
 
-The home and executor use protocol 26. An incompatible executor receives refusal. Before the original credential handover, its existing authority still permits its recovery update. After handover, updates require its credential too. See the [Mac installation runbook](../ops/mac-executor/installation.md).
+
+The home and executor use protocol 26. An incompatible executor receives refusal. Before the original credential handover, its existing authority still permits its recovery update. After handover, updates require its credential too. See the [Mac installation runbook](../ops/mac-executor/installation.md) or [Linux installation runbook](../ops/linux-executor/installation.md).
 
 The stall checker watches outstanding waits. Each machine's presence clock controls waits that depend on that machine. A sleeping machine does not accrue another machine's awake time. Home-only waits use elapsed home time. The separate watchdog can alarm when the server's own checker stops.
 
@@ -100,6 +101,8 @@ Leases carry one machine's bounded state and update offer. Command polls carry a
 - `src/planner/conversation/start_admission/`: automatic-start capacity and pacing.
 - `src/planner/conversation/deploy_interruptions/`: retained adoption and interrupted-turn recovery.
 - `src/planner/stalls/`: wait checks and watchdog.
-- `src/planner/environments/mac_executor.py` and `environments/mac_app/`: installation and signed launcher.
+- `src/planner/environments/mac_executor.py` and `environments/mac_app/`: Mac installation and signed launcher.
+- `src/planner/environments/linux_executor.py`: Linux installation and systemd user service.
+- `scripts/build_linux_executor.py`: Linux executor archive and native startup proof.
 
-_Last verified: 2026-11-13._
+_Last verified: 2026-11-14._

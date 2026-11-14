@@ -164,3 +164,29 @@ def test_migration_with_a_dangling_reference_rolls_back(
         assert list(conn.iterdump()) == before
     finally:
         conn.close()
+
+
+def test_linux_executor_upgrade_preserves_credential_after_merged_home_head(tmp_path: Path) -> None:
+    """A sibling migration head blocks startup on the newly merged home schema."""
+    from planner.machines.contracts import ORIGINAL_MAC_MACHINE_ID
+
+    path = str(tmp_path / "merged-home.db")
+    with db_module.schema_migration_transaction(path) as migration:
+        db_module.upgrade_schema_connection(migration, "merge_home_recap")
+    conn = connect(path)
+    try:
+        conn.execute(
+            "INSERT INTO machine_executor_credentials(machine_id,credential_sha256) VALUES(?,?) "
+            "ON CONFLICT(machine_id) DO UPDATE SET credential_sha256=excluded.credential_sha256",
+            (ORIGINAL_MAC_MACHINE_ID, "a" * 64),
+        )
+        conn.commit()
+        create_schema(conn)
+        assert _revision(conn) == "linux_executor_platform"
+        assert tuple(conn.execute(
+            "SELECT credential_sha256,platform FROM machine_executor_credentials "
+            "WHERE machine_id=?",
+            (ORIGINAL_MAC_MACHINE_ID,),
+        ).fetchone()) == ("a" * 64, "darwin")
+    finally:
+        conn.close()

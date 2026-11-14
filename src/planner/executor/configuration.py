@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import re
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Final
@@ -140,6 +141,7 @@ EXECUTOR_CHILD_ID_ENV: Final = "PLAN_EXECUTOR_CHILD_ID"
 EXECUTOR_CAPABILITY_ENV: Final = "PLAN_EXECUTOR_CAPABILITY"
 NATIVE_SKILLS_DIR_ENV: Final = "PLAN_NATIVE_SKILLS_DIR"
 EXECUTOR_ID_HEADER: Final = "X-Panels-Executor-ID"
+EXECUTOR_PLATFORM_HEADER: Final = "X-Panels-Executor-Platform"
 EXECUTOR_CREDENTIAL_HEADER: Final = "X-Panels-Executor-Credential"
 EXECUTOR_CREDENTIAL_PATH: Final = "/api/executor/credential"
 EXECUTOR_INCARNATION_HEADER: Final = "X-Panels-Executor-Incarnation"
@@ -195,14 +197,19 @@ class ExecutorPaths:
         return self.run / EXECUTOR_IPC_NAME
 
 
+def default_executor_root() -> Path:
+    if sys.platform == "linux":
+        return (
+            Path(os.environ.get("XDG_DATA_HOME", str(Path.home() / ".local/share")))
+            / "panels/executor"
+        )
+    return Path.home() / "Library/Application Support/Panels/executor"
+
+
 def executor_paths() -> ExecutorPaths:
     """Resolve paths without creating, reading, or migrating the spool."""
     configured = os.environ.get(EXECUTOR_ROOT_ENV, "").strip()
-    root = (
-        Path(configured).expanduser()
-        if configured
-        else (Path.home() / "Library" / "Application Support" / "Panels" / "executor")
-    )
+    root = Path(configured).expanduser() if configured else default_executor_root()
     return ExecutorPaths(root=root.resolve())
 
 

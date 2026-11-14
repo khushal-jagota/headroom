@@ -98,13 +98,18 @@ def runtime_archive(tmp_path: Path, *, unsafe: bool = False) -> tuple[Path, str,
     return archive, hashlib.sha256(data).hexdigest(), len(data)
 
 
+@pytest.mark.parametrize("linux", [False, True])
 def test_runtime_handoff_preserves_external_cli_environment(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    linux: bool,
 ) -> None:
     root = tmp_path / "runtime"
-    atomic_record(
-        root / "mac-runtime.json", asdict(MacRuntimeManifest(1, "b" * 40, "darwin", "arm64"))
-    )
+    manifest = asdict(MacRuntimeManifest(1, "b" * 40, "darwin", "arm64"))
+    if linux:
+        manifest.update(platform="linux", architecture="x86_64", role="executor")
+    atomic_record(root / "mac-runtime.json", manifest)
+    monkeypatch.setattr(runtime_bootstrap, "_linux_runtime", lambda: linux)
     seen: list[dict[str, str]] = []
 
     def spawn(*args: object, **kwargs: object) -> subprocess.Popen[bytes]:
@@ -117,7 +122,12 @@ def test_runtime_handoff_preserves_external_cli_environment(
     arguments = ["executor", "run", "--application-revision", "a" * 40]
     runtime_bootstrap._launch(arguments, str(root), "b" * 40)
     assert seen[-1]["PLAN_CLAUDE_EXECUTABLE"] == "/operator/claude"
-    assert seen[-1]["PATH"] == f"{root}/python/bin:/owner/.local/bin:/usr/bin"
+    bins = (
+        f"{root}/.venv/bin:{root}/agent_backends/node_modules/.bin"
+        if linux else f"{root}/python/bin"
+    )
+    assert seen[-1]["PATH"] == f"{bins}:/owner/.local/bin:/usr/bin"
+    assert seen[-1]["PLAN_APP_SHA"] == "b" * 40
     monkeypatch.delenv("PLAN_CLAUDE_EXECUTABLE")
     runtime_bootstrap._launch(arguments, str(root), "b" * 40)
     assert "PLAN_CLAUDE_EXECUTABLE" not in seen[-1]
@@ -696,6 +706,9 @@ def test_prefetch_runs_beside_work_and_activation_reuses_its_verified_runtime(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Risk: prefetch stops work, blocks the poll, loops on bad bytes, or activation refetches."""
+    from planner.environments.mac_runtime import read_runtime_revision
+
+    monkeypatch.setattr("planner.executor.mac_updates.read_runtime_revision", read_runtime_revision)
 
     async def exercise() -> None:
         runner, _, _, _ = native_registry

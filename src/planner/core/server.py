@@ -702,12 +702,32 @@ def create_app(
     app.state.update_barrier = UpdateBarrier(data_directory / "update-barrier.json")
     import_legacy_request(update_attempts, data_directory, config.app_sha)
     update_provider = GitHubUpdateProvider.configured() if service_unit is not None else None
+    def executor_update_platform(machine_id: str) -> str:
+        from planner.machines.executor_credentials import executor_platform
+
+        connection = conn_factory()
+        try:
+            return executor_platform(connection, machine_id)
+        finally:
+            connection.close()
+
+    def linux_executor_registered() -> bool:
+        connection = conn_factory()
+        try:
+            return connection.execute(
+                "SELECT 1 FROM machine_executor_credentials WHERE platform='linux' LIMIT 1"
+            ).fetchone() is not None
+        finally:
+            connection.close()
+
     app.state.mac_updates = MacUpdateService(
         data_directory / "mac-updates",
         update_attempts,
         update_provider,
         config.app_sha,
         ready_release=lambda: app.state.updates.ready_release(),
+        platform_for=executor_update_platform,
+        linux_registered=linux_executor_registered,
     )
     app.state.updates = UpdateService(
         update_provider,
@@ -809,7 +829,13 @@ def create_app(
             if destination not in (HOME_MACHINE_ID, ORIGINAL_MAC_MACHINE_ID):
                 raise PlannerError(ErrorCode.not_found, "Unknown executor destination")
             return {"mode": "local", "connection_state": "disconnected"}
-        return _with_native_build_1_fields({"mode": "remote", **endpoint.health_payload()})
+        payload = {"mode": "remote", **endpoint.health_payload()}
+        if destination == ORIGINAL_MAC_MACHINE_ID:
+            return _with_native_build_1_fields(payload)
+        return {
+            **payload,
+            "connection_state": "ready" if payload.get("presence") == "present" else "disconnected",
+        }
 
     @app.get("/api/health")
     async def health(expected_sha: str | None = None) -> JSONResponse:

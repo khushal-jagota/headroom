@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from contextlib import closing
+from dataclasses import asdict
 from pathlib import Path
 from unittest.mock import AsyncMock
 
@@ -18,7 +19,8 @@ from planner.core.clock import build_clock
 from planner.core.config import load_config
 from planner.core.db import connect, create_schema
 from planner.core.server import create_app
-from planner.execution_identity import ChildReference
+from planner.execution_configuration import PROTOCOL_VERSION, SPOOL_FORMAT_VERSION
+from planner.execution_identity import ChildReference, ExecutorIdentity
 from planner.executor.registry import VpsExecutorRegistry
 from planner.machines.contracts import HOME_MACHINE_ID, ORIGINAL_MAC_MACHINE_ID
 from planner.worker_supervision.contracts import CleanupResult
@@ -135,14 +137,34 @@ def test_server_loads_both_retained_owners_before_adoption_and_dispatches_cleanu
         registry = app.state.executor_registry
         first = registry.get(ORIGINAL_MAC_MACHINE_ID)
         second = registry.get(EXTRA)
+        original_identity = asdict(ExecutorIdentity(
+            PROTOCOL_VERSION, "test", SPOOL_FORMAT_VERSION, "00000000-0000-0000-0000-000000000000",
+        ))
+        extra_identity = asdict(ExecutorIdentity(
+            PROTOCOL_VERSION, "test", SPOOL_FORMAT_VERSION, "00000000-0000-0000-0000-000000000001",
+        ))
         monkeypatch.setattr(
-            first, "health_payload", lambda: {"presence": "present", "identity": None},
+            first, "health_payload", lambda: {"presence": "present", "identity": original_identity},
         )
         monkeypatch.setattr(
             second, "health_payload", lambda: {"presence": "asleep", "identity": None},
         )
         assert client.get("/api/executor/health").json()["presence"] == "present"
         assert client.get(f"/api/executor/health?machine_id={EXTRA}").json()["presence"] == "asleep"
+        # Legacy Mac consumers need the derived generation. Scoped extra machines
+        # must expose their exact protocol identity, including a zero generation.
+        legacy = client.get("/api/executor/health").json()
+        assert legacy["identity"] == {**original_identity, "connection_generation": 1}
+        assert client.get(
+            f"/api/executor/health?machine_id={ORIGINAL_MAC_MACHINE_ID}"
+        ).json()["identity"] == legacy["identity"]
+        monkeypatch.setattr(
+            second, "health_payload", lambda: {"presence": "present", "identity": extra_identity},
+        )
+        scoped = client.get(f"/api/executor/health?machine_id={EXTRA}").json()
+        assert scoped["connection_state"] == "ready"
+        assert scoped["identity"] == extra_identity
+        assert scoped["identity"]["connection_generation"] == 0
         first.runs.recheck_cleanup = AsyncMock(return_value=CleanupResult(True, "first"))
         second.runs.recheck_cleanup = AsyncMock(return_value=CleanupResult(True, "second"))
         callback = app.state.conversation.system._worker_cleanup_recheck

@@ -14,6 +14,7 @@ class RuntimeTarget:
 
 
 LINUX_HOME = RuntimeTarget("linux", "x86_64", "home")
+LINUX_EXECUTOR = RuntimeTarget("linux", "x86_64", "executor")
 MAC_HOME = RuntimeTarget("darwin", "arm64", "home")
 MAC_EXECUTOR = RuntimeTarget("darwin", "arm64", "executor")
 

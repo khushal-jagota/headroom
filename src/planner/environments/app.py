@@ -22,6 +22,7 @@ from planner.environments.runtime_contracts import (
     runtime_bytes_digest,
 )
 from planner.platform_runtime.contracts import RuntimeRequirements
+from planner.platform_runtime.targets import RuntimeTarget, require_runtime_target
 
 APP_FORMAT = "panels-app-v1"
 FULL_SHA_PATTERN = r"[0-9a-f]{40}"
@@ -61,6 +62,7 @@ def validate_app_manifest(
     expected_sha: str | None = None,
     require_runtime: bool = False,
     verify_artifact_digest: bool = True,
+    expected_target: RuntimeTarget | None = None,
 ) -> AppManifest:
     """Validate one app's manifest; skip the whole-tree digest only when a checksum covers it."""
     manifest_input = path.expanduser()
@@ -70,6 +72,23 @@ def validate_app_manifest(
     if not manifest_path.is_file():
         raise AppValidationError(f"app manifest is missing: {manifest_path}")
     app_root = manifest_path.parent
+    marker = app_root / "mac-runtime.json"
+    if marker.exists():
+        target_value = json.loads(marker.read_text())
+        if expected_target is None:
+            if target_value.get("role") == "executor":
+                raise AppValidationError("an executor artifact cannot replace a home")
+        else:
+            require_runtime_target(
+                RuntimeTarget(
+                    target_value.get("platform"),
+                    target_value.get("architecture"),
+                    target_value.get("role"),
+                ),
+                expected_target,
+            )
+    elif expected_target is not None:
+        raise AppValidationError("executor artifact lacks its target manifest")
     if (app_root / ".git").exists():
         raise AppValidationError("app root must not contain Git metadata")
     try:
@@ -88,9 +107,10 @@ def validate_app_manifest(
         raise AppValidationError("app manifest SHA does not match expected SHA")
     if not isinstance(source_digest, str) or fullmatch(HEX_DIGEST_PATTERN, source_digest) is None:
         raise AppValidationError("app manifest has an invalid source digest")
-    if not isinstance(artifact_digest, str) or fullmatch(
-        HEX_DIGEST_PATTERN, artifact_digest
-    ) is None:
+    if (
+        not isinstance(artifact_digest, str)
+        or fullmatch(HEX_DIGEST_PATTERN, artifact_digest) is None
+    ):
         raise AppValidationError("app manifest has an invalid artifact digest")
     artifact_matches = not verify_artifact_digest or artifact_digest == digest_app_artifact(
         app_root
@@ -311,9 +331,17 @@ def _install_app_dependencies(app_root: Path) -> None:
         subprocess.run(["npm", "ci", "--prefix", str(app_root / "web")], check=True)
     if (app_root / "agent_backends/package.json").is_file():
         subprocess.run(
-            ["npm", "install", "--prefix", str(app_root / "agent_backends"),
-             "--package-lock=false", "--save=false", "@anthropic-ai/claude-code@latest",
-             "@openai/codex@latest"], check=True,
+            [
+                "npm",
+                "install",
+                "--prefix",
+                str(app_root / "agent_backends"),
+                "--package-lock=false",
+                "--save=false",
+                "@anthropic-ai/claude-code@latest",
+                "@openai/codex@latest",
+            ],
+            check=True,
         )
     if (app_root / "web" / "package.json").is_file():
         subprocess.run(["npm", "run", "build", "--prefix", str(app_root / "web")], check=True)

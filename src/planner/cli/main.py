@@ -965,7 +965,9 @@ machine.add_command(machine_join_command)
 @json_option
 def machine_register(name: str, as_json: bool) -> None:
     """Register an extra machine and print its credential once."""
-    data = http.send("POST", "/api/machines", as_json=as_json, json_body={"name": name})
+    data = http.send(
+        "POST", "/api/machines", as_json=as_json, json_body={"name": name}
+    )
     http.emit(data, True, "")
 
 

@@ -14,6 +14,7 @@ import contextlib
 import json
 import os
 import re
+import sys
 from collections.abc import Callable
 from dataclasses import asdict, replace
 from pathlib import Path
@@ -22,7 +23,10 @@ from uuid import UUID
 
 import aiohttp
 
-from planner.environments.mac_runtime import extract_runtime, read_runtime_revision
+if sys.platform == "linux":
+    from planner.environments.linux_executor_runtime import extract_runtime, read_runtime_revision
+else:
+    from planner.environments.mac_runtime import extract_runtime, read_runtime_revision
 from planner.execution_identity import ExecutorIdentity
 from planner.executor.configuration import EXECUTOR_ID_HEADER, ExecutorPaths
 from planner.executor.mac_presence import MacPresence

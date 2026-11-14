@@ -34,22 +34,40 @@ def authenticate_executor(
     credential: str | None,
     configured_original_id: str | None,
     authenticated_incarnation: str | None = None,
+    *,
+    authenticated_platform: str | None = None,
 ) -> str:
     machine_id = (
-        ORIGINAL_MAC_MACHINE_ID if configured_original_id and claimed_id == configured_original_id
+        ORIGINAL_MAC_MACHINE_ID
+        if configured_original_id and claimed_id == configured_original_id
         else claimed_id
     )
     row = conn.execute(
-        "SELECT credential_sha256,legacy_closed_at_ms FROM machine_executor_credentials "
-        "WHERE machine_id=?", (machine_id,),
+        "SELECT credential_sha256,legacy_closed_at_ms,platform FROM machine_executor_credentials "
+        "WHERE machine_id=?",
+        (machine_id,),
     ).fetchone()
     if row is None or machine_id == HOME_MACHINE_ID:
         raise _forbidden()
     if credential is not None:
         if row[0] is None or not hmac.compare_digest(str(row[0]), _digest(credential)):
             raise _forbidden()
+        if authenticated_platform is not None and authenticated_platform not in {"linux", "darwin"}:
+            raise PlannerError(ErrorCode.validation, "Executor platform must be darwin or linux")
         if row[1] is None:
             _confirm_original_credential(conn, machine_id, credential, authenticated_incarnation)
+        if authenticated_platform is not None and authenticated_platform != row[2]:
+            with conn:
+                conn.execute(
+                    "UPDATE machine_executor_credentials SET platform=? "
+                    "WHERE machine_id=? AND credential_sha256=? AND platform<>?",
+                    (
+                        authenticated_platform,
+                        machine_id,
+                        _digest(credential),
+                        authenticated_platform,
+                    ),
+                )
         return machine_id
     # This is exactly the pre-existing original-device authority, not a fallback for
     # a wrong secret. First credential authentication closes it durably.
@@ -155,7 +173,11 @@ def issue_original_credential(
     return grant
 
 
-def register_machine(conn: sqlite3.Connection, name: str) -> MachineCredentialGrant:
+def register_machine(
+    conn: sqlite3.Connection, name: str, platform: str = "darwin"
+) -> MachineCredentialGrant:
+    if not isinstance(platform, str) or platform not in {"darwin", "linux"}:
+        raise PlannerError(ErrorCode.validation, "Executor platform must be darwin or linux")
     name = name.strip()
     if not name or len(name) > 80:
         raise PlannerError(ErrorCode.validation, "Machine name must contain 1 to 80 characters")
@@ -168,7 +190,8 @@ def register_machine(conn: sqlite3.Connection, name: str) -> MachineCredentialGr
             (machine_id, name),
         )
         conn.execute(
-            "INSERT INTO machine_executor_credentials(machine_id) VALUES(?)", (machine_id,),
+            "INSERT INTO machine_executor_credentials(machine_id,platform) VALUES(?,?)",
+            (machine_id, platform),
         )
         grant = _issue(conn, machine_id, None)
         conn.commit()
@@ -192,3 +215,12 @@ def replace_credential(conn: sqlite3.Connection, machine_id: str) -> MachineCred
     except BaseException:
         conn.rollback()
         raise
+
+
+def executor_platform(conn: sqlite3.Connection, machine_id: str) -> str:
+    row = conn.execute(
+        "SELECT platform FROM machine_executor_credentials WHERE machine_id=?", (machine_id,),
+    ).fetchone()
+    if row is None:
+        raise PlannerError(ErrorCode.validation, "Machine has no executor credential")
+    return str(row[0])

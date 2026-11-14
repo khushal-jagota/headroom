@@ -16,7 +16,7 @@ from planner.executor.protocol import IpcOperation, QuiesceRequest, type_adapter
 
 @click.group("executor")
 def executor_group() -> None:
-    """Run the native Mac executor through the app HTTPS service."""
+    """Run an extra machine executor through the home HTTPS service."""
 
 
 @executor_group.command("run")

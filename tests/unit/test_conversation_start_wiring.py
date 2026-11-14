@@ -42,6 +42,7 @@ from planner.conversation.workspace_admission import WorkspaceAdmission
 from planner.core.contracts import Principal, PrincipalKind
 from planner.core.errors import PlannerError
 from planner.machines.contracts import ORIGINAL_MAC_MACHINE_ID
+from planner.machines.executor_credentials import register_machine
 from planner.projects.data import create_project, update_project
 from planner.runtime.conversation_start import (
     new_conversation_id,
@@ -467,26 +468,56 @@ def test_worker_resolve_preserves_disabled_history_but_rejects_new_disabled_over
     assert read_ticket(tmp_db, ticket.id) == ticket
 
 
-def test_mac_project_ticket_starts_in_its_mac_workspace_project_folder(
-    tmp_db: Connection, tmp_path: Path, ticket: Ticket
+def test_registered_linux_project_ticket_starts_in_its_executor_workspace_project_folder(
+    tmp_db: Connection, tmp_path: Path, ticket: Ticket,
 ) -> None:
+    from uuid import uuid4
+
+    from planner.execution_configuration import PROTOCOL_VERSION, SPOOL_FORMAT_VERSION
+    from planner.execution_identity import ExecutorIdentity
+    from planner.executor.protocol import LeaseRequest
+    from planner.executor.vps_presence_store import accept_lease_in_transaction
     from planner.tickets.api import _conversation_start_values_json
+
+    destination = register_machine(tmp_db, "Linux server", "linux").machine_id
+    identity = ExecutorIdentity(PROTOCOL_VERSION, "test", SPOOL_FORMAT_VERSION, str(uuid4()))
+    with tmp_db:
+        accept_lease_in_transaction(
+            tmp_db, LeaseRequest(identity, 123, 1000, 0, None, (), False, (), False),
+            1000, destination,
+        )
 
     server_checkout = tmp_path / "vps-checkout"
     server_checkout.mkdir()
-    project = create_project(tmp_db, name="Mac project", folder_path=server_checkout, now=1)
+    project = create_project(tmp_db, name="Linux project", folder_path=server_checkout, now=1)
     tmp_db.execute(
         "UPDATE tickets SET project_id = ?, locale = 'macos', machine_id = ? WHERE id = ?",
-        (project.id, ORIGINAL_MAC_MACHINE_ID, ticket.id),
+        (project.id, destination, ticket.id),
     )
     ticket = read_ticket(tmp_db, ticket.id)
     values = worker_resolve(tmp_db, ticket)
-    # The server's Project path stays on the server. The Mac gets its own Project folder.
+    # The home checkout stays at home. Each executor resolves its own Project folder.
     assert values.workspace_folder == Path("/projects") / project.id
     assert values.workspace_path_policy is WorkspacePathPolicy.executor_default
     assert _conversation_start_values_json(values)["workspace_folder"] is None
     system = InMemoryConversationSystem()
-    conversation_id = asyncio.run(_started(system, tmp_db, ticket, values, now=3))
+    watching = _LinkWatchingConversationSystem(system, tmp_db, ticket.id)
+    delivered = asyncio.run(send_to_ticket_conversation(
+        watching, tmp_db, ticket.id, text_message_content("Start the Worker"),
+        conversation_id=None, sender_label="loop", now=3,
+    ))
+    assert isinstance(delivered.fate, PromptDeliveryStarted)
+    conversation_id = delivered.conversation_id
+    assert conversation_id is not None
+    assert len(watching.start_requests) == 1
+    request = watching.start_requests[0]
+    assert request.workspace_folder == Path("/projects") / project.id
+    assert request.workspace_path_policy is WorkspacePathPolicy.executor_default
+    assert request.role_materials is not None
+    identity_environment = dict(request.role_materials.identity_environment_variables)
+    assert identity_environment["PLAN_TICKET_ID"] == ticket.id
+    assert f"Its fixed destination is {destination}." in request.role_materials.role_text
+    assert read_ticket(tmp_db, ticket.id).machine_id == destination
     row = tmp_db.execute(
         "SELECT workspace_folder, workspace_path_policy FROM conversations "
         "WHERE conversation_id = ?",

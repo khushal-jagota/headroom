@@ -44,6 +44,7 @@ from planner.executor.configuration import (
     EXECUTOR_ITEMS_PATH,
     EXECUTOR_LEASE_PATH,
     EXECUTOR_LIVE_PATH,
+    EXECUTOR_PLATFORM_HEADER,
     EXECUTOR_PROTOCOL_HEADER,
     EXECUTOR_READS_PATH,
     EXECUTOR_UPLOAD_PATH,
@@ -186,9 +187,12 @@ def build_executor_router() -> APIRouter:
     def authenticate(connection: HTTPConnection, claimed_id: str) -> str:
         with runtime_connection(database_path(connection)) as conn:
             return executor_credentials.authenticate_executor(
-                conn, claimed_id, connection.headers.get(EXECUTOR_CREDENTIAL_HEADER),
+                conn,
+                claimed_id,
+                connection.headers.get(EXECUTOR_CREDENTIAL_HEADER),
                 connection.app.state.executor_id,
                 connection.headers.get(EXECUTOR_INCARNATION_HEADER),
+                authenticated_platform=connection.headers.get(EXECUTOR_PLATFORM_HEADER),
             )
 
     async def authenticated_machine(connection: HTTPConnection) -> str:
@@ -225,7 +229,8 @@ def build_executor_router() -> APIRouter:
             raise HTTPException(403, error.message) from error
         registry = getattr(request.app.state, "executor_registry", None)
         endpoint = (
-            await registry.ensure(machine_id) if registry is not None
+            await registry.ensure(machine_id)
+            if registry is not None
             else getattr(request.app.state, "executor_endpoint", None)
         )
         if isinstance(endpoint, VpsExecutor):
@@ -233,7 +238,7 @@ def build_executor_router() -> APIRouter:
         service = getattr(request.app.state, "mac_updates", None)
         if not isinstance(service, MacUpdateService):
             raise HTTPException(503, "Mac update service unavailable")
-        return service.for_machine(machine_id), endpoint
+        return await run_on_worker_thread(service.for_machine, machine_id), endpoint
 
     @router.post(EXECUTOR_CREDENTIAL_PATH)
     async def original_credential(request: Request) -> Response:
