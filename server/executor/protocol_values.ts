@@ -1,6 +1,11 @@
 /** The current executor schema grammar, source validation modes and value serializer. */
 import { pure_posix_path } from '../core/python_path.ts';
-import { JsonNumber, numeric_value, stringify_pydantic_json } from '../core/http/numeric_json.ts';
+import {
+  is_json_record,
+  JsonNumber,
+  numeric_value,
+  stringify_pydantic_json,
+} from '../core/http/numeric_json.ts';
 import { strip_unicode_space } from '../core/whitespace.ts';
 import { WIRE_SCHEMA } from './wire.generated.ts';
 import type { JsonValue, WireRootName, WireTypes } from './wire.generated.ts';
@@ -63,12 +68,7 @@ type Context = {
   revalidate: boolean;
 };
 const record = (v: unknown): v is Record<string, unknown> =>
-  v !== null &&
-  typeof v === 'object' &&
-  !Array.isArray(v) &&
-  !(v instanceof JsonNumber) &&
-  !(v instanceof Uint8Array) &&
-  !class_name(v);
+  is_json_record(v) && !(v instanceof Uint8Array) && !class_name(v);
 function dereference(schema: Schema): Schema {
   return schema.$ref ? definitions[schema.$ref.slice('#/$defs/'.length)]! : schema;
 }

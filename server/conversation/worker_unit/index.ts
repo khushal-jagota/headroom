@@ -16,7 +16,7 @@ import {
 } from 'node:fs';
 import { homedir } from 'node:os';
 import { randomUUID } from 'node:crypto';
-import { relative } from 'node:path';
+import { path_is_within } from '../../core/path_containment.ts';
 import type { ChildProcess } from 'node:child_process';
 import type { OwnedChildProcesses, OwnedUnitControl } from '../../lifecycle/contracts.ts';
 import { control, control_retained } from './control.ts';
@@ -43,8 +43,7 @@ function disk_directory(path: string): void {
     const mount = before
       .split(' ')[4]
       .replace(/\\([0-7]{3})/g, (_, octal: string) => String.fromCharCode(parseInt(octal, 8)));
-    const descendant = relative(mount, resolved);
-    if (descendant === '' || (!descendant.startsWith('../') && descendant !== '..')) {
+    if (path_is_within(mount, resolved)) {
       mounts.push({ depth: mount.split('/').filter(Boolean).length, kind: after.split(' ')[0] });
     }
   }

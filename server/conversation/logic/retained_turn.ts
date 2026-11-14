@@ -1,5 +1,5 @@
 /** What a VPS restart keeps of an independently hosted Mac turn. */
-import type { ChildReference, TurnToken } from '../backends/contracts.ts';
+import type { TurnToken } from '../backends/contracts.ts';
 import type { UserInputQuestion } from '../events.ts';
 import type { OpenRunTurn, RunningTurn } from '../record/contracts.ts';
 import {
@@ -13,15 +13,6 @@ import type {
   LifecycleOperation,
   LifecycleStatus,
 } from '../record/lifecycle.ts';
-
-export function same_reference(left: ChildReference | null, right: ChildReference): boolean {
-  return (
-    left !== null &&
-    left.executor_incarnation === right.executor_incarnation &&
-    left.child_id === right.child_id &&
-    left.conversation_id === right.conversation_id
-  );
-}
 
 export const LIVE_FACT_STATUSES: ReadonlySet<LifecycleStatus> = new Set([
   S.intent,

@@ -3,7 +3,8 @@ import {
   CLAUDE_STEER_ADMISSION_TIMEOUT_SECONDS,
   CLAUDE_STEER_SETTLEMENT_TIMEOUT_SECONDS,
 } from './configuration.ts';
-import { Pending, bounded, object, raw_user_message_uuids } from './wire.ts';
+import { Pending, object, raw_user_message_uuids } from './wire.ts';
+import { observe_promise } from '../../../core/promise_observer.ts';
 
 interface ObservedUserMessage {
   admission: Pending<boolean | null>;
@@ -85,11 +86,11 @@ export class ClaudeReceipts {
     const observed = this.user_messages.get(uuid);
     if (!observed) return null;
     try {
-      const result = await bounded(
+      const result = await observe_promise(
         observed.admission.promise,
-        CLAUDE_STEER_ADMISSION_TIMEOUT_SECONDS,
+        CLAUDE_STEER_ADMISSION_TIMEOUT_SECONDS * 1000,
       );
-      return result.timed_out || observed.conflicting_admission ? null : result.value;
+      return !result.completed || observed.conflicting_admission ? null : result.value;
     } finally {
       observed.admission_consumed = true;
       this.retire();
@@ -109,21 +110,21 @@ export class ClaudeReceipts {
     const observed = this.user_messages.get(uuid);
     if (!observed) return;
     if (!observed.admission.settled) {
-      const admission = await bounded(
+      const admission = await observe_promise(
         observed.admission.promise,
-        CLAUDE_STEER_ADMISSION_TIMEOUT_SECONDS,
+        CLAUDE_STEER_ADMISSION_TIMEOUT_SECONDS * 1000,
       );
-      if (admission.timed_out) {
+      if (!admission.completed) {
         observed.settled.resolve();
         return;
       }
     }
     const drained_before_wait = observed.started;
-    const settled = await bounded(
+    const settled = await observe_promise(
       observed.settled.promise,
-      CLAUDE_STEER_SETTLEMENT_TIMEOUT_SECONDS,
+      CLAUDE_STEER_SETTLEMENT_TIMEOUT_SECONDS * 1000,
     );
-    if (!settled.timed_out) return;
+    if (settled.completed) return;
     if (drained_before_wait || !observed.started) {
       observed.settled.resolve();
       return;

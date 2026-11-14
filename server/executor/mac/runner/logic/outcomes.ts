@@ -16,7 +16,6 @@ import { python_repr } from '../../../protocol_errors.ts';
 import type { WireInput } from '../../../protocol.ts';
 import type {
   ChildCommand,
-  ChildReference,
   CommandDisposition,
   CommandOutcome,
   CommandResult,
@@ -38,13 +37,6 @@ const refusals = [
   [PromptWriteRefused, 'PromptWriteRefused'],
 ] as const;
 
-export function same_reference(left: ChildReference, right: ChildReference): boolean {
-  return (
-    left.executor_incarnation === right.executor_incarnation &&
-    left.child_id === right.child_id &&
-    left.conversation_id === right.conversation_id
-  );
-}
 /** The codec supplies defaults and exact integer normalization before structural comparison. */
 export function same_wire<K extends WireRootName>(
   left: WireInput<K>,

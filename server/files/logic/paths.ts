@@ -1,4 +1,5 @@
-import { dirname, join, relative, isAbsolute, sep, extname } from 'node:path';
+import { dirname, join, extname } from 'node:path';
+import { path_is_within } from '../../core/path_containment.ts';
 import { lstatSync, realpathSync, statSync } from 'node:fs';
 import type { OwnerKind } from '../contracts.ts';
 export const unsafeEncoded = /%(?:25|2e|2f|5c)/i;
@@ -16,9 +17,7 @@ export function safeRelative(value: string): void {
     throw new Error('unsafe managed file path');
 }
 export function inside(root: string, target: string): void {
-  const path = relative(root, target);
-  if (path === '..' || path.startsWith('..' + sep) || isAbsolute(path))
-    throw new Error('managed file escapes managed root');
+  if (!path_is_within(root, target)) throw new Error('managed file escapes managed root');
 }
 export function symlink(path: string): boolean {
   try {

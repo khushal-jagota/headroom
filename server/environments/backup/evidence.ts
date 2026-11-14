@@ -1,4 +1,5 @@
 /** Read-only proof shared by status, cleanup, and future backup publication. */
+import { is_record as object } from '../../core/records.ts';
 import { createHash } from 'node:crypto';
 import { createReadStream } from 'node:fs';
 import { lstat, stat, readFile, readdir } from 'node:fs/promises';
@@ -52,8 +53,6 @@ export async function sha256_file(path: string): Promise<string> {
     digest.update(chunk);
   return digest.digest('hex');
 }
-const object = (value: unknown): value is Record<string, unknown> =>
-  value !== null && typeof value === 'object' && !Array.isArray(value);
 export async function relative_manifest(root: string): Promise<Record<string, string>> {
   const manifest: Record<string, string> = {};
   async function walk(directory: string, prefix = ''): Promise<void> {

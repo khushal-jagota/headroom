@@ -1,5 +1,6 @@
 /** Ask the app-server for models. Catalog presence does not establish entitlement. */
 import { homedir } from 'node:os';
+import { copy_environment } from '../../../core/environment.ts';
 import type { OwnedChildProcesses } from '../../../lifecycle/contracts.ts';
 import { CodexAppServerClient, CodexAppServerError } from './client.ts';
 import { CodexModelCatalogUnavailable } from '../../snapshot/provider_contracts.ts';
@@ -64,9 +65,7 @@ export async function probe_codex_model_catalog(
     await client.start({
       argv: [executable, 'app-server'],
       environment: child_environment({
-        overrides: Object.entries(options.environment ?? {}).filter(
-          (entry): entry is [string, string] => entry[1] !== undefined,
-        ),
+        overrides: Object.entries(copy_environment(options.environment ?? {})),
       }),
       working_directory: options.environment?.HOME ?? homedir(),
     });

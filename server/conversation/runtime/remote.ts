@@ -1,4 +1,5 @@
 /** Retained executor runs keep their exact child identity across VPS restarts. */
+import { same_reference } from '../../executor/child_reference.ts';
 import type {
   BackendChild,
   BackendChildFactory,
@@ -17,7 +18,7 @@ import {
   UserInputRequestedEventPayload,
 } from '../events.ts';
 import { MessageText, message_content_text } from '../message_content.ts';
-import { adopted_running_turn, same_reference } from '../logic/retained_turn.ts';
+import { adopted_running_turn } from '../logic/retained_turn.ts';
 import { read_facts } from '../record/data/lifecycle.ts';
 import type {
   AcceptedRecordEvent,

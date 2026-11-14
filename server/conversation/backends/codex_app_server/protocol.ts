@@ -1,17 +1,11 @@
 /** The small Codex wire contracts consumed by Panels, not an upstream schema. */
-import { JsonNumber } from '../../../core/http/numeric_json.ts';
+import { is_json_record, JsonNumber } from '../../../core/http/numeric_json.ts';
 export class CodexProtocolError extends Error {}
 
 type ObjectValue = Record<string, unknown>;
 function object(value: unknown): ObjectValue {
-  if (
-    value === null ||
-    typeof value !== 'object' ||
-    Array.isArray(value) ||
-    value instanceof JsonNumber
-  )
-    throw new CodexProtocolError('Codex value must be an object');
-  return value as ObjectValue;
+  if (!is_json_record(value)) throw new CodexProtocolError('Codex value must be an object');
+  return value;
 }
 function string(value: unknown): string {
   if (typeof value !== 'string') throw new CodexProtocolError('Codex value must be a string');

@@ -1,4 +1,5 @@
 import type { FastifyPluginAsync, FastifyRequest } from 'fastify';
+import { is_record as record } from '../core/records.ts';
 import type { AreaServices } from '../core/authority/register.ts';
 import { PlannerError } from '../core/contracts.ts';
 import type { Principal } from '../core/contracts.ts';
@@ -45,9 +46,6 @@ function body_str_list(body: Json, key: string): string[] {
   if (!Array.isArray(raw) || raw.some((v) => typeof v !== 'string'))
     throw new PlannerError('validation', `invalid ${key}`, { [key]: raw });
   return raw;
-}
-function record(value: unknown): value is Json {
-  return value !== null && typeof value === 'object' && !Array.isArray(value);
 }
 export function parse_principal(
   raw: unknown,

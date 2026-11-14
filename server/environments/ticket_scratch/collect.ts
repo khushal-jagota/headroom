@@ -3,6 +3,7 @@ import type { SpawnOptions } from 'node:child_process';
 import { lstat, readdir, stat } from 'node:fs/promises';
 import { constants, homedir } from 'node:os';
 import { isAbsolute, join } from 'node:path';
+import { path_is_within } from '../../core/path_containment.ts';
 import { createReadAccess } from '../../core/database/index.ts';
 import { stop_one_shot_child } from '../../lifecycle/one_shot_children.ts';
 import type { ReadSql } from '../../core/database/contracts.ts';
@@ -20,7 +21,6 @@ import {
   compare_paths,
   compare_strings,
   finished,
-  inside,
   ticket_id_of_branch,
   ticket_id_of_name,
   ticket_id_of_path,
@@ -206,7 +206,7 @@ export async function collect_ticket_scratch(
     }
   }
   for (const worktree of await list_worktrees(layout.repository, options)) {
-    if (layout.folders.some((folder) => inside(worktree.path, folder))) continue;
+    if (layout.folders.some((folder) => path_is_within(folder, worktree.path))) continue;
     const owner = ticket_id_of_path(worktree.path) ?? ticket_id_of_branch(worktree.branch);
     if (owner !== null) add(entries, owner, worktree.path);
   }

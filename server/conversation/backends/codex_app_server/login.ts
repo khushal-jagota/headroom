@@ -1,4 +1,5 @@
 /** Read the saved Codex login without a refresh, network call, or retained secret. */
+import { is_record as object } from '../../../core/records.ts';
 import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
@@ -52,9 +53,6 @@ export class StoredCodexLogin implements StoredCodexLoginContract {
     return this.access_token_expires_at !== null && this.access_token_expires_at <= options.now;
   }
 }
-
-const object = (value: unknown): value is Record<string, unknown> =>
-  value !== null && typeof value === 'object' && !Array.isArray(value);
 
 function missing(error: unknown): boolean {
   return error instanceof Error && 'code' in error && error.code === 'ENOENT';

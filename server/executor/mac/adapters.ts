@@ -1,4 +1,5 @@
 /** Host the same provider factories with this Mac's account and launch settings. */
+import { copy_environment } from '../../core/environment.ts';
 import { pure_posix_path } from '../../core/python_path.ts';
 import { provider_launch_settings } from '../../core/config.ts';
 import { claude_executable_override } from '../../conversation/snapshot/environment.ts';
@@ -63,9 +64,7 @@ export function create_mac_adapter_host(options: MacAdapterOptions): MacAdapterH
   if (override !== undefined) environment.PLAN_CLAUDE_EXECUTABLE = override;
   environment.CODEX_HOME = expand(settings.codex_home);
   environment.CLAUDE_CONFIG_DIR = expand(settings.claude_home);
-  const launch_environment = Object.entries(environment).filter(
-    (entry): entry is [string, string] => entry[1] !== undefined,
-  );
+  const launch_environment = Object.entries(copy_environment(environment));
   const native_launch = <
     T extends { environment_overrides?: readonly (readonly [string, string])[] },
   >(

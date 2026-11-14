@@ -13,6 +13,8 @@ with the prepared repository's CLI and retains its reserved listener. `serve` us
 foreground supervisor, and `restart` requests replacement through its control socket.
 The installed wrapper and production deployment remain separate cutover work.
 
+`core/promise_observer.ts` limits ordinary promise waits without cancelling admitted work. Shutdown retains its absolute deadline and separate settlement path.
+
 From the repository root:
 
 ```sh
@@ -68,7 +70,7 @@ TypeScript, Ruff and mypy pass. Added helpers total 423 lines against 426 produc
 
 Navigation `createRoutes()` returns `{routes,start}`. Previews use `createPreviewRoutes()` instead of a global routes export. `areas.initialize()` prepares the record without starting replay or stale-epoch cleanup. Explicit route services and replay start after application readiness. Production composition starts one idle-child janitor in normal mode, even without dispatcher admission. Test mode skips that janitor, unlike Python. The explicit checker can run in test mode, but only writes findings/heartbeat and cannot notify.
 
-Environment composition preserves the actual executor object's members. It does not spread away prototype methods. A genuine `executor:null` remains absence. The invocation-owned `VpsExecutor` supplies remote factories, retained runs, recovery, catalog, health, and stalls. `startServer` reads the explicit `readOpenRuns` hook before the single record reconciliation, then creates the core. Production passes this hook explicitly from the real executor. Retained Mac children adopt those preserved turns and keep exact retirement custody. A replay kill ends the recorded turn and its asks before a late native reply can finish. Shutdown observes the original deadline separately from raw settlement. The environment's actual Mac update service reaches the executor routes and presence checks as one shared instance. The [executor guide](executor/README.md) describes these bindings. The default production dependency table remains a supplier-owned gate. These contracts do not authorize a production provider, release, or service operation in tests.
+Environment composition preserves the actual executor object's members. It does not spread away prototype methods. A genuine `executor:null` remains absence. The invocation-owned `VpsExecutor` supplies remote factories, retained runs, recovery, catalog, health, and stalls. `startServer` reads the explicit `readOpenRuns` hook before the single record reconciliation, then creates the core. Production passes this hook explicitly from the real executor. Retained Mac children adopt those preserved turns and keep exact retirement custody. A replay kill ends the recorded turn and its asks before a late native reply can finish. Shutdown observes the original deadline separately from raw settlement. The environment's actual Mac update service reaches the executor routes and presence checks as one shared instance. The [executor guide](executor/README.md) describes these bindings. The default production dependency table uses these same locale bindings. These contracts do not authorize a production provider, release, or service operation in tests.
 
 Create `server/<area>/contracts.ts`, `logic/`, `data/`, and `routes.ts` as needed. Keep pure rules in `logic/`. Import the existing generated frontend contracts with `import type` until cutover.
 
@@ -169,6 +171,8 @@ The scripted test host can open and continue conversations through these routes.
 
 The SDK public spawn hook owns the exact child and its required WorkerUnit. An input queue offer proves neither a completed write nor native acceptance. Ordinary delivery needs UUID admission receipts; native commands retain Python's write-completion contract. Stop requires a valid cancellation receipt with an empty `still_queued` set and settlement of the active command.
 
+The Claude spawn hook uses `codex_app_server/process.ts` for process custody, signals, and bounded termination. SDK exit callbacks still follow stream closure. Cleanup observes direct-child exit first, then a separate bounded output drain. Each Claude shutdown phase retains its five-second limit.
+
 `tests/compare/direct/test_unit18_adapter.py` drives the TS scripted CLI through both real adapters and conversation cores. It compares events, lifecycle facts, view rows, and delivery fates. This scripted proof does not establish real-provider coverage of all 19 backend events.
 
 On Linux, `BASH_ENV` points to the absolute source path of `server/conversation/tool_shell_startup.bash` for TS and `src/planner/conversation/tool_shell_startup.bash` for Python. The direct proof permits only this exact source-location pair and requires identical file bytes. A byte difference fails the proof. Other environment differences require explicit acceptance in `DEVIATIONS.md`.
@@ -218,6 +222,8 @@ The 45-second value starts forced termination; it does not claim unconditional p
 Node timers cannot interrupt synchronous JavaScript or SQLite. The separate supervisor fallback is required for a blocked application loop.
 New TypeScript packaging must consume the exported 60-second supervisor APP fallback. Packaged policy uses an 80-second stop client and a 90-second outer unit phase. The legacy Python rehearsal's 30-second unit is not its rehearsal route. Those packaged consumers remain unmerged and unproved by this application change.
 Real new-unit/supervisor timeout proofs remain part of the later packaging work.
+
+`core/locks/flock.ts` owns advisory lock calls and retries interruptions. Callers retain file permissions, contention errors, and lock lifetimes.
 
 Registry mutation and direct startup share a stable database-derived authority outside the instance tree.
 Reset/remove hold it through the complete swap, walk, and manifest publication. They also retain the legacy supervisor and DB locks.

@@ -1,5 +1,6 @@
 /** One selected Claude CLI child, persistent session, and backend event stream. */
 import { randomUUID } from 'node:crypto';
+import { observe_promise } from '../../../core/promise_observer.ts';
 import type { Options, SDKUserMessage } from '@anthropic-ai/claude-agent-sdk';
 import * as B from '../contracts.ts';
 import type { ResolvedConversationStart, PromptDeliveryMode, AnswerFate } from '../../contracts.ts';
@@ -412,24 +413,17 @@ export class ClaudeAgentSdkBackendChild implements B.BackendChild {
     }
     turn.owned_steer_uuids.clear();
     settle_parked_asks(turn);
-    let timer: ReturnType<typeof setTimeout> | undefined;
     try {
-      await Promise.race([
+      const ended = await observe_promise(
         turn.ended.promise,
-        new Promise<never>((_, reject) => {
-          timer = setTimeout(
-            () => reject(new Error('timeout')),
-            CLAUDE_CANCEL_SETTLEMENT_TIMEOUT_SECONDS * 1000,
-          );
-        }),
-      ]);
+        CLAUDE_CANCEL_SETTLEMENT_TIMEOUT_SECONDS * 1000,
+      );
+      if (!ended.completed) throw new Error('timeout');
     } catch {
       this.wire_broken = true;
       throw new B.PromptWriteFailed(
         'claude cancelled its queue but did not settle the active command',
       );
-    } finally {
-      clearTimeout(timer);
     }
   }
   async answer_permission_ask(ask_id: string, option_id: string): Promise<AnswerFate> {

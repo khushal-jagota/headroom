@@ -9,9 +9,7 @@ import {
 } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { randomUUID } from 'node:crypto';
-import koffi from 'koffi';
-const libc = koffi.load(process.platform === 'darwin' ? '/usr/lib/libSystem.B.dylib' : 'libc.so.6');
-const flock = libc.func('int flock(int fd, int operation)');
+import { flock } from '../core/locks/flock.ts';
 export const managed_skills_home = (parent: string): string => join(parent, 'skills');
 export function with_skill_publication_lock<T>(parent: string, action: (root: string) => T): T {
   const destination = resolve(managed_skills_home(parent));
@@ -19,10 +17,11 @@ export function with_skill_publication_lock<T>(parent: string, action: (root: st
   const root = realpathSync(destination);
   const fd = openSync(join(root, '.publication.lock'), 'a+');
   try {
-    if (flock(fd, 2) !== 0) throw new Error(`flock failed: errno ${koffi.errno()}`);
+    const errno = flock(fd, 'exclusive');
+    if (errno !== 0) throw new Error(`flock failed: errno ${errno}`);
     return action(root);
   } finally {
-    flock(fd, 8);
+    flock(fd, 'unlock');
     closeSync(fd);
   }
 }

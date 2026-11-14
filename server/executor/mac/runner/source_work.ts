@@ -1,8 +1,8 @@
 /** Retain admitted source promises independently of the caller that observes them. */
+import { same_reference } from '../../child_reference.ts';
 import type { ChildReference } from '../../wire.generated.ts';
 import type { MacChildStateContract } from './command_contracts.ts';
 import type { MacSourceWorkContract } from './retirement_contracts.ts';
-import { same_reference } from './logic/outcomes.ts';
 
 export class MacSourceWork implements MacSourceWorkContract {
   private readonly state: MacChildStateContract;

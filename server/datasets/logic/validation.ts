@@ -1,3 +1,4 @@
+import { is_record } from '../../core/records.ts';
 import { calendar_date, timezone } from '../../measures/logic/dates.ts';
 import { PlannerError } from '../../core/contracts.ts';
 import { stringify_python_json, numeric_value } from '../../core/http/numeric_json.ts';
@@ -18,9 +19,8 @@ function text(value: unknown, name: string, allow_empty = false): string {
   return value;
 }
 function object(value: unknown, name: string): Record<string, unknown> {
-  if (value === null || typeof value !== 'object' || Array.isArray(value))
-    invalid(`invalid dataset ${name}`);
-  return value as Record<string, unknown>;
+  if (!is_record(value)) invalid(`invalid dataset ${name}`);
+  return value;
 }
 function sequence(value: unknown, name: string): unknown[] {
   if (!Array.isArray(value)) invalid(`invalid dataset ${name}`);

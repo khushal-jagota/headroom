@@ -1,12 +1,10 @@
+import { is_record as object } from '../core/records.ts';
 import type { ReadSql } from '../core/database/contracts.ts';
 import { stringify_python_json } from '../core/http/numeric_json.ts';
 import { CHIEF_SETTINGS_KEY } from '../worker_settings/service.ts';
 import { destination } from './contracts.ts';
 import type { AttentionEvent, Destination, Evidence, GateInterval } from './contracts.ts';
 const key = (kind: string, id: string): string => JSON.stringify([kind, id]);
-function object(value: unknown): value is Record<string, unknown> {
-  return value !== null && typeof value === 'object' && !Array.isArray(value);
-}
 function snapshot(raw: string): Destination {
   const value = JSON.parse(raw) as Destination;
   return destination(value.kind, value.id, value.title, value.url, {

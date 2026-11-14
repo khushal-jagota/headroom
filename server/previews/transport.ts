@@ -17,6 +17,7 @@ import { request_headers, response_headers, within_prefix } from './policy.ts';
 import { Capacity, TransferBudget, MessageBudget } from './limits.ts';
 import { PreviewService } from './service.ts';
 import { HttpRequestScope } from '../core/http/lifetime.ts';
+import { observe_promise } from '../core/promise_observer.ts';
 const raw_headers = (raw: string[]): Header[] =>
   Array.from({ length: raw.length / 2 }, (_, i) => [raw[i * 2]!, raw[i * 2 + 1]!]);
 function headers_object(headers: Header[]): http.OutgoingHttpHeaders {
@@ -32,19 +33,6 @@ function headers_object(headers: Header[]): http.OutgoingHttpHeaders {
           : [String(previous), value];
   }
   return result;
-}
-async function deadline<T>(promise: Promise<T>, ms: number): Promise<T> {
-  let timer: NodeJS.Timeout | undefined;
-  try {
-    return await Promise.race([
-      promise,
-      new Promise<never>((_, reject) => {
-        timer = setTimeout(() => reject(new Error('preview timeout')), Math.max(1, ms));
-      }),
-    ]);
-  } finally {
-    clearTimeout(timer);
-  }
 }
 /** Count raw bytes before Node can normalize whitespace or allocate header fields. */
 class HeaderBoundedSocket extends net.Socket {
@@ -122,7 +110,9 @@ class VerifiedAgent extends http.Agent {
         socket.connect({ host: '127.0.0.1', port: port(this.record) });
         socket.pause();
         try {
-          await deadline(once(socket, 'connect'), config.CONNECT_SECONDS * 1000);
+          await once(socket, 'connect', {
+            signal: AbortSignal.timeout(config.CONNECT_SECONDS * 1000),
+          });
           await this.service.after_connection(this.record, socket.localPort!);
           if (this.connection_closed()) throw new Error('Preview connection admission is closed');
           callback?.(null, socket);
@@ -280,7 +270,9 @@ export class PreviewTransport {
               const part = chunk.subarray(offset, offset + config.CHUNK_BYTES);
               await this.budget.consume(part.length);
               if (!upstream!.write(part))
-                await deadline(once(upstream!, 'drain'), config.DOWNSTREAM_SEND_SECONDS * 1000);
+                await once(upstream!, 'drain', {
+                  signal: AbortSignal.timeout(config.DOWNSTREAM_SEND_SECONDS * 1000),
+                });
             }
           }
           upstream!.end();
@@ -289,10 +281,12 @@ export class PreviewTransport {
           pump_error = error;
           upstream!.destroy(error as Error);
         });
-      const peer = await deadline(
+      const headers_received = await observe_promise(
         incoming,
-        config.PREHEADER_SECONDS * 1000 - (performance.now() - started),
+        Math.max(1, config.PREHEADER_SECONDS * 1000 - (performance.now() - started)),
       );
+      if (!headers_received.completed) throw new Error('preview timeout');
+      const peer = headers_received.value;
       const [clean, cookies] = response_headers(raw_headers(peer.rawHeaders), {
         request_url: record.public_origin + pathname,
         origin: record.public_origin,
@@ -310,7 +304,9 @@ export class PreviewTransport {
           const part = chunk.subarray(offset, offset + config.CHUNK_BYTES);
           await this.budget.consume(part.length);
           if (!response.write(part))
-            await deadline(once(response, 'drain'), config.DOWNSTREAM_SEND_SECONDS * 1000);
+            await once(response, 'drain', {
+              signal: AbortSignal.timeout(config.DOWNSTREAM_SEND_SECONDS * 1000),
+            });
         }
       }
       await body_pump;
@@ -425,7 +421,9 @@ export class PreviewTransport {
         browser?.terminate();
         socket.destroy();
       });
-      await deadline(once(peer, 'open'), config.PREHEADER_SECONDS * 1000);
+      await once(peer, 'open', {
+        signal: AbortSignal.timeout(config.PREHEADER_SECONDS * 1000),
+      });
       peer.pause();
       await this.service.check(ticket_id, generation);
       if (this.closed || this.websocket_closed || this.lifetime.sealed)
@@ -477,12 +475,13 @@ export class PreviewTransport {
                   );
                 messages.consume();
                 await this.budget.consume(bytes.length);
-                await deadline(
+                const sent = await observe_promise(
                   new Promise<void>((resolve, reject) =>
                     target.send(bytes, { binary }, (error) => (error ? reject(error) : resolve())),
                   ),
                   config.DOWNSTREAM_SEND_SECONDS * 1000,
                 );
+                if (!sent.completed) throw new Error('preview timeout');
                 queued--;
                 if (!queued) source.resume();
               }),

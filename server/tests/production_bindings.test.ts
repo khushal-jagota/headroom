@@ -84,7 +84,7 @@ function private_production_environment(
   return { path, root, claude_path, hermes_source, hermes_python };
 }
 
-test('real bindings share owners and durable memory while Hermes cleanup retains server ownership', async () => {
+test('configured real bindings share owners and durable memory while Hermes cleanup retains server ownership', async () => {
   const began = performance.now(),
     database = fixture();
   const { path, root, claude_path, hermes_source, hermes_python } =
@@ -147,14 +147,6 @@ test('real bindings share owners and durable memory while Hermes cleanup retains
       createBackendServices(value) {
         context = value;
         const real = create_production_backend_bindings();
-        const rejected = {
-          ...value,
-          config: { ...value.config, executor_id: 'no-router' },
-          codex_login_rejection: create_durable_codex_login_rejection(value.database),
-        };
-        expect(() => real.claude(rejected)).toThrow(
-          'Configured production executor router is not installed',
-        );
         expect(constructors.every((spy) => spy.mock.calls.length === 0)).toBe(true);
         owned_http = without_runner(
           '0',
@@ -162,7 +154,7 @@ test('real bindings share owners and durable memory while Hermes cleanup retains
             compose_production_backends(
               {
                 ...value,
-                config: { ...value.config, test_mode: false },
+                config: { ...value.config, test_mode: false, executor_id: 'synthetic-executor' },
               },
               real,
             ).http,

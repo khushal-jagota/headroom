@@ -1,4 +1,5 @@
 /** Bounded immutable capture files, read before the startup write transaction. */
+import { is_record } from '../../core/records.ts';
 import {
   closeSync,
   constants,
@@ -43,9 +44,7 @@ function integer(value: unknown, minimum = 0): number {
   return value;
 }
 function object(value: unknown): Record<string, unknown> | null {
-  return typeof value === 'object' && value !== null && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : null;
+  return is_record(value) ? value : null;
 }
 export function manifest_from_dict(value: unknown): CaptureManifest {
   const raw = object(value);

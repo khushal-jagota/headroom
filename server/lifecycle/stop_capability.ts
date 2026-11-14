@@ -1,7 +1,8 @@
 import { constants } from 'node:fs';
 import { lstat, open, rename, unlink } from 'node:fs/promises';
 import { randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
-import { dirname, isAbsolute, join, relative } from 'node:path';
+import { dirname, isAbsolute, join } from 'node:path';
+import { path_is_within } from '../core/path_containment.ts';
 import { managed_file_roots } from '../environments/backup/capture.ts';
 import { resolved_path } from '../environments/paths.ts';
 import { CAPABILITY_FILENAME, MAX_CONTROL_MESSAGE_BYTES } from './configuration.ts';
@@ -9,10 +10,6 @@ import { ManagedStopError } from './contracts.ts';
 import type { CapabilityCaptureRoots, StopCapabilityRecord, SupervisorMode } from './contracts.ts';
 import { decode_capability, encode_message } from './logic/control.ts';
 
-function contains(parent: string, child: string): boolean {
-  const tail = relative(parent, child);
-  return tail !== '..' && !tail.startsWith('../') && !isAbsolute(tail);
-}
 export async function admit_capability_placement(
   runtime_directory: string,
   roots: CapabilityCaptureRoots,
@@ -35,7 +32,7 @@ export async function admit_capability_placement(
     roots.snapshot_destination,
   ]) {
     const actual = await resolved_path(root);
-    if (contains(actual, runtime) || contains(runtime, actual))
+    if (path_is_within(actual, runtime) || path_is_within(runtime, actual))
       throw new ManagedStopError(
         'Managed stop capability must be outside application and snapshot roots',
       );

@@ -1,4 +1,11 @@
 /** JSON intake retains exact integers and numeric kinds for validation and storage. */
+import { is_record } from '../records.ts';
+
+/** Exact-number markers represent JSON numbers, not dictionary values. */
+export function is_json_record(value: unknown): value is Record<string, unknown> {
+  return is_record(value) && !(value instanceof JsonNumber);
+}
+
 export type JsonNumberKind = 'integer' | 'float';
 /** The server's document form retains numeric kinds until an explicit validation projection. */
 export type NumericJSON<T> = T extends number

@@ -1,4 +1,5 @@
 /** Native starts and stops retain custody independently of command/result retries. */
+import { same_reference } from '../../child_reference.ts';
 import { randomBytes, timingSafeEqual } from 'node:crypto';
 import { BackendSpawnFailed } from '../../../conversation/backends/contracts.ts';
 import { FifoLock } from '../../../conversation/runtime/state.ts';
@@ -13,7 +14,6 @@ import type {
   MacRunningChild,
 } from './contracts.ts';
 import { MacChildAdmissionRefused } from './contracts.ts';
-import { same_reference } from './logic/outcomes.ts';
 import { remember_model_catalog_failure } from '../../../conversation/backends/catalog_cleanup.ts';
 interface Entry {
   reference: ChildReference;

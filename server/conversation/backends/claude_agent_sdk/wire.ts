@@ -1,3 +1,4 @@
+import { is_record as object } from '../../../core/records.ts';
 import { StringDecoder } from 'node:string_decoder';
 import { Transform } from 'node:stream';
 import { parse_numeric_json, numeric_kind } from '../../../core/http/numeric_json.ts';
@@ -31,9 +32,6 @@ export class Pending<T> {
   }
 }
 
-export function object(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
 export interface CommandLifecycle {
   type: 'command_lifecycle';
   command_uuid: string;
@@ -133,23 +131,6 @@ export class ObservedStdout extends Transform {
   }
 }
 
-export async function bounded<T>(
-  promise: Promise<T>,
-  seconds: number,
-): Promise<{ timed_out: false; value: T } | { timed_out: true }> {
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  try {
-    return await Promise.race([
-      promise.then((value) => ({ timed_out: false as const, value })),
-      new Promise<{ timed_out: true }>((resolve) => {
-        timer = setTimeout(() => resolve({ timed_out: true }), seconds * 1000);
-      }),
-    ]);
-  } finally {
-    if (timer !== undefined) clearTimeout(timer);
-  }
-}
-
 /** Python's stderr callback receives nonblank right-trimmed lines, not chunks. */
 export class ObservedStderr {
   private readonly decoder = new StringDecoder('utf8');
@@ -199,3 +180,5 @@ export class ObservedStderr {
     this.length = 0;
   }
 }
+
+export { is_record as object } from '../../../core/records.ts';

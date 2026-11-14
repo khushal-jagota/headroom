@@ -1,5 +1,6 @@
 /** Production machine I/O stays outside card and route policy. */
 import { BackendCommands } from './commands.ts';
+import { copy_environment } from '../../core/environment.ts';
 import type { OwnedOneShotChildren } from '../../lifecycle/contracts.ts';
 import type { BackendCommandOptions } from './commands.ts';
 import { accessSync, constants, realpathSync, statSync } from 'node:fs';
@@ -132,11 +133,7 @@ export class SubprocessBackendProbeEnvironment implements BackendProbeEnvironmen
     return this.commands.run(argv, {
       ...options,
       environment_overrides: {
-        ...Object.fromEntries(
-          Object.entries(this.environment).filter(
-            (entry): entry is [string, string] => entry[1] !== undefined,
-          ),
-        ),
+        ...copy_environment(this.environment),
         ...options.environment_overrides,
       },
     });

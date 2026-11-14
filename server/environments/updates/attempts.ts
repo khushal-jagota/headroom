@@ -14,7 +14,7 @@ import {
 } from 'node:fs';
 import { basename, dirname, join } from 'node:path';
 import { randomUUID } from 'node:crypto';
-import koffi from 'koffi';
+import { flock } from '../../core/locks/flock.ts';
 import { getSystemErrorName } from 'node:util';
 import type { UpdateAttempt, UpdateAttemptState } from './contracts.ts';
 import { ATTEMPT_FILE_NAME } from './configuration.ts';
@@ -29,8 +29,6 @@ import {
 } from './codec.ts';
 import { JsonNumber } from '../../core/http/numeric_json.ts';
 
-const libc = koffi.load(process.platform === 'darwin' ? '/usr/lib/libSystem.B.dylib' : 'libc.so.6');
-const flock = libc.func('int flock(int fd, int operation)');
 export const SETTLED_ATTEMPT_STATES: ReadonlySet<UpdateAttemptState> = new Set(['done', 'failed']);
 export class UpdateConflict extends Error {}
 export const attempt_path = (data_directory: string): string =>
@@ -47,10 +45,9 @@ export function exclusive_lock<T>(path: string, action: () => T): T {
   mkdirSync(dirname(path), { recursive: true });
   return exclusive_existing_lock(path, action);
 }
-function lock(fd: number, operation: number): void {
-  while (flock(fd, operation) !== 0) {
-    const errno = koffi.errno();
-    if (errno === 4) continue;
+function lock(fd: number, operation: 'exclusive' | 'unlock'): void {
+  const errno = flock(fd, operation);
+  if (errno !== 0) {
     throw Object.assign(new Error('flock failed'), {
       errno: -errno,
       code: getSystemErrorName(-errno),
@@ -62,11 +59,11 @@ function lock(fd: number, operation: number): void {
 export function exclusive_existing_lock<T>(path: string, action: () => T): T {
   const fd = openSync(path, 'a+');
   try {
-    lock(fd, 2);
+    lock(fd, 'exclusive');
     try {
       return action();
     } finally {
-      lock(fd, 8);
+      lock(fd, 'unlock');
     }
   } finally {
     closeSync(fd);

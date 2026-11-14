@@ -36,7 +36,7 @@ import {
 } from '../../message_content.ts';
 import type { MessageContent } from '../../message_content.ts';
 import type { ConversationMessageFiles } from '../../message_files.ts';
-import { within } from '../codex_app_server/process.ts';
+import { observe_promise } from '../../../core/promise_observer.ts';
 import type { AcpChildLaunch } from './launch.ts';
 import { HermesAcpLauncher } from './client.ts';
 import type { OwnedChildProcesses } from '../../../lifecycle/contracts.ts';
@@ -194,7 +194,12 @@ export class HermesAcpBackendChild implements BackendChild {
         'an automatic compaction write did not carry the canonical /compact request',
       );
     if (
-      !(await within(this.events.first_commands.promise, AVAILABLE_COMMANDS_WAIT_TIMEOUT_SECONDS))
+      !(
+        await observe_promise(
+          this.events.first_commands.promise,
+          AVAILABLE_COMMANDS_WAIT_TIMEOUT_SECONDS * 1000,
+        )
+      ).completed
     )
       throw new PromptWriteFailed('this Hermes session did not advertise its commands');
     if (!this.events.available_commands?.some((command) => command.name === 'compress'))
@@ -375,7 +380,14 @@ export class HermesAcpBackendChild implements BackendChild {
     const tasks = [turn.prompt, turn.ending_reporter].filter(
       (task): task is Promise<PromptResponse> | Promise<void> => task !== null,
     );
-    if (!(await within(Promise.allSettled(tasks), CANCELLED_TURN_ENDING_TIMEOUT_SECONDS)))
+    if (
+      !(
+        await observe_promise(
+          Promise.allSettled(tasks),
+          CANCELLED_TURN_ENDING_TIMEOUT_SECONDS * 1000,
+        )
+      ).completed
+    )
       console.warn(
         `conversation ${turn.token.conversation_id} did not hear its backend finish the turn it cancelled within ${CANCELLED_TURN_ENDING_TIMEOUT_SECONDS} seconds; carrying on`,
       );

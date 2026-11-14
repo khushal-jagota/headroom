@@ -1,4 +1,5 @@
 /** Cancelable maintenance exposes its actual operation join to the complete runner. */
+import { same_reference } from '../../child_reference.ts';
 import {
   ConversationStartAborted,
   observe_conversation_operation,
@@ -12,7 +13,7 @@ import type {
   MacMaintenanceDependencies,
   MacMaintenanceOperations,
 } from './maintenance_contracts.ts';
-import { outcome, same_reference } from './logic/outcomes.ts';
+import { outcome } from './logic/outcomes.ts';
 import type { StopOptions } from '../../../lifecycle/contracts.ts';
 import { remember_model_catalog_failure } from '../../../conversation/backends/catalog_cleanup.ts';
 

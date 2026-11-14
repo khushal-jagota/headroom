@@ -180,8 +180,6 @@ export function create_production_backend_bindings(): ProductionBackendBindings 
   let launches: ReturnType<typeof production_backend_launches> | undefined;
   let http: BackendHttpRuntime | undefined;
   const current = (context: ProductionBindingContext) => {
-    if (context.config.executor_id !== null)
-      throw new Error('Configured production executor router is not installed');
     if (owner !== undefined && owner !== context.database)
       throw new Error('Production backend bindings belong to another server invocation');
     if (launches === undefined) {

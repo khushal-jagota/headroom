@@ -2,7 +2,7 @@ import { OneShotChildren, stop_one_shot_child } from '../../lifecycle/one_shot_c
 import type { OwnedOneShotChildren } from '../../lifecycle/contracts.ts';
 import { statfs, opendir, stat } from 'node:fs/promises';
 import { platform } from 'node:os';
-import { relative, isAbsolute } from 'node:path';
+import { path_is_within } from '../../core/path_containment.ts';
 import { StringDecoder } from 'node:string_decoder';
 import { is_directory, is_file, is_symlink, resolved_path } from '../backup/evidence.ts';
 import type { VpsStatusDependencies } from './contracts.ts';
@@ -27,8 +27,7 @@ export async function bounded_children(root: string): Promise<string[]> {
   return result;
 }
 export async function contained(root: string, path: string): Promise<boolean> {
-  const suffix = relative(await resolved_path(root), await resolved_path(path));
-  return suffix !== '..' && !suffix.startsWith('../') && !isAbsolute(suffix);
+  return path_is_within(await resolved_path(root), await resolved_path(path));
 }
 export async function safe_under(root: string, path: string, directory: boolean): Promise<boolean> {
   return (

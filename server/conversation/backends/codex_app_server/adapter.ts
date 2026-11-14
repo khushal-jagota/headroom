@@ -53,7 +53,8 @@ import {
   CANCEL_SETTLING_TIMEOUT_SECONDS,
   ASK_WITHDRAWAL_TIMEOUT_SECONDS,
 } from './adapter_configuration.ts';
-import { TurnInFlight, bounded, same_turn } from './turn.ts';
+import { TurnInFlight, same_turn } from './turn.ts';
+import { observe_promise } from '../../../core/promise_observer.ts';
 import {
   plan_entries,
   tool_call_started,
@@ -454,7 +455,10 @@ export class CodexAppServerBackendChild implements B.BackendChild {
     if (turn === null) return;
     let id = turn.interrupt_turn_id ?? turn.turn_id;
     if (id === null && turn.awaiting_start_response) {
-      const started = await bounded(turn.started.promise, CANCEL_SETTLING_TIMEOUT_SECONDS);
+      const started = await observe_promise(
+        turn.started.promise,
+        CANCEL_SETTLING_TIMEOUT_SECONDS * 1000,
+      );
       if (!started.completed)
         throw new B.PromptWriteFailed('codex start remains unknown during cancellation');
       id = started.value;
@@ -466,7 +470,9 @@ export class CodexAppServerBackendChild implements B.BackendChild {
       if (error instanceof CodexAppServerError) throw new B.PromptWriteFailed(text(error));
       throw error;
     }
-    if (!(await bounded(turn.ended.promise, CANCEL_SETTLING_TIMEOUT_SECONDS)).completed)
+    if (
+      !(await observe_promise(turn.ended.promise, CANCEL_SETTLING_TIMEOUT_SECONDS * 1000)).completed
+    )
       console.warn(
         `conversation ${this.resolved_start.conversation_id}: codex took the interrupt but never said the turn ended`,
       );
@@ -541,7 +547,8 @@ export class CodexAppServerBackendChild implements B.BackendChild {
       await this.coordinator.close();
       const turn = this.turn;
       this.turn = null;
-      if (turn !== null) await bounded(this.settle_asks(turn), ASK_WITHDRAWAL_TIMEOUT_SECONDS);
+      if (turn !== null)
+        await observe_promise(this.settle_asks(turn), ASK_WITHDRAWAL_TIMEOUT_SECONDS * 1000);
     } finally {
       await this.client.stop();
     }

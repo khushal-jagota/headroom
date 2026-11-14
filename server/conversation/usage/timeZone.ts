@@ -1,6 +1,7 @@
 /** Resolve installed, case-sensitive ZoneInfo keys to an ICU formatter key. */
 import { closeSync, openSync, readSync, realpathSync, statSync } from 'node:fs';
-import { delimiter, isAbsolute, join, relative, sep } from 'node:path';
+import { delimiter, isAbsolute, join, relative } from 'node:path';
+import { path_is_within } from '../../core/path_containment.ts';
 
 const STANDARD_ROOTS = [
   '/usr/share/zoneinfo',
@@ -54,9 +55,8 @@ export function timezone(key: string): string {
   const candidates = [key];
   for (const root of directories) {
     try {
-      const suffix = relative(realpathSync(root), selected);
-      if (suffix !== '..' && !suffix.startsWith('..' + sep) && !isAbsolute(suffix))
-        candidates.push(suffix);
+      const canonical = realpathSync(root);
+      if (path_is_within(canonical, selected)) candidates.push(relative(canonical, selected));
     } catch {
       /* A missing alternative root does not invalidate the selected file. */
     }
