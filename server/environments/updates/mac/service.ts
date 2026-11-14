@@ -12,9 +12,8 @@ import {
   MacArchiveInspectionError,
   MacArchiveInspectionUnsettled,
 } from '../../release/contracts.ts';
-import { numeric_kind, numeric_value } from '../../../core/http/numeric_json.ts';
 import { atomic_write_json, missing, UpdateConflict } from '../attempts.ts';
-import { attempt_to_dict, is_object, parse_attempt, parse_attempt_json } from '../codec.ts';
+import { attempt_to_dict, is_object, parse_attempt } from '../codec.ts';
 import type { PublishedUpdate, UpdateAttempt } from '../contracts.ts';
 import { with_zip_member } from '../zip.ts';
 import type {
@@ -46,9 +45,7 @@ const file = (path: string): boolean => {
   }
 };
 function decode_json(bytes: Buffer): unknown {
-  return parse_attempt_json(
-    new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(bytes),
-  );
+  return JSON.parse(new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(bytes));
 }
 function json(path: string): unknown {
   return decode_json(readFileSync(path));
@@ -166,14 +163,11 @@ export class MacUpdateService implements MacUpdateServiceContract {
     const mac = release.mac;
     if (
       mac === null ||
-      numeric_kind(mac.artifact_id) !== 'integer' ||
-      !(numeric_value(mac.artifact_id)! >= 1) ||
+      !Number.isSafeInteger(mac.artifact_id) ||
+      !(mac.artifact_id >= 1) ||
       !fullmatch(/[0-9a-f]{64}/, mac.archive_sha256) ||
-      numeric_kind(mac.archive_size) !== 'integer' ||
-      !(
-        numeric_value(mac.archive_size)! > 0 &&
-        numeric_value(mac.archive_size)! <= MAX_MAC_RUNTIME_ARCHIVE_BYTES
-      ) ||
+      !Number.isSafeInteger(mac.archive_size) ||
+      !(mac.archive_size > 0 && mac.archive_size <= MAX_MAC_RUNTIME_ARCHIVE_BYTES) ||
       !fullmatch(/[0-9a-f]{40}/, release.manifest.app_sha)
     )
       throw new UpdateConflict('The Mac publication identity is invalid.');
@@ -183,16 +177,11 @@ export class MacUpdateService implements MacUpdateServiceContract {
     const mac = release.mac!;
     let inspected;
     try {
-      inspected = await inspect_mac_archive(
-        path,
-        mac.archive_sha256,
-        numeric_value(mac.archive_size)!,
-        {
-          child_processes: this.child_processes,
-          signal: this.signal,
-          deadline: performance.now() / 1000 + MAC_RUNTIME_INSPECTION_TIMEOUT_SECONDS,
-        },
-      );
+      inspected = await inspect_mac_archive(path, mac.archive_sha256, mac.archive_size, {
+        child_processes: this.child_processes,
+        signal: this.signal,
+        deadline: performance.now() / 1000 + MAC_RUNTIME_INSPECTION_TIMEOUT_SECONDS,
+      });
     } catch (error) {
       if (!(error instanceof MacArchiveInspectionUnsettled)) throw error;
       try {
@@ -206,7 +195,7 @@ export class MacUpdateService implements MacUpdateServiceContract {
     const { manifest, python, node, entrypoint } = inspected;
     if (
       !is_object(manifest) ||
-      numeric_value(manifest.schema_version) !== 1 ||
+      manifest.schema_version !== 1 ||
       manifest.application_revision !== release.manifest.app_sha ||
       manifest.platform !== 'darwin' ||
       manifest.architecture !== 'arm64' ||
@@ -276,10 +265,7 @@ export class MacUpdateService implements MacUpdateServiceContract {
         const downloaded = join(temporary, 'artifact.zip');
         await this.provider.download_artifact(release.mac.artifact_id, downloaded, this.signal);
         this.signal.throwIfAborted();
-        if (
-          (await zip_runtime_size(downloaded, this.signal)) !==
-          numeric_value(release.mac.archive_size)
-        )
+        if ((await zip_runtime_size(downloaded, this.signal)) !== release.mac.archive_size)
           throw new UpdateConflict('The Mac runtime artifact size differs.');
         this.signal.throwIfAborted();
         const candidate = join(temporary, MAC_RUNTIME_ARCHIVE_NAME);
@@ -366,7 +352,7 @@ export class MacUpdateService implements MacUpdateServiceContract {
       mode: attempt.mode,
       activate: attempt.state === 'done' && attempt.to_sha === this.current_app_sha,
       archive_sha256: mac.archive_sha256,
-      archive_size: counter(numeric_value(mac.archive_size)),
+      archive_size: counter(mac.archive_size),
       archive_path: `/api/executor/update/${request_id}/archive`,
     };
   }
@@ -391,7 +377,7 @@ export class MacUpdateService implements MacUpdateServiceContract {
           ? {
               application_revision: release.manifest.app_sha,
               archive_sha256: mac.archive_sha256,
-              archive_size: counter(numeric_value(mac.archive_size)),
+              archive_size: counter(mac.archive_size),
               archive_path: `/api/executor/update/prefetch/${mac.archive_sha256}`,
             }
           : null,

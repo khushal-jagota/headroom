@@ -21,7 +21,6 @@ import {
   run_release_command,
 } from './process.ts';
 import type { ReleaseExecution } from './contracts.ts';
-import { canonical_json } from '../updates/codec.ts';
 import {
   GLIBC_LIBRARIES,
   MINIMUM_NODE_VERSION,
@@ -275,7 +274,7 @@ export async function complete_node_runtime(
     copied_components,
     packaging_tools: ['readelf', 'patchelf'],
   };
-  const bytes = Buffer.from(canonical_json(document));
+  const bytes = Buffer.from(JSON.stringify(document));
   assert_release_execution(execution);
   await writeFile(join(app_root, RUNTIME_INVENTORY_PATH), bytes);
   const contract: NodeRuntimeContract = {
@@ -291,7 +290,7 @@ export async function complete_node_runtime(
     inventory_sha256: createHash('sha256').update(bytes).digest('hex'),
   };
   assert_release_execution(execution);
-  await writeFile(join(app_root, RUNTIME_CONTRACT_PATH), canonical_json(contract));
+  await writeFile(join(app_root, RUNTIME_CONTRACT_PATH), JSON.stringify(contract));
   assert_release_execution(execution);
   return contract;
 }

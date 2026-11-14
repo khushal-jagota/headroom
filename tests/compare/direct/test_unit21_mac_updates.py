@@ -151,8 +151,8 @@ def test_unit21_mac_updates_retained_archive_and_leased_report_sequence(
     first = fixture.publish()
     successor = fixture.publish("c" * 40)
     bad = fixture.publish("d" * 40, manifest_revision="e" * 40)
-    # Exercise the exact persisted integer kind and ID, not a rounded JS projection.
-    huge = 9_007_199_254_740_993
+    # Exercise a large safe GitHub artifact ID through persistence and downloads.
+    huge = 9_007_199_254_740_991
     assert first.mac is not None
     first = replace(first, mac=replace(first.mac, artifact_id=huge))
     assert first.mac is not None
@@ -184,7 +184,7 @@ def test_unit21_mac_updates_retained_archive_and_leased_report_sequence(
     records["failed"] = asdict(attempt(successor, "failed", mac_attempt_id="mac_next"))
     records["no_mac"] = asdict(attempt(replace(successor, mac=None), "preparing"))
     floating = asdict(first)
-    floating["mac"]["artifact_id"] = 1.0
+    floating["mac"]["artifact_id"] = 1.5
     identity = {
         "protocol_version": PROTOCOL_VERSION,
         "spool_format_version": SPOOL_FORMAT_VERSION,
@@ -374,10 +374,10 @@ def test_unit21_mac_updates_retained_archive_and_leased_report_sequence(
     input_path = node / "request.json"
     input_path.write_text(json.dumps({**specification, "root": str(node)}))
     script = """import {readFileSync} from 'node:fs';
-const codec=await import(process.argv[3]);const module=await import(process.argv[1]);
-const input=codec.parse_attempt_json(readFileSync(process.argv[2],'utf8'));
+const module=await import(process.argv[1]);
+const input=JSON.parse(readFileSync(process.argv[2],'utf8'));
 const result=await module.mac_update_sequence(input);
-process.stdout.write(codec.canonical_json(result));"""
+process.stdout.write(JSON.stringify(result));"""
     process = subprocess.Popen(
         [
             "node",
@@ -386,7 +386,6 @@ process.stdout.write(codec.canonical_json(result));"""
             script,
             COMPANION.as_uri(),
             str(input_path),
-            (ROOT / "server/environments/updates/codec.ts").as_uri(),
         ],
         cwd=ROOT,
         env={

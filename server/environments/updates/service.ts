@@ -10,7 +10,6 @@ import { build_worker_runtime_definitions } from '../../worker_types/configurati
 import { read_definitions } from '../../worker_types/store.ts';
 import { audit_ticket_registry_integrity } from '../../tickets/data/index.ts';
 import { FileUpdateAttemptStore, UpdateConflict, utc_now } from './attempts.ts';
-import { canonical_json } from './codec.ts';
 import { add_seconds, instant, resolve, settle } from './logic/experience.ts';
 import {
   ATTEMPT_OBSERVER_SECONDS,
@@ -192,7 +191,7 @@ export class UpdateService {
     )
       return;
     validate_release(release);
-    if (canonical_json(release) === canonical_json(this.ready)) return;
+    if (JSON.stringify(release) === JSON.stringify(this.ready)) return;
     const staged = await this.options.staging.stage(provider, release, this.options.current_root);
     if (!this.active(incarnation)) return;
     if (release.manifest.runtime_contract?.version === 2)

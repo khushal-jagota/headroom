@@ -1,7 +1,7 @@
 /** Actual GitHub intake shared by the build and final receipt entries. */
 import { readFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
-import { is_object } from '../updates/codec.ts';
+import { is_record as is_object } from '../../core/records.ts';
 import { validate_app_sha } from './logic/manifest.ts';
 import { run_release_command } from './process.ts';
 import { PUBLICATION_GIT_SECONDS } from './publication_configuration.ts';

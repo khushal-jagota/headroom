@@ -247,11 +247,16 @@ def test_installer_algorithm_and_configured_paths(
                 child.kill()
                 child.communicate(timeout=3)
 
-    def comparable(outcome: dict[str, Any]) -> dict[str, Any]:
+    def comparable(
+        outcome: dict[str, Any], *, native_unknown_integer: bool = False
+    ) -> dict[str, Any]:
         rows = []
         for row in outcome["tree"]:
             if row["path"] == "data/update-attempt.json" and "bytes" in row:
                 record = json_values(bytes.fromhex(row["bytes"]).decode())
+                if native_unknown_integer and "unknown" in record:
+                    assert record["unknown"]["large"] == json_values("9007199254740993")
+                    record["unknown"]["large"] = json_values("9007199254740992")
                 if record.get("detail") is not None:
                     assert isinstance(record["detail"], str) and record["detail"]
                     record["detail"] = "<diagnostic>"
@@ -261,7 +266,7 @@ def test_installer_algorithm_and_configured_paths(
 
     # Compare failure meaning, while retaining record types and every swap effect.
     assert [comparable(value) for value in actual["canonical"]] == [
-        comparable(value) for value in expected
+        comparable(value, native_unknown_integer=True) for value in expected
     ]
     report = {
         "complete": True,
@@ -269,6 +274,11 @@ def test_installer_algorithm_and_configured_paths(
         **actual["configured"],
         "node_seconds": time.monotonic() - node_started,
         "body_seconds": time.monotonic() - started,
+        "unknown_integer_projection": {
+            "python": 9007199254740993,
+            "typescript": 9007199254740992,
+            "reason": "Unknown internal fields use native JSON numbers.",
+        },
         "scope": (
             "Recording service/health and canonical capture/restore. "
             "Configured capture/restore are owned Node witnesses, "

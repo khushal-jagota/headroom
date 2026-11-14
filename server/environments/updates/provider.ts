@@ -6,27 +6,16 @@ import { join } from 'node:path';
 import { Readable } from 'node:stream';
 import type { ReadableStream } from 'node:stream/web';
 import { pipeline } from 'node:stream/promises';
-import { JsonNumber, numeric_value } from '../../core/http/numeric_json.ts';
-import type { NumericJSON } from '../../core/http/numeric_json.ts';
 import { parseIsoDatetime } from '../../core/clock.ts';
 import type { PublishedUpdate, UpdateProvider } from './contracts.ts';
-import { canonical_json, is_object, parse_attempt_json, parse_release } from './codec.ts';
+import { is_object, parse_release } from './codec.ts';
 import { instant } from './logic/experience.ts';
 import { with_zip_member } from './zip.ts';
 
-type Identity = NumericJSON<number>;
 export const TRUSTED_RELEASE_WORKFLOWS: ReadonlyMap<string, 1 | 2> = new Map([
   ['.github/workflows/deploy.yml', 1],
   ['.github/workflows/publish-typescript-release.yml', 2],
 ]);
-function exact_run_id(value: unknown): bigint {
-  if (value instanceof JsonNumber) {
-    if (value.integer !== null) return value.integer;
-    return BigInt(Math.trunc(value.value));
-  }
-  if (typeof value === 'number') return BigInt(Math.trunc(value));
-  return BigInt(String(value).trim().replaceAll('_', ''));
-}
 function repository_stream(response: Response, message: string): Readable {
   if (response.body === null) throw new Error(message);
   return Readable.from(
@@ -38,18 +27,6 @@ function repository_stream(response: Response, message: string): Readable {
       }
     })(),
   );
-}
-function same_number(left: unknown, right: unknown): boolean {
-  const integer = (value: unknown): bigint | null => {
-    if (value instanceof JsonNumber && value.integer !== null) return value.integer;
-    const number = numeric_value(value);
-    return number !== undefined && Number.isFinite(number) && Number.isInteger(number)
-      ? BigInt(number)
-      : null;
-  };
-  const a = integer(left),
-    b = integer(right);
-  return a !== null && b !== null ? a === b : numeric_value(left) === numeric_value(right);
 }
 function record(value: unknown): Record<string, unknown> {
   if (!is_object(value)) throw new Error('The repository update service refused the operation.');
@@ -181,7 +158,7 @@ export class GitHubUpdateProvider implements UpdateProvider {
   }
   private async response_json(response: Response): Promise<Record<string, unknown>> {
     try {
-      return record(parse_attempt_json(await response.text()));
+      return record(JSON.parse(await response.text()));
     } catch {
       throw new Error('The repository update service refused the operation.');
     }
@@ -204,7 +181,7 @@ export class GitHubUpdateProvider implements UpdateProvider {
       .map((run) => ({
         run,
         created: parseIsoDatetime(run.created_at as string),
-        id: exact_run_id(run.id),
+        id: Number(run.id),
       }))
       .sort((a, b) => {
         if (a.created.aware !== b.created.aware)
@@ -214,13 +191,13 @@ export class GitHubUpdateProvider implements UpdateProvider {
         return left === right ? (a.id === b.id ? 0 : a.id > b.id ? -1 : 1) : left > right ? -1 : 1;
       });
     for (const { run } of ordered) {
-      const release = await this.publication(run.id as Identity);
+      const release = await this.publication(run.id as number);
       if (release !== null) return release;
     }
     return null;
   }
-  async publication(run_id: Identity): Promise<PublishedUpdate | null> {
-    const run = await this.json(`actions/runs/${canonical_json(run_id)}`);
+  async publication(run_id: number): Promise<PublishedUpdate | null> {
+    const run = await this.json(`actions/runs/${run_id}`);
     const contract_version = TRUSTED_RELEASE_WORKFLOWS.get(run.path as string);
     if (
       run.head_branch !== 'main' ||
@@ -231,7 +208,7 @@ export class GitHubUpdateProvider implements UpdateProvider {
       contract_version === undefined
     )
       return null;
-    const artifacts = await this.json(`actions/runs/${canonical_json(run_id)}/artifacts`, {
+    const artifacts = await this.json(`actions/runs/${run_id}/artifacts`, {
       per_page: '100',
     });
     const by_name = new Map(
@@ -245,14 +222,14 @@ export class GitHubUpdateProvider implements UpdateProvider {
     let release = this.publication_cache;
     if (
       release === null ||
-      !same_number(release.publication_run_id, run_id) ||
-      !same_number(release.artifact_id, app.id) ||
-      !same_number(release.proof_artifact_id, proof.id)
+      release.publication_run_id !== run_id ||
+      release.artifact_id !== app.id ||
+      release.proof_artifact_id !== proof.id
     ) {
       const directory = await mkdtemp(join(this.temporary_directory, 'panels-update-proof-'));
       try {
         const path = join(directory, 'proof.zip');
-        const response = await this.request(`actions/artifacts/${canonical_json(proof.id)}/zip`);
+        const response = await this.request(`actions/artifacts/${proof.id}/zip`);
         await pipeline(
           repository_stream(
             response,
@@ -263,7 +240,7 @@ export class GitHubUpdateProvider implements UpdateProvider {
         const payload = await with_zip_member(path, 'publication.json', async (stream) => {
           const chunks: Buffer[] = [];
           for await (const chunk of stream) chunks.push(Buffer.from(chunk));
-          return record(parse_attempt_json(Buffer.concat(chunks).toString('utf8')));
+          return record(JSON.parse(Buffer.concat(chunks).toString('utf8')));
         });
         payload.proof_artifact_id = proof.id;
         release = parse_release(payload);
@@ -272,11 +249,10 @@ export class GitHubUpdateProvider implements UpdateProvider {
       }
     }
     if (
-      !same_number(release.publication_run_id, run_id) ||
-      !same_number(release.artifact_id, app.id) ||
+      release.publication_run_id !== run_id ||
+      release.artifact_id !== app.id ||
       release.manifest.app_sha !== run.head_sha ||
-      (release.mac !== null &&
-        !same_number(by_name.get('panels-mac-runtime')?.id, release.mac.artifact_id))
+      (release.mac !== null && by_name.get('panels-mac-runtime')?.id !== release.mac.artifact_id)
     )
       throw new Error('Publication identity differs from trusted repository evidence.');
     if (instant(release.expires_at).epochMicroseconds <= BigInt(Date.now()) * 1000n) return null;
@@ -287,16 +263,12 @@ export class GitHubUpdateProvider implements UpdateProvider {
     return release;
   }
   async download_artifact(
-    artifact_id: Identity,
+    artifact_id: number,
     destination: string,
     signal?: AbortSignal,
   ): Promise<void> {
     signal?.throwIfAborted();
-    const metadata = await this.json(
-      `actions/artifacts/${canonical_json(artifact_id)}`,
-      {},
-      signal,
-    );
+    const metadata = await this.json(`actions/artifacts/${artifact_id}`, {}, signal);
     signal?.throwIfAborted();
     if (metadata.expired === true) throw new Error('The pinned update artifact expired.');
     const headers = this.headers();
@@ -322,7 +294,7 @@ export class GitHubUpdateProvider implements UpdateProvider {
     };
     const response = await network_read(() =>
       this.fetch(
-        `https://api.github.com/repos/${this.repository}/actions/artifacts/${canonical_json(artifact_id)}/zip`,
+        `https://api.github.com/repos/${this.repository}/actions/artifacts/${artifact_id}/zip`,
         { method: 'GET', headers, redirect: 'follow', signal: request_signal },
       ),
     );

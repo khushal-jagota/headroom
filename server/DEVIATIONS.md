@@ -747,3 +747,15 @@ The TypeScript client refuses linked run/socket entries and sockets owned by ano
 The ordinary CLI socket read/write/retry seam returns exit 2 for non-ValueError transport failures that Python can expose as a traceback.
 
 - Mac Node archives: the TypeScript VPS also admits a regular executable `node/bin/node` and regular `server/executor/mac/entrypoint.ts`; Python VPS acceptance of Node-only archives remains unsupported.
+
+## Internal update, release, and lifecycle JSON — accepted
+
+The Manager accepted native JSON values for internal update, release, and lifecycle state on November 14, 2026.
+Whole numeric tokens such as `1.0` and `2.0` equal `1` and `2` in TypeScript. Python retains their float types.
+GitHub identities and supervisor PIDs use safe integer numbers. Control versions still require the expected numeric value.
+Unknown internal fields retain native JSON values, including the usual projection of integers above the safe range.
+An empty object is truthy in TypeScript. A legacy `created_at: {}` therefore fails timestamp conversion instead of selecting Python's default timestamp.
+
+Existing update, installer, provider, and supervisor comparisons record these specific Python and TypeScript observations separately.
+The supervisor proof reuses its foreground restart for version `1.0` and retains refusal of version `1.5`.
+This decision does not change HTTP, executor wire, or database numeric boundaries. Metrics and status boundary holdouts retain exact-number handling.

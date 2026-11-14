@@ -5,7 +5,7 @@ import { create_database_backup } from './backup/capture.ts';
 import { restore_database_snapshot } from './backup/restore.ts';
 import { AppManifestValidationFailure } from './command_contracts.ts';
 import { domain_error } from './operator_errors.ts';
-import { is_object, parse_attempt_json } from './updates/codec.ts';
+import { is_object } from './updates/codec.ts';
 import type {
   CurrentAppCommandDependencies,
   EnvironmentCommandArguments as Args,
@@ -141,7 +141,7 @@ export async function environment_backup(
 }
 function manifest_json(text: string): unknown {
   try {
-    return parse_attempt_json(text);
+    return JSON.parse(text);
   } catch (error) {
     if (!(error instanceof SyntaxError)) throw error;
     throw new AppManifestValidationFailure('value', error.message);

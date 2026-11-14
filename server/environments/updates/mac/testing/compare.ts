@@ -8,7 +8,7 @@ import type { SpawnOptions, ChildProcess } from 'node:child_process';
 import { ChildProcesses } from '../../../../lifecycle/owned_processes.ts';
 import { OneShotChildren } from '../../../../lifecycle/one_shot_children.ts';
 import { FileUpdateAttemptStore, UpdateConflict } from '../../attempts.ts';
-import { canonical_json, parse_attempt, parse_attempt_json, parse_release } from '../../codec.ts';
+import { parse_attempt, parse_release } from '../../codec.ts';
 import type { UpdateAttempt, PublishedUpdate, UpdateProvider } from '../../contracts.ts';
 import { MacUpdateService } from '../service.ts';
 import type { MacUpdateReport, MacUpdateHealthRead } from '../contracts.ts';
@@ -204,7 +204,7 @@ syncBuiltinESMExports();\n`,
       available: async () => null,
       async download_artifact(id, destination) {
         downloads.push(id);
-        await copyFile(request.artifacts[canonical_json(id)]!, destination);
+        await copyFile(request.artifacts[JSON.stringify(id)]!, destination);
       },
     };
     const root = join(request.root, 'mac-updates');
@@ -278,11 +278,11 @@ syncBuiltinESMExports();\n`,
             break;
           case 'expire_applied': {
             const path = join(root, 'applied.json');
-            const value = parse_attempt_json(await readFile(path, 'utf8')) as {
+            const value = JSON.parse(await readFile(path, 'utf8')) as {
               release: { expires_at: string };
             };
             value.release.expires_at = '2000-01-01T00:00:00Z';
-            await writeFile(path, canonical_json(value));
+            await writeFile(path, JSON.stringify(value));
             break;
           }
           case 'archives':

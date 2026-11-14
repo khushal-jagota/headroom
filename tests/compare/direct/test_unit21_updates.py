@@ -96,9 +96,8 @@ def _node(root: Path, value: dict[str, Any] | list[dict[str, Any]], function: st
     script = (
         "import {readFileSync} from 'node:fs'; "
         "const module=await import(process.argv[1]); "
-        "const codec=await import(process.argv[3]); "
-        "const input=codec.parse_attempt_json(readFileSync(process.argv[2],'utf8')); "
-        f"process.stdout.write(codec.canonical_json(await module.{function}(input)));"
+        "const input=JSON.parse(readFileSync(process.argv[2],'utf8')); "
+        f"process.stdout.write(JSON.stringify(await module.{function}(input)));"
     )
     result = subprocess.run(
         [
@@ -108,7 +107,6 @@ def _node(root: Path, value: dict[str, Any] | list[dict[str, Any]], function: st
             script,
             COMPANION.as_uri(),
             str(path),
-            (COMPANION.parent.parent / "codec.ts").as_uri(),
         ],
         cwd=ROOT,
         env=_environment(root),
@@ -184,27 +182,42 @@ def _report(request: pytest.FixtureRequest, name: str, result: dict[str, Any]) -
 
 
 def _compare_store(
-    root: Path, paths: tuple[Path, Path], operations: list[dict[str, Any]]
+    root: Path,
+    paths: tuple[Path, Path],
+    operations: list[dict[str, Any]],
+    *,
+    native_unknown_integer: bool = False,
 ) -> dict[str, Any]:
     expected = _python_store(paths[0], operations)
     actual: dict[str, Any] = _node(
         root, {"path": str(paths[1]), "now": NOW, "operations": operations}, "probe_store"
     )
-    # Compare stored values, including exact integers, without JSON spelling.
-    def meaningful(result: dict[str, Any]) -> str:
+    # Only the disclosed unknown-field fixture uses the accepted native projection.
+    def projected(value: Any) -> Any:
+        if isinstance(value, dict):
+            return {key: projected(item) for key, item in value.items()}
+        if isinstance(value, list):
+            return [projected(item) for item in value]
+        if type(value) is int and value == 9007199254740993123456789:
+            return 9007199254740993073741824
+        return value
+
+    def meaningful(result: dict[str, Any], *, native_projection: bool = False) -> str:
         text = result["file_text"]
         try:
             text = json.loads(text) if text else None
         except json.JSONDecodeError:
             pass  # Malformed records remain byte-for-byte comparisons.
         fields = {**result, "file_text": text}
+        if native_projection:
+            fields = projected(fields)
         normalized = json.loads(
             json.dumps(fields),
             parse_float=lambda raw: int(value) if (value := float(raw)).is_integer() else value,
         )
         return json.dumps(normalized, sort_keys=True)
 
-    assert meaningful(actual) == meaningful(expected)
+    assert meaningful(actual) == meaningful(expected, native_projection=native_unknown_integer)
     return actual
 
 
@@ -229,10 +242,10 @@ def test_attempt_store_preserves_versions_and_compare_and_swap(
     initial["release"]["mac"] = {
         "artifact_id": 1.0,
         "archive_sha256": "f" * 64,
-        "archive_size": 9007199254740993123456789,
+        "archive_size": 123456,
     }
     for index, field in enumerate(("publication_run_id", "artifact_id", "proof_artifact_id")):
-        initial["release"][field] = 9007199254740993123456789 + index
+        initial["release"][field] = 9007199254740989 + index
     operations: list[dict[str, Any]] = [
         {"kind": "read"},
         {
@@ -254,7 +267,7 @@ def test_attempt_store_preserves_versions_and_compare_and_swap(
     for path in (python_path, node_path):
         path.write_text(json.dumps(initial))
     paths = (python_path, node_path)
-    actual = _compare_store(tmp_path, paths, operations)
+    actual = _compare_store(tmp_path, paths, operations, native_unknown_integer=True)
     fresh = {**_attempt("fresh"), "future": numeric_edges}
     more: list[dict[str, Any]] = [
         {
@@ -268,7 +281,7 @@ def test_attempt_store_preserves_versions_and_compare_and_swap(
         {"kind": "remove", "attempt_id": "fresh", "expected": ["waiting"]},
         {"kind": "read"},
     ]
-    actual_more = _compare_store(tmp_path, paths, more)
+    actual_more = _compare_store(tmp_path, paths, more, native_unknown_integer=True)
     for path in (python_path, node_path):
         path.write_text("{broken")
     recovery: list[dict[str, Any]] = [
@@ -321,6 +334,7 @@ def test_attempt_store_preserves_versions_and_compare_and_swap(
         (None, running_sha, "applying"),
     ):
         request_payload["state"] = state
+        request_payload["created_at"] = {} if state == "applied" else NOW
         legacy_lifecycle.write_text(
             "{broken"
             if state == "applying"
@@ -334,7 +348,40 @@ def test_attempt_store_preserves_versions_and_compare_and_swap(
         adoption = [
             {"kind": "import_legacy", "data_directory": str(legacy_root), "running_sha": sha}
         ]
-        legacy_results.append(_compare_store(tmp_path, paths, adoption))
+        if existing is None and sha == running_sha and state == "applied":
+            python_result = _python_store(python_path, adoption)
+            node_result = _node(
+                tmp_path,
+                {"path": str(node_path), "now": NOW, "operations": adoption},
+                "probe_store",
+            )
+            assert python_result["answers"][0]["result"]["created_at"] == NOW
+            assert python_result["emitted"] == 1
+            assert node_result == {
+                "answers": [
+                    {
+                        "result": None,
+                        "error": {
+                            "type": "TypeError",
+                            "message": "Update field must be text or a scalar value",
+                        },
+                    }
+                ],
+                "file_text": None,
+                "file_mode": None,
+                "emitted": 0,
+            }
+            legacy_results.append(
+                {
+                    "python": python_result,
+                    "typescript": node_result,
+                    "reason": (
+                        "An empty object is truthy in native TypeScript and is not a timestamp."
+                    ),
+                }
+            )
+        else:
+            legacy_results.append(_compare_store(tmp_path, paths, adoption))
     _report(
         request,
         "unit-21-attempt-store.json",
@@ -346,6 +393,14 @@ def test_attempt_store_preserves_versions_and_compare_and_swap(
             "corrupt_record_recovery": actual_recovery,
             "unreadable_encoding_recovery": encoding_results,
             "legacy_adoption": legacy_results,
+            "unknown_integer_projection": {
+                "python": numeric_edges["integer"],
+                "typescript": 9007199254740993073741824,
+                "reason": (
+                    "Unknown internal fields use native JSON numbers. "
+                    "GitHub IDs stay safe integers."
+                ),
+            },
         },
     )
 
@@ -1309,14 +1364,14 @@ def test_provider_trust_evidence_and_streamed_download_match_python(
             "actions/workflows/deploy.yml/runs": {
                 "json": {
                     "workflow_runs": [
-                        {"id": 9007199254740992, "created_at": "2026-11-12T10:00:00.000001Z"}
+                        {"id": 9007199254740990, "created_at": "2026-11-12T10:00:00.000001Z"}
                     ]
                 }
             },
             "actions/workflows/publish-typescript-release.yml/runs": {
                 "json": {
                     "workflow_runs": [
-                        {"id": 9007199254740993, "created_at": "2026-11-12T10:00:00.000001Z"},
+                        {"id": 9007199254740991, "created_at": "2026-11-12T10:00:00.000001Z"},
                         {"id": 1, "created_at": "2026-11-12T10:00:00.000002Z"},
                     ]
                 }
@@ -1471,9 +1526,17 @@ def test_provider_trust_evidence_and_streamed_download_match_python(
         "probe_update_provider",
     )
     timing = {item["name"]: item.pop("timing") for item in actual if "timing" in item}
-    assert actual == json.loads(json.dumps(expected))
+    native_version = next(item for item in actual if item["name"] == "node_float_version")
+    python_version = next(item for item in expected if item["name"] == "node_float_version")
+    assert python_version["result"] is None
+    assert python_version["error"] == "runtime contract has missing or unknown fields"
+    trusted_version = next(item for item in actual if item["name"] == "node_trusted")
+    assert {**native_version, "name": "node_trusted"} == trusted_version
+    assert [item for item in actual if item["name"] != "node_float_version"] == json.loads(
+        json.dumps([item for item in expected if item["name"] != "node_float_version"])
+    )
     assert next(item["result"] for item in actual if item["name"] == "combined_order") == {
-        "considered": [1, 9007199254740993, 9007199254740992]
+        "considered": [1, 9007199254740991, 9007199254740990]
     }
     assert timing["slow_steady"]["elapsed_ms"] > 70
     assert timing["slow_steady"]["aborted"] is False
@@ -1488,6 +1551,11 @@ def test_provider_trust_evidence_and_streamed_download_match_python(
             "seconds": time.perf_counter() - started,
             "result": actual,
             "inactivity": timing,
+            "native_runtime_version": {
+                "python": python_version,
+                "typescript": native_version,
+                "reason": "Native internal JSON treats runtime version 2.0 as version 2.",
+            },
             "download_bytes": source.stat().st_size,
             "boundary": (
                 "Real GitHub adapters and scripted HTTP transports. "

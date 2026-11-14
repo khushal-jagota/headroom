@@ -1,13 +1,12 @@
 /** Bind the actual uploaded ZIPs and inner sealed Linux payload before publication. */
 import { createWriteStream } from 'node:fs';
-import { mkdir, mkdtemp, readFile, realpath, stat } from 'node:fs/promises';
+import { mkdir, mkdtemp, realpath, stat } from 'node:fs/promises';
 import { dirname, isAbsolute, join } from 'node:path';
 import { pipeline } from 'node:stream/promises';
 import { isDeepStrictEqual } from 'node:util';
 import { check_head_review } from '../../ios_compatibility/check.ts';
-import { JsonNumber, numeric_value, parse_numeric_json } from '../../core/http/numeric_json.ts';
+import { is_record } from '../../core/records.ts';
 import { sha256_file } from '../backup/evidence.ts';
-import { is_object } from '../updates/codec.ts';
 import { replace_existing_json } from '../updates/attempts.ts';
 import { with_zip_member } from '../updates/zip.ts';
 import { parse_optional_runtime_contract } from '../updates/logic/runtime_contract.ts';
@@ -36,6 +35,7 @@ import { migration_frontier, read_migration_graph } from './migrations.ts';
 import { assert_release_execution, run_release_command } from './process.ts';
 import {
   publication_id,
+  publication_json_file,
   require_clean_publication_source,
   require_publication_run,
 } from './publication_identity.ts';
@@ -56,13 +56,13 @@ export interface PublicationReceiptOptions {
   readonly mac_build_result: string;
 }
 function record(value: unknown): Record<string, unknown> {
-  if (!is_object(value)) throw new Error('Invalid publication evidence object');
+  if (!is_record(value)) throw new Error('Invalid publication evidence object');
   return value;
 }
-function integer(value: unknown): bigint {
-  if (!(value instanceof JsonNumber) || value.integer === null)
-    throw new Error('Publication evidence requires an exact integer');
-  return value.integer;
+function integer(value: unknown): number {
+  if (typeof value !== 'number' || !Number.isSafeInteger(value))
+    throw new Error('Publication evidence requires a safe integer');
+  return value;
 }
 function digest(value: unknown): string {
   if (typeof value !== 'string' || !/^[0-9a-f]{64}$/.test(value) || value.length !== 64)
@@ -70,11 +70,7 @@ function digest(value: unknown): string {
   return value;
 }
 async function json_file(path: string): Promise<Record<string, unknown>> {
-  return record(
-    parse_numeric_json(
-      new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(await readFile(path)),
-    ),
-  );
+  return record(await publication_json_file(path));
 }
 export async function write_publication_receipt(
   options: PublicationReceiptOptions,
@@ -93,8 +89,8 @@ export async function write_publication_receipt(
       Math.max(0, Math.ceil((execution.deadline - performance.now() / 1000) * 1000)),
     ),
   ]);
-  const artifact_id = new JsonNumber(publication_id(options.artifact_id, 'artifact ID')),
-    mac_artifact_id = new JsonNumber(publication_id(options.mac_artifact_id, 'Mac artifact ID'));
+  const artifact_id = integer(Number(publication_id(options.artifact_id, 'artifact ID'))),
+    mac_artifact_id = integer(Number(publication_id(options.mac_artifact_id, 'Mac artifact ID')));
   publication_id(options.linux_build_artifact_id, 'Linux evidence artifact ID');
   if (!github_token) throw new Error('Artifact binding requires the current GitHub token');
   for (const path of [
@@ -141,21 +137,21 @@ export async function write_publication_receipt(
         await response.body?.cancel().catch(() => {});
         throw new Error('GitHub artifact metadata is unavailable');
       }
-      const metadata = record(parse_numeric_json(await response.text())),
+      const metadata = record(JSON.parse(await response.text())),
         run = record(metadata.workflow_run),
         info = await stat(input.path),
         sha256 = await sha256_file(input.path);
       if (
-        integer(metadata.id) !== BigInt(input.id) ||
+        integer(metadata.id) !== Number(input.id) ||
         metadata.name !== input.name ||
         metadata.expired !== false ||
-        integer(run.id) !== BigInt(source_run.run_id) ||
+        integer(run.id) !== Number(source_run.run_id) ||
         run.head_sha !== source_run.source_sha ||
         run.head_branch !== 'main' ||
         integer(run.repository_id) !== integer(run.head_repository_id) ||
         !info.isFile() ||
         !Number.isSafeInteger(info.size) ||
-        integer(metadata.size_in_bytes) !== BigInt(info.size) ||
+        integer(metadata.size_in_bytes) !== info.size ||
         metadata.digest !== 'sha256:' + sha256
       )
         throw new Error('Artifact ZIP differs from trusted GitHub identity or bytes');
@@ -180,7 +176,7 @@ export async function write_publication_receipt(
       await member(options.mac_artifact_zip, name, join(mac_root, name));
     const build = await json_file(join(linux, 'linux-publication-build.json')),
       producer = record(build.source_run);
-    if (integer(build.version) !== 1n) throw new Error('Unsupported Linux publication evidence');
+    if (integer(build.version) !== 1) throw new Error('Unsupported Linux publication evidence');
     for (const field of [
       'repository',
       'source_sha',
@@ -209,10 +205,10 @@ export async function write_publication_receipt(
     )
       throw new Error('Publication schema evidence differs from the selected source');
     const admission = record(build.admission),
-      seconds = numeric_value(admission.seconds);
+      seconds = admission.seconds;
     if (
       admission.status !== 'passed' ||
-      seconds === undefined ||
+      typeof seconds !== 'number' ||
       !Number.isFinite(seconds) ||
       seconds < 0
     )
@@ -228,7 +224,7 @@ export async function write_publication_receipt(
       !Number.isSafeInteger(info.size) ||
       info.size <= 0 ||
       info.size > ARCHIVE_MAX_COMPRESSED_BYTES ||
-      BigInt(info.size) !== integer(archive.size) ||
+      info.size !== integer(archive.size) ||
       (await sha256_file(archive_path)) !== archive_sha256
     )
       throw new Error('Publication archive bytes changed');
@@ -258,9 +254,9 @@ export async function write_publication_receipt(
       throw new Error('Publication license inventory bytes changed');
     const inventory = await json_file(join(linux, 'package-licenses.json'));
     if (
-      integer(inventory.version) !== 1n ||
+      integer(inventory.version) !== 1 ||
       !Array.isArray(inventory.packages) ||
-      integer(licenses.package_count) !== BigInt(inventory.packages.length) ||
+      integer(licenses.package_count) !== inventory.packages.length ||
       !isDeepStrictEqual(licenses.missing_own_licenses, inventory.missing_own_licenses)
     )
       throw new Error('Publication license evidence differs from its inventory');
@@ -291,17 +287,17 @@ export async function write_publication_receipt(
       { timeout_seconds: PUBLICATION_MAC_VALIDATION_SECONDS, environment, cwd: source },
       execution,
     );
-    const mac = record(parse_numeric_json(checked_mac.stdout));
+    const mac = record(JSON.parse(checked_mac.stdout));
     if (
-      integer(mac.artifact_id) !== mac_artifact_id.integer ||
-      integer(mac.archive_size) <= 0n ||
-      integer(mac.archive_size) > BigInt(MAX_MAC_RUNTIME_ARCHIVE_BYTES)
+      integer(mac.artifact_id) !== mac_artifact_id ||
+      integer(mac.archive_size) <= 0 ||
+      integer(mac.archive_size) > MAX_MAC_RUNTIME_ARCHIVE_BYTES
     )
       throw new Error('Mac validation differs from its actual artifact');
     const published_mac: PublishedMacUpdate = {
       artifact_id: mac_artifact_id,
       archive_sha256: digest(mac.archive_sha256),
-      archive_size: mac.archive_size as JsonNumber,
+      archive_size: integer(mac.archive_size),
     };
     const ios_review = await check_head_review(source, source_run.source_sha, execution);
     for (const artifact of artifacts)
@@ -310,7 +306,7 @@ export async function write_publication_receipt(
     await remove_owned_tree(work);
     fence();
     const receipt: PublicationReceipt = {
-      publication_run_id: new JsonNumber(source_run.run_id),
+      publication_run_id: integer(Number(source_run.run_id)),
       artifact_id,
       manifest: actual_manifest,
       archive_sha256,

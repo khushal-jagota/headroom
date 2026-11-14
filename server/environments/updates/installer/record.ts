@@ -5,11 +5,11 @@ import {
   replace_existing_json,
   utc_now,
 } from '../attempts.ts';
-import { is_object, parse_attempt_json } from '../codec.ts';
+import { is_object } from '../codec.ts';
 import { assert_installer_path } from './configuration.ts';
 import type { InstallerRequest } from './contracts.ts';
 
-/** Keep unknown cross-version fields and numeric lexemes outside the typed store. */
+/** Keep unknown cross-version fields outside the typed store. */
 export class InstallationRecord {
   readonly path: string;
   readonly lock_path: string;
@@ -22,7 +22,7 @@ export class InstallationRecord {
   }
   read(): Record<string, unknown> {
     assert_installer_path(this.path);
-    const value = parse_attempt_json(
+    const value = JSON.parse(
       new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(readFileSync(this.path)),
     );
     if (!is_object(value)) throw new TypeError('update attempt must be an object');

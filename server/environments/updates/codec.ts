@@ -1,4 +1,4 @@
-/** Exact-number JSON decoding and canonical encoding for persisted updates. */
+/** Plain JSON records for persisted updates. */
 import type {
   PublishedUpdate,
   UpdateAttempt,
@@ -6,41 +6,23 @@ import type {
   UpdateMode,
 } from './contracts.ts';
 import { parse_optional_runtime_contract } from './logic/runtime_contract.ts';
-import {
-  is_json_record as is_object,
-  JsonNumber,
-  parse_numeric_json,
-  stringify_numeric_json,
-} from '../../core/http/numeric_json.ts';
+import { is_record as is_object } from '../../core/records.ts';
 
-export { is_json_record as is_object } from '../../core/http/numeric_json.ts';
+export { is_record as is_object } from '../../core/records.ts';
 
-export const parse_attempt_json = parse_numeric_json;
 function required(value: Record<string, unknown>, key: string): unknown {
   if (!(key in value)) throw new Error(`missing update field: ${key}`);
   return value[key];
 }
-function truth(value: unknown): boolean {
-  if (value instanceof JsonNumber) return value.value !== 0;
-  if (value === null || value === undefined || value === false || value === 0 || value === '')
-    return false;
-  if (Array.isArray(value)) return value.length !== 0;
-  if (is_object(value)) return Object.keys(value).length !== 0;
-  return true;
-}
 function text(value: unknown): string {
-  if (value instanceof JsonNumber)
-    return value.integer === null ? String(value.value) : String(value.integer);
   if (value === undefined || (value !== null && typeof value === 'object'))
     throw new TypeError('Update field must be text or a scalar value');
   return String(value);
 }
-function integer(value: unknown): number | JsonNumber {
-  const raw = text(value).trim();
-  if (!/^[+-]?[0-9]+(?:_[0-9]+)*$/.test(raw)) throw new Error('invalid publication integer');
-  const exact = BigInt(raw.replaceAll('_', '')).toString();
-  const projected = Number(exact);
-  return Number.isSafeInteger(projected) ? projected : new JsonNumber(exact);
+function integer(value: unknown): number {
+  const number = Number(value);
+  if (!Number.isSafeInteger(number)) throw new Error('invalid publication integer');
+  return number;
 }
 export function parse_release(payload: Record<string, unknown>): PublishedUpdate {
   const manifest = required(payload, 'manifest');
@@ -64,9 +46,9 @@ export function parse_release(payload: Record<string, unknown>): PublishedUpdate
       mac === null
         ? null
         : {
-            artifact_id: required(mac, 'artifact_id') as number | JsonNumber,
+            artifact_id: required(mac, 'artifact_id') as number,
             archive_sha256: required(mac, 'archive_sha256') as string,
-            archive_size: required(mac, 'archive_size') as number | JsonNumber,
+            archive_size: required(mac, 'archive_size') as number,
           },
   };
 }
@@ -90,14 +72,14 @@ export function parse_attempt(payload: unknown): UpdateAttempt {
   if (!is_object(payload)) throw new Error('update attempt must be an object');
   const release = required(payload, 'release');
   if (!is_object(release)) throw new Error('update attempt release must be an object');
-  const steps = truth(payload.steps) ? payload.steps : {};
+  const steps = payload.steps ?? {};
   if (!is_object(steps)) throw new Error('update attempt steps must be an object');
   return {
     attempt_id: text(required(payload, 'attempt_id')),
     from_sha: text(required(payload, 'from_sha')),
     to_sha: text(required(payload, 'to_sha')),
     mode: required(payload, 'mode') as UpdateMode,
-    confirm_activity: truth(payload.confirm_activity),
+    confirm_activity: Boolean(payload.confirm_activity),
     state: required(payload, 'state') as UpdateAttemptState,
     created_at: text(required(payload, 'created_at')),
     updated_at: text(required(payload, 'updated_at')),
@@ -122,7 +104,4 @@ export function merged(previous: unknown, current: unknown): unknown {
       Object.entries(current).map(([key, value]) => [key, merged(previous[key], value)]),
     ),
   };
-}
-export function canonical_json(value: unknown): string {
-  return stringify_numeric_json(value);
 }

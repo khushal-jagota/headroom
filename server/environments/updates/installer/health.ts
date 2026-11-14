@@ -1,7 +1,8 @@
 import * as http from 'node:http';
 import * as https from 'node:https';
 import { setTimeout as delay } from 'node:timers/promises';
-import { is_object, parse_attempt_json } from '../codec.ts';
+import { is_object } from '../codec.ts';
+import { parse_numeric_json } from '../../../core/http/numeric_json.ts';
 import {
   assert_installer_health_url,
   HEALTH_INACTIVITY_SECONDS,
@@ -51,7 +52,7 @@ async function request_observation(
                 status,
                 body: REDIRECT_STATUSES.includes(status)
                   ? null
-                  : parse_attempt_json(Buffer.concat(chunks).toString('utf8')),
+                  : parse_numeric_json(Buffer.concat(chunks).toString('utf8')),
                 location: typeof location === 'string' ? location : undefined,
               });
             } catch {
