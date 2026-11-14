@@ -1,7 +1,11 @@
 /** Operator handlers select lazily; metadata belongs to the public CLI catalog. */
-import { commands } from '../cli/commands.ts';
+import { create_commands } from '../cli/commands.ts';
+import { find_command } from '../cli/declarations.ts';
+
 import type { CommandDefinition } from '../cli/contracts.ts';
 import type { OperatorHandler, OperatorName, OperatorTable } from './command_contracts.ts';
+
+const commands = create_commands({});
 
 function definition<Name extends OperatorName>(
   name: Name,
@@ -9,7 +13,7 @@ function definition<Name extends OperatorName>(
   load: () => Promise<OperatorHandler<Name>>,
 ): { readonly command: CommandDefinition; readonly handler: OperatorHandler<Name> } {
   const path = group === null ? [name] : [group, name];
-  const command = commands.find((item) => !item.group && item.path.join('/') === path.join('/'));
+  const command = find_command(commands, path);
   if (!command) throw new Error('Missing canonical operator command: ' + path.join(' '));
   return { command, handler: async (args, deps) => (await load())(args, deps) };
 }

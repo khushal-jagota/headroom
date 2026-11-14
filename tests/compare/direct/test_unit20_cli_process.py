@@ -476,8 +476,9 @@ def _transport_proof(
             )
             node_code = """
 import {send_text} from './server/cli/http.ts';
-import {commands} from './server/cli/commands.ts';
-const inv={command:commands.find(c=>c.path.join(' ')==='project list'),values:{as_json:true},
+import {create_commands} from './server/cli/commands.ts';
+import {find_command} from './server/cli/declarations.ts';
+const inv={command:find_command(create_commands(process.env),['project','list']),values:{as_json:true},
   environment:process.env,stdin:async()=>Buffer.alloc(0)};
 try {
   const text=await send_text(inv,'GET',process.argv[1],{

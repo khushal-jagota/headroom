@@ -49,7 +49,7 @@ async function invoke<Name extends OperatorName>(
 
 export async function run_operator_command(invocation: Invocation): Promise<CommandResult> {
   const selected = Object.entries(operator_commands).find(
-    ([, entry]) => entry.command === invocation.command,
+    ([, entry]) => entry.command.path.join(' ') === invocation.command.path.join(' '),
   );
   if (!selected) throw new Error('Operator command is absent from its canonical table');
   try {

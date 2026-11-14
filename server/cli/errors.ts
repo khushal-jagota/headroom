@@ -43,18 +43,7 @@ export function command_path(command: CommandDefinition): string {
 export function command_shape(command: CommandDefinition): string {
   const override = recovery[command.path.join(' ')];
   if (override) return override;
-  const options = command.parameters.filter((p) => !p.argument && !p.hidden);
-  return [
-    command_path(command),
-    ...options
-      .filter((p) => p.required)
-      .map(
-        (p) =>
-          (p.opts?.find((o) => o.startsWith('--')) ?? p.opts![0]) + (p.flag ? '' : ' ' + p.metavar),
-      ),
-    ...(options.some((p) => !p.required) ? ['[OPTIONS]'] : []),
-    ...command.parameters.filter((p) => p.argument).map((p) => p.metavar),
-  ].join(' ');
+  return [command_path(command), command.usage()].join(' ');
 }
 export function human_error(
   command: CommandDefinition,
