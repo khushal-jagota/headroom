@@ -9,25 +9,29 @@ on:
   workflow_dispatch:
     inputs:
       build_mac_package:
-        description: Build the TypeScript Mac package with the reviewed target inputs
+        description: Build a test TypeScript Mac package with synthetic installation values
         type: boolean
         default: false
       target_home:
-        description: Absolute HOME of the target Mac account (package only)
+        description: Synthetic target HOME for the test package
         required: false
         type: string
+        default: /Users/panels-test
       executor_id:
-        description: Reviewed executor identity (package only)
+        description: Synthetic executor identity for the test package
         required: false
         type: string
+        default: test-executor
       server_url:
-        description: Reviewed HTTPS peer URL, never contacted (package only)
+        description: Synthetic HTTPS peer URL, never contacted
         required: false
         type: string
+        default: https://panels.invalid
       backend_path:
-        description: Absolute provider and system directories separated by colons (package only)
+        description: Synthetic command PATH for the test package
         required: false
         type: string
+        default: /usr/bin:/bin
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
@@ -248,6 +252,7 @@ jobs:
           if-no-files-found: warn
 
   mac-package:
+    name: Build a test Mac package with synthetic installation values
     if: github.event_name == 'workflow_dispatch' && inputs.build_mac_package
     # macos-14 retired on 2026-11-02. The Manager approved standard macos-15 arm64.
     # https://github.blog/changelog/2026-10-01-github-actions-macos-14-runner-image-retirement/
@@ -257,7 +262,7 @@ jobs:
       run:
         shell: bash
     steps:
-      - name: Require the reviewed package target
+      - name: Require the test package target
         env:
           TARGET_MAC_HOME: ${{ inputs.target_home }}
           TARGET_EXECUTOR_ID: ${{ inputs.executor_id }}
@@ -317,14 +322,16 @@ jobs:
             --executor-id "$TARGET_EXECUTOR_ID" \
             --server-url "$TARGET_SERVER_URL" \
             --backend-path "$TARGET_BACKEND_PATH"
+          printf '%s\n' 'TEST BUILD: synthetic installation values. Real installation values require the owner Mac session.' > "$PACKAGE_ROOT/output/TEST-BUILD.txt"
           BUILD
       - name: Upload runtime archive and installation assets
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: panels-typescript-mac-${{ github.sha }}
+          name: panels-typescript-mac-test-build-${{ github.sha }}
           path: |
             ${{ runner.temp }}/typescript-mac-package/output/panels-mac-runtime.tar.gz
             ${{ runner.temp }}/typescript-mac-package/output/build.json
+            ${{ runner.temp }}/typescript-mac-package/output/TEST-BUILD.txt
             ${{ runner.temp }}/typescript-mac-package/output/INSTALLATION.md
             ${{ runner.temp }}/typescript-mac-package/output/assets/
           if-no-files-found: error

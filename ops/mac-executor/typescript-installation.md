@@ -20,7 +20,10 @@ The producer requires the installed lock metadata and exact direct dependency ve
 It checks Mach-O headers for Node, better-sqlite3, and Koffi. These checks do not establish provenance or ABI compatibility.
 The Manager must arrange genuine Darwin package construction and native addon load checks before installation.
 
-The Manager can dispatch `.github/workflows/typescript-lifecycle-native.yml` with `build_mac_package=true` and the four reviewed target inputs.
+The Manager can dispatch `.github/workflows/typescript-lifecycle-native.yml` with `build_mac_package=true` for a test build.
+Its synthetic defaults are `/Users/panels-test`, `test-executor`, `https://panels.invalid`, and `/usr/bin:/bin`.
+The artifact name includes `test-build`, and `TEST-BUILD.txt` marks the extracted package.
+Real installation values come only from the later Mac session with the owner.
 It uses standard `macos-15` arm64 and official Node 22, then uploads the archive, assets, build metadata, and this document.
 The workflow does not install, sign, launch, or contact the configured peer.
 
