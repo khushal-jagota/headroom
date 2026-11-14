@@ -15,7 +15,7 @@ export function splitlines(text: string): string[] {
   if (lines.at(-1) === '') lines.pop();
   return lines;
 }
-export function agent_cgroup(text: string): boolean {
+export function agent_cgroup(text: string, installation_units: readonly string[] = []): boolean {
   const lines = splitlines(text);
   if (!lines.length) throw new InvalidPeerEvidence('missing cgroup evidence');
   for (const line of lines) {
@@ -30,7 +30,8 @@ export function agent_cgroup(text: string): boolean {
         (part) =>
           part === 'panels-live.service' ||
           part === 'panels-workers.slice' ||
-          part === TYPESCRIPT_SERVICE_NAME,
+          part === TYPESCRIPT_SERVICE_NAME ||
+          installation_units.includes(part),
       )
     )
       return true;
