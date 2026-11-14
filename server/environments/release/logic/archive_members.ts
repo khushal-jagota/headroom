@@ -49,6 +49,7 @@ export class ArchiveMembers {
   entrypoint = false;
   readonly purpose: 'extraction' | 'mac-inspection';
   readonly #parser: Parser;
+  readonly #on_entry: ((entry: ReadEntry, member: ArchiveMember) => void) | undefined;
   #entries = 0;
   #metadataBytes = 0;
   #logicalSize = 0;
@@ -57,8 +58,12 @@ export class ArchiveMembers {
   #prefix = Buffer.alloc(0);
   #started = false;
 
-  constructor(purpose: 'extraction' | 'mac-inspection' = 'extraction') {
+  constructor(
+    purpose: 'extraction' | 'mac-inspection' = 'extraction',
+    on_entry?: (entry: ReadEntry, member: ArchiveMember) => void,
+  ) {
     this.purpose = purpose;
+    this.#on_entry = on_entry;
     this.#parser = new Parser({
       strict: true,
       zstd: false,
@@ -160,6 +165,7 @@ export class ArchiveMembers {
       if (member.path === 'server/executor/mac/entrypoint.ts')
         this.entrypoint = files.has(member.type) && member.size > 0;
     }
+    this.#on_entry?.(entry, member);
     entry.resume();
   }
   feed(chunk: Buffer): void {

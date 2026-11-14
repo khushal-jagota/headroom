@@ -15,7 +15,6 @@ import { basename, dirname, join } from 'node:path';
 import { isMainThread } from 'node:worker_threads';
 import { createGunzip } from 'node:zlib';
 import { finished } from 'node:stream/promises';
-import { Parser } from 'tar';
 import { ArchiveMembers } from '../../../environments/release/logic/archive_members.ts';
 import type { ArchiveMember } from '../../../environments/release/logic/archive_members.ts';
 import {
@@ -264,58 +263,44 @@ async function extract(
       });
   let index = 0,
     current: number | undefined;
-  const parser = new Parser({
-    strict: true,
-    onReadEntry(entry) {
-      const member = members[index++];
-      if (
-        !member ||
-        member.path !==
-          entry.path
-            .split('/')
-            .filter((part) => part && part !== '.')
-            .join('/') ||
-        member.type !== entry.type ||
-        member.size !== entry.size ||
-        member.mode !== (entry.mode ?? 0) ||
-        member.linkpath !== (entry.linkpath ?? '') ||
-        member.mtime?.getTime() !== entry.mtime?.getTime()
-      )
-        throw new Error('Runtime archive changed after validation.');
-      if (['File', 'OldFile', 'ContiguousFile'].includes(member.type)) {
-        current = at(root, member.path, true, (parent, leaf) =>
-          retain(
-            open_relative(
-              parent,
-              leaf,
-              constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW,
-              0o600,
-            ),
+  const parser = new ArchiveMembers('extraction', (entry, parsed) => {
+    const member = members[index++];
+    if (
+      !member ||
+      member.path !== parsed.path ||
+      member.type !== parsed.type ||
+      member.size !== parsed.size ||
+      member.mode !== parsed.mode ||
+      member.linkpath !== parsed.linkpath ||
+      member.mtime?.getTime() !== parsed.mtime?.getTime()
+    )
+      throw new Error('Runtime archive changed after validation.');
+    if (['File', 'OldFile', 'ContiguousFile'].includes(member.type)) {
+      current = at(root, member.path, true, (parent, leaf) =>
+        retain(
+          open_relative(
+            parent,
+            leaf,
+            constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW,
+            0o600,
           ),
-        );
-        entry.on('data', (chunk: Buffer) => write_all(current!, chunk));
-        entry.on('end', () => {
-          fchmodSync(current!, file_mode(member.mode));
-          if (member.mtime) futimesSync(current!, member.mtime, member.mtime);
-          sync_file_descriptor(current!);
-          close(current!);
-          current = undefined;
-        });
-      }
-      entry.resume();
-    },
-  });
-  parser.on('error', (error) => {
-    throw error;
-  });
-  parser.on('ignoredEntry', () => {
-    throw new Error('Runtime archive changed after validation.');
+        ),
+      );
+      entry.on('data', (chunk: Buffer) => write_all(current!, chunk));
+      entry.on('end', () => {
+        fchmodSync(current!, file_mode(member.mode));
+        if (member.mtime) futimesSync(current!, member.mtime, member.mtime);
+        sync_file_descriptor(current!);
+        close(current!);
+        current = undefined;
+      });
+    }
   });
   try {
     await inflated(fd, sha, bytes, (chunk) => {
-      parser.write(chunk);
+      parser.feed(chunk);
     });
-    parser.end();
+    parser.finish();
     if (index !== members.length || current !== undefined)
       throw new Error('Runtime archive is truncated.');
   } finally {
