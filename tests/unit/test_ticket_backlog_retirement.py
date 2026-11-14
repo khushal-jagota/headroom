@@ -1,7 +1,7 @@
 """Explicit deferral preserves work; removed lifecycle states are invalid."""
 
 from sqlite3 import Connection
-from typing import Any
+from typing import Any, cast
 
 from fastapi.testclient import TestClient
 from tests.support.api_app import _app
@@ -225,7 +225,7 @@ def test_active_list_filters_before_pagination_and_resume_restores_membership(
         def listed(**params: str | int | bool) -> dict[str, Any]:
             response = client.get("/api/tickets", params={"detail": "summary", **params})
             assert response.status_code == 200, response.text
-            return response.json()
+            return cast(dict[str, Any], response.json())
 
         inventory = listed()
         assert {row["id"] for row in inventory["tickets"]} == {deferred, active}
