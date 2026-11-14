@@ -2,7 +2,7 @@
 
 Use TypeScript, Node APIs, and maintained JavaScript packages. Keep one shared helper for each job. Delete duplicate implementations when you change their callers.
 
-- Own children through `conversation/backends/codex_app_server/process.ts`. Do not add another process owner. Keep cancellation separate from actual settlement.
+- Own children through `lifecycle/owned_processes.ts`. Do not add another process owner. Keep cancellation separate from actual settlement.
 - Put the shared flock binding in `core/locks/flock.ts`. Do not add another native binding or flock helper.
 - Use `core/path_containment.ts` for lexical path containment. Lexical containment does not prove filesystem custody or prevent symlink races.
 - Use `AbortSignal.timeout()` and `AbortSignal.any()` for operation deadlines and cancellation. If a wait must leave admitted effects intact, use `core/promise_observer.ts::observe_promise`. Use `conversation/shutdown.ts::observe_shutdown` only for shutdown with the shared absolute deadline. Do not copy deadline helpers.

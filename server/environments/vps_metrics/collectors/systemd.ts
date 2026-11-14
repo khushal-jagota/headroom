@@ -1,5 +1,9 @@
 /** One bounded service-manager command. Every failure reaps its exact child. */
-import { spawn } from 'node:child_process';
+import {
+  ChildProcesses,
+  child_lifetime,
+  signal_child,
+} from '../../../lifecycle/owned_processes.ts';
 import type { ChildProcessByStdio } from 'node:child_process';
 import type { Readable } from 'node:stream';
 import { evidence_error } from './errors.ts';
@@ -7,7 +11,11 @@ export type LaunchServiceQuery = (
   args: readonly string[],
 ) => ChildProcessByStdio<null, Readable, null>;
 const launch: LaunchServiceQuery = (args) =>
-  spawn('systemctl', [...args], { stdio: ['ignore', 'pipe', 'ignore'], shell: false });
+  new ChildProcesses().spawn('systemctl', [...args], {
+    stdio: ['ignore', 'pipe', 'ignore'],
+    shell: false,
+    detached: false,
+  }) as ReturnType<LaunchServiceQuery>;
 export function query_services(
   scope: string,
   timeout: number,
@@ -25,6 +33,7 @@ export function query_services(
     let child: ReturnType<LaunchServiceQuery>;
     try {
       child = execute(args);
+      child_lifetime(child);
     } catch (error) {
       reject(error);
       return;
@@ -35,7 +44,7 @@ export function query_services(
     const fail = (error: unknown) => {
       if (failure !== undefined) return;
       failure = error;
-      child.kill('SIGKILL');
+      signal_child(child, 'SIGKILL', false);
       // A service-manager descendant can retain the write end after this child
       // exits. Closing our bounded pipe keeps that descriptor out of the drain.
       child.stdout.destroy();

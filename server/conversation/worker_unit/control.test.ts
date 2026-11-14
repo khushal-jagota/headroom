@@ -22,7 +22,10 @@ function owned_child() {
 }
 
 beforeEach(() => fake.spawn.mockReset());
-afterEach(() => vi.useRealTimers());
+afterEach(() => {
+  vi.useRealTimers();
+  vi.restoreAllMocks();
+});
 
 it('reports the native missing systemctl error', async () => {
   const child = owned_child();
@@ -56,7 +59,8 @@ it('reports the native missing systemctl error', async () => {
 });
 
 it('kills only its timed-out child and waits for exact exit evidence', async () => {
-  vi.useFakeTimers();
+  const timeout = new AbortController();
+  vi.spyOn(AbortSignal, 'timeout').mockReturnValueOnce(timeout.signal);
   const child = owned_child();
   fake.spawn.mockImplementation(() => child);
   const owner = new ChildProcesses();
@@ -83,8 +87,9 @@ it('kills only its timed-out child and waits for exact exit evidence', async () 
       settled = true;
     },
   );
-  const checked = expect(pending).rejects.toMatchObject({ name: 'TimeoutError', message: '' });
-  await vi.advanceTimersByTimeAsync(CONTROL_TIMEOUT_SECONDS * 1000);
+  const checked = expect(pending).rejects.toMatchObject({ name: 'TimeoutError' });
+  expect(AbortSignal.timeout).toHaveBeenCalledWith(CONTROL_TIMEOUT_SECONDS * 1000);
+  timeout.abort(new DOMException('The operation was aborted due to timeout', 'TimeoutError'));
   expect(child.kill).toHaveBeenCalledExactlyOnceWith('SIGKILL');
   expect(settled).toBe(false);
   child.emit('close', null, 'SIGKILL');

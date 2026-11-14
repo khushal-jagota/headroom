@@ -1,4 +1,4 @@
-import { spawn } from 'node:child_process';
+import { ChildProcesses, signal_child } from '../../lifecycle/owned_processes.ts';
 import type { SpawnOptions } from 'node:child_process';
 import { lstat, readdir, stat } from 'node:fs/promises';
 import { constants, homedir } from 'node:os';
@@ -59,7 +59,7 @@ export function git(
     const argv = ['-C', directory, ...args];
     const child = options.git_execution
       ? options.git_execution.children.spawn('git', argv, launch_options)
-      : spawn('git', argv, launch_options);
+      : new ChildProcesses().spawn('git', argv, { ...launch_options, detached: false });
     const stdout: Buffer[] = [],
       stderr: Buffer[] = [];
     let failure: Error | undefined;
@@ -70,7 +70,7 @@ export function git(
     });
     const abort = () => {
       if (options.git_execution) stop_one_shot_child(child);
-      else child.kill('SIGTERM');
+      else signal_child(child, 'SIGTERM', false);
       child.stdout!.destroy();
       child.stderr!.destroy();
     };
