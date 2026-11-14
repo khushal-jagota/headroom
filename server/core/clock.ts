@@ -52,7 +52,7 @@ export function parseIsoDatetime(raw: string): ParsedIsoDatetime {
     micros = '',
     offset: string | undefined;
   if (rest) {
-    // Python permits any single separator, including a Unicode code point.
+    // The date/time separator may be any single Unicode code point.
     const separator = Array.from(rest)[0]!;
     const time =
       /^(\d{2})(?::?(\d{2}))?(?::?(\d{2}))?(?:[.,](\d+))?(Z|[+-]\d{2}(?::?\d{2})?)?$/.exec(
@@ -88,7 +88,7 @@ export function parseIsoDatetime(raw: string): ParsedIsoDatetime {
     epochMicroseconds: BigInt(date.getTime()) * 1000n + BigInt(Number(micros.slice(1)) % 1000),
   };
 }
-/** Shared Python-compatible ISO validation, also used by provider timestamp readers. */
+/** Shared ISO validation, also used by provider timestamp readers. */
 export function parse_iso_datetime(raw: string): Date {
   return parseIsoDatetime(raw).date;
 }

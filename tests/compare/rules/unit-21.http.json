@@ -19,6 +19,8 @@
     "resource_source_versions.revision": "Trigger counters count SQL updates, so compare change rather than magnitude."
   },
   "response_tokens": {
+    "body.revision": "Only the deployment-status resource body uses this scalar path in this list. Its revision is opaque; compare stable/change history, not JSON spelling.",
+    "body.resources.*.revision": "Only deployment-status resource versions use this scalar path in this list. Compare opaque revision continuity; keys, body fields, and other revisions remain strict.",
     "body.record_sha256": "Ticket record digest includes its stored JSON representation, so compare changes.",
     "body.tickets.*.record_sha256": "Ticket record digests include stored JSON representation, so compare changes.",
     "body.pending_proposal.revision": "Proposal revision is an opaque approval token, so compare changes.",

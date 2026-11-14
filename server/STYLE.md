@@ -13,6 +13,6 @@ Use TypeScript, Node APIs, and maintained JavaScript packages. Keep one shared h
 
 Preserve the HTTP API, executor wire protocol, and database schema. Preserve CLI command names, options, `--json` fields, and exit codes. Human text, help, and error wording are not CLI contracts. Python formatting belongs only at boundaries where an external contract requires it.
 
-The native-style CI check scans added TypeScript lines against the pull request base. It rejects Python representation imports, Koffi imports outside `core/locks/flock.ts`, and named flock or deadline helper definitions. These small text checks cover ordinary import and function syntax. They do not parse TypeScript or replace source review. Unchanged occurrences remain grandfathered.
+The native-style CI check scans added TypeScript lines against the pull request base. It rejects retired Python helpers and exception classes, fake Python error names, compatibility imports outside their wire consumers, Koffi imports outside `core/locks/flock.ts`, and new flock or deadline helpers. These small text checks cover ordinary import and definition syntax. They do not parse TypeScript or replace source review. Unchanged occurrences remain grandfathered.
 
 Reuse focused behavioral coverage. Add a test only for a distinct failure risk that existing coverage does not prove. Keep production code independent of test helpers.

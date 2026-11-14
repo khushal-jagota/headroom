@@ -1,4 +1,4 @@
-/** Provider units implement these Python-shaped local service boundaries. */
+/** Provider units implement these local service boundaries. */
 import type { CodexLoginStanding, CommandOutcome } from './contracts.ts';
 import type { StopOptions } from '../../lifecycle/contracts.ts';
 export interface CodexModel {
@@ -65,7 +65,7 @@ export interface CodexSignIn {
   readonly state: SignInState;
   readonly verification_url: string | null;
   readonly user_code: string | null;
-  /** Strings use Python datetime.isoformat() text to preserve source microseconds. */
+  /** ISO datetime strings preserve source microseconds. */
   readonly started_at: Date | string;
   readonly deadline_at: Date | string;
   readonly detail: string | null;

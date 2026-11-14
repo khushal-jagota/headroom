@@ -8,5 +8,5 @@ export class HttpError extends Error {
     this.detail = detail;
   }
 }
-/** A deliberate response-depth refusal preserves Python's committed-write outcome. */
+/** A response-depth refusal leaves an already committed write intact. */
 export class ResponseDepthError extends Error {}

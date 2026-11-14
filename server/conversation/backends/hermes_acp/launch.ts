@@ -8,17 +8,21 @@ export interface AcpChildLaunch {
   readonly argv: readonly string[];
   readonly environment_overrides: readonly (readonly [string, string])[];
 }
-/** Python Path.parents[2], or Path.parent for a shallow lexical POSIX interpreter path. */
+/** Interpreter parents ignore '.' components but retain '..' for filesystem resolution. */
 export function hermes_source_root(path: string): string {
   const parents: string[] = [];
-  let current = path;
+  let current =
+    path
+      .split('/')
+      .filter((part) => part !== '.')
+      .join('/') || '.';
   while (parents.length < 3) {
     const parent = current === '//' ? '//' : posix.dirname(current);
     if (parent === current) break;
     parents.push(parent);
     current = parent;
   }
-  return parents[2] ?? parents[0] ?? path;
+  return parents[2] ?? parents[0] ?? current;
 }
 export function hermes_acp_child_launch(options: {
   hermes_python: string;

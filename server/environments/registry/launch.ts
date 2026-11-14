@@ -69,7 +69,7 @@ export function provision_environment_skills(
   const root = paths.admit_path(managed_skills_home(parent));
   const homes = [options.hermes_home, options.codex_home, options.claude_home].map((value) => {
     const home = paths.admit_path(paths.expand_path(value));
-    // Python replaces this link itself, but can read its previous target first.
+    // Link replacement can read the previous target before replacing the link.
     paths.admit_path(join(home, 'skills'));
     return home;
   });

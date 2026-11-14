@@ -54,12 +54,7 @@ export async function resolve_loopback_peer(
   server: Endpoint | null,
   context?: PeerLookupContext,
 ): Promise<PeerLookupResult> {
-  if (
-    context === undefined &&
-    (process.env.VITEST === 'true' ||
-      process.env.PYTEST_CURRENT_TEST !== undefined ||
-      testModeFromEnvironment())
-  )
+  if (context === undefined && testModeFromEnvironment())
     return { is_owner: false, skipped_unreadable_processes: 0 };
   context ??= default_context();
   let skipped = 0;

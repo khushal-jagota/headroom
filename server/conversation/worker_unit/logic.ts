@@ -26,7 +26,7 @@ export function environment_file(environment: Readonly<Record<string, string>>):
   return lines.join('');
 }
 
-/** Python pathlib preserves parent segments and executable symlinks. */
+/** Preserve parent segments and executable symlinks. */
 export function absolute_path(value: string, directory: string): string {
   const input = value.startsWith('/') ? value : `${directory}/${value}`;
   const prefix = input.startsWith('//') && !input.startsWith('///') ? '//' : '/';

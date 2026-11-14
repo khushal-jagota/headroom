@@ -4,7 +4,7 @@ export interface ChainFacts {
   targetParentManagerId: string | null;
   callerParentManagerId: string | null;
   targetExists: boolean;
-  /** Empty for ordinary callers. Retains the Python declaration decision seam. */
+  /** Explicitly declared targets; empty for ordinary callers. */
   callerDeclaredTargets?: readonly Target[];
 }
 export function isSelf(caller: Principal, target: Target, facts: ChainFacts): boolean {

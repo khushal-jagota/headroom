@@ -1,6 +1,5 @@
 /** Host the same provider factories with this Mac's account and launch settings. */
 import { copy_environment } from '../../core/environment.ts';
-import { pure_posix_path } from '../../core/python_path.ts';
 import { provider_launch_settings } from '../../core/config.ts';
 import { claude_executable_override } from '../../conversation/snapshot/environment.ts';
 import type { ResolvedConversationStart } from '../../conversation/contracts.ts';
@@ -51,11 +50,11 @@ export interface MacAdapterHost {
 export function create_mac_adapter_host(options: MacAdapterOptions): MacAdapterHost {
   const settings = provider_launch_settings(options.environment);
   const environment = settings.environment;
-  const expand = (path: string) => pure_posix_path(expand_executor_path(path, environment));
+  const expand = (path: string) => expand_executor_path(path, environment);
   const executables = new Map(
     ['claude', 'codex'].map((name) => [name, options.executable_path(name)]),
   );
-  const on_path = (name: string) => pure_posix_path(executables.get(name) ?? name);
+  const on_path = (name: string) => executables.get(name) ?? name;
   const hermes_python = expand(settings.hermes_python);
   const hermes_home = expand(settings.hermes_home);
   const override = claude_executable_override(environment, expand);
@@ -108,7 +107,6 @@ export function create_mac_adapter_host(options: MacAdapterOptions): MacAdapterH
         return create_hermes_backend_child_factory(native_launch(launches.hermes), {
           child_processes: options.child_processes,
         });
-      // Python MacRunner creates a new production factory for each native start.
       // This explicit memory is factory-local, unlike the VPS's durable rejection row.
       return create_codex_backend_child_factory(native_launch(launches.codex), {
         child_processes: options.child_processes,

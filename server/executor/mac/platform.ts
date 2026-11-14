@@ -207,7 +207,7 @@ export function sync_directory_descriptor(descriptor: number): void {
   const fsync = native('int fsync(int fd)');
   checked('fsync', () => fsync(descriptor));
 }
-/** Python requires the full flush to succeed. Missing symbols and failures propagate. */
+/** Full flushes must succeed. Missing symbols and failures propagate. */
 export function sync_file_descriptor(descriptor: number): void {
   if (isMainThread) throw new Error('Executor full flushes require the owned files worker.');
   sync_directory_descriptor(descriptor);
@@ -292,7 +292,6 @@ export function acquire_process_lock(root: string): { close(): void } {
     if (!flock_descriptor(lock, 'try-exclusive'))
       throw Object.assign(new Error('outbox is already owned'), {
         code: 'EAGAIN',
-        name: 'BlockingIOError',
       });
   } catch (error) {
     if (lock !== undefined) {

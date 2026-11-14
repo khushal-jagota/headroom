@@ -697,14 +697,28 @@ export async function probe_update_routes(request: RouteRequest) {
       resources.capture(sql, {} as FastifyRequest, '/api/deployment-status'),
     )!;
     const captured = snapshot.read();
+    const unchanged = host.database.read((sql) =>
+      resources.capture(sql, {} as FastifyRequest, '/api/deployment-status'),
+    )!;
     const attempt = host.attempts.read();
     if (attempt !== null) host.attempts.remove(attempt.attempt_id, new Set([attempt.state]));
+    const changed = host.database.read((sql) =>
+      resources.capture(sql, {} as FastifyRequest, '/api/deployment-status'),
+    )!;
     return {
       responses,
       health_reads,
       mac_reads,
       nonowner_unchanged,
-      resource: { captures, revision: snapshot.revision, body: captured, after: snapshot.read() },
+      resource: {
+        captures,
+        revision: snapshot.revision,
+        unchanged_revision: unchanged.revision,
+        changed_revision: changed.revision,
+        body: captured,
+        changed_body: changed.read(),
+        after: snapshot.read(),
+      },
     };
   } finally {
     await app.close();

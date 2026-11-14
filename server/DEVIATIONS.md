@@ -533,15 +533,8 @@ The Manager requires the TypeScript command route to forward response disconnect
 ### Encoding validation
 
 The Manager required this admission rule in the shared codec review of PR 806.
-TypeScript validates each root-specific encoder input through the wire decoder before serialization.
-It rejects missing required fields and invalid command semantics, and it supplies Python's declared defaults.
-Python's serializer can write a dataclass whose state did not pass that validation.
-The TypeScript sender must produce a message that the Python peer can read.
-Root-specific encoder inputs use the generated contracts. Nullable fields without defaults require an explicit null.
-
-### Retained turn numbers
-
-Python accepts unbounded integers. TypeScript refuses remote turn numbers, sender message counts and late-steer sequences outside the safe integer range at their conversation-core boundary. Wire and mailbox integers remain exact.
+Each root-specific encoder validates against the shared schema before serialization.
+Missing required fields and invalid command semantics refuse admission. Nullable fields without defaults require an explicit null.
 
 ### Replaced-process retry logging
 

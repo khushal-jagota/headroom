@@ -73,7 +73,7 @@ export function missing(error: unknown): boolean {
   return error instanceof Error && 'code' in error && error.code === 'ENOENT';
 }
 function read_record_json(path: string): unknown {
-  // Python read_text rejects invalid UTF-8 and leaves a BOM for JSON to reject.
+  // Reject invalid UTF-8 and leave a BOM for JSON to reject.
   const text = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(
     readFileSync(path),
   );
@@ -91,7 +91,7 @@ export function atomic_write_json(path: string, payload: Record<string, unknown>
   }
   replace_existing_json(path, payload);
 }
-/** Atomic replacement with Python os.replace semantics in an existing parent. */
+/** Atomically replace the record in its existing parent directory. */
 export function replace_existing_json(path: string, payload: Record<string, unknown>): void {
   const parent = dirname(path);
   const encoded = Buffer.from(canonical_json(payload) + '\n');
@@ -146,7 +146,7 @@ export class FileUpdateAttemptStore {
       if (is_object(previous) && previous.attempt_id === attempt.attempt_id)
         payload.release = merged(previous.release, payload.release);
     } catch {
-      /* Python tolerates a missing or unreadable previous record here. */
+      /* A missing or unreadable previous record does not block replacement. */
     }
     atomic_write_json(this.path, payload);
     return attempt;

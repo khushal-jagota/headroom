@@ -1,4 +1,4 @@
-/** Decimal Unicode digits have the same numeric value in Python int(). */
+/** Return the ASCII spelling of a Unicode decimal digit. */
 export function decimal_digit(character: string): string {
   const point = character.codePointAt(0)!;
   let start = point;
@@ -6,7 +6,7 @@ export function decimal_digit(character: string): string {
   return String((point - start) % 10);
 }
 
-/** Python int() accepts decimal Unicode digits and underscores between digits. */
+/** Parse decimal Unicode digits with underscores between digits. */
 export function integer_text(text: string): bigint | null {
   if (text.includes('\uFEFF')) return null;
   const trimmed = text.replace(/^[\s\u001c-\u001f\u0085]+|[\s\u001c-\u001f\u0085]+$/gu, '');

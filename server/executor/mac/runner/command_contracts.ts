@@ -50,7 +50,7 @@ export interface MacCommandDependencies {
   };
   readonly asks: {
     get(child: ChildReference, ask_id: string): AskReference | null;
-    /** Read and remove the current ask after native acceptance, as Python does. */
+    /** Read and remove the current ask after native acceptance. */
     take(child: ChildReference, ask_id: string): AskReference | null;
   };
   readonly inputs: {

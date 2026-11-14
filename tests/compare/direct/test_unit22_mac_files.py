@@ -225,6 +225,13 @@ def test_unit22_mac_files_and_configuration(tmp_path: Path, request: pytest.Fixt
         if is_dataclass(reference) and not isinstance(reference, type):
             reference = asdict(reference)
         assert value == reference, name
+    nul_messages = []
+    for observed in (actual, expected):
+        error = observed["relatives"][relatives.index("a\x00b")]["error"]
+        assert error["kind"] == "validation"
+        assert isinstance(error["message"], str) and error["message"]
+        nul_messages.append(error["message"])
+        error["message"] = "<NUL path refused>"
     assert actual == expected
     report = request.config.getoption("--compare-report-dir")
     if report:
@@ -244,6 +251,7 @@ def test_unit22_mac_files_and_configuration(tmp_path: Path, request: pytest.Fixt
                             "The TypeScript installation must stay separate from Python state."
                         ),
                         "fifo": "TS refuses FIFO intake without an external writer.",
+                        "nul_messages": nul_messages,
                     },
                     "seconds": time.perf_counter() - started,
                 },

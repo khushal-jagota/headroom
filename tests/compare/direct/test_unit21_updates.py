@@ -1118,9 +1118,15 @@ def test_owner_routes_populated_mac_reads_and_deployment_snapshot_match_python(
     assert _identities(actual["responses"]) == _identities(expected)
     assert actual["nonowner_unchanged"]
     assert {key: actual[key] for key in counts} == counts
-    assert actual["resource"]["captures"] == 1
-    assert actual["resource"]["body"] == actual["resource"]["after"]
-    assert json.loads(actual["resource"]["revision"]) == actual["resource"]["body"]
+    resource = actual["resource"]
+    assert resource["captures"] == 3
+    assert resource["body"] == resource["after"]
+    for field in ("revision", "unchanged_revision", "changed_revision"):
+        assert isinstance(resource[field], str) and resource[field]
+    assert resource["revision"] == resource["unchanged_revision"]
+    assert resource["revision"] != resource["changed_revision"]
+    assert resource["body"]["target_sha"] == "b" * 40
+    assert resource["changed_body"] == {**resource["body"], "target_sha": None}
     _report(
         request,
         "unit-21-update-routes.json",

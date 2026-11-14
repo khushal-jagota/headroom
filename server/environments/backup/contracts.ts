@@ -1,4 +1,4 @@
-/** Existing Python backup-v2 format and host-local operator contracts. */
+/** Existing backup-v2 format and host-local operator contracts. */
 export type ManagedRootName = 'files' | 'worker-settings' | 'skills';
 export type CapturedRootName = Exclude<ManagedRootName, 'files'>;
 

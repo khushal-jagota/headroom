@@ -88,7 +88,7 @@ export function create_mac_catalog(options: {
     environment,
     now: options.now,
     machine_catalog: true,
-    // Python's machine snapshot reads login standing independently of each child factory.
+    // Machine snapshots read login standing independently of each child factory.
     read_codex_login_standing: () =>
       read_codex_login_standing(null, options.host.native_skill_home('codex')),
     probe: create_backend_probe(

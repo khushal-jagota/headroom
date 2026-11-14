@@ -239,7 +239,7 @@ export class ClaudeAgentSdkBackendChild implements B.BackendChild {
           type: 'image',
           source: {
             type: 'base64',
-            // The core validates image media. Python forwards this native value unchanged.
+            // The core validates image media. Forward the native value unchanged.
             media_type: piece.media_type as Base64ImageSource['media_type'],
             data: encoded,
           },

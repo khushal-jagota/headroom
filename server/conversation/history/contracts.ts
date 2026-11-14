@@ -1,4 +1,4 @@
-/** The generated Python history contract remains the single public shape. */
+/** Shared public history contract. */
 export type {
   ConversationHistoryEntry,
   ConversationHistoryPage,

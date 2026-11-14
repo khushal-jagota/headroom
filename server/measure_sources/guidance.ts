@@ -19,7 +19,7 @@ export const SCALAR_EXAMPLE = `export default async function ({context, request,
 }
 `;
 
-/** Retain Python's helpers/context/examples/notes JSON shape for the CLI unit. */
+/** Helper, context, example, and note fields for CLI guidance. */
 export function runtime_guidance(limits: RuntimeLimits = DEFAULT_LIMITS) {
   return {
     helpers: {
@@ -110,12 +110,10 @@ export function runtime_guidance(limits: RuntimeLimits = DEFAULT_LIMITS) {
   };
 }
 
-/** Python's existing offline entry-point name remains available to the CLI port. */
+/** Public offline guidance entry point. */
 export const runtime_guide = runtime_guidance;
 
-/** Offline request declarations share the accepted JavaScript authoring contract.
- * Only the named script example and script/history notes differ from Python.
- */
+/** Offline request declarations share the JavaScript authoring contract. */
 export const CREATE = CREATE_REFERENCE;
 export const SCRIPT = {
   ...SCRIPT_REFERENCE,

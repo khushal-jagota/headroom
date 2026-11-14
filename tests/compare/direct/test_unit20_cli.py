@@ -306,6 +306,11 @@ def test_unit20_every_help_and_group_usage(tmp_path: Path, request: pytest.Fixtu
 
     visit(main, [])
     cases = [(path + ["--help"], 0) for path, _ in declarations]
+    guidance_cases = [
+        ["ticket", "proposals"], ["ticket", "shw"], ["ticket", "list", "--bogus"],
+        ["sprint"], ["day"],
+    ]
+    cases.extend((argv, 2) for argv in guidance_cases)
     cases.extend(
         (
             (["--", "project", "--help"], 0),
@@ -375,6 +380,14 @@ def test_unit20_every_help_and_group_usage(tmp_path: Path, request: pytest.Fixtu
             evidence.append({"argv": argv, "answers": answers})
             if driver.comparable(left) != driver.comparable(right):
                 differences.append(evidence[-1])
+            if argv in guidance_cases:
+                # Only Commander's placeholder casing differs in these recovery shapes.
+                guidance = [
+                    answer["stderr"].replace("[options]", "[OPTIONS]").strip().splitlines()
+                    for answer in answers
+                ]
+                if guidance[0] != guidance[1]:
+                    differences.append({"argv": argv, "guidance": guidance})
         driver.write_report(
             request,
             "unit20-help-and-usage",

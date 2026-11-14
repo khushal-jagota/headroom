@@ -118,7 +118,7 @@ async function read_metadata(path: string): Promise<unknown> {
   } catch {
     return undefined;
   }
-  // Python's UnicodeDecodeError escapes its JSONDecodeError-only handler.
+  // Invalid UTF-8 propagates; malformed JSON makes the metadata unavailable.
   const text = new TextDecoder('utf-8', { fatal: true }).decode(bytes);
   try {
     return JSON.parse(text);

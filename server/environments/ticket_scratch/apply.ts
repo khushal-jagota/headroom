@@ -25,7 +25,7 @@ async function* git_checkouts(root: string, options: ScratchPassOptions): AsyncG
   try {
     entries = await readdir(root, { withFileTypes: true });
   } catch (error) {
-    if (error instanceof Error && 'code' in error) return; // os.walk ignores directory read errors.
+    if (error instanceof Error && 'code' in error) return; // Skip unreadable directories.
     throw error;
   }
   if (entries.some((entry) => entry.name === '.git')) yield root;

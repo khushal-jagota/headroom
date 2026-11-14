@@ -53,7 +53,7 @@ export function raw_user_message_uuids(message: Record<string, unknown>): Set<st
   return values;
 }
 
-/** Match Python's per-line Unicode-character bound before the SDK consumes stdout. */
+/** Bound each stdout line by Unicode character count before the SDK consumes it. */
 export class ObservedStdout extends Transform {
   private readonly decoder = new StringDecoder('utf8');
   private pending = '';
@@ -121,7 +121,7 @@ export class ObservedStdout extends Transform {
   }
 }
 
-/** Python's stderr callback receives nonblank right-trimmed lines, not chunks. */
+/** Deliver nonblank, right-trimmed stderr lines. */
 export class ObservedStderr {
   private readonly decoder = new StringDecoder('utf8');
   private pending = '';

@@ -1,4 +1,4 @@
-// Python's strict mimetypes defaults, followed by the same host mime.types files.
+// Strict MIME defaults, followed by the host mime.types files.
 import { readFileSync } from 'node:fs';
 import { extname } from 'node:path';
 const types: Record<string, string> = {

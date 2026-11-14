@@ -219,7 +219,7 @@ export function installer_unit_environment(env: Readonly<NodeJS.ProcessEnv>): {
   return { environment, paths };
 }
 
-/** Application evidence has the same environment-only selector as Python. */
+/** Application evidence selects its root through the environment. */
 export function applicationRootFromEnvironment(env: NodeJS.ProcessEnv = process.env): string {
   return env.PLAN_APP_ROOT ?? fileURLToPath(new URL('../../', import.meta.url));
 }

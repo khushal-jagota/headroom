@@ -1,19 +1,19 @@
-/** Goal-unit composition seams. These calls stay open until Units 12/13 provide them. */
+/** Goal and dataset services for Manager pages. */
 import type { ReadSql } from '../core/database/contracts.ts';
 import type { ManagerPageDocument as PageDocument } from './contracts.ts';
 export interface ManagerDocumentDependencies {
-  /** Python list_goals(holder_id) followed by goal_json at the same snapshot/date. */
+  /** Read and present the holder's goals at one snapshot and date. */
   manager_goals(
     sql: ReadSql,
     manager_id: string,
     now: Date,
     calendar_iso?: string,
   ): Record<string, unknown>[];
-  /** Python prepare_document for charts, including category/formula validation. */
+  /** Prepare charts, including category and formula validation. */
   prepare_rich_document(document: unknown): PageDocument;
-  /** Python validate_page_bindings: measures, formula graph, datasets, manual origin. */
+  /** Validate measure, formula graph, dataset, and manual-origin bindings. */
   validate_page_bindings(sql: ReadSql, document: PageDocument): void;
-  /** Python document_readings_json for a PageReadingSubject with this id/revision. */
+  /** Project readings for the page's identity and revision. */
   document_readings(
     sql: ReadSql,
     subject: { id: string; page: PageDocument; revision: number },

@@ -1,4 +1,4 @@
-/** Mechanical copy of the existing T3 wire DTOs and Python-shaped runtime contracts.
+/** T3 wire DTOs and the local usage service contracts.
  * Copyright (c) 2026 T3 Tools Inc. MIT permission notice: ./T3-LICENSE.
  * Source pin: 75e4ceb96489a2fe92c710c79dbea59778cccfd1.
  * The frontend projection's extensionless imports require bundler resolution.

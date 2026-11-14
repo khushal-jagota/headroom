@@ -1,4 +1,4 @@
-/** Current publication/update constants, kept together as in Python. */
+/** Publication and update constants. */
 export const SUPPORTED_UPDATE_SCHEMA_FLOOR = 'video_upload_ledger';
 export const UPDATE_ARTIFACT_RETENTION_DAYS = 30;
 export const UPDATE_AVAILABILITY_REFRESH_SECONDS = 60;

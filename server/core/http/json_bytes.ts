@@ -1,11 +1,11 @@
-/** Match json.loads(bytes) encoding selection without discarding numeric tokens. */
+/** Decode JSON byte encodings without discarding numeric tokens. */
 function utf8(body: Uint8Array): string {
   const decoder = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true });
   try {
     return decoder.decode(body);
   } catch {
-    // Python uses surrogatepass. Preserve surrogate triples but reject every
-    // other malformed UTF-8 sequence through the strict decoder.
+    // Preserve surrogate triples; reject other malformed UTF-8 sequences
+    // through the strict decoder.
     const pieces: string[] = [];
     let start = 0;
     for (let offset = 0; offset + 2 < body.length; offset++) {

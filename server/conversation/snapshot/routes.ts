@@ -63,7 +63,7 @@ export function createBackendRoutes(
   options: BackendRouteOptions,
 ): FastifyPluginAsync<AreaServices> {
   return async (app, services) => {
-    // Runtime dependency resolution precedes Python's body/query/path validation,
+    // Runtime dependency resolution precedes body/query/path validation,
     // but malformed JSON is rejected by the transport before dependencies run.
     app.addHook('preValidation', async () => {
       if (!options.available) throw new HttpError(503, 'the conversation system is unavailable');
@@ -105,7 +105,7 @@ export function createBackendRoutes(
       };
     });
     app.post('/backends', async (request, reply) => {
-      // Ctx validates identity only. Python imposes no owner-only rule here.
+      // Context validates identity only. This route has no owner-only rule.
       services.identity(request);
       const refresh_requested = refresh(request.query);
       if (!dictionaryBody(request.body, reply)) return;

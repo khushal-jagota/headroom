@@ -7,7 +7,7 @@ import { failure } from '../contracts.ts';
 import type { RunFailure, RuntimeLimits } from '../contracts.ts';
 
 // Stored collector scripts survive release-directory changes. Resolve this one
-// built-in module against the active child runtime, as Python resolves its module.
+// built-in module against the active child runtime.
 registerHooks({
   resolve(specifier, context, nextResolve) {
     if (specifier === 'panels:attention') {

@@ -108,7 +108,7 @@ export async function listTranscriptFiles(
       return;
     }
     for (const entry of entries) {
-      // Python os.path.join retains '..' until the filesystem follows symlinks.
+      // Retain '..' until the filesystem follows symlinks.
       const child = dir.endsWith('/') ? dir + entry.name : dir + '/' + entry.name;
       if (entry.isDirectory()) {
         await walk(child);
@@ -121,7 +121,7 @@ export async function listTranscriptFiles(
       }
       try {
         const stats = await NodeFSP.stat(child, { bigint: true });
-        // Divide the integer rational before conversion, like Python's st_mtime_ns / 1_000_000.
+        // Divide integer nanoseconds before conversion to preserve sub-millisecond precision.
         const mtimeMs =
           Number(stats.mtimeNs / 1_000_000n) + Number(stats.mtimeNs % 1_000_000n) / 1_000_000;
         if (mtimeMs >= sinceMs) {

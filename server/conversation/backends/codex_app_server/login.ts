@@ -19,7 +19,7 @@ export const LOGIN_FILE_NAME = 'auth.json';
 export function codex_home(
   environment: Readonly<Record<string, string | undefined>> = process.env,
 ): string {
-  // Python deliberately uses the process HOME, not a HOME from the supplied mapping.
+  // The default home belongs to this process, independent of the supplied overrides.
   return environment.CODEX_HOME || join(homedir(), '.codex');
 }
 

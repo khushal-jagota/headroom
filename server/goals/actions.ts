@@ -51,7 +51,7 @@ const EDITABLE = [
   'primary_checklist_block_id',
   'primary_chart',
 ];
-/** Python dict equality compares numeric values, including signed zero, before structure. */
+/** Compare numeric values, including signed zero, before record structure. */
 function rule_equal(left: unknown, right: unknown): boolean {
   const numeric = (value: unknown): number | bigint | null =>
     value instanceof JsonNumber

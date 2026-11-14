@@ -18,7 +18,7 @@ export function child_environment(
   return environment;
 }
 
-// Path.resolve() in Python resolves existing symlinks even when the final path is absent.
+// Resolve existing symlinks even when the final path is absent.
 function resolved_home(path: string): string {
   const absolute = resolve(path);
   try {

@@ -1,4 +1,4 @@
-/** Python's shared principal and rejection contracts. */
+/** Shared principal and rejection contracts. */
 import type { Principal as GeneratedPrincipal } from '../../web/src/lib/ticketWorkspace/contracts.ts';
 export type Principal = GeneratedPrincipal;
 export type PrincipalKind = Principal['kind'];

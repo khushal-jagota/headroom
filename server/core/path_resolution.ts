@@ -1,8 +1,8 @@
-/** Filesystem resolution for database-adjacent folders that follow Python Path.resolve. */
+/** Filesystem resolution for database-adjacent folders. */
 import { lstatSync, readlinkSync } from 'node:fs';
 import { dirname, isAbsolute } from 'node:path';
 
-/** Path.resolve(strict=False) follows links before a later '..', and permits missing tails. */
+/** Follow links before a later '..' and permit missing tails unless strict. */
 export function resolve_path_sync(
   path: string,
   options: { strict?: boolean; missing_only?: boolean; require_directory_traversal?: boolean } = {},

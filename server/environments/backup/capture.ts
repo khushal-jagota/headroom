@@ -1,4 +1,4 @@
-/** Verified online snapshots in the existing Python backup-v2 format. */
+/** Verified online snapshots in the existing backup-v2 format. */
 import { createHash, randomUUID } from 'node:crypto';
 import fs from 'node:fs/promises';
 import { dirname, join } from 'node:path';
@@ -35,7 +35,7 @@ export async function managed_file_roots(
   };
 }
 
-/** Follow only the source root, as Python copytree does. Preserve every descendant link. */
+/** Follow only the source root. Preserve every descendant link. */
 export async function copy_managed_tree(source: string, destination: string): Promise<void> {
   await fs.cp(await fs.realpath(source), destination, {
     recursive: true,

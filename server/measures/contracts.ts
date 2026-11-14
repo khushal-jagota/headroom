@@ -5,7 +5,7 @@ export type MeasureKind = 'reading' | 'running_total' | 'period_count';
 export type MeasureOrigin = 'taken' | 'assembled' | 'manual';
 export type Coverage = Wire.ExpressionValue['coverage_status'];
 export type Status = Wire.ExpressionValue['status'];
-/** The stored form retains Python numeric kinds and exact integer digits until projection. */
+/** The stored form retains numeric kinds and exact integer digits until projection. */
 export type FormulaExpression = NumericJSON<Wire.FormulaExpression>;
 export interface Measure {
   id: string;

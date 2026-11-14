@@ -16,7 +16,7 @@ function required(fields: Record<string, unknown>, key: string, kind: string): u
     throw new Error(`Missing required field in ${kind} message: '${key}'`);
   return fields[key];
 }
-/** Mirror only the required native fields that Python's SDK parser consumes. */
+/** Require the native fields consumed by the event mapper. */
 export function validate_message(message: ClaudeSdkMessage): void {
   const kind = message.type;
   if (kind === 'assistant' || kind === 'user') {

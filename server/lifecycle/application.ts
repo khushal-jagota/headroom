@@ -7,12 +7,15 @@ import { start_production_server } from './production.ts';
 import { default_production_dependencies } from './production_bindings.ts';
 import type { ApplicationEntrypoint } from './contracts.ts';
 import { writeSync } from 'node:fs';
+import { setFlagsFromString } from 'node:v8';
 
 /** Only an actual process entry supplies its terminal exit capability. */
 export async function run_application_process(
   application: ApplicationEntrypoint,
   exit: (code: 0 | 1) => void,
 ): Promise<void> {
+  // Node 24 WASM wrapper lifetime race: https://github.com/nodejs/node/issues/66366
+  if (process.versions.node.startsWith('24.')) setFlagsFromString('--no-wasm-code-gc');
   let completed = false;
   const complete = (code: 0 | 1): void => {
     if (completed) return;

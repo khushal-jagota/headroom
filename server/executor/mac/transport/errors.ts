@@ -45,7 +45,7 @@ export function http_error(status: number, body: Uint8Array): ExecutorHttpError 
       }
     }
   } catch {
-    /* An invalid body has the same unknown diagnostic as Python. */
+    /* An invalid body retains the unknown diagnostic. */
   }
   return new ExecutorHttpError(status, code, message);
 }

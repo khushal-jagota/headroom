@@ -10,7 +10,7 @@ interface DurableRow {
   has_live_background_task: number;
 }
 
-/** Python publication/reader.py::read_durable_facts, batched over the complete source. */
+/** Read durable facts in batches over the complete source. */
 const DURABLE_FACTS_SQL =
   'SELECT c.conversation_id,c.owner_read_through_sequence,' +
   '(SELECT MAX(sequence) FROM conversation_events e WHERE ' +

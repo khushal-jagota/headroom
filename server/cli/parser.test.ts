@@ -1,5 +1,6 @@
 import { expect, test } from 'vitest';
 import { create_commands } from './commands.ts';
+import { CliFailure } from './errors.ts';
 import { parse } from './parser.ts';
 
 // The HTTP comparison can return the same empty page after integer rounding.
@@ -30,4 +31,44 @@ test('dash-prefixed operands require a terminator without changing option values
   expect(() =>
     parse(['project', 'set', '--value', '--', '-1', 'summary'], create_commands, {}),
   ).toThrow(usage_failure);
+});
+
+test('usage failures retain recovery and help omits false flag defaults', () => {
+  const cases: [string[], string][] = [
+    [['ticket', 'proposals'], 'Use: panels ticket proposal TICKET_ID ACTION'],
+    [['ticket', 'shw'], 'Use: panels ticket show'],
+    [['ticket', 'list', '--bogus'], 'Use: panels ticket list'],
+    [['sprint'], 'No replacement panels command can be inferred for "sprint".'],
+    [['day'], 'No replacement panels command can be inferred for "day".'],
+    [['manager', 'page'], 'Use: panels page --help'],
+    [['ticket', '--bogus'], 'No panels call can be named until an action is selected.'],
+    [
+      ['attention', 'setup-collection', '--bogus'],
+      'Use: panels attention setup-collection --project TEXT --database-path PATH [OPTIONS]',
+    ],
+  ];
+  for (const [argv, recovery] of cases) {
+    let failure: unknown;
+    try {
+      parse(argv, create_commands, {});
+    } catch (error) {
+      failure = error;
+    }
+    expect(failure).toBeInstanceOf(CliFailure);
+    const result = (failure as CliFailure).result;
+    expect(result).toMatchObject({ exit_code: 2, stdout: '' });
+    if (argv[1] === 'proposals')
+      expect(result.stderr.split('\n')[0]).toBe(
+        'error: "proposals" is not a command under panels ticket.',
+      );
+    if (argv[1] === 'list')
+      expect(result.stderr.split('\n')[0]).toBe(
+        'error: "--bogus" is not an option for panels ticket list.',
+      );
+    expect(result.stderr).toContain(recovery);
+  }
+  expect(parse(['ticket', 'list', '--help'], create_commands, {}).help).not.toContain(
+    '(default: false)',
+  );
+  expect(parse(['ticket', 'list'], create_commands, {}).values.as_json).toBe(false);
 });

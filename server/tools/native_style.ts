@@ -9,6 +9,12 @@ interface Finding {
   message: string;
 }
 const flock_owner = 'server/core/locks/flock.ts';
+const removed_python_helpers =
+  /\b(?:python_(?:(?:string_)?repr(?:_unicode)?|truth|sum|json_equal|os_error_message)|posix_child_path|os_errors|value_error)\b/;
+const retired_python_error_class =
+  /\b(?:ValueError|KeyError|PydanticSerializationError|CalledProcessError)\b/;
+const fake_python_error_name =
+  /(?:\.name\s*(?:={1,3}|!={1,2})|\bname\s*:)\s*['"](?:ValueError|RuntimeError|OSError|FileNotFoundError|PermissionError|NotADirectoryError|IsADirectoryError|JSONDecodeError|KeyError|IndexError|OverflowError|UnicodeDecodeError|UnicodeEncodeError|PydanticSerializationError|CalledProcessError|BlockingIOError)['"]/;
 
 export function native_style_findings(diff: string): Finding[] {
   const findings: Finding[] = [];
@@ -33,8 +39,24 @@ export function native_style_findings(diff: string): Finding[] {
     if (!/^server\/.*\.[cm]?tsx?$/.test(path)) continue;
     const add = (message: string) => findings.push({ path, line: at, message });
     const imported = /^\s*(?:import\b|export\s*(?:\{|\*)|\}\s*from\b)/.test(text);
-    if (imported && /\bpython_(?:string_)?repr\b/.test(text))
-      add('Use JavaScript values and plain Node errors instead of python_repr.');
+    if (imported && removed_python_helpers.test(text))
+      add('Use native JavaScript values instead of removed Python helpers.');
+    if (
+      (imported || /^\s*(?:export\s+)?(?:default\s+)?class\s+/.test(text)) &&
+      retired_python_error_class.test(text)
+    )
+      add('Use native errors instead of retired Python exception classes.');
+    const wire_consumer = path.startsWith('server/executor/');
+    if (
+      imported &&
+      !wire_consumer &&
+      (/(?:\bpure_posix_path\b|['"][^'"]*\/python_path\.ts['"])/.test(text) ||
+        (path !== 'server/execution_identity.ts' &&
+          /['"][^'"]*\/(?:python_integer|whitespace)\.ts['"]/.test(text)))
+    )
+      add('Keep Python path, integer and whitespace compatibility at the executor wire boundary.');
+    if (fake_python_error_name.test(text))
+      add('Use native error classes instead of Python error-name assignments or branches.');
     if (imported && /['"]koffi(?:\/[^'"]*)?['"]/.test(text) && path !== flock_owner)
       add(`Keep the native binding in ${flock_owner}.`);
     const name =
@@ -42,6 +64,11 @@ export function native_style_findings(diff: string): Finding[] {
       (/=>|\bfunction\b/.test(text)
         ? /^\s*(?:export\s+)?(?:const|let)\s+([\w$]+)\s*=/.exec(text)?.[1]
         : undefined);
+    if (
+      name &&
+      (removed_python_helpers.test(name) || (name === 'pure_posix_path' && !wire_consumer))
+    )
+      add('Do not recreate removed Python compatibility helpers.');
     const binding =
       /^\s*(?:export\s+)?(?:const|let)\s+[\w$]+\s*=\s*[\w$.]+\.func\(\s*['"][^'"]*\bflock\b/.test(
         text,
