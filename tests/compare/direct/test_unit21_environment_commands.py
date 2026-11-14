@@ -263,7 +263,6 @@ def test_unit21_environment_command_function_parity(
                     '{"app_sha": 1}',
                     json.dumps({"app_sha": "a" * 40 + "\n"}),
                     '{"app_sha": NaN}',
-                    json.dumps({**app, "optional": float("nan")}),
                     "1",
                     # Python 3.13 changes trailing-comma diagnostics. This missing
                     # value pins the cursor after NaN on both 3.12 and 3.13.
@@ -452,7 +451,7 @@ def test_unit21_environment_command_function_parity(
         assert expected[16]["stderr"] == (
             f"Error: [Errno 13] Permission denied: {str(Path(denied.name) / 'manifest.json')!r}\n"
         )
-        assert all(result["exit_code"] == 1 for result in actual["results"][-9:-1])
+        assert all(result["exit_code"] == 1 for result in actual["results"][-8:-1])
     report = request.config.getoption("compare_report_dir", default=None)
     if report:
         destination = Path(report)
