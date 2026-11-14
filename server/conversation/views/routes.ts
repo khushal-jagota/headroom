@@ -1,4 +1,5 @@
 /** The six selected-conversation view routes. */
+import { is_record as object } from '../../core/records.ts';
 import { Readable } from 'node:stream';
 import { readSync } from 'node:fs';
 import type { FastifyPluginAsync, FastifyRequest } from 'fastify';
@@ -63,9 +64,6 @@ function fail(status: number, detail: string): never {
 }
 function text(value: unknown): value is string {
   return typeof value === 'string';
-}
-function object(value: unknown): value is Record<string, unknown> {
-  return value !== null && typeof value === 'object' && !Array.isArray(value);
 }
 // Pydantic permits underscores in the integer part, but not fractional zeros.
 function normalized_integer_text(raw: string): string {

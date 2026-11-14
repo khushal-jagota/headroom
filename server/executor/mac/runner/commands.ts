@@ -1,4 +1,5 @@
 /** Native effects stay under the retained child lock. Exact retirement belongs to its owner. */
+import { same_reference } from '../../child_reference.ts';
 import {
   BackendPromptRejected,
   BackendSpawnFailed,
@@ -23,13 +24,7 @@ import { NATIVE_WORKER_CONTEXT } from '../configuration.ts';
 import { MacChildAdmissionRefused } from './contracts.ts';
 import type { MacRunningChild } from './contracts.ts';
 import type { MacCommandDependencies, MacCommandWork } from './command_contracts.ts';
-import {
-  CHILD_START_FAILED,
-  outcome,
-  outcome_detail,
-  same_reference,
-  same_wire,
-} from './logic/outcomes.ts';
+import { CHILD_START_FAILED, outcome, outcome_detail, same_wire } from './logic/outcomes.ts';
 
 function native_turn(child: MacRunningChild, token: TurnToken): NativeTurn {
   // Native adapters retain this accepted token and compare its integer with ===.

@@ -1,6 +1,6 @@
 import { calendar_date } from '../../measures/logic/dates.ts';
 import {
-  JsonNumber,
+  is_json_record as object,
   clone_numeric_json,
   numeric_value,
   numeric_kind,
@@ -8,11 +8,6 @@ import {
 /** Plain page-kit validation; chart preparation remains the goal unit's responsibility. */
 import type { ManagerPageDocument as PageDocument } from '../contracts.ts';
 type ObjectValue = Record<string, unknown>;
-const object = (value: unknown): value is ObjectValue =>
-  value !== null &&
-  typeof value === 'object' &&
-  !Array.isArray(value) &&
-  !(value instanceof JsonNumber);
 const fail = (message: string): never => {
   throw new TypeError(message);
 };

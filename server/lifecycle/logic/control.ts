@@ -1,16 +1,12 @@
-import { parse_numeric_json, JsonNumber } from '../../core/http/numeric_json.ts';
+import {
+  is_json_record as object,
+  parse_numeric_json,
+  JsonNumber,
+} from '../../core/http/numeric_json.ts';
 import { MAX_CONTROL_MESSAGE_BYTES } from '../configuration.ts';
 import { ServerRestartProtocolError } from '../contracts.ts';
 import type { ControlRequest, ControlResponse, StopCapabilityRecord } from '../contracts.ts';
 
-function object(value: unknown): value is Record<string, unknown> {
-  return (
-    value !== null &&
-    typeof value === 'object' &&
-    !Array.isArray(value) &&
-    !(value instanceof JsonNumber)
-  );
-}
 function shape(value: Record<string, unknown>, names: readonly string[]): boolean {
   return Object.keys(value).sort().join(',') === [...names].sort().join(',');
 }

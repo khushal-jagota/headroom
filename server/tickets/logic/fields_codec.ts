@@ -1,3 +1,4 @@
+import { is_record as object } from '../../core/records.ts';
 import { PlannerError, type Principal } from '../../core/contracts.ts';
 import type { WorkflowDefinition } from '../../worker_types/contracts.ts';
 import type {
@@ -7,8 +8,6 @@ import type {
   TicketFieldValues,
 } from '../contracts.ts';
 import { gating_field } from './machine.ts';
-const object = (v: unknown): v is Record<string, unknown> =>
-  v !== null && typeof v === 'object' && !Array.isArray(v);
 function require(condition: unknown): asserts condition {
   if (!condition) throw new PlannerError('validation', 'corrupt ticket field state');
 }

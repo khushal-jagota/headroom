@@ -1,10 +1,8 @@
 /** Validate the whole inventory before any of it enters a card. */
+import { is_record as object } from '../../../core/records.ts';
 import type { BackendModel } from '../contracts.ts';
 const text = (value: unknown): string | null =>
   typeof value === 'string' && value.trim() ? value.trim() : null;
-function object(value: unknown): value is Record<string, unknown> {
-  return value !== null && typeof value === 'object' && !Array.isArray(value);
-}
 export function parse_hermes_inventory(
   payload: unknown,
 ):

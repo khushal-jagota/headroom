@@ -1,4 +1,5 @@
 /** Bounded local ffprobe adapter. A valid stream is not a full decode proof. */
+import { is_record as object } from '../../core/records.ts';
 import { spawn } from 'node:child_process';
 import { accessSync, constants, statSync } from 'node:fs';
 import { open } from 'node:fs/promises';
@@ -22,8 +23,6 @@ export function require_probe(): string {
   }
   throw new VideoUploadError('Video uploads are unavailable: ffprobe is not installed.', 503);
 }
-const object = (value: unknown): value is Record<string, unknown> =>
-  value !== null && typeof value === 'object' && !Array.isArray(value);
 export async function probe_video(
   path: string,
   filename: string,

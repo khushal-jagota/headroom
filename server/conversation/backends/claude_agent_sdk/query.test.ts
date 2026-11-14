@@ -52,6 +52,7 @@ function setup(environment: Record<string, string> = {}, can_use_tool?: Options[
       child.exitCode = 0;
       child.stdout.end();
       child.stderr.end();
+      child.emit('exit', 0, null);
       child.emit('close', 0, null);
     },
     environment,
@@ -181,6 +182,7 @@ it('waits for actual stdin completion and does not inherit a Worker containment 
       [],
       expect.objectContaining({
         env: expect.not.objectContaining({ SDK_ONLY_ADDITION: 'forbidden' }),
+        detached: process.platform !== 'win32',
       }),
     );
     await client.disconnect();
@@ -252,7 +254,7 @@ it('retains a failed cleanup handle until the same owned child confirms exit', a
   await client.connect();
   close.mockImplementation(() => {});
   const first = expect(client.disconnect()).rejects.toThrow(
-    'Claude process termination remains unconfirmed',
+    'Child process termination remains unconfirmed',
   );
   await vi.advanceTimersByTimeAsync(15_000);
   await first;
@@ -260,6 +262,7 @@ it('retains a failed cleanup handle until the same owned child confirms exit', a
     'a Claude transport cannot reconnect after cleanup',
   );
   child.exitCode = 0;
+  child.emit('exit', 0, null);
   child.emit('close', 0, null);
   await client.disconnect();
   await pumping();
@@ -275,6 +278,7 @@ it('closes an exact spawned process even when SDK query construction never retur
   });
   child.stdin.on('finish', () => {
     child.exitCode = 0;
+    child.emit('exit', 0, null);
     child.emit('close', 0, null);
   });
   await expect(client.connect()).rejects.toThrow('query construction failed after spawn');
@@ -282,6 +286,25 @@ it('closes an exact spawned process even when SDK query construction never retur
   await pumping();
   expect(spawn).toHaveBeenCalledTimes(1);
   expect(child.kill).not.toHaveBeenCalled();
+});
+
+it('bounds output drain separately after the direct child exits without signalling its retired group', async () => {
+  vi.useFakeTimers();
+  const { client, child, close, pumping } = setup();
+  await client.connect();
+  close.mockImplementation(() => {
+    child.exitCode = 0;
+    child.emit('exit', 0, null);
+  });
+  const drained = expect(client.disconnect()).rejects.toThrow(
+    'Claude output drain remains unconfirmed',
+  );
+  await vi.advanceTimersByTimeAsync(5000);
+  await drained;
+  expect(child.kill).not.toHaveBeenCalled();
+  child.emit('close', 0, null);
+  await client.disconnect();
+  await pumping();
 });
 
 it('joins one owned unit stop when EOF and disconnect overlap', async () => {

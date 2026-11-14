@@ -1,7 +1,8 @@
 /** VPS backend adapter. The Mac retains native process ownership; calls create mailbox rows. */
 import { randomUUID } from 'node:crypto';
 import { homedir } from 'node:os';
-import { isAbsolute, relative, sep } from 'node:path';
+import { relative } from 'node:path';
+import { path_is_within } from '../core/path_containment.ts';
 import * as backend from '../conversation/backends/contracts.ts';
 import type {
   BackendChild,
@@ -173,12 +174,9 @@ export class MacRemoteChild implements BackendChild {
     }
     let workspace_home_relative: string | null = null;
     if (start.workspace_path_policy === WorkspacePathPolicy.home_relative) {
-      const path = relative(
-        resolve_path_sync(homedir()),
-        resolve_path_sync(start.workspace_folder),
-      );
-      if (path !== '..' && !path.startsWith('..' + sep) && !isAbsolute(path))
-        workspace_home_relative = path;
+      const home = resolve_path_sync(homedir()),
+        workspace = resolve_path_sync(start.workspace_folder);
+      if (path_is_within(home, workspace)) workspace_home_relative = relative(home, workspace);
     } else if (start.workspace_path_policy === WorkspacePathPolicy.executor_default) {
       const path = pure_posix_path(start.workspace_folder);
       if (!path.startsWith('/'))

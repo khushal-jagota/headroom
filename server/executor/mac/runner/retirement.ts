@@ -2,7 +2,8 @@
 import type { ChildCommand, ChildReference, CommandOutcome } from '../../wire.generated.ts';
 import type { MacCommandWork } from './command_contracts.ts';
 import type { MacRetirementContract, MacRetirementDependencies } from './retirement_contracts.ts';
-import { error_message, error_outcome, outcome, same_reference } from './logic/outcomes.ts';
+import { error_message, error_outcome, outcome } from './logic/outcomes.ts';
+import { same_reference } from '../../child_reference.ts';
 import { observe_shutdown } from '../../../conversation/shutdown.ts';
 import type { StopOptions } from '../../../lifecycle/contracts.ts';
 import { remember_model_catalog_failure } from '../../../conversation/backends/catalog_cleanup.ts';

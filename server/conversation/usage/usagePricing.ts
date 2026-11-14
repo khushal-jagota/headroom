@@ -11,6 +11,7 @@
  * @module usagePricing
  */
 import type { UsageCostSource, UsageModelPriceOverride, UsageTokenTotals } from './contracts.ts';
+import { is_record } from '../../core/records.ts';
 
 /**
  * The subset of a LiteLLM entry we price against. All values are USD per token.
@@ -72,10 +73,10 @@ function finiteNumber(value: unknown): number | null {
  */
 export function parseRateTable(document: unknown): RateTable {
   const table = new Map<string, ModelRate>();
-  if (typeof document !== 'object' || document === null || Array.isArray(document)) return table;
+  if (!is_record(document)) return table;
 
   for (const [name, raw] of Object.entries(document as Record<string, unknown>)) {
-    if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) continue;
+    if (!is_record(raw)) continue;
     const entry = raw as LiteLlmEntry;
     const input = finiteNumber(entry.input_cost_per_token);
     const output = finiteNumber(entry.output_cost_per_token);
