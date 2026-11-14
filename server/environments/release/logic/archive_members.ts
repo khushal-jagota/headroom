@@ -54,11 +54,15 @@ export class ArchiveMembers {
   #logicalSize = 0;
   #names = new Set<string>();
   #manifest = false;
+  #prefix = Buffer.alloc(0);
+  #started = false;
 
   constructor(purpose: 'extraction' | 'mac-inspection' = 'extraction') {
     this.purpose = purpose;
     this.#parser = new Parser({
       strict: true,
+      zstd: false,
+      brotli: false,
       maxMetaEntrySize: ARCHIVE_MAX_METADATA_ENTRY_BYTES,
       onReadEntry: (entry) => this.#entry(entry),
     });
@@ -159,6 +163,17 @@ export class ArchiveMembers {
     entry.resume();
   }
   feed(chunk: Buffer): void {
+    if (!this.#started) {
+      chunk = Buffer.concat([this.#prefix, chunk]);
+      if (chunk.length < 2) {
+        this.#prefix = chunk;
+        return;
+      }
+      // The caller already inflated and counted raw TAR bytes. Do not inflate twice.
+      if (chunk[0] === 0x1f && chunk[1] === 0x8b) refuse('app archive contains nested gzip data');
+      this.#started = true;
+      this.#prefix = Buffer.alloc(0);
+    }
     this.#parser.write(chunk);
   }
   finish(): void {
