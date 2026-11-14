@@ -12,6 +12,8 @@ final class OfflineOperationTests: XCTestCase {
         try await proof(base, "fast")
         app.launch()
         defer { app.terminate() }
+        let workspace = app.tabBars.buttons["Workspace"]
+        XCTAssertTrue(workspace.waitForExistence(timeout: 12)); workspace.tap()
         let chief = app.buttons.matching(NSPredicate(format: "label CONTAINS 'Chief of Staff'")).firstMatch
         XCTAssertTrue(chief.waitForExistence(timeout: 12))
         app.tabBars.buttons["Review"].tap()
@@ -61,6 +63,7 @@ final class OfflineOperationTests: XCTestCase {
         XCTAssertTrue(confirmReturn.waitForExistence(timeout: 5))
         confirmReturn.tap()
         app.terminate(); app.launch()
+        XCTAssertTrue(workspace.waitForExistence(timeout: 3)); workspace.tap()
         XCTAssertTrue(chief.waitForExistence(timeout: 3), "Cached Workspace did not restore offline")
         app.tabBars.buttons["Review"].tap()
         XCTAssertTrue(app.buttons.matching(NSPredicate(format: "label CONTAINS 'Record offline'")).firstMatch.waitForExistence(timeout: 5), "Cached Review did not restore the remaining ask offline")

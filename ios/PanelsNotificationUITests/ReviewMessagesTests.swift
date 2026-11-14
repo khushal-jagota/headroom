@@ -56,6 +56,8 @@ final class ReviewMessagesTests: XCTestCase {
         app.launchArguments = ["--conversation-stub", base]
         app.launch()
         defer { app.terminate() }
+        let workspace = app.tabBars.buttons["Workspace"]
+        XCTAssertTrue(workspace.waitForExistence(timeout: 8)); workspace.tap()
         let chief = app.buttons.matching(NSPredicate(format: "label CONTAINS 'Chief of Staff'")).firstMatch
         XCTAssertTrue(chief.waitForExistence(timeout: 8))
         chief.tap()

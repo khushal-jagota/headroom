@@ -99,6 +99,7 @@ private struct ConversationSurface: View {
             if checksCurrentConversation { model.selectConversation(conversationID) }
             else if let current = currentReference { model.selectConversation(current) }
             model.restore(owner: owner, api: store.client, recoverConversationID: false)
+            if owner == .chief { model.reloadDraft() }
             if case .ticket(let id) = owner {
                 let api = store.client
                 let ticket = store.resources.handle(TicketResources.detail(id))

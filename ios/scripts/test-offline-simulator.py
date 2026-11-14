@@ -657,6 +657,14 @@ def main() -> int:
                     return
                 if name.startswith("review-owner/"):
                     state["review_owner"] = name.split("/")[-1]
+                elif name == "review-final":
+                    # A local fixture transition clears the queue after Revisit.
+                    # It does not issue any product mutation or real conversation send.
+                    with lock:
+                        state["read_through"] = 4
+                        state["historical_read"] = True
+                        for ticket in tickets.values():
+                            ticket["pending_proposal"] = None
                 elif name == "new-message":
                     state["new_message"] = True
                 elif name == "offline":
@@ -987,6 +995,19 @@ def main() -> int:
                     else:
                         state["read_through"] = body["through_sequence"]
                     value = {"owner_read_through_sequence": body["through_sequence"]}
+                elif (
+                    REVIEW_MESSAGES
+                    and path.endswith("/send")
+                    and "owner_read_through_sequence" not in body
+                ):
+                    # Final-page Chief messages use the ordinary conversation path,
+                    # without the unread-run boundary that belongs to a Review reply.
+                    state["writes"].append(body)
+                    state["messages"].append(body)
+                    value = {
+                        "conversation_id": body.get("conversation_id") or state["chief_conversation"] or "stub",
+                        "fate": "started",
+                    }
                 elif REVIEW_MESSAGES and path.endswith("/send"):
                     state["writes"].append(body)
                     if not state["refused"]:

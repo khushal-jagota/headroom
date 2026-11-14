@@ -10,7 +10,7 @@ The app icon uses the Chief of Staff portrait from
 Its opaque 1024×1024 PNG lives in `Panels/Assets.xcassets/AppIcon.appiconset`;
 `project.yml` selects `AppIcon` for the Panels target.
 
-Workspace is the initial tab. Review, Workspace and More each own a navigation
+Review is the initial tab. Notification links retain their destination. Review, Workspace and More each own a navigation
 stack and retain their place when switching tabs. More groups Work and System in
 a native list, with deployment status in a Panels server row above them. Active
 deployment status adds a dot to More; healthy idle has no dot. The tab bar is visible on these three roots; the shared `AppRoute`

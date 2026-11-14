@@ -152,6 +152,32 @@ import XCTest
         XCTAssertFalse(sent)
         XCTAssertTrue(ReviewMessageProtocol.state.bodies.isEmpty)
     }
+    func testReplacementUpdatesAuthorityWithoutChangingDisplayedRunOrDraft() async throws {
+        let api = makeAPI()
+        ReviewMessageProtocol.state.reset()
+        defer { clean(api) }
+        let decision = ReviewMessageDecision()
+        await decision.load(item: item(), api: api)
+        decision.composer.draft = "Keep this old-conversation draft"
+        decision.composer.attachments = [.init(piece: "file", data: "YWJj", mediaType: "text/plain", fileName: "note.txt")]
+        let reads = ReviewMessageProtocol.state.eventReads
+        ReviewMessageProtocol.state.newMessage = true
+        decision.updateAddressCurrent(false)
+        XCTAssertTrue(decision.historical)
+        XCTAssertTrue(decision.isCurrent(for: item(current: false)), "Replacement does not invalidate the displayed unread run")
+        XCTAssertEqual(decision.events.count, 65)
+        XCTAssertEqual(decision.through, 66)
+        XCTAssertEqual(ReviewMessageProtocol.state.eventReads, reads)
+        XCTAssertEqual(decision.composer.conversationID, "c")
+        XCTAssertEqual(decision.composer.draft, "Keep this old-conversation draft")
+        XCTAssertEqual(decision.composer.attachments.first?.fileName, "note.txt")
+        let sent = await decision.send()
+        XCTAssertFalse(sent)
+        XCTAssertTrue(ReviewMessageProtocol.state.bodies.isEmpty)
+        let marked = await decision.markRead()
+        XCTAssertTrue(marked)
+        XCTAssertEqual(ReviewMessageProtocol.state.bodies.last?["through_sequence"] as? Int, 66)
+    }
     private func item(current: Bool = true) -> ReviewItem { .init(reviewItemType: "message", title: "Chief", waitingSince: 1, conversationId: "c", ownerKind: "chief", ownerId: "chief", ownerReadThroughSequence: 1, addressCurrent: current) }
     private func makeAPI() -> APIClient {
         let config = URLSessionConfiguration.ephemeral; config.protocolClasses = [ReviewMessageProtocol.self]

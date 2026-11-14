@@ -57,26 +57,28 @@ struct ReviewView: View {
             } else if store.review != nil {
                 GeometryReader { geometry in
                     ScrollView {
-                        VStack(spacing: PanelsTheme.Space.sm) {
-                            Text("You’re caught up.").font(ReviewStyle.empty).foregroundStyle(PanelsTheme.strong)
-                            Text("All done for now.").font(PanelsTheme.TypeScale.body).foregroundStyle(PanelsTheme.faint)
+                        VStack(spacing: PanelsTheme.Space.xl) {
+                            VStack(spacing: PanelsTheme.Space.sm) {
+                                Text("You’re caught up.").font(ReviewStyle.empty).foregroundStyle(PanelsTheme.strong)
+                                Text("All done for now.").font(PanelsTheme.TypeScale.body).foregroundStyle(PanelsTheme.faint)
+                            }
+                            .multilineTextAlignment(.center)
+                            ReviewChiefMessage(isActive: active)
+                            if skippedCount > 0 {
+                                Button("Revisit \(skippedCount) skipped \(skippedCount == 1 ? "item" : "items")") {
+                                    Haptics.selection()
+                                    withAnimation(ReviewStyle.entrance) { queue.revisit(); reviewPage = nil }
+                                }
+                                .buttonStyle(ReviewActionStyle())
+                                .accessibilityIdentifier("review.revisitSkipped")
+                            }
                         }
-                        .multilineTextAlignment(.center)
-                        .frame(maxWidth: .infinity, minHeight: geometry.size.height)
-                        .padding(.horizontal, ReviewStyle.gutter)
-                    }.panelsRefreshable { await store.refresh() }
-                }
-                .safeAreaInset(edge: .bottom, spacing: 0) {
-                    if skippedCount > 0 {
-                        Button("Revisit \(skippedCount) skipped \(skippedCount == 1 ? "item" : "items")") {
-                            Haptics.selection()
-                            withAnimation(ReviewStyle.entrance) { queue.revisit(); reviewPage = nil }
-                        }
-                        .buttonStyle(ReviewActionStyle())
-                        .accessibilityIdentifier("review.revisitSkipped")
                         .padding(.horizontal, ReviewStyle.gutter)
                         .padding(.vertical, PanelsTheme.Space.xl)
+                        .frame(maxWidth: .infinity, minHeight: geometry.size.height)
                     }
+                    .scrollDismissesKeyboard(.interactively)
+                    .panelsRefreshable { await store.refresh() }
                 }
                 .opacity(emptyVisible ? 1 : 0)
                 .task { withAnimation(.easeOut(duration: ReviewStyle.fadeOut)) { emptyVisible = true } }

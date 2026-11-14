@@ -46,6 +46,17 @@ import UniformTypeIdentifiers
         }
         syncOutbox(savedWork: savedWork)
     }
+    /// Re-read the owner's shared composer when another surface edited its draft.
+    func reloadDraft() {
+        guard let api = persistenceAPI else { return }
+        restoring = true
+        defer { restoring = false }
+        let server = LocalStore.server(api.baseURL)
+        draft = LocalStore.shared.draft(server: server, id: draftKey) ?? ""
+        attachments = (try? LocalStore.shared.record(server: server, kind: "attachments", id: draftKey))
+            .flatMap { try? JSONDecoder().decode([ConversationSend.Piece].self, from: $0.payload) } ?? []
+    }
+
     /// Change the displayed destination without changing the owner's unsent work
     /// or the destinations of messages already recorded in the outbox.
     func selectConversation(_ id: String?) {
