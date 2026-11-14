@@ -3,6 +3,8 @@ import { closeSync, readdirSync } from 'node:fs';
 import { parentPort } from 'node:worker_threads';
 import * as files from './file_worker_operations.ts';
 import * as transfers from './transfer_file_operations.ts';
+import * as records from './runtime/record_operations.ts';
+import * as archives from './updates/archive_operations.ts';
 import { close_retained } from './retained_cleanup.ts';
 import { sync_directory_descriptor, unlink_relative } from './platform.ts';
 import type {
@@ -19,10 +21,22 @@ function descriptor(handle: number): number {
   if (value === undefined) throw new Error('Executor directory handle is closed or unknown.');
   return value;
 }
-function execute(
+async function execute(
   message: Exclude<FileWorkerRequest, { operation: 'stop' }>,
-): FileOperationResults[keyof FileOperationResults] {
+): Promise<FileOperationResults[keyof FileOperationResults]> {
   switch (message.operation) {
+    case 'read_runtime_revision':
+      return archives.read_runtime_revision(...message.arguments);
+    case 'unlink_at':
+      return unlink_relative(descriptor(message.arguments[0]), message.arguments[1], true);
+    case 'extract_runtime':
+      return archives.extract_runtime(...message.arguments);
+    case 'read_runtime_record':
+      return records.read_runtime_record(...message.arguments);
+    case 'atomic_runtime_record':
+      return records.atomic_runtime_record(...message.arguments);
+    case 'remove_runtime_record':
+      return records.remove_runtime_record(...message.arguments);
     case 'open_transfer':
       return transfers.open_transfer(...message.arguments);
     case 'read_transfer':
@@ -94,19 +108,25 @@ function error_body(error: unknown): FileWorkerError {
   };
 }
 function close_handles(): unknown {
-  const transfer_failure = transfers.close_transfers();
-  const directory_failure = close_retained(directories, closeSync);
-  if (transfer_failure !== undefined && directory_failure !== undefined)
-    return new AggregateError(
-      [transfer_failure, directory_failure],
-      'Transfer and directory cleanup failed.',
-    );
-  return transfer_failure ?? directory_failure;
+  const failures: unknown[] = [
+    transfers.close_transfers(),
+    close_retained(directories, closeSync),
+  ].filter((failure) => failure !== undefined);
+  for (const cleanup of [records.cleanup_record_handles, archives.cleanup_archive_handles]) {
+    try {
+      cleanup();
+    } catch (error) {
+      failures.push(error);
+    }
+  }
+  return failures.length > 1
+    ? new AggregateError(failures, 'Executor file cleanup failed.')
+    : failures[0];
 }
 // Fatal JavaScript errors still release libc descriptors before the thread exits.
 process.once('uncaughtExceptionMonitor', close_handles);
 process.once('exit', close_handles);
-port.on('message', (message: FileWorkerRequest) => {
+async function dispatch(message: FileWorkerRequest): Promise<void> {
   if (message.operation === 'stop') {
     const failure = close_handles();
     if (failure !== undefined) {
@@ -120,9 +140,11 @@ port.on('message', (message: FileWorkerRequest) => {
   }
   let response: FileWorkerResponse;
   try {
-    response = { id: message.id, value: execute(message) };
+    response = { id: message.id, value: await execute(message) };
   } catch (error) {
     if (
+      records.owns_record_handles() ||
+      archives.owns_archive_handles() ||
       message.operation === 'close_transfer' ||
       message.operation === 'close_directory' ||
       (error instanceof AggregateError && message.operation === 'open_transfer')
@@ -133,4 +155,9 @@ port.on('message', (message: FileWorkerRequest) => {
     response = { id: message.id, error: error_body(error) };
   }
   port.postMessage(response);
+}
+let pending = Promise.resolve();
+port.on('message', (message: FileWorkerRequest) => {
+  // Stop joins the same ordered chain as admitted async archive work.
+  pending = pending.then(() => dispatch(message));
 });

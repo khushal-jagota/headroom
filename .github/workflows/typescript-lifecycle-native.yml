@@ -7,6 +7,27 @@ on:
   schedule:
     - cron: '17 */4 * * *'
   workflow_dispatch:
+    inputs:
+      build_mac_package:
+        description: Build the TypeScript Mac package with the reviewed target inputs
+        type: boolean
+        default: false
+      target_home:
+        description: Absolute HOME of the target Mac account (package only)
+        required: false
+        type: string
+      executor_id:
+        description: Reviewed executor identity (package only)
+        required: false
+        type: string
+      server_url:
+        description: Reviewed HTTPS peer URL, never contacted (package only)
+        required: false
+        type: string
+      backend_path:
+        description: Absolute provider and system directories separated by colons (package only)
+        required: false
+        type: string
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
@@ -225,3 +246,87 @@ jobs:
           name: lifecycle-native-darwin-arm64-node-22
           path: ${{ runner.temp }}/lifecycle-native-evidence
           if-no-files-found: warn
+
+  mac-package:
+    if: github.event_name == 'workflow_dispatch' && inputs.build_mac_package
+    # macos-14 retired on 2026-11-02. The Manager approved standard macos-15 arm64.
+    # https://github.blog/changelog/2026-10-01-github-actions-macos-14-runner-image-retirement/
+    runs-on: macos-15
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Require the reviewed package target
+        env:
+          TARGET_MAC_HOME: ${{ inputs.target_home }}
+          TARGET_EXECUTOR_ID: ${{ inputs.executor_id }}
+          TARGET_SERVER_URL: ${{ inputs.server_url }}
+          TARGET_BACKEND_PATH: ${{ inputs.backend_path }}
+        run: |
+          set -euo pipefail
+          : "${TARGET_MAC_HOME:?Package target HOME is required}"
+          : "${TARGET_EXECUTOR_ID:?Package executor ID is required}"
+          : "${TARGET_SERVER_URL:?Package HTTPS peer is required}"
+          : "${TARGET_BACKEND_PATH:?Package backend PATH is required}"
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '22'
+          architecture: arm64
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: '3.12'
+      - name: Assemble the native Node package
+        env:
+          TARGET_MAC_HOME: ${{ inputs.target_home }}
+          TARGET_EXECUTOR_ID: ${{ inputs.executor_id }}
+          TARGET_SERVER_URL: ${{ inputs.server_url }}
+          TARGET_BACKEND_PATH: ${{ inputs.backend_path }}
+        run: |
+          set -euo pipefail
+          umask 077
+          package_root="$RUNNER_TEMP/typescript-mac-package"
+          mkdir "$package_root"
+          mkdir "$package_root/source" "$package_root/home" "$package_root/tmp" "$package_root/npm-cache"
+          git archive --format=tar "$GITHUB_SHA" | tar -xf - -C "$package_root/source"
+          env -i PATH="$PATH" LANG=en_US.UTF-8 LC_ALL=en_US.UTF-8 \
+            GITHUB_ACTIONS=true GITHUB_WORKSPACE="$GITHUB_WORKSPACE" GITHUB_SHA="$GITHUB_SHA" \
+            HOME="$package_root/home" TMPDIR="$package_root/tmp" npm_config_cache="$package_root/npm-cache" \
+            PLAN_SERVER_URL=https://127.0.0.1:9 PLAN_TEST_MODE=0 \
+            PACKAGE_ROOT="$package_root" TARGET_MAC_HOME="$TARGET_MAC_HOME" \
+            TARGET_EXECUTOR_ID="$TARGET_EXECUTOR_ID" TARGET_SERVER_URL="$TARGET_SERVER_URL" \
+            TARGET_BACKEND_PATH="$TARGET_BACKEND_PATH" \
+            bash --noprofile --norc -euo pipefail <<'BUILD'
+          node --input-type=module -e 'if(process.platform!=="darwin"||process.arch!=="arm64"||Number(process.versions.node.split(".")[0])!==22||Number(process.versions.node.split(".")[1])<18)throw Error("Darwin arm64 Node22 >=22.18 required");console.log({node:process.versions.node,platform:process.platform,architecture:process.arch});'
+          node_distribution=$(node --input-type=module -e 'import{realpathSync}from"node:fs";import{dirname}from"node:path";console.log(dirname(dirname(realpathSync(process.execPath))));')
+          # NODE_ENV=production is npm ci's production omission mode. The shared guard
+          # accepts no extra ci flags, so the exported source gets its own production tree.
+          NODE_ENV=production python3 -I -S -B "$PACKAGE_ROOT/source/scripts/development_safety/bootstrap.py" npm --prefix server ci
+          python3 -I -S -B "$PACKAGE_ROOT/source/scripts/development_safety/bootstrap.py" check-node server
+          node "$PACKAGE_ROOT/source/server/executor/mac/packaging/main.ts" \
+            --source "$PACKAGE_ROOT/source" \
+            --node-distribution "$node_distribution" \
+            --node-modules "$PACKAGE_ROOT/source/server/node_modules" \
+            --output "$PACKAGE_ROOT/output" \
+            --revision "$GITHUB_SHA" \
+            --home "$TARGET_MAC_HOME" \
+            --executor-id "$TARGET_EXECUTOR_ID" \
+            --server-url "$TARGET_SERVER_URL" \
+            --backend-path "$TARGET_BACKEND_PATH"
+          BUILD
+      - name: Upload runtime archive and installation assets
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: panels-typescript-mac-${{ github.sha }}
+          path: |
+            ${{ runner.temp }}/typescript-mac-package/output/panels-mac-runtime.tar.gz
+            ${{ runner.temp }}/typescript-mac-package/output/build.json
+            ${{ runner.temp }}/typescript-mac-package/output/INSTALLATION.md
+            ${{ runner.temp }}/typescript-mac-package/output/assets/
+          if-no-files-found: error
+          retention-days: 30
+          compression-level: 0

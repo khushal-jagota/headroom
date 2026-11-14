@@ -106,6 +106,27 @@ export class FilesService {
       }
     });
   }
+  read_runtime_revision(path: string, expected: string): Promise<string> {
+    return this.request('read_runtime_revision', [path, expected]);
+  }
+  extract_runtime(
+    archive: string,
+    releases: string,
+    sha256: string,
+    bytes: number,
+    revision: string,
+  ): Promise<string> {
+    return this.request('extract_runtime', [archive, releases, sha256, bytes, revision]);
+  }
+  read_runtime_record(path: string): Promise<string | null> {
+    return this.request('read_runtime_record', [path]);
+  }
+  atomic_runtime_record(path: string, text: string): Promise<void> {
+    return this.request('atomic_runtime_record', [path, text]);
+  }
+  remove_runtime_record(path: string): Promise<void> {
+    return this.request('remove_runtime_record', [path]);
+  }
   file_digest(path: string) {
     return this.request('file_digest', [path]);
   }
@@ -174,6 +195,9 @@ export class FilesService {
   async close_directory(handle: DirectoryHandle): Promise<void> {
     await this.request('close_directory', [this.directory(handle)]);
     this.directories.delete(handle);
+  }
+  async unlink_at(handle: DirectoryHandle, name: string): Promise<void> {
+    await this.request('unlink_at', [this.directory(handle), name]);
   }
   async copy_verified_at(
     source: string,

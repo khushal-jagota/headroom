@@ -130,6 +130,8 @@ export class MacArchiveJsonError extends Error {
 export interface MacArchiveInspection {
   readonly manifest: unknown;
   readonly python: boolean;
+  readonly node: boolean;
+  readonly entrypoint: boolean;
 }
 export interface MacInspectionExecution {
   readonly child_processes: OwnedChildProcesses;

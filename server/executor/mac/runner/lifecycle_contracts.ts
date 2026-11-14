@@ -59,6 +59,7 @@ export interface MacRunnerContract
     MacRunnerEventsContract,
     MacRunnerLifetimeContract {
   readonly native_children: MacNativeChildrenContract;
+  seal_admission(): void;
   authenticate(child_id: string | null, capability: string | null): MacRunningChild;
   withdraw(command_id: string): boolean;
   source_work<T>(

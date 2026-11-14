@@ -1,8 +1,43 @@
-# Mac executor file foundation
+# TypeScript Mac executor
+
+`host/service.ts` composes the standalone Mac invocation, including its shared child owners,
+runner, mailbox, gateway, HTTP, lease, live sender, durable sender, skills, catalog, and storage.
+It reads a planned handoff before the journal and HTTP identity, then fences commands until replay completes.
+Each producer receives the original absolute stop deadline. Actual joins precede file workers, journal, and the spool lock.
+`inputs.ts` downloads verified prompt files and removes temporary entries through a retained directory capability.
+`host/entry.ts` supplies the production update, provider, catalog, and Darwin process bindings plus signal ownership.
+The packaged `entrypoint.ts` reuses the ordinary CLI. `run.ts` binds parent mode to the fixed runtime supervisor and child mode to the host.
+
+`AgentProcesses` records descendant identities in `run/agent-processes.json` and retains reparented tools.
+The Darwin host supplies its existing files and one-shot child owners. Native `ps`, priority and individual-PID signals stay in `platform.ts`.
+Startup checks start times before orphan signals and preserves discovered identities across cancellation.
+Linux checks use scripted snapshots only. Real Darwin process identity, priority and signal behavior remain a later Mac check.
+
+## Unix CLI client
+
+`ipc/gateway.ts` owns the private Unix listener and admitted CLI publications.
+`ipc/outbox.ts` captures files through the real spool and retains receipt waiters.
+The sender calls `notify_confirmed` after its durable acknowledgement callback.
+`storage/envelopes.ts` supplies the shared row-to-envelope and receipt projections.
+The host supplies runner admission, catalog settlement, presence, reads, and exit.
+It joins gateway and runner cleanup before storage. A response timeout never cancels publication.
+The runner facade seals admission before reversible catalog settlement and quiescence.
+
+`ipc_client.ts` connects only to the configured root's Unix socket. It validates
+and frames each request through the shared wire codec before emission. It sends
+the OS monotonic deadline, so a service in another process can compare that clock.
+One absolute timeout covers connect, write, and response, including the transport reserve.
+The client joins socket closure before it returns. It never retries a write.
+After possible emission, a transport or response-validation failure means unknown
+acceptance for write/retry. A valid reply retains its original submission identity.
+The existing CLI owns output and exit codes. `run` retains the parent interrupt exit code and joins its child and file owners.
+`permissions` previews lexical workspace/output scopes and touches them only with `--check`.
+Its explicit check reads one directory entry and writes, reads, closes, and removes one temporary output file.
+The fresh Python comparison checks bytes, exits, and cleanup. Actual macOS consent remains a later Mac check.
 
 The Mac executor uses `FilesService` for byte copies, hashes, directory creation, and durable flushes.
 Each caller owns its service instance and must pass the shared absolute shutdown deadline to `stop()`.
-The later host can retain separate instances for independent conversation transfers. This slice adds no worker pool.
+The host retains separate file services for conversation transfers and runtime updates.
 
 The public methods return promises:
 
@@ -41,7 +76,8 @@ It does not change the existing usage worker or its runtime policy.
 ## Native operations and containment
 
 The Manager permits the branch's existing Koffi bridge only to OS libc or libSystem.
-Every new native call resides in `platform.ts`. An absent library or symbol refuses the operation.
+Native filesystem calls reside in `platform.ts`. The shared flock binding resides in `core/locks/flock.ts`.
+An absent library or symbol refuses the operation.
 There is no path-based fallback.
 The module refuses startup if `O_NOFOLLOW`, `O_DIRECTORY`, `O_CREAT`, `O_EXCL`, or `O_NONBLOCK` is absent or nonpositive.
 `O_RDONLY` legitimately equals zero.
@@ -59,9 +95,8 @@ This preserves Python's symlink defense. It is not a sandbox against arbitrary s
 `file_version` keeps Python's metadata-only, path-based `lstat` observation.
 Nanosecond file versions use BigInt rather than rounded JavaScript numbers.
 
-The spool lock uses the same OS `flock` mechanism as the shared lock helper.
-The shared helper opens its path directly and can follow a substituted parent or leaf.
-It cannot supply a retained-parent, no-follow lock creation unchanged, so the executor reuses the native mechanism through its platform boundary.
+The spool lock uses `core/locks/flock.ts` on its retained-parent, no-follow descriptor.
+The executor retains responsibility for lock-file creation and contention handling.
 The exposed executor lock modes are nonblocking exclusive acquisition and unlock. No blocking acquisition mode exists.
 
 A regular-file flush calls plain libc `fsync`, then strict Darwin `fcntl(F_FULLFSYNC)` with an explicit variadic `int` zero.
@@ -72,7 +107,7 @@ Directory creation retains Python's stricter parent-flush sequence.
 Normal failure cleanup removes each private `.tmp-` entry through its retained directory.
 This file helper does not perform a startup sweep after process death.
 Python's outbox startup calls `_sweep_blobs` at `mac_outbox.py:183-191` and defines it at `mac_outbox.py:542-560`.
-The later storage slice must preserve that sweep for spool blobs.
+`OutboxStore` sweeps its spool blobs at startup and after durable acknowledgements.
 That sweep does not cover temporary files under other artifact or update directories.
 No blanket crash-cleanup claim applies to those directories.
 
@@ -94,11 +129,12 @@ The separate native session must check each native boundary below with synthetic
 | Native flags                                     | Check Darwin values, including `O_NONBLOCK`, `O_DIRECTORY`, `O_NOFOLLOW`, and `O_CLOEXEC`.                                                                                |
 | Packaged Koffi                                   | Verify that the package contains and loads its arm64 Darwin addon, with no external native library beyond the OS library.                                                 |
 
-The existing `server/skills/sources.ts` declaration remains outside this new platform module.
-Its older fixed `openat` declaration does not create regular files here. This slice does not claim to repair that separate publisher.
-The later skill-publication slice must retain or address its own native requirements explicitly.
+The shared `server/skills/sources.ts` publisher remains outside this platform module.
+Its `openat` declaration is variadic and passes an explicit promoted `int` mode argument.
 
 The TypeScript default state directory is `~/Library/Application Support/Panels/executor-typescript`.
 The Python directory remains `~/Library/Application Support/Panels/executor`.
 The Manager requested this default-root difference. Explicit configuration refuses the Python root and its descendants, including symlink aliases.
-The new app, LaunchAgent, package, provider homes, and real-Mac installation remain later slices.
+`packaging/build.ts` produces the runtime archive and unsigned app and LaunchAgent assets.
+The [installation document](../../../ops/mac-executor/typescript-installation.md) records the exact paths and later owner procedure.
+Real-Mac installation, consent, and provider checks remain unproved.

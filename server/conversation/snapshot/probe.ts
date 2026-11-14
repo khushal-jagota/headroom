@@ -61,6 +61,7 @@ export function create_backend_probe(
         identity.detail ||
           `Panels could not read who \`${recipe.executable_name}\` is signed in as.`,
       );
+    options.signal?.throwIfAborted();
     const catalog = await readers[backend_key]({
       environment,
       executable_path,
