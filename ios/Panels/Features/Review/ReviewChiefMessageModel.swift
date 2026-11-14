@@ -67,7 +67,7 @@ import Observation
             if let record = try LocalStore.shared.record(server: server, kind: "attachments", id: Self.chiefDraftID),
                record.updatedAt <= work.created,
                let saved = try? JSONDecoder().decode([ConversationSend.Piece].self, from: record.payload),
-               try JSONEncoder().encode(saved) == JSONEncoder().encode(content.filter { $0.piece != "text" }) {
+               saved == content.filter({ $0.piece != "text" }) {
                 try LocalStore.shared.put(server: server, kind: "attachments", id: Self.chiefDraftID, data: Data("[]".utf8))
             }
             composer.reloadDraft()
