@@ -9,7 +9,7 @@ import {
   MAX_MAC_RUNTIME_MANIFEST_BYTES,
 } from '../../updates/mac/configuration.ts';
 import {
-  ARCHIVE_MAX_HEADERS,
+  ARCHIVE_MAX_ENTRIES,
   ARCHIVE_MAX_METADATA_BYTES,
   ARCHIVE_MAX_METADATA_ENTRY_BYTES,
   ARCHIVE_MAX_MEMBER_BYTES,
@@ -49,7 +49,7 @@ export class ArchiveMembers {
   entrypoint = false;
   readonly purpose: 'extraction' | 'mac-inspection';
   readonly #parser: Parser;
-  #headers = 0;
+  #entries = 0;
   #metadataBytes = 0;
   #logicalSize = 0;
   #names = new Set<string>();
@@ -90,7 +90,7 @@ export class ArchiveMembers {
     });
   }
   #count(): void {
-    if (++this.#headers > ARCHIVE_MAX_HEADERS) refuse('app archive exceeds member count limit');
+    if (++this.#entries > ARCHIVE_MAX_ENTRIES) refuse('app archive exceeds member count limit');
   }
   #account(bytes: number): void {
     this.#metadataBytes += bytes;

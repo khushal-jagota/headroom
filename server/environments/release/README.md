@@ -11,7 +11,7 @@ The reader uses these fixed budgets:
 | Compressed input | 4 GiB |
 | Expanded TAR | 8 GiB |
 | One member | 4 GiB |
-| Headers | 250,000 |
+| Entries and nonempty metadata records | 250,000 |
 | One metadata body | 1 MiB |
 | Cumulative metadata, path, and link bytes | 64 MiB |
 | Path depth | 64 components |
@@ -49,7 +49,7 @@ VPS Mac readiness constructs one real MacUpdateService with the runtime’s actu
 
 Mac inspection shares the package parser and resource limits. It keeps its separate manifest and runtime-marker rules. It does not apply extraction restrictions to unrelated links, duplicate names, or modes. Malformed manifests still refuse through the existing JSON boundary.
 
-The physical TAR caps are 8 GiB expanded, 250,000 headers, 1 MiB per extension body, and 64 MiB cumulative metadata/path/link bytes. Existing Mac limits stay at 2 GiB compressed, 4 GiB logical member bytes, and 16 KiB for the manifest.
+The TAR caps are 8 GiB expanded, 250,000 package entry events, 1 MiB per extension body, and 64 MiB cumulative metadata/path/link bytes. Empty extension headers emit no event and count only toward expanded bytes. Existing Mac limits stay at 2 GiB compressed, 4 GiB logical member bytes, and 16 KiB for the manifest.
 
 Acceptance requires that the unchanged real Mac producer passes the hosted compatibility gate. The first run passed unchanged on the PR merge tree for head `37333bd6e`, with a 268.48-second build and 7.59-second inspection. The gate runs on every Darwin job and requires its evidence files. Every final head must pass it after source changes. The direct report measures four archive observations and parser diagnostics, with accepted:true. Other accepted limits and framing rules have source review, without a measured boundary claim. [The difference registry](../../DEVIATIONS.md#mac-archive-inspection-policies-and-json-diagnostics--accepted-conditionally) records the scope and proof. Default factory activation and executor transport remain later work.
 

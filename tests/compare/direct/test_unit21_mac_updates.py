@@ -292,9 +292,7 @@ def test_unit21_mac_updates_retained_archive_and_leased_report_sequence(
     )
     inspections: dict[str, dict[str, Any]] = {}
 
-    def inspect(
-        name: str, payload: bytes, *, mode: str | None = None
-    ) -> None:
+    def inspect(name: str, payload: bytes, *, mode: str | None = None) -> None:
         assert first.mac is not None
         path = fixtures / (name + ".zip")
         with zipfile.ZipFile(path, "w") as zipped:
@@ -362,9 +360,7 @@ def test_unit21_mac_updates_retained_archive_and_leased_report_sequence(
     )
     metadata = tarfile.TarInfo("metadata")
     metadata.type, metadata.size = tarfile.XHDTYPE, 1024**2 + 1
-    inspect(
-        "metadata-limit", gzip.compress(metadata.tobuf() + b"\0" * 1024)
-    )
+    inspect("metadata-limit", gzip.compress(metadata.tobuf() + b"\0" * 1024))
     specification["inspections"] = inspections
     # Both implementations receive the same wire form, including platform lists.
     specification = json.loads(json.dumps(specification))
@@ -434,7 +430,11 @@ process.stdout.write(codec.canonical_json(result));"""
             observed[name] = {
                 "python": reference,
                 "typescript": outcome,
-                "reason": "UTF-8 manifest policy" if name == "utf16" else "Native JSON diagnostics",
+                "reason": (
+                    "UTF-8 manifest policy"
+                    if name == "utf16"
+                    else "Native JSON diagnostics"
+                ),
             }
             if name != "json":
                 assert outcome == {
