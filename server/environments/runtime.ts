@@ -2,7 +2,7 @@
 import { dirname, join } from 'node:path';
 import type { Config } from '../core/config.ts';
 import { HOST } from '../core/config.ts';
-import { observe_shutdown } from '../lifecycle/deadline.ts';
+import { observe_shutdown } from '../conversation/shutdown.ts';
 import { ShutdownDeadlineExceeded } from '../lifecycle/contracts.ts';
 import type { TestCompositionContext } from '../core/start.ts';
 import type { EnvironmentRuntime } from './contracts.ts';
@@ -180,7 +180,12 @@ export async function createEnvironmentRuntime(
             'Environment shutdown failed',
           );
       });
-      closing = observe_shutdown(actual_stop, options, 'environment services');
+      closing = observe_shutdown(
+        actual_stop,
+        options,
+        'Shutdown deadline expired; ownership retained: environment services',
+        ['environment services'],
+      );
       // Fence every producer now, including when setup still owns a continuation.
       for (const stop of [
         () => metrics.stop(options),

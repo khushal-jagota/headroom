@@ -4,7 +4,7 @@ import type { Clock } from '../core/clock.ts';
 import type { WorkspaceAdmission } from '../conversation/workspace_admission.ts';
 import type { APNsAdapter, WebPushAdapter } from './contracts.ts';
 import type { StopOptions } from '../lifecycle/contracts.ts';
-import { observe_shutdown } from '../lifecycle/deadline.ts';
+import { observe_shutdown } from '../conversation/shutdown.ts';
 import { canonical_server_origin } from './apns.ts';
 import * as data from './data.ts';
 import * as apns_data from './apns_data.ts';
@@ -135,7 +135,8 @@ export class NotificationLoop {
     this.closing = observe_shutdown(
       this.shutdown_settlement,
       { deadline },
-      'notifications',
+      'Shutdown deadline expired; ownership retained: notifications',
+      ['notifications'],
     ).finally(() => {
       // A late transport result remains owned, but cannot use the database again.
       this.expired = true;

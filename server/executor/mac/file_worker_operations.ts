@@ -1,5 +1,5 @@
 /** Immutable snapshots and bounded byte transfers, relative to retained directory inodes. */
-import { closeSync, constants, fstatSync, readSync, writeSync } from 'node:fs';
+import { constants, fstatSync, readSync, writeSync } from 'node:fs';
 import { createHash, randomUUID } from 'node:crypto';
 import { basename, dirname } from 'node:path';
 import { isMainThread } from 'node:worker_threads';
@@ -15,6 +15,7 @@ import { FILE_CHUNK_BYTES } from './configuration.ts';
 import { FILE_MODIFIED_WINDOW_NS } from './configuration.ts';
 import type { CapturedBlob } from './file_worker_contracts.ts';
 import {
+  close_native_descriptor,
   open_directory_descriptor,
   open_relative,
   rename_relative,
@@ -38,20 +39,20 @@ export function regular_descriptor(path: string): number {
       constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK,
     );
   } catch (error) {
-    closeSync(parent);
+    close_native_descriptor(parent);
     throw error;
   }
   try {
-    closeSync(parent);
+    close_native_descriptor(parent);
   } catch (error) {
-    closeSync(descriptor);
+    close_native_descriptor(descriptor);
     throw error;
   }
   try {
     if (!fstatSync(descriptor).isFile()) throw invalid('artifact is not regular file');
     return descriptor;
   } catch (error) {
-    closeSync(descriptor);
+    close_native_descriptor(descriptor);
     throw error;
   }
 }
@@ -63,7 +64,7 @@ export function fsync_directory(path: string): void {
   try {
     sync_directory_descriptor(descriptor);
   } finally {
-    closeSync(descriptor);
+    close_native_descriptor(descriptor);
   }
 }
 export function copy_hashed(
@@ -126,10 +127,10 @@ export function copy_verified_at(
         throw error;
       }
     } finally {
-      closeSync(outgoing);
+      close_native_descriptor(outgoing);
     }
   } finally {
-    closeSync(incoming);
+    close_native_descriptor(incoming);
   }
 }
 export function copy_verified(
@@ -142,7 +143,7 @@ export function copy_verified(
   try {
     copy_verified_at(source, parent, basename(destination), sha256, byte_count);
   } finally {
-    closeSync(parent);
+    close_native_descriptor(parent);
   }
 }
 export function install_verified_at(
@@ -173,7 +174,7 @@ export function install_verified(
   try {
     install_verified_at(source, parent, basename(target), sha256, byte_count);
   } finally {
-    closeSync(parent);
+    close_native_descriptor(parent);
   }
 }
 function hash_descriptor(incoming: number): readonly [string, number] {
@@ -205,7 +206,7 @@ export function verified_version(
     [digest, count] = hash_descriptor(incoming);
     after = version(fstatSync(incoming, { bigint: true }));
   } finally {
-    closeSync(incoming);
+    close_native_descriptor(incoming);
   }
   if (!same_version(before, after) || digest !== sha256 || count !== byte_count) return null;
   return same_version(file_version(path), after) ? after : null;
@@ -215,7 +216,7 @@ export function file_digest(path: string): readonly [string, number] {
   try {
     return hash_descriptor(incoming);
   } finally {
-    closeSync(incoming);
+    close_native_descriptor(incoming);
   }
 }
 
@@ -266,7 +267,7 @@ export function capture_file(
           checked_ns - after.mtimeNs <= BigInt(FILE_MODIFIED_WINDOW_NS) ? -1n : after.mtimeNs,
       };
     } finally {
-      closeSync(outgoing);
+      close_native_descriptor(outgoing);
     }
     let exists = false;
     try {
@@ -279,7 +280,7 @@ export function capture_file(
         if (!fstatSync(existing).isFile()) throw invalid('artifact is not regular file');
         exists = true;
       } finally {
-        closeSync(existing);
+        close_native_descriptor(existing);
       }
     } catch (error) {
       if (error_code(error) !== 'ENOENT') throw error;
@@ -291,7 +292,7 @@ export function capture_file(
     try {
       if (created) unlink_relative(blobs, temporary, true);
     } finally {
-      closeSync(incoming);
+      close_native_descriptor(incoming);
     }
   }
 }

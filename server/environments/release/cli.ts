@@ -1,13 +1,12 @@
 /** Typed callbacks only. The CLI owns parsing and error presentation. */
 import { posix_child_path } from '../../core/python_path.ts';
-import { python_os_error_message } from '../../core/os_errors.ts';
 import { domain_error } from '../operator_errors.ts';
 import type { OperatorHandler } from '../command_contracts.ts';
 
 const failure = (error: Error) => ({
   exit_code: 1 as const,
   stdout: '' as const,
-  failure_message: python_os_error_message(error),
+  failure_message: error.message,
   stderr_prefix: '',
 });
 export const app_identity: OperatorHandler<'app-identity'> = async (args, deps) => {
@@ -22,12 +21,9 @@ export const app_identity: OperatorHandler<'app-identity'> = async (args, deps) 
 
 export const app_build: OperatorHandler<'app-build'> = async (args, deps) => {
   try {
-    const { stringify_python_json } = await import('../../core/http/numeric_json.ts');
     return {
       exit_code: 0,
-      stdout:
-        stringify_python_json(await deps.build_app(args), { sort_keys: true, ensure_ascii: true }) +
-        '\n',
+      stdout: JSON.stringify(await deps.build_app(args)) + '\n',
       stderr: '',
     };
   } catch (error) {

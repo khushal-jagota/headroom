@@ -7,7 +7,6 @@ import { join } from 'node:path';
 import type { OwnedChildProcesses } from '../../lifecycle/contracts.ts';
 import { stop_one_shot_child } from '../../lifecycle/one_shot_children.ts';
 import { observe_promise } from '../../core/promise_observer.ts';
-import { python_os_error_message } from '../../core/os_errors.ts';
 import { AppValidationError } from './contracts.ts';
 import {
   RUNTIME_PROBE_TIMEOUT_SECONDS,
@@ -224,7 +223,7 @@ async function runtime_probe(
     return await run_owned(argv, state, deadline, child_processes, json_output);
   } catch (error) {
     if (error instanceof Error && 'code' in error && typeof error.code === 'string')
-      throw new AppValidationError(`runtime probe failed: ${python_os_error_message(error)}`);
+      throw new AppValidationError(`runtime probe failed: ${error.message}`);
     throw error;
   }
 }

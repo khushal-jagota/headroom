@@ -1,9 +1,10 @@
 /** Bounded transfer bytes, hashes and full flush stay in the existing owned file worker. */
-import { closeSync, constants, fstatSync, readSync, writeSync } from 'node:fs';
+import { constants, fstatSync, readSync, writeSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { basename, dirname } from 'node:path';
 import { isMainThread } from 'node:worker_threads';
 import {
+  close_native_descriptor,
   open_directory_descriptor,
   open_relative,
   sync_file_descriptor,
@@ -112,11 +113,11 @@ function close(value: Transfer): void {
       value.created = false;
     }
     if (value.descriptor !== null) {
-      closeSync(value.descriptor);
+      close_native_descriptor(value.descriptor);
       value.descriptor = null;
     }
     if (value.parent !== null) {
-      closeSync(value.parent);
+      close_native_descriptor(value.parent);
       value.parent = null;
     }
   } catch (error) {

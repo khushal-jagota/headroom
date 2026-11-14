@@ -56,8 +56,6 @@ export class FilesService {
     // Node 22.18+ and 24 run these .ts files directly. No inherited eval or loader is needed.
     const worker = new Worker(new URL('./files_worker.ts', import.meta.url), {
       execArgv: [],
-      // libc opens bypass Node's tracker. This worker explicitly owns every descriptor.
-      trackUnmanagedFds: false,
     });
     this.worker = worker;
     this.exit = new Promise<void>((resolve) => worker.once('exit', () => resolve()));

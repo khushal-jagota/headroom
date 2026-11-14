@@ -1,5 +1,5 @@
 import { Runtime as SourceRuntime } from './measure_sources/runtime/supervisor.ts';
-import { observe_shutdown } from './lifecycle/deadline.ts';
+import { observe_shutdown } from './conversation/shutdown.ts';
 import { ShutdownDeadlineExceeded } from './lifecycle/contracts.ts';
 import type { StopOptions } from './lifecycle/contracts.ts';
 import { SourceScheduleLoop } from './measure_sources/schedule_loop.ts';
@@ -296,7 +296,12 @@ export function composeAreaLoops(context: OwnedAreaContext, options: AreaLoopOpt
             'Area loop shutdown failed',
           );
       });
-      closing = observe_shutdown(actual_stop, stop, 'area loops');
+      closing = observe_shutdown(
+        actual_stop,
+        stop,
+        'Shutdown deadline expired; ownership retained: area loops',
+        ['area loops'],
+      );
       try {
         unsubscribe?.();
       } catch (error) {

@@ -1,13 +1,14 @@
 /** One fresh-Python flow, without a listener or a provider. */
 import { createHash } from 'node:crypto';
 import {
-  closeSync,
   constants,
   lstatSync,
   mkdirSync,
   readFileSync,
   readdirSync,
   readlinkSync,
+  renameSync,
+  rmdirSync,
   writeFileSync,
   symlinkSync,
 } from 'node:fs';
@@ -15,56 +16,13 @@ import { join, relative } from 'node:path';
 import { setTimeout as pause } from 'node:timers/promises';
 import { MacSkillsPublisher } from '../skills/index.ts';
 import type { CanonicalSkillSnapshot } from '../../wire.generated.ts';
-import fs from 'node:fs';
-import { syncBuiltinESMExports } from 'node:module';
-import { Worker, isMainThread, workerData, parentPort } from 'node:worker_threads';
 import {
+  close_native_descriptor,
   flock_descriptor,
   open_directory_descriptor,
   open_relative,
-  mkdir_relative,
-  rmdir_relative,
 } from '../platform.ts';
-if (!isMainThread) {
-  const { root, snapshot } = workerData as { root: string; snapshot: CanonicalSkillSnapshot };
-  const { install_native_skill_snapshot, owns_handles, cleanup_handles } =
-    await import('../skills/installation.ts');
-  const parent = open_directory_descriptor(join(root, 'skills'));
-  mkdir_relative(parent, 'rmdir-check');
-  rmdir_relative(parent, 'rmdir-check');
-  const lock = open_relative(parent, '.install.lock', constants.O_RDWR | constants.O_NOFOLLOW);
-  closeSync(parent);
-  if (!flock_descriptor(lock, 'try-exclusive')) throw new Error('Fixture lock contention.');
-  mkdirSync(join(root, 'unused', 'skills'), { recursive: true });
-  const cancellation = new AbortController(),
-    original_close = fs.closeSync;
-  let close_failed = false;
-  try {
-    const work = install_native_skill_snapshot(
-      { root, native_home: join(root, 'unused'), snapshot },
-      cancellation.signal,
-    );
-    void work.catch(() => {});
-    await pause(0);
-    fs.closeSync = (fd) => {
-      if (!close_failed && fs.fstatSync(fd).isDirectory()) {
-        close_failed = true;
-        throw new Error('injected directory close failure');
-      }
-      original_close(fd);
-    };
-    syncBuiltinESMExports();
-    cancellation.abort();
-    await work.catch(() => {});
-    const retained = owns_handles();
-    cleanup_handles();
-    parentPort!.postMessage({ retained, cleared: !owns_handles(), close_failed });
-  } finally {
-    fs.closeSync = original_close;
-    syncBuiltinESMExports();
-    closeSync(lock);
-  }
-} else {
+{
   const root = process.argv[2]!;
   const input = JSON.parse(readFileSync(join(root, 'input.json'), 'utf8')) as {
     snapshots: string[];
@@ -172,7 +130,7 @@ if (!isMainThread) {
       symlinkSync(join(fixture, 'real-provider'), home);
     }
     if (name === 'linked-skills') {
-      fs.rmdirSync(skills);
+      rmdirSync(skills);
       mkdirSync(join(fixture, 'foreign-skills'));
       writeFileSync(join(fixture, 'foreign-skills', 'user-data'), 'preserve');
       symlinkSync(join(fixture, 'foreign-skills'), skills);
@@ -231,7 +189,7 @@ if (!isMainThread) {
     constants.O_CREAT | constants.O_RDWR | constants.O_NOFOLLOW,
     0o600,
   );
-  closeSync(swap_parent);
+  close_native_descriptor(swap_parent);
   if (!flock_descriptor(swap_lock, 'try-exclusive'))
     throw new Error('Fixture swap lock contention.');
   const swapping = new MacSkillsPublisher((error) => faults.push(error.message));
@@ -256,7 +214,7 @@ if (!isMainThread) {
         throw new Error('Provider directory ownership witness timed out.');
       if (!observed) await pause(5);
     }
-    fs.renameSync(join(swap_home, 'skills'), join(swap_home, 'retained-skills'));
+    renameSync(join(swap_home, 'skills'), join(swap_home, 'retained-skills'));
     symlinkSync(join(swap_root, 'replacement'), join(swap_home, 'skills'));
     const before = JSON.stringify([tree(swap_home), tree(join(swap_root, 'replacement'))]);
     flock_descriptor(swap_lock, 'unlock');
@@ -267,7 +225,7 @@ if (!isMainThread) {
     swap_unchanged =
       JSON.stringify([tree(swap_home), tree(join(swap_root, 'replacement'))]) === before;
   } finally {
-    closeSync(swap_lock);
+    close_native_descriptor(swap_lock);
     await swapping.stop({ deadline: performance.now() / 1000 + 10 });
     await swapping.settled();
   }
@@ -293,7 +251,7 @@ if (!isMainThread) {
     constants.O_CREAT | constants.O_RDWR | constants.O_NOFOLLOW,
     0o600,
   );
-  closeSync(parent);
+  close_native_descriptor(parent);
   if (!flock_descriptor(lock, 'try-exclusive'))
     throw new Error('Fixture lock is unexpectedly held.');
   mkdirSync(join(root, 'unused-provider', 'skills'), { recursive: true });
@@ -313,34 +271,17 @@ if (!isMainThread) {
   await blocked.stop({ deadline: performance.now() / 1000 + 10 });
   await blocked.settled();
   const rejected = (await Promise.allSettled([work]))[0]!.status === 'rejected';
-  closeSync(lock);
-  const cleanup_started = performance.now();
-  let close_retry: unknown;
-  const cleanup_worker = new Worker(new URL(import.meta.url), {
-    execArgv: [],
-    workerData: { root: blocked_root, snapshot: snapshots[0]! },
-  });
-  await new Promise<void>((resolve, reject) => {
-    cleanup_worker.on('message', (reply: unknown) => {
-      close_retry = reply;
-    });
-    cleanup_worker.on('error', reject);
-    cleanup_worker.on('exit', (code) =>
-      code === 0 && close_retry ? resolve() : reject(new Error('Cleanup fixture worker failed.')),
-    );
-  });
+  close_native_descriptor(lock);
   writeFileSync(
     join(root, 'result.json'),
     JSON.stringify({
       report,
       mac_only: { corrupt_rebuilt, corrupt_preserved, refusals, folder_swap },
-      cleanup_worker_ms: performance.now() - cleanup_started,
       lifecycle: {
         stopped_refused,
         expired,
         rejected,
         faults,
-        close_retry,
         blocked: readdirSync(skills),
       },
     }),
