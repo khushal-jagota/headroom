@@ -1,7 +1,7 @@
 /** POSIX replacement retains inherited descriptors without a spawned wrapper. */
 import { createRequire } from 'node:module';
 import type koffi from 'koffi';
-import { getSystemErrorName } from 'node:util';
+import { getSystemErrorMessage, getSystemErrorName } from 'node:util';
 import { EnvironmentValidationError } from '../registry/contracts.ts';
 
 export function execve(
@@ -16,7 +16,6 @@ export function execve(
   const replace = libc.func(
     'int execve(const char *path, const char **argv, const char **environment)',
   );
-  const strerror = libc.func('const char *strerror(int error)');
   // Node marks initialized stdio descriptors close-on-exec too.
   for (const fd of [0, 1, 2]) inherit_descriptor(fd);
   replace(
@@ -24,11 +23,11 @@ export function execve(
     [...argv, null],
     [...Object.entries(environment).map(([key, value]) => `${key}=${value}`), null],
   );
-  const errno = ffi.errno();
-  throw Object.assign(new Error(`[Errno ${errno}] ${strerror(errno)}`), {
-    name: 'OSError',
+  const errno = ffi.errno(),
+    code = getSystemErrorName(-errno);
+  throw Object.assign(new Error(`execve ${file}: ${code}: ${getSystemErrorMessage(-errno)}`), {
     errno: -errno,
-    code: getSystemErrorName(-errno),
+    code,
   });
 }
 
