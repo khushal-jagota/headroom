@@ -940,6 +940,24 @@ def run(browser, urls):
         expect(field).to_have_value(draft + "\n")
         field.fill(draft)
 
+    def assert_proposal_note_keys_leave_a_draft(field, draft):
+        """Text entry must not select either proposal decision or send a plain note."""
+        def writes():
+            return len(approval_attempts) + len(revisions) + len(review_note_sends)
+
+        assert_enter_rules_leave_a_draft(field, draft, writes)
+        before = writes()
+        field.press("End")
+        field.press("Enter")
+        expect(field).to_have_value(draft + "\n")
+        for key in ("Control+Enter", "Meta+Enter"):
+            field.fill(draft)
+            field.press(key)
+            assert field.input_value().rstrip("\n") == draft
+        page.wait_for_timeout(100)
+        assert writes() == before
+        field.fill(draft)
+
     def wait_for_held(predicate):
         # A held route never finishes its request, so poll the fixture while the
         # driver hands the route to its handler. Callers assert.
@@ -1433,9 +1451,9 @@ def run(browser, urls):
     page.locator("[data-send-back]").click()
     expect(page.locator("[data-revision-note]")).to_be_focused()
     exact_revision = "Keep the agreed scope.\nPreserve the attributed details."
-    assert_enter_rules_leave_a_draft(page.locator("[data-revision-note]"), "Draft note", lambda: len(revisions))
+    assert_proposal_note_keys_leave_a_draft(page.locator("[data-revision-note]"), "Draft note")
     page.locator("[data-revision-note]").fill(exact_revision)
-    page.locator("[data-revision-note]").press("Enter")
+    page.locator("[data-send-back]").click()
     wait_for_write(lambda: revisions)
     assert revisions == [{"message": exact_revision, "expected_proposal_revision": 1, "decision_id": '["t_with_session",1]:send_back'}]
     drive("window.__batch()")
@@ -1504,7 +1522,7 @@ def run(browser, urls):
     review_note_sends.clear()
     original_note = "  Keep the existing approval boundary.\n\nPreserve café and all whitespace.  "
     note_input = page.locator("[data-review-revision-input]")
-    assert_enter_rules_leave_a_draft(note_input, original_note, lambda: len(approval_attempts) + len(revisions))
+    assert_proposal_note_keys_leave_a_draft(note_input, original_note)
     note_input.fill(original_note)
     retained_editor = page.locator("[data-approval-block] [data-edit]")
     retained_editor.click()

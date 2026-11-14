@@ -135,8 +135,7 @@
   <div class="revision" bind:this={revisionSlot}>
     {#if revisionEditor}{@render revisionEditor()}{:else}
       <ComposerField bind:value={revisionText} placeholder="Add a note for the worker…"
-        inputAttributes={{ "data-revision-note": "" }}
-        onsubmit={sendItBack} />
+        inputAttributes={{ "data-revision-note": "" }} />
     {/if}
   </div>
   <!-- Every button row sits at the right, the most important action furthest right, as in a
@@ -155,6 +154,7 @@
         onclick={(event) => finalApproval ? void completeScope({ approval:true, ceiling:"none", holder }) : scopePicker?.openApproval(event.currentTarget as HTMLElement)}>Approve</Button>
     </div>
   </div>
+  <p class="revision-hint">{proposal.field === "brief" ? "Enter adds a line. Choose Approve." : "Enter adds a line. Choose Send it back or Approve."}</p>
   <CeilingPicker externalTrigger newStage={stage} {lifecycle} {ceiling} {holder} {manager} below pendingStage={stage}
     approvalCeiling={nextCeiling} bind:controller={scopePicker}
     holderLabel={(value) => value ? reviewerLabel(value) : "User"} onComplete={(change) => void completeScope(change)} />
@@ -186,6 +186,7 @@
   .reviewer-chevron { width:12px; height:12px; flex:none; fill:none; stroke:var(--tone-tertiary); stroke-width:1.5; stroke-linecap:round; stroke-linejoin:round; }
   .reviewer:focus-visible { outline:var(--focus-width) solid var(--focus-ring); outline-offset:2px; }
   .return-unavailable { color:var(--tone-tertiary); font-size:var(--type-small); margin:var(--space-2) 0 0; }
+  .revision-hint { color:var(--tone-tertiary); font-size:var(--type-small); margin:var(--space-2) 0 0; }
   .revision { margin-top:var(--space-5); min-width:0; }
   /* The decision's own buttons are never smaller than staging's (37px tall, 18px either side). */
   .decision :global(.button) { height:var(--decision-button-height); padding-inline:18px; }
