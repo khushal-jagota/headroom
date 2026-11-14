@@ -13,7 +13,7 @@ Items about one Ticket share a card. A card is as old as its oldest item. Messag
 
 Review reads other records. Membership and order come from the navigation index, which tracks attention without a read of every conversation. Actions use the ordinary writers: decisions use the proposal resolver, replies use Send Message, and read marks update the conversation. Each action clears only what that card showed. The next card is whatever is now oldest.
 
-The proposal on a card is the same approval surface as on the Ticket page. Both keep one note box beside Approve and Send it back. The note goes with either decision. Skipping a card defers it for this visit only.
+The proposal on a card is the same approval surface as on the Ticket page. Both keep one note box beside Approve and Send it back. The note goes with either explicit decision. Text entry never chooses a proposal decision. Skipping a card defers it for this visit only.
 
 Approve and Send back submit the complete note with the exact visible proposal. The successful decision saves one attributed instruction for the Worker. A stale proposal fails without a success message. Retries keep the same decision identity and cannot duplicate the decision or its instruction.
 
@@ -36,4 +36,4 @@ Review is a primary destination in the browser, with a count. [Notifications](no
 - `src/planner/navigation/`: the index, and Review's membership and ordering (`review.py`, `review_logic.py`).
 - `web/src/routes/ReviewRoute.svelte` and `web/src/components/Review*.svelte`: the pass and its cards.
 
-_Last verified: 2026-11-13._
+_Last verified: 2026-11-14._
