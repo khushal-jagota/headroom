@@ -323,6 +323,8 @@ def test_unit20_every_help_and_group_usage(tmp_path: Path, request: pytest.Fixtu
             (["sprint", "outcome", "otherx"], 2),
             (["projec"], 2),
             (["project", "shwo"], 2),
+            (["project", "shwo", "--help"], 2),
+            (["project", "--help", "shwo"], 0),
             (["manager", "delte"], 2),
             (["-"], 2),
         )
@@ -393,7 +395,7 @@ def test_unit20_every_help_and_group_usage(tmp_path: Path, request: pytest.Fixtu
 def test_unit20_declarations_match_fresh_python(
     tmp_path: Path, request: pytest.FixtureRequest
 ) -> None:
-    """Pin functional parser metadata without requiring Python help presentation."""
+    """Compare the same functional contract across Click and native declarations."""
     import os
     import sys
 
@@ -419,10 +421,7 @@ def test_unit20_declarations_match_fresh_python(
     typescript = driver.raw_process(
         [
             "node",
-            "--input-type=module",
-            "-e",
-            "import {commands} from './server/cli/commands.ts'; "
-            "process.stdout.write(JSON.stringify(commands));",
+            str(driver.ROOT / "tests/compare/direct/unit20_declarations.ts"),
         ],
         environment,
     )
@@ -442,10 +441,10 @@ def test_unit20_declarations_match_fresh_python(
     )
     destination = request.config.getoption("--compare-report-dir")
     if destination:
-        from tests.compare.direct.unit20_metadata import render_declarations
-
         # This is review evidence, never a repository mutation or a test bypass.
-        (Path(destination) / "unit20-fresh-commands.ts").write_text(render_declarations(left))
+        (Path(destination) / "unit20-fresh-commands.json").write_text(
+            json.dumps(left, ensure_ascii=False, indent=2) + "\n"
+        )
 
     def functional(value: Any, metadata: bool = True) -> Any:
         if isinstance(value, list):

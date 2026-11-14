@@ -2,10 +2,9 @@
 import { fileURLToPath } from 'node:url';
 import { realpathSync } from 'node:fs';
 import type { Writable } from 'node:stream';
-import { commands } from './commands.ts';
+import { create_commands } from './commands.ts';
 import type { CommandResult, Invocation } from './contracts.ts';
 import { CliFailure, MissingResponseValue } from './errors.ts';
-import { render_help } from './help.ts';
 import { parse } from './parser.ts';
 
 export async function run(
@@ -20,9 +19,8 @@ export async function run(
 ): Promise<CommandResult> {
   let invocation: Invocation | undefined;
   try {
-    const parsed = parse(argv, commands, environment);
-    if (parsed.help)
-      return { exit_code: 0, stdout: render_help(parsed.command, commands), stderr: '' };
+    const parsed = parse(argv, create_commands, environment);
+    if (parsed.help) return { exit_code: 0, stdout: parsed.help, stderr: '' };
     invocation = { ...parsed, environment, stdin, write_stderr };
     switch (parsed.command.path[0]) {
       case 'executor':

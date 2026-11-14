@@ -1,11 +1,10 @@
-"""Export the current Click declarations as data, without invoking any command."""
+"""Read fresh Python CLI contracts without invoking commands or writing source files."""
 
 from __future__ import annotations
 
 import inspect
 import json
 import os
-from pathlib import Path
 from typing import Any
 
 
@@ -115,24 +114,6 @@ def declarations() -> list[dict[str, Any]]:
     return result
 
 
-def render_declarations(records: list[dict[str, Any]]) -> str:
-    """Render supplied declaration data without importing or invoking the CLI."""
-    return (
-        "/** Current Python command declarations, exported as data. */\n"
-        "import type { CommandDefinition } from './contracts.ts';\n"
-        "export const commands: CommandDefinition[] = "
-        + json.dumps(records, ensure_ascii=False, indent=2)
-        + ";\n"
-    )
-
-
-SCHEMA_FILES = {
-    "goal": ("server/goals/cli/guidance.json", None),
-    "page": ("server/managers/page_cli/guidance.json", None),
-    "measure": ("server/measures/cli/schema.ts", "CREATE"),
-}
-
-
 def schema_declarations() -> dict[str, Any]:
     from planner.goals.guidance import CREATE, EDIT, PRIMARY_CHART
     from planner.managers.page_guidance import EDIT as PAGE
@@ -149,23 +130,13 @@ def schema_declarations() -> dict[str, Any]:
     }
 
 
-def render_schema(value: Any, export: str | None) -> str:
-    document = json.dumps(value, ensure_ascii=False, indent=2)
-    if export is None:
-        return document + "\n"
-    document = document.replace("\\", "\\\\").replace("`", "\\`").replace("${", "\\${")
-    return (
-        "/** Offline declarations: generated from fresh Python during migration. */\n"
-        "import { parse_numeric_json } from '../../core/http/numeric_json.ts';\n"
-        f"export const {export} = parse_numeric_json(`{document}`) as Record<string, any>;\n"
-    )
-
-
 if __name__ == "__main__":
     # This is an import-only exporter, but still refuses ambient worker identity.
     assert not any(name.startswith("PLAN_") for name in os.environ), "clean environment required"
-    target = Path(__file__).resolve().parents[3] / "server/cli/commands.ts"
-    target.write_text(render_declarations(declarations()))
-    for name, value in schema_declarations().items():
-        relative, export = SCHEMA_FILES[name]
-        (target.parents[2] / relative).write_text(render_schema(value, export))
+    print(
+        json.dumps(
+            {"commands": declarations(), "schemas": schema_declarations()},
+            ensure_ascii=False,
+            indent=2,
+        )
+    )

@@ -50,12 +50,14 @@ def test_unit20_nonfinite_file_input_refuses_before_httpx_transport(
     root = Path(__file__).resolve().parents[3]
     input_module = (root / "server/cli/input.ts").as_uri()
     command_module = (root / "server/cli/commands.ts").as_uri()
+    declaration_module = (root / "server/cli/declarations.ts").as_uri()
     script = (
         f"import {{read_json_object}} from {json.dumps(input_module)};"
-        f"import {{commands}} from {json.dumps(command_module)};"
+        f"import {{create_commands}} from {json.dumps(command_module)};"
+        f"import {{find_command}} from {json.dumps(declaration_module)};"
         "let source='';for await(const part of process.stdin)source+=part;const results=[];"
         "for(const path of JSON.parse(source)){try{await read_json_object({"
-        "command:commands.find(c=>c.path.join(' ')==='ticket create'),values:{as_json:true},"
+        "command:find_command(create_commands({}),['ticket','create']),values:{as_json:true},"
         "environment:{PLAN_SERVER_URL:'http://127.0.0.1:1'},stdin:async()=>Buffer.alloc(0)},"
         "path,'Ticket create input');results.push({accepted:true});}catch(error){"
         "if(!error.result)throw error;results.push(error.result);}}"
