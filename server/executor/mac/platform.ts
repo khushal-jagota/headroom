@@ -1,5 +1,5 @@
 /** The Mac executor's only bridge to operating-system-specific paths and libc calls. */
-import { constants, openSync, closeSync, fstatSync } from 'node:fs';
+import { constants, fstatSync } from 'node:fs';
 import { constants as os_constants, homedir } from 'node:os';
 import { getPriority, setPriority } from 'node:os';
 import { join, isAbsolute } from 'node:path';
@@ -38,18 +38,23 @@ function native(signature: string) {
   }
   return callable;
 }
-function checked(operation: string, call: () => number): number {
+function checked(operation: string, call: () => number, retry_interrupted = true): number {
   for (;;) {
     const result = call();
     if (result !== -1) return result;
     const errno = koffi.errno();
-    if (errno === os_constants.errno.EINTR) continue;
+    if (errno === os_constants.errno.EINTR && retry_interrupted) continue;
     throw Object.assign(new Error(`${operation} failed: ${getSystemErrorName(-errno)}`), {
       code: getSystemErrorName(-errno),
       errno: -errno,
       syscall: operation,
     });
   }
+}
+/** Pair libc opens with libc close; Node never registered these descriptors. */
+export function close_native_descriptor(descriptor: number): void {
+  // close may already consume the descriptor on EINTR. Never retry a reused number.
+  checked('close', () => native('int close(int fd)')(descriptor), false);
 }
 export function require_relative_component(name: string): void {
   if (!name || name === '.' || name === '..' || name.includes('/') || name.includes('\0'))
@@ -109,7 +114,7 @@ export function read_directory_names(descriptor: number): string[] {
   );
   let stream: unknown = null;
   const close = () => {
-    if (stream === null) closeSync(duplicate);
+    if (stream === null) close_native_descriptor(duplicate);
     else checked('closedir', () => native('int closedir(void *directory)')(stream));
     directory_readers.delete(close);
   };
@@ -242,7 +247,16 @@ export function open_directory_descriptor(
   const parts = (isAbsolute(path) ? raw : [...process.cwd().split('/'), ...raw]).filter(
     (part) => part !== '' && part !== '.',
   );
-  let descriptor = openSync('/', directory_open_flags);
+  const darwin = native_platform() === 'darwin';
+  let descriptor = checked('openat', () =>
+    native('int openat(int dirfd, const char *path, int flags, ...)')(
+      darwin ? -2 : -100,
+      '/',
+      directory_open_flags | (darwin ? 0x1000000 : 0x80000),
+      'int',
+      0,
+    ),
+  );
   try {
     for (const part of parts) {
       if (options.create)
@@ -255,11 +269,11 @@ export function open_directory_descriptor(
       const child = open_relative(descriptor, part, directory_open_flags);
       const previous = descriptor;
       descriptor = child;
-      closeSync(previous);
+      close_native_descriptor(previous);
     }
     return descriptor;
   } catch (error) {
-    closeSync(descriptor);
+    close_native_descriptor(descriptor);
     throw error;
   }
 }
@@ -284,14 +298,14 @@ export function acquire_process_lock(root: string): { close(): void } {
     if (lock !== undefined) {
       const failed = lock;
       lock = undefined;
-      closeSync(failed);
+      close_native_descriptor(failed);
     }
     throw error;
   } finally {
     try {
-      closeSync(parent);
+      close_native_descriptor(parent);
     } catch (error) {
-      if (lock !== undefined) closeSync(lock);
+      if (lock !== undefined) close_native_descriptor(lock);
       throw error;
     }
   }
@@ -300,7 +314,7 @@ export function acquire_process_lock(root: string): { close(): void } {
   return {
     close() {
       if (!closed) {
-        closeSync(descriptor);
+        close_native_descriptor(descriptor);
         closed = true;
       }
     },
