@@ -3,7 +3,7 @@ import type { Database } from '../core/database/contracts.ts';
 import type { Clock } from '../core/clock.ts';
 import type { WorkspaceAdmission } from '../conversation/workspace_admission.ts';
 import type { SlotParticipant } from './participants.ts';
-import { observe_shutdown } from '../lifecycle/deadline.ts';
+import { observe_shutdown } from '../conversation/shutdown.ts';
 import type { StopOptions } from '../lifecycle/contracts.ts';
 import { ShutdownDeadlineExceeded } from '../lifecycle/contracts.ts';
 export interface SourceScheduleLoopOptions {
@@ -89,7 +89,12 @@ export class SourceScheduleLoop {
       for (const result of results) if (result.status === 'rejected') failures.push(result.reason);
       if (failures.length) throw new AggregateError(failures, 'Source clock shutdown failed');
     });
-    this.closing = observe_shutdown(this.shutdown_settlement, stop, 'source clock');
+    this.closing = observe_shutdown(
+      this.shutdown_settlement,
+      stop,
+      'Shutdown deadline expired; ownership retained: source clock',
+      ['source clock'],
+    );
     // Each participant fences its producer before any drain is awaited.
     for (const participant of this.options.participants) {
       try {

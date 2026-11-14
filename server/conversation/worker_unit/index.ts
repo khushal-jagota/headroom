@@ -87,12 +87,12 @@ export class WorkerUnit {
     null;
 
   constructor(values: WorkerUnitValues) {
-    this.finished = new Promise<void>((resolve) => {
-      this.resolve_finished = () => {
-        this.confirmed_inactive = true;
-        resolve();
-      };
-    });
+    const { promise, resolve } = Promise.withResolvers<void>();
+    this.finished = promise;
+    this.resolve_finished = () => {
+      this.confirmed_inactive = true;
+      resolve();
+    };
     this.name = values.name;
     this.directory = values.directory;
     this.environment = values.environment;
@@ -231,22 +231,17 @@ export class WorkerUnit {
     if (this.stop_requested) throw new WorkerUnitError('Worker launch admission is closed');
     if (this.launching) throw new WorkerUnitError('Worker unit already owns a launcher');
     this.launching = true;
-    this.wrapper_ready = new Promise<void>((resolve) => {
-      this.publish_wrapper = resolve;
-    });
+    const { promise, resolve } = Promise.withResolvers<void>();
+    this.wrapper_ready = promise;
+    this.publish_wrapper = resolve;
   }
   launch_failed_before_spawn(): void {
     this.resolve_finished(); // The reserved spawn threw without returning any child.
     this.publish_wrapper?.();
   }
   track_wrapper(child: ChildProcess): void {
-    let exit!: () => void, close!: () => void;
-    const exited = new Promise<void>((resolve) => {
-      exit = resolve;
-    });
-    const closed = new Promise<void>((resolve) => {
-      close = resolve;
-    });
+    const { promise: exited, resolve: exit } = Promise.withResolvers<void>();
+    const { promise: closed, resolve: close } = Promise.withResolvers<void>();
     child.once('exit', (code, signal) => {
       if (code === 0 && signal === null) this.resolve_finished();
       exit();

@@ -239,16 +239,19 @@ export class CodexSignInService implements SignInServiceContract {
     this.session = session;
     let answer: unknown;
     try {
-      const startup = await observe_promise(
-        this.bring_up_child(session),
-        this.bounds.child_startup_seconds * 1000,
+      const startup_timeout = AbortSignal.timeout(
+        Math.ceil(this.bounds.child_startup_seconds * 1000),
       );
-      if (!startup.completed) throw Object.assign(new Error(''), { name: 'TimeoutError' });
+      const startup = await observe_promise(this.bring_up_child(session), startup_timeout);
+      if (!startup.completed) throw startup_timeout.reason;
+      const login_timeout = AbortSignal.timeout(
+        Math.ceil(this.bounds.child_startup_seconds * 1000),
+      );
       const login = await observe_promise(
         client.request(START_METHOD, { type: 'chatgptDeviceCode' }),
-        this.bounds.child_startup_seconds * 1000,
+        login_timeout,
       );
-      if (!login.completed) throw Object.assign(new Error(''), { name: 'TimeoutError' });
+      if (!login.completed) throw login_timeout.reason;
       answer = login.value;
     } catch (failure) {
       session.startup_aborted = true;

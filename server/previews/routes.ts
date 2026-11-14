@@ -1,3 +1,4 @@
+import { ShutdownDeadlineExceeded } from '../lifecycle/contracts.ts';
 import type { FastifyPluginAsync } from 'fastify';
 import type { AreaServices, PreparedAreaRoutes } from '../core/authority/register.ts';
 import { PlannerError } from '../core/contracts.ts';
@@ -9,7 +10,7 @@ import { PreviewTransport } from './transport.ts';
 import { require_preview_ingress } from './ingress.ts';
 import { install_request_lifetime } from '../core/http/lifetime.ts';
 import type { StopOptions } from '../lifecycle/contracts.ts';
-import { observe_shutdown } from '../lifecycle/deadline.ts';
+import { observe_shutdown } from '../conversation/shutdown.ts';
 import type { IncomingMessage } from 'node:http';
 import type { Duplex } from 'node:stream';
 const result = (record: PreviewRecord | null) =>
@@ -213,12 +214,14 @@ export function createPreviewRoutes(): PreparedPreviewRoutes {
     seal,
     stop(options, http_actual) {
       if (stopping) return stopping;
-      let resolve!: () => void, reject!: (error: unknown) => void;
-      actual_stop = new Promise<void>((yes, no) => {
-        resolve = yes;
-        reject = no;
-      });
-      stopping = observe_shutdown(actual_stop, options, 'preview services');
+      const { promise, resolve, reject } = Promise.withResolvers<void>();
+      actual_stop = promise;
+      stopping = observe_shutdown(
+        actual_stop,
+        options,
+        new ShutdownDeadlineExceeded(['preview services']).message,
+        ['preview services'],
+      );
       const failures: unknown[] = [];
       try {
         seal();

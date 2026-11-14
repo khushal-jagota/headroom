@@ -5,7 +5,7 @@ import { join, dirname } from 'node:path';
 import { resolved_path } from '../paths.ts';
 import type { ChangeSignal } from '../../core/changes/index.ts';
 import type { StopOptions } from '../../lifecycle/contracts.ts';
-import { observe_shutdown } from '../../lifecycle/deadline.ts';
+import { observe_shutdown } from '../../conversation/shutdown.ts';
 import { build_worker_runtime_definitions } from '../../worker_types/configuration.ts';
 import { read_definitions } from '../../worker_types/store.ts';
 import { audit_ticket_registry_integrity } from '../../tickets/data/index.ts';
@@ -372,7 +372,12 @@ export class UpdateService {
     this.observer = null;
     this.shutdown_settlement = Promise.allSettled([...this.work]).then(() => {});
     this.prefetching = this.advancing = null;
-    this.stopping = observe_shutdown(this.shutdown_settlement, { deadline }, 'updates');
+    this.stopping = observe_shutdown(
+      this.shutdown_settlement,
+      { deadline },
+      'Shutdown deadline expired; ownership retained: updates',
+      ['updates'],
+    );
     return this.stopping;
   }
   poll(): boolean {

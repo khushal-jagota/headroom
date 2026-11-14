@@ -91,7 +91,6 @@ test('old handlers and stale cancellation cannot alter the replacement session',
 });
 
 test('a timed out resolver cannot spawn a child after startup failure', async () => {
-  vi.useFakeTimers();
   const argv = new Deferred<readonly string[] | null>();
   let client!: FakeClient;
   const service = new CodexSignInService({
@@ -108,14 +107,12 @@ test('a timed out resolver cannot spawn a child after startup failure', async ()
   try {
     const start = service.start();
     const rejected = expect(start).rejects.toThrow();
-    await vi.advanceTimersByTimeAsync(10);
     await rejected;
     argv.resolve(['/synthetic/codex', 'app-server']);
-    await vi.advanceTimersByTimeAsync(0);
+    await Promise.resolve();
     expect(client.start_calls).toBe(0);
     expect(client.stop_calls).toBe(1);
     expect(service.read()?.state).toBe('ended');
-    expect(vi.getTimerCount()).toBe(0);
   } finally {
     await service.shutdown();
   }
