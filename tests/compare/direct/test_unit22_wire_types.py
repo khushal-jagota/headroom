@@ -48,7 +48,9 @@ def test_unit22_shared_wire_types_are_current(
     assert manifest["protocol_version"] == 22
     assert manifest["spool_format_version"] == 5
     assert manifest["command_journal_format_version"] == 1
-    assert {"LeaseRequest", "QueuedEnvelope", "MacUpdateCheck", "ExecutorHealthRead"} <= set(schema["roots"])
+    assert {"LeaseRequest", "QueuedEnvelope", "MacUpdateCheck", "ExecutorHealthRead"} <= set(
+        schema["roots"]
+    )
     current = run(["node", str(TOOLS / "generate_wire.ts"), "--check"])
     assert current.returncode == 0, current.stderr + current.stdout
 
@@ -60,7 +62,8 @@ def test_unit22_shared_wire_types_are_current(
         "const text=readFileSync(process.argv[1],'utf8'),schema=JSON.parse(text);"
         "schema.$defs.MacUpdateCheck.properties.schema_version.type='string';"
         "try{await check_wire(schema,{schema:text,types:readFileSync(process.argv[2],'utf8')});"
-        "process.exitCode=1;}catch(error){if(!error.message.includes('Executor wire types are stale'))throw error;}",
+        "process.exitCode=1;}catch(error){"
+        "if(!error.message.includes('Executor wire types are stale'))throw error;}",
         str(schema_path), str(types_path),
     ])
     assert stale.returncode == 0, stale.stderr + stale.stdout

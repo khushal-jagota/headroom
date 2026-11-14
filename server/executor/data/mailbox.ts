@@ -12,13 +12,38 @@ import { conversation_event_payload_from_canonical_json } from '../../conversati
 import { message_content_text } from '../../conversation/message_content.ts';
 import type { PromptDeliveryUncertainEventPayload } from '../../conversation/events.ts';
 import type { StallSource, TrackedWait } from '../../stalls/contracts.ts';
-import type { CommandSettlementReason, MailboxFetchResult, MailboxRecordResult, MailboxRow, MailboxSettlement, MailboxSettlements, PromptWrittenAgain, LateSteerAfterRestart, WireValue } from '../contracts.ts';
-import { HELD_POLL_EVIDENCE_MS, MAX_MAILBOX_POLL_BYTES, MAX_MAILBOX_POLL_COMMANDS, STEER_DELIVERY_LIMIT_SECONDS } from '../configuration.ts';
-import { as_object, decode_json, decode_value, encode_bounded, ExecutorValidationError } from '../protocol.ts';
+import type {
+  CommandSettlementReason,
+  MailboxFetchResult,
+  MailboxRecordResult,
+  MailboxRow,
+  MailboxSettlement,
+  MailboxSettlements,
+  PromptWrittenAgain,
+  LateSteerAfterRestart,
+  WireValue,
+} from '../contracts.ts';
+import {
+  HELD_POLL_EVIDENCE_MS,
+  MAX_MAILBOX_POLL_BYTES,
+  MAX_MAILBOX_POLL_COMMANDS,
+  STEER_DELIVERY_LIMIT_SECONDS,
+} from '../configuration.ts';
+import {
+  as_object,
+  decode_json,
+  decode_value,
+  encode_bounded,
+  ExecutorValidationError,
+} from '../protocol.ts';
 import { expiry_reason } from '../logic/command_expiry.ts';
 import { counter } from '../logic/counters.ts';
 import { current_incarnation } from '../vps_presence_store.ts';
-import { open_child_assignment, prepare_command_in_transaction, record_prompt_outcome_in_transaction } from './child_custody.ts';
+import {
+  open_child_assignment,
+  prepare_command_in_transaction,
+  record_prompt_outcome_in_transaction,
+} from './child_custody.ts';
 
 const settled_states = new Set(['finished', 'withdrawn', 'expired']);
 export function is_settled(row: MailboxRow): boolean {
@@ -99,8 +124,8 @@ function insert(
       operation(command),
       child?.child.conversation_id ?? null,
       child?.child.child_id ?? null,
-      child?.turn == null ? null : (child.turn.turn_number),
-      (command.created_at_vps_ms),
+      child?.turn == null ? null : child.turn.turn_number,
+      command.created_at_vps_ms,
     ],
   );
   // lastInsertRowid can already be rounded by the driver. Read text before leaving this writer.
@@ -624,7 +649,7 @@ export function late_steers_left_by_a_restart(sql: ReadSql): readonly LateSteerA
         candidate.state === 'delivered' ||
         (candidate.finished !== null &&
           counter(candidate.finished) - counter(candidate.created) >=
-            (STEER_DELIVERY_LIMIT_SECONDS * 1000));
+            STEER_DELIVERY_LIMIT_SECONDS * 1000);
       const child = decode_json(candidate.command_json, 'MailboxCommand').child_command;
       const args = child?.arguments;
       if (!late || args?.kind !== 'steer' || args.sender_label !== label) continue;

@@ -123,8 +123,9 @@ export type ChildCommand = {
   operation: ChildOperation;
   turn: TurnToken | null;
 };
-export type ChildCommandArguments =
-  StartRun | WritePrompt | Steer | CancelTurn | AnswerPermission | AnswerUserInput | StopRun;
+export type ChildCommandArguments = (
+  StartRun | WritePrompt | Steer | CancelTurn | AnswerPermission | AnswerUserInput | StopRun
+) & { kind: string };
 export type ChildOperation =
   | 'start'
   | 'write_prompt'

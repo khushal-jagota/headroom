@@ -713,7 +713,9 @@ def test_unit22_executor_real_wire(tmp_path: Path, request: pytest.FixtureReques
                     # Query parameters bypass the JSON codec but keep its integer admission.
                     async with proxy.session_factory() as client:
                         async with client.get(
-                            owned_url(proxy.origin, "/api/executor/commands?after=9007199254740992&wait=0"),
+                            owned_url(
+                                proxy.origin, "/api/executor/commands?after=9007199254740992&wait=0"
+                            ),
                             headers={
                                 "X-Panels-Executor-ID": "test-executor",
                                 "X-Panels-Executor-Incarnation": IDENTITY.executor_incarnation,
@@ -760,7 +762,9 @@ def test_unit22_executor_real_wire(tmp_path: Path, request: pytest.FixtureReques
                 "candidate": actual,
                 "core_source": expected_core,
                 "core_candidate": actual_core,
-                "comparison_rule": "Invalid phase keeps its HTTP status and error shape with native text.",
+                "comparison_rule": (
+                    "Invalid phase keeps its HTTP status and error shape with native text."
+                ),
                 "guard_refusals": 3,
                 "unsafe_poll": unsafe_poll,
                 "refused_connection_attempts": 0,

@@ -192,8 +192,7 @@ export async function mailbox_parity(input: Input): Promise<unknown> {
         }
         if (id === 'b') {
           retry_times.runner!.push(performance.now() / 1000);
-          if (retry_times.runner!.length === 1)
-            throw new Error('scripted runner retry');
+          if (retry_times.runner!.length === 1) throw new Error('scripted runner retry');
         }
         if (id === 'a1' || id === 'stop') {
           (id === 'a1' ? first : stopped).resolve();

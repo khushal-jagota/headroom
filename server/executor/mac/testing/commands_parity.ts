@@ -21,7 +21,6 @@ import { same_turn as codex_same_turn } from '../../../conversation/backends/cod
 import type { ResolvedConversationStart } from '../../../conversation/contracts.ts';
 import { decode_json, as_object, ExecutorValidationError } from '../../protocol.ts';
 import { MacCommandService } from '../runner/service.ts';
-import { dispatch_command } from '../runner/commands.ts';
 import { create_mac_output_publication } from '../runner/publication.ts';
 import type { MacCommandDependencies, MacOutputPublication } from '../runner/command_contracts.ts';
 import { MacNativeChildren } from '../runner/start_stop.ts';
@@ -372,14 +371,12 @@ try {
   await run('start');
   const before_unsafe = calls.length;
   const unsafe = { ...commands.prompt! };
+  if (unsafe.arguments.kind !== 'write_prompt')
+    throw new Error('The prompt fixture must carry prompt arguments');
   unsafe.arguments = { ...unsafe.arguments, sender_message_count: Number.MAX_SAFE_INTEGER + 1 };
-  const unsafe_count = await dispatch_command(
-    dependencies(wrap_journal(journal!), wrap_publication(create_mac_output_publication(store!))),
-    unsafe,
-    new Map(),
-    service,
-    fail,
-  ).catch((error: unknown) => error);
+  const unsafe_count = await Promise.resolve()
+    .then(() => service.run(unsafe))
+    .catch((error: unknown) => error);
   guards.unsafe_sender_count_refused =
     unsafe_count instanceof ExecutorValidationError &&
     native_children.get('child')!.active_turn === null &&

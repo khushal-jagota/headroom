@@ -61,7 +61,7 @@ export function native_wire_fixtures(): WireTypes {
       identity_environment_variables: [['PLAN_ACTOR', 'ticket']],
     },
   };
-  const prompt: WireTypes['WritePrompt'] = {
+  const prompt = {
     content: pieces,
     sender_content: pieces,
     sender_label: 'Owner',
@@ -72,7 +72,7 @@ export function native_wire_fixtures(): WireTypes {
     reasoning_effort_change: 'low',
     reasoning_effort_is_set: true,
     automatic_compaction: true,
-  };
+  } satisfies WireTypes['WritePrompt'];
   const command: WireTypes['ChildCommand'] = {
     command_id: 'prompt',
     child,

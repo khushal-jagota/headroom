@@ -468,8 +468,7 @@ const catalog = new MacCatalog({
         diagnoses: [],
         models_complete: true,
       };
-      // The snapshot domain uses number[], while the authoritative wire allows exact integers.
-      // Validate that wider fixture at the shared wire door before the domain source seam.
+      // The synthetic provider supplies ordinary JSON through the same wire validation.
       return decode_json(JSON.stringify(snapshot), 'BackendSnapshot') as unknown as BackendSnapshot;
     },
   },

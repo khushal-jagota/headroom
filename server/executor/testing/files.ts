@@ -286,7 +286,9 @@ async function main(raw: Spec): Promise<void> {
       Object.fromEntries(Object.entries(spec.manifest).reverse()),
       'FileManifest',
     );
-    if (await staging.staged_file(spec.manifest) !== await staging.staged_file(reordered_manifest))
+    if (
+      (await staging.staged_file(spec.manifest)) !== (await staging.staged_file(reordered_manifest))
+    )
       throw new Error('Manifest property order changed its staged filename');
     result.staging_keys = [
       basename(await staging.staged_file(spec.manifest)),

@@ -13,16 +13,18 @@ import {
   read_typed_frame,
 } from '../protocol.ts';
 import { WIRE_SCHEMA } from '../wire.generated.ts';
-import type { WireRootName } from '../wire.generated.ts';
+import type { WireRootName, WireTypes } from '../wire.generated.ts';
 import { native_wire_fixtures } from './native_protocol_fixtures.ts';
 
 const native = native_wire_fixtures();
 assert.deepEqual(Object.keys(native).sort(), [...WIRE_SCHEMA.roots].sort());
 const roots: string[] = [];
 for (const root of Object.keys(native) as WireRootName[]) {
+  const expected = decode_value(JSON.parse(JSON.stringify(native[root])), root);
   const body = encode_bounded(native[root], root);
   const document = JSON.parse(Buffer.from(body).toString());
   const decoded = decode_bounded(body, root);
+  assert.deepEqual(decoded, expected, root);
   assert.deepEqual(decoded, document, root);
   assert.deepEqual(
     JSON.parse(Buffer.from(encode_bounded(decoded, root)).toString()),
@@ -66,7 +68,9 @@ for (const value of [Number.MAX_SAFE_INTEGER + 1, Number.MIN_SAFE_INTEGER - 1]) 
 }
 invalid('nonfinite-json-token', () => decode_json('{"value":NaN}', 'JsonObject'));
 invalid('nonfinite-json-exponent', () => decode_json('{"value":1e999}', 'JsonObject'));
-invalid('nonfinite-structured-extra', () => decode_json('{"conversation_id":"c","turn_number":1,"extra":1e999}', 'TurnToken'));
+invalid('nonfinite-structured-extra', () =>
+  decode_json('{"conversation_id":"c","turn_number":1,"extra":1e999}', 'TurnToken'),
+);
 for (const value of [NaN, Infinity, -Infinity])
   invalid(`nonfinite-output-${String(value)}`, () =>
     encode_bounded({ values: [value] }, 'JsonObject'),
@@ -74,8 +78,53 @@ for (const value of [NaN, Infinity, -Infinity])
 invalid('command-kind-conflict', () =>
   decode_value({ ...native.ChildCommand, operation: 'stop' }, 'ChildCommand'),
 );
+const missing_kind = JSON.parse(JSON.stringify(native.ChildCommand));
+delete missing_kind.arguments.kind;
+invalid('command-kind-required', () => decode_value(missing_kind, 'ChildCommand'));
 invalid('command-needs-turn', () =>
   decode_value({ ...native.ChildCommand, turn: null }, 'ChildCommand'),
+);
+const permission_answer = {
+  command_id: 'permission-answer',
+  operation: 'answer_permission_ask',
+  child: native.ChildReference,
+  turn: native.TurnToken,
+  arguments: {
+    kind: 'answer_permission_ask',
+    ask_id: native.AskReference.ask_id,
+    option_id: 'allow',
+    answer: {
+      answer_id: 'permission-answer',
+      ask: native.AskReference,
+      option_id: 'allow',
+      accepted_at_vps_ms: 123,
+    },
+  },
+} satisfies WireTypes['ChildCommand'];
+// An omitted optional user-input field cannot invalidate a permission answer.
+assert.doesNotThrow(() => decode_value(permission_answer, 'ChildCommand'));
+const conflicting_answer = {
+  ...permission_answer,
+  arguments: {
+    ...permission_answer.arguments,
+    answer: { ...permission_answer.arguments.answer, answer_id: 'other' },
+  },
+};
+invalid('permission-answer-id-conflict', () => decode_value(conflicting_answer, 'ChildCommand'));
+invalid('nested-permission-answer-id-conflict', () =>
+  decode_value(
+    {
+      commands: [
+        {
+          command_id: permission_answer.command_id,
+          command_sequence: 1,
+          created_at_vps_ms: 123,
+          child_command: conflicting_answer,
+        },
+      ],
+    },
+    'MailboxPollReply',
+  ),
 );
 invalid('mailbox-payload-conflict', () =>
   decode_value(
@@ -111,4 +160,6 @@ const event = decode_event_arguments({
 const [method, args] = encode_backend_event(event);
 assert.equal(method, 'agent_message_delta');
 assert.deepEqual(args, { text_delta: 'native λ' });
-process.stdout.write(JSON.stringify({ roots, refused, framed: true, events: true }));
+process.stdout.write(
+  JSON.stringify({ roots, refused, framed: true, events: true, optional_permission_answer: true }),
+);

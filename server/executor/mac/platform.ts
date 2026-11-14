@@ -363,8 +363,7 @@ export function expand_executor_path(
   const slash = value.indexOf('/');
   const username = value.slice(1, slash < 0 ? undefined : slash);
   const home = username ? account_home(username) : (environment.HOME ?? homedir());
-  if (home === undefined)
-    throw new Error('Could not determine home directory.');
+  if (home === undefined) throw new Error('Could not determine home directory.');
   return home.replace(/\/+$/, '') + (slash < 0 ? '' : value.slice(slash)) || '/';
 }
 

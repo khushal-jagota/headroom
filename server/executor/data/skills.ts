@@ -43,7 +43,11 @@ export function read_canonical_skill_snapshot(
     validate_skill_snapshot(snapshot);
     return snapshot;
   } catch (error) {
-    if (is_sqlite_error(error) || error instanceof ExecutorValidationError || error instanceof PlannerError)
+    if (
+      is_sqlite_error(error) ||
+      error instanceof ExecutorValidationError ||
+      error instanceof PlannerError
+    )
       throw new BackendSpawnFailed(
         `cannot read canonical skill snapshot: ${error instanceof Error ? error.message : String(error)}`,
       );

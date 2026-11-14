@@ -7,7 +7,12 @@ import { PlannerError } from '../../core/contracts.ts';
 import type { ExecutorIdentity } from '../../execution_identity.ts';
 import type { DirectoryHandle, FileOperationOptions, WireValue } from '../contracts.ts';
 import type { FileVersion } from '../files.ts';
-import { directory_descriptor, file_version_at, FileCleanupError, verified_version } from '../files.ts';
+import {
+  directory_descriptor,
+  file_version_at,
+  FileCleanupError,
+  verified_version,
+} from '../files.ts';
 import { same_version } from '../mac/file_metadata.ts';
 import { MAX_FILES_PER_PUBLICATION_TRANSACTION } from '../configuration.ts';
 import { as_object, decode_json, decode_value, ExecutorValidationError } from '../protocol.ts';
@@ -154,7 +159,7 @@ export class InboxStore {
       [
         envelope.sender_id,
         envelope.conversation_id,
-        (envelope.sequence),
+        envelope.sequence,
         envelope.submission_id,
         options.dispatching ? 'dispatching' : receipt.disposition,
         record(receipt),
@@ -176,9 +181,9 @@ export class InboxStore {
       'SELECT CAST(sequence AS TEXT) AS sequence,result_json FROM mac_inbox_positions WHERE sender_id=? AND conversation_id=?',
       [envelope.sender_id, envelope.conversation_id],
     );
-    if (!previous || (envelope.sequence) > counter(previous.sequence)) return null;
+    if (!previous || envelope.sequence > counter(previous.sequence)) return null;
     const stored = InboxStore.receipt(previous);
-    if ((envelope.sequence) === counter(previous.sequence)) {
+    if (envelope.sequence === counter(previous.sequence)) {
       if (stored.submission_id !== envelope.submission_id)
         throw invalid('Submission identity conflicts with its first receipt');
       return stored;

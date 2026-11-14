@@ -37,7 +37,7 @@ const answer: WireValue<'ChildCommand'> = {
     child_id: 'child',
   },
   turn: { conversation_id: 'remote', turn_number: 1 },
-  arguments: { ask_id: 'ask', option_id: 'allow' },
+  arguments: { kind: 'answer_permission_ask', ask_id: 'ask', option_id: 'allow' },
   file_dependencies: [],
 };
 

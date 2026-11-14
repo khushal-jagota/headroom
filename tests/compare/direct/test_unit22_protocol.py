@@ -39,6 +39,7 @@ def test_unit22_shared_protocol_exchange(tmp_path: Path, request: pytest.Fixture
     schema = json.loads((ROOT / "server/executor/wire.schema.json").read_text())
     assert set(evidence["roots"]) == set(schema["roots"])
     assert evidence["framed"] is evidence["events"] is True
+    assert evidence["optional_permission_answer"] is True
     assert {
         "malformed-json",
         "missing-required-field",
@@ -49,7 +50,10 @@ def test_unit22_shared_protocol_exchange(tmp_path: Path, request: pytest.Fixture
         "nonfinite-json-exponent",
         "nonfinite-structured-extra",
         "command-kind-conflict",
+        "command-kind-required",
         "command-needs-turn",
+        "permission-answer-id-conflict",
+        "nested-permission-answer-id-conflict",
         "mailbox-payload-conflict",
         "mailbox-command-id-conflict",
         "body-budget",

@@ -54,7 +54,14 @@ function render(schema: Schema): string {
   if (Object.hasOwn(schema, 'const')) return literal(schema.const);
   if (schema.enum) return schema.enum.map(literal).join(' | ');
   const union = schema.anyOf ?? schema.oneOf;
-  if (union) return union.map((branch) => `(${render(branch)})`).join(' | ');
+  if (union) {
+    const alternatives = union.map((branch) => `(${render(branch)})`).join(' | ');
+    if (schema.type === 'object' && schema.properties) {
+      const { anyOf: _anyOf, oneOf: _oneOf, ...object } = schema;
+      return `(${alternatives}) & ${render(object)}`;
+    }
+    return alternatives;
+  }
   if (schema.allOf) return schema.allOf.map((branch) => `(${render(branch)})`).join(' & ');
   if (Array.isArray(schema.type))
     return schema.type.map((type) => `(${render({ ...schema, type })})`).join(' | ');

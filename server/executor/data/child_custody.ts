@@ -31,11 +31,11 @@ export function prepare_command_in_transaction(
   if (command.operation === 'start' || command.operation === 'write_prompt') {
     if (
       row.stop_state !== 'open' ||
-      (command.turn !== null && (command.turn.turn_number) < counter(row.turn_number))
+      (command.turn !== null && command.turn.turn_number < counter(row.turn_number))
     )
       throw new ExecutorValidationError('Mac run cannot accept a stale or stopped delivery');
     tx.run('UPDATE mac_runs SET delivery_uncertain=1,turn_number=? WHERE conversation_id=?', [
-      command.turn === null ? counter(row.turn_number) : (command.turn.turn_number),
+      command.turn === null ? counter(row.turn_number) : command.turn.turn_number,
       child.conversation_id,
     ]);
   } else if (command.operation === 'stop') {
@@ -59,7 +59,7 @@ export function record_prompt_outcome_in_transaction(
       child.conversation_id,
       child.executor_incarnation,
       child.child_id,
-      command.turn === null ? 0 : (command.turn.turn_number),
+      command.turn === null ? 0 : command.turn.turn_number,
     ],
   );
 }

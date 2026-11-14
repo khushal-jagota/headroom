@@ -8,7 +8,11 @@ import { execution_unavailable_reason } from '../../tickets/locale_configuration
 import { current_incarnation } from '../vps_presence_store.ts';
 import { ExecutorValidationError } from '../protocol.ts';
 import type { WireValue } from '../contracts.ts';
-import { open_child_assignment, prepare_command_in_transaction, record_prompt_outcome_in_transaction } from './child_custody.ts';
+import {
+  open_child_assignment,
+  prepare_command_in_transaction,
+  record_prompt_outcome_in_transaction,
+} from './child_custody.ts';
 
 export class ExecutorStore {
   readonly database: Database;
@@ -39,7 +43,7 @@ export class ExecutorStore {
               },
               turn: {
                 conversation_id: row.conversation_id,
-                turn_number: (counter(row.turn_number)),
+                turn_number: counter(row.turn_number),
               },
               delivery_uncertain: Boolean(row.delivery_uncertain),
               retirement_confirmed: row.stop_state === 'closed',

@@ -3,7 +3,14 @@ import { randomUUID } from 'node:crypto';
 import { PlannerError } from '../../core/contracts.ts';
 import type { HeldFileLocation } from '../contracts.ts';
 import type { FileVersion } from '../files.ts';
-import { FileCleanupError, file_version_at, fsync_directory, link_at, rename_at_sync, unlink_at } from '../files.ts';
+import {
+  FileCleanupError,
+  file_version_at,
+  fsync_directory,
+  link_at,
+  rename_at_sync,
+  unlink_at,
+} from '../files.ts';
 import { same_version } from '../mac/file_metadata.ts';
 
 export function artifact_changed(): PlannerError {

@@ -606,6 +606,20 @@ def test_unit22_mac_commands(
     for _, outcome in observed["parity"]["outcomes"]:
         if isinstance(outcome, dict):
             type_adapter(CommandOutcome).validate_python(outcome)
+    # Native Error replaces Python RuntimeError for this scripted source failure.
+    # Its command identity, uncertain disposition, and original message stay exact.
+    for collection in ("outcomes", "results"):
+        source = dict(expected[collection])["failed-source-stop"]
+        native = dict(observed["parity"][collection])["failed-source-stop"]
+        source_error = (source if collection == "outcomes" else source["child_outcome"])["result"]
+        native_error = (native if collection == "outcomes" else native["child_outcome"])["result"]
+        assert source_error == {
+            "error_type": "RuntimeError", "error_message": "required source publication failed"
+        }
+        assert native_error == {
+            "error_type": "Error", "error_message": "required source publication failed"
+        }
+        source_error["error_type"] = "Error"
     assert observed["parity"] == expected
     assert expected["facts"] and all(expected["facts"].values())
     assert observed["actual_work_joined"]
@@ -619,4 +633,8 @@ def test_unit22_mac_commands(
         "real command/source/retirement custody with scripted skills/files/backend; "
         "no provider or network",
         python_retry_attempts=python_attempts,
+        native_diagnostic_difference={
+            "command": "failed-source-stop", "python": "RuntimeError", "typescript": "Error",
+            "preserved": "uncertain disposition, command identity, and original error message",
+        },
     )

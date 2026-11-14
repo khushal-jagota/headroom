@@ -39,7 +39,7 @@ function command_admission(command: ChildCommand): boolean {
           ask.kind === 'permission' &&
           ask.ask_id === args.ask_id &&
           answer.option_id === args.option_id &&
-          answer.user_input_answers === null;
+          answer.user_input_answers == null;
       else if (args.kind === 'answer_user_input')
         matching_answer =
           ask.kind === 'user_input' &&

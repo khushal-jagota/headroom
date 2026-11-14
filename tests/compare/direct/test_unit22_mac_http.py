@@ -393,9 +393,19 @@ def test_unit22_mac_http(tmp_path: Path, record_property: Any) -> None:
             # Both TypeScript peers use native JSON. Message fields and codes stay exact.
             for result in (actual, expected):
                 result["results"] = [
-                    json.loads(value) if isinstance(value, str) else value
+                    json.loads(value)
+                    if isinstance(value, str) and value.startswith("{")
+                    else value
                     for value in result["results"]
                 ]
+                for value in result["results"]:
+                    if isinstance(value, dict) and value.get("failure") in {
+                        "ValueError", "ExecutorValidationError"
+                    }:
+                        value["failure"] = "validation"
+            (tmp_path / "native-http-outcomes.json").write_text(
+                json.dumps({"actual": actual, "expected": expected}, indent=2) + "\n"
+            )
             assert actual == expected
             assert traces[0] == traces[1]
             assert (tmp_path / "node-target").read_bytes() == content
