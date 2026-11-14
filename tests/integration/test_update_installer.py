@@ -20,7 +20,6 @@ from typing import cast
 
 import pytest
 
-from planner.core.path_observer import PathSignature
 from planner.environments.update_install import installer_command, write_installer
 
 FROM_SHA = "a" * 40
@@ -334,7 +333,7 @@ def test_trial_boot_holds_runtime_until_installer_releases_cut(
     marker_observed = threading.Event()
     signature = path_observer.path_signature
 
-    def observed_signature(path: Path) -> PathSignature:
+    def observed_signature(path: Path) -> path_observer.PathSignature:
         result = signature(path)
         if path == barrier.path:
             marker_observed.set()
@@ -579,7 +578,7 @@ def test_restore_child_retains_lock_then_times_out_after_parent_descriptor_close
             if child.stdout is not None:
                 child.stdout.close()
 
-    monkeypatch.setattr("planner.platform_runtime.linux.update_installer.subprocess.run", restore)
+    monkeypatch.setattr(subprocess, "run", restore)
     try:
         result = installer.roll_back(
             installation,

@@ -15,6 +15,9 @@ from pathlib import Path
 import pytest
 from tests.support.multi_machine_home import Executor, Home, wait_for
 
+from planner.core.db import connect
+from planner.executor.protocol import EnvelopeKind, ReceiptDisposition
+
 
 def test_two_executors_share_home_without_shared_command_custody(tmp_path: Path) -> None:
     async def exercise() -> None:
@@ -37,6 +40,16 @@ def test_two_executors_share_home_without_shared_command_custody(tmp_path: Path)
                 for client in clients:
                     assert client.native.start_count == 1
                     assert client.mac.journal.poll_cursor() > 0
+                for index, client in enumerate(clients):
+                    marker = f"joined-machine-owner-message-{index}"
+                    await client.send_message(marker)
+                    with contextlib.closing(connect(str(home.root / "home.sqlite"))) as conn:
+                        messages = conn.execute(
+                            "SELECT payload FROM conversation_events "
+                            "WHERE conversation_id=? AND kind='message_to_owner'",
+                            (f"multi{index}",),
+                        ).fetchall()
+                    assert any(marker in str(row[0]) for row in messages)
                 # The same trusted login does not grant another machine's child or workspace.
                 from planner.executor.mac_http import ExecutorHttpError
                 from planner.executor.protocol import LiveReadRequest
@@ -49,7 +62,6 @@ def test_two_executors_share_home_without_shared_command_custody(tmp_path: Path)
                     await clients[0].mac.client.workspace_states((replies[1]["ticket_id"],))
                 assert refused_machine.value.status == 403
                 # A cannot acknowledge B's command or use it as a file capability.
-                from planner.core.db import connect
                 from planner.executor.protocol import CommandOutcomeReport, CommandResult
 
                 with contextlib.closing(connect(str(home.root / "home.sqlite"))) as conn:
@@ -84,6 +96,18 @@ def test_two_executors_share_home_without_shared_command_custody(tmp_path: Path)
                     await asyncio.sleep(0.02)
                 assert state["ended"] == {"multi0": 1, "multi1": 1}
                 assert state["open_commands"] == 0
+                await wait_for(
+                    lambda: all(c.mac.outbox.pending_count() == 0 for c in clients),
+                    "all CLI and backend-event receipts",
+                )
+                for client in clients:
+                    assert client.submitted.keys() == client.receipted.keys()
+                    kinds = {envelope.kind for envelope in client.submitted.values()}
+                    assert {EnvelopeKind.cli_write, EnvelopeKind.backend_event} <= kinds
+                    assert all(
+                        receipt.disposition is ReceiptDisposition.accepted
+                        for receipt in client.receipted.values()
+                    )
                 from dataclasses import replace
 
                 from planner.executor.protocol import ItemBatch, ItemSubmission, LeaseRefused

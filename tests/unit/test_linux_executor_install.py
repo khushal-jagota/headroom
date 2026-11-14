@@ -3,6 +3,7 @@
 from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
+from typing import TypedDict
 
 import pytest
 
@@ -177,21 +178,29 @@ def test_failed_first_install_removes_own_files_and_allows_retry(
             raise OSError("unit publication failed")
         return replace_path(path, target)
 
-    def install_runtime() -> Path:
-        return install(
-            config, archive=tmp_path / "archive.tar.gz", archive_sha256="a" * 64,
-            archive_size=123, credential_file=credential, unit_directory=units,
-        )
+    class InstallArguments(TypedDict):
+        archive: Path
+        archive_sha256: str
+        archive_size: int
+        credential_file: Path
+        unit_directory: Path
 
+    arguments: InstallArguments = dict(
+        archive=tmp_path / "archive.tar.gz",
+        archive_sha256="a" * 64,
+        archive_size=123,
+        credential_file=credential,
+        unit_directory=units,
+    )
     with monkeypatch.context() as failure:
         failure.setattr(Path, "replace", fail_publication)
         with pytest.raises(OSError, match="unit publication failed"):
-            install_runtime()
+            install(config, **arguments)
     assert not config.data.exists()
     assert releases.is_dir() and list(releases.iterdir()) == []
     assert foreign_runtime_file.read_text() == "keep installation content"
     assert list(units.iterdir()) == [foreign_unit_file]
     assert foreign_unit_file.read_text() == "keep unrelated temporary file"
-    unit = install_runtime()
+    unit = install(config, **arguments)
     assert unit.read_text() == render_service(config, runtime)
     assert foreign_unit_file.read_text() == "keep unrelated temporary file"

@@ -15,7 +15,7 @@ from collections.abc import Callable, Coroutine
 from dataclasses import asdict, replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Any
+from typing import cast
 
 import pytest
 from fastapi import FastAPI
@@ -33,7 +33,7 @@ from planner.environments.update_attempts import (
     import_legacy_request,
 )
 from planner.environments.update_barrier import UpdateBarrier
-from planner.environments.update_contracts import PublishedMacUpdate, PublishedUpdate
+from planner.environments.update_contracts import PublishedMacUpdate, PublishedUpdate, UpdateAttempt
 from planner.environments.update_install import require_exact_schema_frontier
 from planner.environments.update_service import ACTIVITY_CHANGED_DETAIL, WAIT_DETAIL, UpdateService
 
@@ -172,7 +172,7 @@ def test_required_snapshot_precedes_installer_launch(
     harness = Harness(tmp_path / "current", migrated=native_snapshot)
     from planner.environments import update_service
 
-    from planner.environments.backup import create_database_backup as backup
+    backup = cast(Callable[[Path, Path, str], Path], vars(update_service)["create_database_backup"])
 
     def protected_snapshot(source_db: Path, backup_dir: Path, deployed_revision: str) -> Path:
         current = harness.store.read()
@@ -342,9 +342,9 @@ def test_unexpected_background_admission_error_reaches_the_home_log(
         harness.service.stop()
 
     asyncio.run(run())
-    recorded = harness.store.read()
-    assert recorded is not None
-    assert "admission diagnostic receipt" in (recorded.detail or "")
+    assert "admission diagnostic receipt" in (
+        cast(UpdateAttempt, harness.store.read()).detail or ""
+    )
     assert harness.service.status().state == "waiting"
     assert not harness.launched
 
@@ -399,8 +399,7 @@ def test_idle_wait_reports_the_bound_without_forcing_or_latching_work(
     assert status.state == "waiting" and (status.detail or "").startswith(WAIT_DETAIL)
     assert status.allowed_actions == ("cancel", "update_now")
     assert "Example Worker" in (status.detail or "")
-    recorded = harness.store.read()
-    assert recorded is not None and recorded.deadline_at is None
+    assert cast(UpdateAttempt, harness.store.read()).deadline_at is None
     harness.advance()
     assert not harness.launched  # The bound never turns an idle wait into a forced stop.
     harness.system.activity = "idle"
@@ -727,18 +726,18 @@ def test_owner_controller_refusal_is_bounded_and_does_not_claim_cancellation(
 ) -> None:
     """The owner loop can disappear between the running check and its reply."""
     owner = asyncio.new_event_loop()
-    queued: list[Coroutine[Any, Any, None]] = []
+    queued = []
 
-    class NoReply(concurrent.futures.Future[None]):
-        def result(self, timeout: float | None = None) -> None:
+    class NoReply(concurrent.futures.Future[object]):
+        def result(self, timeout: float | None = None) -> object:
             assert timeout == 5
             raise TimeoutError
 
     future = NoReply()
 
     def schedule(
-        pending: Coroutine[Any, Any, None], loop: asyncio.AbstractEventLoop,
-    ) -> concurrent.futures.Future[None]:
+        pending: Coroutine[object, object, object], loop: asyncio.AbstractEventLoop,
+    ) -> NoReply:
         assert loop is owner
         queued.append(pending)
         if failure == "closed":

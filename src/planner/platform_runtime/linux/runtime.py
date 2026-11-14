@@ -58,8 +58,11 @@ def verify_runtime_host(
         if shutil.which(executable, path="/usr/local/bin:/usr/bin:/bin") is None:
             raise AppValidationError(f"runtime host prerequisite is missing: {executable}")
     node = run_probe(["/usr/bin/env", "node", "--version"], state=state)
-    if node.split(".")[0] != f"v{contract.node_major}":
-        raise AppValidationError(f"runtime requires Node {contract.node_major}")
+    if (
+        (match := fullmatch(r"v(\d+)\.\d+\.\d+", node.strip())) is None
+        or int(match[1]) < contract.node_major
+    ):
+        raise AppValidationError(f"runtime requires Node {contract.node_major} or newer")
     if isinstance(contract, NodeRuntimeContract):
         match = fullmatch(r"v(\d+)\.(\d+)\.(\d+)", node.strip())
         if match is None:
@@ -68,8 +71,7 @@ def verify_runtime_host(
         minimum = tuple(int(part) for part in contract.minimum_node_version.split("."))
         if found < minimum:
             raise AppValidationError(
-                f"runtime requires Node {contract.minimum_node_version} or a later Node "
-                f"{contract.node_major}"
+                f"runtime requires Node {contract.minimum_node_version} or newer"
             )
 
 

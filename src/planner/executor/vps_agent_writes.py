@@ -245,7 +245,9 @@ class AgentWrites:
     ) -> tuple[AcceptanceReceipt | None, Principal, str, MessageDeliveryMode]:
         with self.store._transaction() as conn:
             # The reservation is the write that admits the delivery: fence its sender here.
-            require_current_incarnation_in_transaction(conn, identity.executor_incarnation)
+            require_current_incarnation_in_transaction(
+                conn, identity.executor_incarnation, self.store.machine_id
+            )
             previous = self.store._prior_receipt(conn, envelope, identity)
             if previous is not None:
                 return previous, principal, "", MessageDeliveryMode.queue
