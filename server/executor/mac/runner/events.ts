@@ -18,7 +18,8 @@ import type {
 import { as_object, encode_backend_event, ValueError } from '../../protocol.ts';
 import type { BackendEvent, ChildReference, TurnToken } from '../../wire.generated.ts';
 import type { MacEventsDependencies, MacRunnerEventsContract } from './lifecycle_contracts.ts';
-import { bounded_detail, same_reference, same_wire } from './logic/outcomes.ts';
+import { bounded_detail, same_wire } from './logic/outcomes.ts';
+import { same_reference } from '../../child_reference.ts';
 
 function bounded_event(event: BackendEventValue): BackendEventValue {
   if (

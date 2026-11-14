@@ -17,7 +17,7 @@ import type {
 } from '../../wire.generated.ts';
 import { safe_component } from '../files.ts';
 import { CLI_RESULT_TIMEOUT_SECONDS } from '../configuration.ts';
-import { same_reference } from '../runner/logic/outcomes.ts';
+import { same_reference } from '../../child_reference.ts';
 import { ExecutorHttpError } from '../transport/errors.ts';
 import { failure_name } from '../failure_name.ts';
 import type { GatewayOptions, Publication } from './contracts.ts';

@@ -3,11 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { constants as os_constants } from 'node:os';
 import { delimiter, join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
-import {
-  OwnedCodexProcess,
-  within,
-} from '../../../conversation/backends/codex_app_server/process.ts';
-import { CHILD_KILL_WAIT_SECONDS } from '../../../conversation/backends/codex_app_server/configuration.ts';
+import { OwnedCodexProcess } from '../../../conversation/backends/codex_app_server/process.ts';
 import { SUPERVISOR_APP_STOP_SECONDS } from '../../../lifecycle/configuration.ts';
 import type { OwnedChildProcesses, OwnedOneShotChildren } from '../../../lifecycle/contracts.ts';
 import type { MacRuntimeSelection } from '../../wire.generated.ts';
@@ -84,22 +80,6 @@ export async function supervise(
     await files.remove_runtime_record(join(root, 'pending.json'));
   }
   let current: OwnedCodexProcess | undefined;
-  const stopping = new WeakMap<OwnedCodexProcess, Promise<void>>();
-  const stop = (owned: OwnedCodexProcess, grace: number): Promise<void> => {
-    let task = stopping.get(owned);
-    if (task !== undefined) return task;
-    task = (async () => {
-      owned.signal_group('SIGTERM');
-      if (!(await within(owned.exited, grace))) {
-        owned.signal_group('SIGKILL');
-        if (!(await within(owned.exited, CHILD_KILL_WAIT_SECONDS)))
-          throw new Error('Mac runtime did not exit after SIGKILL.');
-      }
-      await owned.stop();
-    })();
-    stopping.set(owned, task);
-    return task;
-  };
   const launch = async (
     runtime: string | null,
     app_revision: string,
@@ -150,7 +130,7 @@ export async function supervise(
     options.signal.addEventListener('abort', interrupted, { once: true });
     try {
       if (!options.signal.aborted) await Promise.race([owned.exited, signal]);
-      if (options.signal.aborted) await stop(owned, SUPERVISOR_APP_STOP_SECONDS);
+      if (options.signal.aborted) await owned.stop({ grace_seconds: SUPERVISOR_APP_STOP_SECONDS });
       else await owned.stop();
     } finally {
       options.signal.removeEventListener('abort', interrupted);
@@ -221,7 +201,7 @@ export async function supervise(
         await files.remove_runtime_record(join(root, 'pending.json'));
         continue;
       }
-      await stop(current, MAC_UPDATE_TERMINATE_SECONDS);
+      await current.stop({ grace_seconds: MAC_UPDATE_TERMINATE_SECONDS });
       await atomic_record(files, join(root, 'failure.json'), {
         request_id: pending.request_id,
         phase: 'reverted',
@@ -237,6 +217,6 @@ export async function supervise(
       );
     }
   } finally {
-    if (current !== undefined) await stop(current, SUPERVISOR_APP_STOP_SECONDS);
+    if (current !== undefined) await current.stop({ grace_seconds: SUPERVISOR_APP_STOP_SECONDS });
   }
 }

@@ -11,6 +11,7 @@ import { backend_io_is_test } from '../../conversation/snapshot/environment.ts';
 import type { OwnedOneShotChildren } from '../../lifecycle/contracts.ts';
 import { MAC_AGENT_PROCESS_PROBE_TIMEOUT_SECONDS } from '../configuration.ts';
 import { shell_quote } from '../../conversation/worker_unit/logic.ts';
+import { flock } from '../../core/locks/flock.ts';
 
 for (const name of ['O_NOFOLLOW', 'O_DIRECTORY', 'O_CREAT', 'O_EXCL', 'O_NONBLOCK'] as const) {
   if (typeof constants[name] !== 'number' || constants[name] <= 0)
@@ -213,19 +214,15 @@ export function flock_descriptor(
   descriptor: number,
   operation: 'try-exclusive' | 'unlock',
 ): boolean {
-  const flock = native('int flock(int fd, int operation)');
-  const flags = operation === 'unlock' ? 8 : 2 | 4;
-  try {
-    checked('flock', () => flock(descriptor, flags));
-    return true;
-  } catch (error) {
-    if (
-      operation === 'try-exclusive' &&
-      ['EAGAIN', 'EWOULDBLOCK'].includes((error as NodeJS.ErrnoException).code ?? '')
-    )
-      return false;
-    throw error;
-  }
+  const errno = flock(descriptor, operation);
+  if (errno === 0) return true;
+  const code = getSystemErrorName(-errno);
+  if (operation === 'try-exclusive' && ['EAGAIN', 'EWOULDBLOCK'].includes(code)) return false;
+  throw Object.assign(new Error(`flock failed: ${code}`), {
+    code,
+    errno: -errno,
+    syscall: 'flock',
+  });
 }
 export const directory_open_flags =
   constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW;

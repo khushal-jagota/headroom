@@ -91,6 +91,10 @@ test('Node ownership excludes Python and dispatcher contention returns false', (
     expect(canonical_database_path(join(dir, 'directory-link') + '/../future.db')).toBe(
       join(dir, 'nested', 'future.db'),
     );
+    // A shared nonstrict resolver must not hide filesystem faults in a lock identity.
+    expect(() => canonical_database_path(join(db, 'child'))).toThrow(
+      expect.objectContaining({ code: 'ENOTDIR' }),
+    );
     symlinkSync('loop', join(dir, 'loop'));
     expect(() => canonical_database_path(join(dir, 'loop'))).toThrow('symbolic link loop');
     handle.close();

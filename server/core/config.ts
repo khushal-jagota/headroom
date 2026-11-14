@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url';
 import { parse } from 'yaml';
 import { PlannerError } from './contracts.ts';
 import { strip } from './whitespace.ts';
+import { copy_environment } from './environment.ts';
 export const HOST = '127.0.0.1';
 export const SSE_HEARTBEAT_MS = 15000;
 export const DB_BUSY_TIMEOUT_MS = 5000;
@@ -113,9 +114,7 @@ export function mac_runtime_settings(env: Readonly<NodeJS.ProcessEnv> = process.
 }
 /** Lifecycle consumers share raw inputs and a copy that does not forward the listener. */
 export function lifecycle_launch_settings(env: Readonly<NodeJS.ProcessEnv>) {
-  const environment = Object.fromEntries(
-    Object.entries(env).filter((pair): pair is [string, string] => pair[1] !== undefined),
-  );
+  const environment = copy_environment(env);
   const listener_fd = env.PLAN_SERVER_LISTENER_FD;
   delete environment.PLAN_SERVER_LISTENER_FD;
   return {

@@ -23,7 +23,7 @@ import { MacInbox } from './vps_inbox.ts';
 import { InboxStore } from './data/inbox.ts';
 import { FileStaging, VpsFiles } from './vps_files.ts';
 import { VpsCatalogRelay } from './catalog_relay.ts';
-import { answer_by } from './item_budget.ts';
+import { observe_promise } from '../core/promise_observer.ts';
 import { as_object, decode_event_arguments, integer_value } from './protocol.ts';
 import { parse_executor_json } from './protocol_json.ts';
 import { JsonNumber, stringify_python_json } from '../core/http/numeric_json.ts';
@@ -149,8 +149,8 @@ export class VpsExecutor {
       () => this.owned.delete(task),
     );
     if (answer_within === undefined) return task;
-    const answer = await answer_by(task, performance.now() / 1000 + answer_within);
-    if (!answer.done) throw new PlannerError('retry_later', 'the VPS is still saving this');
+    const answer = await observe_promise(task, answer_within * 1000);
+    if (!answer.completed) throw new PlannerError('retry_later', 'the VPS is still saving this');
     return answer.value;
   }
   health() {
@@ -267,16 +267,16 @@ export class VpsExecutor {
     const target = new URL(read.path, 'http://executor');
     target.search = params.toString();
     const controller = new AbortController();
-    const answer = await answer_by(
+    const answer = await observe_promise(
       this.app.inject({
         method: 'GET',
         url: target.pathname + target.search,
         headers,
         signal: controller.signal,
       }),
-      performance.now() / 1000 + LIVE_READ_SERVER_LIMIT_SECONDS,
+      LIVE_READ_SERVER_LIMIT_SECONDS * 1000,
     );
-    if (!answer.done) {
+    if (!answer.completed) {
       controller.abort();
       throw new PlannerError('retry_later', 'the read took too long');
     }
@@ -331,11 +331,8 @@ export class VpsExecutor {
       () => this.owned.delete(task),
       () => this.owned.delete(task),
     );
-    const answer = await answer_by(
-      task,
-      performance.now() / 1000 + LIVE_EVENT_SERVER_LIMIT_SECONDS,
-    );
-    if (!answer.done) {
+    const answer = await observe_promise(task, LIVE_EVENT_SERVER_LIMIT_SECONDS * 1000);
+    if (!answer.completed) {
       expired = true;
       return;
     }

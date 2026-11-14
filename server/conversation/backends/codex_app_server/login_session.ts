@@ -1,5 +1,6 @@
 /** One process-owned device-code sign-in. Evidence is drained before the final login read. */
 import { randomBytes } from 'node:crypto';
+import { observe_promise } from '../../../core/promise_observer.ts';
 import type { OwnedChildProcesses } from '../../../lifecycle/contracts.ts';
 import { homedir } from 'node:os';
 import {
@@ -104,23 +105,6 @@ function deadline(start: Timestamp, seconds: number): string {
   const local = new Date(Number(whole_seconds * 1000n) + start.offset_minutes * 60_000);
   const decimal = fraction === 0n ? '' : '.' + String(fraction).padStart(6, '0');
   return `${local.toISOString().slice(0, 19)}${decimal}${start.text.slice(-6)}`;
-}
-async function bounded<T>(operation: Promise<T>, seconds: number): Promise<T> {
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  try {
-    return await Promise.race([
-      operation,
-      new Promise<never>((_resolve, reject) => {
-        timer = setTimeout(() => {
-          const failure = new Error('');
-          failure.name = 'TimeoutError';
-          reject(failure);
-        }, seconds * 1000);
-      }),
-    ]);
-  } finally {
-    if (timer !== undefined) clearTimeout(timer);
-  }
 }
 function same_generation(
   one: CodexLoginGeneration | null,
@@ -255,11 +239,17 @@ export class CodexSignInService implements SignInServiceContract {
     this.session = session;
     let answer: unknown;
     try {
-      await bounded(this.bring_up_child(session), this.bounds.child_startup_seconds);
-      answer = await bounded(
-        client.request(START_METHOD, { type: 'chatgptDeviceCode' }),
-        this.bounds.child_startup_seconds,
+      const startup = await observe_promise(
+        this.bring_up_child(session),
+        this.bounds.child_startup_seconds * 1000,
       );
+      if (!startup.completed) throw Object.assign(new Error(''), { name: 'TimeoutError' });
+      const login = await observe_promise(
+        client.request(START_METHOD, { type: 'chatgptDeviceCode' }),
+        this.bounds.child_startup_seconds * 1000,
+      );
+      if (!login.completed) throw Object.assign(new Error(''), { name: 'TimeoutError' });
+      answer = login.value;
     } catch (failure) {
       session.startup_aborted = true;
       await this.stop_child(session);
@@ -356,9 +346,9 @@ export class CodexSignInService implements SignInServiceContract {
   private async ask_to_cancel(session: Session): Promise<void> {
     if (session.login_id === null || !session.client.is_alive) return;
     try {
-      await bounded(
+      await observe_promise(
         session.client.request(CANCEL_METHOD, { loginId: session.login_id }),
-        this.bounds.cancel_seconds,
+        this.bounds.cancel_seconds * 1000,
       );
     } catch {
       // A timeout or answer does not establish saved credential state.

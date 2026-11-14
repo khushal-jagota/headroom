@@ -1,4 +1,5 @@
 /** Bounded public request metadata and the existing canonical snapshot decoder. */
+import { is_record as object } from '../../../core/records.ts';
 import { isIP } from 'node:net';
 import { invalid, text } from '../../logic/validation.ts';
 import {
@@ -13,8 +14,6 @@ import type {
   CredentialRequestRowBody,
   RequestReplacement,
 } from '../contracts.ts';
-const object = (value: unknown): value is Record<string, unknown> =>
-  value !== null && typeof value === 'object' && !Array.isArray(value);
 function exact_keys(value: Record<string, unknown>, keys: readonly string[]): boolean {
   return Object.keys(value).sort().join(',') === [...keys].sort().join(',');
 }

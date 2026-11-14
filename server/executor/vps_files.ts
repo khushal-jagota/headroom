@@ -1,7 +1,8 @@
 /** Verified transfer custody. The served tree is published later by the inbox. */
 import { createHash, randomUUID } from 'node:crypto';
 import type { FileHandle } from 'node:fs/promises';
-import { basename, dirname, isAbsolute, join, relative } from 'node:path';
+import { basename, dirname, join } from 'node:path';
+import { path_is_within } from '../core/path_containment.ts';
 import { PlannerError } from '../core/contracts.ts';
 import { stringify_python_json } from '../core/http/numeric_json.ts';
 import { resolve_path_sync } from '../core/path_resolution.ts';
@@ -431,8 +432,8 @@ export class VpsFiles {
           throw error;
         }
         const path = this.message_files.path_of(command.child.conversation_id, stored_file_id);
-        const within = relative(join(this.message_root, command.child.conversation_id), path);
-        if (within === '..' || within.startsWith('../') || isAbsolute(within)) throw absent;
+        if (!path_is_within(join(this.message_root, command.child.conversation_id), path))
+          throw absent;
         await assert_file_support();
         incoming = await regular_descriptor(path);
         const [sha256, count] = await descriptor_hash(incoming, { signal });

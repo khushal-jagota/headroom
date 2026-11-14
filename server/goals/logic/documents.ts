@@ -1,5 +1,9 @@
 /** Full chart validation extends the shared page-kit preparer without flattening numbers. */
-import { JsonNumber, numeric_kind, numeric_value } from '../../core/http/numeric_json.ts';
+import {
+  is_json_record as object,
+  numeric_kind,
+  numeric_value,
+} from '../../core/http/numeric_json.ts';
 import { prepare_plain_document } from '../../managers/logic/documents.ts';
 import { validate_iso_calendar_date } from '../calendar.ts';
 import { dependencies, parse_formula } from '../../measures/logic/formulas.ts';
@@ -85,11 +89,6 @@ const chart_schema: Schema = {
     'increments?': ['number'],
   },
 };
-const object = (value: unknown): value is Record<string, unknown> =>
-  value !== null &&
-  typeof value === 'object' &&
-  !Array.isArray(value) &&
-  !(value instanceof JsonNumber);
 function validate(value: unknown, schema: Schema, path: string): void {
   if (Array.isArray(schema)) {
     if (schema[0] === 'pair-number') {
