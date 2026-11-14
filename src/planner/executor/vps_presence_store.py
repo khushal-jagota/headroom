@@ -91,7 +91,7 @@ def current_incarnation(
 def require_current_incarnation_in_transaction(
     conn: sqlite3.Connection,
     executor_incarnation: str,
-    machine_id: str = ORIGINAL_MAC_MACHINE_ID,
+    machine_id: str,
 ) -> None:
     """The binding fence: raise executor_incarnation_not_current unless executor_incarnation
     is the presence row's current one. Call it inside the transaction that writes."""
@@ -100,7 +100,7 @@ def require_current_incarnation_in_transaction(
 
 
 def require_current_incarnation(
-    db_path: str, identity: ExecutorIdentity, machine_id: str = ORIGINAL_MAC_MACHINE_ID
+    db_path: str, identity: ExecutorIdentity, machine_id: str
 ) -> None:
     """The fence on its own connection, before any write. Blocking: call it on a worker
     thread (core.task_settlement.run_on_worker_thread)."""

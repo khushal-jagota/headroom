@@ -163,9 +163,9 @@ def test_the_migrated_incarnation_passes_the_fence_until_a_new_process_leases(
     path = _staging_database(tmp_path, None)
     with closing(connect(path)) as conn:
         create_schema(conn)
-    require_current_incarnation(path, CURRENT)
+    require_current_incarnation(path, CURRENT, ORIGINAL_MAC_MACHINE_ID)
     with pytest.raises(PlannerError) as refused:
-        require_current_incarnation(path, REPLACED)
+        require_current_incarnation(path, REPLACED, ORIGINAL_MAC_MACHINE_ID)
     assert refused.value.code is ErrorCode.executor_incarnation_not_current
 
     successor = ExecutorIdentity(PROTOCOL_VERSION, "new-release", 5, str(uuid4()))
@@ -185,9 +185,9 @@ def test_the_migrated_incarnation_passes_the_fence_until_a_new_process_leases(
                 "WHERE replaced_at_ms IS NULL"
             )
         ] == [successor.executor_incarnation]
-    require_current_incarnation(path, successor)
+    require_current_incarnation(path, successor, ORIGINAL_MAC_MACHINE_ID)
     with pytest.raises(PlannerError):
-        require_current_incarnation(path, CURRENT)
+        require_current_incarnation(path, CURRENT, ORIGINAL_MAC_MACHINE_ID)
     # The replaced process may not lease its way back in; it must exit.
     with closing(connect(path)) as conn:
         conn.execute("BEGIN IMMEDIATE")
