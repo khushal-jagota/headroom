@@ -76,7 +76,8 @@ It does not change the existing usage worker or its runtime policy.
 ## Native operations and containment
 
 The Manager permits the branch's existing Koffi bridge only to OS libc or libSystem.
-Every new native call resides in `platform.ts`. An absent library or symbol refuses the operation.
+Native filesystem calls reside in `platform.ts`. The shared flock binding resides in `core/locks/flock.ts`.
+An absent library or symbol refuses the operation.
 There is no path-based fallback.
 The module refuses startup if `O_NOFOLLOW`, `O_DIRECTORY`, `O_CREAT`, `O_EXCL`, or `O_NONBLOCK` is absent or nonpositive.
 `O_RDONLY` legitimately equals zero.
@@ -94,9 +95,8 @@ This preserves Python's symlink defense. It is not a sandbox against arbitrary s
 `file_version` keeps Python's metadata-only, path-based `lstat` observation.
 Nanosecond file versions use BigInt rather than rounded JavaScript numbers.
 
-The spool lock uses the same OS `flock` mechanism as the shared lock helper.
-The shared helper opens its path directly and can follow a substituted parent or leaf.
-It cannot supply a retained-parent, no-follow lock creation unchanged, so the executor reuses the native mechanism through its platform boundary.
+The spool lock uses `core/locks/flock.ts` on its retained-parent, no-follow descriptor.
+The executor retains responsibility for lock-file creation and contention handling.
 The exposed executor lock modes are nonblocking exclusive acquisition and unlock. No blocking acquisition mode exists.
 
 A regular-file flush calls plain libc `fsync`, then strict Darwin `fcntl(F_FULLFSYNC)` with an explicit variadic `int` zero.
