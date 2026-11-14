@@ -4,7 +4,6 @@ import { retained_run_is_unresolved } from '../record/data/lifecycle.ts';
 import { CaptureValidationError } from './contracts.ts';
 import type { CapturedTurn } from './contracts.ts';
 
-const text = (value: unknown): string => (value === null ? 'None' : String(value));
 export function read_unresolved_turns(
   sql: ReadSql,
   options: { conversation_ids?: readonly string[] } = {},
@@ -26,9 +25,9 @@ export function read_unresolved_turns(
       : undefined;
   const epoch =
     current !== undefined
-      ? text(current.epoch)
+      ? String(current.epoch)
       : legacy !== undefined
-        ? text(legacy.runtime_epoch)
+        ? String(legacy.runtime_epoch)
         : null;
   const only =
     conversation_ids === undefined
@@ -46,7 +45,7 @@ export function read_unresolved_turns(
   );
   const captured: CapturedTurn[] = [];
   for (const fact of facts) {
-    const conversation_id = text(fact.conversation_id);
+    const conversation_id = String(fact.conversation_id);
     if (retained_run_is_unresolved(sql, conversation_id)) continue;
     const occurrence = tables.has('conversation_turn_occurrences')
       ? sql.get<{ occurrence_id: unknown; runtime_epoch: unknown }>(
@@ -54,8 +53,8 @@ export function read_unresolved_turns(
           [conversation_id, fact.turn_number],
         )
       : undefined;
-    const occurrence_id = occurrence === undefined ? null : text(occurrence.occurrence_id);
-    const runtime_epoch = occurrence === undefined ? epoch : text(occurrence.runtime_epoch);
+    const occurrence_id = occurrence === undefined ? null : String(occurrence.occurrence_id);
+    const runtime_epoch = occurrence === undefined ? epoch : String(occurrence.runtime_epoch);
     if (occurrence_id === null && runtime_epoch === null)
       throw new CaptureValidationError('unresolved legacy turn has no persisted runtime epoch');
     const turn = {
@@ -77,11 +76,11 @@ export function read_unresolved_turns(
     if (ticket !== undefined) {
       captured.push({
         ...turn,
-        display_name: text(ticket.title),
+        display_name: String(ticket.title),
         owner_kind: 'ticket',
-        owner_id: text(ticket.id),
+        owner_id: String(ticket.id),
         claim_revision: Math.trunc(ticket.worker_step_claim_revision),
-        claim: text(ticket.worker_step_claim),
+        claim: String(ticket.worker_step_claim),
       });
       continue;
     }
@@ -92,9 +91,9 @@ export function read_unresolved_turns(
     if (historical !== undefined) {
       captured.push({
         ...turn,
-        display_name: text(historical.title),
+        display_name: String(historical.title),
         owner_kind: 'ticket',
-        owner_id: text(historical.owner_id),
+        owner_id: String(historical.owner_id),
         claim_revision: null,
         claim: null,
       });
@@ -112,12 +111,12 @@ export function read_unresolved_turns(
       ...turn,
       display_name:
         owner !== undefined
-          ? text(owner.title)
+          ? String(owner.title)
           : chief !== undefined
             ? 'Chief of Staff'
             : 'Agent conversation',
       owner_kind: owner !== undefined ? 'manager' : chief !== undefined ? 'chief' : 'unknown',
-      owner_id: owner !== undefined ? text(owner.owner_id) : chief !== undefined ? 'chief' : null,
+      owner_id: owner !== undefined ? String(owner.owner_id) : chief !== undefined ? 'chief' : null,
       claim_revision: null,
       claim: null,
     });

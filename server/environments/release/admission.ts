@@ -3,6 +3,7 @@ import { access, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:
 import { tmpdir } from 'node:os';
 import { isAbsolute, join } from 'node:path';
 import { constants } from 'node:fs';
+import { isDeepStrictEqual } from 'node:util';
 import { path_is_within } from '../../core/path_containment.ts';
 import { is_record } from '../../core/records.ts';
 import { is_file } from '../backup/evidence.ts';
@@ -10,7 +11,6 @@ import type { OwnedChildProcesses } from '../../lifecycle/contracts.ts';
 import type { AppManifest, RuntimeContract, NodeRuntimeContract } from './contracts.ts';
 import { AppValidationError } from './contracts.ts';
 import { validate_app_manifest } from './identity.ts';
-import { python_json_equal } from './logic/manifest.ts';
 import {
   os_release_values,
   require_host_node,
@@ -158,7 +158,7 @@ export async function validate_node_probe_report(
   if (
     !Array.isArray(libraries) ||
     !libraries.every((path) => typeof path === 'string' && path.startsWith('/')) ||
-    !python_json_equal(
+    !isDeepStrictEqual(
       libraries,
       [...libraries].sort((a, b) => Buffer.compare(Buffer.from(a), Buffer.from(b))),
     )
@@ -176,7 +176,7 @@ export async function validate_node_probe_report(
     !is_record(declared) ||
     !is_record(declared.dependencies) ||
     !is_record(report.package_paths) ||
-    !python_json_equal(
+    !isDeepStrictEqual(
       Object.keys(report.package_paths).sort(),
       Object.keys(declared.dependencies).sort(),
     )
@@ -201,7 +201,7 @@ export async function admit_runtime(
     require_runtime: true,
     verify_artifact_digest: false,
   });
-  if (!python_json_equal(bound, manifest))
+  if (!isDeepStrictEqual(bound, manifest))
     throw new AppValidationError('candidate manifest differs from the admitted receipt');
   current(deadline);
   const state = await mkdtemp(join(tmpdir(), 'panels-runtime-probe-'));

@@ -101,7 +101,7 @@ export async function resolve_loopback_peer(
     const target = `socket:[${inode}]`;
     let holders = 0;
     for (const process of await files.list(proc_root)) {
-      if (!/^\p{Decimal_Number}+$/u.test(process)) continue;
+      if (!/^[0-9]+$/.test(process)) continue;
       const path = join(proc_root, process);
       try {
         if ((await files.uid(path)) !== uid) continue;

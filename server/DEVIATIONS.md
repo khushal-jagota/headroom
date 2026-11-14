@@ -11,6 +11,7 @@ Comparisons check fields, values, and exit codes instead of Python presentation 
 Document storage uses native compact JSON. Page character counts preserve empty versus positive state, while page values remain strict.
 Whole provider values such as `5.0` pass native integer checks. JWT expiration claims accept finite numbers and reject booleans.
 Goal date validation retains its approved HTTP wording.
+Arithmetic, truth checks, text trimming and document equality use native TypeScript behavior.
 
 ## Staging merge 12: decision notes and recap freshness
 

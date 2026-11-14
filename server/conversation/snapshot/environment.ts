@@ -6,7 +6,6 @@ import type { BackendCommandOptions } from './commands.ts';
 import { accessSync, constants, realpathSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, isAbsolute, join, resolve, delimiter } from 'node:path';
-import { pure_posix_path } from '../../core/python_path.ts';
 import type { BackendProbeEnvironment, CommandOutcome } from './contracts.ts';
 import { testModeFromEnvironment, provider_launch_settings } from '../../core/config.ts';
 export function backend_io_is_test(): boolean {
@@ -36,13 +35,10 @@ export function claude_executable_override(
   const legacy =
     settings.app_root === undefined
       ? null
-      : pure_posix_path(
-          (settings.app_root === '' ? '' : settings.app_root.replace(/\/$/, '') + '/') +
-            'agent_backends/node_modules/@anthropic-ai/claude-code/bin/claude.exe',
-        );
-  return legacy !== null && pure_posix_path(expand_path(override)) === legacy
-    ? undefined
-    : expand_path(override);
+      : (settings.app_root === '' ? '' : settings.app_root.replace(/\/$/, '') + '/') +
+        'agent_backends/node_modules/@anthropic-ai/claude-code/bin/claude.exe';
+  const expanded = expand_path(override);
+  return expanded === legacy ? undefined : expanded;
 }
 function file(path: string): boolean {
   try {

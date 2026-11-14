@@ -6,7 +6,6 @@ import { homedir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { parse } from 'yaml';
 import { PlannerError } from './contracts.ts';
-import { strip } from './whitespace.ts';
 import { copy_environment } from './environment.ts';
 export const HOST = '127.0.0.1';
 export const SSE_HEARTBEAT_MS = 15000;
@@ -233,7 +232,7 @@ export function loadConfig(
   const refuse_unidentified_agent_calls = parseConfigBoolean(
     refusalFlag,
     'refuse_unidentified_agent_calls',
-    strip(refusalFlag),
+    refusalFlag.trim(),
   );
   if (env === process.env) delete process.env.PLAN_REFUSE_UNIDENTIFIED_AGENT_CALLS;
   path ??= env.PLAN_CONFIG_PATH ?? 'config.yaml';

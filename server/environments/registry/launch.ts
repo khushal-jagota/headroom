@@ -1,4 +1,3 @@
-import { pure_posix_path } from '../../core/python_path.ts';
 import { provider_launch_settings } from '../../core/config.ts';
 /** Existing environment allowlist and explicit skill provisioning. No runtime launcher argv. */
 import { statSync } from 'node:fs';
@@ -11,10 +10,6 @@ import type { EnvironmentRunOptions, ResolvedEnvironmentInstance } from './contr
 import { validate_environment_values } from './logic.ts';
 
 const ALLOWED_AMBIENT = new Set(['LANG', 'LANGUAGE', 'PATH', 'TERM', 'TMPDIR']);
-function pure_path(path: string): string {
-  const result = pure_posix_path(path);
-  return result === '.' ? '' : result;
-}
 
 export function build_environment_run_env(
   instance: ResolvedEnvironmentInstance,
@@ -32,12 +27,12 @@ export function build_environment_run_env(
     PLAN_LOGS_DIR: instance.logs_dir,
     PLAN_DISPATCHER_LOCK_PATH: instance.dispatcher_lock_path,
     PLAN_SERVER_CONTROL_SOCKET: instance.server_control_socket_path,
-    PLAN_HERMES_PYTHON: pure_path(options.hermes_python),
+    PLAN_HERMES_PYTHON: options.hermes_python,
     ...(options.ambient.HOME === undefined
       ? {}
       : {
           HOME: options.ambient.HOME,
-          PLAN_HERMES_HOME: pure_path(options.ambient.HOME + '/.hermes'),
+          PLAN_HERMES_HOME: options.ambient.HOME + '/.hermes',
         }),
   };
 }

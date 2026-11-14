@@ -1,5 +1,4 @@
 /** Source application identity rules without filesystem or runtime probes. */
-import { JsonNumber } from '../../../core/http/numeric_json.ts';
 import type { AppManifest } from '../contracts.ts';
 import { AppValidationError } from '../contracts.ts';
 import { APP_FORMAT } from '../configuration.ts';
@@ -39,48 +38,4 @@ export function manifest_identity(
     source_digest: raw.source_digest as string,
     artifact_digest: raw.artifact_digest as string,
   };
-}
-function numeric(value: unknown): bigint | number | undefined {
-  if (typeof value === 'boolean') return BigInt(Number(value));
-  if (value instanceof JsonNumber) return value.integer ?? value.value;
-  if (typeof value === 'number') return Number.isInteger(value) ? BigInt(value) : value;
-  return undefined;
-}
-/** Python dict equality admits numeric equivalents in the separate payload JSON. */
-export function python_json_equal(left: unknown, right: unknown): boolean {
-  const a = numeric(left),
-    b = numeric(right);
-  if (a !== undefined || b !== undefined) {
-    if (a === undefined || b === undefined) return false;
-    if (typeof a === typeof b) return a === b;
-    const integer = typeof a === 'bigint' ? a : b;
-    const floating = typeof a === 'number' ? a : b;
-    return (
-      typeof floating === 'number' &&
-      Number.isFinite(floating) &&
-      Number.isInteger(floating) &&
-      BigInt(floating) === integer
-    );
-  }
-  if (Array.isArray(left) || Array.isArray(right))
-    return (
-      Array.isArray(left) &&
-      Array.isArray(right) &&
-      left.length === right.length &&
-      left.every((value, index) => python_json_equal(value, right[index]))
-    );
-  if ((left !== null && typeof left === 'object') || (right !== null && typeof right === 'object'))
-    return (
-      left !== null &&
-      typeof left === 'object' &&
-      right !== null &&
-      typeof right === 'object' &&
-      Object.keys(left).length === Object.keys(right).length &&
-      Object.entries(left).every(
-        ([key, value]) =>
-          Object.hasOwn(right, key) &&
-          python_json_equal(value, (right as Record<string, unknown>)[key]),
-      )
-    );
-  return left === right;
 }

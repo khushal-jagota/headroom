@@ -1,7 +1,5 @@
 /** Native Claude facts enter the unchanged backend event seam here. */
 import { is_record } from '../../../core/records.ts';
-import { python_truth } from '../../../core/python_truth.ts';
-export { python_truth } from '../../../core/python_truth.ts';
 import { ComposerCatalogEntry, ComposerCatalogEntryKind } from '../../contracts.ts';
 import { PlanEntry, PlanEntryStatus, ToolCallStatus } from '../../events.ts';
 import { text_message_content } from '../../message_content.ts';
@@ -55,7 +53,7 @@ export function validate_message(message: ClaudeSdkMessage): void {
       'session_id',
     ])
       required(message, key, kind);
-    if (python_truth(message.deferred_tool_use)) {
+    if (message.deferred_tool_use) {
       const deferred = record(message.deferred_tool_use);
       if (!deferred) throw new TypeError('Deferred tool use must be an object');
       for (const key of ['id', 'name', 'input']) required(deferred, key, kind);
@@ -88,7 +86,7 @@ function joined_text(values: readonly unknown[]): string {
   return values.join('');
 }
 export function canonical_json(value: unknown): string | null {
-  if (!python_truth(value)) return null;
+  if (!value) return null;
   try {
     return JSON.stringify(value);
   } catch {

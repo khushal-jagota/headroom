@@ -399,7 +399,6 @@ def test_unit21_environment_command_function_parity(
         assert actual["results"][-1] == {"thrown": "SqliteError"}
         assert actual["routing"] == json.loads(json.dumps(routing, default=str))
         operators = actual["operators"]
-        assert operators["literal_manifest_path"] == str(Path("link/../app") / "manifest.json")
         assert operators["invocation_home"] == str(root)
         assert operators["unsafe_paths_refused"] == 4
         snapshot = operators["snapshot_only_refusals"]

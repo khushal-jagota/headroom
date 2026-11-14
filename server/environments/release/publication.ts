@@ -2,6 +2,7 @@
 import { createHash } from 'node:crypto';
 import { mkdir, readFile, realpath, stat } from 'node:fs/promises';
 import { isAbsolute, join } from 'node:path';
+import { isDeepStrictEqual } from 'node:util';
 import { build_exported_app } from './build.ts';
 import {
   create_app_archive,
@@ -13,7 +14,7 @@ import { admit_runtime } from './admission.ts';
 import { RuntimeProbeUnsettled } from './admission_process.ts';
 import { assert_release_execution } from './process.ts';
 import { validate_app_manifest } from './identity.ts';
-import { python_json_equal, validate_app_sha } from './logic/manifest.ts';
+import { validate_app_sha } from './logic/manifest.ts';
 import { read_migration_graph, migration_frontier } from './migrations.ts';
 import { inventory_package_licenses } from './package_licenses.ts';
 import { canonical_json } from '../updates/codec.ts';
@@ -86,7 +87,7 @@ export async function build_linux_publication(
         expected_sha: requested,
         require_runtime: true,
       });
-      if (actual.runtime_contract?.version !== 2 || !python_json_equal(actual, manifest))
+      if (actual.runtime_contract?.version !== 2 || !isDeepStrictEqual(actual, manifest))
         throw new AppValidationError('sealed publication manifest differs from its build');
     };
     await phase('validate_build', () => validate(candidate));
@@ -107,7 +108,7 @@ export async function build_linux_publication(
         execution,
       ),
     );
-    if (!python_json_equal(extracted, manifest))
+    if (!isDeepStrictEqual(extracted, manifest))
       throw new AppValidationError('extracted publication manifest differs from its build');
     await phase('validate_sealed', () => validate(sealed));
     const inventory = await phase('licenses', () => inventory_package_licenses(sealed));

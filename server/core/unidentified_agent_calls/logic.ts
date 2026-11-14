@@ -1,7 +1,6 @@
-/** Source-compatible evidence and bypass rules. No filesystem or transport operations. */
+/** Kernel evidence and bypass rules. No filesystem or transport operations. */
 import { TYPESCRIPT_SERVICE_NAME } from '../../lifecycle/service_identity.ts';
 import { InvalidPeerEvidence } from './contracts.ts';
-export { strip } from '../whitespace.ts';
 import type {
   UnidentifiedCallRequest,
   UnidentifiedHttpRefusal,
@@ -97,17 +96,10 @@ export function proc_address(encoded: string, little_endian: boolean): number[] 
   return normalize(bytes);
 }
 export function integer(value: string | undefined, radix = 10): bigint {
-  const pattern =
-    radix === 16 ? /^[+-]?(?:0[xX])?[0-9a-fA-F](?:_?[0-9a-fA-F])*$/ : /^[+-]?\d(?:_?\d)*$/;
+  const pattern = radix === 16 ? /^[0-9a-fA-F]+$/ : /^[0-9]+$/;
   if (value === undefined || !pattern.test(value))
     throw new InvalidPeerEvidence('invalid socket integer');
-  let clean = value.replaceAll('_', ''),
-    sign = 1n;
-  if (clean[0] === '-' || clean[0] === '+') {
-    if (clean[0] === '-') sign = -1n;
-    clean = clean.slice(1);
-  }
-  return sign * BigInt(radix === 16 ? '0x' + clean.replace(/^0x/i, '') : clean);
+  return BigInt(radix === 16 ? '0x' + value : value);
 }
 export function lookup_required(enabled: boolean, request: UnidentifiedCallRequest): boolean {
   if (!enabled || request.kind === 'other' || request.authenticated_owner) return false;

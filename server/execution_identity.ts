@@ -6,7 +6,6 @@ import {
 } from './execution_configuration.ts';
 import { ExecutorValidationError } from './executor/protocol_errors.ts';
 import { strip } from './core/whitespace.ts';
-import { assigned_after_unicode_15 } from './core/python_repr_unicode.ts';
 import type { ExecutorIdentity as WireIdentity } from './executor/wire.generated.ts';
 
 export interface ExecutorIdentity {
@@ -47,7 +46,6 @@ export function refusal_reason_for_versions(
     ? MAC_NEEDS_UPDATE
     : MAC_VERSION_INCOMPATIBLE;
 }
-/** Preserve the existing identity text forms without numeric conversion. */
 function valid_uuid(text: string): boolean {
   let hex = text.replaceAll('urn:', '').replaceAll('uuid:', '');
   let start = 0,
@@ -56,18 +54,8 @@ function valid_uuid(text: string): boolean {
   while (end > start && (hex[end - 1] === '{' || hex[end - 1] === '}')) end--;
   hex = hex.slice(start, end).replaceAll('-', '');
   if (Array.from(hex).length !== 32 || /[\u001c-\u001f]/u.test(hex)) return false;
-  hex = strip(hex)
-    .replace(/\p{Decimal_Number}/gu, (digit) => {
-      let first = digit.codePointAt(0)!;
-      if (assigned_after_unicode_15(first)) return digit;
-      while (first > 0 && /\p{Decimal_Number}/u.test(String.fromCodePoint(first - 1))) first--;
-      return String((digit.codePointAt(0)! - first) % 10);
-    })
-    .replace(/^(\+?0[xX])_/, '$1');
-  const parsed = /^[+-]?(?:0[xX])?([0-9a-fA-F](?:_?[0-9a-fA-F])*)$/.exec(hex);
-  if (parsed === null) return false;
-  const digits = parsed[1]!.replaceAll('_', '');
-  return digits.length <= 32 && (!hex.startsWith('-') || /^0+$/.test(digits));
+  // Retain the wire's ASCII forms without interpreting Unicode digits as hex.
+  return /^\+?(?:0[xX]_?)?[a-fA-F0-9](?:_?[a-fA-F0-9])*$/.test(strip(hex));
 }
 export function validate_identity(
   identity: WireIdentity,

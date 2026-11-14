@@ -241,12 +241,12 @@ describe('ported Python measure rules', () => {
     expect(evaluate([{ measure_id: 'week', date: day }], defs, rows, NOW)[0]!.status).toBe(
       'missing_input',
     );
-    // Python 3.12+ sum preserves a small contribution between canceling large values.
+    // Native addition loses the small contribution between canceling large values.
     const values = [1e16, 1, -1e16, 0, 0, 0, 0];
     const dates = expression_references(weekly.formula!, day, 'UTC', NOW);
     for (const [index, pair] of dates.entries())
       rows.set(pair_key(pair), observation(pair.measure_id, pair.date, values[index]!));
-    expect(evaluate([{ measure_id: 'week', date: day }], defs, rows, NOW)[0]!.value).toBe(1);
+    expect(evaluate([{ measure_id: 'week', date: day }], defs, rows, NOW)[0]!.value).toBe(0);
   });
   it('graph integrity does not police numeric kinds', () => {
     const a = assembled('a', ref('b', -1)),

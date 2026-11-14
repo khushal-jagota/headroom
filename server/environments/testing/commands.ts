@@ -9,7 +9,6 @@ import type {
   SpawnOptionsWithoutStdio,
 } from 'node:child_process';
 import { loadConfig } from '../../core/config.ts';
-import { posix_child_path } from '../../core/python_path.ts';
 import { operator_commands } from '../commands.ts';
 import { AppManifestValidationFailure, OperatorInterrupted } from '../command_contracts.ts';
 import { create_production_operator_dependencies } from '../operator_dependencies.ts';
@@ -318,7 +317,6 @@ async function operator_probe(root: string): Promise<unknown> {
     /watchdog provider command is unavailable in test mode/,
   );
   return {
-    literal_manifest_path: posix_child_path('link/../app', 'manifest.json'),
     composed_callbacks,
     diagnostic: await Promise.all(
       [false, true].map((json) =>
