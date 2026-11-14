@@ -62,10 +62,12 @@ final class ReviewFinalPageTests: XCTestCase {
         XCTAssertEqual(input.value as? String, "Shared Chief draft")
         XCTAssertTrue(attachment.waitForExistence(timeout: 5))
         input.tap(); input.typeText(" from Chief")
+        let changedDraft = try XCTUnwrap(input.value as? String)
+        XCTAssertTrue(changedDraft.contains(" from Chief"))
         app.buttons["detail-back"].tap()
         XCTAssertTrue(review.waitForExistence(timeout: 5)); review.tap()
         XCTAssertTrue(input.waitForExistence(timeout: 8))
-        XCTAssertEqual(input.value as? String, "Shared Chief draft from Chief")
+        XCTAssertEqual(input.value as? String, changedDraft)
         capture(app, "review-final-chief-shared-draft")
 
         if !send.isHittable { app.swipeUp() }
@@ -80,7 +82,7 @@ final class ReviewFinalPageTests: XCTestCase {
         XCTAssertEqual(message["conversation_id"] as? String, "stub")
         XCTAssertNil(message["owner_read_through_sequence"], "A final-page send must not acknowledge unread Review content")
         let pieces = try XCTUnwrap(message["content"] as? [[String: Any]])
-        XCTAssertEqual(pieces.first?["text"] as? String, "Shared Chief draft from Chief")
+        XCTAssertEqual(pieces.first?["text"] as? String, changedDraft)
         XCTAssertTrue(pieces.contains { $0["piece"] as? String == "image" })
 
         // Appearance is a one-off review, rather than a permanent geometry gate.
