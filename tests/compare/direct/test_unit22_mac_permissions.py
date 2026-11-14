@@ -9,10 +9,12 @@ import json
 import os
 import time
 from pathlib import Path
+from typing import Any
 
 import pytest
 from click.testing import CliRunner
 from tests.compare.direct.mac_executor_fixture import report_direct, run_node
+from tests.compare.direct.test_unit22_mac_cli import normalize_human_usage
 from tests.support.synthetic_homes import create_synthetic_homes
 
 from planner.cli.main import main
@@ -71,7 +73,7 @@ def test_mac_permissions_cli_contract(
             ]
         ),
     ]
-    expected = []
+    expected: list[dict[str, Any]] = []
     with monkeypatch.context() as patch:
         for key in tuple(os.environ):
             if key.startswith("PLAN_"):
@@ -86,7 +88,12 @@ def test_mac_permissions_cli_contract(
     source = tmp_path / "permissions.json"
     source.write_text(json.dumps(dict(environment=environment, scenarios=scenarios)))
     observed = run_node("server/executor/mac/testing/cli_parity.ts", source, homes, timeout=15)
-    assert observed["results"] == expected
+    assert [
+        {**value, "stderr": normalize_human_usage(value["stderr"])}
+        for value in observed["results"]
+    ] == [
+        {**value, "stderr": normalize_human_usage(value["stderr"])} for value in expected
+    ]
     assert [value["exit_code"] for value in expected] == [0, 0, 1]
     assert list(workspace.iterdir()) == []
     assert regular.read_text() == "must not read this file"
@@ -98,6 +105,7 @@ def test_mac_permissions_cli_contract(
         "unit22-mac-permissions.json",
         observed,
         started,
-        "fresh Python CLI bytes/exits; lexical preview, redirected check, directory refusal",
+        "fresh Python CLI output/exits; native usage layout; "
+        "lexical preview, redirected check, directory refusal",
         cases=len(scenarios),
     )

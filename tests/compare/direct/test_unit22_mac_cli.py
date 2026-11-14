@@ -10,6 +10,7 @@ from __future__ import annotations
 import contextlib
 import json
 import os
+import re
 import socket
 import struct
 import tempfile
@@ -178,6 +179,15 @@ def output_fields(result: dict[str, Any]) -> dict[str, Any]:
     return fields
 
 
+def normalize_human_usage(text: str) -> str:
+    """Only the native usage layout differs for these retained executor commands."""
+    return re.sub(
+        r"(?m)^(Use: panels executor (?:health|quiesce|permissions))(?: [^\n]*)?$",
+        r"\1 <usage>",
+        text,
+    )
+
+
 def test_mac_cli_socket_parity(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, request: pytest.FixtureRequest
 ) -> None:
@@ -292,6 +302,9 @@ def test_mac_cli_socket_parity(
                 )
                 candidate["stderr"]["error"]["message"] = python_message
         assert len(accepted_native_errors) == 3
+        for fields in [*expected_fields, *observed_fields]:
+            if isinstance(fields.get("stderr"), str):
+                fields["stderr"] = normalize_human_usage(fields["stderr"])
         assert normalize(expected_fields, python.requests) == normalize(
             observed_fields, typescript.requests
         )

@@ -366,7 +366,14 @@ def test_unit21_environment_command_function_parity(
             )
         assert completed.returncode == 0, completed.stderr
         actual = json.loads(completed.stdout)
-        assert actual["cold"]["new_require_modules"] == []
+        # The native declarations load Commander, but no server, SQLite, or
+        # provider package. Permit only this parser's own entry and library files.
+        commander = (ROOT / "server/node_modules/commander").resolve(strict=True)
+        parser_modules = {commander / "index.js", *(commander / "lib").glob("*.js")}
+        loaded_modules = {
+            Path(module).resolve(strict=True) for module in actual["cold"]["new_require_modules"]
+        }
+        assert loaded_modules <= parser_modules, actual["cold"]
         assert actual["cold"]["signals_unchanged"]
         assert actual["interrupted_lock"] == dict(injected=1, acquire_calls=2, actions=1)
 
