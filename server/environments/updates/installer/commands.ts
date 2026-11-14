@@ -25,7 +25,7 @@ import type {
   InstallerRequest,
 } from './contracts.ts';
 
-export class CalledProcessError extends Error {
+export class InstallerCommandFailure extends Error {
   readonly argv: readonly string[];
   readonly returncode: number;
   readonly signal: NodeJS.Signals | null;
@@ -35,18 +35,18 @@ export class CalledProcessError extends Error {
         ? `Command ${JSON.stringify(argv)} exited with status ${returncode}.`
         : `Command ${JSON.stringify(argv)} stopped with signal ${signal}.`,
     );
-    this.name = 'CalledProcessError';
+    this.name = 'InstallerCommandFailure';
     this.argv = argv;
     this.returncode = returncode;
     this.signal = signal;
   }
 }
-export class TimeoutExpired extends Error {
+export class InstallerCommandTimeout extends Error {
   readonly argv: readonly string[];
   readonly timeout_seconds: number;
   constructor(argv: readonly string[], timeout_seconds: number) {
     super(`Command ${JSON.stringify(argv)} timed out after ${timeout_seconds} seconds`);
-    this.name = 'TimeoutExpired';
+    this.name = 'InstallerCommandTimeout';
     this.argv = argv;
     this.timeout_seconds = timeout_seconds;
   }
@@ -62,7 +62,7 @@ export function phase(execution: InstallerExecution, timeout_seconds: number): I
 export function assert_phase(value: InstallerPhase, argv: readonly string[]): void {
   value.signal.throwIfAborted();
   if (performance.now() / 1000 >= value.deadline)
-    throw new TimeoutExpired(argv, value.timeout_seconds);
+    throw new InstallerCommandTimeout(argv, value.timeout_seconds);
 }
 /** Inherited/discarded output and real return status differ from the build runner. */
 export async function run_installer_command(
@@ -93,7 +93,7 @@ export async function run_installer_command(
   const abort = () => fail(value.signal.reason);
   value.signal.addEventListener('abort', abort);
   const timer = setTimeout(
-    () => fail(new TimeoutExpired(argv, value.timeout_seconds)),
+    () => fail(new InstallerCommandTimeout(argv, value.timeout_seconds)),
     Math.max(0, value.deadline - performance.now() / 1000) * 1000,
   );
   const fence = () => {
@@ -124,7 +124,8 @@ export async function run_installer_command(
     await closed;
     fence();
     const returncode = signal === null ? (code ?? -1) : -constants.signals[signal];
-    if (options.check && returncode !== 0) throw new CalledProcessError(argv, returncode, signal);
+    if (options.check && returncode !== 0)
+      throw new InstallerCommandFailure(argv, returncode, signal);
     return returncode;
   } catch (error) {
     fail(error);
@@ -228,8 +229,8 @@ export function create_installer_effects(
         execution.signal.throwIfAborted();
         if (!(
           is_os_error(error) ||
-          error instanceof CalledProcessError ||
-          error instanceof TimeoutExpired ||
+          error instanceof InstallerCommandFailure ||
+          error instanceof InstallerCommandTimeout ||
           error instanceof AppValidationError
         ))
           throw error;

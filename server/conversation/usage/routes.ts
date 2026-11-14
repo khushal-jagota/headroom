@@ -102,11 +102,7 @@ export function createUsageRoutes(runtime: UsageHttpRuntime): FastifyPluginAsync
         return await runtime.recorded_usage.readSummary(input);
       } catch (error) {
         if (error instanceof UsageServiceStopped) throw new HttpError(503, error.message);
-        if (
-          error instanceof UsageReadError ||
-          error instanceof RangeError ||
-          (error instanceof Error && error.name === 'ValueError')
-        )
+        if (error instanceof UsageReadError || error instanceof RangeError)
           throw new HttpError(422, error.message);
         throw error;
       }

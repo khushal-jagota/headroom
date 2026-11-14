@@ -1,3 +1,4 @@
+import { inspect } from 'node:util';
 import { RealClock } from '../core/clock.ts';
 import type { Clock } from '../core/clock.ts';
 import { calendar_date, local_date, local_midnight, offset_date } from '../measures/logic/dates.ts';
@@ -40,11 +41,23 @@ export function calendar_parts(now: Date, zone?: string): [string, number] {
   return [today, Date.parse(offset_date(today, 1) + 'T00:00:00' + offset) / 1000];
 }
 
-/** Reject invalid and noncanonical dates with the caller's validation message. */
+/** Goal validation messages are part of the public HTTP response. */
 export function validate_iso_calendar_date(value: unknown, canonical_message: string): void {
   try {
     calendar_date(value);
-  } catch {
-    throw new TypeError(canonical_message);
+  } catch (error) {
+    if (
+      typeof value !== 'string' ||
+      (error instanceof Error && error.message === 'measure date must use YYYY-MM-DD')
+    )
+      throw new TypeError(canonical_message);
+    const date = /^(?:(\d{4})-(\d{2})-(\d{2})|(\d{4})(\d{2})(\d{2}))$/.exec(value);
+    if (date) {
+      if (Number(date[1] ?? date[4]) === 0) throw new TypeError('year 0 is out of range');
+      if (Number(date[2] ?? date[5]) < 1 || Number(date[2] ?? date[5]) > 12)
+        throw new TypeError('month must be in 1..12');
+      throw new TypeError('day is out of range for month');
+    }
+    throw new TypeError(`Invalid isoformat string: ${inspect(value)}`);
   }
 }
