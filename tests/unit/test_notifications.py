@@ -4,6 +4,7 @@ import asyncio
 import json
 import subprocess
 from contextlib import closing
+from datetime import UTC, datetime
 from pathlib import Path
 from sqlite3 import Connection
 
@@ -530,3 +531,142 @@ def test_failed_notification_delivery_retains_one_edge_and_retry(tmp_path: Path)
             ).fetchone()[0]
             == 1
         )
+
+
+@pytest.mark.parametrize("imported_state", [False, True])
+def test_backlog_pauses_task_alerts_and_gate_until_resume(
+    tmp_db: Connection, imported_state: bool,
+) -> None:
+    """Canonical and imported deferral must stop queued obligations on both transports."""
+    from planner.notifications import apns_data
+
+    _subscribe(tmp_db)
+    apns_data.register_device(
+        tmp_db, device_token="aabb" * 16, bundle_id="app.panels.ios",
+        environment="development", now=10,
+    )
+    ticket = _ticket(tmp_db, 10)
+    assigned = tickets_data.create_ticket(
+        tmp_db, worker_type="exploration", title="Owner answer", principal=OWNER_PRINCIPAL,
+        now=10, title_max_chars=TITLE_MAX_CHARS,
+    )
+    tmp_db.execute("UPDATE tickets SET stage='needs_answer' WHERE id=?", (assigned.id,))
+    _conversation_on_a_ticket(tmp_db, ticket.id)
+    _conversation_event(tmp_db, 11, "permission_asked", '{"ask_id":"approval"}')
+    _conversation_event(tmp_db, 12, "message_to_owner", "{}")
+    for identity in (ticket.id, assigned.id):
+        attention.capture_ticket_attention(tmp_db, identity, 15)
+    tmp_db.commit()
+    notifications_data.queue_deliveries(tmp_db, 15)
+
+    def pending() -> tuple[set[tuple[str, str, int]], set[tuple[str, str, int]]]:
+        web = {
+            (delivery.edge.subject_id, delivery.edge.notification_type, delivery.edge.generation)
+            for delivery in notifications_data.pending_deliveries(tmp_db, 35)
+        }
+        native = {
+            (delivery.edge.subject_id, delivery.edge.notification_type, delivery.edge.generation)
+            for delivery in apns_data.pending_deliveries(tmp_db, 35)
+        }
+        return web, native
+
+    original = {
+        (ticket.id, "awaiting_approval", 1), (ticket.id, "awaiting_answer", 1),
+        (ticket.id, "awaiting_reply", 1), (assigned.id, "assigned", 1),
+    }
+    assert pending() == (original, original)
+
+    def defer(value: bool, now: int) -> None:
+        for identity in (ticket.id, assigned.id):
+            if imported_state:
+                tmp_db.execute(
+                    "UPDATE tickets SET is_backlogged=?,updated_at=? WHERE id=?",
+                    (int(value), now, identity),
+                )
+            else:
+                tickets_data.set_ticket_backlog(
+                    tmp_db, identity, is_backlogged=value, principal=OWNER_PRINCIPAL, now=now,
+                )
+        tmp_db.commit()
+        notifications_data.reconcile_attention(tmp_db)
+
+    defer(True, 20)
+    only_message = {(ticket.id, "awaiting_reply", 1)}
+    assert pending() == (only_message, only_message)
+    assert notifications_data.queue_deliveries(tmp_db, 21) == 0
+    assert tickets_data.read_ticket(tmp_db, ticket.id).pending_proposal == ticket.pending_proposal
+    assert tmp_db.execute("SELECT count(*) FROM conversation_events").fetchone()[0] == 2
+    defer(False, 30)
+    notifications_data.queue_deliveries(tmp_db, 31)
+    resumed = {
+        (ticket.id, "awaiting_approval", 2), (ticket.id, "awaiting_answer", 2),
+        (ticket.id, "awaiting_reply", 1), (assigned.id, "assigned", 2),
+    }
+    assert pending() == (resumed, resumed)
+    assert [tuple(row) for row in tmp_db.execute(
+        "SELECT opened_at,closed_at FROM attention_gate_intervals WHERE ticket_id=? ORDER BY id",
+        (ticket.id,),
+    )] == [(10, 20), (30, None)]
+
+
+@pytest.mark.parametrize("native", [False, True])
+def test_delivery_rechecks_a_selected_batch_after_another_send_defers_work(
+    tmp_path: Path, native: bool,
+) -> None:
+    """A slow earlier send must not admit a later obligation after deferral."""
+    from planner.notifications import apns_data
+    from planner.notifications.contracts import APNsResult, PendingAPNsDelivery
+
+    database = str(tmp_path / "mid-batch.db")
+    with closing(connect(database)) as conn:
+        create_schema(conn)
+        notifications_data.get_or_create_web_push_identity(conn, 10)
+        if native:
+            apns_data.register_device(
+                conn, device_token="aabb" * 16, bundle_id="app.panels.ios",
+                environment="development", now=10,
+            )
+        else:
+            _subscribe(conn)
+        first = _ticket(conn, 10)
+        second = _ticket(conn, 11)
+
+    sent: list[str] = []
+
+    def defer_second(intent: NotificationIntent) -> None:
+        sent.append(intent.route)
+        with closing(connect(database)) as conn:
+            tickets_data.set_ticket_backlog(
+                conn, second.id, is_backlogged=True, principal=OWNER_PRINCIPAL, now=20,
+            )
+
+    class BrowserAdapter:
+        def send(
+            self, subscription: PushSubscription, intent: NotificationIntent,
+            identity: WebPushIdentity, *, subject: str,
+        ) -> WebPushResult:
+            defer_second(intent)
+            return WebPushResult(delivered=True)
+
+    class NativeAdapter:
+        def send(
+            self, delivery: PendingAPNsDelivery, *, server_url: str, now: int,
+        ) -> APNsResult:
+            defer_second(delivery.intent)
+            return APNsResult(delivered=True)
+
+        def close(self) -> None:
+            pass
+
+    clock = MutableClock(parse_fake_now("2026-09-20T05:00:00+01:00"))
+    # Both edges are due, without expiration of the native queue's fixed dates.
+    clock.set(datetime.fromtimestamp(20, UTC))
+    loop = NotificationLoop(
+        database, clock, canonical_origin="https://panels.example",
+        adapter=BrowserAdapter(), apns_adapter=NativeAdapter() if native else None,
+    )
+    try:
+        assert loop.poll_once() == 1
+        assert sent == [f"/#/workspace/{first.id}"]
+    finally:
+        loop.stop()

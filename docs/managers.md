@@ -39,7 +39,7 @@ Some events become durable **wakes**, real prompts queued into the responsible C
 - a Ticket turn failing when an agent holds that Ticket's review;
 - a [measure source](measures.md) failing when that Manager or Chief is responsible for it.
 
-Each wake is recorded in the same write as the event that caused it, then delivered by a loop, so a crash cannot lose it. A notice that has gone stale, such as a proposal already decided, is dropped rather than sent. Replying to a wake approves nothing. Proposals are decided only through the [Ticket lifecycle](tickets.md).
+Each wake is recorded in the same write as the event that caused it, then delivered by a loop, so a crash cannot lose it. A notice that has gone stale, such as a proposal already decided, is dropped rather than sent. Backlog pauses an undelivered proposal wake until resume. Failure notices still report real events. Replying to a wake approves nothing. Proposals are decided only through the [Ticket lifecycle](tickets.md).
 
 When the event concerns Khushal rather than an agent, it reaches him through [Review](review.md) and [notifications](notifications.md) instead.
 

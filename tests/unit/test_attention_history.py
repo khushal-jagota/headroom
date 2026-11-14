@@ -10,6 +10,7 @@ from alembic.script import ScriptDirectory
 
 from planner.attention.history import capture_gate, install_history, record_approval
 from planner.core.contracts import OWNER_PRINCIPAL, Principal, PrincipalKind
+from planner.notifications import data as notifications_data
 from planner.notifications.attention import capture_ticket_attention
 from planner.tickets import data
 from planner.tickets.contracts import NO_FURTHER, TicketEdit
@@ -161,8 +162,19 @@ def test_activation_retains_unknown_opening_and_migration_has_one_head(
     row = tmp_db.execute("SELECT * FROM attention_gate_intervals").fetchone()
     assert row["opened_at"] is None
     assert row["observed_since"] == 150
+    # Imported deferral can predate activation. Its closure cannot precede the
+    # first observation, even though the original proposal and update are older.
+    tmp_db.execute(
+        "UPDATE tickets SET is_backlogged=1,updated_at=120 WHERE id=?", (ticket_id,),
+    )
+    notifications_data.reconcile_attention(tmp_db)
+    data.set_ticket_backlog(
+        tmp_db, ticket_id, is_backlogged=False, principal=OWNER_PRINCIPAL, now=160,
+    )
     _accept(tmp_db, ticket_id)
-    assert tmp_db.execute("SELECT closed_at FROM attention_gate_intervals").fetchone()[0] == 200
+    assert [tuple(row) for row in tmp_db.execute(
+        "SELECT opened_at,observed_since,closed_at FROM attention_gate_intervals ORDER BY id"
+    )] == [(None, 150, 150), (160, 160, 200)]
     assert tmp_db.execute("SELECT started_at FROM attention_history_metadata").fetchone()[0] == 150
     script = ScriptDirectory(
         str(Path(__file__).resolve().parents[2] / "src/planner/core/migrations")
