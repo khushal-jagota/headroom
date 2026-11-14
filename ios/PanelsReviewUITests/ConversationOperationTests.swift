@@ -13,6 +13,8 @@ final class ConversationOperationTests: XCTestCase {
         defer { app.terminate() }
         try await proof(base, "replacement/old")
         app.launch()
+        let workspace = app.tabBars.buttons["Workspace"]
+        XCTAssertTrue(workspace.waitForExistence(timeout: 8)); workspace.tap()
         // WorkspaceContextMenu wraps this link and drops its source identifier.
         // Use the unique Chief title, as the admitted Review screen walk does.
         let chief = app.buttons.matching(NSPredicate(format: "label CONTAINS 'Chief of Staff'")).firstMatch
@@ -50,6 +52,7 @@ final class ConversationOperationTests: XCTestCase {
         app.terminate()
         try await proof(base, "replacement/relaunch-new")
         app.launch()
+        XCTAssertTrue(workspace.waitForExistence(timeout: 8)); workspace.tap()
         XCTAssertTrue(chief.waitForExistence(timeout: 8)); chief.tap()
         XCTAssertTrue(line.waitForExistence(timeout: 8)); line.tap()
         XCTAssertTrue(replacement.waitForExistence(timeout: 8))

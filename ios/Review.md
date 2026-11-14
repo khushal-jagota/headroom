@@ -1,5 +1,17 @@
 # Review on iOS
 
+Review is the initial tab. Notification links keep their own destination. The final
+page places Message Chief beneath the caught-up text, with Revisit below it. The
+composer shares Chief’s draft text and attachments. It uses the existing outgoing
+store and conversation send path. Each attempt keeps its captured destination.
+Check delivery reads receipts and held prompts without another send. Uncertain
+attempts retain their words and attachments. Accepted attempts clear only their
+unchanged draft, so newer edits survive.
+
+An open message card follows the owner’s current conversation reference. After a
+replacement, it shows the historical marker and removes Reply without a new visit.
+The old draft, displayed messages, and Mark read boundary stay intact.
+
 Review shows proposals and unread conversations in one queue, ordered by waiting
 time. Like desktop, a Ticket is one card on one page: its title and recap once, its
 proposal first, then each of its conversations with its complete unread message run.

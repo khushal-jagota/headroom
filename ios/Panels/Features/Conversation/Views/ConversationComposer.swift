@@ -7,6 +7,7 @@ struct ConversationComposer: View {
     @Bindable var model: ConversationModel
     let owner: ConversationOwner
     var reviewReply = false
+    var placeholder: String? = nil
     var sendReply: (() async -> Bool)? = nil
     var statusNote: String?
     var retryReply = false
@@ -202,7 +203,7 @@ struct ConversationComposer: View {
     }
 
     private var field: some View {
-        TextField(reviewReply ? "Reply…" : "Message", text: $model.draft, axis: .vertical)
+        TextField(placeholder ?? (reviewReply ? "Reply…" : "Message"), text: $model.draft, axis: .vertical)
             .font(PanelsTheme.TypeScale.body).lineLimit(1...5).focused($focused)
             .disabled(capturingSpeech).allowsHitTesting(!capturingSpeech)
             .accessibilityHidden(capturingSpeech)

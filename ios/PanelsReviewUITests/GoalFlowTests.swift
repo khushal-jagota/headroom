@@ -11,6 +11,8 @@ final class GoalFlowTests: XCTestCase {
         let app = XCUIApplication()
         app.launchArguments = ["--conversation-stub", base]
         app.launch(); defer { app.terminate() }
+        let workspace = app.tabBars.buttons["Workspace"]
+        XCTAssertTrue(workspace.waitForExistence(timeout: 15)); workspace.tap()
         func capture(_ name: String) {
             let attachment = XCTAttachment(screenshot: app.screenshot())
             attachment.name = name; attachment.lifetime = .keepAlways; self.add(attachment)

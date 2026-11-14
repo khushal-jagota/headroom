@@ -7,7 +7,7 @@ struct AppShell: View {
     @Environment(\.scenePhase) private var scenePhase
     @State private var updateRequired = false
     @State private var deploymentState: DeploymentStatusPresentation?
-    @State private var selectedTab: AppTab = .workspace
+    @State private var selectedTab: AppTab = .review
     @State private var savedReviewWork = ReviewSavedWork()
     @State private var reviewPath: [AppRoute] = []
     @State private var workspacePath: [AppRoute] = []

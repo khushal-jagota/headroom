@@ -105,6 +105,8 @@ final class ReviewMessagesTests: XCTestCase {
         continueAfterFailure = false
         let app = XCUIApplication()
         app.launch()
+        let workspaceTab = app.tabBars.buttons["Workspace"]
+        XCTAssertTrue(workspaceTab.waitForExistence(timeout: 20)); workspaceTab.tap()
         let chief = app.buttons.matching(NSPredicate(format: "label CONTAINS 'Chief of Staff'")).firstMatch
         XCTAssertTrue(chief.waitForExistence(timeout: 20))
         let workspace = XCTAttachment(screenshot: app.screenshot()); workspace.name = "live-workspace"; workspace.lifetime = .keepAlways; add(workspace)

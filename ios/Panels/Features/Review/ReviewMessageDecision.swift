@@ -67,7 +67,11 @@ extension APIClient {
     }
     var events: [ReviewMessageEvent] = []
     var loaded = false
-    var historical = false
+    private var addressCurrent: Bool?
+    var historical: Bool { !(addressCurrent ?? item?.addressCurrent ?? true) }
+    /// Address authority changes independently of the frozen displayed unread run.
+    /// A message read that started earlier must not replace this current authority.
+    func updateAddressCurrent(_ current: Bool) { addressCurrent = current }
     var busy = false
     private var loading = false
     var error: String?
@@ -80,7 +84,7 @@ extension APIClient {
     private var loadedFreshness: String?
     /// When the read behind `events` started.
     private var readStarted: ContinuousClock.Instant?
-    static func freshness(_ item: ReviewItem) -> String { "\(item.ownerReadThroughSequence)|\(item.addressCurrent)" }
+    static func freshness(_ item: ReviewItem) -> String { "\(item.ownerReadThroughSequence)" }
     func isCurrent(for item: ReviewItem) -> Bool { loaded && loadedFreshness == Self.freshness(item) }
     var through: Int { events.last?.sequence ?? 0 }
     private(set) var attempt: PendingWork?
@@ -124,7 +128,7 @@ extension APIClient {
         do {
             let messages = try await api.reviewMessages(id, after: item.ownerReadThroughSequence)
             try Task.checkCancellation()
-            events = messages; historical = !item.addressCurrent
+            events = messages
             refreshSavedWork(LocalStore.server(api.baseURL))
             let saved = self.saved(LocalStore.server(api.baseURL)).last {
                 $0.message?.conversationId == id && $0.message?.ownerReadThroughSequence != nil &&
