@@ -135,7 +135,7 @@ export async function journal_parity(input: Input): Promise<unknown> {
       input.incarnation,
       {
         outputs_module: fixture,
-        now_ms: () => BigInt(input.now_ms),
+        now_ms: () => Number(input.now_ms),
         on_failure,
       },
       options,
@@ -146,7 +146,7 @@ export async function journal_parity(input: Input): Promise<unknown> {
           const cursor = await journal.record_poll_reply(
             Buffer.from(step.hex!, 'hex'),
             step.incarnation ?? input.incarnation,
-            BigInt(step.after ?? '0'),
+            Number(step.after ?? '0'),
           );
           if (cursor.command_count !== step.expected_command_count)
             throw new Error('Fresh cursor lost the original poll reply command count');
@@ -158,7 +158,7 @@ export async function journal_parity(input: Input): Promise<unknown> {
           break;
         case 'lower':
           observations.push(
-            await journal.lower_poll_cursor(BigInt(step.high!), BigInt(step.at_lease!)),
+            await journal.lower_poll_cursor(Number(step.high!), Number(step.at_lease!)),
           );
           break;
         case 'published':

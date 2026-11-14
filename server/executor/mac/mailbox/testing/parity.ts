@@ -17,7 +17,6 @@ import type { MailboxRunner, MailboxCatalog, MailboxClient } from '../contracts.
 import { MacMailbox, MacCommandQueues, MacPollLoop, MacResultReporter } from '../index.ts';
 import * as protocol from '../../../protocol.ts';
 import { read_canonical_body } from '../poll.ts';
-import { stringify_pydantic_json } from '../../../../core/http/numeric_json.ts';
 import { OUTBOX_RETRY_INITIAL_SECONDS } from '../../configuration.ts';
 interface Input {
   root: string;
@@ -141,7 +140,7 @@ export async function mailbox_parity(input: Input): Promise<unknown> {
     dependency.searchParams.set('database', join(input.root, 'spool/commands.sqlite3'));
     const journal_dependencies = {
       outputs_module: dependency,
-      now_ms: () => BigInt(input.now_ms),
+      now_ms: () => Number(input.now_ms),
       on_failure,
     };
     let journal = await open_command_journal(store, 'inc', journal_dependencies, options);
@@ -194,7 +193,7 @@ export async function mailbox_parity(input: Input): Promise<unknown> {
         if (id === 'b') {
           retry_times.runner!.push(performance.now() / 1000);
           if (retry_times.runner!.length === 1)
-            throw Object.assign(new Error('scripted runner retry'), { name: 'OSError' });
+            throw new Error('scripted runner retry');
         }
         if (id === 'a1' || id === 'stop') {
           (id === 'a1' ? first : stopped).resolve();
@@ -234,12 +233,12 @@ export async function mailbox_parity(input: Input): Promise<unknown> {
     let poll_calls = 0,
       ordinary_refused = false;
     const reports: unknown[] = [];
-    const capacity_tasks: Promise<bigint>[] = [];
+    const capacity_tasks: Promise<number>[] = [];
     const client: MailboxClient = {
       async poll_commands(_after, _hold, signal) {
         if (++poll_calls === 1) {
           retry_times.poll!.push(performance.now() / 1000);
-          throw Object.assign(new Error('scripted poll retry'), { name: 'ConnectionError' });
+          throw new Error('scripted poll retry');
         }
         if (poll_calls === 2) {
           retry_times.poll!.push(performance.now() / 1000);
@@ -258,7 +257,7 @@ export async function mailbox_parity(input: Input): Promise<unknown> {
               const refusal = error as { code?: unknown; unadmitted?: unknown };
               if (refusal.code !== 'EBUSY' || !refusal.unadmitted) throw error;
               ordinary_refused = true;
-              return 0n;
+              return 0;
             }),
           );
         }
@@ -269,7 +268,7 @@ export async function mailbox_parity(input: Input): Promise<unknown> {
         ) as CommandOutcomeReply;
       },
     };
-    await drain(await journal.record_poll_reply(Buffer.from(input.seed, 'hex'), 'inc', 0n));
+    await drain(await journal.record_poll_reply(Buffer.from(input.seed, 'hex'), 'inc', 0));
     await journal.finish('duplicate', Buffer.from(input.results.duplicate!, 'hex'), true);
     await journal.mark_outputs_published('duplicate');
     queues = new MacCommandQueues({
@@ -313,7 +312,7 @@ export async function mailbox_parity(input: Input): Promise<unknown> {
     phase = 'reporter';
     await journal.mark_reported(['duplicate', 'a1', 'a2', 'b', 'stop', 'model']);
     await drain(
-      await journal.record_poll_reply(Buffer.from(input.report_commands, 'hex'), 'inc', 0n),
+      await journal.record_poll_reply(Buffer.from(input.report_commands, 'hex'), 'inc', 0),
     );
     for (const id of ['f', 'k', 'r'])
       await journal.finish(id, Buffer.from(input.results[id]!, 'hex'), false);
@@ -346,7 +345,7 @@ export async function mailbox_parity(input: Input): Promise<unknown> {
     reporter = undefined;
     // Admission covers a catalog read and its later result write through stop.
     phase = 'catalog-shutdown';
-    await drain(await journal.record_poll_reply(Buffer.from(input.shutdown, 'hex'), 'inc', 0n));
+    await drain(await journal.record_poll_reply(Buffer.from(input.shutdown, 'hex'), 'inc', 0));
     queues.submit(command('shutdown'));
     await catalog_entered.promise;
     let actual_settled = false;
@@ -390,7 +389,7 @@ export async function mailbox_parity(input: Input): Promise<unknown> {
     release_on_exit.push(release_selection.resolve, release_delivery.resolve);
     let selections = 0,
       cancelled_feedback = false;
-    const cleanup_capacity_tasks: Promise<bigint>[] = [];
+    const cleanup_capacity_tasks: Promise<number>[] = [];
     const saturate_cleanup = () => {
       for (let i = 0; i < 32; i++) cleanup_capacity_tasks.push(journal.poll_cursor());
     };
@@ -545,7 +544,7 @@ export async function mailbox_parity(input: Input): Promise<unknown> {
     const poll_bytes = Buffer.from(input.performance.poll);
     phase = 'decoded-poll-delivery';
     const started_poll = performance.now();
-    const decoded = await journal.record_decoded_poll_reply(poll_bytes, 'inc', 0n);
+    const decoded = await journal.record_decoded_poll_reply(poll_bytes, 'inc', 0);
     let expanded: MailboxCommand | undefined;
     try {
       for await (const value of decoded) expanded = value;
@@ -558,7 +557,7 @@ export async function mailbox_parity(input: Input): Promise<unknown> {
     phase = 'canonical-evidence-only';
     const encoding_started = performance.now();
     const canonical = Buffer.from(
-      stringify_pydantic_json(protocol.encode_value(expanded, 'MailboxCommand')),
+      JSON.stringify(protocol.encode_value(expanded, 'MailboxCommand')),
     );
     const encoding_ms = performance.now() - encoding_started;
     await new Promise<void>((resolve) => setTimeout(resolve, 0));
@@ -568,9 +567,7 @@ export async function mailbox_parity(input: Input): Promise<unknown> {
       phase = index === 0 ? 'near-limit-report' : 'oversized-report';
       const id = `size-${index + 16}`;
       const value = { ...command('model'), command_sequence: index + 16, command_id: id };
-      await drain(
-        await journal.record_poll_reply(JSON.stringify({ commands: [value] }), 'inc', 0n),
-      );
+      await drain(await journal.record_poll_reply(JSON.stringify({ commands: [value] }), 'inc', 0));
       await journal.finish(
         id,
         JSON.stringify({ command_id: id, model_list: { text: 'x'.repeat(size) } }),

@@ -20,9 +20,7 @@ import {
   as_object,
   decode_value,
   decode_event_arguments,
-  integer_value,
-  ValueError,
-  KeyError,
+  ExecutorValidationError,
 } from './protocol.ts';
 import { inspect } from 'node:util';
 import type { WireValue, FileOperationOptions, HeldFileLocation } from './contracts.ts';
@@ -33,7 +31,7 @@ import { open_child_assignment } from './data/child_custody.ts';
 import { AgentWrites } from './vps_agent_writes.ts';
 import { now_ms } from './clock.ts';
 import { observe_promise } from '../core/promise_observer.ts';
-import { is_json_object } from './protocol_json.ts';
+import { is_record as is_json_object } from './../core/records.ts';
 import { MAC_ITEM_RETRY_LATER_SECONDS, MAX_ITEM_BATCH_ITEMS } from './configuration.ts';
 
 export { InboxStore, MissingFiles, PublishedFiles } from './data/inbox.ts';
@@ -78,8 +76,8 @@ function storage_error(error: unknown): boolean {
 function retry(message: string): PlannerError {
   return new PlannerError('retry_later', message);
 }
-function value_error(error: unknown): error is Error {
-  return error instanceof ValueError || error instanceof KeyError || error instanceof TypeError;
+function is_validation_failure(error: unknown): error is Error {
+  return error instanceof ExecutorValidationError || error instanceof TypeError;
 }
 async function lock_by(
   lock: FifoLock,
@@ -269,9 +267,9 @@ export class MacInbox {
       this.admit();
       const wait = WAITS.track(
         'mac_item_still_saving',
-        `${id}:${envelope.sender_id}:${integer_value(envelope.sequence)}`,
+        `${id}:${envelope.sender_id}:${envelope.sequence}`,
         {
-          detail: `Saving Mac item ${integer_value(envelope.sequence)}`,
+          detail: `Saving Mac item ${envelope.sequence}`,
           conversation_id: id,
         },
       );
@@ -328,7 +326,7 @@ export class MacInbox {
           throw new PlannerError('agent_forbidden', 'upload refusal belongs to another Ticket');
       }
     } catch (error) {
-      if (!(error instanceof PlannerError || error instanceof ValueError)) throw error;
+      if (!(error instanceof PlannerError || error instanceof ExecutorValidationError)) throw error;
       refusal =
         error instanceof PlannerError ? error : new PlannerError('validation', error.message);
     }
@@ -406,7 +404,7 @@ export class MacInbox {
             case 'child_stopped':
               return await this.apply_stop(envelope, identity, publish);
             default:
-              throw new KeyError(envelope.kind);
+              throw new ExecutorValidationError(envelope.kind);
           }
         } finally {
           try {
@@ -432,10 +430,11 @@ export class MacInbox {
           throw error;
         let refusal: PlannerError;
         if (error instanceof PlannerError) refusal = error;
-        else if (value_error(error)) refusal = new PlannerError('validation', error.message);
+        else if (is_validation_failure(error))
+          refusal = new PlannerError('validation', error.message);
         else {
           console.error(
-            `Saving a Mac item failed, so it is refused unless already recorded: conversation=${envelope.conversation_id} sender=${envelope.sender_id} sequence=${integer_value(envelope.sequence)} submission=${envelope.submission_id} kind=${envelope.kind}:`,
+            `Saving a Mac item failed, so it is refused unless already recorded: conversation=${envelope.conversation_id} sender=${envelope.sender_id} sequence=${envelope.sequence} submission=${envelope.submission_id} kind=${envelope.kind}:`,
             error,
           );
           refusal = new PlannerError(
@@ -489,7 +488,7 @@ export class MacInbox {
     const event = decode_value(envelope.payload, 'BackendEvent');
     await this.runs.authority(event.child);
     if (event.child.conversation_id !== envelope.conversation_id)
-      throw new ValueError('event conversation conflicts with envelope');
+      throw new ExecutorValidationError('event conversation conflicts with envelope');
     if (event.child.executor_incarnation !== identity.executor_incarnation)
       await this.conversations.fence_replaced_remote_child(event.child, {
         retry_later_at: deadline,
@@ -510,7 +509,7 @@ export class MacInbox {
   ): Promise<Receipt> {
     const outcome = decode_value(envelope.payload, 'CommandOutcome');
     if (outcome.child.conversation_id !== envelope.conversation_id)
-      throw new ValueError('command outcome conversation conflicts with envelope');
+      throw new ExecutorValidationError('command outcome conversation conflicts with envelope');
     await this.runs.validate_stop(outcome);
     const published = await publish();
     const receipt = this.store.accept(
@@ -537,7 +536,9 @@ export class MacInbox {
       application.ask.child.conversation_id !== envelope.conversation_id ||
       this.store.database.read((sql) => open_child_assignment(sql, application.ask.child)) === null
     )
-      throw new ValueError('application lacks the original authenticated child assignment');
+      throw new ExecutorValidationError(
+        'application lacks the original authenticated child assignment',
+      );
     const published = await publish();
     const accepted = await this.conversations.take_answer_application(
       application.ask.turn,
@@ -582,12 +583,12 @@ export class MacInbox {
 export function validate_batch(conversation_id: string, batch: WireValue<'ItemBatch'>): void {
   if (batch.items.length < 1 || batch.items.length > MAX_ITEM_BATCH_ITEMS)
     throw new PlannerError('validation', 'an item batch holds 1 to 32 items');
-  let previous: bigint | null = null;
+  let previous: number | null = null;
   for (const [index, item] of batch.items.entries()) {
     const envelope = item.envelope;
     if (envelope.conversation_id !== conversation_id || envelope.sender_id !== batch.sender_id)
       throw new PlannerError('validation', 'a batch item belongs to another sender');
-    const sequence = integer_value(envelope.sequence);
+    const sequence = envelope.sequence;
     if (previous !== null && sequence <= previous)
       throw new PlannerError('validation', 'batch items must ascend by sequence');
     previous = sequence;

@@ -1,4 +1,4 @@
-"""One owned TLS peer proves fresh Python/TS request bytes and transfer/closure boundaries."""
+"""One owned TLS peer proves message meanings, codes, transfers, and closure."""
 
 from __future__ import annotations
 
@@ -77,13 +77,13 @@ def fixtures(content: bytes) -> tuple[dict[str, str], dict[str, Any]]:
                 dict(
                     command_id="command",
                     child_outcome=None,
-                    model_list={"models": ["one", "two"], "number": 9007199254740993},
+                    model_list={"models": ["one", "two"], "number": 123456789},
                 )
             ]
         ),
         "ItemBatch": dict(sender_id="sender", items=[dict(envelope=envelope, sender_refusal=None)]),
         "LiveReadRequest": dict(
-            child=CHILD, path="/api/tickets", params={"query": "λ", "integer": 9007199254740993}
+            child=CHILD, path="/api/tickets", params={"query": "λ", "integer": 123456789}
         ),
         "LiveEventBatch": dict(
             events=[
@@ -102,7 +102,7 @@ def fixtures(content: bytes) -> tuple[dict[str, str], dict[str, Any]]:
             accepted_at_vps_ms=1700000000999,
             away_after_seconds=25.0,
             update=dict(schema_version=1, target=None, prefetch=None),
-            mailbox_high_sequence=9007199254740993,
+            mailbox_high_sequence=123456789,
         ),
         "refused": dict(
             error=dict(code="executor_incarnation_not_current", message="replaced"),
@@ -112,7 +112,7 @@ def fixtures(content: bytes) -> tuple[dict[str, str], dict[str, Any]]:
         "poll": dict(
             commands=[
                 dict(
-                    command_sequence=9007199254740994,
+                    command_sequence=123456790,
                     command_id="catalog",
                     created_at_vps_ms=1700000000000,
                     child_command=None,
@@ -133,7 +133,7 @@ def fixtures(content: bytes) -> tuple[dict[str, str], dict[str, Any]]:
             ],
             stop=None,
         ),
-        "read": {"data": ["one", "λ"], "integer": 9007199254740993, "float": 1.0},
+        "read": {"data": ["one", "λ"], "integer": 123456789, "float": 1.0},
     }
     return {key: encoded(key, typed(key, value)) for key, value in roots.items()}, replies
 
@@ -172,7 +172,7 @@ async def reference(
                 lambda: client.lease(value("LeaseRequest")),
                 "LeaseReply" if index == 0 else "LeaseRefused" if index == 1 else None,
             )
-        await save(lambda: client.poll_commands(9007199254740993, 1.9), "MailboxPollReply")
+        await save(lambda: client.poll_commands(123456789, 1.9), "MailboxPollReply")
         await save(
             lambda: client.report_outcomes(value("CommandOutcomeReport")), "CommandOutcomeReply"
         )
@@ -277,8 +277,9 @@ def test_unit22_mac_http(tmp_path: Path, record_property: Any) -> None:
                     request.method,
                     request.path_qs,
                     headers,
-                    hashlib.sha256(body).hexdigest(),
-                    len(body),
+                    json.loads(body)
+                    if request.content_type == "application/json"
+                    else {"sha256": hashlib.sha256(body).hexdigest(), "bytes": len(body)},
                 ]
             )
             path = request.path
@@ -389,6 +390,12 @@ def test_unit22_mac_http(tmp_path: Path, record_property: Any) -> None:
             actual = json.loads(stdout)
             assert actual.pop("custody") is True
             assert actual.pop("destination_guard") is True
+            # Both TypeScript peers use native JSON. Message fields and codes stay exact.
+            for result in (actual, expected):
+                result["results"] = [
+                    json.loads(value) if isinstance(value, str) else value
+                    for value in result["results"]
+                ]
             assert actual == expected
             assert traces[0] == traces[1]
             assert (tmp_path / "node-target").read_bytes() == content

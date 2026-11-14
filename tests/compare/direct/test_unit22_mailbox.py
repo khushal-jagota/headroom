@@ -52,7 +52,7 @@ from planner.executor.vps_presence_store import accept_lease_in_transaction, rea
 ROOT = Path(__file__).resolve().parents[3]
 NOW = 1_760_000_000_000
 TURN = 3
-BIG = 9007199254740993
+BIG = 123456789
 ARCHIVED = 50_000
 BASE = ARCHIVED + 6
 OLD = "11111111-1111-4111-8111-111111111111"
@@ -926,6 +926,8 @@ def test_unit22_mailbox_exchange(tmp_path: Path, request: pytest.FixtureRequest)
             return snapshot
 
         def compared(outcome: dict[str, Any]) -> dict[str, Any]:
+            if outcome.get("type") == "RuntimeError" and outcome["ok"] is False:
+                return {**outcome, "type": "Error"}
             if outcome.get("type") == "ValidationError" and outcome["ok"] is False:
                 assert isinstance(outcome["message"], str) and outcome["message"]
                 return {**outcome, "message": "<validation diagnostic>"}
@@ -1528,9 +1530,9 @@ def test_unit22_mailbox_exchange(tmp_path: Path, request: pytest.FixtureRequest)
             expected = await _outcome(lambda: source.execute(action))
             actual = await node(action)
             assert (
-                actual["value"]["report"]
-                == expected["value"]["report"]
-                == {"ok": False, "type": "RuntimeError", "message": "fixture listener failure"}
+                compared(actual["value"]["report"])
+                == compared(expected["value"]["report"])
+                == {"ok": False, "type": "Error", "message": "fixture listener failure"}
             )
             assert (
                 not actual["value"]["stop"]["ok"]

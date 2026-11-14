@@ -1,22 +1,21 @@
 /** One real-mailbox exchange; no listener or backend provider. */
 import { readFileSync } from 'node:fs';
 import { createDatabase } from '../../core/database/index.ts';
-import { stringify_python_json } from '../../core/http/numeric_json.ts';
 import { ChangeSignal } from '../../core/changes/index.ts';
 import { VpsCatalogRelay } from '../catalog_relay.ts';
+import { snapshot_for_wire } from '../backend_snapshot.ts';
 import { SqliteCommandMailbox } from '../vps_mailbox.ts';
 import { MacPresenceService } from '../vps_presence.ts';
-import { parse_executor_json } from '../protocol_json.ts';
-import { as_object, decode_value, parse_identity, integer_value } from '../protocol.ts';
+import { as_object, decode_value, parse_identity } from '../protocol.ts';
 import type { WireTypes } from '../wire.generated.ts';
-const spec = parse_executor_json(readFileSync(0)) as unknown as {
+const spec = JSON.parse(readFileSync(0, 'utf8')) as unknown as {
   path: string;
   now: number;
   identity: WireTypes['ExecutorIdentity'];
   lease: WireTypes['LeaseRequest'];
   snapshots: WireTypes['BackendSnapshot'][];
 };
-const now = Number(integer_value(spec.now));
+const now = spec.now;
 const database = createDatabase(spec.path),
   mailbox = new SqliteCommandMailbox(database, { clock: () => now });
 const presence = new MacPresenceService(database, mailbox, {
@@ -78,9 +77,11 @@ try {
         'SELECT * FROM machine_backend_snapshots ORDER BY machine_id,backend_key',
       ),
     )
-    .map((row) => ({ ...row, snapshot_json: parse_executor_json(Buffer.from(row.snapshot_json)) }));
+    .map((row) => ({ ...row, snapshot_json: JSON.parse(row.snapshot_json) }));
   output = {
-    values: [first, cached, fallback, offline].map((value) => as_object(value, 'BackendSnapshot')),
+    values: [first, cached, fallback, offline].map((value) =>
+      as_object(snapshot_for_wire(value), 'BackendSnapshot'),
+    ),
     flags,
     cancelled,
     rows,
@@ -107,7 +108,7 @@ try {
   output.aborted_waiting_rows = database.read((sql) =>
     sql.all<{ state: string }>(
       'SELECT state FROM executor_commands WHERE command_sequence>? ORDER BY command_sequence',
-      [integer_value(before_closed_contact)],
+      [before_closed_contact],
     ),
   );
   output.after_abort_poll = (
@@ -119,4 +120,4 @@ try {
   await mailbox.stop({ deadline: performance.now() / 1000 + 2 });
   database.close();
 }
-process.stdout.write(stringify_python_json(output));
+process.stdout.write(JSON.stringify(output));

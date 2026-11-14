@@ -100,7 +100,7 @@ class Peer:
                     identity = request.request_id
                     reply: dict[str, Any] = dict(
                         request_id=identity,
-                        result={"id": "ticket", "ok": True, "large": 9007199254741003},
+                        result={"id": "ticket", "ok": True, "large": 123456799},
                         error=None,
                         unconfirmed=None,
                     )
@@ -238,7 +238,7 @@ def test_mac_cli_socket_parity(
         observed_fields = [output_fields(value) for value in observed["results"]]
         for values in (expected_fields, observed_fields):
             large = values[0]["stdout"]["large"]
-            assert type(large) is int and large == 9007199254741003
+            assert type(large) is int and large == 123456799
 
         accepted_native_errors = []
         peer_error = dict(code="agent_forbidden", message="No access", detail={})

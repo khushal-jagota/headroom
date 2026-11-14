@@ -1,3 +1,4 @@
+import { counter } from '../../logic/counters.ts';
 /** Synchronous journal rules run only in the owned SQLite worker. */
 import { isMainThread } from 'node:worker_threads';
 import { join } from 'node:path';
@@ -11,8 +12,6 @@ import type {
   DurableSidecarOpenFailure,
   TransactionSql,
 } from '../../../core/database/contracts.ts';
-import { stringify_pydantic_json } from '../../../core/http/numeric_json.ts';
-import { integer_value } from '../../integers.ts';
 import type { WireInput } from '../../protocol.ts';
 import type { WireRootName, MailboxCommand, CommandResult } from '../../wire.generated.ts';
 import type { JournalOutputPolicy, JournalReportFeedback } from './journal_contracts.ts';
@@ -62,6 +61,7 @@ export class JournalEngine {
     try {
       this.database = createDurableSidecarDatabase(path, {
         schemaVersion: COMMAND_JOURNAL_FORMAT_VERSION,
+        safeIntegers: false,
         foreignKeys: false,
         refusalMessage: JOURNAL_REFUSAL,
         initialize: (tx) => {
@@ -97,7 +97,7 @@ export class JournalEngine {
     });
   }
   private encode<R extends WireRootName>(value: WireInput<R>, root: R): Buffer {
-    return Buffer.from(stringify_pydantic_json(this.protocol.encode_value(value, root)));
+    return Buffer.from(JSON.stringify(this.protocol.encode_value(value, root)));
   }
   private command(raw: Uint8Array | string): MailboxCommand {
     return this.protocol.decode_json(raw, 'MailboxCommand');
@@ -143,15 +143,17 @@ export class JournalEngine {
       }
     });
   }
-  poll_cursor(): bigint {
-    return this.db().read(
-      (sql) =>
-        sql.get<{ cursor: bigint }>(
-          'SELECT COALESCE(MAX(command_sequence),0) AS cursor FROM commands',
-        )!.cursor,
+  poll_cursor(): number {
+    return counter(
+      this.db().read(
+        (sql) =>
+          sql.get<{ cursor: number }>(
+            'SELECT COALESCE(MAX(command_sequence),0) AS cursor FROM commands',
+          )!.cursor,
+      ),
     );
   }
-  lower_poll_cursor(high: bigint, cursor_at_lease: bigint): boolean {
+  lower_poll_cursor(high: number, cursor_at_lease: number): boolean {
     if (cursor_at_lease <= high) return false;
     return this.write(
       (tx) =>
@@ -162,14 +164,15 @@ export class JournalEngine {
   record_poll_reply(
     raw: Uint8Array | string,
     incarnation: string,
-    after: bigint,
-    recorded_at: bigint,
+    after: number,
+    recorded_at: number,
   ): { rows: EncodedJournalRow[]; command_count: number } {
     const reply = this.protocol.decode_json(raw, 'MailboxPollReply');
     const rows = this.write((tx) => {
-      const cursor = tx.get<{ value: bigint }>(
+      const cursor = tx.get<{ value: number }>(
         'SELECT COALESCE(MAX(command_sequence),0) AS value FROM commands',
       )!.value;
+      counter(cursor);
       if (cursor < after) return [];
       const fresh: EncodedJournalRow[] = [];
       for (const command of reply.commands) {
@@ -181,19 +184,13 @@ export class JournalEngine {
           const encoded = this.encode(command, 'MailboxCommand');
           tx.run(
             "INSERT INTO commands(command_id,command_sequence,executor_incarnation,mailbox_command_json,phase,recorded_at_ms) VALUES(?,?,?,?,'recorded',?)",
-            [
-              command.command_id,
-              integer_value(command.command_sequence),
-              incarnation,
-              encoded,
-              recorded_at,
-            ],
+            [command.command_id, command.command_sequence, incarnation, encoded, recorded_at],
           );
           fresh.push({ command_id: command.command_id, command: encoded });
           continue;
         }
         tx.run('UPDATE commands SET command_sequence=MAX(command_sequence,?) WHERE command_id=?', [
-          integer_value(command.command_sequence),
+          command.command_sequence,
           command.command_id,
         ]);
         if (row.phase === 'finished') {

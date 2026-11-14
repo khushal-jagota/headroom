@@ -1,3 +1,5 @@
+import { is_os_error } from '../../../core/system_errors.ts';
+import { MacPermissionDenied } from '../runner/contracts.ts';
 /** Capability-scoped CLI work remains owned after its caller loses the response. */
 import { FifoLock } from '../../../conversation/runtime/state.ts';
 import {
@@ -6,9 +8,8 @@ import {
 } from '../../../conversation/shutdown.ts';
 import { ServerLifecycleError } from '../../../lifecycle/contracts.ts';
 import type { StopOptions } from '../../../lifecycle/contracts.ts';
-import { is_value_error } from '../../../core/value_error.ts';
 import { scalar_text } from '../../../cli/text.ts';
-import { as_object, decode_value, integer_value, ValueError } from '../../protocol.ts';
+import { as_object, decode_value, ExecutorValidationError } from '../../protocol.ts';
 import type {
   AcceptanceReceipt,
   IpcRequest,
@@ -22,11 +23,13 @@ import { ExecutorHttpError } from '../transport/errors.ts';
 import { failure_name } from '../failure_name.ts';
 import type { GatewayOptions, Publication } from './contracts.ts';
 import { GatewayListener } from './listener.ts';
-const monotonic = () => Number(process.hrtime.bigint()) / 1_000_000_000;
-const permission = (message: string) =>
-  Object.assign(new Error(message), { name: 'PermissionError' });
-const connection = (message: string) =>
-  Object.assign(new Error(message), { name: 'ConnectionError' });
+const monotonic = () => {
+  const [seconds, nanoseconds] = process.hrtime();
+  return seconds + nanoseconds / 1_000_000_000;
+};
+class GatewayConnectionError extends Error {}
+const permission = (message: string) => new MacPermissionDenied(message);
+const connection = (message: string) => new GatewayConnectionError(message);
 
 export class AgentGateway {
   private readonly options: GatewayOptions;
@@ -120,7 +123,8 @@ export class AgentGateway {
           );
         } catch (error) {
           if (error instanceof ExecutorHttpError) {
-            if (error.status === 400) throw new ValueError(error.message || 'read refused');
+            if (error.status === 400)
+              throw new ExecutorValidationError(error.message || 'read refused');
             if (error.status === 403) throw permission(error.message || 'read forbidden');
             throw connection(`VPS read failed: HTTP ${error.status} ${error.code}`);
           }
@@ -149,11 +153,12 @@ export class AgentGateway {
           ? this.unconfirmed(request.request_id, submission, 'queued')
           : this.receipt_response(request.request_id, record.receipt);
       }
-      if (request.operation !== 'write') throw new ValueError('unsupported executor IPC operation');
+      if (request.operation !== 'write')
+        throw new ExecutorValidationError('unsupported executor IPC operation');
       let deadline = monotonic() + CLI_RESULT_TIMEOUT_SECONDS;
       if (request.response_deadline != null) {
         if (!Number.isFinite(request.response_deadline))
-          throw new ValueError('invalid IPC response deadline');
+          throw new ExecutorValidationError('invalid IPC response deadline');
         deadline = Math.min(deadline, request.response_deadline);
       }
       const incoming = decode_value(request.payload, 'IpcWritePayload');
@@ -194,14 +199,14 @@ export class AgentGateway {
         ? this.unconfirmed(request.request_id, submission, 'queued')
         : this.receipt_response(request.request_id, receipt);
     } catch (error) {
-      const name = error instanceof Error ? error.name : '';
-      const code = is_value_error(error)
-        ? 'validation'
-        : name === 'PermissionError'
-          ? 'agent_forbidden'
-          : name === 'ConnectionError'
-            ? 'connection'
-            : null;
+      const code =
+        error instanceof ExecutorValidationError
+          ? 'validation'
+          : error instanceof MacPermissionDenied
+            ? 'agent_forbidden'
+            : error instanceof GatewayConnectionError || is_os_error(error)
+              ? 'connection'
+              : null;
       if (code === null) throw error;
       return {
         request_id: request.request_id,
@@ -250,7 +255,7 @@ export class AgentGateway {
           quiescence.pending_callback_count,
           quiescence.uncertain_operation_count,
           quiescence.unsent_entry_count,
-        ].every((n) => integer_value(n) === 0n);
+        ].every((n) => n === 0);
       const exit_committed = ready && maintenance.exit_when_ready;
       if (exit_committed) {
         this.exit_committed = true;

@@ -10,7 +10,7 @@ import {
 } from '../configuration.ts';
 import { JOURNAL_OPERATIONS, JOURNAL_INPUT_BYTES, JOURNAL_RESULT_BYTES } from './journal_limits.ts';
 import { failure_name } from '../failure_name.ts';
-import { journal_error, journal_error_properties, unpack } from './journal_worker_contracts.ts';
+import { journal_error, journal_error_properties } from './journal_worker_contracts.ts';
 import type { MailboxCommand } from '../../wire.generated.ts';
 import type {
   JournalAction,
@@ -417,7 +417,7 @@ export class CommandJournal implements AsyncCommandJournal {
       } else request?.resolve(message.value);
       return;
     }
-    const task = Promise.resolve().then<bigint | void>(() => {
+    const task = Promise.resolve().then<number | void>(() => {
       if (message.callback === 'permission') {
         if (this.closed) throw new ServerLifecycleError('Journal opening is stopped.');
         this.scope!.assert_admission();
@@ -428,7 +428,7 @@ export class CommandJournal implements AsyncCommandJournal {
       return this.scope!.flush_spool();
     });
     this.callbacks.add(task);
-    const reply = (value?: bigint, error?: unknown) => {
+    const reply = (value?: number, error?: unknown) => {
       this.callbacks.delete(task);
       if (this.worker !== worker || worker.threadId === -1) return;
       try {
@@ -442,7 +442,7 @@ export class CommandJournal implements AsyncCommandJournal {
       }
     };
     void task.then(
-      (value) => reply(typeof value === 'bigint' ? value : undefined),
+      (value) => reply(typeof value === 'number' ? value : undefined),
       (error) => reply(undefined, error),
     );
   }
@@ -545,16 +545,16 @@ export class CommandJournal implements AsyncCommandJournal {
       }
     });
   }
-  poll_cursor(): Promise<bigint> {
+  poll_cursor(): Promise<number> {
     return this.call({ operation: 'poll_cursor' });
   }
-  lower_poll_cursor(high: bigint, cursor_at_lease: bigint): Promise<boolean> {
+  lower_poll_cursor(high: number, cursor_at_lease: number): Promise<boolean> {
     return this.call({ operation: 'lower_poll_cursor', high, cursor_at_lease });
   }
   async record_poll_reply(
     bytes: Uint8Array | string,
     incarnation: string,
-    polled_after: bigint,
+    polled_after: number,
   ): Promise<FreshCommandCursor> {
     const value = await this.record_reply(bytes, incarnation, polled_after, false);
     return new Cursor(
@@ -567,10 +567,10 @@ export class CommandJournal implements AsyncCommandJournal {
   async record_decoded_poll_reply(
     bytes: Uint8Array | string,
     incarnation: string,
-    polled_after: bigint,
+    polled_after: number,
   ): Promise<DecodedCommandCursor> {
     const value = await this.record_reply(bytes, incarnation, polled_after, true);
-    return new Cursor(this, value.cursor, (row) => unpack(row.decoded!) as MailboxCommand, {
+    return new Cursor(this, value.cursor, (row) => row.decoded as MailboxCommand, {
       ...value,
       abandonable: true,
     });
@@ -578,7 +578,7 @@ export class CommandJournal implements AsyncCommandJournal {
   private record_reply(
     bytes: Uint8Array | string,
     incarnation: string,
-    polled_after: bigint,
+    polled_after: number,
     decoded: boolean,
   ): Promise<{ cursor: number; command_count: number; fresh_count: number }> {
     if (

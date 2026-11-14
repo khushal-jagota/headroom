@@ -23,9 +23,8 @@ import { resolve_path_sync } from '../core/path_resolution.ts';
 import { pure_posix_path } from '../core/python_path.ts';
 import type { StopOptions } from '../lifecycle/contracts.ts';
 import { observe_shutdown } from '../conversation/shutdown.ts';
-import { python_truth } from '../conversation/backends/claude_agent_sdk/events.ts';
 import { now_ms } from './clock.ts';
-import { ProtocolRefused, KeyError, ValueError } from './protocol.ts';
+import { ProtocolRefused, ExecutorValidationError } from './protocol.ts';
 import { inspect } from 'node:util';
 import { validate_skill_snapshot } from './skills.ts';
 import type { WireTypes, ChildCommandArguments, ChildOperation } from './wire.generated.ts';
@@ -180,7 +179,7 @@ export class MacRemoteChild implements BackendChild {
     } else if (start.workspace_path_policy === WorkspacePathPolicy.executor_default) {
       const path = pure_posix_path(start.workspace_folder);
       if (!path.startsWith('/'))
-        throw new ValueError(`${inspect(path)} is not in the subpath of '/'`);
+        throw new ExecutorValidationError(`${inspect(path)} is not in the subpath of '/'`);
       workspace_home_relative = path.replace(/^\/+/, '') || null;
     }
     const command = this.command({
@@ -293,9 +292,10 @@ export class MacRemoteChild implements BackendChild {
       });
     raise_for(outcome);
     const result = outcome.result;
-    if (!Object.hasOwn(result, 'kind')) throw new KeyError('kind');
+    if (!Object.hasOwn(result, 'kind')) throw new ExecutorValidationError('kind');
     if (result.kind === 'steer_refused') {
-      if (!Object.hasOwn(result, 'refusal_reason')) throw new KeyError('refusal_reason');
+      if (!Object.hasOwn(result, 'refusal_reason'))
+        throw new ExecutorValidationError('refusal_reason');
       const reason =
         typeof result.refusal_reason === 'string'
           ? result.refusal_reason
@@ -303,7 +303,9 @@ export class MacRemoteChild implements BackendChild {
       if (
         !Object.values(PromptDeliveryRefusalReason).includes(reason as PromptDeliveryRefusalReason)
       )
-        throw new ValueError(`${inspect(reason)} is not a valid PromptDeliveryRefusalReason`);
+        throw new ExecutorValidationError(
+          `${inspect(reason)} is not a valid PromptDeliveryRefusalReason`,
+        );
       return new backend.BackendSteerRefused({
         refusal_reason: reason as PromptDeliveryRefusalReason,
       });
@@ -314,7 +316,7 @@ export class MacRemoteChild implements BackendChild {
       });
     return new backend.BackendSteerAccepted({
       composed_content_delivered: Object.hasOwn(result, 'composed_content_delivered')
-        ? python_truth(delivered)
+        ? Boolean(delivered)
         : true,
     });
   }

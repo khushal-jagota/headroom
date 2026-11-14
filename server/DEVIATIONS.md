@@ -511,6 +511,19 @@ Persisted dataset row identities and exact numeric values remain unchanged. Spec
 
 ## Executor message and core admission
 
+### Native JSON boundary
+
+The Manager replaced Python byte compatibility with native JSON on November 14, 2026.
+Both TypeScript executor peers ship together at cutover.
+The shared schemas define message meaning and generate the TypeScript types.
+The codec uses `JSON.parse`, cached Ajv validators, and `JSON.stringify`.
+Integer fields and counters use safe integer numbers. Opaque payloads contain plain JSON values.
+Nonfinite values refuse admission.
+
+The Python lexical parser, exact-number markers, scalar coercions, numeric formatting, and special depth and integer-token limits are removed.
+Command, answer, mailbox, identity, and version admission rules remain, with the existing error codes.
+Private filesystem nanosecond timestamps and inode values retain Node bigint stat values and stay off the wire.
+
 The Manager requires the TypeScript command route to forward response disconnects into mailbox poll cancellation; Python's route has no explicit disconnect observer.
 
 ### Encoding validation
@@ -566,7 +579,9 @@ The existing release comparison records this accepted difference instead of Pyth
 ## TypeScript iOS compatibility inventory — accepted
 
 The Manager accepted the TypeScript source inventory on November 13, 2026.
-It replaces Python source paths with production TypeScript, five fixed JSON inputs, and two retained Hermes Python helpers.
+It replaces Python source paths with production TypeScript, eight fixed JSON inputs, and two retained Hermes Python helpers.
+The inventory includes goal guidance, holder-page guidance, and the executor schema now that these JSON files are runtime inputs.
+The Manager requires renewed human review before publication at cutover.
 The digest retains raw bytes, NUL framing, and Python path ordering. Publication still requires a source-bound human review.
 
 ## VPS mailbox shutdown admission

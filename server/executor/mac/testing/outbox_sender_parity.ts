@@ -39,7 +39,7 @@ export async function deliver(input: { root: string; replies: Record<string, (st
     notify_confirmed(receipt) {
       const row = store.lookup(receipt.submission_id);
       confirmed.push([receipt.submission_id, row === null || row.receipt_json !== null]);
-      if (store.pending_count() === 0n) finish();
+      if (store.pending_count() === 0) finish();
     },
     warn() {},
     on_failure() {},

@@ -4,7 +4,7 @@ import { CliFailure, human_error } from '../../cli/errors.ts';
 import { emit, executor_request, json } from '../../cli/http.ts';
 import { scalar_text } from '../../cli/text.ts';
 import { as_object } from '../protocol.ts';
-import { is_value_error } from '../../core/value_error.ts';
+import { ExecutorValidationError } from '../../executor/protocol_errors.ts';
 import { local_status, request } from './ipc_client.ts';
 
 export async function run_executor_command(inv: Invocation): Promise<CommandResult> {
@@ -25,7 +25,7 @@ export async function run_executor_command(inv: Invocation): Promise<CommandResu
           stderr: '',
         };
       } catch (error) {
-        if (!is_value_error(error)) throw error;
+        if (!(error instanceof ExecutorValidationError)) throw error;
         throw new CliFailure(human_error(inv.command, error.message));
       }
     }

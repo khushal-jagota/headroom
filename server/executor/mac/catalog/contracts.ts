@@ -1,5 +1,5 @@
 import type { BackendSnapshotSource } from '../../../conversation/snapshot/contracts.ts';
-import type { pack } from '../storage/journal_worker_contracts.ts';
+import type { BackendSnapshot } from '../../wire.generated.ts';
 import type { StopOptions } from '../../../lifecycle/contracts.ts';
 export interface MacCatalogDependencies {
   readonly snapshots: BackendSnapshotSource;
@@ -10,7 +10,7 @@ export interface MacCatalogDependencies {
   on_failure(error: Error): void;
 }
 export type CatalogAction =
-  | { operation: 'encode'; command_id: string; snapshot: ReturnType<typeof pack> }
+  | { operation: 'encode'; command_id: string; snapshot: BackendSnapshot | null }
   | { operation: 'open'; result: number }
   | { operation: 'close_result'; result: number }
   | { operation: 'read'; reader: number }

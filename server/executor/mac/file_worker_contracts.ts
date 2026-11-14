@@ -9,7 +9,7 @@ export interface TransferHandle {
 /** Local immutable-blob result, without wire scope, owner, or manifest fields. */
 export interface CapturedBlob {
   sha256: string;
-  byte_count: bigint;
+  byte_count: number;
   modified_ns: bigint;
 }
 export interface FileOperationArguments {
@@ -28,7 +28,7 @@ export interface FileOperationArguments {
   open_transfer: [path: string, mode: 'read' | 'write'];
   read_transfer: [handle: number, limit: number];
   write_transfer: [handle: number, bytes: Uint8Array];
-  finish_transfer: [handle: number, sha256: string, byte_count: bigint];
+  finish_transfer: [handle: number, sha256: string, byte_count: number];
   close_transfer: [handle: number, discard?: boolean];
   capture_file: [source: string, blobs: number, checked_ns: bigint];
   sweep_directory: [directory: number, path: string, keep: readonly string[]];

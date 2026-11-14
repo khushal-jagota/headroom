@@ -1,8 +1,9 @@
+import { counter } from '../logic/counters.ts';
 /** The mailbox's three run-custody participants. The caller owns their transaction. */
 import type { ReadSql, TransactionSql } from '../../core/database/contracts.ts';
 import type { ChildReference } from '../../conversation/backends/contracts.ts';
 import type { WireValue } from '../contracts.ts';
-import { ValueError, integer_value } from '../protocol.ts';
+import { ExecutorValidationError } from '../protocol.ts';
 
 export function open_child_assignment(
   sql: ReadSql,
@@ -26,15 +27,15 @@ export function prepare_command_in_transaction(
     [child.conversation_id, child.executor_incarnation, child.child_id],
   );
   if (!row || row.stop_state === 'closed')
-    throw new ValueError('Mac run no longer owns this conversation');
+    throw new ExecutorValidationError('Mac run no longer owns this conversation');
   if (command.operation === 'start' || command.operation === 'write_prompt') {
     if (
       row.stop_state !== 'open' ||
-      (command.turn !== null && integer_value(command.turn.turn_number) < BigInt(row.turn_number))
+      (command.turn !== null && (command.turn.turn_number) < counter(row.turn_number))
     )
-      throw new ValueError('Mac run cannot accept a stale or stopped delivery');
+      throw new ExecutorValidationError('Mac run cannot accept a stale or stopped delivery');
     tx.run('UPDATE mac_runs SET delivery_uncertain=1,turn_number=? WHERE conversation_id=?', [
-      command.turn === null ? BigInt(row.turn_number) : integer_value(command.turn.turn_number),
+      command.turn === null ? counter(row.turn_number) : (command.turn.turn_number),
       child.conversation_id,
     ]);
   } else if (command.operation === 'stop') {
@@ -58,7 +59,7 @@ export function record_prompt_outcome_in_transaction(
       child.conversation_id,
       child.executor_incarnation,
       child.child_id,
-      command.turn === null ? 0n : integer_value(command.turn.turn_number),
+      command.turn === null ? 0 : (command.turn.turn_number),
     ],
   );
 }

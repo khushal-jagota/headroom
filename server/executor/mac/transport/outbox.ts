@@ -7,8 +7,8 @@ import {
 } from '../../../conversation/shutdown.ts';
 import { ServerLifecycleError } from '../../../lifecycle/contracts.ts';
 import type { StopOptions } from '../../../lifecycle/contracts.ts';
-import { decode_value, encode_bounded, integer_value } from '../../protocol.ts';
-import { is_json_object } from '../../protocol_json.ts';
+import { decode_value, encode_bounded } from '../../protocol.ts';
+import { is_record as is_json_object } from '../../../core/records.ts';
 import type {
   AcceptanceReceipt,
   FileManifest,
@@ -127,7 +127,7 @@ export class MacOutboxSender {
       return;
     }
     const envelope = batch.items[reply.receipts.length]?.envelope;
-    if (!envelope || integer_value(envelope.sequence) !== integer_value(stop.sequence))
+    if (!envelope || envelope.sequence !== stop.sequence)
       throw new Error('Outbox stop is outside this batch.');
     if (stop.reason === 'retry_later') throw new RetryLater(stop.message);
     const uploaded = state.uploaded.get(envelope.submission_id) ?? new Set<string>();

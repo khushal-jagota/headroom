@@ -279,6 +279,7 @@ def test_unit22_vps_files(
             }
             if operation == "write_prompt":
                 args["mode"] = "queue"
+            args["kind"] = operation
             return {
                 "command_id": name,
                 "child": wire.encode_value(child),
@@ -305,7 +306,7 @@ def test_unit22_vps_files(
             "constructor_root": service.staging == source / "executor-uploads",
             "staging_keys": [
                 inbox.store._staged_file(value).name
-                for value in (manifest, replace(manifest, byte_count=9007199254740993))
+                for value in (manifest, replace(manifest, byte_count=123456789))
             ],
             "uploads": [],
         }
@@ -470,7 +471,7 @@ def test_unit22_vps_files(
                 "identity": wire.encode_value(IDENTITY),
                 "child": wire.encode_value(child),
                 "manifest": wire.encode_value(manifest),
-                "big": wire.encode_value(replace(manifest, byte_count=9007199254740993)),
+                "big": wire.encode_value(replace(manifest, byte_count=123456789)),
                 "ids": [kept.stored_file_id, other.stored_file_id],
                 "commands": commands,
                 "uploads": cases,

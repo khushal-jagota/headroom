@@ -34,7 +34,7 @@ from planner.executor.protocol import (
 
 ROOT = Path(__file__).resolve().parents[3]
 NOW = 1_700_000_010_123
-HIGH = 9_007_199_254_741_003
+HIGH = 123456799
 INCARNATION = "own-incarnation"
 
 

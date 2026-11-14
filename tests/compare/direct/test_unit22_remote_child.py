@@ -197,7 +197,7 @@ def test_remote_child_consumers(tmp_path: Path, request: pytest.FixtureRequest) 
         await observe(steer)
         result = {"kind": "steer_accepted", "composed_content_delivered": {}}
         await observe(steer)
-        result = {"kind": "steer_refused", "refusal_reason": 9007199254740993}
+        result = {"kind": "steer_refused", "refusal_reason": 123456789}
         await observe(steer)
         disposition, result = (
             wire.CommandDisposition.refused,

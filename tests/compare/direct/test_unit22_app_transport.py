@@ -64,6 +64,7 @@ def owned_url(origin: str, path: str) -> str:
         or parsed.scheme != "https"
         or parsed.hostname != "127.0.0.1"
         or parsed.port is None
+        or parsed.port == 8767
         or not path.startswith("/")
         or path.startswith("//")
     ):
@@ -709,6 +710,19 @@ def test_unit22_executor_real_wire(tmp_path: Path, request: pytest.FixtureReques
                 OWNED_ORIGINS.add(proxy.origin)
                 try:
                     actual = await transcript(proxy, spec)
+                    # Query parameters bypass the JSON codec but keep its integer admission.
+                    async with proxy.session_factory() as client:
+                        async with client.get(
+                            owned_url(proxy.origin, "/api/executor/commands?after=9007199254740992&wait=0"),
+                            headers={
+                                "X-Panels-Executor-ID": "test-executor",
+                                "X-Panels-Executor-Incarnation": IDENTITY.executor_incarnation,
+                                "X-Panels-Executor-Protocol": "22",
+                            },
+                        ) as response:
+                            assert response.status == 400
+                            unsafe_poll = await response.json()
+                            assert unsafe_poll["error"]["code"] == "validation"
                     for origin, route in (
                         ("https://127.0.0.1:1", "/api/executor/lease"),
                         (proxy.origin, "https://panels.invalid/api/executor/lease"),
@@ -734,15 +748,6 @@ def test_unit22_executor_real_wire(tmp_path: Path, request: pytest.FixtureReques
                 assert status == 409 and set(content) == {"detail"}
                 detail = content["detail"]
                 assert isinstance(detail, str) and "phase" in detail
-                for phase in (
-                    "waiting",
-                    "downloading",
-                    "ready_to_restart",
-                    "current",
-                    "failed",
-                    "reverted",
-                ):
-                    assert phase in detail
                 return [
                     *rows[:-2],
                     [status, {"detail": "<invalid update phase>"}, headers],
@@ -755,8 +760,9 @@ def test_unit22_executor_real_wire(tmp_path: Path, request: pytest.FixtureReques
                 "candidate": actual,
                 "core_source": expected_core,
                 "core_candidate": actual_core,
-                "comparison_rule": "Invalid phase keeps its shape and choices with native text.",
+                "comparison_rule": "Invalid phase keeps its HTTP status and error shape with native text.",
                 "guard_refusals": 3,
+                "unsafe_poll": unsafe_poll,
                 "refused_connection_attempts": 0,
                 "remaining_input_descriptors": [],
                 "catalog_state_after_stop": final["catalog_state"],

@@ -139,7 +139,7 @@ async def reference(
             "models": [
                 dict(
                     name="🦉" * 270_000,
-                    integer=9_007_199_254_741_003,
+                    integer=123456799,
                     numbers=[1.0, -0.0, 1e-7, 1e-5, 1e16],
                 )
             ]

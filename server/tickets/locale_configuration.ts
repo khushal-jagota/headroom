@@ -2,7 +2,6 @@ import type { ReadSql } from '../core/database/contracts.ts';
 import { supports_executor_versions } from '../execution_identity.ts';
 import { judge_presence } from '../executor/logic/presence.ts';
 import { read_presence } from '../executor/vps_presence_store.ts';
-import { integer_value } from '../executor/protocol.ts';
 import type { ExecutorRefusal } from '../executor/contracts.ts';
 import type { TicketLocale } from './contracts.ts';
 export const CURRENT_EXECUTION_LOCALE: TicketLocale = 'vps';
@@ -27,7 +26,7 @@ export function mac_is_present(sql: ReadSql, now_ms: number): boolean {
 }
 function _render_refusal(refusal: ExecutorRefusal): string {
   const server = refusal.server_identity;
-  const server_text = `server ${server.application_revision} (protocol ${integer_value(server.protocol_version)}, outbox ${integer_value(server.spool_format_version)})`;
+  const server_text = `server ${server.application_revision} (protocol ${server.protocol_version}, outbox ${server.spool_format_version})`;
   const peer = refusal.peer_identity;
   if (peer === null) {
     return (
@@ -37,7 +36,7 @@ function _render_refusal(refusal: ExecutorRefusal): string {
   }
   return (
     `${refusal.reason}: Mac ${peer.application_revision} ` +
-    `(protocol ${integer_value(peer.protocol_version)}, outbox ${integer_value(peer.spool_format_version)}); ` +
+    `(protocol ${peer.protocol_version}, outbox ${peer.spool_format_version}); ` +
     `${server_text}. Last contact confirmed a version mismatch.`
   );
 }

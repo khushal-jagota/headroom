@@ -1,6 +1,8 @@
-/** Project a SQLite decimal read through the shared wire integer policy. */
-import type { WireInteger } from '../wire.generated.ts';
-import { normalize_integer } from '../integers.ts';
-export function counter(decimal: string): WireInteger {
-  return normalize_integer(BigInt(decimal));
+/** SQL counters must fit the native executor number contract. */
+import { ExecutorValidationError } from '../protocol_errors.ts';
+export function counter(value: unknown): number {
+  const result = Number(value);
+  if (!Number.isSafeInteger(result))
+    throw new ExecutorValidationError('Executor counter exceeds the safe integer range');
+  return result;
 }

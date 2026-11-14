@@ -54,6 +54,8 @@ export interface AuxiliaryDatabaseOptions {
 }
 /** A frozen durable format. Existing version zero is incompatible, not a fresh store. */
 export interface DurableSidecarDatabaseOptions {
+  /** Use native numbers when the sidecar has no nanosecond metadata. */
+  safeIntegers?: boolean;
   schemaVersion: number;
   initialize(tx: TransactionSql): void;
   foreignKeys: boolean;

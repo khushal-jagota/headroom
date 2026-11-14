@@ -8,7 +8,6 @@ import { MacNativeChildren } from '../runner/start_stop.ts';
 import { MacChildAdmissionRefused } from '../runner/contracts.ts';
 import { MacCatalog } from '../catalog/index.ts';
 import { ExecutorPaths, FILE_CHUNK_BYTES } from '../configuration.ts';
-import { JsonNumber, stringify_pydantic_json } from '../../../core/http/numeric_json.ts';
 import { FilesService } from '../files.ts';
 import { decode_json } from '../../protocol.ts';
 import type { BackendChild } from '../../../conversation/backends/contracts.ts';
@@ -458,7 +457,7 @@ const catalog = new MacCatalog({
             detail: null,
             reasoning_effort_options: ['high'],
             selected_variant: null,
-            version: backend === 'codex' ? [new JsonNumber('9007199254741003')] : [],
+            version: backend === 'codex' ? [123456799] : [],
             resolved_model_id: null,
           },
         ],
@@ -471,10 +470,7 @@ const catalog = new MacCatalog({
       };
       // The snapshot domain uses number[], while the authoritative wire allows exact integers.
       // Validate that wider fixture at the shared wire door before the domain source seam.
-      return decode_json(
-        stringify_pydantic_json(snapshot),
-        'BackendSnapshot',
-      ) as unknown as BackendSnapshot;
+      return decode_json(JSON.stringify(snapshot), 'BackendSnapshot') as unknown as BackendSnapshot;
     },
   },
   stop_sources: async () => {},

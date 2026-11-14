@@ -3,7 +3,7 @@ import { BackendSpawnFailed } from '../../conversation/backends/contracts.ts';
 import { PlannerError } from '../../core/contracts.ts';
 import type { ReadSql } from '../../core/database/contracts.ts';
 import { is_sqlite_error } from '../../core/database/index.ts';
-import { ValueError } from '../../core/value_error.ts';
+import { ExecutorValidationError } from '../../executor/protocol_errors.ts';
 import { read_all_skill_sources } from '../../skills/data.ts';
 import { WORKER_ONLY_SKILL_NAMES } from '../../skills/native_publication.ts';
 import { workflow_from_row } from '../../worker_types/store.ts';
@@ -19,7 +19,7 @@ export function read_canonical_skill_snapshot(
       'SELECT workflow_json FROM tickets WHERE id = ?',
       [ticket_id],
     );
-    if (row === undefined) throw new ValueError('assigned Ticket does not exist');
+    if (row === undefined) throw new ExecutorValidationError('assigned Ticket does not exist');
     const definition = workflow_from_row(row);
     const sources = read_all_skill_sources(sql);
     const required_skill_names = [
@@ -43,7 +43,7 @@ export function read_canonical_skill_snapshot(
     validate_skill_snapshot(snapshot);
     return snapshot;
   } catch (error) {
-    if (is_sqlite_error(error) || error instanceof ValueError || error instanceof PlannerError)
+    if (is_sqlite_error(error) || error instanceof ExecutorValidationError || error instanceof PlannerError)
       throw new BackendSpawnFailed(
         `cannot read canonical skill snapshot: ${error instanceof Error ? error.message : String(error)}`,
       );

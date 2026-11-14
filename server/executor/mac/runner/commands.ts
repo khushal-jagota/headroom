@@ -9,8 +9,7 @@ import {
 import type { TurnToken as NativeTurn } from '../../../conversation/backends/contracts.ts';
 import { prefix_message_content_text } from '../../../conversation/message_content.ts';
 import { UserInputAnswer } from '../../../conversation/events.ts';
-import { as_object, ValueError } from '../../protocol.ts';
-import { integer_value, normalize_integer } from '../../integers.ts';
+import { as_object, ExecutorValidationError } from '../../protocol.ts';
 import { native_message_content as native_content } from '../../backend_events.ts';
 import type {
   AskReference,
@@ -27,8 +26,6 @@ import type { MacCommandDependencies, MacCommandWork } from './command_contracts
 import { CHILD_START_FAILED, outcome, outcome_detail, same_wire } from './logic/outcomes.ts';
 
 function native_turn(child: MacRunningChild, token: TurnToken): NativeTurn {
-  // Native adapters retain this accepted token and compare its integer with ===.
-  // Reuse that exact marker for a semantically equal steer, without a numeric conversion.
   return (
     child.active_turn !== null && same_wire(child.active_turn, token, 'TurnToken')
       ? child.active_turn
@@ -63,7 +60,7 @@ function answer_application(
           {
             answer_id: command.command_id,
             ask,
-            applied_at_mac_ms: normalize_integer(dependencies.now_ms()),
+            applied_at_mac_ms: dependencies.now_ms(),
           },
           'AnswerApplication',
         ),
@@ -80,12 +77,7 @@ async function invoke(
     case 'write_prompt': {
       if (dependencies.state.admission_stopped)
         throw new MacChildAdmissionRefused('executor is quiescing');
-      const sender_message_count = integer_value(args.sender_message_count!);
-      if (
-        sender_message_count < BigInt(Number.MIN_SAFE_INTEGER) ||
-        sender_message_count > BigInt(Number.MAX_SAFE_INTEGER)
-      )
-        throw new ValueError('sender message count exceeds the native safe-integer range');
+      const sender_message_count = args.sender_message_count!;
       const model = args.model_change == null ? child.model : args.model_change;
       const effort =
         args.reasoning_effort_change == null && !args.reasoning_effort_is_set
@@ -102,7 +94,7 @@ async function invoke(
           {
             sender_label: args.sender_label,
             sender_content: native_content(args.sender_content),
-            sender_message_count: Number(sender_message_count),
+            sender_message_count,
             mode: args.mode,
             model_change: args.model_change ?? null,
             reasoning_effort_change: args.reasoning_effort_change ?? null,
@@ -166,7 +158,7 @@ async function invoke(
         dependencies.asks.take(child.reference, args.request_id),
       );
     default:
-      throw new ValueError('unsupported child command');
+      throw new ExecutorValidationError('unsupported child command');
   }
 }
 

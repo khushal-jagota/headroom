@@ -15,7 +15,7 @@ import type {
   BackendEventSink,
   BackendEventValue,
 } from '../../../conversation/backends/contracts.ts';
-import { as_object, encode_backend_event, ValueError } from '../../protocol.ts';
+import { as_object, encode_backend_event, ExecutorValidationError } from '../../protocol.ts';
 import type { BackendEvent, ChildReference, TurnToken } from '../../wire.generated.ts';
 import type { MacEventsDependencies, MacRunnerEventsContract } from './lifecycle_contracts.ts';
 import { bounded_detail, same_wire } from './logic/outcomes.ts';
@@ -91,13 +91,13 @@ export class MacRunnerEvents implements MacRunnerEventsContract {
   ): Promise<void> {
     const child = this.dependencies.native_children.get(reference.child_id);
     if (child === null || !same_reference(child.reference, reference))
-      throw new ValueError('event from unknown child');
+      throw new ExecutorValidationError('event from unknown child');
     const state = this.dependencies.state;
     if (event instanceof PermissionAskRaised) {
-      if (turn === null) throw new ValueError('permission ask lacks turn');
+      if (turn === null) throw new ExecutorValidationError('permission ask lacks turn');
       state.install({ child: reference, turn, ask_id: event.ask.ask_id, kind: 'permission' });
     } else if (event instanceof UserInputRequested) {
-      if (turn === null) throw new ValueError('user input request lacks turn');
+      if (turn === null) throw new ExecutorValidationError('user input request lacks turn');
       state.install({
         child: reference,
         turn,

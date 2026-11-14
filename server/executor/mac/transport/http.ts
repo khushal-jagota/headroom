@@ -2,7 +2,7 @@
 import type { ExecutorIdentity } from '../../../execution_identity.ts';
 import { observe_shutdown } from '../../../conversation/shutdown.ts';
 import type { StopOptions } from '../../../lifecycle/contracts.ts';
-import { decode_bounded, encode_bounded, integer_value, ValueError } from '../../protocol.ts';
+import { decode_bounded, encode_bounded, ExecutorValidationError } from '../../protocol.ts';
 import type {
   CommandOutcomeReply,
   ItemBatch,
@@ -39,7 +39,7 @@ export class MacHttpClient {
     this.headers = Object.freeze({
       'X-Panels-Executor-ID': executor_id,
       'X-Panels-Executor-Incarnation': identity.executor_incarnation,
-      'X-Panels-Executor-Protocol': String(integer_value(identity.protocol_version)),
+      'X-Panels-Executor-Protocol': String(identity.protocol_version),
       'Accept-Encoding': 'identity',
     });
     this.sessions = new HttpSessions(this.server_url, CONNECTORS, options);
@@ -74,7 +74,7 @@ export class MacHttpClient {
     throw http_error(reply.status, reply.body);
   }
   async poll_commands(
-    after: bigint,
+    after: number,
     hold_seconds: number,
     signal: AbortSignal,
   ): Promise<Uint8Array> {
@@ -101,7 +101,7 @@ export class MacHttpClient {
       body.byte_count <= 0 ||
       body.byte_count > settings.MAX_COMMAND_OUTCOME_REPORT_BYTES
     )
-      throw new ValueError('body exceeds its size limit');
+      throw new ExecutorValidationError('body exceeds its size limit');
     const reply = await this.json({
       loop: 'outcomes',
       method: 'POST',

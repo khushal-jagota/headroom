@@ -2,7 +2,7 @@ import type { ExecutorIdentity } from '../execution_identity.ts';
 import type { ChangeSignal } from '../core/changes/index.ts';
 import type { FileHandle } from 'node:fs/promises';
 import type { Principal } from '../core/contracts.ts';
-import type { WireInteger, WireRootName, WireTypes } from './wire.generated.ts';
+import type { WireRootName, WireTypes } from './wire.generated.ts';
 export interface ExecutorRefusal extends Omit<
   WireTypes['ExecutorRefusal'],
   'server_identity' | 'peer_identity'
@@ -22,7 +22,7 @@ export interface PresenceRecord {
 }
 export interface PresenceJudgement {
   presence: 'never' | 'refused' | 'asleep' | 'present' | 'not_heard_from';
-  since_ms: WireInteger | null;
+  since_ms: number | null;
 }
 
 export interface AcceptedLease {
@@ -62,7 +62,7 @@ export interface FileOperationOptions {
 export interface InputFile {
   readonly path: string;
   readonly sha256: string;
-  readonly byte_count: WireInteger;
+  readonly byte_count: number;
   readonly chunks: AsyncIterable<Uint8Array>;
   close(): Promise<void>;
 }
@@ -85,9 +85,9 @@ export interface VpsFilesOptions {
   readonly signal: AbortSignal;
 }
 
-/** Runtime wire values preserve Python integer custody. */
+/** Runtime values share the native executor wire types. */
 export type WireValue<K extends WireRootName> = WireTypes[K];
-export type MailboxCounter = WireInteger;
+export type MailboxCounter = number;
 export const MailboxCommandState = {
   waiting: 'waiting',
   delivered: 'delivered',

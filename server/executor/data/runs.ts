@@ -1,3 +1,4 @@
+import { counter } from '../logic/counters.ts';
 /** Durable run and exact child-assignment custody. All writes use the invocation door. */
 import { BackendSpawnFailed, RetainedBackendRun } from '../../conversation/backends/contracts.ts';
 import type { ChildReference } from '../../conversation/backends/contracts.ts';
@@ -5,14 +6,9 @@ import { PlannerError } from '../../core/contracts.ts';
 import type { Database, ReadSql, TransactionSql } from '../../core/database/contracts.ts';
 import { execution_unavailable_reason } from '../../tickets/locale_configuration.ts';
 import { current_incarnation } from '../vps_presence_store.ts';
-import { ValueError } from '../protocol.ts';
-import { normalize_integer } from '../integers.ts';
+import { ExecutorValidationError } from '../protocol.ts';
 import type { WireValue } from '../contracts.ts';
-import {
-  open_child_assignment,
-  prepare_command_in_transaction,
-  record_prompt_outcome_in_transaction,
-} from './child_custody.ts';
+import { open_child_assignment, prepare_command_in_transaction, record_prompt_outcome_in_transaction } from './child_custody.ts';
 
 export class ExecutorStore {
   readonly database: Database;
@@ -41,10 +37,9 @@ export class ExecutorStore {
                 child_id: row.child_id,
                 conversation_id: row.conversation_id,
               },
-              // Retain the exact wire marker where the core's nominal type is narrower.
               turn: {
                 conversation_id: row.conversation_id,
-                turn_number: normalize_integer(BigInt(row.turn_number)),
+                turn_number: (counter(row.turn_number)),
               },
               delivery_uncertain: Boolean(row.delivery_uncertain),
               retirement_confirmed: row.stop_state === 'closed',
@@ -124,7 +119,7 @@ export class ExecutorStore {
           child.child_id,
           principal_kind,
           principal_id,
-          BigInt(turn.turn_number),
+          counter(turn.turn_number),
         ],
       );
       tx.run('INSERT INTO executor_child_assignments VALUES (?,?,?,?,?,?,NULL)', [
@@ -169,7 +164,7 @@ export function close_child_in_transaction(
       [child.conversation_id, child.executor_incarnation, child.child_id],
     )
   )
-    throw new ValueError('Mac run does not match this child');
+    throw new ExecutorValidationError('Mac run does not match this child');
   tx.run(
     "UPDATE mac_runs SET stop_state='closed' WHERE conversation_id=? AND executor_incarnation=? AND child_id=?",
     [child.conversation_id, child.executor_incarnation, child.child_id],

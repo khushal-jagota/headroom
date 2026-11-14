@@ -78,7 +78,7 @@ test('quiesce cancels a catalog probe before native dispatch and joins HTTP befo
         'LeaseReply',
       );
     }
-    async poll_commands(_after: bigint, _hold: number, signal: AbortSignal) {
+    async poll_commands(_after: number, _hold: number, signal: AbortSignal) {
       assert.equal(http_closed, false);
       signal.throwIfAborted();
       if (!this.polled) {

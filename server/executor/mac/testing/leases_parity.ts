@@ -14,9 +14,9 @@ export async function leases(input: {
     lowered: number[][] = [];
   const waiting = Array.from(
     { length: 65 },
-    (_, index) => [`conversation-${index}`, BigInt(index + 1)] as const,
+    (_, index) => [`conversation-${index}`, Number(index + 1)] as const,
   );
-  let cursor = 100n,
+  let cursor = 100,
     replaced = false,
     stopped = false;
   const options: MacLeaseOptions = {
@@ -32,7 +32,7 @@ export async function leases(input: {
       },
     },
     outbox: {
-      pending_count: () => 7n,
+      pending_count: () => 7,
       oldest_age_ms: () => 11,
       pending_conversations: () => waiting,
     },

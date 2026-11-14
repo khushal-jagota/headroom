@@ -1,3 +1,5 @@
+import { ExecutorValidationError } from '../protocol_errors.ts';
+import { counter } from '../logic/counters.ts';
 /** Immutable snapshots and bounded byte transfers, relative to retained directory inodes. */
 import { constants, fstatSync, readSync, writeSync } from 'node:fs';
 import { createHash, randomUUID } from 'node:crypto';
@@ -88,15 +90,14 @@ export function copy_hashed(
       throw error;
     }
     if (read === 0) return [digest.digest('hex'), count];
-    count += read;
+    count = counter(count + read);
     if (options.byte_limit !== undefined && count > options.byte_limit)
       throw invalid('file exceeds manifest length');
     digest.update(buffer.subarray(0, read));
     let offset = 0;
     while (offset < read) {
       const written = writeSync(outgoing, buffer, offset, read - offset, null);
-      if (!written)
-        throw Object.assign(new Error('file write made no progress'), { name: 'OSError' });
+      if (!written) throw Object.assign(new Error('file write made no progress'), { code: 'EIO' });
       offset += written;
     }
   }
@@ -232,7 +233,7 @@ export function capture_file(
   } catch (error) {
     if (
       ['ENOENT', 'ENOTDIR', 'EACCES', 'EPERM'].includes(error_code(error) ?? '') ||
-      (error as Error).name === 'ValueError'
+      error instanceof ExecutorValidationError
     )
       return null;
     throw error;
@@ -262,7 +263,7 @@ export function capture_file(
       fsync_file(outgoing);
       captured = {
         sha256,
-        byte_count: BigInt(count),
+        byte_count: count,
         modified_ns:
           checked_ns - after.mtimeNs <= BigInt(FILE_MODIFIED_WINDOW_NS) ? -1n : after.mtimeNs,
       };

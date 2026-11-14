@@ -1,31 +1,20 @@
+import { counter } from '../logic/counters.ts';
 /** Ordered receipt custody and bounded file publication through the invocation write door. */
 import { basename, dirname } from 'node:path';
+import { isDeepStrictEqual } from 'node:util';
 import type { Database, ReadSql, TransactionSql } from '../../core/database/contracts.ts';
 import { PlannerError } from '../../core/contracts.ts';
-import { stringify_python_json } from '../../core/http/numeric_json.ts';
 import type { ExecutorIdentity } from '../../execution_identity.ts';
 import type { DirectoryHandle, FileOperationOptions, WireValue } from '../contracts.ts';
 import type { FileVersion } from '../files.ts';
-import {
-  directory_descriptor,
-  file_version_at,
-  FileCleanupError,
-  verified_version,
-} from '../files.ts';
+import { directory_descriptor, file_version_at, FileCleanupError, verified_version } from '../files.ts';
 import { same_version } from '../mac/file_metadata.ts';
 import { MAX_FILES_PER_PUBLICATION_TRANSACTION } from '../configuration.ts';
-import {
-  as_object,
-  decode_json,
-  decode_value,
-  integer_value,
-  KeyError,
-  ValueError,
-} from '../protocol.ts';
+import { as_object, decode_json, decode_value, ExecutorValidationError } from '../protocol.ts';
 import { FileStaging } from '../vps_files.ts';
 import { require_current_incarnation_in_transaction } from '../vps_presence_store.ts';
 import { open_child_assignment } from './child_custody.ts';
-import { is_json_object } from '../protocol_json.ts';
+import { is_record as is_json_object } from '../../core/records.ts';
 import { artifact_changed, PublicationGroup } from './publication.ts';
 
 export type TransactionalWriter = (
@@ -75,10 +64,7 @@ function invalid(message: string): PlannerError {
   return new PlannerError('validation', message);
 }
 function record(value: WireValue<'AcceptanceReceipt'>): string {
-  return stringify_python_json(as_object(value, 'AcceptanceReceipt'), {
-    sort_keys: true,
-    compact: true,
-  });
+  return JSON.stringify(as_object(value, 'AcceptanceReceipt'));
 }
 interface InboxPosition {
   sequence: string;
@@ -137,8 +123,7 @@ export class InboxStore {
     } catch (error) {
       if (!(
         error instanceof PlannerError ||
-        error instanceof ValueError ||
-        error instanceof KeyError ||
+        error instanceof ExecutorValidationError ||
         error instanceof TypeError
       ))
         throw error;
@@ -169,7 +154,7 @@ export class InboxStore {
       [
         envelope.sender_id,
         envelope.conversation_id,
-        integer_value(envelope.sequence),
+        (envelope.sequence),
         envelope.submission_id,
         options.dispatching ? 'dispatching' : receipt.disposition,
         record(receipt),
@@ -191,9 +176,9 @@ export class InboxStore {
       'SELECT CAST(sequence AS TEXT) AS sequence,result_json FROM mac_inbox_positions WHERE sender_id=? AND conversation_id=?',
       [envelope.sender_id, envelope.conversation_id],
     );
-    if (!previous || integer_value(envelope.sequence) > BigInt(previous.sequence)) return null;
+    if (!previous || (envelope.sequence) > counter(previous.sequence)) return null;
     const stored = InboxStore.receipt(previous);
-    if (integer_value(envelope.sequence) === BigInt(previous.sequence)) {
+    if ((envelope.sequence) === counter(previous.sequence)) {
       if (stored.submission_id !== envelope.submission_id)
         throw invalid('Submission identity conflicts with its first receipt');
       return stored;
@@ -235,14 +220,10 @@ export class InboxStore {
       published.files.length !== dependencies.length ||
       published.files.some(
         (file, index) =>
-          stringify_python_json(as_object(file.manifest, 'FileManifest'), {
-            sort_keys: true,
-            compact: true,
-          }) !==
-          stringify_python_json(as_object(dependencies[index]!, 'FileManifest'), {
-            sort_keys: true,
-            compact: true,
-          }),
+          !isDeepStrictEqual(
+            as_object(file.manifest, 'FileManifest'),
+            as_object(dependencies[index]!, 'FileManifest'),
+          ),
       )
     )
       throw new Error('file dependencies must be published before their item');

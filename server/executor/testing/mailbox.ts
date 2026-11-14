@@ -3,18 +3,16 @@ import { createInterface } from 'node:readline';
 import { getEventListeners } from 'node:events';
 import type { Database, SqlValue } from '../../core/database/contracts.ts';
 import { createDatabase, createReadAccess } from '../../core/database/index.ts';
-import { JsonNumber, numeric_value, stringify_python_json } from '../../core/http/numeric_json.ts';
 import { SqliteCommandMailbox } from '../vps_mailbox.ts';
-import { encode_value, encode_bounded, ValidationError } from '../protocol.ts';
-import { parse_executor_json } from '../protocol_json.ts';
+import { encode_value, encode_bounded } from '../protocol.ts';
 import { is_shutdown_business_cancellation } from '../../conversation/shutdown.ts';
 import type { StallSource } from '../../stalls/contracts.ts';
 import * as data from '../data/mailbox.ts';
-import type { WireInteger, WireTypes } from '../wire.generated.ts';
+import type { WireTypes } from '../wire.generated.ts';
 import { MacPresenceService, no_update_check } from '../vps_presence.ts';
 import { ChangeSignal } from '../../core/changes/index.ts';
 import { UpdateConflict } from '../../environments/updates/attempts.ts';
-import { ValueError, decode_value } from '../protocol.ts';
+import { ExecutorValidationError, decode_value } from '../protocol.ts';
 import { read_presence } from '../vps_presence_store.ts';
 
 type Statement = { sql: string; values: SqlValue[] };
@@ -31,7 +29,7 @@ type Action = {
   after_put?: WireTypes['ChildCommand'];
   throw_on: string | null;
   child: WireTypes['ChildReference'];
-  turn: WireInteger;
+  turn: number;
   deadline_ms?: number;
   command: WireTypes['ChildCommand'];
   ids: string[];
@@ -82,12 +80,10 @@ changes.subscribe(() => {
     });
 });
 const scalar = (value: unknown): number => {
-  const result = numeric_value(value);
-  if (result === undefined) throw new TypeError('A control number is required');
-  return result;
+  if (typeof value !== 'number') throw new TypeError('A control number is required');
+  return value;
 };
-const parameter = (value: SqlValue): SqlValue =>
-  value instanceof JsonNumber ? (value.integer ?? value.value) : value;
+const parameter = (value: SqlValue): SqlValue => value;
 function sql(statements: Statement[]): void {
   database.write((tx) => {
     for (const statement of statements) tx.run(statement.sql, statement.values.map(parameter));
@@ -138,9 +134,7 @@ function owner(): void {
   mailbox.settled_listener = (command, result) => {
     trace.push({ id: command.command_id, result: encode_value(result, 'CommandResult') });
     if (command.command_id === throw_on) {
-      const error = new Error('fixture listener failure');
-      error.name = 'RuntimeError';
-      throw error;
+      throw new Error('fixture listener failure');
     }
   };
 }
@@ -167,7 +161,7 @@ async function timed_poll(args: unknown[], lease = false): Promise<unknown> {
       ? await presence!.accept_lease(args[0] as WireTypes['LeaseRequest'])
       : await mailbox.poll(
           args[0] as WireTypes['ExecutorIdentity'],
-          args[1] as WireInteger,
+          args[1] as number,
           scalar(args[2]),
         );
     const polled_at = performance.now();
@@ -197,7 +191,7 @@ async function timed_poll(args: unknown[], lease = false): Promise<unknown> {
 }
 async function poll_boundaries(args: unknown[]): Promise<unknown> {
   const identity = args[0] as WireTypes['ExecutorIdentity'],
-    high = args[1] as WireInteger;
+    high = args[1] as number;
   const controller = new AbortController();
   for (let index = 0; index < 5; index++) {
     await mailbox.poll(identity, high, 0.002, { signal: controller.signal });
@@ -248,9 +242,6 @@ function failure(error: unknown): Outcome {
     ok: false,
     type: error.name,
     message: error.message,
-    ...(error instanceof ValidationError
-      ? { issues: error.issues.map(({ type, loc }) => ({ type, loc })) }
-      : {}),
     ...(error instanceof AggregateError ? { errors: error.errors.map(failure) } : {}),
   };
 }
@@ -261,7 +252,7 @@ async function call(method: string, args: unknown[]): Promise<unknown> {
   const calls: Record<string, () => unknown> = {
     put: () => mailbox.put_child_command(command, options),
     model: () => mailbox.put_model_list_request(args[0] as WireTypes['ModelListRequest']),
-    poll: () => mailbox.poll(identity, args[1] as WireInteger, scalar(args[2]), options),
+    poll: () => mailbox.poll(identity, args[1] as number, scalar(args[2]), options),
     wait: () =>
       mailbox.wait_result(args[0] as string, args[1] === null ? null : scalar(args[1]), options),
     report: () => mailbox.record_results(identity, args[1] as WireTypes['CommandOutcomeReport']),
@@ -274,7 +265,7 @@ async function call(method: string, args: unknown[]): Promise<unknown> {
 function callback_error(): void {
   const kind = presence_mode;
   if (kind === 'os') throw Object.assign(new Error('fixture callback'), { code: 'EIO' });
-  if (kind === 'value') throw new ValueError('fixture callback');
+  if (kind === 'value') throw new ExecutorValidationError('fixture callback');
   if (kind === 'conflict') throw new UpdateConflict('fixture callback');
   if (kind === 'type') throw new TypeError('fixture callback');
   if (kind === 'syntax') throw new SyntaxError('fixture callback');
@@ -585,8 +576,8 @@ async function execute(action: Action): Promise<unknown> {
   }
 }
 for await (const line of createInterface({ input: process.stdin, crlfDelay: Infinity })) {
-  const action = parse_executor_json(Buffer.from(line)) as unknown as Action;
+  const action = JSON.parse(line) as unknown as Action;
   const result = await outcome(() => execute(action));
-  process.stdout.write(stringify_python_json(result, { compact: true }) + '\n');
+  process.stdout.write(JSON.stringify(result) + '\n');
   if (action.op === 'finish') break;
 }

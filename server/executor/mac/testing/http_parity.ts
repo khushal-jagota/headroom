@@ -28,6 +28,7 @@ function fixture_origin(value: string, owned: string): string {
   const parsed = new URL(value);
   if (
     parsed.hostname !== '127.0.0.1' ||
+    parsed.port === '8767' ||
     !parsed.port ||
     parsed.origin !== owned ||
     parsed.pathname !== '/' ||
@@ -38,8 +39,9 @@ function fixture_origin(value: string, owned: string): string {
   return parsed.origin;
 }
 export async function run(spec: Spec): Promise<unknown> {
-  for (const refused of ['https://example.com', 'https://127.0.0.1:9', 'https://127.0.0.1:8000'])
+  for (const refused of ['https://example.com', 'https://127.0.0.1:9', 'https://127.0.0.1:8767'])
     assert.throws(() => fixture_origin(refused, spec.owned_origin));
+  assert.throws(() => fixture_origin('https://127.0.0.1:8767', 'https://127.0.0.1:8767'));
   const origin = fixture_origin(spec.origin, spec.owned_origin);
   const options = { tls: { ca: fs.readFileSync(spec.ca) } };
   const client = new MacHttpClient(origin, 'synthetic-executor', spec.identity, options);
@@ -80,11 +82,9 @@ export async function run(spec: Spec): Promise<unknown> {
       );
     await save(
       async () =>
-        decode_bounded(
-          await client.poll_commands(9007199254740993n, 1.9, signal),
-          'MailboxPollReply',
-          { limit: 4 * 1024 * 1024 },
-        ),
+        decode_bounded(await client.poll_commands(123456789, 1.9, signal), 'MailboxPollReply', {
+          limit: 4 * 1024 * 1024,
+        }),
       'MailboxPollReply',
     );
     const report = Buffer.from(spec.roots.CommandOutcomeReport!);
@@ -122,7 +122,7 @@ export async function run(spec: Spec): Promise<unknown> {
     await files.finish_transfer(
       held,
       createHash('sha256').update(bytes).digest('hex'),
-      BigInt(bytes.length),
+      Number(bytes.length),
     );
     await files.close_transfer(held);
     assert.deepEqual(fs.readFileSync(join(moved, 'file')), bytes);
@@ -138,7 +138,7 @@ export async function run(spec: Spec): Promise<unknown> {
     await save(() =>
       transfer.download_command_file('command', 'corrupt', spec.target + '-corrupt'),
     );
-    await save(() => client.poll_commands(1n, 0, signal));
+    await save(() => client.poll_commands(1, 0, signal));
     await client.reset();
     await save(() => client.read(root('LiveReadRequest')), 'JsonObject');
   } finally {

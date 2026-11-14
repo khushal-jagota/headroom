@@ -1,13 +1,12 @@
-/** The wire and mailbox keep exact integers; core counters use native numbers. */
+/** Remote counters share the native safe-integer contract with the conversation core. */
 import type { RetainedBackendRun, TurnToken } from '../backends/contracts.ts';
-import type { WireInteger } from '../../executor/wire.generated.ts';
-import { integer_value } from '../../executor/integers.ts';
-import { ValueError } from '../../core/value_error.ts';
-export function admit_remote_integer(integer: WireInteger, field: string): number {
-  const value = integer_value(integer);
-  if (value > BigInt(Number.MAX_SAFE_INTEGER) || value < BigInt(Number.MIN_SAFE_INTEGER))
-    throw new ValueError(`${field} exceeds the safe integer range of the conversation core`);
-  return Number(value);
+import { ExecutorValidationError } from '../../executor/protocol_errors.ts';
+export function admit_remote_integer(value: number, field: string): number {
+  if (!Number.isSafeInteger(value))
+    throw new ExecutorValidationError(
+      `${field} exceeds the safe integer range of the conversation core`,
+    );
+  return value;
 }
 export function admit_remote_turn(turn: RetainedBackendRun['turn']): TurnToken {
   return {

@@ -63,7 +63,7 @@ from planner.executor.protocol import (
 )
 
 NOW = 1_700_000_010_123
-HIGH = 9_007_199_254_741_003
+HIGH = 123456799
 UPDATE_ID = "0123456789abcdef0123456789abcdef"
 
 

@@ -33,8 +33,8 @@ def inputs() -> dict[str, Any]:
     return dict(
         identity=p.as_object(mac_identity("inc")),
         child=dict(executor_incarnation="inc", child_id="child", conversation_id="conversation"),
-        turn=dict(conversation_id="conversation", turn_number=9007199254741003),
-        high=9007199254741003,
+        turn=dict(conversation_id="conversation", turn_number=123456799),
+        high=123456799,
     )
 
 

@@ -2,7 +2,6 @@ import { expect, test, vi } from 'vitest';
 import { fixture } from '../tests/ticket_fixture.ts';
 import { setup } from '../tests/conversation_core_fixture.ts';
 import { ChangeSignal } from '../core/changes/index.ts';
-import { JsonNumber } from '../core/http/numeric_json.ts';
 import { admit_remote_turn } from '../conversation/runtime/remote_turn.ts';
 import { MacPresenceService } from './vps_presence.ts';
 import { SqliteCommandMailbox } from './vps_mailbox.ts';
@@ -91,7 +90,7 @@ test('answer admission refuses an exact unsafe turn before the core callback', a
     await expect(
       runs.save_answer({
         ...answer,
-        turn: { conversation_id: 'remote', turn_number: new JsonNumber('9007199254740993') },
+        turn: { conversation_id: 'remote', turn_number: Number.MAX_SAFE_INTEGER + 1 },
       }),
     ).rejects.toThrow('Remote turn number exceeds the safe integer range');
     expect(emit).not.toHaveBeenCalled();

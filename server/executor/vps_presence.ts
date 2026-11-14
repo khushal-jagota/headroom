@@ -3,7 +3,7 @@ import type { Database } from '../core/database/contracts.ts';
 import { is_sqlite_error } from '../core/database/index.ts';
 import { PlannerError } from '../core/contracts.ts';
 import { is_os_error } from '../core/system_errors.ts';
-import { ValueError } from '../core/value_error.ts';
+import { ExecutorValidationError } from '../executor/protocol_errors.ts';
 import { UpdateConflict } from '../environments/updates/attempts.ts';
 import { observe_shutdown, is_shutdown_business_cancellation } from '../conversation/shutdown.ts';
 import { ServerLifecycleError } from '../lifecycle/contracts.ts';
@@ -35,7 +35,6 @@ import {
   MAC_AWAY_AFTER_SECONDS,
   MAC_UPDATE_SCHEMA_VERSION,
 } from './configuration.ts';
-import { integer_value, normalize_integer } from './integers.ts';
 import { decode_value } from './protocol.ts';
 import { high_sequence } from './data/mailbox.ts';
 import {
@@ -86,7 +85,7 @@ export class MacPresenceService {
   private drains_owed = false;
   private working_turns = new Map<
     string,
-    { conversation_id: string; turn_number: bigint; first_seen_ms: number; tool_running: boolean }
+    { conversation_id: string; turn_number: number; first_seen_ms: number; tool_running: boolean }
   >();
   private readonly activity_ms = new Map<string, number>();
   private readonly operations = new Set<Promise<unknown>>();
@@ -244,7 +243,7 @@ export class MacPresenceService {
       accepted_at_vps_ms: now,
       away_after_seconds: MAC_AWAY_AFTER_SECONDS,
       update: await this.check_update(),
-      mailbox_high_sequence: normalize_integer(this.database.read(high_sequence)),
+      mailbox_high_sequence: this.database.read(high_sequence),
     };
   }
   private write_lease(request: WireValue<'LeaseRequest'>) {
@@ -276,7 +275,7 @@ export class MacPresenceService {
     } catch (error) {
       if (
         !(error instanceof UpdateConflict) &&
-        !(error instanceof ValueError) &&
+        !(error instanceof ExecutorValidationError) &&
         !(error instanceof SyntaxError) &&
         !is_os_error(error)
       )
@@ -325,10 +324,7 @@ export class MacPresenceService {
     });
     await Promise.resolve();
     const base = this.get_record() ?? empty_record();
-    const contact = Math.max(
-      base.last_contact_at_ms ?? 0,
-      Number(integer_value(refusal.refused_at_ms)),
-    );
+    const contact = Math.max(base.last_contact_at_ms ?? 0, refusal.refused_at_ms);
     this.set_record({ ...base, refusal, last_contact_at_ms: contact });
     this.flushed_contact_ms = contact;
     this.schedule_presence_change();
@@ -470,11 +466,11 @@ export class MacPresenceService {
     const previous = accepted.new_incarnation ? new Map() : this.working_turns;
     const turns = new Map<
       string,
-      { conversation_id: string; turn_number: bigint; first_seen_ms: number; tool_running: boolean }
+      { conversation_id: string; turn_number: number; first_seen_ms: number; tool_running: boolean }
     >();
     for (const working of request.working_turns) {
       const conversation_id = working.turn.conversation_id;
-      const turn_number = integer_value(working.turn.turn_number);
+      const turn_number = working.turn.turn_number;
       const key = `${conversation_id}:${turn_number}`;
       turns.set(key, {
         conversation_id,

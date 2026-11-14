@@ -282,7 +282,7 @@ async def reference(root: Path, patch: pytest.MonkeyPatch) -> dict[str, Any]:
                         backend.value + "-model",
                         display_name="🦉" * 270_000 if backend.value == "codex" else None,
                         reasoning_effort_options=("high",),
-                        version=(9_007_199_254_741_003,) if backend.value == "codex" else (),
+                        version=(123456799,) if backend.value == "codex" else (),
                     ),
                 ),
                 ("high",),
