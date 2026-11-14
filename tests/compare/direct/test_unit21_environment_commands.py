@@ -388,7 +388,8 @@ def test_unit21_environment_command_function_parity(
                 and expected[index].get("thrown") in {"KeyError", "TypeError"}
             ):
                 result = actual["results"][index]
-                assert result["exit_code"] == 1 and result["stdout"] == "" and result["stderr"]
+                assert type(result["exit_code"]) is int and result["exit_code"] == 1
+                assert result["stdout"] == "" and result["stderr"]
                 native_manifest_failures.append({"case": index, "python": expected[index]})
                 expected_commands[index] = dict(exit_code=1, stdout="", stderr="")
         assert stable(actual["results"][:-1]) == stable(expected_commands[:-1])
@@ -451,7 +452,10 @@ def test_unit21_environment_command_function_parity(
         assert expected[16]["stderr"] == (
             f"Error: [Errno 13] Permission denied: {str(Path(denied.name) / 'manifest.json')!r}\n"
         )
-        assert all(result["exit_code"] == 1 for result in actual["results"][-8:-1])
+        assert all(
+            type(result["exit_code"]) is int and result["exit_code"] == 1
+            for result in actual["results"][-8:-1]
+        )
     report = request.config.getoption("compare_report_dir", default=None)
     if report:
         destination = Path(report)
