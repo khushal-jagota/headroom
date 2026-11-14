@@ -209,3 +209,31 @@ def test_interrupt_waits_for_real_installer_cleanup_through_repeated_ctrl_c(tmp_
             except subprocess.TimeoutExpired:
                 process.kill()
                 process.wait(timeout=5)
+
+
+@pytest.mark.parametrize("major", [21, 25])
+def test_install_preflight_accepts_current_node_and_refuses_old_node(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, major: int
+) -> None:
+    """Bootstrap must accept newer Node before any release download or service write."""
+    import shutil
+    import subprocess
+
+    args = bootstrap.parser().parse_args(
+        ["join", "--root", str(tmp_path / "install"), "--service", "test-executor"]
+    )
+    node = tmp_path / "node"
+    node.touch()
+    monkeypatch.setattr(shutil, "which", lambda *_: str(node))
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+
+    def run(*command: str, **kwargs: object) -> subprocess.CompletedProcess[str]:
+        output = f"v{major}.0.0" if command[-1] == "--version" else "not-found"
+        return subprocess.CompletedProcess(command, 0, stdout=output, stderr="")
+
+    monkeypatch.setattr(bootstrap, "_run", run)
+    if major < 22:
+        with pytest.raises(ValueError, match="Node.js 22 or newer"):
+            bootstrap.preflight(args, "linux")
+    else:
+        bootstrap.preflight(args, "linux")

@@ -12,7 +12,7 @@ Use a separate OS account for another instance, including an executor with a dif
 
 ## Install with one command
 
-Install Python 3.11.8 or newer and Node.js 22 first. The Mac requires macOS 15 or newer.
+Install Python 3.11.8 or newer and Node.js 22 or newer first. The Mac requires macOS 15 or newer.
 Use `/opt/homebrew/bin/node` on the Mac. Linux requires x86_64, an active systemd user manager, and user lingering.
 If lingering is absent, setup refuses before installation. Run `loginctl enable-linger "$USER"`, then repeat the command.
 The sealed release also checks its native runtime requirements before the service starts.

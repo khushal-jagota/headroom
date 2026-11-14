@@ -32,8 +32,8 @@ class DarwinRuntimeContract:
             raise ValueError("runtime requires a darwin arm64 home artifact")
         if self.minimum_os != MAC_RUNTIME_MINIMUM_OS:
             raise ValueError("unsupported Mac runtime minimum OS")
-        if type(self.node_major) is not int or self.node_major != 22:
-            raise ValueError("runtime requires host Node major 22")
+        if type(self.node_major) is not int or self.node_major < 22:
+            raise ValueError("runtime requires host Node major 22 or newer")
         if re.fullmatch(r"3\.12\.\d+", self.python_version) is None:
             raise ValueError("runtime requires a concrete CPython 3.12 patch version")
         if re.fullmatch(r"[0-9a-f]{64}", self.inventory_sha256) is None:

@@ -102,8 +102,8 @@ class RuntimeContract:
             raise RuntimeContractError("unsupported runtime operating system or architecture")
         if self.platforms != SUPPORTED_PLATFORMS:
             raise RuntimeContractError("unsupported runtime platform boundary")
-        if type(self.node_major) is not int or self.node_major != 22:
-            raise RuntimeContractError("runtime requires host Node major 22")
+        if type(self.node_major) is not int or self.node_major < 22:
+            raise RuntimeContractError("runtime requires host Node major 22 or newer")
         if fullmatch(r"3\.12\.\d+", self.python_version) is None:
             raise RuntimeContractError("runtime requires a concrete CPython 3.12 patch version")
         if fullmatch(r"[0-9a-f]{64}", self.inventory_sha256) is None:
@@ -206,9 +206,11 @@ class NodeRuntimeContract:
             raise RuntimeContractError("unsupported runtime operating system or architecture")
         if self.platforms != SUPPORTED_PLATFORMS:
             raise RuntimeContractError("unsupported runtime platform boundary")
-        if type(self.node_major) is not int or self.node_major != 22:
-            raise RuntimeContractError("runtime requires host Node major 22")
-        if self.minimum_node_version != MINIMUM_NODE_VERSION:
+        if type(self.node_major) is not int or self.node_major < 22:
+            raise RuntimeContractError("runtime requires host Node major 22 or newer")
+        if (fullmatch(r"\d+\.\d+\.\d+", self.minimum_node_version) is None
+                or tuple(map(int, self.minimum_node_version.split(".")))
+                < tuple(map(int, MINIMUM_NODE_VERSION.split(".")))):
             raise RuntimeContractError(f"runtime requires minimum Node {MINIMUM_NODE_VERSION}")
         if fullmatch(r"[0-9a-f]{64}", self.inventory_sha256) is None:
             raise RuntimeContractError("invalid runtime inventory SHA256")

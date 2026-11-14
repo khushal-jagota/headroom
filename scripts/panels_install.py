@@ -88,11 +88,12 @@ def preflight(args: argparse.Namespace, target: str) -> None:
     node = "/opt/homebrew/bin/node" if target == "darwin" else shutil.which("node")
     if node is None or not Path(node).is_file():
         raise ValueError(
-            "Install Node.js 22 before installation. On Mac use /opt/homebrew/bin/node."
+            "Install Node.js 22 or newer before installation. On Mac use /opt/homebrew/bin/node."
         )
     version = _run(node, "--version").stdout.strip()
-    if re.fullmatch(r"v22\.\d+\.\d+", version) is None:
-        raise ValueError(f"Install Node.js 22. The selected Node reports {version}.")
+    node_version = re.fullmatch(r"v(\d+)\.\d+\.\d+", version)
+    if node_version is None or int(node_version.group(1)) < 22:
+        raise ValueError(f"Install Node.js 22 or newer. The selected Node reports {version}.")
     if target == "darwin":
         if int(platform.mac_ver()[0].split(".")[0]) < 15:
             raise ValueError("Update this Mac to macOS 15 or newer.")

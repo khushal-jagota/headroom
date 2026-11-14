@@ -12,10 +12,11 @@ import shutil
 import signal
 import socket
 import subprocess
-from collections.abc import Iterator
+from collections.abc import Awaitable, Callable, Iterator
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
+from typing import cast
 
 import pytest
 
@@ -293,7 +294,7 @@ def test_failed_rollback_releases_receipt_cut(scratch: Scratch) -> None:
     result = scratch.run_installer()
     assert result.returncode == 1
     assert not barrier.exists()
-    assert "rollback_healthy" not in scratch.record()["steps"]
+    assert "rollback_healthy" not in cast(dict[str, str], scratch.record()["steps"])
 
 
 def test_trial_boot_holds_runtime_until_installer_releases_cut(
@@ -332,7 +333,7 @@ def test_trial_boot_holds_runtime_until_installer_releases_cut(
     marker_observed = threading.Event()
     signature = path_observer.path_signature
 
-    def observed_signature(path: Path):
+    def observed_signature(path: Path) -> path_observer.PathSignature:
         result = signature(path)
         if path == barrier.path:
             marker_observed.set()
@@ -429,7 +430,7 @@ def test_trial_boot_holds_runtime_until_installer_releases_cut(
                 # another lifespan or another call to the normal producer starters.
                 saves: list[bool] = []
 
-                def write_proof(target: list[bool]):
+                def write_proof(target: list[bool]) -> Callable[[], Awaitable[dict[str, bool]]]:
                     async def save() -> dict[str, bool]:
                         target.append(True)
                         return {"saved": True}
@@ -445,7 +446,8 @@ def test_trial_boot_holds_runtime_until_installer_releases_cut(
                 active_probe = running_barrier.installer_active
 
                 def record_active(
-                    identity: str, probe=active_probe, observed=live_lock_observed,
+                    identity: str, probe: Callable[[str], bool] = active_probe,
+                    observed: threading.Event = live_lock_observed,
                 ) -> bool:
                     active = probe(identity)
                     if active:
@@ -467,8 +469,9 @@ def test_trial_boot_holds_runtime_until_installer_releases_cut(
 
                     def transient_dispatch(
                         identity: str, generation: int,
-                        attempts=dispatches, recover=recover_attempt,
-                    ):
+                        attempts: list[bool] = dispatches,
+                        recover: Callable[[str, int], int | None] = recover_attempt,
+                    ) -> int | None:
                         attempts.append(True)
                         if len(attempts) == 1:
                             raise RuntimeError("injected first orphan dispatch failure")
@@ -575,7 +578,7 @@ def test_restore_child_retains_lock_then_times_out_after_parent_descriptor_close
             if child.stdout is not None:
                 child.stdout.close()
 
-    monkeypatch.setattr(installer.subprocess, "run", restore)
+    monkeypatch.setattr(subprocess, "run", restore)
     try:
         result = installer.roll_back(
             installation,
@@ -584,7 +587,7 @@ def test_restore_child_retains_lock_then_times_out_after_parent_descriptor_close
         )
         assert result == 1
         assert observations == [True]
-        assert "rollback_healthy" not in scratch.record()["steps"]
+        assert "rollback_healthy" not in cast(dict[str, str], scratch.record()["steps"])
         assert scratch.record()["state"] == "failed"
     finally:
         parent.close()

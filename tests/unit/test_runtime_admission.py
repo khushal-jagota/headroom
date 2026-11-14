@@ -67,7 +67,7 @@ def test_contract_survives_receipt_and_pinned_request_roundtrip() -> None:
     )
 
 
-@pytest.mark.parametrize("failure", ["architecture", "libc", "library", "native"])
+@pytest.mark.parametrize("failure", ["architecture", "libc", "library", "node", "native"])
 def test_host_refusal_precedes_payload_and_probe_failures_close(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -102,7 +102,7 @@ def test_host_refusal_precedes_payload_and_probe_failures_close(
     def run(command: list[str], **kwargs: object) -> str:
         commands.append(command)
         if command[-1] == "--version":
-            return "v22.0.0"
+            return "v21.0.0" if failure == "node" else "v25.8.1"
         raise AppValidationError("native failure")
 
     if failure == "library":
@@ -112,7 +112,7 @@ def test_host_refusal_precedes_payload_and_probe_failures_close(
     monkeypatch.setattr(admission, "_run_probe", run)
     with pytest.raises(AppValidationError):
         admission.admit_runtime(root, manifest)
-    assert bool(commands) == (failure == "native")
+    assert bool(commands) == (failure in {"node", "native"})
 
 
 def test_runtime_validation_and_admission_keep_credentials_out_of_candidates(
@@ -231,8 +231,9 @@ def node_report(root: Path, **changes: object) -> dict[str, object]:
     return report | changes
 
 
+@pytest.mark.parametrize("node_version", ["22.18.0", "25.8.1"])
 def test_version_2_admission_runs_the_trusted_probe_and_never_python(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, node_version: str
 ) -> None:
     """Risk: a Node release needs a .venv it lacks, runs a candidate entrypoint, or
     runs its JavaScript tools on a Node other than the resolved host Node."""
@@ -246,7 +247,7 @@ def test_version_2_admission_runs_the_trusted_probe_and_never_python(
 
     def json_probe(command: list[str], **kwargs: object) -> object:
         probes.append(command)
-        return node_report(root)
+        return node_report(root, node_version=node_version)
 
     monkeypatch.setattr(admission, "_run_json_probe", json_probe)
     def tool_probe(command: list[str], **kwargs: object) -> str:
@@ -271,7 +272,7 @@ def test_version_2_admission_runs_the_trusted_probe_and_never_python(
         {"extra": True},
         {"native": "failed"},
         {"node_version": "22.17.9"},
-        {"node_version": "24.1.0"},
+        {"node_version": "21.0.0"},
         {"loaded_libraries": ["libc.so.6"]},
         {"loaded_libraries": ["/usr/lib/node_modules/better-sqlite3/linux-x64.node"]},
         {"loaded_libraries": ["/usr/lib/x86_64-linux-gnu/libc.so.6.node"]},
@@ -335,3 +336,44 @@ def test_probe_report_is_read_whole_up_to_its_cap(
         admission._run_json_probe(
             ["/bin/sh", "-c", 'printf "%s" "$0"', long], state=tmp_path, timeout=10
         )
+
+
+@pytest.mark.parametrize("major", [21, 25])
+def test_runtime_contracts_treat_node_major_as_a_minimum(major: int) -> None:
+    """Each published contract must admit newer majors and refuse obsolete ones."""
+    from planner.platform_runtime.darwin.runtime_contracts import DarwinRuntimeContract
+
+    factories = (
+        lambda: RuntimeContract("3.12.12", "f" * 64, node_major=major),
+        lambda: NodeRuntimeContract(
+            "f" * 64, node_major=major, minimum_node_version=f"{major}.0.0"
+        ),
+        lambda: DarwinRuntimeContract("3.12.12", "f" * 64, node_major=major),
+    )
+    for factory in factories:
+        if major < 22:
+            with pytest.raises(ValueError, match="Node"):
+                factory()
+        else:
+            assert factory().node_major == major
+
+
+@pytest.mark.parametrize("major", [21, 25])
+def test_mac_host_accepts_current_node_and_refuses_old_node(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, major: int
+) -> None:
+    """The Mac host has a separate Node check from Linux admission."""
+    from planner.platform_runtime.darwin.runtime import DarwinRuntime
+    from planner.platform_runtime.darwin.runtime_contracts import DarwinRuntimeContract
+
+    contract = DarwinRuntimeContract("3.12.12", "f" * 64)
+    monkeypatch.setattr(platform, "system", lambda: "Darwin")
+    monkeypatch.setattr(platform, "machine", lambda: "arm64")
+    monkeypatch.setattr(platform, "mac_ver", lambda: ("15.0", (), ""))
+    monkeypatch.setattr(shutil, "which", lambda *_: "/synthetic/node")
+    monkeypatch.setattr(admission, "_run_probe", lambda *args, **kwargs: f"v{major}.0.0")
+    if major < 22:
+        with pytest.raises(AppValidationError, match="Node 22 or newer"):
+            DarwinRuntime().verify_host(contract, state=tmp_path)
+    else:
+        DarwinRuntime().verify_host(contract, state=tmp_path)

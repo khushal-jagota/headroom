@@ -19,7 +19,7 @@ Linux tests establish software behavior, not installed credentials, login behavi
 ## Join a new machine with one command
 
 This path installs a published runtime into a new private root. It never replaces an existing executor.
-Use macOS 15 or newer on Apple Silicon, Node 22, Xcode command-line tools, and a graphical login session.
+Use macOS 15 or newer on Apple Silicon, Node 22 or newer, Xcode command-line tools, and a graphical login session.
 The installer signs the fixed native launcher ad hoc and checks its strict signature.
 No signing certificate or keychain identity is required.
 Developer ID distribution and notarization remain separate work.
@@ -34,7 +34,7 @@ panels machine join-command "Studio Mac" --home https://HOME-ORIGIN
 
 Use the same owner command for a Linux x86_64 machine. The executor reports its host platform after credential authentication.
 On Linux, the bootstrap selects the Linux executor archive and its systemd user service.
-Linux needs Node 22 and an active systemd user manager. No native Mac tools are required.
+Linux needs Node 22 or newer and an active systemd user manager. No native Mac tools are required.
 Enable user lingering if that service must start after reboot without a login.
 
 Use the trusted HTTPS origin of this same home. Check the address before you share the credential.
