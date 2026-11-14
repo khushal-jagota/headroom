@@ -1,3 +1,4 @@
+import { is_record as object } from '../../../core/records.ts';
 import type { BackendUsageWindow, BackendUsageWindowKind } from '../contracts.ts';
 import { parse_iso_datetime } from '../../../core/clock.ts';
 import {
@@ -5,8 +6,6 @@ import {
   numeric_value,
   parse_numeric_json,
 } from '../../../core/http/numeric_json.ts';
-const object = (value: unknown): value is Record<string, unknown> =>
-  value !== null && typeof value === 'object' && !Array.isArray(value);
 export function percentage(value: unknown): number | null {
   const number = numeric_value(value);
   return number !== undefined && number >= 0 && number <= 100 ? number : null;

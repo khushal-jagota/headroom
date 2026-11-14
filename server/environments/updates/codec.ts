@@ -8,16 +8,13 @@ import type {
 } from './contracts.ts';
 import { parse_optional_runtime_contract } from './logic/runtime_contract.ts';
 import {
+  is_json_record as is_object,
   JsonNumber,
   parse_numeric_json,
   stringify_python_json,
 } from '../../core/http/numeric_json.ts';
 
-export const is_object = (value: unknown): value is Record<string, unknown> =>
-  value !== null &&
-  typeof value === 'object' &&
-  !Array.isArray(value) &&
-  !(value instanceof JsonNumber);
+export { is_json_record as is_object } from '../../core/http/numeric_json.ts';
 
 /** Python's attempt reader also accepts its JSON encoder's non-finite constants. */
 export function parse_attempt_json(source: string): unknown {

@@ -1,4 +1,5 @@
 /** The Python record's canonical JSON and legacy stored-payload decoder. */
+import { is_record } from '../../core/records.ts';
 import * as E from '../events.ts';
 import {
   AnswerFate,
@@ -12,8 +13,8 @@ import { message_content_from_stored, message_content_json_entries } from '../me
 
 type ObjectValue = Record<string, unknown>;
 function object(value: unknown, detail: string): ObjectValue {
-  if (value === null || typeof value !== 'object' || Array.isArray(value)) throw new Error(detail);
-  return value as ObjectValue;
+  if (!is_record(value)) throw new Error(detail);
+  return value;
 }
 function required(stored: ObjectValue, key: string): unknown {
   if (!(key in stored)) throw new Error(`'${key}'`);

@@ -3,7 +3,10 @@ import { lstatSync, readlinkSync } from 'node:fs';
 import { dirname, isAbsolute } from 'node:path';
 
 /** Path.resolve(strict=False) follows links before a later '..', and permits missing tails. */
-export function resolve_path_sync(path: string, options: { strict?: boolean } = {}): string {
+export function resolve_path_sync(
+  path: string,
+  options: { strict?: boolean; missing_only?: boolean } = {},
+): string {
   function walk(value: string, base: string, active: Set<string>): string {
     let current = isAbsolute(value) ? '/' : base;
     for (const part of value.split('/')) {
@@ -20,6 +23,8 @@ export function resolve_path_sync(path: string, options: { strict?: boolean } = 
       } catch (error) {
         if (options.strict) throw error;
         if (!(error instanceof Error && 'code' in error)) throw error;
+        // Lock and credential identities tolerate missing tails, not other filesystem faults.
+        if (options.missing_only && error.code !== 'ENOENT') throw error;
         current = candidate;
         continue;
       }

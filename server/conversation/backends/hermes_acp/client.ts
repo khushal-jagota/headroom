@@ -13,7 +13,8 @@ import type {
 import type * as Rpc from '../../../node_modules/@agentclientprotocol/sdk/dist/core/jsonrpc.js';
 import type * as Validators from '../../../node_modules/@agentclientprotocol/sdk/dist/v1/unstable/schema/zod.gen.js';
 import { BackendAdapterError, BackendSpawnFailed } from '../contracts.ts';
-import { spawn_codex_process, within } from '../codex_app_server/process.ts';
+import { spawn_codex_process } from '../codex_app_server/process.ts';
+import { observe_promise } from '../../../core/promise_observer.ts';
 import type { OwnedCodexProcess } from '../codex_app_server/process.ts';
 import type { ResolvedConversationStart } from '../../contracts.ts';
 import { child_environment } from './launch.ts';
@@ -227,15 +228,10 @@ export class HermesAcpClient {
   get signal(): AbortSignal {
     return this.connection.signal;
   }
-  private wait_for_permission_write<T>(promise: Promise<T>): Promise<T> {
-    let timer: ReturnType<typeof setTimeout>;
-    const timeout = new Promise<never>((_, reject) => {
-      timer = setTimeout(
-        () => reject(new Error('the permission answer did not reach the wire')),
-        ANSWER_ON_THE_WIRE_TIMEOUT_SECONDS * 1000,
-      );
-    });
-    return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
+  private async wait_for_permission_write<T>(promise: Promise<T>): Promise<T> {
+    const answer = await observe_promise(promise, ANSWER_ON_THE_WIRE_TIMEOUT_SECONDS * 1000);
+    if (!answer.completed) throw new Error('the permission answer did not reach the wire');
+    return answer.value;
   }
   private log(error: unknown): void {
     try {
@@ -480,7 +476,10 @@ export class HermesAcpLauncher {
       // stdout can still contain a final reply when the direct child exits. Let
       // the SDK drain it in order, with a bound for pipes held by descendants.
       void owned.exited.then(async () => {
-        if (!(await within(client.closed, ANSWER_ON_THE_WIRE_TIMEOUT_SECONDS)))
+        if (
+          !(await observe_promise(client.closed, ANSWER_ON_THE_WIRE_TIMEOUT_SECONDS * 1000))
+            .completed
+        )
           client.close(new Error('the backend process ended'));
       });
       void owned.output_failed.then((error) => {

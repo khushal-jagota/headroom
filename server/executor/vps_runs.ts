@@ -1,4 +1,5 @@
 /** Retained Mac children and restart recovery, with durable assignments and owned waits. */
+import { same_reference } from './child_reference.ts';
 import { randomUUID } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
 import { setTimeout as pause } from 'node:timers/promises';
@@ -13,7 +14,6 @@ import type {
 import { ConversationRoleMaterials, ResolvedConversationStart } from '../conversation/contracts.ts';
 import type { UndeliveredTurnPrompt } from '../conversation/record/contracts.ts';
 import { close_mac_interruption_of_turn } from '../conversation/deploy_interruptions/data.ts';
-import { same_reference } from '../conversation/logic/retained_turn.ts';
 import { admit_remote_integer, admit_remote_turn } from '../conversation/runtime/remote_turn.ts';
 import { observe_shutdown, is_shutdown_business_cancellation } from '../conversation/shutdown.ts';
 import type { Database } from '../core/database/contracts.ts';

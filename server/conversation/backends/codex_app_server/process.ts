@@ -4,6 +4,7 @@ import type { OwnedChildProcesses } from '../../../lifecycle/contracts.ts';
 import type { WorkerUnit } from '../../worker_unit/index.ts';
 import { CHILD_KILL_WAIT_SECONDS, CHILD_SHUTDOWN_GRACE_SECONDS } from './configuration.ts';
 import { CodexChildWouldNotStart } from './errors.ts';
+import { observe_promise } from '../../../core/promise_observer.ts';
 
 export interface CodexProcessOptions {
   child_processes: OwnedChildProcesses;
@@ -13,6 +14,11 @@ export interface CodexProcessOptions {
   /** A preflight receives EOF without changing the main child's piped stream API. */
   close_stdin?: boolean;
 }
+interface ProcessStopOptions {
+  grace_seconds?: number;
+  kill_wait_seconds?: number;
+  preserve_output?: boolean;
+}
 export class OwnedCodexProcess {
   readonly child: ChildProcessWithoutNullStreams;
   readonly exited: Promise<void>;
@@ -20,6 +26,7 @@ export class OwnedCodexProcess {
   private output_failure: Error | null = null;
   private reaped: boolean;
   private stop_task: Promise<void> | null = null;
+  private signal_sent = false;
   constructor(child: ChildProcessWithoutNullStreams) {
     this.child = child;
     this.reaped = child.exitCode !== null || child.signalCode !== null;
@@ -55,56 +62,52 @@ export class OwnedCodexProcess {
   get output_error(): Error | null {
     return this.output_failure;
   }
-  stop(): Promise<void> {
+  get killed(): boolean {
+    return this.child.killed || this.signal_sent;
+  }
+  stop(options: ProcessStopOptions = {}): Promise<void> {
     if (this.stop_task !== null) return this.stop_task;
-    const task = this.stop_group();
+    const task = this.stop_group(options);
     this.stop_task = task;
     void task.catch(() => {
       this.stop_task = null;
     });
     return task;
   }
-  private signal_group(signal: NodeJS.Signals): void {
+  signal(signal: NodeJS.Signals | number = 'SIGTERM'): boolean {
     const pid = this.child.pid;
     // After the leader is reaped, its numeric PID/PGID can belong to another process.
-    if (
-      pid === undefined ||
-      this.reaped ||
-      this.child.exitCode !== null ||
-      this.child.signalCode !== null
-    )
-      return;
+    if (this.reaped || this.child.exitCode !== null || this.child.signalCode !== null) return false;
     try {
-      process.kill(process.platform === 'win32' ? pid : -pid, signal);
+      const sent =
+        process.platform === 'win32' || pid === undefined
+          ? this.child.kill(signal)
+          : process.kill(-pid, signal);
+      this.signal_sent ||= sent;
+      return sent;
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== 'ESRCH') throw error;
+      if ((error as NodeJS.ErrnoException).code === 'ESRCH') return false;
+      throw error;
     }
   }
-  private async stop_group(): Promise<void> {
+  private async stop_group({
+    grace_seconds = CHILD_SHUTDOWN_GRACE_SECONDS,
+    kill_wait_seconds = CHILD_KILL_WAIT_SECONDS,
+    preserve_output = false,
+  }: ProcessStopOptions): Promise<void> {
     this.child.stdin.end();
-    this.signal_group('SIGTERM');
-    if (!(await within(this.exited, CHILD_SHUTDOWN_GRACE_SECONDS))) {
-      this.signal_group('SIGKILL');
-      if (!(await within(this.exited, CHILD_KILL_WAIT_SECONDS)))
-        throw new CodexChildWouldNotStart('the codex process did not exit after SIGKILL');
+    this.signal('SIGTERM');
+    if (!(await observe_promise(this.exited, grace_seconds * 1000)).completed) {
+      this.signal('SIGKILL');
+      if (!(await observe_promise(this.exited, kill_wait_seconds * 1000)).completed)
+        throw new Error('Child process termination remains unconfirmed');
     }
     // Never signal a retired group, even if descendants still hold output pipes.
-    this.child.stdout.destroy();
-    this.child.stderr.destroy();
+    if (!preserve_output) {
+      this.child.stdout.destroy();
+      this.child.stderr.destroy();
+    }
     this.child.stdin.destroy();
-  }
-}
-export async function within(task: Promise<unknown>, seconds: number): Promise<boolean> {
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  try {
-    return await Promise.race([
-      task.then(() => true),
-      new Promise<boolean>((resolve) => {
-        timer = setTimeout(() => resolve(false), seconds * 1000);
-      }),
-    ]);
-  } finally {
-    clearTimeout(timer);
   }
 }
 export async function spawn_codex_process(

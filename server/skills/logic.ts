@@ -1,4 +1,5 @@
 import { isMap, parseDocument } from 'yaml';
+import { is_record } from '../core/records.ts';
 import { PlannerError } from '../core/contracts.ts';
 import type { ManagedSkill, SkillPatch } from './contracts.ts';
 function fail(message: string, detail: Record<string, unknown> = {}): never {
@@ -16,7 +17,7 @@ export function skill_description(text: string, expected_skill_name: string): st
   const doc = parseDocument(lines.join(''), { uniqueKeys: false, version: '1.1' });
   if (doc.errors.length) fail('skill frontmatter is invalid', { skill_name: expected_skill_name });
   const value: unknown = doc.toJS();
-  if (!value || typeof value !== 'object' || Array.isArray(value))
+  if (!is_record(value))
     fail('skill frontmatter must be a mapping', { skill_name: expected_skill_name });
   const data = value as Record<string, unknown>;
   if (data.name !== expected_skill_name)

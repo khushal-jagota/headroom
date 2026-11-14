@@ -1,6 +1,7 @@
 /** Codex inherits the account environment. A copied rotating credential is refused. */
 import { readlinkSync, realpathSync } from 'node:fs';
 import { basename, dirname, join, resolve } from 'node:path';
+import { copy_environment } from '../../../core/environment.ts';
 import { CodexLoginIsDuplicated } from './errors.ts';
 import { codex_home, logins_hold_the_same_credential } from './login.ts';
 
@@ -10,11 +11,7 @@ export function child_environment(
     identity?: readonly (readonly [string, string])[];
   } = {},
 ): Record<string, string> {
-  const environment = Object.fromEntries(
-    Object.entries(process.env).filter(
-      (entry): entry is [string, string] => entry[1] !== undefined,
-    ),
-  );
+  const environment = copy_environment(process.env);
   Object.assign(environment, Object.fromEntries(options.overrides ?? []));
   Object.assign(environment, Object.fromEntries(options.identity ?? []));
   refuse_a_duplicated_codex_login(environment);

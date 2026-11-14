@@ -1,7 +1,8 @@
 /** Linux evidence proves a readable owner, not authorship or hidden socket holders. */
 import { execFile } from 'node:child_process';
 import { readFile, readdir, readlink, realpath, stat, opendir } from 'node:fs/promises';
-import { isAbsolute, join, relative, resolve, sep } from 'node:path';
+import { join, resolve } from 'node:path';
+import { path_is_within } from '../core/path_containment.ts';
 import { setTimeout as delay } from 'node:timers/promises';
 import * as config from './config.ts';
 import { PreviewError, type ProcessIdentity } from './contracts.ts';
@@ -65,8 +66,7 @@ export class LinuxProcessInspector {
       if (value === undefined || !/^\d+$/.test(value)) throw new Error('Invalid process ticks');
       ticks = Number(value);
       const cwd = await realpath(join(root, 'cwd'));
-      const inside = relative(worktree, cwd);
-      if (inside === '..' || inside.startsWith(`..${sep}`) || isAbsolute(inside)) {
+      if (!path_is_within(worktree, cwd)) {
         throw new Error('Outside worktree');
       }
     } catch {
