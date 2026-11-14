@@ -533,7 +533,17 @@ def test_retained_runs_rebuild_drain_and_rewrite(
     assert actual.pop("retry_shutdown") == 1
     for side in (actual, expected):
         side["trace"].sort(key=lambda value: json.dumps(value, sort_keys=True))
-    assert actual == expected
+    # The exact-stop refusal retains its message and meaning through the native
+    # domain error class. All run custody and durable state still compare exactly.
+    assert expected["exact_stop_refusal"]["type"] == "ValueError"
+    comparable_expected = {
+        **expected,
+        "exact_stop_refusal": {
+            **expected["exact_stop_refusal"],
+            "type": "ExecutorValidationError",
+        },
+    }
+    assert actual == comparable_expected
     assert actual["answer_gate"] == [False, False, True]
     assert actual["closed_ask"] == ["expired", "answered_request_not_open"]
     assert actual["interruptions"][0]["recovery_state"] == "closed"

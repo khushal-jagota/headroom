@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import os
 import signal
 import sqlite3
+import struct
 import subprocess
 import time
 from dataclasses import replace
@@ -50,6 +52,29 @@ def encoded(kind: Any, value: Any) -> bytes:
     return type_adapter(kind).dump_json(value)
 
 
+def semantic_digest(raw: bytes) -> str:
+    """Compare JSON values without retaining Python number spelling or key order."""
+
+    def value(item: Any) -> Any:
+        if item is None:
+            return ["null"]
+        if isinstance(item, bool):
+            return ["boolean", item]
+        if isinstance(item, (int, float)):
+            return ["number", struct.pack(">d", 0.0 if item == 0 else item).hex()]
+        if isinstance(item, str):
+            return ["string", item]
+        if isinstance(item, list):
+            return ["array", [value(child) for child in item]]
+        return [
+            "object",
+            [[key, value(item[key])] for key in sorted(item, key=lambda k: k.encode())],
+        ]
+
+    document = json.dumps(value(json.loads(raw)), ensure_ascii=False, separators=(",", ":"))
+    return hashlib.sha256(document.encode()).hexdigest()
+
+
 def command(command_id: str, sequence: int, child: str = "a", stop: bool = False) -> MailboxCommand:
     c = _command(command_id, sequence, "stop" if stop else "write_prompt")
     assert c.child_command is not None
@@ -61,7 +86,6 @@ def performance_spec(journal: CommandJournal) -> dict[str, Any]:
     """Reuse the same populated journal for canonical expansion and report boundaries."""
     raw = json.loads(type_adapter(MailboxCommand).dump_json(command("performance", 15)))
     raw.pop("model_list_request")
-    raw["child_command"]["arguments"].pop("kind")
     text_bytes = (
         4 * 1024 * 1024
         - len(json.dumps({"commands": [raw]}, separators=(",", ":")).encode())
@@ -73,6 +97,7 @@ def performance_spec(journal: CommandJournal) -> dict[str, Any]:
     canonical = type_adapter(MailboxCommand).dump_json(decoded.commands[0])
     journal.record_poll_reply(decoded, "inc")
     reports = []
+    report_meanings = []
     for sequence, size in enumerate((4 * 1024 * 1024 - 4096, 4 * 1024 * 1024 + 4096), 16):
         identifier = f"size-{sequence}"
         c = MailboxCommand(
@@ -82,15 +107,17 @@ def performance_spec(journal: CommandJournal) -> dict[str, Any]:
         result = CommandResult(identifier, model_list={"text": "x" * size})
         journal.finish(identifier, result, outputs_owed=False)
         report = MacResultReporter(cast(MacHttpClient, None), journal)._report()
-        reports.append(
-            _digest(type_adapter(CommandOutcomeReport).dump_json(CommandOutcomeReport(report)))
-        )
+        body = type_adapter(CommandOutcomeReport).dump_json(CommandOutcomeReport(report))
+        reports.append(_digest(body))
+        report_meanings.append(semantic_digest(body))
         journal.mark_reported((identifier,))
     return dict(
         poll=poll.decode(),
         raw_poll_bytes=len(poll),
         canonical_command=_digest(canonical),
+        canonical_meaning=semantic_digest(canonical),
         reports=reports,
+        report_meanings=report_meanings,
     )
 
 
@@ -336,6 +363,9 @@ async def reference(
         await closing
         stored = journal.result_of("shutdown")
         assert stored is not None
+        stored_body = type_adapter(CommandResult).dump_json(stored)
+        assert len(stored_body) > 1024 * 1024
+        spec["shutdown_result_wire"] = _digest(stored_body)
         journal.mark_reported(("shutdown",))
         journal.record_poll_reply(reply(commands["committed"], commands["committed-later"]), "inc")
         journal.close()
@@ -368,7 +398,7 @@ async def reference(
             catalog_reads=catalog_reads,
             reports=reports,
             stop_waited=stop_waited,
-            shutdown_result=_digest(type_adapter(CommandResult).dump_json(stored)),
+            shutdown_result=semantic_digest(stored_body),
         ), spec
     finally:
         release.set()
@@ -447,9 +477,11 @@ def test_unit22_mac_mailbox_scripted_flow(
     assert expected["retry_delays"] and all(expected["retry_delays"].values())
     assert expected["replays"] == ["duplicate"] and len(expected["reports"]) == 5
     assert observed["aggregate_shutdown"] and all(observed["aggregate_shutdown"].values())
-    assert observed["performance"]["canonical_command"] == spec["performance"]["canonical_command"]
-    assert observed["performance"]["reports"] == spec["performance"]["reports"]
+    assert observed["performance"]["canonical_meaning"] == spec["performance"]["canonical_meaning"]
+    assert observed["performance"]["report_meanings"] == spec["performance"]["report_meanings"]
     assert observed["performance"]["canonical_command"][0] > spec["performance"]["raw_poll_bytes"]
+    for reports in (observed["performance"]["reports"], spec["performance"]["reports"]):
+        assert reports[0][0] < 4 * 1024 * 1024 < reports[1][0]
     destination = request.config.getoption("--compare-report-dir")
     if destination:
         output = Path(destination)
@@ -460,5 +492,10 @@ def test_unit22_mac_mailbox_scripted_flow(
             equal=True,
             elapsed_seconds=time.perf_counter() - started,
             reference_retry_seconds=spec["reference_retry_seconds"],
+            reference_wire_evidence={
+                "shutdown_result": spec["shutdown_result_wire"],
+                "canonical_command": spec["performance"]["canonical_command"],
+                "reports": spec["performance"]["reports"],
+            },
         )
         (output / "unit-22-mac-mailbox.json").write_text(json.dumps(report, indent=2))

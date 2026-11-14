@@ -8,13 +8,9 @@ import {
 import { ServerLifecycleError } from '../../../lifecycle/contracts.ts';
 import type { StopOptions } from '../../../lifecycle/contracts.ts';
 import { decode_value, encode_bounded } from '../../protocol.ts';
+import { file_manifest_key as manifest_key } from '../../file_manifest.ts';
 import { is_record as is_json_object } from '../../../core/records.ts';
-import type {
-  AcceptanceReceipt,
-  FileManifest,
-  ItemBatch,
-  ItemBatchReply,
-} from '../../wire.generated.ts';
+import type { AcceptanceReceipt, ItemBatch, ItemBatchReply } from '../../wire.generated.ts';
 import type { OutboxStore } from '../storage/outbox.ts';
 import { row_envelope } from '../storage/envelopes.ts';
 import {
@@ -42,8 +38,6 @@ export interface OutboxSenderOptions {
   readonly on_failure: (error: unknown) => void;
 }
 class RetryLater extends Error {}
-const manifest_key = (manifest: FileManifest) =>
-  Buffer.from(encode_bounded(manifest, 'FileManifest')).toString();
 
 export class MacOutboxSender {
   private readonly options: OutboxSenderOptions;

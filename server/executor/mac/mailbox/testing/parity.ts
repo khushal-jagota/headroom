@@ -63,6 +63,26 @@ const request_bytes = (reader: CanonicalReader) =>
     async close() {}, // The reporter retains its actual reader through feedback and close.
   });
 const digest = (raw: Buffer) => [raw.length, createHash('sha256').update(raw).digest('hex')];
+function semantic_digest(raw: Buffer): string {
+  const value = (item: unknown): unknown => {
+    if (item === null) return ['null'];
+    if (typeof item === 'number') {
+      const number = Buffer.alloc(8);
+      number.writeDoubleBE(item || 0);
+      return ['number', number.toString('hex')];
+    }
+    if (typeof item === 'string' || typeof item === 'boolean') return [typeof item, item];
+    if (Array.isArray(item)) return ['array', item.map(value)];
+    return [
+      'object',
+      Object.entries(item as Record<string, unknown>)
+        .sort(([a], [b]) => Buffer.compare(Buffer.from(a), Buffer.from(b)))
+        .map(([key, child]) => [key, value(child)]),
+    ];
+  };
+  const document = JSON.stringify(value(JSON.parse(raw.toString())));
+  return createHash('sha256').update(document).digest('hex');
+}
 async function drain(cursor: Awaited<ReturnType<AsyncCommandJournal['record_poll_reply']>>) {
   let last: Buffer | undefined;
   try {
@@ -123,7 +143,7 @@ export async function mailbox_parity(input: Input): Promise<unknown> {
     next = now + 10;
     rss = Math.max(rss, process.memoryUsage().rss);
   }, 10);
-  let observations: unknown, performance_proof: unknown;
+  let observations: unknown, performance_proof: unknown, shutdown_result_wire: unknown;
   let aggregate_shutdown: Record<string, boolean> = {};
   const debug = console.debug,
     cancellation_debug: unknown[][] = [];
@@ -361,6 +381,9 @@ export async function mailbox_parity(input: Input): Promise<unknown> {
     if (!stored) throw new Error('Admitted model result was lost');
     if (owner_closes !== 2) throw new Error('Catalog canonical owners did not close exactly once');
     if (fault) throw fault;
+    const stored_body = await bytes(stored);
+    if (stored_body.length <= 1024 * 1024) throw new Error('Large admitted result was truncated');
+    shutdown_result_wire = digest(stored_body);
     observations = {
       planned_blocked,
       second_not_started,
@@ -377,7 +400,7 @@ export async function mailbox_parity(input: Input): Promise<unknown> {
       catalog_reads,
       reports,
       stop_waited,
-      shutdown_result: digest(await bytes(stored)),
+      shutdown_result: semantic_digest(stored_body),
     };
     // Reuse the same worker for the TS aggregate's own stop/preparation boundary.
     phase = 'aggregate-shutdown';
@@ -561,6 +584,7 @@ export async function mailbox_parity(input: Input): Promise<unknown> {
     const encoding_ms = performance.now() - encoding_started;
     await new Promise<void>((resolve) => setTimeout(resolve, 0));
     const performance_reports = [],
+      report_meanings = [],
       selection_ms = [];
     for (const [index, size] of [4 * 1024 * 1024 - 4096, 4 * 1024 * 1024 + 4096].entries()) {
       phase = index === 0 ? 'near-limit-report' : 'oversized-report';
@@ -577,18 +601,22 @@ export async function mailbox_parity(input: Input): Promise<unknown> {
       selection_ms.push(performance.now() - started_selection);
       if (!selected || selected.command_ids.join() !== id)
         throw new Error('Report selection lost singleton');
-      performance_reports.push(digest(await bytes(selected.body)));
+      const report_body = await bytes(selected.body);
+      performance_reports.push(digest(report_body));
+      report_meanings.push(semantic_digest(report_body));
       await journal.report_feedback(selected.selection, [id]);
     }
     performance_proof = {
       raw_poll_bytes: poll_bytes.length,
       canonical_command: digest(canonical),
+      canonical_meaning: semantic_digest(canonical),
       decoded_delivery_ms: poll_ms,
       canonical_evidence_ms: encoding_ms,
       recovery_ms,
       owned_cleanup_ms,
       selection_ms,
       reports: performance_reports,
+      report_meanings,
     };
   } finally {
     for (const release of release_on_exit) release();
@@ -609,6 +637,7 @@ export async function mailbox_parity(input: Input): Promise<unknown> {
     observations,
     aggregate_shutdown,
     performance: performance_proof,
+    wire_evidence: { shutdown_result: shutdown_result_wire },
     stats: {
       elapsed_seconds: (performance.now() - started) / 1000,
       samples: delays.length,
