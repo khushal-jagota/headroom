@@ -3,6 +3,7 @@ import { createHash } from 'node:crypto';
 import { constants, createReadStream } from 'node:fs';
 import { access, lstat, readdir, readFile, readlink, stat } from 'node:fs/promises';
 import { dirname, extname, join, relative, sep } from 'node:path';
+import { isDeepStrictEqual } from 'node:util';
 import { path_is_within } from '../../core/path_containment.ts';
 import type { AppManifest, AppValidationOptions, RuntimeContract } from './contracts.ts';
 import { AppValidationError } from './contracts.ts';
@@ -15,9 +16,8 @@ import {
   SHARED_RUNTIME_FILES,
 } from './configuration.ts';
 import { expand_path, resolved_path } from '../paths.ts';
-import { parse_attempt_json } from '../updates/codec.ts';
 import { parse_optional_runtime_contract } from '../updates/logic/runtime_contract.ts';
-import { manifest_identity, python_json_equal } from './logic/manifest.ts';
+import { manifest_identity } from './logic/manifest.ts';
 export { validate_app_sha } from './logic/manifest.ts';
 
 function missing(error: unknown): boolean {
@@ -127,9 +127,7 @@ async function validate_runtime_tree(root: string, node: boolean): Promise<void>
       throw new AppValidationError(`runtime file is missing: ${name}`);
 }
 function decode(bytes: Uint8Array): unknown {
-  return parse_attempt_json(
-    new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(bytes),
-  );
+  return JSON.parse(new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(bytes));
 }
 export async function validate_app_manifest(
   path: string,
@@ -180,7 +178,7 @@ export async function validate_app_manifest(
   try {
     contract = parse_optional_runtime_contract(value.runtime_contract);
     if (contract !== null) {
-      if (!python_json_equal(decode(await readFile(join(root, RUNTIME_CONTRACT_PATH))), contract))
+      if (!isDeepStrictEqual(decode(await readFile(join(root, RUNTIME_CONTRACT_PATH))), contract))
         throw new Error('manifest runtime contract differs from payload');
       const inventory = await readFile(join(root, RUNTIME_INVENTORY_PATH));
       if (createHash('sha256').update(inventory).digest('hex') !== contract.inventory_sha256)

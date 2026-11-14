@@ -834,9 +834,10 @@ def test_unit21_release_identity_archive_and_frontier(
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(name)
     (app / "directory-alias").symlink_to("a", target_is_directory=True)
-    # Python compares payload JSON values, not JSON number kinds or Boolean identity.
+    # Native equality distinguishes true from 1; keep the version numeric.
+    # Whole-valued 22.0 retains the native integer/float spelling case.
     payload = json.loads((app / "runtime/contract.json").read_text())
-    payload.update(version=True, node_major=22.0)
+    payload["node_major"] = 22.0
     (app / "runtime/contract.json").write_text(json.dumps(payload))
     rewrite_artifact_digest(app)
     for path in app.rglob("*"):

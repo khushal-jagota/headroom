@@ -2,7 +2,6 @@ import type { Tone } from '../contracts.ts';
 import { calendar_parts, with_calendar_iso } from '../calendar.ts';
 import type { ChartBlock, MeasureValue } from '../../../web/src/lib/goals/contracts.ts';
 import { calendar_date } from '../../measures/logic/dates.ts';
-import { python_sum } from '../../measures/logic/sum.ts';
 import { numeric_projection } from '../category_contracts.ts';
 import type { ChartInput } from '../category_contracts.ts';
 export function goal_status(completed: boolean, deadline: string | null, today: string): Tone {
@@ -79,7 +78,9 @@ export function chart_summary(
   if (chart.stacked || chart.kind === 'allocation') {
     const parts = categories.filter((key) => key !== 'target').map((key) => latest[key] ?? null);
     return [
-      parts.length && !parts.includes(null) ? python_sum(parts as number[]) : null,
+      parts.length && !parts.includes(null)
+        ? (parts as number[]).reduce((total, value) => total + value, 0)
+        : null,
       latest.target ?? null,
     ];
   }
@@ -91,8 +92,8 @@ export function chart_summary(
       .map((point) => point.target)
       .filter((value): value is number => value !== null && value !== undefined);
     return [
-      actuals.length ? python_sum(actuals) : null,
-      targets.length ? python_sum(targets) : null,
+      actuals.length ? actuals.reduce((total, value) => total + value, 0) : null,
+      targets.length ? targets.reduce((total, value) => total + value, 0) : null,
     ];
   }
   let value = latest.actual ?? null;

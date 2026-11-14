@@ -23,6 +23,7 @@ import {
 } from 'node:fs';
 import type { Stats } from 'node:fs';
 import { dirname, isAbsolute, join, posix } from 'node:path';
+import { isDeepStrictEqual } from 'node:util';
 import { inside } from '../../files/logic/paths.ts';
 import { is_os_error } from '../../core/system_errors.ts';
 import { assert_installer_path } from '../updates/installer/configuration.ts';
@@ -30,7 +31,7 @@ import type { InstallerRequest } from '../updates/installer/contracts.ts';
 import { replace_existing_json } from '../updates/attempts.ts';
 import { is_object } from '../updates/codec.ts';
 import { parse_optional_runtime_contract } from '../updates/logic/runtime_contract.ts';
-import { manifest_identity, python_json_equal, validate_app_sha } from './logic/manifest.ts';
+import { manifest_identity, validate_app_sha } from './logic/manifest.ts';
 import { assert_release_execution } from './process.ts';
 import { AppValidationError } from './contracts.ts';
 import type {
@@ -392,7 +393,7 @@ function verify(root: string, files: readonly InstallerRecipeEntry[], fence: () 
   for (const expected of files) {
     fence();
     const actual = entry_for(root, expected.path);
-    if (!python_json_equal(actual, expected))
+    if (!isDeepStrictEqual(actual, expected))
       fail('installer recipe bytes, mode or link changed: ' + expected.path);
   }
 }
@@ -493,11 +494,11 @@ export function copy_installer_runtime(
   const metadata = native_metadata(root);
   if (
     !is_object(manifest) ||
-    !python_json_equal(manifest.runtime_contract, read_json(root, RUNTIME_CONTRACT_PATH)) ||
+    !isDeepStrictEqual(manifest.runtime_contract, read_json(root, RUNTIME_CONTRACT_PATH)) ||
     metadata.hash !== recipe.runtime_inventory_sha256
   )
     fail('installer recipe identity or inventory changed');
-  if (!python_json_equal(recipe, selected_recipe(root, recipe.source_sha, fence)))
+  if (!isDeepStrictEqual(recipe, selected_recipe(root, recipe.source_sha, fence)))
     fail('installer recipe does not match the complete selected closure');
   const data = root_path(request.data_directory),
     attempt = join(data, 'update-installer-' + request.attempt_id);

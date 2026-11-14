@@ -5,7 +5,7 @@ import { dirname, join } from 'node:path';
 import { expect, test } from 'vitest';
 import { ChildProcesses } from '../lifecycle/owned_processes.ts';
 import { publication_git } from '../environments/release/publication_identity.ts';
-import { check_head_review, contract_digest, REVIEW_PATH } from './check.ts';
+import { check, check_head_review, contract_digest, REVIEW_PATH } from './check.ts';
 import { MINIMUM_SUPPORTED_BUILD } from './policy.ts';
 
 test('publication accepts the committed reviewer and refuses a job-edited review', async () => {
@@ -39,7 +39,15 @@ test('publication accepts the committed reviewer and refuses a job-edited review
       evidence: 'Private committed-review fixture only, without publication or device approval.',
     };
     await mkdir(dirname(join(root, REVIEW_PATH)), { recursive: true });
+    await writeFile(
+      join(root, REVIEW_PATH),
+      JSON.stringify({ ...review, oldest_supported_build: true }) + '\n',
+    );
+    await expect(check(root)).rejects.toThrow(
+      "Review must name the policy's oldest supported build.",
+    );
     await writeFile(join(root, REVIEW_PATH), JSON.stringify(review) + '\n');
+    await check(root);
     await publication_git(root, ['init', '--template='], execution);
     await publication_git(root, ['add', '.'], execution);
     await publication_git(

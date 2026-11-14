@@ -532,7 +532,7 @@ export class CodexAppServerClient {
       throw new CodexRequestRejected(
         method,
         object(error) ? (numeric_value(error.code) ?? null) : null,
-        object(error) ? String(error.message ?? 'None') : String(error),
+        object(error) ? String(error.message) : String(error),
         object(error) ? error.data : null,
         { request_id: String(numeric_value(reply.id) ?? reply.id) },
       );

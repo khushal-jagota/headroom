@@ -4,6 +4,7 @@ import { createHash } from 'node:crypto';
 import { closeSync, constants, fsyncSync, openSync, readFileSync, statSync } from 'node:fs';
 import { mkdir, mkdtemp, open, rename, rm } from 'node:fs/promises';
 import { join } from 'node:path';
+import { isDeepStrictEqual } from 'node:util';
 import yauzl from 'yauzl';
 import type { ZipFile } from 'yauzl';
 import { inspect_mac_archive } from '../../release/archive.ts';
@@ -12,7 +13,6 @@ import {
   MacArchiveInspectionUnsettled,
 } from '../../release/contracts.ts';
 import { numeric_kind, numeric_value } from '../../../core/http/numeric_json.ts';
-import { python_json_equal } from '../../release/logic/manifest.ts';
 import { atomic_write_json, missing, UpdateConflict } from '../attempts.ts';
 import { attempt_to_dict, is_object, parse_attempt, parse_attempt_json } from '../codec.ts';
 import type { PublishedUpdate, UpdateAttempt } from '../contracts.ts';
@@ -206,7 +206,7 @@ export class MacUpdateService implements MacUpdateServiceContract {
     const { manifest, python, node, entrypoint } = inspected;
     if (
       !is_object(manifest) ||
-      !python_json_equal(manifest.schema_version, 1) ||
+      numeric_value(manifest.schema_version) !== 1 ||
       manifest.application_revision !== release.manifest.app_sha ||
       manifest.platform !== 'darwin' ||
       manifest.architecture !== 'arm64' ||
@@ -471,12 +471,12 @@ export class MacUpdateService implements MacUpdateServiceContract {
       (!target.activate ||
         identity === null ||
         identity.application_revision !== target.application_revision ||
-        !python_json_equal(leased, identity))
+        !isDeepStrictEqual(leased, identity))
     )
       throw new UpdateConflict('The target Mac runtime is not the present, leased one.');
     if (
       report.phase === 'ready_to_restart' &&
-      (identity === null || !python_json_equal(leased, identity))
+      (identity === null || !isDeepStrictEqual(leased, identity))
     )
       throw new UpdateConflict('The Mac stop report does not match its present process.');
     const result = {

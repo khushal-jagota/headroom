@@ -87,7 +87,7 @@ function cookies(raw: string): Cookie[] {
       current.attributes.set(attribute, value ?? '');
     } else if (attrs.has(name.toLowerCase())) {
       if (!current || (value === undefined && !flags.has(name.toLowerCase()))) return [];
-      current.attributes.set(name.toLowerCase(), value === undefined ? 'True' : unquote(value));
+      current.attributes.set(name.toLowerCase(), value === undefined ? 'true' : unquote(value));
     } else if (value !== undefined) {
       if (!/^[-!#$%&'*+.\^_`|~0-9A-Za-z:]+$/.test(name)) return [];
       current = result.get(name) ?? { name, coded_value: value, attributes: new Map() };

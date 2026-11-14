@@ -5,7 +5,10 @@ import { afterEach, expect, it, vi } from 'vitest';
 import { spawn } from 'node:child_process';
 import { load_claude_sdk } from './claude_sdk.ts';
 import { ensure_cli_compatible } from './cli_compatibility.ts';
-import { probe_claude_model_catalog } from './claude_model_catalog.ts';
+import {
+  claude_model_catalog_from_init,
+  probe_claude_model_catalog,
+} from './claude_model_catalog.ts';
 import { OneShotChildren } from '../../lifecycle/one_shot_children.ts';
 import { Deferred } from '../runtime/state.ts';
 
@@ -122,17 +125,25 @@ it('closes the exact probe on timeout and reaps only its recorded child', async 
   });
 });
 
-it('leaves malformed catalog transformation errors outside the startup error wrapper', async () => {
-  vi.mocked(ensure_cli_compatible).mockResolvedValue(undefined);
-  vi.mocked(query).mockReturnValue({
-    initializationResult: async () => ({
-      models: [{ value: 'haiku', resolvedModel: 'claude-haiku', supportedEffortLevels: 7 }],
+it('uses native defaults for malformed optional catalog fields', () => {
+  expect(
+    claude_model_catalog_from_init({
+      models: [
+        { value: 'haiku', resolvedModel: 'claude-haiku', displayName: 7, supportedEffortLevels: 7 },
+      ],
     }),
-    close: vi.fn(),
-  } as never);
-  await expect(probe_claude_model_catalog('/synthetic/selected-cli')).rejects.toBeInstanceOf(
-    TypeError,
-  );
+  ).toEqual({
+    models: [
+      {
+        model_id: 'claude-haiku',
+        display_name: 'Haiku',
+        resolved_model_id: 'claude-haiku',
+        reasoning_effort_options: [],
+      },
+    ],
+    reasoning_effort_options: [],
+    default_model_id: null,
+  });
 });
 
 it('retains the startup failure and reaps its child if SDK close also fails', async () => {

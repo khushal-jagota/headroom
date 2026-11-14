@@ -14,7 +14,6 @@ import { pair_key } from '../contracts.ts';
 import { combine_coverage } from './coverage.ts';
 import { calendar_date, date_range, invalid, offset_date, period_interval } from './dates.ts';
 import { number } from './formulas.ts';
-import { python_sum } from './sum.ts';
 import {
   EVALUATION_DEPTH_LIMIT,
   GOAL_ACTUAL_ENTRY_WEIGHT,
@@ -238,7 +237,7 @@ export class Evaluation {
           reference(child, depth + nesting),
         );
         if (values.some((v) => v === null)) return null;
-        return number(python_sum(values as number[]));
+        return number((values as number[]).reduce((total, value) => total + value, 0));
       }
       const l = expression(n.left, nesting + EXPRESSION_EDGE_WEIGHT),
         r = expression(n.right, nesting + EXPRESSION_EDGE_WEIGHT);

@@ -174,7 +174,7 @@ def test_unit21_unidentified_agent_refusal(
     config = tmp_path / "config.yaml"
     config.write_text("refuse_unidentified_agent_calls: true\n")
     configs: list[dict[str, Any]] = []
-    for value in (None, "yes", " OFF ", "\x1cyes\x1f", "invalid"):
+    for value in (None, "yes", " OFF ", "\tyes\n", "invalid"):
         env = {} if value is None else {SETTING: value}
         try:
             configs.append(

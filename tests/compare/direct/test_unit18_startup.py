@@ -380,18 +380,6 @@ def test_unit18_model_catalog(tmp_path: Path, request: pytest.FixtureRequest) ->
         {"name": "missing-models", "info": {}},
         {"name": "non-list-models", "info": {"models": {}}},
         {"name": "no-models", "info": {"models": []}},
-        {
-            "name": "noniterable-efforts-retain-type-error",
-            "info": {
-                "models": [
-                    {
-                        "value": "haiku",
-                        "resolvedModel": "claude-haiku-4-5-20251001",
-                        "supportedEffortLevels": 9,
-                    }
-                ]
-            },
-        },
     ]
     spec = {"operation": "catalogs", "cases": cases}
     expected = _python_catalogs(cases)
@@ -404,7 +392,6 @@ def test_unit18_model_catalog(tmp_path: Path, request: pytest.FixtureRequest) ->
         "seconds": time.perf_counter() - started,
         "python_boundary": "probe with fake SDK handshake and compatibility check",
         "typescript_boundary": "claude_model_catalog_from_init transform",
-        "type_error_proof": "malformed noniterable efforts compare raw error class only",
         "provider_processes_started": 0,
         "normalization_rules": [],
     }

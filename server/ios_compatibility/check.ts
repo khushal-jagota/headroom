@@ -2,9 +2,8 @@
 import { createHash } from 'node:crypto';
 import { readdir, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { strip } from '../core/whitespace.ts';
-import { parse_attempt_json, is_object } from '../environments/updates/codec.ts';
-import { python_json_equal, validate_app_sha } from '../environments/release/logic/manifest.ts';
+import { is_object } from '../environments/updates/codec.ts';
+import { validate_app_sha } from '../environments/release/logic/manifest.ts';
 import {
   publication_git,
   require_clean_publication_source,
@@ -79,7 +78,7 @@ export async function contract_digest(root: string): Promise<string> {
 
 /** Read only. Missing inputs or a missing human record cannot authorize publication. */
 export async function check(root: string, review_path = join(root, REVIEW_PATH)): Promise<void> {
-  const review = parse_attempt_json(
+  const review = JSON.parse(
     new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(await readFile(review_path)),
   );
   if (!is_object(review)) throw new Error('iOS compatibility review must be an object');
@@ -87,11 +86,11 @@ export async function check(root: string, review_path = join(root, REVIEW_PATH))
     throw new Error(
       'Native-facing contracts changed. Review iOS compatibility and refresh the source-bound review.',
     );
-  if (!python_json_equal(review.oldest_supported_build, MINIMUM_SUPPORTED_BUILD))
+  if (review.oldest_supported_build !== MINIMUM_SUPPORTED_BUILD)
     throw new Error("Review must name the policy's oldest supported build.");
   if (review.decision !== 'compatible' && review.decision !== 'minimum_raised')
     throw new Error('Record compatible or minimum_raised after review.');
-  if (typeof review.evidence !== 'string' || Array.from(strip(review.evidence)).length < 40)
+  if (typeof review.evidence !== 'string' || Array.from(review.evidence.trim()).length < 40)
     throw new Error(
       'Record concrete check evidence, or the break that required a minimum increase.',
     );

@@ -1,7 +1,6 @@
 /** Function-only environment commands. No argv parser, installed wrapper or process IO. */
 import { readFile } from 'node:fs/promises';
 import { isAbsolute } from 'node:path';
-import { posix_child_path } from '../core/python_path.ts';
 import { create_database_backup } from './backup/capture.ts';
 import { restore_database_snapshot } from './backup/restore.ts';
 import { AppManifestValidationFailure } from './command_contracts.ts';
@@ -154,7 +153,7 @@ export async function environment_backup_current(
 ): Promise<Result> {
   let warning = '';
   try {
-    const manifest_input = posix_child_path(args.current_app, 'manifest.json');
+    const manifest_input = `${args.current_app || '.'}/manifest.json`;
     let manifest_path: string;
     let source: Buffer;
     try {

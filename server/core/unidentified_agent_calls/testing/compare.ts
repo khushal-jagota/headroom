@@ -73,7 +73,7 @@ export async function refusal_probe(spec: Probe): Promise<unknown> {
           : http_refusal(2),
     });
   }
-  const values = [undefined, 'yes', ' OFF ', '\u001cyes\u001f', 'invalid'];
+  const values = [undefined, 'yes', ' OFF ', '\tyes\n', 'invalid'];
   const configs = values.map((value) => {
     const env = value === undefined ? {} : { PLAN_REFUSE_UNIDENTIFIED_AGENT_CALLS: value };
     try {

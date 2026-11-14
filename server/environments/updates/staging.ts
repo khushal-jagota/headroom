@@ -3,6 +3,7 @@ import { createWriteStream } from 'node:fs';
 import { lstat, mkdtemp, readdir, rename, rm, stat, unlink } from 'node:fs/promises';
 import { join } from 'node:path';
 import { pipeline } from 'node:stream/promises';
+import { isDeepStrictEqual } from 'node:util';
 import { is_os_error } from '../../core/system_errors.ts';
 import type { OwnedChildProcesses } from '../../lifecycle/contracts.ts';
 import type { AppManifest, ReleaseStaging } from './contracts.ts';
@@ -12,7 +13,6 @@ import { extract_app_archive, remove_owned_tree } from '../release/archive.ts';
 import { APP_ARCHIVE_NAME } from '../release/configuration.ts';
 import { admit_runtime } from '../release/admission.ts';
 import { RuntimeProbeUnsettled } from '../release/admission_process.ts';
-import { python_json_equal } from '../release/logic/manifest.ts';
 import { STAGED_APP_PREFIX } from './configuration.ts';
 import { with_zip_member } from './zip.ts';
 
@@ -88,7 +88,7 @@ export function create_release_staging(
         signal.throwIfAborted();
         const manifest = await staged_manifest(staged, app_sha);
         signal.throwIfAborted();
-        if (python_json_equal(manifest, release.manifest)) {
+        if (isDeepStrictEqual(manifest, release.manifest)) {
           await admit_candidate(staged, release.manifest);
           return staged;
         }
@@ -120,7 +120,7 @@ export function create_release_staging(
         signal.throwIfAborted();
         await unlink(archive);
         signal.throwIfAborted();
-        if (!python_json_equal(manifest, release.manifest))
+        if (!isDeepStrictEqual(manifest, release.manifest))
           throw new AppValidationError('The downloaded app differs from its publication receipt.');
         await admit_candidate(unpacked, manifest);
         signal.throwIfAborted();
