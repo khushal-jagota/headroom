@@ -1,19 +1,22 @@
-/** Python Unicode rules determine stored error text, not JavaScript regex defaults. */
+/** Failure text uses native whitespace rules and retains credential redaction. */
 import { expect, test } from 'vitest';
 import { normalized_failure_summary } from '../conversation/logic/backend_events.ts';
 
-// These actual Python/TS differences are absent from the ASCII adapter summaries.
-test('failure summaries retain Python Unicode whitespace, word boundaries, and case folding', () => {
+test('failure summaries normalize whitespace without weakening Unicode credential redaction', () => {
   const cases = [
-    ['\u0085failed\u001cnow\u0085', 'failed now'],
-    ['\ufefffailed\ufeff', '\ufefffailed\ufeff'],
+    [' \tfailed\nnow ', 'failed now'],
+    ['\ufefffailed\ufeff', 'failed'],
     ['épassword=secret', 'épassword=secret'],
     ['²password=secret', '²password=secret'],
     ['apı_key=secret', 'apı_key=[redacted]'],
     ['apİ_key=secret', 'apİ_key=[redacted]'],
     ['authorızatıon: Bearer abc', 'authorızatıon: [redacted]'],
-    ['password\ufeff=secret', 'password\ufeff=secret'],
-    ['Bearer secret\ufefftail', 'Bearer [redacted]'],
+    ['password\ufeff=secret', 'password =[redacted]'],
+    ['Bearer secret\ufefftail', 'Bearer [redacted] tail'],
+    [
+      'password\u0085=\u001fsynthetic; api\u0085key=synthetic; Bearer\u001csynthetic',
+      'password\u0085=\u001f[redacted]; api\u0085key=[redacted]; Bearer [redacted]',
+    ],
   ];
   for (const [input, expected] of cases) {
     expect(normalized_failure_summary(input)).toBe(expected);

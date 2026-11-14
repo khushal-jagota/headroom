@@ -8,20 +8,12 @@ import { text_message_content } from '../../message_content.ts';
 import * as B from '../contracts.ts';
 import type { ClaudeSdkMessage } from './query_contracts.ts';
 import type { TurnInFlight } from './turn.ts';
-import { python_str } from './failure_summary.ts';
+import { display_text } from './failure_summary.ts';
 
 export function record(value: unknown): Record<string, unknown> | null {
   return value !== null && typeof value === 'object' && !Array.isArray(value)
     ? (value as Record<string, unknown>)
     : null;
-}
-function python_type(value: unknown): string {
-  if (value === null || value === undefined) return 'NoneType';
-  if (Array.isArray(value)) return 'list';
-  if (typeof value === 'string') return 'str';
-  if (typeof value === 'boolean') return 'bool';
-  if (typeof value === 'number') return Number.isInteger(value) ? 'int' : 'float';
-  return 'dict';
 }
 function required(fields: Record<string, unknown>, key: string, kind: string): unknown {
   if (!Object.hasOwn(fields, key))
@@ -34,15 +26,14 @@ export function validate_message(message: ClaudeSdkMessage): void {
   if (kind === 'assistant' || kind === 'user') {
     const raw = required(message, 'message', kind);
     const body = record(raw);
-    if (body === null) throw new TypeError(`'${python_type(raw)}' object is not subscriptable`);
+    if (body === null) throw new TypeError(`${kind} message must contain an object`);
     const content = required(body, 'content', kind);
     if (kind === 'assistant' && !Array.isArray(content))
-      throw new Error(`Invalid assistant content (expected list, got ${python_type(content)})`);
+      throw new Error('Assistant content must be an array');
     if (Array.isArray(content)) {
       for (const value of content) {
         const block = record(value);
-        if (!block)
-          throw new Error(`Invalid content block (expected dict, got ${python_type(value)})`);
+        if (!block) throw new Error('Content block must be an object');
         const type = required(block, 'type', kind);
         let keys: string[] = [];
         if (type === 'text') keys = ['text'];
@@ -68,10 +59,7 @@ export function validate_message(message: ClaudeSdkMessage): void {
       required(message, key, kind);
     if (python_truth(message.deferred_tool_use)) {
       const deferred = record(message.deferred_tool_use);
-      if (!deferred)
-        throw new TypeError(
-          `'${python_type(message.deferred_tool_use)}' object is not subscriptable`,
-        );
+      if (!deferred) throw new TypeError('Deferred tool use must be an object');
       for (const key of ['id', 'name', 'input']) required(deferred, key, kind);
     }
   } else if (kind === 'stream_event') {
@@ -88,7 +76,7 @@ export function validate_message(message: ClaudeSdkMessage): void {
   } else if (kind === 'rate_limit_event') {
     const raw = required(message, 'rate_limit_info', kind);
     const info = record(raw);
-    if (!info) throw new TypeError(`'${python_type(raw)}' object is not subscriptable`);
+    if (!info) throw new TypeError(`${kind} message must contain an object`);
     required(info, 'status', kind);
     for (const key of ['uuid', 'session_id']) required(message, key, kind);
   } else if (kind === 'conversation_reset') {
@@ -97,10 +85,7 @@ export function validate_message(message: ClaudeSdkMessage): void {
 }
 function joined_text(values: readonly unknown[]): string {
   for (const [index, value] of values.entries()) {
-    if (typeof value !== 'string')
-      throw new TypeError(
-        `sequence item ${index}: expected str instance, ${python_type(value)} found`,
-      );
+    if (typeof value !== 'string') throw new TypeError(`Text item ${index} must be a string`);
   }
   return values.join('');
 }
@@ -109,7 +94,7 @@ export function canonical_json(value: unknown): string | null {
   try {
     return stringify_python_json(value, { sort_keys: true, ensure_ascii: false });
   } catch {
-    return python_str(value);
+    return display_text(value);
   }
 }
 export function composer_catalog(

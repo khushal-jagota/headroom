@@ -127,7 +127,7 @@
         "results": 1,
         "rows": 1
       },
-      "cause": "Manager accepts native ascending index-key display only where dictionary order has no meaning. This single retained row keeps both exact numeric member spans; compare every outside byte and all declaration arrays exactly. Ticket search follows declared workflow fields, and the preexisting unbound browser composition sum remains outside this server/CLI difference.",
+      "cause": "Compare parsed member values, JSON types, exact integers and ordered declaration arrays. Native object-member order and float spelling are presentation details. Ticket search retains declared workflow order.",
       "deviation": "server/DEVIATIONS.md#integer-like-json-map-keys"
     },
     "goal_numeric_chart_keys": {
@@ -146,7 +146,7 @@
         "method": "GET",
         "route": "/api/goals/${goal}/readings"
       },
-      "cause": "Manager accepts only native index-member order for this exact chart map; preserve every member value lexeme, non-index member order, public values array and every outside byte.",
+      "cause": "Compare parsed chart members, values, JSON types, exact integers and ordered public arrays. Native object-member order and float spelling are presentation details.",
       "deviation": "server/DEVIATIONS.md#integer-like-json-map-keys"
     }
   },

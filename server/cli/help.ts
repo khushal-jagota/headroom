@@ -1,64 +1,6 @@
 import type { CommandDefinition, Parameter } from './contracts.ts';
 import { command_path } from './errors.ts';
 
-function wrap(text: string, width: number, initial = '', subsequent = initial): string {
-  const chunks =
-    text
-      .trim()
-      .replace(/[\t\n\r\f\v]/g, ' ')
-      .match(
-        /[\t\n\v\f\r ]+|(?<=[\p{L}\p{N}_!"'&.,?])-{2,}(?=[\p{L}\p{N}_])|[^\t\n\v\f\r ]+?(?:-(?:(?<=[\p{L}_]{2}-)|(?<=[\p{L}_]-[\p{L}_]-))(?=[\p{L}_]-?[\p{L}_])|(?=[\t\n\v\f\r ]|$)|(?<=[\p{L}\p{N}_!"'&.,?])(?=-{2,}[\p{L}\p{N}_]))/gu,
-      ) ?? [];
-  const lines: string[] = [];
-  let line = initial;
-  let whitespace = '';
-  for (let word of chunks) {
-    if (/^\s+$/.test(word)) {
-      whitespace = word;
-      continue;
-    }
-    let prefix = lines.length === 0 ? initial : subsequent;
-    if (line.length > prefix.length && line.length + whitespace.length + word.length > width) {
-      lines.push(line.trimEnd());
-      line = subsequent;
-      whitespace = '';
-      prefix = subsequent;
-    }
-    if (line.length > prefix.length) line += whitespace;
-    whitespace = '';
-    while (word.length > width - line.length) {
-      const remaining = width - line.length;
-      if (remaining <= 0) {
-        lines.push(line.trimEnd());
-        line = subsequent;
-        continue;
-      }
-      line += word.slice(0, remaining);
-      word = word.slice(remaining);
-      lines.push(line);
-      line = subsequent;
-    }
-    line += word;
-  }
-  if (line.trim()) lines.push(line.trimEnd());
-  return lines.join('\n');
-}
-function paragraphs(text: string, indent = '  ', width = 78): string {
-  return text
-    .trim()
-    .split(/\n\s*\n/)
-    .map((p) => {
-      if (p.startsWith('\b'))
-        return p
-          .slice(1)
-          .trim()
-          .split('\n')
-          .map((s) => indent + s)
-          .join('\n');
-      return wrap(p, width, indent);
-    })
-    .join('\n\n');
-}
 function option_name(p: Parameter): string {
   let result = (p.opts ?? []).join(', ');
   if (p.secondary_opts?.length) result += ' / ' + p.secondary_opts.join(', ');
@@ -88,33 +30,10 @@ function option_help(p: Parameter): string {
   if (extras.length) help += (help ? '  ' : '') + '[' + extras.join('; ') + ']';
   return help;
 }
-function definitions(rows: [string, string][], width = 78): string {
-  const first = Math.min(Math.max(...rows.map((r) => r[0].length)), 30) + 2;
+function definitions(rows: [string, string][]): string {
   return rows
-    .map(([name, description]) => {
-      if (!description) return '  ' + name;
-      if (name.length + 2 > first)
-        return '  ' + name + '\n' + paragraphs(description, ' '.repeat(first + 2), width);
-      return wrap(description, width, '  ' + name.padEnd(first), ' '.repeat(first + 2));
-    })
+    .map(([name, description]) => `  ${name}${description ? '\n    ' + description : ''}`)
     .join('\n');
-}
-function short_help(help: string, limit: number): string {
-  const words = help
-    .split(/\n\s*\n/, 1)[0]
-    .trim()
-    .split(/\s+/);
-  let result = '';
-  for (const word of words) {
-    if ((result ? result.length + 1 : 0) + word.length > limit) {
-      while (result.length + 3 > limit && result.includes(' '))
-        result = result.slice(0, result.lastIndexOf(' '));
-      return result + '...';
-    }
-    result += (result ? ' ' : '') + word;
-    if (word.endsWith('.')) break;
-  }
-  return result;
 }
 export function render_help(
   command: CommandDefinition,
@@ -127,13 +46,8 @@ export function render_help(
     ...command.parameters.filter((p) => p.argument).map((p) => p.metavar),
     ...(command.group ? ['COMMAND [ARGS]...'] : []),
   ].join(' ');
-  const usagePrefix = 'Usage: ' + path + ' ';
-  const usage =
-    78 >= usagePrefix.length + 20
-      ? wrap(args, 78, usagePrefix, ' '.repeat(usagePrefix.length))
-      : usagePrefix + '\n' + wrap(args, 78, ' '.repeat(11));
-  const lines = [usage];
-  if (command.help.trim()) lines.push('', paragraphs(command.help));
+  const lines = [`Usage: ${path} ${args}`];
+  if (command.help.trim()) lines.push('', command.help.replace(/\u0008/g, '').trim());
   const options: [string, string][] = command.parameters
     .filter((p) => !p.argument && !p.hidden)
     .map((p) => [option_name(p), option_help(p)]);
@@ -149,11 +63,10 @@ export function render_help(
       )
       .sort((a, b) => (a.path.at(-1)! < b.path.at(-1)! ? -1 : 1));
     if (children.length) {
-      const limit = 78 - 6 - Math.max(...children.map((c) => c.path.at(-1)!.length));
       lines.push(
         '',
         'Commands:',
-        definitions(children.map((c) => [c.path.at(-1)!, short_help(c.help, limit)])),
+        definitions(children.map((c) => [c.path.at(-1)!, c.help.trim().split('\n')[0]])),
       );
     }
   }

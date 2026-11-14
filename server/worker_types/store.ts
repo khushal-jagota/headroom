@@ -1,5 +1,4 @@
 import { PlannerError } from '../core/contracts.ts';
-import { pythonRepr } from '../core/config.ts';
 import type { ReadSql, TransactionSql } from '../core/database/contracts.ts';
 import type {
   FieldDefinition,
@@ -53,7 +52,9 @@ function exact(value: unknown, keys: readonly string[], what: string): Record<st
 }
 function text(value: unknown, what: string): string {
   if (typeof value !== 'string' || !value || value !== value.trim())
-    return fail(`stored worker type has a malformed ${what}`, { value: pythonRepr(value) });
+    return fail(`stored worker type has a malformed ${what}`, {
+      value: JSON.stringify(value) ?? String(value),
+    });
   return value;
 }
 function stage(raw: unknown): StageDefinition {
@@ -75,7 +76,7 @@ function stage(raw: unknown): StageDefinition {
     ownership !== 'paired'
   )
     return fail('stored worker type names an unknown ownership mode', {
-      ownership_mode: pythonRepr(ownership),
+      ownership_mode: JSON.stringify(ownership) ?? String(ownership),
     });
   return {
     id: text(payload.id, 'stage id'),

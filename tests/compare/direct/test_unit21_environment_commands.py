@@ -23,7 +23,7 @@ from typing import Any
 import click
 import pytest
 from tests.compare.direct.test_unit21_status import _seed
-from tests.compare.direct.unit20_cli import _python_library
+from tests.compare.direct.unit20_cli import _python_library, comparable
 from tests.support.synthetic_homes import create_synthetic_homes
 from tests.unit.test_database_backups import _legacy_snapshot
 from tests.unit.test_ticket_scratch import _layout
@@ -53,7 +53,9 @@ def _python(root: Path, calls: list[dict[str, Any]], monkeypatch: pytest.MonkeyP
             now=lambda: datetime.fromisoformat("2026-11-05T12:00:00+00:00"),
             platform_name=lambda: "Darwin",
             statvfs=lambda _: type(
-                "Disk", (), dict(f_frsize=4096, f_blocks=100_000_000, f_bavail=60_000_000)
+                "Disk",
+                (),
+                dict(f_frsize=4096, f_blocks=100_000_000, f_bavail=60_000_000),
             )(),
             process_lines=lambda: (),
             git_worktree_output=lambda _: "",
@@ -302,7 +304,10 @@ def test_unit21_environment_command_function_parity(
 
                 def record(_name: str = case["name"], **values: Any) -> None:
                     routing.append(
-                        {"name": _name, "args": {aliases.get(k, k): v for k, v in values.items()}}
+                        {
+                            "name": _name,
+                            "args": {aliases.get(k, k): v for k, v in values.items()},
+                        }
                     )
 
                 with monkeypatch.context() as callback:
@@ -364,11 +369,15 @@ def test_unit21_environment_command_function_parity(
         assert actual["cold"]["signals_unchanged"]
         assert actual["interrupted_lock"] == dict(injected=1, acquire_calls=2, actions=1)
 
-        def stable(value: Any) -> str:
-            return re.sub(
-                r"snapshot-\d{8}T\d{6}Z-[0-9a-f]{8}",
-                "snapshot-<generated>",
-                json.dumps(value, sort_keys=True),
+        def stable(value: Any) -> Any:
+            # Operator comparisons keep JSON fields and exit codes, not human text.
+            value = [comparable(result) if "exit_code" in result else result for result in value]
+            return json.loads(
+                re.sub(
+                    r"snapshot-\d{8}T\d{6}Z-[0-9a-f]{8}",
+                    "snapshot-<generated>",
+                    json.dumps(value),
+                )
             )
 
         assert stable(actual["results"][:-1]) == stable(expected[:-1])
@@ -400,13 +409,12 @@ def test_unit21_environment_command_function_parity(
         assert operators["interrupted_status"]["later_spawns"] == 0
         assert actual["scratch_owned"]["actual_children"] > 0
         assert actual["scratch_owned"]["all_closed"]
-        for name in ("app-build", "run", "serve", "restart"):
-            assert operators["deferred"][name] == dict(
-                exit_code=1,
-                stdout="",
-                failure_message=f"The {name} command is not yet available in this build.",
-                stderr_prefix="",
-            )
+        assert operators["composed_callbacks"] == {
+            "app-build": ["build_app"],
+            "run": ["prepare_run"],
+            "serve": ["run_supervisor"],
+            "restart": ["request_restart"],
+        }
         message = "The TypeScript runtime cannot enumerate Promise await chains."
         assert operators["diagnostic"] == [
             dict(

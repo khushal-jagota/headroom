@@ -1,6 +1,5 @@
 /** Child-scoped, independent catalogue sources and bounded recovery. */
 import { createHash } from 'node:crypto';
-import { casefold } from '../../../core/casefold.ts';
 import { ComposerCatalogEntry, ComposerCatalogEntryKind } from '../../contracts.ts';
 import * as protocol from './protocol.ts';
 import { CodexRequestRejected, CodexWireFailed } from './errors.ts';
@@ -190,7 +189,7 @@ export class CatalogCoordinator {
         (key) =>
           !this.metadata.has(key) || now - this.metadata.get(key)![0] >= APP_METADATA_TTL_SECONDS,
       )
-      .sort(compare_text);
+      .sort();
     for (let offset = 0; offset < missing.length; offset += APP_METADATA_BATCH_SIZE) {
       const ids = missing.slice(offset, offset + APP_METADATA_BATCH_SIZE);
       const response = await Promise.race([this.reads.read_metadata(ids), this.closure]);
@@ -264,12 +263,7 @@ export const CODEX_BUILT_IN_CATALOG_ENTRIES: readonly ComposerCatalogEntry[] = [
 
 type Candidate = readonly [string, ComposerCatalogEntry, CatalogInvocation];
 function compare_text(a: string, b: string): number {
-  // Python orders Unicode code points, without locale-specific collation.
-  const left = Array.from(a, (character) => character.codePointAt(0)!);
-  const right = Array.from(b, (character) => character.codePointAt(0)!);
-  for (let index = 0; index < Math.min(left.length, right.length); index += 1)
-    if (left[index] !== right[index]) return left[index]! - right[index]!;
-  return left.length - right.length;
+  return a < b ? -1 : a > b ? 1 : 0;
 }
 function compare_tuple(a: readonly string[], b: readonly string[]): number {
   for (let index = 0; index < a.length; index += 1) {
@@ -280,7 +274,8 @@ function compare_tuple(a: readonly string[], b: readonly string[]): number {
 }
 function mention_token(name: string): string {
   return (
-    casefold(name)
+    name
+      .toLowerCase()
       .replace(/[^a-z0-9]+/g, '-')
       .replace(/^-+|-+$/g, '') || 'item'
   );
@@ -384,7 +379,7 @@ export function catalog_snapshot(
   const executable: Candidate[] = [];
   const allocated = new Set(by_token.keys());
   for (const token of [...by_token.keys()].sort((a, b) =>
-    compare_tuple([casefold(a), a], [casefold(b), b]),
+    compare_tuple([a.toLowerCase(), a], [b.toLowerCase(), b]),
   )) {
     const colliding = by_token.get(token)!;
     if (colliding.length === 1) {
@@ -408,7 +403,7 @@ export function catalog_snapshot(
     }
   }
   executable.sort((a, b) =>
-    compare_tuple([a[1].kind, casefold(a[0])], [b[1].kind, casefold(b[0])]),
+    compare_tuple([a[1].kind, a[0].toLowerCase()], [b[1].kind, b[0].toLowerCase()]),
   );
   const invocations = new Map<string, CatalogInvocation | null>([
     ['/compact', { kind: 'command', name: 'compact', path: null }],

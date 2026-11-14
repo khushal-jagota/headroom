@@ -1,4 +1,4 @@
-/** A Python dictionary index must fail clearly when the server omits its required field. */
+/** Fail clearly when the server omits a required field. */
 import type { Invocation } from './contracts.ts';
 import { fail_validation } from './http.ts';
 export function response_field(inv: Invocation, record: unknown, key: string, label = key): any {

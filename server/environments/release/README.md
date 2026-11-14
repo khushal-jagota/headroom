@@ -75,6 +75,10 @@ The templates preserve config/refusal inputs, private runtime placement, client8
 The probe executes candidate code with the host user's rights and is not a sandbox.
 Descendants of a tool that exits normally are not swept, as in Python.
 
+Receipt staging binds the receipt hash, complete manifest, and fresh runtime admission before the final sibling rename. A matching retained stage gets fresh admission without another download. Permission-restoring cleanup applies only to the exclusive workspace. Staging and schema status retain their exclusive paths until an unsettled probe’s actual cleanup completes. Original probe and cleanup failures remain visible. Staging forwards the invocation stop signal to artifact downloads and the ZIP member pipeline. It checks that signal before candidate admission and rename. Its raw provider operation and temporary cleanup remain part of the stage promise.
+
+The schema adapter checks the complete v2 frontier through a zero-timeout readonly snapshot. V1 status uses the admitted candidate’s own isolated Python helper. UpdateService awaits that result and fences backup after shutdown. Actual v1 execution and sealed v2 admission remain hosted gates.
+
 Dependency installation uses a private npm home and ignores host npm configuration and Node loader variables. Dependency lifecycle scripts remain enabled. The two agent CLI packages retain Python's `@latest` policy. Their bytes can differ across builds of the same source SHA. The artifact digest binds the exact installed bytes.
 
 Mac inspection takes the invocation signal and one absolute 120-second deadline before it opens the input. Its bounded observer retains a separate full-cleanup promise when cancellation cannot settle immediately. Mac preparation joins that promise before temporary-file removal or the next queued flight. Both descriptor passes compute hashes, and the second must equal the first before acceptance.

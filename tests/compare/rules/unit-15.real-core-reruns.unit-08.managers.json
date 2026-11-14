@@ -2,6 +2,10 @@
   "ignore": {
     "attention_history_metadata.started_at": "Schema initialization reads real wall time."
   },
+  "response_counts": {
+    "body.page_character_count": "Stored page JSON uses native float spelling. Keep integer type, presence, and empty versus positive state; compare page values strictly.",
+    "body.managers.*.page_character_count": "Stored page JSON uses native float spelling. Keep integer type, presence, and empty versus positive state; compare page values strictly."
+  },
   "response_tokens": {
     "body.coverage.revision": "Navigation continuity revisions count source commits, so compare changes.",
     "body.ordering_generation": "TypeScript uses Intl.Collator under its own approved ordering generation.",

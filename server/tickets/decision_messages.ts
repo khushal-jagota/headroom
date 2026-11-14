@@ -1,7 +1,6 @@
 /** Immutable decisions share the transaction that settles their proposal. */
 import { createHash } from 'node:crypto';
 import { PlannerError, type Principal } from '../core/contracts.ts';
-import { strip } from '../core/whitespace.ts';
 import type { ReadSql, TransactionSql } from '../core/database/contracts.ts';
 import type { Ticket } from './contracts.ts';
 import { validate_revision_guidance } from './logic/admission.ts';
@@ -14,7 +13,7 @@ export function validate_request(
   if (message !== null) validate_revision_guidance(message);
   if (revision !== null && (!Number.isInteger(revision) || revision <= 0))
     throw new PlannerError('validation', 'expected_proposal_revision must be a positive integer');
-  if (decision_id !== null && (!strip(decision_id) || Array.from(decision_id).length > 200))
+  if (decision_id !== null && (!decision_id.trim() || Array.from(decision_id).length > 200))
     throw new PlannerError('validation', 'decision_id must contain 1 to 200 characters');
 }
 export function request_json(principal: Principal, values: Record<string, unknown>): string {

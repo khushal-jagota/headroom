@@ -6,8 +6,6 @@ import type { CommandOutcome } from '../../snapshot/contracts.ts';
 import type { HermesModelCatalogSource } from '../../snapshot/provider_contracts.ts';
 import { MODEL_CATALOG_PROBE_TIMEOUT_SECONDS } from '../../snapshot/configuration.ts';
 import { BackendAdapterError } from '../contracts.ts';
-import { CodexChildWouldNotStart } from '../codex_app_server/errors.ts';
-import { python_string_repr as python_repr } from '../../../core/python_repr.ts';
 import { spawn_codex_process } from '../codex_app_server/process.ts';
 import type { OwnedCodexProcess } from '../codex_app_server/process.ts';
 import type { AcpChildLaunch } from './launch.ts';
@@ -140,18 +138,7 @@ export class HermesModelCatalogOwner {
         });
       } catch (error) {
         if (probe.reason !== null) throw probe.reason;
-        // Python returns an unavailable command rather than an invented inventory.
-        const executable = argv[0];
-        // The shared helper retains Node's exact message rather than errno. Match
-        // this known spawn failure only; provider and other OS errors stay intact.
-        const detail =
-          error instanceof CodexChildWouldNotStart &&
-          executable !== undefined &&
-          error.message === `spawn ${executable} ENOENT`
-            ? `[Errno 2] No such file or directory: ${python_repr(executable)}`
-            : error instanceof Error
-              ? error.message
-              : String(error);
+        const detail = error instanceof Error ? error.message : String(error);
         return {
           exit_code: -1,
           standard_output: '',

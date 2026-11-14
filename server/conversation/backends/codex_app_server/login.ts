@@ -62,10 +62,7 @@ function missing(error: unknown): boolean {
 
 function text(value: unknown): string | null {
   if (typeof value !== 'string') return null;
-  const stripped = value.replace(
-    /^[\p{White_Space}\u001c-\u001f]+|[\p{White_Space}\u001c-\u001f]+$/gu,
-    '',
-  );
+  const stripped = value.trim();
   return stripped || null;
 }
 

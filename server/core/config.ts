@@ -1,4 +1,3 @@
-import { python_string_repr } from './python_repr.ts';
 import type { APNsConfig } from '../notifications/contracts.ts';
 import { load_apns_config } from '../notifications/config.ts';
 import { readFileSync, existsSync, realpathSync, statSync } from 'node:fs';
@@ -82,12 +81,6 @@ export interface Config {
   ticket_scratch_root: string | null;
   ticket_scratch_database: string | null;
 }
-export function pythonRepr(value: unknown): string {
-  if (value === null) return 'None';
-  if (typeof value === 'boolean') return value ? 'True' : 'False';
-  if (typeof value === 'string') return python_string_repr(value);
-  return String(value);
-}
 export function parseConfigBoolean(
   value: unknown,
   key: string,
@@ -97,7 +90,7 @@ export function parseConfigBoolean(
   const text = source.toLowerCase();
   if (['1', 'true', 'yes', 'on'].includes(text)) return true;
   if (['0', 'false', 'no', 'off'].includes(text)) return false;
-  throw new PlannerError('validation', `invalid boolean for ${key}: ${pythonRepr(value)}`);
+  throw new PlannerError('validation', `invalid boolean for ${key}: ${JSON.stringify(value)}`);
 }
 /** The I/O guards use the same environment-only test setting as loadConfig. */
 export function testModeFromEnvironment(env: NodeJS.ProcessEnv = process.env): boolean {
@@ -118,6 +111,15 @@ export function lifecycle_launch_settings(env: Readonly<NodeJS.ProcessEnv>) {
     listener_fd,
   };
 }
+/** Update discovery uses the invocation snapshot, without another Config load. */
+export function update_repository_configuration(
+  environment: Readonly<NodeJS.ProcessEnv>,
+): { readonly repository: string; readonly token_file: string } | null {
+  const repository = environment.PLAN_UPDATE_REPOSITORY;
+  const token_file = environment.PLAN_UPDATE_TOKEN_FILE;
+  return repository && token_file ? { repository, token_file } : null;
+}
+
 /** Account launch inputs are environment-only, shared by native hosts and discovery. */
 export function provider_launch_settings(env: Readonly<NodeJS.ProcessEnv> = process.env) {
   return {
@@ -241,14 +243,14 @@ export function loadConfig(
       !/^[+-]?\d+$/.test(String(v).trim()) ||
       !Number.isSafeInteger(Number(v))
     )
-      throw new PlannerError('validation', `invalid integer for ${key}: ${pythonRepr(v)}`);
+      throw new PlannerError('validation', `invalid integer for ${key}: ${JSON.stringify(v)}`);
     return Number(v);
   };
   const directory = (key: string, variable: string): string | null => {
     const v = raw(key, variable);
     if (v == null) return null;
     if (typeof v !== 'string' || !v.trim())
-      throw new PlannerError('validation', `invalid ${key}: ${pythonRepr(v)}`);
+      throw new PlannerError('validation', `invalid ${key}: ${JSON.stringify(v)}`);
     // Partial-env callers keep their existing ambient default unless home is explicit.
     const directory_home = paths.home === '' ? '/' : paths.home;
     const expanded =
@@ -266,7 +268,7 @@ export function loadConfig(
     } catch (error) {
       throw new PlannerError(
         'validation',
-        `invalid ${key} ${pythonRepr(v)}: ${(error as Error).message}`,
+        `invalid ${key} ${JSON.stringify(v)}: ${(error as Error).message}`,
       );
     }
   };

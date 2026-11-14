@@ -6,7 +6,6 @@ import type { ReadSql, TransactionSql, SqlValue } from '../../core/database/cont
 import { PlannerError, OWNER, CHIEF, legacyActor } from '../../core/contracts.ts';
 import type { Principal } from '../../core/contracts.ts';
 import { newId } from '../../core/ids.ts';
-import { strip } from '../../core/whitespace.ts';
 import { require_conversation_backend_key } from '../../conversation/contracts.ts';
 import { configured_worker_type_registry } from '../../worker_types/configuration.ts';
 import { validate_workflow } from '../../worker_types/registry.ts';
@@ -481,7 +480,7 @@ export function _apply_decision(
       d.ceiling,
       principal_to_json(d.ceiling_holder),
       now,
-      Number(t.recap_stage_changed || (d.stage !== t.stage && !!strip(t.recap))),
+      Number(t.recap_stage_changed || (d.stage !== t.stage && !!t.recap.trim())),
       t.id,
     ],
   );
@@ -871,7 +870,7 @@ export function edit_ticket(
     if (before !== after) changes[key] = after;
   if ('recap' in e) {
     changes.recap = e.recap!;
-    changes.recap_updated_at = strip(e.recap!) ? o.now : null;
+    changes.recap_updated_at = e.recap!.trim() ? o.now : null;
     changes.recap_stage_changed = 0;
   }
   if (e.field_values && Object.keys(e.field_values).length) {
