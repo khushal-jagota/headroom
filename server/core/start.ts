@@ -140,7 +140,8 @@ export async function startServer(options: ServerOptions = {}): Promise<StartedS
     },
   });
   const { areas, conversationWrites } = services;
-  const onSignal = () => {
+  const onSignal = (signal: NodeJS.Signals) => {
+    console.error('Server shutdown requested by', signal);
     signal_requested = true;
     void close(initialStop()).catch((error) => {
       if (!options.onShutdownComplete) process.exitCode = 1;
