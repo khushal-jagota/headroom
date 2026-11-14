@@ -66,6 +66,7 @@ export async function create_environment(
   assert.equal(url.protocol, 'http:');
   assert.equal(url.hostname, '127.0.0.1');
   assert.ok(url.port && url.port !== '0');
+  assert.notEqual(url.port, '8767', 'Smoke refuses the live server port before connection');
   assert.equal(url.pathname, '/');
   assert.equal(url.username + url.password + url.search + url.hash, '');
   const homes = JSON.parse(await readFile(join(root, 'homes.json'), 'utf8')) as Record<
