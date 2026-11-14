@@ -1,4 +1,5 @@
 import type { CommandDefinition, CommandResult } from './contracts.ts';
+import { CliArgument, CliOption } from './declarations.ts';
 
 export class MissingResponseValue extends Error {
   constructor() {
@@ -43,7 +44,22 @@ export function command_path(command: CommandDefinition): string {
 export function command_shape(command: CommandDefinition): string {
   const override = recovery[command.path.join(' ')];
   if (override) return override;
-  return [command_path(command), command.usage()].join(' ');
+  const options = command.inputs.filter(
+    (input): input is CliOption => input instanceof CliOption && !input.hidden,
+  );
+  const parts = [command_path(command)];
+  for (const input of options.filter((option) => option.mandatory)) {
+    const value = /<([^>]+)>|\[([^\]]+)\]/.exec(input.flags);
+    parts.push([input.long ?? input.short, ...(value ? [value[1] ?? value[2]] : [])].join(' '));
+  }
+  if (options.some((option) => !option.mandatory)) parts.push('[OPTIONS]');
+  for (const input of command.inputs) {
+    if (input instanceof CliArgument)
+      parts.push(
+        (input.required ? input.name() : `[${input.name()}]`) + (input.variadic ? '...' : ''),
+      );
+  }
+  return parts.join(' ');
 }
 export function human_error(
   command: CommandDefinition,
@@ -52,6 +68,7 @@ export function human_error(
   options: { recovery?: string | null; no_route?: string } = {},
 ): CommandResult {
   const line = message
+    .replace(/^error:\s*/, '')
     .split(/\r?\n/)
     .map((p) => p.trim())
     .filter(Boolean)

@@ -10,7 +10,7 @@ export interface MacMaintenanceDependencies extends MacRetirementDependencies {
   readonly commands: () => MacCommandServiceContract;
   readonly retirement: MacRetirementContract;
   readonly outbox: Pick<OutboxStore, 'pending_count'>;
-  /** UUID hex source for Python's update_stop_ identity. */
+  /** UUID hex source for the update_stop_ wire identity. */
   new_update_id(): string;
   /** Permanent lifetime belongs to the final runner. The component fixture uses its actual native owner. */
   permanently_stopped(): boolean;

@@ -19,8 +19,6 @@ export function safe_component(value: string): string {
   return value;
 }
 function is_symlink(path: string): boolean {
-  // pathlib's is_symlink returns false for an embedded NUL. resolve then refuses it.
-  if (path.includes('\0')) return false;
   try {
     return lstatSync(path).isSymbolicLink();
   } catch (error) {
@@ -37,13 +35,14 @@ export function contained_path(root: string, relative_path: string): string {
     relative_path.split('/').some((part) => ['', '.', '..'].includes(part))
   )
     throw file_error('unsafe relative artifact path');
+  if (root.includes('\0') || relative_path.includes('\0'))
+    throw file_error('artifact path contains NUL');
   if (is_symlink(root)) throw file_error('artifact root is symlink');
   let current = root;
   for (const part of relative_path.split('/')) {
     current = join(current, part);
     if (is_symlink(current)) throw file_error('artifact path contains symlink');
   }
-  if (current.includes('\0')) throw file_error('lstat: embedded null character in path');
   if (!path_is_within(resolve_path_sync(root), resolve_path_sync(current)))
     throw file_error('artifact path escapes root');
   return current;
@@ -54,7 +53,7 @@ export function version(status: BigIntStats): FileVersion {
 export function same_version(one: FileVersion | null, other: FileVersion): boolean {
   return one !== null && one.every((value, index) => value === other[index]);
 }
-/** Python observes metadata through lstat here. Byte I/O does not trust this path. */
+/** Observe metadata through lstat. Byte I/O does not trust this path. */
 export function file_version(path: string): FileVersion | null {
   try {
     const status = lstatSync(path, { bigint: true });

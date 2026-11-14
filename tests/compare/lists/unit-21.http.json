@@ -26,6 +26,12 @@
     },
     {
       "method": "GET",
+      "path": "/api/resource-body?key=%2Fapi%2Fdeployment-status",
+      "status": 200,
+      "area": "environment-composition"
+    },
+    {
+      "method": "GET",
       "path": "/api/resource-versions?keys=%5B%22%2Fapi%2Fdeployment-status%22%5D",
       "status": 200,
       "area": "environment-composition"

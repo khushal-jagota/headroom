@@ -6,7 +6,6 @@ import { dirname, isAbsolute, join } from 'node:path';
 import { path_is_within } from '../../core/path_containment.ts';
 import { homedir } from 'node:os';
 import { resolve_path_sync } from '../../core/path_resolution.ts';
-import { strip } from '../../core/whitespace.ts';
 import {
   default_executor_root,
   executor_socket_path,
@@ -141,7 +140,7 @@ function inode(path: string): readonly [bigint, bigint] | null {
 export function executor_paths(environment: NodeJS.ProcessEnv = process.env): ExecutorPaths {
   const home = environment.HOME ?? homedir();
   if (!home || !isAbsolute(home)) refuse_configuration('executor HOME must be an absolute path');
-  const configured = strip(environment[EXECUTOR_ROOT_ENV] ?? '');
+  const configured = (environment[EXECUTOR_ROOT_ENV] ?? '').trim();
   const root = configured
     ? expand_executor_path(configured, environment)
     : default_executor_root(home);
@@ -228,7 +227,7 @@ export function validate_executor_launch(
   application_revision: string,
   server_url: string,
 ): void {
-  if (!/^[A-Za-z0-9_.:-]{1,128}(?![\s\S])/u.test(executor_id) || !strip(application_revision))
+  if (!/^[A-Za-z0-9_.:-]{1,128}(?![\s\S])/u.test(executor_id) || !application_revision.trim())
     refuse_configuration('invalid explicit executor HTTPS launch configuration');
   validate_server_url(server_url);
 }

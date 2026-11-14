@@ -14,7 +14,7 @@ const removed_python_helpers =
 const retired_python_error_class =
   /\b(?:ValueError|KeyError|PydanticSerializationError|CalledProcessError)\b/;
 const fake_python_error_name =
-  /(?:\.name\s*(?:={1,3}|!={1,2})|\bname\s*:)\s*['"](?:ValueError|RuntimeError|OSError|FileNotFoundError|PermissionError|NotADirectoryError|IsADirectoryError|JSONDecodeError|KeyError|IndexError|OverflowError|UnicodeDecodeError|UnicodeEncodeError|PydanticSerializationError|CalledProcessError)['"]/;
+  /(?:\.name\s*(?:={1,3}|!={1,2})|\bname\s*:)\s*['"](?:ValueError|RuntimeError|OSError|FileNotFoundError|PermissionError|NotADirectoryError|IsADirectoryError|JSONDecodeError|KeyError|IndexError|OverflowError|UnicodeDecodeError|UnicodeEncodeError|PydanticSerializationError|CalledProcessError|BlockingIOError)['"]/;
 
 export function native_style_findings(diff: string): Finding[] {
   const findings: Finding[] = [];

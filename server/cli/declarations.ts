@@ -1,6 +1,6 @@
 /** Typed native declarations shared by the parser and help. */
 import { accessSync, constants, statSync } from 'node:fs';
-import { Argument, Command, InvalidArgumentError, Option } from 'commander';
+import { Argument, Command, Help, InvalidArgumentError, Option } from 'commander';
 
 export interface ValueParser {
   (text: string): unknown;
@@ -156,6 +156,9 @@ export const argument = (
 export class CliCommand extends Command {
   readonly path: string[];
   readonly inputs: (CliOption | CliArgument)[] = [];
+  // Commander owns suggestions; use its diagnostics before eager help.
+  declare unknownCommand: () => never;
+  declare unknownOption: (flag: string) => never;
   constructor(path: string[], description: string) {
     super(path.at(-1) ?? 'panels');
     this.path = path;
@@ -163,7 +166,15 @@ export class CliCommand extends Command {
       .helpOption('--help', 'Show command help.')
       .helpCommand(false)
       .enablePositionalOptions()
-      .allowExcessArguments(false);
+      .allowExcessArguments(false)
+      .configureHelp({
+        optionDescription(this: Help, option: Option) {
+          const description = Help.prototype.optionDescription.call(this, option);
+          return option.isBoolean() && option.defaultValue === false
+            ? description.replace(/\s*\(default: false\)$/, '')
+            : description;
+        },
+      });
   }
   override parseOptions(argv: string[]): { operands: string[]; unknown: string[] } {
     let tokens = argv;
@@ -179,16 +190,17 @@ export class CliCommand extends Command {
     const parsed = super.parseOptions(tokens);
     // The native parser delegates a recognized child's remaining tokens.
     if (this.commands.length && parsed.operands.length) {
-      if (!this.commands.some((child) => child.name() === parsed.operands[0]))
-        throw new InvalidArgumentError(`Unknown command: ${parsed.operands[0]}`);
+      if (!this.commands.some((child) => child.name() === parsed.operands[0])) {
+        this.args = parsed.operands;
+        this.unknownCommand();
+      }
       return parsed;
     }
     // Check native unrecognized syntax before Commander's eager help.
     for (const token of parsed.unknown) {
       if (token === '--' || (this.commands.length && (!token.startsWith('-') || token === '-')))
         break;
-      if (token !== '--help' && token.startsWith('-') && token !== '-')
-        throw new InvalidArgumentError(`Unknown option: ${token}`);
+      if (token !== '--help' && token.startsWith('-') && token !== '-') this.unknownOption(token);
     }
     if (!this.commands.length) {
       // Commander accepts negative numeric operands. Panels requires an explicit
@@ -206,7 +218,7 @@ export class CliCommand extends Command {
         }
         if (token === '--help') continue;
         if (token !== '-' && token.startsWith('-') && parsed.operands.includes(token))
-          throw new InvalidArgumentError(`Unknown option: ${token}`);
+          this.unknownOption(token);
       }
     }
     return parsed;
