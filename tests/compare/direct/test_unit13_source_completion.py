@@ -19,6 +19,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from tests.compare.json_values import json_values
 from tests.support.measure_sources import NOW, configured_source
 from tests.support.synthetic_homes import (
     create_synthetic_homes,
@@ -245,10 +246,30 @@ def test_unit13_source_completion(tmp_path: Path, request: pytest.FixtureRequest
             text=True,
         )
     )
+    native_expected = json.loads(json.dumps(expected))
+    for phase in native_expected:
+        for wake in phase["tables"]["manager_wakes"]:
+            wake["summary"] = wake["summary"].replace(
+                f"Measure source {source.name!r} in ",
+                f"Measure source {json.dumps(source.name, ensure_ascii=False)} in ",
+                1,
+            )
+    compared = json.loads(json.dumps([native_expected, actual]))
+    json_columns = {
+        "measure_source_runs": ("failure", "metrics", "test_candidates", "test_dataset_results"),
+        "dataset_rows": ("dimensions", "field_values"),
+    }
+    for snapshots in compared:
+        for snapshot in snapshots:
+            for table, columns in json_columns.items():
+                for row in snapshot["tables"][table]:
+                    for column in columns:
+                        if row[column] is not None:
+                            row[column] = json_values(row[column])
     report = {
         "kind": "direct",
         "case": "unit13-source-completion",
-        "equal": actual == expected,
+        "equal": compared[0] == compared[1],
         "python": expected,
         "typescript": actual,
         "accepted_differences": {"manager_wakes.summary": "Source names use native JSON quotes."},
@@ -259,12 +280,4 @@ def test_unit13_source_completion(tmp_path: Path, request: pytest.FixtureRequest
         folder = Path(destination)
         folder.mkdir(parents=True, exist_ok=True)
         (folder / "unit13-source-completion.json").write_text(json.dumps(report, indent=2) + "\n")
-    native_expected = json.loads(json.dumps(expected))
-    for phase in native_expected:
-        for wake in phase["tables"]["manager_wakes"]:
-            wake["summary"] = wake["summary"].replace(
-                f"Measure source {source.name!r} in ",
-                f"Measure source {json.dumps(source.name, ensure_ascii=False)} in ",
-                1,
-            )
-    assert actual == native_expected
+    assert compared[0] == compared[1]

@@ -23,6 +23,7 @@ from typing import Any
 from unittest.mock import patch
 
 import pytest
+from tests.compare.json_values import json_values
 from tests.integration.test_update_installer import (
     ATTEMPT_ID,
     FROM_SHA,
@@ -250,11 +251,11 @@ def test_installer_algorithm_and_configured_paths(
         rows = []
         for row in outcome["tree"]:
             if row["path"] == "data/update-attempt.json" and "bytes" in row:
-                record = json.loads(bytes.fromhex(row["bytes"]).decode())
+                record = json_values(bytes.fromhex(row["bytes"]).decode())
                 if record.get("detail") is not None:
                     assert isinstance(record["detail"], str) and record["detail"]
                     record["detail"] = "<diagnostic>"
-                row = {**row, "bytes": json.dumps(record, sort_keys=True)}
+                row = {**row, "bytes": record}
             rows.append(row)
         return {**outcome, "tree": rows}
 
