@@ -11,7 +11,7 @@ import { syncBuiltinESMExports } from 'node:module';
 import { join } from 'node:path';
 import { Worker, isMainThread, parentPort, workerData } from 'node:worker_threads';
 import { FilesService } from '../../files.ts';
-import { canonical_json, parse_attempt_json } from '../../../../environments/updates/codec.ts';
+import { ExecutorValidationError } from '../../../protocol.ts';
 import { atomic_record, read_record } from '../records.ts';
 
 if (!isMainThread) {
@@ -97,7 +97,7 @@ if (!isMainThread) {
 } else {
   const root = process.argv[2]!,
     began = performance.now();
-  const input = parse_attempt_json(readFileSync(join(root, 'input.json'), 'utf8')) as {
+  const input = JSON.parse(readFileSync(join(root, 'input.json'), 'utf8')) as {
     record: Record<string, unknown>;
   };
   const files = new FilesService();
@@ -113,7 +113,8 @@ if (!isMainThread) {
     try {
       await read_record(files, path);
     } catch (error) {
-      report.nonobject = { error: (error as Error).name, message: (error as Error).message };
+      if (!(error instanceof ExecutorValidationError)) throw error;
+      report.nonobject = { error: 'validation', message: error.message };
     }
     await files.remove_runtime_record(path);
     report.removed = await read_record(files, path);
@@ -138,5 +139,5 @@ if (!isMainThread) {
   });
   report.native_worker_ms = performance.now() - started;
   report.elapsed_seconds = (performance.now() - began) / 1000;
-  console.log(canonical_json(report));
+  console.log(JSON.stringify(report));
 }

@@ -23,6 +23,9 @@ test('publication accepts the committed reviewer and refuses a job-edited review
       'server/core/database/application_schema.json',
       'server/skills/cli_commands.json',
       'server/environments/release/migration_graph.json',
+      'server/goals/cli/guidance.json',
+      'server/managers/page_cli/guidance.json',
+      'server/executor/wire.schema.json',
       'src/planner/conversation/backends/hermes_acp_extension.py',
       'src/planner/conversation/backends/hermes_model_catalog.py',
     ]) {

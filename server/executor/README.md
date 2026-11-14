@@ -46,24 +46,19 @@ Catalog cancellation withdraws its waiting command and completes that cleanup be
 
 ## Shared wire
 
-Both executor halves import their wire types from `wire.generated.ts`. Python remains the contract author until cutover. Protocol 22 uses HTTPS JSON. The spool format is 5 and the command journal format is 1.
+Both TypeScript peers use `wire.schema.json` as the message contract. The same schemas generate `wire.generated.ts` and supply Ajv validation. Protocol 22 uses HTTPS JSON. The spool format is 5 and the command journal format is 1.
 
-From the repository root, in an isolated development environment:
+Regenerate or check the types in an isolated development environment:
 
 ```sh
-scripts/dev mypy tests/compare/direct/export_unit22_wire.py
 scripts/dev check-node server
-.venv/bin/python -I -B tests/compare/direct/export_unit22_wire.py | node server/executor/tools/generate_wire.ts
-.venv/bin/python -I -B tests/compare/direct/export_unit22_wire.py | node server/executor/tools/generate_wire.ts --check
+node server/executor/tools/generate_wire.ts
+node server/executor/tools/generate_wire.ts --check
 ```
 
-Remove inherited `PLAN_*` and provider-home variables before repository execution. Supply private paths and an explicit non-live server URL. Ticket actions through `panels` retain the Worker's identity variables. The generator starts no server and opens no database, provider home, or network connection.
+Remove inherited `PLAN_*` and provider-home variables before repository execution. Supply private paths and an explicit non-live server URL. Ticket actions through `panels` retain the Worker's identity variables. The generator starts no server and opens no database or network connection.
 
-The Python exporter resolves this checkout's `src/` and imports the current protocol, backend snapshot, health and update dataclasses. It keeps Python's protocol manifest and event-codec mapping. The Node tool deduplicates schema definitions, emits one shared type per definition, and checks both generated files byte for byte. The direct comparison check re-exports Python on every run. A changed schema fails even if the protocol version stays unchanged.
-
-The generated schema retains validation limits. TypeScript types express JSON structure only. Runtime codecs must preserve each call's validation mode, byte limits, identity checks and schema constraints. HTTP work decoding uses Python's lax mode. Local IPC uses strict mode, with nested argument decoding as Python defines it. A required nullable field remains required and must carry `null` when absent. A field with a Python default can be omitted. Python accepts unknown object properties on many dataclasses and ignores them. The types list declared fields, rather than promise that unknown properties survive decoding.
-
-The generated open JSON objects do not describe operation-specific bodies. Hand-written families in `protocol_payloads.ts` document known consumer shapes, but types do not validate runtime values. Generic envelope decoding keeps dictionaries open until the selected consumer interprets them, with Python's field and unknown-property rules.
+Required nullable fields stay required. Schema defaults supply optional fields. Generic envelopes keep opaque JSON payloads intact until their selected consumer applies its admission rules.
 
 | Open source family | Runtime consumer | Boundary |
 | --- | --- | --- |
@@ -75,29 +70,13 @@ The generated open JSON objects do not describe operation-specific bodies. Hand-
 
 `CommandResult.model_list` also remains an open dictionary in the generic codec. `VpsCatalogRelay` decodes its BackendSnapshot and checks the requested backend before it publishes the snapshot.
 
-## Executor JSON intake
-
-`protocol_json.ts::parse_executor_json` is the executor's byte-level JSON parser. It supplies Pydantic/jiter lexical behavior before structural wire decoding. It does not apply body-size admission, schema defaults, scalar coercion, trusted identity, or handler-level payload validation.
-
-The lexical parser retains numeric token kinds until structural interpretation. NaN, positive infinity, negative infinity, and float overflow remain explicit native nonfinite numbers. Later executor serialization writes those values as `null`, as Python does. The parser retains UTF-8 byte locations and rejects lone surrogate escapes and malformed UTF-8 without replacement. Its fixed compatibility limits match Python: 200 levels of nonempty container contents and a signed integer lexeme of at most 4,300 characters. An empty container at the next level is accepted when its parent is within the limit.
-
-`ordered_json_entries` preserves first-key insertion order for parsed objects, including integer-looking keys. Duplicate keys update their value without moving that position. For objects constructed elsewhere, the accessor uses their JavaScript key order. Consumers that need source order must retain the parsed object rather than clone it through native enumeration. Syntax errors expose the exact lexical detail and byte position. The shared codec wraps them in the source ValidationError format.
-
 ## Shared runtime codec
 
-Both halves import runtime operations from `protocol.ts`. The bounded and frame APIs take value/bytes first and the generated root name second. `decode_json` accepts bytes or text for journal reads without the bounded-body wrapper. HTTP decoding is lenient by default. Strict outer JSON and lenient Python-value paths remain distinct, including ChildCommand’s nested lenient arguments and the outer diagnostic origin. The value entry point accepts already-decoded JSON wire dictionaries and supported event classes. Required nullable fields stay required, defaults appear on decode, unknown fields follow Python’s policy, and the existing command/mailbox checks retain their order.
+`protocol.ts` parses with `JSON.parse` and serializes with `JSON.stringify`. Ajv compiles each message validator once from the shared schemas. Wire integers and counters are safe integer numbers. Opaque payloads contain plain JSON values, and nonfinite numbers refuse admission.
 
-All structured integer fields use the generated `WireInteger = number | JsonNumber`. Safe integers decode to plain numbers. Integers outside the safe range retain the shared JsonNumber integer marker without rounding in the wire or mailbox. The core adoption boundary explicitly refuses retained turn numbers outside the safe integer range. Structured float fields decode to plain numbers. Opaque JsonValue retains a marker only for an unsafe integer or an integral float whose token kind a plain number erases. The public `integer_value(value)` helper returns the exact bigint for arithmetic, comparisons and SQL bindings. Both peers use this same rule. Do not compare an unsafe integer marker through JavaScript object identity or cast it to number.
+One frame size cap protects byte intake and output. The codec keeps command, answer, mailbox, identity, and version admission rules. `ExecutorValidationError` identifies validation failures. Socket and system errors retain their separate connection codes.
 
-Backend event conversion returns the existing classes with exact markers retained where native projection loses precision. The reverse registry matches exact constructors. Retained turn contracts keep the wider integer view until the explicit core-adoption check.
-
-Encoding takes the generated type for its mandatory root and validates before output. It requires nullable fields without defaults, writes source defaults and applies the command/mailbox semantic checks. This is the Manager's required peer-admission policy. It does not claim Python's unchecked serialization of arbitrary malformed dataclasses. Value conversion preserves lone-surrogate strings; byte serialization refuses them. Nonfinite floats become null in JSON-mode output. Typed byte output uses the shared `core/http/numeric_json.ts::stringify_pydantic_json` helper before size admission. The executor has no second numeric formatter. Its lone-surrogate check precedes that helper so that the source serialization error survives.
-
-The JSON-mode result also passes peer validation before output. A nonfinite non-nullable float therefore refuses when its conversion produces null. Bounded messages use lenient peer admission. Frames use strict outer peer admission, including Python's nested command exception. Outgoing native containers must fit the peer's depth cap. Outgoing exact integers must fit the peer's 4,300-character signed decimal-token limit.
-
-The facade exports the common ValueError base for ValidationError, ProtocolRefused and PydanticSerializationError. ProtocolRefused remains the single execution-identity class. Both peers share `parse_identity`, `validate_identity` and `refusal_reason_for_versions`; identity checks do not import the codec facade. UUID admission follows Python's source transformations and hexadecimal integer parser, including its accepted noncanonical forms. KeyError retains its separate source error family.
-
-The same exported schema carries minimal Python annotations for field declaration order, actual enum members, and tuple/list identity. These distinctions support source diagnostics without another schema or generated type file. Runtime schema data is embedded as WIRE_SCHEMA in the existing wire.generated.ts module. wire.schema.json remains a freshness artifact and is not a runtime packaging dependency. JsonObject is an explicit root for plain-dictionary replies such as route 7. Path fields use the shared pure Posix spelling helper, with no home expansion, parent cancellation, symlink resolution or filesystem reads.
+Private filesystem nanosecond timestamps and inode values come from Node stat calls with `bigint: true`. They remain local and never enter the wire.
 
 ## VPS file intake
 
@@ -105,7 +84,7 @@ The same exported schema carries minimal Python annotations for field declaratio
 
 A directory capability is an owned Node FileHandle. The walk starts at `/`, opens each component with DIRECTORY and NOFOLLOW, and retains the acquired inode through each operation. Peer paths reject absolute paths, dot segments, backslashes, NUL and encoded escape forms. Symlink loops produce the clean 'artifact path contains symlink' refusal. Regular-file opens use NOFOLLOW, NONBLOCK and fstat. Exclusive mode-0600 creation, copy, rename, metadata, cleanup and flush use the same retained parents. A pathname never replaces a retained capability for byte I/O.
 
-Hashing and copying use asynchronous file operations with 256 KiB blocks and exact bigint counts. `descriptor_hash` reads positionally from zero without advancing the descriptor's implicit offset. `file_digest`, `verified_version` and input-file admission share it. Short writes complete before a buffer is reused. Cleanup errors retain the original failure in AggregateError. `file_version_at` supplies synchronous metadata reads. Ordinary `rename_at` and `unlink_at` are asynchronous and finish before their retained parents close. Hashes, copies, parent creation, staging installation, cleanup and directory flushes stay outside the writer.
+Hashing and copying use asynchronous file operations with 256 KiB blocks and safe number counts. `descriptor_hash` reads positionally from zero without advancing the descriptor's implicit offset. `file_digest`, `verified_version` and input-file admission share it. Short writes complete before a buffer is reused. Cleanup errors retain the original failure in AggregateError. `file_version_at` supplies synchronous metadata reads. Ordinary `rename_at` and `unlink_at` are asynchronous and finish before their retained parents close. Hashes, copies, parent creation, staging installation, cleanup and directory flushes stay outside the writer.
 
 FileStaging is constructed before the inbox. An upload's held source parent and checked leaf pass through the inbox's second authorization into staging installation. The parent remains owned through cleanup, even if its former pathname changes. A later authorized inbox item publishes staged bytes through bounded synchronous rename groups inside the writer, after authority and version rechecks. Every source and destination parent opens before that writer. Exclusive hold links are created in retained destination parents before publication, then removed asynchronously with directory flushes after success or partial failure. Destination parents remain held through the receipt's unchanged-version check.
 
@@ -129,7 +108,7 @@ Accepted poll and large-replacement latency measurements remain in DEVIATIONS. G
 
 Replacement withdraws waiting commands in the lease transaction. Delivered commands settle from the successor's journal cursor. A successful stop result stays delivered until `finish_by_proof` supplies actual child-stop evidence. `publish_settlements` wakes one command's waiters before its listener, then advances to the next command. A listener failure leaves the whole committed batch durable.
 
-Sequence, turn and recovery counters retain exact SQL text reads and bigint bindings. Public values use the shared codec's safe-number or exact-marker rule. Command rows use Pydantic bytes. Outcome rows use validated object conversion followed by sorted standard-library JSON.
+Sequence, turn, and recovery counters use safe number values. Command and outcome rows use native JSON after schema validation.
 
 `stop({ deadline })` requires the shared absolute monotonic deadline in seconds. It seals new owned work, wakes polls and cancels result waits immediately. Its bounded observer uses `observe_shutdown`. `settled()` retains the actual work and cleanup join, including unexpected failures pending at the first stop. The stateless replacement transaction participant and the single stall source remain usable through their caller's SQL capability after stop. Their caller owns admission and settlement. The mailbox leaves database closure to the invocation owner.
 

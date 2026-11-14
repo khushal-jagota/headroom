@@ -9,7 +9,7 @@ import { fixture, fixture_path } from '../tests/ticket_fixture.ts';
 import { file_fixture, held_upload } from './testing/files.ts';
 import { ConversationMessageFiles } from '../conversation/record/message_files.ts';
 import { FILE_TRANSFER_STALL_SECONDS } from './configuration.ts';
-import { ValueError } from './protocol.ts';
+import { ExecutorValidationError } from './protocol.ts';
 import { FileCleanupError, copy_verified, directory_descriptor, unlink_at } from './files.ts';
 
 const faults = vi.hoisted(() => ({
@@ -218,7 +218,7 @@ test('missing procfs refuses before content intake and closes the actual probe d
         destroy() {},
       })
       .catch((error) => error);
-    expect(error).toBeInstanceOf(ValueError);
+    expect(error).toBeInstanceOf(ExecutorValidationError);
     expect(error.cause).toMatchObject({ code: 'ENOENT' });
     expect(next).not.toHaveBeenCalled();
     expect(existsSync(service.staging) ? readdirSync(service.staging).sort() : []).toEqual(before);

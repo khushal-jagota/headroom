@@ -1,3 +1,4 @@
+import { ExecutorValidationError } from '../protocol_errors.ts';
 /** The Mac executor's only bridge to operating-system-specific paths and libc calls. */
 import { constants, fstatSync } from 'node:fs';
 import { constants as os_constants, homedir } from 'node:os';
@@ -58,7 +59,7 @@ export function close_native_descriptor(descriptor: number): void {
 }
 export function require_relative_component(name: string): void {
   if (!name || name === '.' || name === '..' || name.includes('/') || name.includes('\0'))
-    throw Object.assign(new Error('unsafe directory component'), { name: 'ValueError' });
+    throw new ExecutorValidationError('unsafe directory component');
 }
 
 /** openat does not inherit Node openSync's automatic close-on-exec behavior. */
@@ -239,10 +240,9 @@ export function open_directory_descriptor(
 ): number {
   if (options.create && isMainThread)
     throw new Error('Executor directory creation requires the owned files worker.');
-  if (path.includes('\0'))
-    throw Object.assign(new Error('embedded null byte'), { name: 'ValueError' });
+  if (path.includes('\0')) throw new ExecutorValidationError('embedded null byte');
   if (path.split('/').includes('..'))
-    throw Object.assign(new Error('unsafe directory component'), { name: 'ValueError' });
+    throw new ExecutorValidationError('unsafe directory component');
   const raw = path.split('/');
   const parts = (isAbsolute(path) ? raw : [...process.cwd().split('/'), ...raw]).filter(
     (part) => part !== '' && part !== '.',
@@ -332,8 +332,7 @@ export function executor_socket_path(root: string): string {
 }
 let named_home: ((name: string) => string | undefined) | undefined;
 function account_home(name: string): string | undefined {
-  if (name.includes('\0'))
-    throw Object.assign(new Error('embedded null byte'), { name: 'ValueError' });
+  if (name.includes('\0')) throw new ExecutorValidationError('embedded null byte');
   if (named_home === undefined) {
     const darwin = native_platform() === 'darwin';
     const passwd = koffi.struct({
@@ -364,8 +363,7 @@ export function expand_executor_path(
   const slash = value.indexOf('/');
   const username = value.slice(1, slash < 0 ? undefined : slash);
   const home = username ? account_home(username) : (environment.HOME ?? homedir());
-  if (home === undefined)
-    throw Object.assign(new Error('Could not determine home directory.'), { name: 'RuntimeError' });
+  if (home === undefined) throw new Error('Could not determine home directory.');
   return home.replace(/\/+$/, '') + (slash < 0 ? '' : value.slice(slash)) || '/';
 }
 

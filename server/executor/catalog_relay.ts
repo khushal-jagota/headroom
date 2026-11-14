@@ -1,7 +1,6 @@
 /** Machine catalogs travel through the mailbox; SQLite owns their last complete copy. */
 import type { Database } from '../core/database/contracts.ts';
 import { is_os_error } from '../core/system_errors.ts';
-import { stringify_python_json } from '../core/http/numeric_json.ts';
 import { inspect } from 'node:util';
 import { ConversationBackendKey } from '../conversation/contracts.ts';
 import { save_machine_model_list } from '../conversation/backend_state.ts';
@@ -15,7 +14,7 @@ import type { SqliteCommandMailbox } from './vps_mailbox.ts';
 import type { MacPresenceService } from './vps_presence.ts';
 import { MODEL_LIST_LIMIT_SECONDS, CATALOG_CLEANUP_SECONDS } from './configuration.ts';
 import { CommandSettlementReason } from './contracts.ts';
-import { decode_json, ValueError } from './protocol.ts';
+import { decode_json, ExecutorValidationError } from './protocol.ts';
 
 export const MAC_AWAY_DIAGNOSIS = 'The Mac is away.';
 export interface CatalogRunAuthority {
@@ -189,13 +188,13 @@ export class VpsCatalogRelay implements RemoteCatalogSource {
       if (result === null) {
         timed_out = true;
       } else if (result.model_list !== null && result.model_list !== undefined) {
-        const snapshot = this.decode(stringify_python_json(result.model_list));
+        const snapshot = this.decode(JSON.stringify(result.model_list));
         if (snapshot.backend_key !== backend_key)
-          throw new ValueError('unexpected machine snapshot');
+          throw new ExecutorValidationError('unexpected machine snapshot');
         return this.keep(backend_key, snapshot);
       }
     } catch (error) {
-      if (!is_os_error(error) && !(error instanceof ValueError)) throw error;
+      if (!is_os_error(error) && !(error instanceof ExecutorValidationError)) throw error;
       console.warn(`The Mac's ${backend_key} model list was not read: ${inspect(error)}`);
     } finally {
       signal.removeEventListener('abort', start_cleanup);

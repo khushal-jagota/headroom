@@ -3,13 +3,11 @@ import { readFileSync, readdirSync } from 'node:fs';
 import { dirname, join, relative } from 'node:path';
 import { createDatabase } from '../../core/database/index.ts';
 import { PlannerError } from '../../core/contracts.ts';
-import { stringify_python_json } from '../../core/http/numeric_json.ts';
 import { InboxStore, MissingFiles } from '../data/inbox.ts';
 import { FileStaging } from '../vps_files.ts';
-import { decode_value, parse_identity, ValueError } from '../protocol.ts';
-import { parse_executor_json } from '../protocol_json.ts';
+import { decode_value, parse_identity, ExecutorValidationError } from '../protocol.ts';
 import type { WireValue } from '../contracts.ts';
-const spec = parse_executor_json(readFileSync(0)) as unknown as {
+const spec = JSON.parse(readFileSync(0, 'utf8')) as unknown as {
   path: string;
   identity: WireValue<'ExecutorIdentity'>;
   envelope: WireValue<'QueuedEnvelope'>;
@@ -22,9 +20,16 @@ const identity = parse_identity(spec.identity),
 try {
   const published = await store.publish_file_dependencies(envelope, identity);
   try {
+    // JSON object order cannot change the manifest that publication admitted.
+    const reordered = {
+      ...envelope,
+      file_dependencies: (envelope.file_dependencies ?? []).map((manifest) =>
+        Object.fromEntries(Object.entries(manifest).reverse()),
+      ),
+    };
     const results: unknown[] = [];
     const accepted = store.accept(
-      envelope,
+      decode_value(reordered, 'QueuedEnvelope'),
       (tx) => {
         tx.run('UPDATE executor_child_assignments SET created_at_ms=2');
         return { saved: true };
@@ -53,7 +58,7 @@ try {
         { ...envelope, sequence: 3, submission_id: 'refused' },
         (tx) => {
           tx.run('UPDATE executor_child_assignments SET created_at_ms=3');
-          throw new ValueError('domain refused');
+          throw new ExecutorValidationError('domain refused');
         },
         105,
         { identity, published },
@@ -82,7 +87,7 @@ try {
     }
     walk(files_root);
     process.stdout.write(
-      stringify_python_json(
+      JSON.stringify(
         database.read((sql) => ({
           results,
           positions: sql.all(
@@ -94,7 +99,6 @@ try {
           files,
           staged: readdirSync(join(root, 'executor-uploads')).sort(),
         })),
-        { compact: true },
       ),
     );
   } finally {

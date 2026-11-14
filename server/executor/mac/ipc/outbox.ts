@@ -1,7 +1,5 @@
 /** Admitted CLI publication captures immutable files through the existing spool owner. */
-import { stringify_python_json } from '../../../core/http/numeric_json.ts';
 import { as_object } from '../../protocol.ts';
-import { normalize_integer } from '../../integers.ts';
 import type { AcceptanceReceipt, CliWrite, QueuedEnvelope } from '../../wire.generated.ts';
 import type { OutboxStore } from '../storage/outbox.ts';
 import { row_envelope, row_receipt } from '../storage/envelopes.ts';
@@ -22,18 +20,9 @@ export class GatewayOutbox {
         owner_id: ticket_id,
         relative_path: file.relative_path,
         sha256: file.sha256,
-        byte_count: normalize_integer(file.byte_count),
+        byte_count: file.byte_count,
       }));
-      const encoded = Buffer.from(
-        stringify_python_json(
-          { payload, files },
-          {
-            sort_keys: true,
-            compact: true,
-            ensure_ascii: true,
-          },
-        ),
-      );
+      const encoded = Buffer.from(JSON.stringify({ payload, files }));
       return row_envelope(
         this.store.sender_id,
         this.store.append(

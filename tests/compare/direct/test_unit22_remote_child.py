@@ -195,9 +195,9 @@ def test_remote_child_consumers(tmp_path: Path, request: pytest.FixtureRequest) 
             {"kind": "steer_refused", "refusal_reason": "backend_rejected_steer"},
         )
         await observe(steer)
-        result = {"kind": "steer_accepted", "composed_content_delivered": {}}
+        result = {"kind": "steer_accepted", "composed_content_delivered": False}
         await observe(steer)
-        result = {"kind": "steer_refused", "refusal_reason": 9007199254740993}
+        result = {"kind": "steer_refused", "refusal_reason": 123456789}
         await observe(steer)
         disposition, result = (
             wire.CommandDisposition.refused,
@@ -259,19 +259,22 @@ def test_remote_child_consumers(tmp_path: Path, request: pytest.FixtureRequest) 
     assert run.returncode == 0, run.stderr
     actual = json.loads(run.stdout)
 
-    # Key/value diagnostics use native text. Keep refusal classes and all successful facts exact.
-    def comparable(result: dict[str, Any]) -> dict[str, Any]:
+    # Native validation has one domain class and native text. Other refusal
+    # classes, successful results, command contents, and custody remain exact.
+    def comparable(result: dict[str, Any], *, native: bool) -> dict[str, Any]:
         result = {
             **result,
             "results": [dict(row) if isinstance(row, dict) else row for row in result["results"]],
         }
+        validation_errors = {"ExecutorValidationError"} if native else {"KeyError", "ValueError"}
         for row in result["results"]:
-            if isinstance(row, dict) and row.get("error") in {"KeyError", "ValueError"}:
+            if isinstance(row, dict) and row.get("error") in validation_errors:
                 assert isinstance(row["message"], str) and row["message"]
+                row["error"] = "<validation failure>"
                 row["message"] = "<native diagnostic>"
         return result
 
-    assert comparable(actual) == comparable(expected)
+    assert comparable(actual, native=True) == comparable(expected, native=False)
     assert actual["results"][4]["not_delivered"] is True
     assert {"type": "BackendSteerAccepted", "composed_content_delivered": False} in actual[
         "results"

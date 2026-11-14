@@ -1,7 +1,6 @@
-/** Runtime records keep Python's bytes and numeric kinds across the file-worker boundary. */
-import { stringify_python_json } from '../../../core/http/numeric_json.ts';
-import { is_object, parse_attempt_json } from '../../../environments/updates/codec.ts';
-import { ValueError } from '../../../core/value_error.ts';
+/** Runtime records use native JSON across the file-worker boundary. */
+import { is_object } from '../../../environments/updates/codec.ts';
+import { ExecutorValidationError } from '../../../executor/protocol_errors.ts';
 
 /** The invocation's existing FilesService owns these byte operations and its actual cleanup. */
 export interface RuntimeRecordIO {
@@ -14,10 +13,7 @@ export async function atomic_record(
   path: string,
   value: Record<string, unknown>,
 ): Promise<void> {
-  await files.atomic_runtime_record(
-    path,
-    stringify_python_json(value, { sort_keys: true, ensure_ascii: true }) + '\n',
-  );
+  await files.atomic_runtime_record(path, JSON.stringify(value) + '\n');
 }
 export async function read_record(
   files: RuntimeRecordIO,
@@ -25,7 +21,7 @@ export async function read_record(
 ): Promise<Record<string, unknown> | null> {
   const text = await files.read_runtime_record(path);
   if (text === null) return null;
-  const value = parse_attempt_json(text);
-  if (!is_object(value)) throw new ValueError('runtime state must be an object');
+  const value = JSON.parse(text);
+  if (!is_object(value)) throw new ExecutorValidationError('runtime state must be an object');
   return value;
 }

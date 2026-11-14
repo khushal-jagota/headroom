@@ -16,10 +16,9 @@ import { InboxStore } from '../data/inbox.ts';
 import { FileStaging } from '../vps_files.ts';
 import { open_child_assignment } from '../data/child_custody.ts';
 import { decode_value } from '../protocol.ts';
-import { parse_executor_json } from '../protocol_json.ts';
 import type { WireTypes } from '../wire.generated.ts';
 
-const spec = parse_executor_json(readFileSync(0)) as unknown as {
+const spec = JSON.parse(readFileSync(0, 'utf8')) as unknown as {
   path: string;
   identity: WireTypes['ExecutorIdentity'];
   child: WireTypes['ChildReference'];

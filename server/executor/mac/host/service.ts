@@ -257,7 +257,7 @@ export class MacService {
         identity.executor_incarnation,
         {
           outputs_module: new URL('../runner/logic/outcomes.ts', import.meta.url),
-          now_ms: () => BigInt(Date.now()),
+          now_ms: () => Date.now(),
           on_failure,
         },
         cleanup_options,

@@ -4,7 +4,6 @@ import type { ExecutorIdentity } from '../../../execution_identity.ts';
 import { observe_shutdown } from '../../../conversation/shutdown.ts';
 import type { StopOptions } from '../../../lifecycle/contracts.ts';
 import { encode_bounded } from '../../protocol.ts';
-import { integer_value } from '../../integers.ts';
 import type {
   MacRuntimeSelection,
   MacUpdateCheck,
@@ -38,7 +37,7 @@ export interface MacUpdateControllerOptions {
     | 'resume_after_cancelled_update'
   >;
   presence: { readonly identity: ExecutorIdentity; leased(): boolean };
-  outbox: { pending_count(): bigint };
+  outbox: { pending_count(): number };
   /** The host owns this separate worker and closes it after controller settlement. */
   files: FilesService;
   executor_id: string;
@@ -175,15 +174,15 @@ export class MacUpdateController {
     return reply?.confirmed === true;
   }
   private valid_reference(value: MacUpdatePrefetch, expected_path: string): boolean {
-    const bytes = integer_value(value.archive_size);
+    const bytes = value.archive_size;
     return (
       value.application_revision.length === 40 &&
       /^[0-9a-f]{40}$/.test(value.application_revision) &&
       value.archive_sha256.length === 64 &&
       /^[0-9a-f]{64}$/.test(value.archive_sha256) &&
       value.archive_path === expected_path &&
-      bytes > 0n &&
-      bytes <= BigInt(settings.MAX_MAC_RUNTIME_ARCHIVE_BYTES)
+      bytes > 0 &&
+      bytes <= settings.MAX_MAC_RUNTIME_ARCHIVE_BYTES
     );
   }
   private release_path(value: MacUpdatePrefetch): string {
@@ -225,13 +224,13 @@ export class MacUpdateController {
             throw new Error('Mac runtime archive uses transport encoding.');
           const handle: TransferHandle = await files.open_transfer(path, 'write');
           let complete = false,
-            count = 0n;
+            count = 0;
           try {
             for await (const data of response) {
               this.signal.throwIfAborted();
               const bytes = Buffer.from(data as Uint8Array);
-              count += BigInt(bytes.length);
-              if (count > integer_value(value.archive_size))
+              count += bytes.length;
+              if (count > value.archive_size)
                 throw new Error('Mac runtime archive exceeds its published size.');
               for (let offset = 0; offset < bytes.length; offset += settings.TRANSFER_CHUNK_BYTES)
                 await files.write_transfer(
@@ -239,11 +238,7 @@ export class MacUpdateController {
                   bytes.subarray(offset, offset + settings.TRANSFER_CHUNK_BYTES),
                 );
             }
-            await files.finish_transfer(
-              handle,
-              value.archive_sha256,
-              integer_value(value.archive_size),
-            );
+            await files.finish_transfer(handle, value.archive_sha256, value.archive_size);
             complete = true;
           } finally {
             await files.close_transfer(handle, !complete);
@@ -255,7 +250,7 @@ export class MacUpdateController {
         path,
         join(this.root, 'releases'),
         value.archive_sha256,
-        Number(integer_value(value.archive_size)),
+        value.archive_size,
         value.application_revision,
       );
     } finally {
@@ -311,7 +306,7 @@ export class MacUpdateController {
   private async perform(session: HttpSessions, check: MacUpdateCheck): Promise<void> {
     await this.release_handoff_custody();
     await this.release_runtime_admission();
-    if (integer_value(check.schema_version) !== BigInt(settings.MAC_UPDATE_SCHEMA_VERSION))
+    if (check.schema_version !== settings.MAC_UPDATE_SCHEMA_VERSION)
       throw new TypeError('Unsupported Mac update channel schema.');
     await this.start_prefetch(check.prefetch ?? null);
     const target = check.target;
@@ -460,7 +455,7 @@ export class MacUpdateController {
   }
   async release_handoff_custody(): Promise<void> {
     this.signal.throwIfAborted();
-    if (this.options.outbox.pending_count() === 0n) await this.release_custody();
+    if (this.options.outbox.pending_count() === 0) await this.release_custody();
   }
   private async release_custody(): Promise<boolean> {
     this.signal.throwIfAborted();

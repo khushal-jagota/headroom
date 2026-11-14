@@ -4,7 +4,6 @@ import { createHash } from 'node:crypto';
 import { fail } from 'node:assert/strict';
 import { join } from 'node:path';
 import { setImmediate as yield_turn } from 'node:timers/promises';
-import { stringify_pydantic_json } from '../../../core/http/numeric_json.ts';
 import {
   BackendPromptAccepted,
   BackendPromptRejected,
@@ -20,9 +19,8 @@ import type {
 import { same_turn as claude_same_turn } from '../../../conversation/backends/claude_agent_sdk/turn.ts';
 import { same_turn as codex_same_turn } from '../../../conversation/backends/codex_app_server/turn.ts';
 import type { ResolvedConversationStart } from '../../../conversation/contracts.ts';
-import { decode_json, as_object, ValueError } from '../../protocol.ts';
+import { decode_json, as_object, ExecutorValidationError } from '../../protocol.ts';
 import { MacCommandService } from '../runner/service.ts';
-import { dispatch_command } from '../runner/commands.ts';
 import { create_mac_output_publication } from '../runner/publication.ts';
 import type { MacCommandDependencies, MacOutputPublication } from '../runner/command_contracts.ts';
 import { MacNativeChildren } from '../runner/start_stop.ts';
@@ -32,8 +30,8 @@ import { MacRetirement } from '../runner/retirement.ts';
 import { MacMaintenance } from '../runner/maintenance.ts';
 import { ConversationStartAborted } from '../../../runtime/abort.ts';
 import { ServerLifecycleError } from '../../../lifecycle/contracts.ts';
-import { integer_value } from '../../integers.ts';
 import { ExecutorPaths } from '../configuration.ts';
+import { MacPermissionDenied } from '../runner/contracts.ts';
 import type { OutboxStore } from '../storage/outbox.ts';
 import { read_canonical_body } from '../mailbox/poll.ts';
 import type { AsyncCommandJournal } from '../storage/journal_contracts.ts';
@@ -89,7 +87,7 @@ let store: OutboxStore, journal: AsyncCommandJournal;
 async function open() {
   ({ store, journal } = await open_fixture_stores(
     join(root, 'spool'),
-    BigInt(now),
+    Number(now),
     on_failure,
     options,
   ));
@@ -373,16 +371,14 @@ try {
   await run('start');
   const before_unsafe = calls.length;
   const unsafe = { ...commands.prompt! };
-  unsafe.arguments = { ...unsafe.arguments, sender_message_count: unsafe.turn!.turn_number };
-  const unsafe_count = await dispatch_command(
-    dependencies(wrap_journal(journal!), wrap_publication(create_mac_output_publication(store!))),
-    unsafe,
-    new Map(),
-    service,
-    fail,
-  ).catch((error: unknown) => error);
+  if (unsafe.arguments.kind !== 'write_prompt')
+    throw new Error('The prompt fixture must carry prompt arguments');
+  unsafe.arguments = { ...unsafe.arguments, sender_message_count: Number.MAX_SAFE_INTEGER + 1 };
+  const unsafe_count = await Promise.resolve()
+    .then(() => service.run(unsafe))
+    .catch((error: unknown) => error);
   guards.unsafe_sender_count_refused =
-    unsafe_count instanceof ValueError &&
+    unsafe_count instanceof ExecutorValidationError &&
     native_children.get('child')!.active_turn === null &&
     calls.length === before_unsafe;
   for (const raw of input.asks) {
@@ -395,7 +391,7 @@ try {
   // Reorder keys without parsing or rounding the high integer wire token.
   const encoded = as_object(commands.prompt!, 'ChildCommand');
   const reordered = Object.fromEntries(Object.entries(encoded).reverse());
-  const second = service.run(decode_json(stringify_pydantic_json(reordered), 'ChildCommand'));
+  const second = service.run(decode_json(JSON.stringify(reordered), 'ChildCommand'));
   // A transport waiter can leave; the command service never receives its cancellation signal.
   const waiter = new AbortController();
   const abandoned = Promise.race([
@@ -410,7 +406,7 @@ try {
   release.resolve();
   outcomes.push(['prompt', as_object(await second, 'CommandOutcome')]);
   const changed = decode_json(
-    stringify_pydantic_json({
+    JSON.stringify({
       ...encoded,
       arguments: { ...(encoded.arguments as object), sender_label: 'changed' },
     }),
@@ -450,7 +446,7 @@ try {
   guards.zero_output_fate_blocks_idle_stop =
     !record.settled &&
     record.task === null &&
-    integer_value(unsettled.uncertain_operation_count) !== 0n &&
+    unsettled.uncertain_operation_count !== 0 &&
     calls.filter((call) => JSON.stringify(call) === '["stop"]').length === native_stops;
   const empty_children = make_native_children();
   const stop_probe = new MacRetirement({
@@ -529,8 +525,7 @@ try {
     );
   const stop_result = await journal!.result_of('stop');
   facts.source_join_before_stop =
-    refused_source instanceof Error &&
-    refused_source.name === 'PermissionError' &&
+    refused_source instanceof MacPermissionDenied &&
     sources.count(commands.stop!.child) === 1 &&
     calls.filter((call) => JSON.stringify(call) === '["stop"]').length === stop_calls &&
     stop_result === null;
@@ -589,7 +584,7 @@ try {
   maintenance.resume_after_cancelled_update();
   const quiescence = await maintenance.quiesce(signal);
   states.push(as_object(quiescence, 'Quiescence'));
-  facts.receipts_block_exit = !quiescence.idle_children_stopped && store!.pending_count() > 0n;
+  facts.receipts_block_exit = !quiescence.idle_children_stopped && store!.pending_count() > 0;
   maintenance.resume_after_cancelled_update();
   await run('maintenance-start');
   const maintenance_child = native_children.get('maintenance-child')!;
@@ -781,7 +776,7 @@ try {
   await Promise.all([native_stopping, joined_stop]);
   guards.exact_retirement_prunes_records &&= service.records(reference).length === 0;
   process.stdout.write(
-    stringify_pydantic_json({
+    JSON.stringify({
       parity,
       retry_attempts: trace,
       actual_work_joined,

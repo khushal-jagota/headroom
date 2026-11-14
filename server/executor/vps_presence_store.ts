@@ -1,16 +1,9 @@
 /** Caller-owned presence SQL. Lease admission and postcommit publication belong to the owner. */
 import type { ReadSql, TransactionSql } from '../core/database/contracts.ts';
 import { PlannerError } from '../core/contracts.ts';
-import { stringify_python_json } from '../core/http/numeric_json.ts';
 import type { ExecutorIdentity } from '../execution_identity.ts';
 import type { AcceptedLease, ExecutorRefusal, PresenceRecord, WireValue } from './contracts.ts';
-import {
-  as_object,
-  decode_json,
-  decode_value,
-  integer_value,
-  ValidationError,
-} from './protocol.ts';
+import { as_object, decode_json, decode_value, ExecutorValidationError } from './protocol.ts';
 import { continuous_since_after_lease } from './logic/presence.ts';
 
 /** Stored identities need shape decoding, without ingress UUID or version admission. */
@@ -34,7 +27,7 @@ function parse_lease(text: string | null): WireValue<'LeaseRequest'> | null {
     return decode_json(text, 'LeaseRequest');
   } catch (error) {
     // A lease from an older shape is diagnostic only. Other stored records remain authoritative.
-    if (error instanceof ValidationError) return null;
+    if (error instanceof ExecutorValidationError) return null;
     throw error;
   }
 }
@@ -138,15 +131,12 @@ export function accept_lease_in_transaction(
       'ON CONFLICT(singleton) DO UPDATE SET executor_incarnation=excluded.executor_incarnation,identity_json=excluded.identity_json,last_contact_at_ms=excluded.last_contact_at_ms,last_lease_at_ms=excluded.last_lease_at_ms,continuous_since_ms=excluded.continuous_since_ms,going_to_sleep_at_ms=excluded.going_to_sleep_at_ms,lease_json=excluded.lease_json,refusal_json=excluded.refusal_json',
     [
       incarnation,
-      stringify_python_json(as_object(current.identity!, 'ExecutorIdentity'), {
-        sort_keys: true,
-        compact: true,
-      }),
+      JSON.stringify(as_object(current.identity!, 'ExecutorIdentity')),
       current.last_contact_at_ms,
       now_ms,
       current.continuous_since_ms,
       current.going_to_sleep_at_ms,
-      stringify_python_json(as_object(request, 'LeaseRequest'), { sort_keys: true, compact: true }),
+      JSON.stringify(as_object(request, 'LeaseRequest')),
       null,
     ],
   );
@@ -165,9 +155,9 @@ export function same_identity(
   return (
     left.application_revision === right.application_revision &&
     left.executor_incarnation === right.executor_incarnation &&
-    integer_value(left.protocol_version) === integer_value(right.protocol_version) &&
-    integer_value(left.spool_format_version) === integer_value(right.spool_format_version) &&
-    integer_value(left.connection_generation) === integer_value(right.connection_generation)
+    left.protocol_version === right.protocol_version &&
+    left.spool_format_version === right.spool_format_version &&
+    left.connection_generation === right.connection_generation
   );
 }
 /** Version refusal precedes the current-incarnation fence. True means this commit announces a change. */
@@ -182,13 +172,7 @@ export function record_refusal(tx: TransactionSql, value: ExecutorRefusal): bool
     return false;
   tx.run(
     'INSERT INTO mac_executor_presence(singleton,last_contact_at_ms,refusal_json) VALUES (1,?,?) ON CONFLICT(singleton) DO UPDATE SET last_contact_at_ms=MAX(COALESCE(last_contact_at_ms,0),excluded.last_contact_at_ms),refusal_json=excluded.refusal_json',
-    [
-      integer_value(value.refused_at_ms),
-      stringify_python_json(as_object(value, 'ExecutorRefusal'), {
-        sort_keys: true,
-        compact: true,
-      }),
-    ],
+    [value.refused_at_ms, JSON.stringify(as_object(value, 'ExecutorRefusal'))],
   );
   return true;
 }

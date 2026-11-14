@@ -31,7 +31,8 @@ test('Mac package keeps its runtime/CLI assets separate and refuses a non-Darwin
       join(source, 'server/package.json'),
       JSON.stringify({ dependencies, type: 'module' }),
     );
-    await put(join(source, 'server/executor/wire.schema.json'), '{}');
+    const wire_schema = '{"fixture":"native wire schema bytes"}\n';
+    await put(join(source, 'server/executor/wire.schema.json'), wire_schema);
     await put(join(source, 'server/executor/mac/service.test.ts'), '// excluded');
     await put(join(source, 'src/planner/executor/mac_service.py'), '# not shipped');
     await put(join(source, 'src/planner/skills/panels/SKILL.md'), '# seed asset');
@@ -75,7 +76,11 @@ test('Mac package keeps its runtime/CLI assets separate and refuses a non-Darwin
       architecture: 'arm64',
       platform: 'darwin',
     });
-    const reader = new ArchiveMembers('extraction');
+    const archived_schema: Buffer[] = [];
+    const reader = new ArchiveMembers('extraction', (entry, member) => {
+      if (member.path === 'server/executor/wire.schema.json')
+        entry.on('data', (bytes: Buffer) => archived_schema.push(bytes));
+    });
     reader.feed(gunzipSync(await readFile(join(options.output, 'panels-mac-runtime.tar.gz'))));
     reader.finish();
     const members = reader.members.map((entry) => entry.path);
@@ -85,12 +90,16 @@ test('Mac package keeps its runtime/CLI assets separate and refuses a non-Darwin
         'node/bin/node',
         'server/executor/mac/entrypoint.ts',
         'server/executor/wire.generated.ts',
+        'server/executor/wire.schema.json',
         'src/planner/conversation/backends/hermes_acp_extension.py',
         'src/planner/worker_types/shipped_worker_types.json',
       ]),
     );
     expect(members).not.toEqual(expect.arrayContaining(['src/planner/executor/mac_service.py']));
-    expect(members).not.toEqual(expect.arrayContaining(['server/executor/wire.schema.json']));
+    expect(
+      await readFile(join(options.output, 'runtime/server/executor/wire.schema.json'), 'utf8'),
+    ).toBe(wire_schema);
+    expect(Buffer.concat(archived_schema).toString()).toBe(wire_schema);
     expect(members).not.toEqual(expect.arrayContaining(['server/executor/mac/service.test.ts']));
     expect(
       await readFile(join(options.output, 'assets/com.panels.executor.typescript.plist'), 'utf8'),

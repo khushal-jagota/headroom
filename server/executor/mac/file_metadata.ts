@@ -1,5 +1,6 @@
 /** Cheap local validation and metadata observations. No byte copies or full flushes. */
 import { lstatSync } from 'node:fs';
+import { ExecutorValidationError } from '../protocol_errors.ts';
 import type { BigIntStats } from 'node:fs';
 import { join } from 'node:path';
 import { path_is_within } from '../../core/path_containment.ts';
@@ -8,7 +9,7 @@ import { resolve_path_sync } from '../../core/path_resolution.ts';
 /** Local inode metadata, not an executor wire type. */
 export type FileVersion = readonly [bigint, bigint, bigint, bigint, bigint];
 export function file_error(message: string): Error {
-  return Object.assign(new Error(message), { name: 'ValueError' });
+  return new ExecutorValidationError(message);
 }
 export function error_code(error: unknown): string | undefined {
   return (error as NodeJS.ErrnoException).code;

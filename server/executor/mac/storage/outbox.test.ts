@@ -19,7 +19,7 @@ import { createReadAccess } from '../../../core/database/index.ts';
 import { ServerLifecycleError, ShutdownDeadlineExceeded } from '../../../lifecycle/contracts.ts';
 import { observe_shutdown } from '../../../conversation/shutdown.ts';
 import { FilesService } from '../files.ts';
-import { ProtocolRefused, ValueError } from '../../protocol.ts';
+import { ProtocolRefused, ExecutorValidationError } from '../../protocol.ts';
 import { MAX_ENVELOPE_BYTES } from '../configuration.ts';
 import { acquire_process_lock } from '../platform.ts';
 import { DATABASE_NAME } from './schema.ts';
@@ -183,7 +183,7 @@ test('the full-item limit rolls back row and index allocation even with a no-op 
     ticket_id: 'ticket',
     relative_path: 'file',
     sha256: 'a'.repeat(64),
-    byte_count: 1n,
+    byte_count: 1,
     modified_ns: 1n,
   };
   const large = Buffer.from(
@@ -197,7 +197,7 @@ test('the full-item limit rolls back row and index allocation even with a no-op 
     refusal = error;
   }
   expect(refusal).toBeInstanceOf(ProtocolRefused);
-  expect(refusal).toBeInstanceOf(ValueError);
+  expect(refusal).toBeInstanceOf(ExecutorValidationError);
   expect(refusal).toMatchObject({ message: 'value exceeds its encoded size limit' });
   expect(store.lookup('oversize')).toBeNull();
   const read = createReadAccess(join(spool, DATABASE_NAME));
@@ -212,7 +212,7 @@ test('the full-item limit rolls back row and index allocation even with a no-op 
   } finally {
     read.close();
   }
-  expect(store.append(columns('accepted'), payload, [], [], () => {}).sequence).toBe(1n);
+  expect(store.append(columns('accepted'), payload, [], [], () => {}).sequence).toBe(1);
 });
 
 test('committed capture and receipt results survive their distinct cleanup failures', async () => {
@@ -276,14 +276,14 @@ test('capture yields the writer and shutdown drains its reservation despite a fa
   void active.catch(() => {});
   try {
     await entered.promise;
-    expect(store.append(columns('other'), payload, [], [], () => {}).sequence).toBe(1n);
+    expect(store.append(columns('other'), payload, [], [], () => {}).sequence).toBe(1);
     await expect(store.stop({ deadline: performance.now() / 1000 - 1 })).rejects.toBeInstanceOf(
       ServerLifecycleError,
     );
     expect(() => store.append(columns('too_late'), payload, [], [], () => {})).toThrow();
     expect(() => store.with_capture('ticket', () => null)).toThrow();
     release.resolve();
-    expect((await active).sequence).toBe(2n);
+    expect((await active).sequence).toBe(2);
     expect(() => store.append(columns('still_late'), payload, [], [], () => {})).toThrow();
     await failed_stop.promise;
     await retained_failure(store.stop(deadline()), 'stop frame failed');

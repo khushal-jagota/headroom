@@ -38,9 +38,9 @@ import type { PublishedFiles } from './data/inbox.ts';
 import type { InboxRuns, PublishFiles } from './vps_inbox.ts';
 import type { WireValue } from './contracts.ts';
 import { require_current_incarnation_in_transaction } from './vps_presence_store.ts';
-import { decode_value, ValueError } from './protocol.ts';
+import { decode_value, ExecutorValidationError } from './protocol.ts';
 import { now_ms } from './clock.ts';
-import { is_json_object } from './protocol_json.ts';
+import { is_record as is_json_object } from './../core/records.ts';
 
 type Json = WireValue<'JsonObject'>;
 /** Effects use the caller's writer. Canonical domain writers own all mutation rules. */
@@ -132,7 +132,7 @@ export class AgentWrites {
   ): Promise<WireValue<'AcceptanceReceipt'>> {
     const write = decode_value(envelope.payload, 'CliWrite');
     if (write.child.conversation_id !== envelope.conversation_id)
-      throw new ValueError('CLI conversation conflicts with envelope');
+      throw new ExecutorValidationError('CLI conversation conflicts with envelope');
     const principal = await this.runs.authority(write.child);
     const published = await publish();
     if (write.operation === 'message.send' || write.operation === 'ticket.request_help')
@@ -278,7 +278,7 @@ export class AgentWrites {
       [envelope.sender_id, envelope.conversation_id],
     );
     if (!previous || previous.submission_id !== envelope.submission_id)
-      throw new ValueError('message inbox position changed during dispatch');
+      throw new ExecutorValidationError('message inbox position changed during dispatch');
     if (previous.disposition !== 'dispatching') return InboxStore.receipt(previous);
     const receipt: WireValue<'AcceptanceReceipt'> = {
       sender_id: envelope.sender_id,

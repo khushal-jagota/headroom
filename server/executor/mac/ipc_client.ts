@@ -11,7 +11,7 @@ import {
   MAX_ENVELOPE_BYTES,
   executor_paths,
 } from './configuration.ts';
-import { decode_json, decode_value, encode_frame, ValueError } from '../protocol.ts';
+import { decode_json, decode_value, encode_frame, ExecutorValidationError } from '../protocol.ts';
 import type { IpcOperation, IpcResponse, JsonObject, MacLocalStatus } from '../wire.generated.ts';
 
 export function cli_mutation(method: string, path: string, body: unknown): [string, JsonObject] {
@@ -38,11 +38,14 @@ export function cli_mutation(method: string, path: string, body: unknown): [stri
   const help = /^\/api\/tickets\/([^/]+)\/request-help$/.exec(path);
   if (method === 'POST' && help)
     return ['ticket.request_help', { ticket_id: help[1], body } as JsonObject];
-  throw new ValueError(`This executor does not support ${method} ${path}`);
+  throw new ExecutorValidationError(`This executor does not support ${method} ${path}`);
 }
 
 /** Both runtimes use the OS monotonic clock for the deadline across this process boundary. */
-const monotonic = () => Number(process.hrtime.bigint()) / 1_000_000_000;
+const monotonic = () => {
+  const [seconds, nanoseconds] = process.hrtime();
+  return seconds + nanoseconds / 1_000_000_000;
+};
 export async function request(
   operation: IpcOperation,
   payload: JsonObject,
@@ -73,10 +76,12 @@ export async function request(
   );
   const socket_path = executor_paths(environment).ipc_socket;
   if (lstatSync(dirname(socket_path)).isSymbolicLink())
-    throw new ValueError('executor IPC run directory is a symbolic link');
+    throw new ExecutorValidationError('executor IPC run directory is a symbolic link');
   const entry = lstatSync(socket_path);
   if (entry.isSymbolicLink() || !entry.isSocket() || entry.uid !== process.getuid!())
-    throw new ValueError('executor IPC socket must be an owned socket without a symbolic link');
+    throw new ExecutorValidationError(
+      'executor IPC socket must be an owned socket without a symbolic link',
+    );
   const transport_deadline = deadline + limits.reserve_seconds;
   let emission_possible = false;
   try {
@@ -116,22 +121,22 @@ export async function request(
             if (header_bytes < 4) return;
             const length = header.readUInt32BE();
             if (!length || length > MAX_ENVELOPE_BYTES)
-              throw new ValueError('executor IPC response exceeds frame limit');
+              throw new ExecutorValidationError('executor IPC response exceeds frame limit');
             body = Buffer.alloc(length);
           }
           const count = Math.min(body!.length - body_bytes, chunk.length - offset);
           chunk.copy(body!, body_bytes, offset, offset + count);
           body_bytes += count;
           if (body_bytes !== body!.length) return;
-          const decoded = decode_json(body!, 'IpcResponse', { strict: true });
+          const decoded = decode_json(body!, 'IpcResponse');
           if (decoded.request_id !== request_id)
-            throw new ValueError('executor IPC response identity mismatch');
+            throw new ExecutorValidationError('executor IPC response identity mismatch');
           if (
             decoded.unconfirmed != null &&
             (decoded.unconfirmed.request_id !== request_id ||
               decoded.unconfirmed.submission_id !== submission_id)
           )
-            throw new ValueError('executor IPC publication identity mismatch');
+            throw new ExecutorValidationError('executor IPC publication identity mismatch');
           response = decoded;
           finish();
         } catch (error) {
@@ -191,7 +196,7 @@ export async function local_status(
 ): Promise<MacLocalStatus> {
   const response = await request('health', {}, environment);
   if (response.error !== null || response.result === null) {
-    throw new ValueError(
+    throw new ExecutorValidationError(
       response.error && Object.keys(response.error).length
         ? scalar_text(response.error)
         : 'executor health returned nothing',

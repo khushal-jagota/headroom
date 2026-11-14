@@ -7,14 +7,10 @@ import {
 } from '../../../conversation/shutdown.ts';
 import { ServerLifecycleError } from '../../../lifecycle/contracts.ts';
 import type { StopOptions } from '../../../lifecycle/contracts.ts';
-import { decode_value, encode_bounded, integer_value } from '../../protocol.ts';
-import { is_json_object } from '../../protocol_json.ts';
-import type {
-  AcceptanceReceipt,
-  FileManifest,
-  ItemBatch,
-  ItemBatchReply,
-} from '../../wire.generated.ts';
+import { decode_value, encode_bounded } from '../../protocol.ts';
+import { file_manifest_key as manifest_key } from '../../file_manifest.ts';
+import { is_record as is_json_object } from '../../../core/records.ts';
+import type { AcceptanceReceipt, ItemBatch, ItemBatchReply } from '../../wire.generated.ts';
 import type { OutboxStore } from '../storage/outbox.ts';
 import { row_envelope } from '../storage/envelopes.ts';
 import {
@@ -42,8 +38,6 @@ export interface OutboxSenderOptions {
   readonly on_failure: (error: unknown) => void;
 }
 class RetryLater extends Error {}
-const manifest_key = (manifest: FileManifest) =>
-  Buffer.from(encode_bounded(manifest, 'FileManifest')).toString();
 
 export class MacOutboxSender {
   private readonly options: OutboxSenderOptions;
@@ -127,7 +121,7 @@ export class MacOutboxSender {
       return;
     }
     const envelope = batch.items[reply.receipts.length]?.envelope;
-    if (!envelope || integer_value(envelope.sequence) !== integer_value(stop.sequence))
+    if (!envelope || envelope.sequence !== stop.sequence)
       throw new Error('Outbox stop is outside this batch.');
     if (stop.reason === 'retry_later') throw new RetryLater(stop.message);
     const uploaded = state.uploaded.get(envelope.submission_id) ?? new Set<string>();

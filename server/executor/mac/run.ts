@@ -4,7 +4,7 @@ import { ChildProcesses } from '../../lifecycle/owned_processes.ts';
 import { OneShotChildren } from '../../lifecycle/one_shot_children.ts';
 import { SHUTDOWN_GRACE_SECONDS } from '../../lifecycle/configuration.ts';
 import { mac_runtime_settings } from '../../core/config.ts';
-import { is_value_error } from '../../core/value_error.ts';
+import { ExecutorValidationError } from '../../executor/protocol_errors.ts';
 import { CliFailure, human_error } from '../../cli/errors.ts';
 import type { CommandResult, Invocation } from '../../cli/contracts.ts';
 import { executor_paths, validate_executor_launch } from './configuration.ts';
@@ -19,7 +19,7 @@ export async function run_executor(invocation: Invocation): Promise<CommandResul
   try {
     validate_executor_launch(executor_id, revision, panels_server_url);
   } catch (error) {
-    if (!is_value_error(error)) throw error;
+    if (!(error instanceof ExecutorValidationError)) throw error;
     throw new CliFailure(human_error(invocation.command, error.message));
   }
   const runtime = mac_runtime_settings(invocation.environment);

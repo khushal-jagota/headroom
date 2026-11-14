@@ -1,3 +1,4 @@
+import { snapshot_for_wire } from '../../backend_snapshot.ts';
 /** Own optional reads, canonical worker custody, and actual source cleanup. */
 import { Worker } from 'node:worker_threads';
 import { ServerLifecycleError } from '../../../lifecycle/contracts.ts';
@@ -7,7 +8,7 @@ import {
   is_shutdown_business_cancellation,
 } from '../../../conversation/shutdown.ts';
 import type { BackendSnapshot } from '../../../conversation/snapshot/contracts.ts';
-import { ValueError, KeyError } from '../../protocol.ts';
+import { ExecutorValidationError } from '../../protocol.ts';
 import {
   model_catalog_cleanup_pending,
   remember_model_catalog_failure,
@@ -15,7 +16,6 @@ import {
 import type { ModelListRequest } from '../../wire.generated.ts';
 import type { CanonicalReader } from '../storage/journal_contracts.ts';
 import type { CanonicalCatalogResult } from '../mailbox/contracts.ts';
-import { pack } from '../storage/journal_worker_contracts.ts';
 import { FILE_CHUNK_BYTES } from '../configuration.ts';
 import type {
   MacCatalogDependencies,
@@ -112,8 +112,7 @@ class Result implements CanonicalCatalogResult {
 function optional_failure(error: unknown): boolean {
   return (
     error instanceof TypeError ||
-    error instanceof ValueError ||
-    error instanceof KeyError ||
+    error instanceof ExecutorValidationError ||
     (error instanceof Error &&
       'code' in error &&
       typeof error.code === 'string' &&
@@ -279,7 +278,7 @@ export class MacCatalog {
     const descriptor = await this.call<CatalogResultDescriptor>({
       operation: 'encode',
       command_id,
-      snapshot: pack(snapshot),
+      snapshot: snapshot === null ? null : snapshot_for_wire(snapshot),
     });
     const result = new Result(this, descriptor);
     this.results.add(result);

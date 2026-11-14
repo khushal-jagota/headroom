@@ -3,6 +3,7 @@ import { same_reference } from '../../child_reference.ts';
 import type { ChildReference } from '../../wire.generated.ts';
 import type { MacChildStateContract } from './command_contracts.ts';
 import type { MacSourceWorkContract } from './retirement_contracts.ts';
+import { MacPermissionDenied } from './contracts.ts';
 
 export class MacSourceWork implements MacSourceWorkContract {
   private readonly state: MacChildStateContract;
@@ -24,11 +25,7 @@ export class MacSourceWork implements MacSourceWorkContract {
       this.state.is_retired(reference.child_id) ||
       ((this.stopping() || this.state.is_retiring(reference.child_id)) && !options.final_event)
     )
-      return Promise.reject(
-        Object.assign(new Error('source child is retired or retiring'), {
-          name: 'PermissionError',
-        }),
-      );
+      return Promise.reject(new MacPermissionDenied('source child is retired or retiring'));
     // Reserve custody before the callback can emit more work or reenter shutdown.
     const task = Promise.resolve().then(work);
     this.active.set(task, reference);

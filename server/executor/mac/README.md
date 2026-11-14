@@ -33,7 +33,7 @@ acceptance for write/retry. A valid reply retains its original submission identi
 The existing CLI owns output and exit codes. `run` retains the parent interrupt exit code and joins its child and file owners.
 `permissions` previews lexical workspace/output scopes and touches them only with `--check`.
 Its explicit check reads one directory entry and writes, reads, closes, and removes one temporary output file.
-The fresh Python comparison checks bytes, exits, and cleanup. Actual macOS consent remains a later Mac check.
+The retained checks compare message meaning, exit codes, and cleanup. Actual macOS consent remains a later Mac check.
 
 The Mac executor uses `FilesService` for byte copies, hashes, directory creation, and durable flushes.
 Each caller owns its service instance and must pass the shared absolute shutdown deadline to `stop()`.

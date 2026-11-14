@@ -5,7 +5,7 @@
  */
 import { randomUUID } from 'node:crypto';
 import type { ReadSql, TransactionSql } from '../../core/database/contracts.ts';
-import { JsonNumber, stringify_python_json } from '../../core/http/numeric_json.ts';
+import { isDeepStrictEqual } from 'node:util';
 import type { ChildReference } from '../../conversation/backends/contracts.ts';
 import { read_facts } from '../../conversation/record/data/lifecycle.ts';
 import { conversation_event_payload_from_canonical_json } from '../../conversation/record/codec.ts';
@@ -34,8 +34,7 @@ import {
   decode_json,
   decode_value,
   encode_bounded,
-  integer_value,
-  ValueError,
+  ExecutorValidationError,
 } from '../protocol.ts';
 import { expiry_reason } from '../logic/command_expiry.ts';
 import { counter } from '../logic/counters.ts';
@@ -54,47 +53,12 @@ export function operation(command: WireValue<'MailboxCommand'>): string {
   return command.child_command?.operation ?? 'read_model_list';
 }
 function outcome_json(value: WireValue<'CommandResult'>): string {
-  return stringify_python_json(as_object(value, 'CommandResult'), {
-    sort_keys: true,
-    compact: true,
-  });
+  return JSON.stringify(as_object(value, 'CommandResult'));
 }
 function result(text: string | null): WireValue<'CommandResult'> | null {
   return text === null ? null : decode_json(text, 'CommandResult');
 }
-/** Python typed equality compares numeric values, not JS object identity or token spelling. */
-function equivalent(left: unknown, right: unknown): boolean {
-  if (left === right) return true;
-  const numeric = (value: unknown): number | bigint | null =>
-    value instanceof JsonNumber
-      ? (value.integer ?? value.value)
-      : typeof value === 'boolean'
-        ? BigInt(Number(value))
-        : typeof value === 'number' || typeof value === 'bigint'
-          ? value
-          : null;
-  const a = numeric(left),
-    b = numeric(right);
-  if (a !== null && b !== null) {
-    if (typeof a === 'bigint' && typeof b === 'number')
-      return Number.isInteger(b) && a === BigInt(b);
-    if (typeof b === 'bigint' && typeof a === 'number')
-      return Number.isInteger(a) && BigInt(a) === b;
-    return a === b;
-  }
-  if (left === null || right === null || typeof left !== 'object' || typeof right !== 'object')
-    return false;
-  if (Array.isArray(left) !== Array.isArray(right)) return false;
-  const l = Object.entries(left),
-    r = Object.entries(right);
-  return (
-    l.length === r.length &&
-    l.every(
-      ([key, item]) =>
-        Object.hasOwn(right, key) && equivalent(item, (right as Record<string, unknown>)[key]),
-    )
-  );
-}
+const equivalent = isDeepStrictEqual;
 export function command_row(sql: ReadSql, command_id: string): MailboxRow | null {
   const row = sql.get<{
     command_json: string;
@@ -160,8 +124,8 @@ function insert(
       operation(command),
       child?.child.conversation_id ?? null,
       child?.child.child_id ?? null,
-      child?.turn == null ? null : integer_value(child.turn.turn_number),
-      integer_value(command.created_at_vps_ms),
+      child?.turn == null ? null : child.turn.turn_number,
+      command.created_at_vps_ms,
     ],
   );
   // lastInsertRowid can already be rounded by the driver. Read text before leaving this writer.
@@ -172,7 +136,7 @@ function insert(
   const body = encode_bounded(numbered, 'MailboxCommand');
   tx.run('UPDATE executor_commands SET command_json=? WHERE command_sequence=?', [
     Buffer.from(body).toString('utf8'),
-    BigInt(sequence),
+    counter(sequence),
   ]);
   return decode_json(body, 'MailboxCommand');
 }
@@ -185,7 +149,7 @@ export function insert_child_command(
   const existing = command_row(tx, command.command_id);
   if (existing !== null) {
     if (!equivalent(existing.command.child_command, command))
-      throw new ValueError('command identity reused with different content');
+      throw new ExecutorValidationError('command identity reused with different content');
     return existing.command;
   }
   const child = command.child;
@@ -219,7 +183,7 @@ export function insert_model_list_request(
   now: number,
 ): WireValue<'MailboxCommand'> {
   const incarnation = current_incarnation(tx);
-  if (incarnation === null) throw new ValueError('no Mac executor process is known');
+  if (incarnation === null) throw new ExecutorValidationError('no Mac executor process is known');
   return insert(
     tx,
     {
@@ -279,7 +243,7 @@ function prepared_value<T>(value: Preparation<T>): T {
   return value.value;
 }
 /** Caller supplies an admitted poll. This takes no new authority or owned SQL scope. */
-export function read_fetch_rows(sql: ReadSql, incarnation: string, after: bigint): FetchRows {
+export function read_fetch_rows(sql: ReadSql, incarnation: string, after: number): FetchRows {
   const presence =
     sql.get<FetchPresence>(
       'SELECT executor_incarnation,last_lease_at_ms,identity_json,refusal_json FROM mac_executor_presence WHERE singleton=1',
@@ -372,7 +336,7 @@ export async function prepare_fetch(rows: FetchRows): Promise<PreparedFetch> {
 export function fetch(
   tx: TransactionSql,
   incarnation: string,
-  after: bigint,
+  after: number,
   now: number,
   arrived_at: number,
   prepared: PreparedFetch,
@@ -396,13 +360,13 @@ export function fetch(
   for (const row of rows.replaced) {
     const entry = prepared.commands.get(row.sequence)!;
     const command = prepared_value(entry.command);
-    const never_ran = BigInt(row.sequence) > after && row.outcome_present === 0;
+    const never_ran = counter(row.sequence) > after && row.outcome_present === 0;
     const outcome = prepared_value(
       entry.outcomes.get(never_ran ? 'replacement_refused' : 'replacement_uncertain')!,
     );
     tx.run(
       'UPDATE executor_commands SET state=?,outcome_json=?,finished_at_ms=? WHERE command_sequence=?',
-      [never_ran ? 'withdrawn' : 'finished', outcome.text, now, BigInt(row.sequence)],
+      [never_ran ? 'withdrawn' : 'finished', outcome.text, now, counter(row.sequence)],
     );
     settled.push([command, outcome.result]);
   }
@@ -425,7 +389,7 @@ export function fetch(
         const outcome = prepared_value(entry.outcomes.get(reason)!);
         tx.run(
           "UPDATE executor_commands SET state='expired',outcome_json=?,finished_at_ms=? WHERE command_sequence=?",
-          [outcome.text, now, BigInt(row.sequence)],
+          [outcome.text, now, counter(row.sequence)],
         );
         settled.push([command, outcome.result]);
         continue;
@@ -437,7 +401,7 @@ export function fetch(
     if (row.state === 'waiting')
       tx.run(
         "UPDATE executor_commands SET state='delivered',delivered_at_ms=? WHERE command_sequence=?",
-        [now, BigInt(row.sequence)],
+        [now, counter(row.sequence)],
       );
     answered.push(command);
   }
@@ -556,8 +520,8 @@ export function replace_incarnation_in_transaction(
   }
   return settled;
 }
-export function high_sequence(sql: ReadSql): bigint {
-  return BigInt(
+export function high_sequence(sql: ReadSql): number {
+  return counter(
     sql.get<{ value: string }>(
       'SELECT CAST(COALESCE(MAX(command_sequence),0) AS TEXT) AS value FROM executor_commands',
     )!.value,
@@ -594,7 +558,7 @@ export function start_of(
 export function prompt_withdrawn_at_replacement(
   sql: ReadSql,
   child: ChildReference,
-  turn: bigint,
+  turn: number,
 ): WireValue<'WritePrompt'> | null {
   const row = sql.get<{ command_json: string }>(
     'SELECT command_json FROM executor_commands WHERE executor_incarnation=? AND child_id=? ' +
@@ -632,7 +596,7 @@ export function prompts_written_again(sql: ReadSql): readonly PromptWrittenAgain
     if (command?.arguments.kind !== 'write_prompt') continue;
     const written = sql.get(
       "SELECT 1 FROM executor_commands WHERE executor_incarnation=? AND child_id=? AND operation='write_prompt' AND turn_number=?",
-      [row.executor_incarnation, row.child_id, BigInt(row.turn_number)],
+      [row.executor_incarnation, row.child_id, counter(row.turn_number)],
     );
     const started = sql.get(
       "SELECT 1 FROM executor_commands WHERE executor_incarnation=? AND child_id=? AND operation='start'",
@@ -684,8 +648,8 @@ export function late_steers_left_by_a_restart(sql: ReadSql): readonly LateSteerA
       const late =
         candidate.state === 'delivered' ||
         (candidate.finished !== null &&
-          BigInt(candidate.finished) - BigInt(candidate.created) >=
-            BigInt(STEER_DELIVERY_LIMIT_SECONDS * 1000));
+          counter(candidate.finished) - counter(candidate.created) >=
+            STEER_DELIVERY_LIMIT_SECONDS * 1000);
       const child = decode_json(candidate.command_json, 'MailboxCommand').child_command;
       const args = child?.arguments;
       if (!late || args?.kind !== 'steer' || args.sender_label !== label) continue;

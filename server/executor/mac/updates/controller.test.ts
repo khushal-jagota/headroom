@@ -96,7 +96,7 @@ function fixture(replay = false, trial = false) {
     files,
     runner,
     presence: { identity, leased: () => true },
-    outbox: { pending_count: () => 1n },
+    outbox: { pending_count: () => 1 },
     executor_id: 'scripted-mac',
     runtime,
     session_factory: () => new Peer(),

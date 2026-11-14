@@ -27,6 +27,12 @@ export interface MacRunningChild {
   reasoning_effort: string | null;
 }
 export class MacChildAdmissionRefused extends Error {}
+export class MacPermissionDenied extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'MacPermissionDenied';
+  }
+}
 export interface MacNativeChildrenOptions {
   readonly paths: ExecutorPaths;
   readonly workspace_home: string;

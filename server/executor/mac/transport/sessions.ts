@@ -3,7 +3,7 @@ import http from 'node:http';
 import https from 'node:https';
 import type { ClientRequest, IncomingMessage } from 'node:http';
 import type { Socket } from 'node:net';
-import { ValueError } from '../../protocol.ts';
+import { ExecutorValidationError } from '../../protocol.ts';
 import { ServerLifecycleError } from '../../../lifecycle/contracts.ts';
 import { HTTP_CONNECT_TIMEOUT_SECONDS } from '../configuration.ts';
 import type {
@@ -29,7 +29,8 @@ export async function read_bounded(response: IncomingMessage, limit: number): Pr
   for await (const chunk of response) {
     const block = Buffer.from(chunk as Uint8Array);
     count += block.length;
-    if (count > limit) throw new ValueError('executor response exceeds its size bound');
+    if (count > limit)
+      throw new ExecutorValidationError('executor response exceeds its size bound');
     chunks.push(block);
   }
   return Buffer.concat(chunks, count);
@@ -217,14 +218,14 @@ export class HttpSessions {
           if (request.destroyed) throw new DOMException('Request closed', 'AbortError');
           count += chunk.length;
           if (input.byte_count !== undefined && count > input.byte_count)
-            throw new ValueError('executor request exceeds its length');
+            throw new ExecutorValidationError('executor request exceeds its length');
           progress();
           await new Promise<void>((resolve, reject) =>
             request.write(chunk, (error) => (error ? reject(error) : resolve())),
           );
         }
         if (input.byte_count !== undefined && count !== input.byte_count)
-          throw new ValueError('executor request is short');
+          throw new ExecutorValidationError('executor request is short');
         request.end();
       } else request.end(body);
     })();

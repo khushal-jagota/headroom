@@ -17,9 +17,7 @@ import type {
 import { now_ms } from './clock.ts';
 import { MAX_MAILBOX_WAIT_MS } from './configuration.ts';
 import * as data from './data/mailbox.ts';
-import { integer_value, ValueError } from './protocol.ts';
-import { normalize_integer } from './integers.ts';
-
+import { ExecutorValidationError } from './protocol.ts';
 interface Deferred<T> {
   promise: Promise<T>;
   resolve(value: T | PromiseLike<T>): void;
@@ -48,7 +46,7 @@ function validate_wait(seconds: number | null): void {
     seconds !== null &&
     (!Number.isFinite(seconds) || Math.max(seconds, 0) * 1000 > MAX_MAILBOX_WAIT_MS)
   )
-    throw new ValueError(
+    throw new ExecutorValidationError(
       `Mailbox wait must be finite and at most ${MAX_MAILBOX_WAIT_MS} milliseconds.`,
     );
 }
@@ -127,7 +125,7 @@ export class SqliteCommandMailbox {
     'AbortError',
   );
   private readonly poll_waits = new Set<Deferred<void>>();
-  private high: bigint | null = null;
+  private high: number | null = null;
   private closed = false;
   private readonly clock: () => number;
   private readonly database: Database;
@@ -177,7 +175,7 @@ export class SqliteCommandMailbox {
         if (
           !this.cleanup_failures.has(error) &&
           !is_shutdown_business_cancellation(error) &&
-          !(error instanceof ValueError)
+          !(error instanceof ExecutorValidationError)
         )
           console.error('Executor mailbox operation failed.', error);
       },
@@ -208,7 +206,7 @@ export class SqliteCommandMailbox {
       );
       return Promise.resolve().then(() => {
         if ('command_sequence' in placed) {
-          const sequence = integer_value(placed.command_sequence);
+          const sequence = placed.command_sequence;
           let highest = high!;
           if (this.high !== null && this.high > highest) highest = this.high;
           this.high = highest > sequence ? highest : sequence;
@@ -243,7 +241,7 @@ export class SqliteCommandMailbox {
     return this.own(async () => {
       const deadline = performance.now() / 1000 + Math.max(wait_seconds, 0);
       const arrived = this.clock();
-      const cursor = integer_value(after);
+      const cursor = after;
       while (!this.closed) {
         check_aborted(options.signal);
         const wake = deferred<void>();
@@ -384,7 +382,7 @@ export class SqliteCommandMailbox {
   high_sequence(): MailboxCounter {
     this.admit();
     this.high ??= this.database.read(data.high_sequence);
-    return normalize_integer(this.high);
+    return this.high;
   }
   private read<T>(work: (sql: ReadSql) => T): T {
     this.admit();
@@ -400,9 +398,7 @@ export class SqliteCommandMailbox {
     child: WireValue<'ChildReference'>,
     turn: MailboxCounter,
   ): WireValue<'WritePrompt'> | null {
-    return this.read((sql) =>
-      data.prompt_withdrawn_at_replacement(sql, child, integer_value(turn)),
-    );
+    return this.read((sql) => data.prompt_withdrawn_at_replacement(sql, child, turn));
   }
   prompts_written_again(): readonly PromptWrittenAgain[] {
     return this.read(data.prompts_written_again);

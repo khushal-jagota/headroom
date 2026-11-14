@@ -17,7 +17,6 @@ import type { MailboxRunner, MailboxCatalog, MailboxClient } from '../contracts.
 import { MacMailbox, MacCommandQueues, MacPollLoop, MacResultReporter } from '../index.ts';
 import * as protocol from '../../../protocol.ts';
 import { read_canonical_body } from '../poll.ts';
-import { stringify_pydantic_json } from '../../../../core/http/numeric_json.ts';
 import { OUTBOX_RETRY_INITIAL_SECONDS } from '../../configuration.ts';
 interface Input {
   root: string;
@@ -64,6 +63,26 @@ const request_bytes = (reader: CanonicalReader) =>
     async close() {}, // The reporter retains its actual reader through feedback and close.
   });
 const digest = (raw: Buffer) => [raw.length, createHash('sha256').update(raw).digest('hex')];
+function semantic_digest(raw: Buffer): string {
+  const value = (item: unknown): unknown => {
+    if (item === null) return ['null'];
+    if (typeof item === 'number') {
+      const number = Buffer.alloc(8);
+      number.writeDoubleBE(item || 0);
+      return ['number', number.toString('hex')];
+    }
+    if (typeof item === 'string' || typeof item === 'boolean') return [typeof item, item];
+    if (Array.isArray(item)) return ['array', item.map(value)];
+    return [
+      'object',
+      Object.entries(item as Record<string, unknown>)
+        .sort(([a], [b]) => Buffer.compare(Buffer.from(a), Buffer.from(b)))
+        .map(([key, child]) => [key, value(child)]),
+    ];
+  };
+  const document = JSON.stringify(value(JSON.parse(raw.toString())));
+  return createHash('sha256').update(document).digest('hex');
+}
 async function drain(cursor: Awaited<ReturnType<AsyncCommandJournal['record_poll_reply']>>) {
   let last: Buffer | undefined;
   try {
@@ -124,7 +143,7 @@ export async function mailbox_parity(input: Input): Promise<unknown> {
     next = now + 10;
     rss = Math.max(rss, process.memoryUsage().rss);
   }, 10);
-  let observations: unknown, performance_proof: unknown;
+  let observations: unknown, performance_proof: unknown, shutdown_result_wire: unknown;
   let aggregate_shutdown: Record<string, boolean> = {};
   const debug = console.debug,
     cancellation_debug: unknown[][] = [];
@@ -141,7 +160,7 @@ export async function mailbox_parity(input: Input): Promise<unknown> {
     dependency.searchParams.set('database', join(input.root, 'spool/commands.sqlite3'));
     const journal_dependencies = {
       outputs_module: dependency,
-      now_ms: () => BigInt(input.now_ms),
+      now_ms: () => Number(input.now_ms),
       on_failure,
     };
     let journal = await open_command_journal(store, 'inc', journal_dependencies, options);
@@ -193,8 +212,7 @@ export async function mailbox_parity(input: Input): Promise<unknown> {
         }
         if (id === 'b') {
           retry_times.runner!.push(performance.now() / 1000);
-          if (retry_times.runner!.length === 1)
-            throw Object.assign(new Error('scripted runner retry'), { name: 'OSError' });
+          if (retry_times.runner!.length === 1) throw new Error('scripted runner retry');
         }
         if (id === 'a1' || id === 'stop') {
           (id === 'a1' ? first : stopped).resolve();
@@ -234,12 +252,12 @@ export async function mailbox_parity(input: Input): Promise<unknown> {
     let poll_calls = 0,
       ordinary_refused = false;
     const reports: unknown[] = [];
-    const capacity_tasks: Promise<bigint>[] = [];
+    const capacity_tasks: Promise<number>[] = [];
     const client: MailboxClient = {
       async poll_commands(_after, _hold, signal) {
         if (++poll_calls === 1) {
           retry_times.poll!.push(performance.now() / 1000);
-          throw Object.assign(new Error('scripted poll retry'), { name: 'ConnectionError' });
+          throw new Error('scripted poll retry');
         }
         if (poll_calls === 2) {
           retry_times.poll!.push(performance.now() / 1000);
@@ -258,7 +276,7 @@ export async function mailbox_parity(input: Input): Promise<unknown> {
               const refusal = error as { code?: unknown; unadmitted?: unknown };
               if (refusal.code !== 'EBUSY' || !refusal.unadmitted) throw error;
               ordinary_refused = true;
-              return 0n;
+              return 0;
             }),
           );
         }
@@ -269,7 +287,7 @@ export async function mailbox_parity(input: Input): Promise<unknown> {
         ) as CommandOutcomeReply;
       },
     };
-    await drain(await journal.record_poll_reply(Buffer.from(input.seed, 'hex'), 'inc', 0n));
+    await drain(await journal.record_poll_reply(Buffer.from(input.seed, 'hex'), 'inc', 0));
     await journal.finish('duplicate', Buffer.from(input.results.duplicate!, 'hex'), true);
     await journal.mark_outputs_published('duplicate');
     queues = new MacCommandQueues({
@@ -313,7 +331,7 @@ export async function mailbox_parity(input: Input): Promise<unknown> {
     phase = 'reporter';
     await journal.mark_reported(['duplicate', 'a1', 'a2', 'b', 'stop', 'model']);
     await drain(
-      await journal.record_poll_reply(Buffer.from(input.report_commands, 'hex'), 'inc', 0n),
+      await journal.record_poll_reply(Buffer.from(input.report_commands, 'hex'), 'inc', 0),
     );
     for (const id of ['f', 'k', 'r'])
       await journal.finish(id, Buffer.from(input.results[id]!, 'hex'), false);
@@ -346,7 +364,7 @@ export async function mailbox_parity(input: Input): Promise<unknown> {
     reporter = undefined;
     // Admission covers a catalog read and its later result write through stop.
     phase = 'catalog-shutdown';
-    await drain(await journal.record_poll_reply(Buffer.from(input.shutdown, 'hex'), 'inc', 0n));
+    await drain(await journal.record_poll_reply(Buffer.from(input.shutdown, 'hex'), 'inc', 0));
     queues.submit(command('shutdown'));
     await catalog_entered.promise;
     let actual_settled = false;
@@ -363,6 +381,9 @@ export async function mailbox_parity(input: Input): Promise<unknown> {
     if (!stored) throw new Error('Admitted model result was lost');
     if (owner_closes !== 2) throw new Error('Catalog canonical owners did not close exactly once');
     if (fault) throw fault;
+    const stored_body = await bytes(stored);
+    if (stored_body.length <= 1024 * 1024) throw new Error('Large admitted result was truncated');
+    shutdown_result_wire = digest(stored_body);
     observations = {
       planned_blocked,
       second_not_started,
@@ -379,7 +400,7 @@ export async function mailbox_parity(input: Input): Promise<unknown> {
       catalog_reads,
       reports,
       stop_waited,
-      shutdown_result: digest(await bytes(stored)),
+      shutdown_result: semantic_digest(stored_body),
     };
     // Reuse the same worker for the TS aggregate's own stop/preparation boundary.
     phase = 'aggregate-shutdown';
@@ -390,7 +411,7 @@ export async function mailbox_parity(input: Input): Promise<unknown> {
     release_on_exit.push(release_selection.resolve, release_delivery.resolve);
     let selections = 0,
       cancelled_feedback = false;
-    const cleanup_capacity_tasks: Promise<bigint>[] = [];
+    const cleanup_capacity_tasks: Promise<number>[] = [];
     const saturate_cleanup = () => {
       for (let i = 0; i < 32; i++) cleanup_capacity_tasks.push(journal.poll_cursor());
     };
@@ -545,7 +566,7 @@ export async function mailbox_parity(input: Input): Promise<unknown> {
     const poll_bytes = Buffer.from(input.performance.poll);
     phase = 'decoded-poll-delivery';
     const started_poll = performance.now();
-    const decoded = await journal.record_decoded_poll_reply(poll_bytes, 'inc', 0n);
+    const decoded = await journal.record_decoded_poll_reply(poll_bytes, 'inc', 0);
     let expanded: MailboxCommand | undefined;
     try {
       for await (const value of decoded) expanded = value;
@@ -558,19 +579,18 @@ export async function mailbox_parity(input: Input): Promise<unknown> {
     phase = 'canonical-evidence-only';
     const encoding_started = performance.now();
     const canonical = Buffer.from(
-      stringify_pydantic_json(protocol.encode_value(expanded, 'MailboxCommand')),
+      JSON.stringify(protocol.encode_value(expanded, 'MailboxCommand')),
     );
     const encoding_ms = performance.now() - encoding_started;
     await new Promise<void>((resolve) => setTimeout(resolve, 0));
     const performance_reports = [],
+      report_meanings = [],
       selection_ms = [];
     for (const [index, size] of [4 * 1024 * 1024 - 4096, 4 * 1024 * 1024 + 4096].entries()) {
       phase = index === 0 ? 'near-limit-report' : 'oversized-report';
       const id = `size-${index + 16}`;
       const value = { ...command('model'), command_sequence: index + 16, command_id: id };
-      await drain(
-        await journal.record_poll_reply(JSON.stringify({ commands: [value] }), 'inc', 0n),
-      );
+      await drain(await journal.record_poll_reply(JSON.stringify({ commands: [value] }), 'inc', 0));
       await journal.finish(
         id,
         JSON.stringify({ command_id: id, model_list: { text: 'x'.repeat(size) } }),
@@ -581,18 +601,22 @@ export async function mailbox_parity(input: Input): Promise<unknown> {
       selection_ms.push(performance.now() - started_selection);
       if (!selected || selected.command_ids.join() !== id)
         throw new Error('Report selection lost singleton');
-      performance_reports.push(digest(await bytes(selected.body)));
+      const report_body = await bytes(selected.body);
+      performance_reports.push(digest(report_body));
+      report_meanings.push(semantic_digest(report_body));
       await journal.report_feedback(selected.selection, [id]);
     }
     performance_proof = {
       raw_poll_bytes: poll_bytes.length,
       canonical_command: digest(canonical),
+      canonical_meaning: semantic_digest(canonical),
       decoded_delivery_ms: poll_ms,
       canonical_evidence_ms: encoding_ms,
       recovery_ms,
       owned_cleanup_ms,
       selection_ms,
       reports: performance_reports,
+      report_meanings,
     };
   } finally {
     for (const release of release_on_exit) release();
@@ -613,6 +637,7 @@ export async function mailbox_parity(input: Input): Promise<unknown> {
     observations,
     aggregate_shutdown,
     performance: performance_proof,
+    wire_evidence: { shutdown_result: shutdown_result_wire },
     stats: {
       elapsed_seconds: (performance.now() - started) / 1000,
       samples: delays.length,

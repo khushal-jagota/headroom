@@ -1,5 +1,4 @@
 /** Size-only projection of a valid local wrapper through the shared generated wire contract. */
-import { parse_numeric_json, stringify_pydantic_json } from '../../../core/http/numeric_json.ts';
 import { ProtocolRefused } from '../../../execution_identity.ts';
 import type {
   ItemSubmission,
@@ -15,8 +14,8 @@ export function item_size_guard(
   columns: ItemColumns,
   submission_id: string,
   encoded: Buffer,
-): (sequence: bigint) => void {
-  const value = parse_numeric_json(new TextDecoder('utf-8', { fatal: true }).decode(encoded));
+): (sequence: number) => void {
+  const value = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(encoded));
   if (
     value === null ||
     typeof value !== 'object' ||
@@ -39,7 +38,7 @@ export function item_size_guard(
     sender_refusal: null,
   };
   // Serialize outside SQLite's writer. Only the allocated sequence width remains.
-  const size = Buffer.byteLength(stringify_pydantic_json(projection));
+  const size = Buffer.byteLength(JSON.stringify(projection));
   return (sequence) => {
     if (size + String(sequence).length - 1 > MAX_ENVELOPE_BYTES)
       throw new ProtocolRefused('value exceeds its encoded size limit');

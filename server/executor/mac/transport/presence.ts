@@ -6,7 +6,6 @@ import {
 } from '../../../conversation/shutdown.ts';
 import { ServerLifecycleError } from '../../../lifecycle/contracts.ts';
 import type { StopOptions } from '../../../lifecycle/contracts.ts';
-import { integer_value, normalize_integer } from '../../integers.ts';
 import type {
   ExecutorIdentity,
   ExecutorRefusal,
@@ -96,13 +95,13 @@ export class MacLeaseLoop {
       identity: presence.identity,
       process_id: presence.process_id,
       mac_wall_clock_ms: presence.now(),
-      queue_depth: normalize_integer(outbox.pending_count()),
+      queue_depth: outbox.pending_count(),
       oldest_item_age_ms: outbox.oldest_age_ms(),
       waiting_conversations: waiting
         .slice(0, MAX_LEASE_WAITING_CONVERSATIONS)
         .map(([conversation_id, oldest]) => ({
           conversation_id,
-          oldest_sequence: normalize_integer(oldest),
+          oldest_sequence: oldest,
         })),
       waiting_conversations_truncated: waiting.length > MAX_LEASE_WAITING_CONVERSATIONS,
       working_turns: [...runner.working_turns()],
@@ -127,7 +126,7 @@ export class MacLeaseLoop {
   }
   private async exchange(): Promise<boolean> {
     const { client, journal, runner, presence, updates, warn } = this.options;
-    let cursor: bigint | null = null;
+    let cursor: number | null = null;
     try {
       cursor = await journal.poll_cursor();
     } catch (error) {
@@ -158,8 +157,7 @@ export class MacLeaseLoop {
     presence.accepted();
     updates.offer(reply.update);
     try {
-      if (cursor !== null)
-        await journal.lower_poll_cursor(integer_value(reply.mailbox_high_sequence), cursor);
+      if (cursor !== null) await journal.lower_poll_cursor(reply.mailbox_high_sequence, cursor);
     } catch (error) {
       warn(`Lease cursor update failed: ${failure_name(error)}`);
     }

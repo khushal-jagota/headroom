@@ -1,3 +1,4 @@
+import { ExecutorValidationError } from '../protocol_errors.ts';
 /** File work belongs to this explicitly owned thread, never the service event loop. */
 import { Worker } from 'node:worker_threads';
 import { observe_shutdown } from '../../conversation/shutdown.ts';
@@ -20,7 +21,9 @@ export type { DirectoryHandle } from './file_worker_contracts.ts';
 function worker_error(value: FileWorkerError): Error {
   const error = value.errors
     ? new AggregateError(value.errors.map(worker_error), value.message)
-    : new Error(value.message);
+    : value.name === 'ExecutorValidationError'
+      ? new ExecutorValidationError(value.message)
+      : new Error(value.message);
   Object.assign(error, value);
   if (value.errors) Object.assign(error, { errors: value.errors.map(worker_error) });
   if (value.cause) error.cause = worker_error(value.cause);
@@ -144,7 +147,7 @@ export class FilesService {
   write_transfer(handle: TransferHandle, bytes: Uint8Array) {
     return this.request('write_transfer', [this.transfer(handle), bytes]);
   }
-  finish_transfer(handle: TransferHandle, sha256: string, byte_count: bigint) {
+  finish_transfer(handle: TransferHandle, sha256: string, byte_count: number) {
     return this.request('finish_transfer', [this.transfer(handle), sha256, byte_count]);
   }
   async close_transfer(handle: TransferHandle, discard = false): Promise<void> {

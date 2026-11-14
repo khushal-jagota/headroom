@@ -1,7 +1,6 @@
 /** Planned swaps reuse the canonical executor identity check and the durable handoff record. */
 import type { ExecutorIdentity } from '../../../execution_identity.ts';
 import { parse_identity } from '../../../execution_identity.ts';
-import { integer_value } from '../../integers.ts';
 import { read_record } from './records.ts';
 import type { RuntimeRecordIO } from './records.ts';
 
@@ -18,8 +17,7 @@ export async function handoff_identity(
     { ...identity, executor_incarnation, connection_generation },
     { check_versions: false },
   );
-  if (integer_value(next.connection_generation) < 0n)
-    throw new TypeError('Invalid handoff generation.');
+  if (next.connection_generation < 0) throw new TypeError('Invalid handoff generation.');
   return next;
 }
 export function handoff_record(

@@ -1,3 +1,5 @@
+import { counter } from '../../logic/counters.ts';
+import { ExecutorValidationError } from '../../protocol_errors.ts';
 /** Durable local rows and immutable blobs. Wire codecs and send loops belong to the host. */
 import type { BigIntStats } from 'node:fs';
 import { readdir, lstat, opendir } from 'node:fs/promises';
@@ -44,6 +46,10 @@ async function exists(path: string): Promise<boolean> {
   }
 }
 
+function item_row(row: ItemRow): ItemRow {
+  return { ...row, sequence: counter(row.sequence) };
+}
+
 function synchronous<T>(value: T): T {
   if (
     value !== null &&
@@ -58,7 +64,7 @@ function synchronous<T>(value: T): T {
 function unreadable(error: unknown): boolean {
   return (
     ['ENOENT', 'ENOTDIR', 'EACCES', 'EPERM'].includes(error_code(error) ?? '') ||
-    (error as Error).name === 'ValueError'
+    error instanceof ExecutorValidationError
   );
 }
 export class OutboxStore {
@@ -76,7 +82,7 @@ export class OutboxStore {
   private closed = false;
   private callback_scope = 0;
   private capturing = 0;
-  private readonly first_held = new Map<bigint, number>();
+  private readonly first_held = new Map<number, number>();
   private readonly capture_tails = new Map<string, Promise<void>>();
   private readonly operations = new Set<Promise<unknown>>();
   private drained: Promise<void> | undefined;
@@ -144,11 +150,11 @@ export class OutboxStore {
       });
       const opened = clock.monotonic();
       const sequences = database.read((sql) =>
-        sql.all<{ sequence: bigint }>(
+        sql.all<{ sequence: number }>(
           'SELECT sequence FROM items WHERE receipt_json IS NULL ORDER BY sequence',
         ),
       );
-      for (const row of sequences) store.first_held.set(row.sequence, opened);
+      for (const row of sequences) store.first_held.set(counter(row.sequence), opened);
       await store.sweep();
       return store;
     } catch (error) {
@@ -262,56 +268,60 @@ export class OutboxStore {
     return this.held(submission_id);
   }
   private held(submission_id: string): ItemRow | null {
-    return this.database.read(
-      (sql) =>
-        sql.get<ItemRow>('SELECT * FROM items WHERE submission_id=?', [submission_id]) ?? null,
+    const row = this.database.read((sql) =>
+      sql.get<ItemRow>('SELECT * FROM items WHERE submission_id=?', [submission_id]),
     );
+    return row === undefined ? null : item_row(row);
   }
   pending(conversation_id?: string): ItemRow[] {
     this.admit();
-    return this.database.read((sql) =>
-      conversation_id === undefined
-        ? sql.all<ItemRow>(
-            'SELECT * FROM items WHERE receipt_json IS NULL ORDER BY sequence LIMIT ?',
-            [MAX_ITEM_BATCH_ITEMS],
-          )
-        : sql.all<ItemRow>(
-            'SELECT * FROM items WHERE receipt_json IS NULL AND conversation_id=? ORDER BY sequence LIMIT ?',
-            [safe_component(conversation_id), MAX_ITEM_BATCH_ITEMS],
-          ),
-    );
+    return this.database
+      .read((sql) =>
+        conversation_id === undefined
+          ? sql.all<ItemRow>(
+              'SELECT * FROM items WHERE receipt_json IS NULL ORDER BY sequence LIMIT ?',
+              [MAX_ITEM_BATCH_ITEMS],
+            )
+          : sql.all<ItemRow>(
+              'SELECT * FROM items WHERE receipt_json IS NULL AND conversation_id=? ORDER BY sequence LIMIT ?',
+              [safe_component(conversation_id), MAX_ITEM_BATCH_ITEMS],
+            ),
+      )
+      .map(item_row);
   }
   pending_conversations(
     limit: number | null = MAX_LEASE_WAITING_CONVERSATIONS + 1,
-  ): readonly (readonly [string, bigint])[] {
+  ): readonly (readonly [string, number])[] {
     this.admit();
     return this.database.read((sql) =>
       sql
-        .all<{ conversation_id: string; oldest: bigint }>(
+        .all<{ conversation_id: string; oldest: number }>(
           'SELECT conversation_id,MIN(sequence) AS oldest FROM items WHERE receipt_json IS NULL GROUP BY conversation_id ORDER BY MIN(sequence)' +
             (limit === null ? '' : ' LIMIT ?'),
           limit === null ? [] : [limit],
         )
-        .map((row) => [row.conversation_id, row.oldest] as const),
+        .map((row) => [row.conversation_id, counter(row.oldest)] as const),
     );
   }
-  pending_count(): bigint {
+  pending_count(): number {
     this.admit();
-    return this.database.read(
-      (sql) =>
-        sql.get<{ count: bigint }>(
-          'SELECT COUNT(*) AS count FROM items WHERE receipt_json IS NULL',
-        )!.count,
+    return counter(
+      this.database.read(
+        (sql) =>
+          sql.get<{ count: number }>(
+            'SELECT COUNT(*) AS count FROM items WHERE receipt_json IS NULL',
+          )!.count,
+      ),
     );
   }
   oldest_age_ms(): number | null {
     this.admit();
     const first = this.database.read((sql) =>
-      sql.get<{ sequence: bigint }>(
+      sql.get<{ sequence: number }>(
         'SELECT sequence FROM items WHERE receipt_json IS NULL ORDER BY sequence LIMIT 1',
       ),
     );
-    const held = first === undefined ? undefined : this.first_held.get(first.sequence);
+    const held = first === undefined ? undefined : this.first_held.get(counter(first.sequence));
     return held === undefined ? null : Math.trunc((this.clock.monotonic() - held) * 1000);
   }
   append(
@@ -335,7 +345,7 @@ export class OutboxStore {
         'INSERT INTO items(submission_id,conversation_id,child_id,kind,payload_json) VALUES(?,?,?,?,?)',
         [submission, columns.conversation_id, columns.child_id, columns.kind, payload],
       );
-      const sequence = BigInt(result.lastInsertRowid);
+      const sequence = counter(result.lastInsertRowid);
       size_guard(sequence);
       for (const file of files)
         tx.run('INSERT INTO item_files VALUES(?,?,?,?)', [
@@ -349,7 +359,7 @@ export class OutboxStore {
           'INSERT INTO ticket_files VALUES(?,?,?,?,?) ON CONFLICT(ticket_id,relative_path) DO UPDATE SET byte_count=excluded.byte_count,modified_ns=excluded.modified_ns,sha256=excluded.sha256',
           [file.ticket_id, file.relative_path, file.byte_count, file.modified_ns, file.sha256],
         );
-      const held = tx.get<ItemRow>('SELECT * FROM items WHERE sequence=?', [sequence])!;
+      const held = item_row(tx.get<ItemRow>('SELECT * FROM items WHERE sequence=?', [sequence])!);
       synchronous(validate(held));
       this.assert_healthy();
       return held;
@@ -434,11 +444,19 @@ export class OutboxStore {
           continue;
         }
         const previous = this.database.read((sql) => {
-          const row = sql.get<TicketFileRow>(
+          const stored = sql.get<TicketFileRow>(
             'SELECT * FROM ticket_files WHERE ticket_id=? AND relative_path=?',
             [ticket_id, relative_path],
           );
-          if (row === undefined || row.byte_count !== info.size || row.modified_ns !== info.mtimeNs)
+          const row =
+            stored === undefined
+              ? undefined
+              : { ...stored, byte_count: counter(stored.byte_count) };
+          if (
+            row === undefined ||
+            row.byte_count !== counter(info.size) ||
+            row.modified_ns !== info.mtimeNs
+          )
             return undefined;
           const waiting = sql.get(
             'SELECT 1 FROM item_files JOIN items USING(sequence) WHERE sha256=? AND receipt_json IS NULL LIMIT 1',

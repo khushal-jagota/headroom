@@ -10,7 +10,7 @@ import {
 } from './journal_limits.ts';
 import { JournalEngine } from './journal_engine.ts';
 import type { EncodedJournalRow } from './journal_engine.ts';
-import { journal_error, journal_error_properties, pack } from './journal_worker_contracts.ts';
+import { journal_error, journal_error_properties } from './journal_worker_contracts.ts';
 import { ServerLifecycleError } from '../../../lifecycle/contracts.ts';
 import type { DurableSidecarOpenFailure } from '../../../core/database/contracts.ts';
 import type {
@@ -28,7 +28,7 @@ const port = parentPort!,
 let engine: JournalEngine | undefined,
   sealed = false,
   sequence = 0;
-const callbacks = new Map<number, { resolve(value?: bigint): void; reject(error: Error): void }>();
+const callbacks = new Map<number, { resolve(value?: number): void; reject(error: Error): void }>();
 const inputs = new Map<
   number,
   {
@@ -50,9 +50,9 @@ const cursors = new Map<
   }
 >();
 let decode_command: (bytes: Buffer) => MailboxCommand;
-function callback(callback: 'permission' | 'flush' | 'clock'): Promise<bigint | undefined> {
+function callback(callback: 'permission' | 'flush' | 'clock'): Promise<number | undefined> {
   const id = ++sequence;
-  const task = new Promise<bigint | undefined>((resolve, reject) =>
+  const task = new Promise<number | undefined>((resolve, reject) =>
     callbacks.set(id, { resolve, reject }),
   );
   port.postMessage({ kind: 'callback', id, callback } satisfies JournalWorkerMessage);
@@ -237,7 +237,7 @@ async function execute(action: JournalAction): Promise<unknown> {
         return null;
       }
       if (item.decoded) {
-        const decoded = pack(decode_command(row.command!));
+        const decoded = decode_command(row.command!);
         item.rows[item.offset++] = undefined;
         return { command_id: row.command_id, decoded } satisfies CursorRowDescriptor;
       }

@@ -1,63 +1,43 @@
-/** The Python executor's closed backend-event registry, with existing core classes. */
+/** The executor's closed backend-event registry and native core constructors. */
 import type * as Backend from '../conversation/backends/contracts.ts';
+import { WIRE_SCHEMA } from './wire.generated.ts';
 import type { MessageContent } from '../conversation/message_content.ts';
 import type {
   BackendEvent,
   BackendEventMethod,
   JsonObject,
   WireRootName,
-  WireTypes,
 } from './wire.generated.ts';
-import { decode_value, encode_value } from './protocol_values.ts';
-import { KeyError, class_name } from './protocol_errors.ts';
+import { decode_value, encode_value, matches_schema } from './protocol_values.ts';
+import { ExecutorValidationError } from './protocol_errors.ts';
 import { native_class_name, wire_classes } from './protocol_classes.ts';
 
-// Exact constructors, not constructor names or instanceof matching. Python uses type(event).
-const event_types = {
-  agent_message_delta: 'AgentMessageDelta',
-  model_thinking_happened: 'ModelThinkingHappened',
-  agent_message_completed: 'AgentMessageCompleted',
-  command_reply_reported: 'CommandReplyReported',
-  tool_call_started: 'ToolCallStarted',
-  tool_call_progress: 'ToolCallProgress',
-  tool_call_finished: 'ToolCallFinished',
-  plan_updated: 'PlanUpdated',
-  token_usage_reported: 'TokenUsageReported',
-  context_compacted: 'ContextCompacted',
-  permission_ask_raised: 'PermissionAskRaised',
-  user_input_requested: 'UserInputRequested',
-  user_input_failed: 'UserInputFailed',
-  turn_ended: 'TurnEnded',
-  vendor_session_cursor_rebound: 'VendorSessionCursorRebound',
-  composer_catalog_reported: 'ComposerCatalogReported',
-  background_task_started: 'BackgroundTaskStarted',
-  background_task_ended: 'BackgroundTaskEnded',
-  backend_stream_ended: 'BackendStreamEnded',
-} as const satisfies Record<BackendEventMethod, WireRootName>;
+// Match actual core constructors without relying on JavaScript constructor names.
+const event_types = WIRE_SCHEMA.event_codecs as Record<
+  BackendEventMethod,
+  WireRootName & keyof typeof wire_classes
+>;
 const event_methods = new Map<string, BackendEventMethod>(
   Object.entries(event_types).map(([method, root]) => [root, method as BackendEventMethod]),
 );
 
-/** Actual core classes, with exact markers retained only where their number view loses precision. */
-export type DecodedBackendEvent = WireTypes[(typeof event_types)[BackendEventMethod]];
+/** Incoming event arguments become the existing native core classes. */
+export type DecodedBackendEvent = Backend.BackendEventValue;
 function construct(constructor: Function, fields: unknown): object {
   return Reflect.construct(constructor, [fields]);
 }
 function fields(value: unknown): Record<string, unknown> {
-  return value as Record<string, unknown>; // Input already passed the selected Python-value decoder.
+  return value as Record<string, unknown>; // Input already passed the selected wire schema.
 }
 function objects(value: unknown, convert: (value: unknown) => object): object[] {
   return (value as unknown[]).map(convert);
 }
 function message_piece(value: unknown): object {
-  const piece = fields(value);
-  // These dictionaries are normalized union winners, not the original ambiguous raw input.
-  return construct(
-    wire_classes[class_name(value) as 'MessageText' | 'MessageFile' | 'MessageImage'],
-    piece,
-  );
+  for (const root of ['MessageFile', 'MessageImage', 'MessageText'] as const)
+    if (matches_schema(value, root)) return construct(wire_classes[root], value);
+  throw new ExecutorValidationError('Invalid message piece.');
 }
-/** Input already passed its selected wire root. Preserve that root's union winners and exact markers. */
+/** Input already passed its message schema. */
 export function native_message_content(value: unknown): MessageContent {
   return objects(value, message_piece) as MessageContent;
 }
@@ -90,14 +70,16 @@ export function encode_backend_event(
   const actual = Object.getPrototypeOf(event)?.constructor;
   const root_name = native_class_name(event);
   const method = root_name === undefined ? undefined : event_methods.get(root_name);
-  if (method === undefined) throw new KeyError(actual);
+  if (method === undefined)
+    throw new ExecutorValidationError(`Unsupported backend event: ${String(actual)}`);
   return [method, encode_value(event, event_types[method]) as JsonObject];
 }
 
 export function decode_event_arguments(
   event: Pick<BackendEvent, 'method' | 'arguments'>,
 ): DecodedBackendEvent {
-  if (!Object.hasOwn(event_types, event.method)) throw new KeyError(event.method);
+  if (!Object.hasOwn(event_types, event.method))
+    throw new ExecutorValidationError(`Unknown backend event method: ${event.method}`);
   const root = event_types[event.method];
   const constructor = wire_classes[root];
   const value = fields(decode_value(event.arguments, root));

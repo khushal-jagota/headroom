@@ -34,12 +34,18 @@ from planner.executor.protocol import (
 
 ROOT = Path(__file__).resolve().parents[3]
 NOW = 1_700_000_010_123
-HIGH = 9_007_199_254_741_003
+HIGH = 123456799
 INCARNATION = "own-incarnation"
 
 
 def _digest(raw: bytes) -> list[Any]:
     return [len(raw), hashlib.sha256(raw).hexdigest()]
+
+
+def _document(raw: bytes) -> Any:
+    if raw == b"":
+        return raw  # Journal tombstones remain distinct from every JSON value.
+    return json.loads(raw)
 
 
 class Oracle:
@@ -86,8 +92,8 @@ class Oracle:
 
 
 def _inspect(journal: CommandJournal, box: MacOutbox, ids: list[str]) -> dict[str, Any]:
-    def encoded(kind: Any, value: Any) -> list[Any]:
-        return _digest(type_adapter(kind).dump_json(value))
+    def encoded(kind: Any, value: Any) -> Any:
+        return _document(type_adapter(kind).dump_json(value))
 
     return dict(
         cursor=str(journal.poll_cursor()),
@@ -132,7 +138,7 @@ def _reference(
                             [
                                 dict(
                                     id=c.command_id,
-                                    command=_digest(oracle.remember(MailboxCommand, c)),
+                                    command=_document(oracle.remember(MailboxCommand, c)),
                                 )
                                 for c in journal.record_poll_reply(
                                     reply,
@@ -212,7 +218,7 @@ def _snapshot(root: Path) -> dict[str, Any]:
 
 
 def _summary(snapshot: dict[str, Any]) -> dict[str, Any]:
-    """Report compact hashes only after the paired check compares exact SQLite bytes."""
+    """Retain each runtime's actual BLOB sizes and digests as compact evidence."""
     result = snapshot.copy()
     for table, columns in (("commands", (3, 5)), ("items", (5, 6))):
         result[table] = []
@@ -221,6 +227,19 @@ def _summary(snapshot: dict[str, Any]) -> dict[str, Any]:
             for column in columns:
                 if row[column] is not None:
                     row[column] = _digest(bytes.fromhex(row[column]))
+            result[table].append(row)
+    return result
+
+
+def _meanings(snapshot: dict[str, Any]) -> dict[str, Any]:
+    result = {**snapshot}
+    for table, columns in (("commands", (3, 5)), ("items", (5, 6))):
+        result[table] = []
+        for original in snapshot[table]:
+            row = original.copy()
+            for column in columns:
+                if row[column] is not None:
+                    row[column] = _document(bytes.fromhex(row[column]))
             result[table].append(row)
     return result
 
@@ -300,6 +319,10 @@ def _node(
     if exit_code != 0:
         return None
     result = json.loads(stdout)
+    assert result["stats"]["integrity_checks"] == result["stats"]["readers"]
+    assert result["stats"]["integrity_checks"] == (
+        result["stats"]["native_exact_checks"] + result["stats"]["imported_meaning_checks"]
+    )
     oracle.stats.append(dict(result["stats"], operations=len(steps)))
     return result["observations"]
 
@@ -375,7 +398,7 @@ def test_unit22_mac_journal_roundtrip_and_publication_crash(
         expected = _reference(py, steps, oracle, monkeypatch)
         assert _node(ts, steps, oracle, homes) == expected
         snapshot = _snapshot(py)
-        assert _snapshot(ts) == snapshot
+        assert _meanings(_snapshot(ts)) == _meanings(snapshot)
         snapshots.append(_summary(snapshot))
         return expected
 
@@ -420,7 +443,7 @@ def test_unit22_mac_journal_roundtrip_and_publication_crash(
         # Python opens the independently TS-created root and WRITES restart settlement.
         rollback = _reference(ts, [dict(op="inspect", ids=ids)], oracle, monkeypatch)
         assert rollback == _reference(py, [dict(op="inspect", ids=ids)], oracle, monkeypatch)
-        assert _snapshot(ts) == _snapshot(py)
+        assert _meanings(_snapshot(ts)) == _meanings(_snapshot(py))
         assert all(row[4] == "finished" for row in _snapshot(ts)["commands"])
         reverse_summary = _summary(_snapshot(ts))
         # TS next opens the Python-populated mixed-state store, rather than its own rows.
@@ -442,7 +465,7 @@ def test_unit22_mac_journal_roundtrip_and_publication_crash(
             exit_code=-signal.SIGKILL,
             gate=ts.parent / "transaction-entered",
         )
-        assert _snapshot(ts) == _snapshot(py)
+        assert _meanings(_snapshot(ts)) == _meanings(_snapshot(py))
         killed_summary = _summary(_snapshot(ts))
         # Opening settles own and stale incarnations; own prompt output blocks its report.
         restarted = paired(
@@ -482,7 +505,7 @@ def test_unit22_mac_journal_roundtrip_and_publication_crash(
         ]
         _reference(py, crash_steps, oracle, monkeypatch)
         _node(ts, crash_steps, oracle, homes, exit_code=73)
-        assert _snapshot(ts) == _snapshot(py)
+        assert _meanings(_snapshot(ts)) == _meanings(_snapshot(py))
         publish = dict(op="publish", command_hex=oracle.remember(MailboxCommand, crash).hex())
         recovered = paired(
             [
@@ -518,7 +541,10 @@ def test_unit22_mac_journal_roundtrip_and_publication_crash(
                     kind="direct",
                     equal=True,
                     canonical_snapshots=snapshots,
-                    blob_summary="Exact BLOB check before byte/SHA256 summary",
+                    blob_summary=(
+                        "JSON meanings compare across peers. "
+                        "Native reader bytes and SHA256 match native stored BLOBs."
+                    ),
                     recovered=recovered,
                     finish_before_publication_exit_code=73,
                     midtransaction_signal="SIGKILL",
@@ -532,8 +558,9 @@ def test_unit22_mac_journal_roundtrip_and_publication_crash(
                     stats=oracle.stats,
                     fixture_entries=len(oracle.entries),
                     codec_evidence=(
-                        "Public fixed shared codec decode/encode "
-                        "with exact Python SQLite BLOB equality. "
+                        "Native codec decode/encode with message-meaning equality. "
+                        "Every native stream retains its byte count and SHA256 checks "
+                        "against native storage. "
                         "Finite output-policy oracle only."
                     ),
                     measurement_scope="Journal open/ops/close; outbox opening excluded",

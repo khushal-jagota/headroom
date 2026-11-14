@@ -4,7 +4,6 @@ import type { FileHandle } from 'node:fs/promises';
 import { basename, dirname, join } from 'node:path';
 import { path_is_within } from '../core/path_containment.ts';
 import { PlannerError } from '../core/contracts.ts';
-import { stringify_python_json } from '../core/http/numeric_json.ts';
 import { resolve_path_sync } from '../core/path_resolution.ts';
 import type { ExecutorIdentity } from '../execution_identity.ts';
 import type { ConversationMessageFiles } from '../conversation/message_files.ts';
@@ -21,7 +20,6 @@ import type {
   VpsFilesOptions,
   WireValue,
 } from './contracts.ts';
-import type { WireInteger } from './wire.generated.ts';
 import type { SqliteCommandMailbox } from './vps_mailbox.ts';
 import { FILE_CHUNK_BYTES, FILE_TRANSFER_STALL_SECONDS } from './configuration.ts';
 import {
@@ -36,9 +34,8 @@ import {
   safe_component,
   unlink_at,
 } from './files.ts';
-import { as_object, integer_value, ValueError } from './protocol.ts';
-import { normalize_integer } from './integers.ts';
-
+import { ExecutorValidationError } from './protocol.ts';
+import { file_manifest_key } from './file_manifest.ts';
 function aborted(signal: AbortSignal): unknown {
   return is_shutdown_business_cancellation(signal.reason)
     ? signal.reason
@@ -80,20 +77,18 @@ export class FileStaging {
   async file_target(manifest: WireValue<'FileManifest'>): Promise<string> {
     safe_component(manifest.owner_id);
     if (
-      integer_value(manifest.byte_count) < 0n ||
+      manifest.byte_count < 0 ||
       manifest.sha256.length !== 64 ||
       /[^0-9a-f]/.test(manifest.sha256)
     )
-      throw new ValueError('invalid file length or digest');
-    if (manifest.scope !== 'ticket') throw new ValueError('Mac uploads must belong to a Ticket');
+      throw new ExecutorValidationError('invalid file length or digest');
+    if (manifest.scope !== 'ticket')
+      throw new ExecutorValidationError('Mac uploads must belong to a Ticket');
     return contained_path(this.tickets, `${manifest.owner_id}/${manifest.relative_path}`);
   }
   async staged_file(manifest: WireValue<'FileManifest'>): Promise<string> {
     await this.file_target(manifest);
-    const record = stringify_python_json(as_object(manifest, 'FileManifest'), {
-      sort_keys: true,
-      compact: true,
-    });
+    const record = file_manifest_key(manifest);
     return join(this.staging, createHash('sha256').update(record).digest('hex'));
   }
   async store_upload(
@@ -244,7 +239,7 @@ export class VpsFiles {
     identity: ExecutorIdentity,
     sha256: string,
     upload: WireValue<'FileUploadRequest'>,
-    content_length: WireInteger | null,
+    content_length: number | null,
     chunks: UploadSource,
     options: FileOperationOptions = {},
   ): Promise<void> {
@@ -252,18 +247,15 @@ export class VpsFiles {
     const signal = this.admit(options);
     return this.start<void>(signal, async (reply) => {
       const manifest = upload.manifest;
-      const budget = integer_value(manifest.byte_count);
-      if (
-        manifest.sha256 !== sha256 ||
-        content_length === null ||
-        integer_value(content_length) !== budget
-      )
+      const budget = manifest.byte_count;
+      if (manifest.sha256 !== sha256 || content_length === null || content_length !== budget)
         throw new PlannerError('validation', 'upload does not match its manifest');
       try {
         await this.inbox.authorize_upload(upload);
       } catch (error) {
         this.remember_cleanup(error);
-        if (error instanceof ValueError) throw new PlannerError('validation', error.message);
+        if (error instanceof ExecutorValidationError)
+          throw new PlannerError('validation', error.message);
         throw error;
       }
       check(signal);
@@ -281,7 +273,7 @@ export class VpsFiles {
         check(signal);
         output = await create_file_at(source);
         created = true;
-        let count = 0n;
+        let count = 0;
         const digest = createHash('sha256');
         iterator = chunks[Symbol.asyncIterator]();
         while (true) {
@@ -294,7 +286,7 @@ export class VpsFiles {
             break;
           }
           const chunk = next.value;
-          if (count + BigInt(chunk.byteLength) > budget)
+          if (count + chunk.byteLength > budget)
             throw new PlannerError('validation', 'upload exceeds its manifest');
           for (let offset = 0; offset < chunk.byteLength; offset += FILE_CHUNK_BYTES) {
             const piece = chunk.subarray(offset, offset + FILE_CHUNK_BYTES);
@@ -307,7 +299,7 @@ export class VpsFiles {
               written += result.bytesWritten;
             }
             digest.update(piece);
-            count += BigInt(piece.byteLength);
+            count += piece.byteLength;
           }
         }
         if (count !== budget || digest.digest('hex') !== manifest.sha256)
@@ -357,7 +349,9 @@ export class VpsFiles {
         } catch (error) {
           this.remember_cleanup(error);
           errors.push(
-            error instanceof ValueError ? new PlannerError('validation', error.message) : error,
+            error instanceof ExecutorValidationError
+              ? new PlannerError('validation', error.message)
+              : error,
           );
         }
       }
@@ -428,7 +422,7 @@ export class VpsFiles {
           safe_component(command.child.conversation_id);
           safe_component(stored_file_id);
         } catch (error) {
-          if (error instanceof ValueError) throw absent;
+          if (error instanceof ExecutorValidationError) throw absent;
           throw error;
         }
         const path = this.message_files.path_of(command.child.conversation_id, stored_file_id);
@@ -467,7 +461,7 @@ export class VpsFiles {
     incoming: FileHandle,
     path: string,
     sha256: string,
-    count: bigint,
+    count: number,
     signal: AbortSignal,
   ): { input: InputFile; finished: Promise<void> } {
     const finished = deferred<void>();
@@ -512,14 +506,14 @@ export class VpsFiles {
       void close(cancellation_error()).catch(() => {});
     };
     const read_chunks = async function* () {
-      let position = 0n;
+      let position = 0;
       try {
         while (position < count) {
           check_input();
           if (closing) throw closed;
           const remaining = count - position;
           const buffer = Buffer.allocUnsafe(
-            remaining < BigInt(FILE_CHUNK_BYTES) ? Number(remaining) : FILE_CHUNK_BYTES,
+            remaining < FILE_CHUNK_BYTES ? remaining : FILE_CHUNK_BYTES,
           );
           const pending = incoming.read(buffer, 0, buffer.byteLength, position);
           reading = pending;
@@ -535,7 +529,7 @@ export class VpsFiles {
             throw Object.assign(new Error('input file is shorter than its digest'), {
               code: 'EIO',
             });
-          position += BigInt(bytesRead);
+          position += bytesRead;
           yield buffer.subarray(0, bytesRead);
         }
       } catch (error) {
@@ -547,7 +541,7 @@ export class VpsFiles {
     };
     const chunks: AsyncIterable<Uint8Array> = {
       [Symbol.asyncIterator]() {
-        if (used) throw new ValueError('input file permits only one consumer');
+        if (used) throw new ExecutorValidationError('input file permits only one consumer');
         used = true;
         const iterator = read_chunks();
         return {
@@ -569,7 +563,7 @@ export class VpsFiles {
       void close(error).catch(() => {});
     }
     return {
-      input: { path, sha256, byte_count: normalize_integer(count), chunks, close: () => close() },
+      input: { path, sha256, byte_count: count, chunks, close: () => close() },
       finished: finished.promise,
     };
   }

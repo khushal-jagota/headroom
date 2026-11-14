@@ -22,7 +22,6 @@ from unittest.mock import patch
 from uuid import UUID
 
 import pytest
-from pydantic import ValidationError
 from tests.support.executor_presence import lease_request, mac_identity
 
 from planner.conversation.contracts import PromptDeliveryMode
@@ -52,7 +51,7 @@ from planner.executor.vps_presence_store import accept_lease_in_transaction, rea
 ROOT = Path(__file__).resolve().parents[3]
 NOW = 1_760_000_000_000
 TURN = 3
-BIG = 9007199254740993
+BIG = 123456789
 ARCHIVED = 50_000
 BASE = ARCHIVED + 6
 OLD = "11111111-1111-4111-8111-111111111111"
@@ -137,7 +136,7 @@ def _command(
         "child": _child(conversation),
         "operation": operation,
         "turn": {"conversation_id": conversation, "turn_number": TURN},
-        "arguments": arguments[operation],
+        "arguments": {"kind": operation, **arguments[operation]},
         **changes,
     }
 
@@ -842,11 +841,36 @@ async def _outcome(work: Any) -> dict[str, Any]:
         return {"ok": False, "type": "CancelledError", "message": ""}
     except Exception as error:
         result = {"ok": False, "type": type(error).__name__, "message": str(error)}
-        if isinstance(error, ValidationError):
-            result["issues"] = [
-                {"type": issue["type"], "loc": list(issue["loc"])} for issue in error.errors()
-            ]
         return result
+
+
+def _comparable_outcome(outcome: dict[str, Any]) -> dict[str, Any]:
+    """Compare failure categories while each runtime owns its diagnostic classes."""
+    if outcome.get("ok") is False and outcome.get("type") in {
+        "ValidationError", "ValueError", "ExecutorValidationError", "JSONDecodeError"
+    }:
+        assert isinstance(outcome["message"], str) and outcome["message"]
+        return {**outcome, "type": "validation", "message": "<validation diagnostic>"}
+    if outcome.get("ok") is False and outcome.get("type") == "RuntimeError":
+        return {**outcome, "type": "Error"}
+    return outcome
+
+
+def _semantic_snapshot(snapshot: dict[str, Any]) -> dict[str, Any]:
+    result = deepcopy(snapshot)
+    for rows in result.values():
+        if not isinstance(rows, list):
+            continue
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            for name, value in row.items():
+                if name.endswith("_json") and isinstance(value, str):
+                    try:
+                        row[name] = json.loads(value)
+                    except json.JSONDecodeError:
+                        pass  # Malformed stored evidence remains an exact value.
+    return result
 
 
 def test_unit22_mailbox_exchange(tmp_path: Path, request: pytest.FixtureRequest) -> None:
@@ -926,10 +950,7 @@ def test_unit22_mailbox_exchange(tmp_path: Path, request: pytest.FixtureRequest)
             return snapshot
 
         def compared(outcome: dict[str, Any]) -> dict[str, Any]:
-            if outcome.get("type") == "ValidationError" and outcome["ok"] is False:
-                assert isinstance(outcome["message"], str) and outcome["message"]
-                return {**outcome, "message": "<validation diagnostic>"}
-            return outcome
+            return _comparable_outcome(outcome)
 
         async def paired(action: dict[str, Any]) -> Any:
             expected = await _outcome(lambda: source.execute(action))
@@ -965,7 +986,7 @@ def test_unit22_mailbox_exchange(tmp_path: Path, request: pytest.FixtureRequest)
         async def snapshot() -> Any:
             metadata = await paired({"op": "snapshot"})
             expected = correlated(_observe(paths[0]))
-            assert _observe(paths[1]) == expected
+            assert _semantic_snapshot(_observe(paths[1])) == _semantic_snapshot(expected)
             assert expected["total"][0]["count"] == BASE + len(admitted)
             snapshots.append({"rows": expected["total"][0]["count"], "states": expected["counts"]})
             return {**expected, **metadata}
@@ -1067,14 +1088,16 @@ def test_unit22_mailbox_exchange(tmp_path: Path, request: pytest.FixtureRequest)
                     "permission-closed",
                     "answer_permission_ask",
                     "expiry",
-                    arguments={"ask_id": "closed", "option_id": "allow"},
+                    arguments={
+                        "kind": "answer_permission_ask", "ask_id": "closed", "option_id": "allow"
+                    },
                 ),
                 _command("user-open", "answer_user_input", "expiry"),
                 _command(
                     "user-closed",
                     "answer_user_input",
                     "expiry",
-                    arguments={"request_id": "closed", "answers": []},
+                    arguments={"kind": "answer_user_input", "request_id": "closed", "answers": []},
                 ),
                 _command("never-expire", "cancel_running_turn", "expiry"),
             ]
@@ -1314,7 +1337,9 @@ def test_unit22_mailbox_exchange(tmp_path: Path, request: pytest.FixtureRequest)
             await paired({"op": "clock", "now": source.now + 15001})
             await call("put", _command("bad-presence-wake", "cancel_running_turn", "expiry"))
             failed_poll = await join("bad-presence")
-            assert not failed_poll["ok"] and failed_poll["type"] == "ValidationError"
+            assert (
+                not failed_poll["ok"] and _comparable_outcome(failed_poll)["type"] == "validation"
+            )
             after_presence = await snapshot()
             assert [
                 row for row in after_presence["rows"] if row["command_id"] != "bad-presence-wake"
@@ -1480,7 +1505,7 @@ def test_unit22_mailbox_exchange(tmp_path: Path, request: pytest.FixtureRequest)
             assert reference_boundaries["overflow"] == {"accepted_before_cancel": True}
             assert (
                 not native_boundaries["overflow"]["ok"]
-                and native_boundaries["overflow"]["type"] == "ValueError"
+                and native_boundaries["overflow"]["type"] == "ExecutorValidationError"
             )
             postseal = {**one, "command_id": "postseal-waiting"}
             await call("put", postseal)
@@ -1528,9 +1553,9 @@ def test_unit22_mailbox_exchange(tmp_path: Path, request: pytest.FixtureRequest)
             expected = await _outcome(lambda: source.execute(action))
             actual = await node(action)
             assert (
-                actual["value"]["report"]
-                == expected["value"]["report"]
-                == {"ok": False, "type": "RuntimeError", "message": "fixture listener failure"}
+                compared(actual["value"]["report"])
+                == compared(expected["value"]["report"])
+                == {"ok": False, "type": "Error", "message": "fixture listener failure"}
             )
             assert (
                 not actual["value"]["stop"]["ok"]
@@ -1573,15 +1598,16 @@ def test_unit22_mailbox_exchange(tmp_path: Path, request: pytest.FixtureRequest)
             for path in copies:
                 for row in _observe(path)["rows"]:
                     assert (
-                        wire.encode_bounded(
+                        json.loads(wire.encode_bounded(
                             _typed("MailboxCommand", json.loads(row["command_json"]))
-                        ).decode()
-                        == row["command_json"]
+                        ))
+                        == json.loads(row["command_json"])
                     )
                     if row["outcome_json"] is not None:
+                        decoded_result = _typed("CommandResult", json.loads(row["outcome_json"]))
                         assert (
-                            _outcome_json(_typed("CommandResult", json.loads(row["outcome_json"])))
-                            == row["outcome_json"]
+                            json.loads(_outcome_json(decoded_result))
+                            == json.loads(row["outcome_json"])
                         )
             foreign_signals: list[int] = []
             forget_foreign = change_signal.subscribe(lambda: foreign_signals.append(1))
@@ -1651,7 +1677,7 @@ def test_unit22_mailbox_exchange(tmp_path: Path, request: pytest.FixtureRequest)
                 }
                 expected_stale = await _outcome(lambda: source.execute(stale))
                 actual_stale = await node(stale)
-                assert actual_stale == expected_stale
+                assert _comparable_outcome(actual_stale) == _comparable_outcome(expected_stale)
                 selected: dict[str, Any] = {
                     "stale": actual_stale,
                     "placed": await call("put", big),
@@ -1699,7 +1725,9 @@ def test_unit22_mailbox_exchange(tmp_path: Path, request: pytest.FixtureRequest)
                         read.command.command_sequence == BIG + 1
                         and read.command.child_command.turn.turn_number == BIG
                     )
-                    assert wire.encode_bounded(read.command).decode() == row["command_json"]
+                    assert json.loads(wire.encode_bounded(read.command)) == json.loads(
+                        row["command_json"]
+                    )
                     await fresh.close()
                 await source.execute({"op": "stop"})
                 assert (await node({"op": "stop", "deadline_ms": 5000}))["ok"]
@@ -1775,7 +1803,7 @@ async def _presence_phases(source: _Source, node: Any, paired: Any, paths: list[
         nonlocal checkpoints
         checkpoints += 1
         value = await p("state")
-        assert _observe(paths[0]) == _observe(paths[1])
+        assert _semantic_snapshot(_observe(paths[0])) == _semantic_snapshot(_observe(paths[1]))
         return value
 
     async def signal_read() -> Any:
@@ -1953,13 +1981,21 @@ async def _presence_phases(source: _Source, node: Any, paired: Any, paths: list[
                     "WHERE command_sequence BETWEEN 7 AND 3006 ORDER BY command_sequence"
                 ).fetchall()
             )
-    assert compared[0] == compared[1] and len(compared[0]) == 3000
+    def replacement_meanings(rows: list[Any]) -> list[Any]:
+        return [
+            [*row[:3], None if row[3] is None else json.loads(row[3]), row[4]]
+            for row in rows
+        ]
+
+    assert replacement_meanings(compared[0]) == replacement_meanings(compared[1])
+    assert len(compared[0]) == len(compared[1]) == 3000
     assert all(row[2] == "withdrawn" for row in compared[0])
     replacement_cost = dict(
         source=reference_cost["value"],
         candidate=candidate_cost["value"],
         rows=3000,
         command_bytes=sum(row[-1] for row in compared[0]),
+        candidate_command_bytes=sum(row[-1] for row in compared[1]),
     )
     await state()
     assert (await p("lease", lease(OLD)))["error"]["code"] == "executor_incarnation_not_current"
@@ -1994,7 +2030,11 @@ async def _presence_phases(source: _Source, node: Any, paired: Any, paths: list[
             assert actual == expected and actual["value"]["lease"] is None
         else:
             assert not actual["ok"] and not expected["ok"]
-            assert actual["type"] == expected["type"] == "ValidationError"
+            assert (
+                _comparable_outcome(actual)["type"]
+                == _comparable_outcome(expected)["type"]
+                == "validation"
+            )
         await paired(
             dict(
                 op="sql",

@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from tests.compare.direct.mac_end_to_end_fixture import boot
+from tests.compare.direct.mac_end_to_end_fixture import boot, eventually
 from tests.integration.test_executor_end_to_end import (
     INPUT_ANSWERS,
     ORDERED_INPUT_ANSWERS,
@@ -138,6 +138,11 @@ def test_commit_before_ack_replay_returns_first_receipt_and_one_domain_event(
                 harness.endpoint.withhold_seconds = ITEM_BATCH_TIMEOUT_SECONDS + 1
             await harness.peer.call("emit", kind="ask")
             await harness.wait_event("permission_asked", 1)
+
+            async def receipt_cut() -> bool:
+                return harness.endpoint.cut_count == 1
+
+            await eventually(receipt_cut, "The committed event did not reach its receipt cut")
             envelope = harness.endpoint.cut_envelope
             assert envelope is not None and harness.endpoint.cut_count == 1
             first = lookup_receipt(

@@ -2,7 +2,6 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { setImmediate as yield_turn } from 'node:timers/promises';
-import { stringify_pydantic_json } from '../../../core/http/numeric_json.ts';
 import { BackendPromptAccepted } from '../../../conversation/backends/contracts.ts';
 import type {
   BackendChild,
@@ -10,8 +9,8 @@ import type {
   BackendEventValue,
 } from '../../../conversation/backends/contracts.ts';
 import { as_object, decode_json, decode_event_arguments } from '../../protocol.ts';
-import { normalize_integer } from '../../integers.ts';
 import { MacRunner } from '../runner/index.ts';
+import { MacPermissionDenied } from '../runner/contracts.ts';
 import type { MacRunnerOptions } from '../runner/lifecycle_contracts.ts';
 import { outcome, owed_outputs } from '../runner/logic/outcomes.ts';
 import { MacCommandQueues } from '../mailbox/queues.ts';
@@ -33,7 +32,7 @@ import type { FixtureStores } from './runner_fixture.ts';
 
 const started = performance.now(),
   root = process.argv[2]!,
-  now = 1_700_000_010_000n;
+  now = 1_700_000_010_000;
 const input = JSON.parse(readFileSync(join(root, 'input.json'), 'utf8')) as {
   commands: Record<string, string>;
   joined_start: string;
@@ -73,7 +72,7 @@ function mailbox_commands(values: readonly ChildCommand[], first_sequence: numbe
   return values.map((command, index) => ({
     command_sequence: first_sequence + index,
     command_id: command.command_id,
-    created_at_vps_ms: normalize_integer(now),
+    created_at_vps_ms: now,
     child_command: command,
   }));
 }
@@ -138,7 +137,7 @@ try {
     incarnation: 'inc',
     journal,
     outbox: store,
-    now_ms: () => normalize_integer(now),
+    now_ms: () => now,
     inputs: { download_inputs: unexpected },
     live: {
       send: (event) => {
@@ -217,7 +216,7 @@ try {
   }
   await assert.rejects(
     runner.source_work(commands.stop!.child, async () => {}),
-    { name: 'PermissionError' },
+    MacPermissionDenied,
   );
   const waiting = !stop_finished && native_stops === 0;
   release.resolve();
@@ -457,7 +456,7 @@ try {
   await close_fixture_owners(owners, options);
 }
 process.stdout.write(
-  stringify_pydantic_json({
+  JSON.stringify({
     parity,
     lifecycle,
     cleanup,
