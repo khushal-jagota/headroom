@@ -184,6 +184,34 @@ for (const item of instances) {
   });
 }
 
+// Match the existing connected comparison composition, with real records and no provider.
+const typescript_bootstrap = `
+import { run_application_process } from './server/lifecycle/application.ts';
+import { startServer } from './server/core/start.ts';
+import { create_production_conversation_core } from './server/lifecycle/production.ts';
+import { compose_production_backends } from './server/lifecycle/production_bindings.ts';
+import { create_backend_runtime, unavailable_backend_providers } from './server/conversation/snapshot/composition.ts';
+let bound;
+const refuse = () => { throw new Error('Gate 3 permits reads only'); };
+await run_application_process({
+  start: (onShutdownComplete) => startServer({
+    onShutdownComplete,
+    createConversationCore(context) {
+      bound = compose_production_backends(context, {
+        claude: () => refuse, codex: () => refuse, hermes: () => refuse,
+        http: () => create_backend_runtime({
+          database: context.database, config: context.config,
+          now: () => context.clock.now(), providers: unavailable_backend_providers(),
+          one_shot_children: context.one_shot_children,
+        }),
+        stall_sources: () => [],
+      });
+      return create_production_conversation_core(context, bound);
+    },
+    createBackendServices: () => bound.http,
+  }),
+}, code => process.exit(code));
+`;
 async function start(item: Instance) {
   item.log = await open(join(evidence, item.name + '.log'), 'wx', 0o600);
   const command = item.name === 'python' ? python : process.execPath;
@@ -193,7 +221,7 @@ async function start(item: Instance) {
           '-c',
           'from planner.server_lifecycle.application import run_application_process; run_application_process()',
         ]
-      : [join(app, 'server/main.ts')];
+      : ['--input-type=module', '-e', typescript_bootstrap];
   item.child = spawn(command, args, {
     cwd: app,
     env: item.env,
