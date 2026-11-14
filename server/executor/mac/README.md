@@ -83,6 +83,7 @@ The module refuses startup if `O_NOFOLLOW`, `O_DIRECTORY`, `O_CREAT`, `O_EXCL`, 
 `O_RDONLY` legitimately equals zero.
 
 Directory walks retain each opened inode and use `openat` with `O_DIRECTORY`, `O_NOFOLLOW`, and close-on-exec.
+Libc opens and closes own these descriptors. Node retains its normal tracking for descriptors that its own APIs open.
 Files use no-follow and nonblocking opens, followed by a regular-file check.
 A FIFO therefore cannot block the worker before the file-type refusal.
 Destination creation, removal, and rename use retained parents. Swapped ancestor symlinks cannot redirect those operations.
