@@ -186,15 +186,17 @@ def _supervisor(
         "catch(e){console.error(e.message);process.exitCode=1;}"
     )
     options = dict(
-        mode=dict(
-            kind="managed-linux",
-            runtime_directory=str(root / "runtime"),
-            application_root=str(root / "app"),
-            database_path=str(root / "data/app.sqlite"),
-            backup_root=str(root / "backups"),
-        )
-        if managed
-        else dict(kind="foreground"),
+        mode=(
+            dict(
+                kind="managed-linux",
+                runtime_directory=str(root / "runtime"),
+                application_root=str(root / "app"),
+                database_path=str(root / "data/app.sqlite"),
+                backup_root=str(root / "backups"),
+            )
+            if managed
+            else dict(kind="foreground")
+        ),
         application=dict(
             node_executable=node,
             entrypoint=str(app),
@@ -246,9 +248,9 @@ def _supervisor(
                 except ProcessLookupError:
                     pass
                 finally:
-                    assert select.select([descriptor], [], [], 10)[0], (
-                        "owned application did not exit"
-                    )
+                    assert select.select([descriptor], [], [], 10)[
+                        0
+                    ], "owned application did not exit"
                     try:
                         os.waitpid(pid, 0)
                     except ChildProcessError:
@@ -378,9 +380,17 @@ def test_unit21_owned_supervisor_control_and_stop_protocol(
         missing = base / "absent.sock"
         with pytest.raises(ServerRestartConnectionError) as expected:
             request_server_restart(missing)
-        assert _call(base, env, node, "restart", dict(control_socket_path=str(missing))) == dict(
+        missing_source = dict(
             error_type="ServerRestartConnectionError", message=str(expected.value)
         )
+        missing_result = _call(base, env, node, "restart", dict(control_socket_path=str(missing)))
+        assert isinstance(missing_result, dict) and set(missing_result) == {"error_type", "message"}
+        assert missing_result["error_type"] == missing_source["error_type"]
+        assert isinstance(missing_result["message"], str)
+        assert missing_result["message"].startswith(
+            f"Could not connect to the Panels supervisor at {missing}: "
+        )
+        assert "ENOENT" in missing_result["message"]
         bad = base / "invalid.sock"
         with socket.socket(socket.AF_UNIX) as listener:
             listener.bind(str(bad))
@@ -578,6 +588,11 @@ def test_unit21_owned_supervisor_control_and_stop_protocol(
             json.dumps(
                 {
                     "seconds": time.perf_counter() - started,
+                    "connection_failure": {
+                        "python": missing_source,
+                        "typescript": missing_result,
+                        "comparison_rule": "Keep error class, socket path and native ENOENT cause.",
+                    },
                     "real_supervisor_fallback": {
                         "stop_seconds": fallback_elapsed,
                         "host_seconds": fallback_host_seconds,

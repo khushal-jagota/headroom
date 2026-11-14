@@ -163,14 +163,29 @@ def test_unit18_containment_bytes(tmp_path: Path, request: pytest.FixtureRequest
         "real_children": ["owned Node evaluator"],
         "service_manager_calls": 0,
         "units_started": 0,
-        "normalization_rules": [],
+        "normalization_rules": [
+            "Keep invalid-entry names and failure shape; allow native quotes."
+        ],
     }
     destination = request.config.getoption("--compare-report-dir")
     if destination:
         path = Path(destination)
         path.mkdir(parents=True, exist_ok=True)
         (path / "unit18-containment-bytes.json").write_text(json.dumps(report, indent=2) + "\n")
-    assert actual == expected
+
+    def comparable(value: dict[str, Any]) -> dict[str, Any]:
+        errors = value["invalid_environment"]
+        assert len(errors) == len(spec["invalid_environment"])
+        for error, invalid in zip(errors, spec["invalid_environment"], strict=True):
+            assert set(error) == {"error"}
+            assert isinstance(error["error"], str) and next(iter(invalid)) in error["error"]
+        return {
+            **value,
+            "invalid_environment": [{"error": "<invalid environment>"} for _ in errors],
+        }
+
+    assert isinstance(actual, dict)
+    assert comparable(actual) == comparable(expected)
 
 
 def _python_versions(cases: list[dict[str, Any]], executable: str) -> list[dict[str, Any]]:

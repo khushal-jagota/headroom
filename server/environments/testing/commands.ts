@@ -228,15 +228,21 @@ async function operator_probe(root: string): Promise<unknown> {
   environment.HOME = root + '/mutated';
   assert.equal(paths.expand_path('~'), root);
   assert.throws(() => paths.admit_path('/refused-operator-test-path'), /OS temp folder/);
-  const deferred: Record<string, unknown> = {};
-  for (const name of ['app-build', 'run', 'serve', 'restart'] as const) {
+  const composed_callbacks: Record<string, string[]> = {};
+  for (const [name, callback] of [
+    ['app-build', 'build_app'],
+    ['run', 'prepare_run'],
+    ['serve', 'run_supervisor'],
+    ['restart', 'request_restart'],
+  ] as const) {
     const dependencies = await create_production_operator_dependencies(
       name,
       undefined,
       environment,
     );
-    assert.equal(dependencies, undefined);
-    deferred[name] = await operator_commands[name].handler({} as never, dependencies);
+    assert.ok(dependencies);
+    assert.equal(typeof Object.getOwnPropertyDescriptor(dependencies, callback)?.value, 'function');
+    composed_callbacks[name] = Object.keys(dependencies).sort();
   }
   for (const name of ['inspect', 'server-event-loop-tasks'] as const)
     assert.equal(
@@ -313,7 +319,7 @@ async function operator_probe(root: string): Promise<unknown> {
   );
   return {
     literal_manifest_path: posix_child_path('link/../app', 'manifest.json'),
-    deferred,
+    composed_callbacks,
     diagnostic: await Promise.all(
       [false, true].map((json) =>
         operator_commands['server-event-loop-tasks'].handler({ json }, undefined),
