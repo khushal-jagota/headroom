@@ -51,7 +51,10 @@ function file(path: string): boolean {
     return false;
   }
 }
-function which(name: string, environment: Readonly<NodeJS.ProcessEnv>): string | null {
+export function backend_executable_path(
+  name: string,
+  environment: Readonly<NodeJS.ProcessEnv>,
+): string | null {
   const choices = name.includes('/')
     ? [expand(name, environment)]
     : (environment.PATH ?? '').split(delimiter).map((directory) => join(directory || '.', name));
@@ -81,7 +84,7 @@ export class SubprocessBackendProbeEnvironment implements BackendProbeEnvironmen
     require_production_io();
     this.commands = new BackendCommands(children);
     this.environment = { ...environment };
-    this.on_path = executable_path ?? ((name) => which(name, this.environment));
+    this.on_path = executable_path ?? ((name) => backend_executable_path(name, this.environment));
   }
   executable_path(name: string): string | null {
     require_production_io();

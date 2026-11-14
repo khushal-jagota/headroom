@@ -158,6 +158,8 @@ export class ArchiveMembers {
   readonly members: ArchiveMember[] = [];
   manifest_bytes: Buffer | null = null;
   python = false;
+  node = false;
+  entrypoint = false;
   #manifest: unknown = null;
   #capture: { bytes: Buffer; used: number } | undefined;
   #logicalSize = 0;
@@ -304,6 +306,12 @@ export class ArchiveMembers {
           }
           if (entry.path === 'python/bin/python3')
             this.python = ['0', '\0', '7', '2'].includes(entry.type);
+          // Node packages require real payload members. Inspection never follows links.
+          if (entry.path === 'node/bin/node')
+            this.node =
+              ['0', '\0', '7'].includes(entry.type) && entry.size > 0 && (entry.mode & 0o111) !== 0;
+          if (entry.path === 'server/executor/mac/entrypoint.ts')
+            this.entrypoint = ['0', '\0', '7'].includes(entry.type) && entry.size > 0;
           // tarfile._proc_builtin skips known nonregular bodies, even with a declared size.
           this.#left = ['1', '2', '3', '4', '5', '6'].includes(entry.type)
             ? 0

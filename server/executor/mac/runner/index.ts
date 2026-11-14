@@ -225,6 +225,9 @@ export class MacRunner implements MacRunnerContract {
   seal(): void {
     this.lifetime.seal();
   }
+  seal_admission(): void {
+    this.state.seal_admission();
+  }
   stop(options: StopOptions): Promise<void> {
     return this.lifetime.stop(options);
   }

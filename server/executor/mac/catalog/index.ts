@@ -122,7 +122,7 @@ function optional_failure(error: unknown): boolean {
 }
 export class MacCatalog {
   private readonly dependencies: MacCatalogDependencies;
-  private readonly cancellation = new AbortController();
+  private cancellation = new AbortController();
   private readonly reads = new Set<Promise<CanonicalCatalogResult>>();
   private readonly results = new Set<Result>();
   private readonly pending = new Map<
@@ -177,7 +177,8 @@ export class MacCatalog {
       return Promise.reject(this.resource_failure(error));
     }
     // Publish custody before a source can synchronously reenter stop().
-    const task = Promise.resolve().then(() => this.read(command_id, request));
+    const signal = this.cancellation.signal;
+    const task = Promise.resolve().then(() => this.read(command_id, request, signal));
     this.reads.add(task);
     void task.then(
       () => this.release_read(task),
@@ -250,10 +251,12 @@ export class MacCatalog {
   private async read(
     command_id: string,
     request: ModelListRequest,
+    signal: AbortSignal,
   ): Promise<CanonicalCatalogResult> {
     if (this.closed) throw this.failure ?? new ServerLifecycleError('Mac catalog is stopped.');
     let snapshot: BackendSnapshot | null = null;
     try {
+      signal.throwIfAborted();
       if (
         request.backend_key === 'claude' ||
         request.backend_key === 'codex' ||
@@ -262,11 +265,14 @@ export class MacCatalog {
         snapshot = await this.dependencies.snapshots.snapshot(request.backend_key, {
           refresh: request.refresh,
           discover_update_advisory: false,
-          signal: this.cancellation.signal,
+          signal,
         });
     } catch (error) {
       if (this.failure) throw this.failure;
-      if (!(optional_failure(error) || (this.closed && is_shutdown_business_cancellation(error))))
+      if (!(
+        optional_failure(error) ||
+        (signal.aborted && error === signal.reason && is_shutdown_business_cancellation(error))
+      ))
         throw error;
     }
     if (this.failure) throw this.failure;
@@ -310,6 +316,18 @@ export class MacCatalog {
     if (this.failures.size)
       this.reject_actual(new AggregateError(this.failures, 'Mac catalog cleanup failed.'));
     else this.resolve_actual();
+  }
+  async settle(): Promise<void> {
+    const controller = this.cancellation;
+    controller.abort(new DOMException('Mac catalog reads cancelled.', 'AbortError'));
+    try {
+      await this.dependencies.cancel_sources?.(controller.signal.reason);
+    } catch (error) {
+      throw this.resource_failure(error);
+    }
+    while (this.reads.size) await Promise.allSettled([...this.reads]);
+    if (this.failure) throw this.failure;
+    if (!this.closed && this.cancellation === controller) this.cancellation = new AbortController();
   }
   stop(options: StopOptions): Promise<void> {
     this.closed = true;

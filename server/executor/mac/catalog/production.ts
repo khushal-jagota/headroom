@@ -147,6 +147,14 @@ export function create_mac_catalog(options: {
   const catalog = new MacCatalog({
     snapshots,
     on_failure: options.on_failure,
+    async cancel_sources(reason) {
+      for (const controller of controllers) controller.abort(reason);
+      const cleanup = await Promise.allSettled([hermes.cancel(reason), ...probes]);
+      for (const result of cleanup)
+        if (result.status === 'rejected' && result.reason instanceof ModelCatalogCleanupFailed)
+          throw retain(result.reason);
+      if (cleanup[0]!.status === 'rejected') throw cleanup[0]!.reason;
+    },
     async stop_sources(stop_options) {
       source_stop_options ??= stop_options;
       closed = true;

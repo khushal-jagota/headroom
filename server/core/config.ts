@@ -97,6 +97,21 @@ export function parseConfigBoolean(
 export function testModeFromEnvironment(env: NodeJS.ProcessEnv = process.env): boolean {
   return parseConfigBoolean(env.PLAN_TEST_MODE ?? '0', 'test_mode');
 }
+/** Socket routing and child authority are explicit inputs of the Mac CLI. */
+export function executor_client_settings(env: Readonly<NodeJS.ProcessEnv> = process.env) {
+  return {
+    root: env.PLAN_EXECUTOR_ROOT,
+    child_id: env.PLAN_EXECUTOR_CHILD_ID ?? null,
+    capability: env.PLAN_EXECUTOR_CAPABILITY ?? null,
+  };
+}
+export function mac_runtime_settings(env: Readonly<NodeJS.ProcessEnv> = process.env) {
+  return {
+    child: env.PLAN_EXECUTOR_RUNTIME_CHILD === '1',
+    ready_path: env.PLAN_EXECUTOR_RUNTIME_READY ?? null,
+    handoff_path: env.PLAN_EXECUTOR_RUNTIME_HANDOFF ?? null,
+  };
+}
 /** Lifecycle consumers share raw inputs and a copy that does not forward the listener. */
 export function lifecycle_launch_settings(env: Readonly<NodeJS.ProcessEnv>) {
   const environment = copy_environment(env);
