@@ -1,7 +1,7 @@
 /** Private production configuration with the existing external Codex wire fixture. */
 import assert from 'node:assert/strict';
 import { mkdir, readFile, realpath, writeFile } from 'node:fs/promises';
-import { isAbsolute, join, relative, sep } from 'node:path';
+import { dirname, isAbsolute, join, relative, sep } from 'node:path';
 
 /** Bootstrap the unchanged Python comparison seed without ambient account or runtime inputs. */
 export async function create_seed_environment(
@@ -22,7 +22,7 @@ export async function create_seed_environment(
     await mkdir(join(bootstrap, directory), { recursive: true, mode: 0o700 });
   await writeFile(join(bootstrap, 'config.yaml'), '{}\n', { flag: 'wx', mode: 0o600 });
   return {
-    PATH: '/usr/bin:/bin',
+    PATH: dirname(process.execPath) + ':/usr/bin:/bin',
     LANG: 'C.UTF-8',
     HOME: join(bootstrap, 'home'),
     CODEX_HOME: join(bootstrap, 'codex'),
