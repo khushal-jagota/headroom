@@ -21,10 +21,9 @@ import { tmpdir } from 'node:os';
 import { pipeline } from 'node:stream/promises';
 import { Pack } from 'tar';
 import type { OwnedChildProcesses } from '../../lifecycle/contracts.ts';
-import { ShutdownDeadlineExceeded } from '../../lifecycle/contracts.ts';
 import { stop_one_shot_child } from '../../lifecycle/one_shot_children.ts';
-import { observe_shutdown } from '../../conversation/shutdown.ts';
-import { inside } from '../ticket_scratch/logic.ts';
+import { path_is_within } from '../../core/path_containment.ts';
+import { is_record } from '../../core/records.ts';
 import type {
   AppManifest,
   ArchiveUnpackRequest,
@@ -64,7 +63,7 @@ export async function create_app_archive(app: string, archive: string): Promise<
   await validate_app_manifest(join(app, 'manifest.json'), { require_runtime: true });
   const root = await resolved_path(app),
     target = await resolved_path(archive);
-  if (inside(target, root))
+  if (path_is_within(root, target))
     throw new AppValidationError('archive must be outside the candidate app');
   const paths = await app_tree_paths(root);
   for (const path of paths) {
@@ -159,16 +158,20 @@ export async function inspect_mac_archive(
   execution.signal.throwIfAborted();
   if (performance.now() / 1000 >= execution.deadline)
     throw new AppValidationError('Mac archive inspection deadline expired before admission');
+  const signal = AbortSignal.any([
+    execution.signal,
+    AbortSignal.timeout(Math.max(0, Math.ceil((execution.deadline - performance.now() / 1000) * 1000))),
+  ]);
   let interrupt: ((reason: unknown) => void) | undefined;
   let stopped!: (reason: unknown) => void;
   const interrupted = new Promise<never>((_resolve, reject) => {
     stopped = reject;
   });
   const abort = () => {
-    interrupt?.(execution.signal.reason);
-    stopped(execution.signal.reason);
+    interrupt?.(signal.reason);
+    stopped(signal.reason);
   };
-  execution.signal.addEventListener('abort', abort);
+  signal.addEventListener('abort', abort);
   const actual = extract_archive(
     archive,
     null,
@@ -192,18 +195,13 @@ export async function inspect_mac_archive(
   const settled = actual.then(() => {});
   void settled.catch(() => {});
   try {
-    await observe_shutdown(
-      Promise.race([actual, interrupted]),
-      execution,
-      'Mac archive inspection did not settle before its deadline',
-    );
-    return (await actual) as MacArchiveInspection;
+    return (await Promise.race([actual, interrupted])) as MacArchiveInspection;
   } catch (error) {
     interrupt?.(error);
     if (!complete) throw new MacArchiveInspectionUnsettled(settled, error);
     throw error;
   } finally {
-    execution.signal.removeEventListener('abort', abort);
+    signal.removeEventListener('abort', abort);
   }
 }
 function inspection_error(message: Record<string, unknown>): Error {
@@ -251,6 +249,16 @@ async function extract_archive(
     failure: unknown;
   const errors: unknown[] = [];
   const inspection = purpose.purpose === 'mac-inspection';
+  const signal = execution
+    ? execution.deadline === null
+      ? execution.signal
+      : AbortSignal.any([
+          execution.signal,
+          AbortSignal.timeout(
+            Math.max(0, Math.ceil((execution.deadline - performance.now() / 1000) * 1000)),
+          ),
+        ])
+    : undefined;
   const cancel = (reason: unknown): void => {
     failure ??= reason;
     if (child && !ended && !stop_requested) {
@@ -266,7 +274,7 @@ async function extract_archive(
       child?.stdout?.destroy(reason instanceof Error ? reason : new Error(String(reason)));
   };
   register_cancel?.(cancel);
-  const abort = () => cancel(execution!.signal.reason);
+  const abort = () => cancel(signal!.reason);
   let target = destination === null ? '' : resolve(destination);
   const require_live = (): void => {
     if (failure !== undefined) throw failure;
@@ -440,8 +448,7 @@ async function extract_archive(
           message.type === 'result' &&
           validated &&
           result === undefined &&
-          message.manifest &&
-          typeof message.manifest === 'object'
+          is_record(message.manifest)
         ) {
           result = message.manifest as AppManifest;
           continue;
@@ -519,20 +526,12 @@ async function extract_archive(
     }
     return result!;
   }
-  execution?.signal.addEventListener('abort', abort);
+  signal?.addEventListener('abort', abort);
+  if (signal?.aborted) abort();
   const actual = unpack();
-  if (execution && execution.deadline !== null)
-    void observe_shutdown(
-      actual,
-      { deadline: execution.deadline },
-      'release operation exceeded its time budget',
-    ).catch((error) => {
-      if (error instanceof ShutdownDeadlineExceeded)
-        cancel(new AppValidationError('release operation exceeded its time budget'));
-    });
   try {
     return await actual;
   } finally {
-    execution?.signal.removeEventListener('abort', abort);
+    signal?.removeEventListener('abort', abort);
   }
 }
