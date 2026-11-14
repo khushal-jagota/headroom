@@ -5,6 +5,7 @@ import {
   observe_conversation_operation,
 } from './abort.ts';
 import { observe_shutdown } from '../conversation/shutdown.ts';
+import { automatic_ticket_admitted } from './automatic_work.ts';
 import type { StopOptions } from '../lifecycle/contracts.ts';
 import { PlannerError } from '../core/contracts.ts';
 import type { Database } from '../core/database/contracts.ts';
@@ -60,6 +61,7 @@ export class WorkerStepStartResult {
   }
 }
 export interface WorkerStepStartOptions {
+  automatic_tickets_created_after?: number;
   signal?: AbortSignal;
   connect_database: () => Database;
   conversation_system: ConversationSystem;
@@ -72,6 +74,14 @@ export async function start_ready_worker_step(
 ): Promise<WorkerStepStartResult> {
   return options.conversation_system.workspace_admission.operation(async (admitted) => {
     if (!admitted) return new WorkerStepStartResult({ started: false });
+    if (
+      !options
+        .connect_database()
+        .read((sql) =>
+          automatic_ticket_admitted(sql, ticket_id, options.automatic_tickets_created_after),
+        )
+    )
+      return new WorkerStepStartResult({ started: false });
     const decision_fate = await deliver_ticket_decision_messages(ticket_id, options);
     if (decision_fate !== null) return WorkerStepStartResult.from_delivery_fate(decision_fate);
     return _admitted_start_ready_worker_step(ticket_id, options);
@@ -230,6 +240,12 @@ export async function tell_a_worker_it_lost_its_memory(
   return options.conversation_system.workspace_admission.operation(async (admitted) => {
     if (!admitted) return false;
     const database = options.connect_database();
+    if (
+      !database.read((sql) =>
+        automatic_ticket_admitted(sql, ticket_id, options.automatic_tickets_created_after),
+      )
+    )
+      return false;
     return conversation_start.conversation_link_lock(`ticket:${ticket_id}`).run(async () => {
       const ticket = database.read((sql) => tickets_data.read_ticket(sql, ticket_id));
       const conversation_id = ticket.conversation_id;
@@ -330,6 +346,14 @@ export class WorkerStepReadinessLoop {
   }
   private schedule(ticket_id: string, notice = false): boolean {
     if (this.stop_requested || this.in_flight.has(ticket_id)) return false;
+    if (
+      !this.options
+        .connect_database()
+        .read((sql) =>
+          automatic_ticket_admitted(sql, ticket_id, this.options.automatic_tickets_created_after),
+        )
+    )
+      return false;
     const controller = new AbortController();
     const operations = conversation_operation_scope(controller.signal);
     this.controllers.set(ticket_id, controller);

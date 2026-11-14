@@ -45,3 +45,11 @@ The server's own unit needs the same protection for Manager and Chief children.
 requires production mode and the dispatcher lock. Without an explicit setting,
 notifications follow dispatch as before. These settings do not quiesce copied
 recovery records. Clear those in the copied database before the first trial start.
+
+`PLAN_AUTOMATIC_TICKETS_CREATED_AFTER` optionally limits automatic work to Tickets
+created at or after that Unix timestamp. Copied Tickets remain visible and direct
+owner messages still work. Worker steps, decisions, memory notices, and Manager or
+Chief notices follow the source Ticket cutoff. Clear copied notice queues before
+the first start. With this setting, all automatic measure-source schedules stay off,
+including schedules added later in the trial. Manual source actions remain available.
+Without the setting, automatic work follows the normal rules.

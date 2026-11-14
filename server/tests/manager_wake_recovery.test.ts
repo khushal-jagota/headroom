@@ -24,7 +24,57 @@ import {
   configure_conversation_start,
   conversation_link_lock,
 } from '../runtime/conversation_start.ts';
-import { ManagerWakeLoop, reconcile_batch_outcomes } from '../manager_wakes/runtime.ts';
+import {
+  deliver_batch,
+  ManagerWakeLoop,
+  reconcile_batch_outcomes,
+} from '../manager_wakes/runtime.ts';
+
+test('automatic notices batch only new Tickets even when they share a Chief', async () => {
+  const database = fixture();
+  const copied = create(database, { now: 1, title: 'Copied' });
+  const fresh = create(database, { now: 2, title: 'Trial' });
+  database.write((sql) => {
+    for (const ticket of [copied, fresh])
+      data.create_worker_error_wake(sql, {
+        target: { kind: 'chief', id: 'chief' },
+        ticket_id: ticket.id,
+        ticket_title: ticket.title,
+        claim_revision: 1,
+        error_reason: 'stopped',
+        now: 3,
+      });
+  });
+  const batch = database.write((sql) =>
+    data.claim_next_batch(sql, {
+      process_token: 'trial',
+      now: 3,
+      automatic_tickets_created_after: 2,
+    }),
+  );
+  expect(batch?.message).toContain(fresh.id);
+  expect(batch?.message).not.toContain(copied.id);
+  const system = new InMemoryConversationSystem();
+  const start = vi.spyOn(system, 'start_conversation');
+  expect(
+    await deliver_batch(
+      { ...batch!, target: { kind: 'ticket', id: copied.id } },
+      {
+        database,
+        conversation_system: system,
+        process_token: 'trial',
+        now: () => 3,
+        assert_database_owned() {},
+        workspace_context: {
+          db_path: fixture_path(database),
+          workspace_root: null,
+          automatic_tickets_created_after: 2,
+        },
+      },
+    ),
+  ).toBe(false);
+  expect(start).not.toHaveBeenCalled();
+});
 
 // The in-memory HTTP host cannot produce an interrupted native send or durable
 // receipts. Reuse the existing SQLite fixture and record writer without a host.

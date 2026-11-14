@@ -31,6 +31,7 @@ export function prepare_background_loops(options: {
   enable_worker_readiness: boolean;
   test_mode: boolean;
   dispatch_enabled: boolean;
+  automatic_tickets_created_after?: number;
   dispatcher_owned: boolean;
   worker: WorkerStepStartOptions | null;
   before_poll?: () => boolean;
@@ -45,6 +46,10 @@ export function prepare_background_loops(options: {
   }
   if (options.worker === null) throw new Error('Worker readiness requires a conversation system');
   return new BackgroundLoops(
-    new WorkerStepReadinessLoop({ ...options.worker, before_poll: options.before_poll }),
+    new WorkerStepReadinessLoop({
+      ...options.worker,
+      automatic_tickets_created_after: options.automatic_tickets_created_after,
+      before_poll: options.before_poll,
+    }),
   );
 }

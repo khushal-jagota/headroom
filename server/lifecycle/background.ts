@@ -176,6 +176,7 @@ export function compose_background_services(
         enable_worker_readiness: options.enable_worker_readiness ?? false,
         test_mode: context.config.test_mode,
         dispatch_enabled: context.config.dispatch_enabled,
+        automatic_tickets_created_after: context.config.automatic_tickets_created_after,
         dispatcher_owned: options.dispatcher_owned,
         before_poll: options.before_poll,
         worker: context.conversationSystem
