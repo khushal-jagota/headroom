@@ -2,13 +2,8 @@
 import { Socket } from 'node:net';
 import { createInterface } from 'node:readline';
 import { registerHooks } from 'node:module';
-import {
-  parse_numeric_json,
-  stringify_python_json,
-  JsonNumber,
-} from '../../core/http/numeric_json.ts';
+import { parse_runtime_json, stringify_runtime_json } from './json.ts';
 import { failure } from '../contracts.ts';
-import { float_number } from '../../measures/logic/formulas.ts';
 import type { RunFailure, RuntimeLimits } from '../contracts.ts';
 
 // Stored collector scripts survive release-directory changes. Resolve this one
@@ -29,25 +24,8 @@ const output = new Socket({ fd: 3, readable: true, writable: true });
 const input = createInterface({ input: output });
 let sequence = 0;
 const pending = new Map<number, { resolve(value: unknown): void; reject(reason: unknown): void }>();
-function signed_zero(value: unknown): unknown {
-  if (typeof value === 'number' && Object.is(value, -0)) return float_number(value);
-  if (Array.isArray(value)) return value.map(signed_zero);
-  if (value !== null && typeof value === 'object' && !(value instanceof JsonNumber))
-    return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, signed_zero(item)]));
-  return value;
-}
 function send(value: unknown): void {
-  output.write(stringify_python_json(signed_zero(value), { compact: true }) + '\n');
-}
-function native(value: unknown): unknown {
-  if (value instanceof JsonNumber)
-    return value.integer !== null && !Number.isSafeInteger(value.value)
-      ? value.integer
-      : value.value;
-  if (Array.isArray(value)) return value.map(native);
-  if (value !== null && typeof value === 'object')
-    return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, native(item)]));
-  return value;
+  output.write(stringify_runtime_json(value) + '\n');
 }
 function freeze(value: unknown): unknown {
   if (value !== null && typeof value === 'object') {
@@ -72,7 +50,7 @@ function call(op: string, values: Record<string, unknown>): Promise<unknown> {
 }
 let initialized = false;
 input.on('line', (line) => {
-  const message = native(parse_numeric_json(line)) as Record<string, unknown>;
+  const message = parse_runtime_json(line) as Record<string, unknown>;
   if (!initialized) {
     initialized = true;
     void execute(message);
@@ -180,7 +158,7 @@ async function execute(config: Record<string, unknown>): Promise<void> {
           let destination = new URL(url);
           let method = (options.method ?? 'GET').toUpperCase();
           let body =
-            options.json_body === undefined ? undefined : stringify_python_json(options.json_body);
+            options.json_body === undefined ? undefined : stringify_runtime_json(options.json_body);
           for (let redirects = 0; ; redirects++) {
             response = await network_read(() =>
               fetch(destination, {
@@ -255,7 +233,7 @@ async function execute(config: Record<string, unknown>): Promise<void> {
           },
           async json() {
             try {
-              return native(parse_numeric_json(body));
+              return parse_runtime_json(body);
             } catch {
               throw new ScriptFailure(failure('invalid_json'));
             }

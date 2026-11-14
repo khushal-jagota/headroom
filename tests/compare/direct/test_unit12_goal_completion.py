@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from tests.compare.json_values import json_values
 from tests.support.synthetic_homes import create_synthetic_homes, synthetic_home_environment
 from tests.unit.test_manual_measures import manual_measure, replacement
 from tests.unit.test_measure_persistence import NOW
@@ -182,10 +183,16 @@ def test_unit12_goal_completion_writer_parity(
             text=True,
         )
     )
+    compared = json.loads(json.dumps([expected, actual]))
+    for snapshots in compared:
+        for captured in snapshots:
+            for row in captured["tables"]["goals"]:
+                if row["completion_rule"] is not None:
+                    row["completion_rule"] = json_values(row["completion_rule"])
     report = {
         "kind": "direct",
         "case": "unit12-goal-completion",
-        "equal": actual == expected,
+        "equal": compared[0] == compared[1],
         "python": expected,
         "typescript": actual,
         "seconds": time.perf_counter() - started,
@@ -195,4 +202,4 @@ def test_unit12_goal_completion_writer_parity(
         path = Path(destination)
         path.mkdir(parents=True, exist_ok=True)
         (path / "unit12-goal-completion.json").write_text(json.dumps(report, indent=2) + "\n")
-    assert actual == expected
+    assert compared[0] == compared[1]

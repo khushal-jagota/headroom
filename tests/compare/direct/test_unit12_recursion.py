@@ -15,6 +15,7 @@ import subprocess
 import sys
 import time
 from contextlib import closing
+from copy import deepcopy
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import TypedDict
@@ -22,6 +23,7 @@ from typing import TypedDict
 import pytest
 from fastapi.testclient import TestClient
 from httpx import Response
+from tests.compare.json_values import json_values
 from tests.support.api_app import _app
 from tests.support.synthetic_homes import create_synthetic_homes, synthetic_home_environment
 
@@ -574,6 +576,11 @@ def test_unit12_mixed_formula_admission_parity(
                     if accepted
                     else [],
                 }
+                # Only stored formula JSON spacing differs. Keep raw rows in the report.
+                compared = deepcopy([actual, expected, policy_expected])
+                for answer in compared:
+                    for row in answer["rows"]:
+                        row["formula"] = json_values(row["formula"])
                 results.append(
                     {
                         "leaf": kind,
@@ -585,8 +592,8 @@ def test_unit12_mixed_formula_admission_parity(
                         "python": expected,
                         "typescript": actual,
                         "typescript_policy_expected": policy_expected if not gate_parity else None,
-                        "gate_pass": actual == (expected if gate_parity else policy_expected),
-                        "informational_python_equal": actual == expected,
+                        "gate_pass": compared[0] == compared[1 if gate_parity else 2],
+                        "informational_python_equal": compared[0] == compared[1],
                         "seconds": time.perf_counter() - case_started,
                     }
                 )

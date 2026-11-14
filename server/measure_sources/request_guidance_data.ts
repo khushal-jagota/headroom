@@ -1,6 +1,5 @@
-import { parse_numeric_json } from '../core/http/numeric_json.ts';
 /** Offline declarations: generated from fresh Python during migration. */
-export const CREATE = parse_numeric_json(`{
+export const CREATE = JSON.parse(`{
   "schema": {
     "$defs": {
       "SourceResponsibleBody": {
@@ -75,7 +74,7 @@ export const CREATE = parse_numeric_json(`{
 }`) as Record<string, any>;
 
 /** Offline declarations: generated from fresh Python during migration. */
-export const SCRIPT_DATA = parse_numeric_json(`{
+export const SCRIPT_DATA = JSON.parse(`{
   "schema": {
     "additionalProperties": false,
     "properties": {
@@ -115,7 +114,7 @@ export const SCRIPT_NOTES = {
 export const SCRIPT: Record<string, any> = { ...SCRIPT_DATA, notes: Object.values(SCRIPT_NOTES) };
 
 /** Offline declarations: generated from fresh Python during migration. */
-export const RUN_DATA = parse_numeric_json(`{
+export const RUN_DATA = JSON.parse(`{
   "schema": {
     "$defs": {
       "HistoryWindow": {

@@ -1,7 +1,7 @@
 /** Canonical holder page storage. Rich dependencies enter through the goal-unit seam. */
 import type { ReadSql, TransactionSql } from '../core/database/contracts.ts';
 import { PlannerError } from '../core/contracts.ts';
-import { parse_numeric_json, stringify_python_json } from '../core/http/numeric_json.ts';
+import { parse_numeric_json, stringify_numeric_json } from '../core/http/numeric_json.ts';
 import { newId } from '../core/ids.ts';
 import type { ManagerPageDocument as PageDocument } from './contracts.ts';
 import { manager_document_dependencies } from './document_dependencies.ts';
@@ -42,7 +42,7 @@ export function write_page(
     }
     if (has_chart(page)) manager_document_dependencies().validate_page_bindings(tx, page);
   }
-  const saved = page === null ? null : python_json(page);
+  const saved = page === null ? null : page_json(page);
   if (manager_id === null)
     tx.run('UPDATE chief_page SET page=?,page_revision=page_revision+1 WHERE singleton=1', [saved]);
   else
@@ -52,8 +52,8 @@ export function write_page(
     ]);
   return read_page(tx, manager_id);
 }
-/** Shared numeric-kind encoder also supplies Manager page character counts. */
-export const python_json = stringify_python_json;
+/** Native JSON encoding also supplies Manager page character counts. */
+export const page_json = stringify_numeric_json;
 export function page_readings(
   sql: ReadSql,
   manager_id: string | null,

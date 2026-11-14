@@ -1,7 +1,7 @@
 /** Source completion validates both batches before the first retained write. */
 import type { ReadSql, TransactionSql } from '../core/database/contracts.ts';
+import { stringify_numeric_json } from '../core/http/numeric_json.ts';
 import type { NumericJSON } from '../core/http/numeric_json.ts';
-import { stringify_python_json } from '../core/http/numeric_json.ts';
 import { PlannerError } from '../core/contracts.ts';
 import type { CandidateObservation } from './contracts.ts';
 import type { OutputMeasure } from '../measures/contracts.ts';
@@ -164,7 +164,7 @@ export function commit_results(
         r.date,
         run_id,
         by_id.get(r.dataset_id)!.definition_revision,
-        stringify_python_json(by_id.get(r.dataset_id), { compact: true, ensure_ascii: true }),
+        stringify_numeric_json(by_id.get(r.dataset_id)),
         now,
         number(r.query_end_at),
         r.query_start_at === null ? null : number(r.query_start_at),
@@ -179,8 +179,8 @@ export function commit_results(
           r.dataset_id,
           r.date,
           dimension_key(row.dimensions),
-          stringify_python_json(row.dimensions, { ensure_ascii: true }),
-          stringify_python_json(row.values, { ensure_ascii: true }),
+          stringify_numeric_json(row.dimensions),
+          stringify_numeric_json(row.values),
         ],
       );
     for (const [dimension, items] of Object.entries(r.labels))

@@ -4,7 +4,7 @@ import {
   JsonNumber,
   numeric_value,
   parse_numeric_json,
-  stringify_python_json,
+  stringify_numeric_json,
 } from '../../core/http/numeric_json.ts';
 import type { MetricNumber } from './contracts.ts';
 import { MetricsValueError } from './contracts.ts';
@@ -14,12 +14,9 @@ export function number(value: MetricNumber): number {
 function nonfinite_error(value: number): MetricsValueError {
   return new MetricsValueError(`Metrics JSON requires a finite number: ${value}`);
 }
-export function float(value: number): JsonNumber {
+export function float(value: number): number {
   if (!Number.isFinite(value)) throw nonfinite_error(value);
-  const source = String(value);
-  return new JsonNumber(
-    Object.is(value, -0) ? '-0.0' : /[.eE]/.test(source) ? source : source + '.0',
-  );
+  return value;
 }
 function finite(value: unknown): void {
   if (typeof value === 'number' || value instanceof JsonNumber) {
@@ -33,7 +30,7 @@ function finite(value: unknown): void {
 }
 export function encode(value: unknown): string {
   finite(value);
-  return stringify_python_json(value, { compact: true, ensure_ascii: true });
+  return stringify_numeric_json(value);
 }
 export function decode<T>(value: string): T {
   return parse_numeric_json(value) as T;

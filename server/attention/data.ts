@@ -1,6 +1,5 @@
 import { is_record as object } from '../core/records.ts';
 import type { ReadSql } from '../core/database/contracts.ts';
-import { stringify_python_json } from '../core/http/numeric_json.ts';
 import { CHIEF_SETTINGS_KEY } from '../worker_settings/service.ts';
 import { destination } from './contracts.ts';
 import type { AttentionEvent, Destination, Evidence, GateInterval } from './contracts.ts';
@@ -193,11 +192,7 @@ export function load_evidence(sql: ReadSql, first_at: number, last_at: number): 
     const message_id = payload.sender_message_id;
     const event_id =
       row.kind === 'prompt' && object(sender) && typeof message_id === 'string' && message_id
-        ? 'message:' +
-          stringify_python_json([sender.kind ?? null, sender.id ?? null, message_id], {
-            compact: true,
-            ensure_ascii: true,
-          })
+        ? 'message:' + JSON.stringify([sender.kind ?? null, sender.id ?? null, message_id])
         : `conversation:${row.conversation_id}:${row.sequence}`;
     events.push({ identity: event_id, occurred_at: row.created_at, kind, destination: item });
   }

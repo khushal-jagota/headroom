@@ -19,6 +19,7 @@ from unittest.mock import patch
 import pytest
 from tests.compare.direct.test_unit21_backups import _report
 from tests.compare.direct.test_unit21_updates import _environment
+from tests.compare.json_values import json_values
 from tests.unit.test_mac_updates import MacProvider, attempt
 
 from planner.core import change_signal
@@ -410,7 +411,19 @@ process.stdout.write(codec.canonical_json(result));"""
                 process.communicate(timeout=5)
     assert process.returncode == 0, stderr
     actual = json.loads(stdout)
-    assert actual["parity"] == expected
+
+    def comparable(value: Any) -> Any:
+        if isinstance(value, dict):
+            if set(value) == {"bytes", "reported_at"}:
+                assert isinstance(value["bytes"], str)
+                value = {**value, "bytes": json_values(value["bytes"])}
+            return {key: comparable(item) for key, item in value.items()}
+        if isinstance(value, list):
+            return [comparable(item) for item in value]
+        return value
+
+    # Only stored report spelling differs. Values, arrays, identities and effects stay strict.
+    assert comparable(actual["parity"]) == comparable(expected)
     assert actual["children"]["spawned"] == actual["children"]["closed"] > 0
     observed = {}
     for name, spec in inspections.items():

@@ -41,7 +41,7 @@ async function setup() {
       const request_id = ++next;
       const answer = new Deferred<unknown>();
       pending.set(request_id, answer);
-      return { request_id, promise: Promise.resolve({ envelope: {}, raw_result: null }) };
+      return { request_id, promise: Promise.resolve({}) };
     },
     async finish_request(_method, answer) {
       return pending.get(answer.request_id)!.promise;

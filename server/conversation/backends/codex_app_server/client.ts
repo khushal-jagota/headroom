@@ -42,16 +42,12 @@ export interface CodexServerMessageHandler {
   on_server_request(method: string, request_id: unknown, params: unknown): Promise<void>;
   on_child_ended(): Promise<void>;
 }
-export interface CodexReply {
-  readonly envelope: WireObject;
-  readonly raw_result: string | null;
-}
 export interface PendingCodexRequest {
   readonly request_id: number;
-  readonly promise: Promise<CodexReply>;
+  readonly promise: Promise<WireObject>;
 }
 interface Pending extends PendingCodexRequest {
-  resolve(reply: CodexReply): void;
+  resolve(reply: WireObject): void;
   reject(error: unknown): void;
 }
 export interface CodexRequestOptions {
@@ -66,62 +62,6 @@ export interface CodexClientStart {
   worker_ticket_id?: string | null;
 }
 
-/** Preserve the last top-level result value exactly, including numeric spelling. */
-export function raw_json_result(line: string): string | null {
-  let index = 0;
-  const whitespace = () => {
-    while (/\s/.test(line[index] ?? '') && index < line.length) index += 1;
-  };
-  const string_end = (): void => {
-    index += 1;
-    while (index < line.length) {
-      const character = line[index++];
-      if (character === '\\') index += 1;
-      else if (character === '"') return;
-    }
-  };
-  const value_end = (): void => {
-    if (line[index] === '"') {
-      string_end();
-      return;
-    }
-    if (line[index] === '{' || line[index] === '[') {
-      let depth = 0;
-      do {
-        const character = line[index];
-        if (character === '"') {
-          string_end();
-          continue;
-        }
-        index += 1;
-        if (character === '{' || character === '[') depth += 1;
-        if (character === '}' || character === ']') depth -= 1;
-      } while (depth > 0 && index < line.length);
-      return;
-    }
-    while (index < line.length && !/[\s,}\]]/.test(line[index]!)) index += 1;
-  };
-  whitespace();
-  if (line[index++] !== '{') return null;
-  let result: string | null = null;
-  while (index < line.length) {
-    whitespace();
-    if (line[index] === '}') break;
-    const start = index;
-    if (line[index] !== '"') return null;
-    string_end();
-    const key = JSON.parse(line.slice(start, index)) as string;
-    whitespace();
-    if (line[index++] !== ':') return null;
-    whitespace();
-    const value_start = index;
-    value_end();
-    if (key === 'result') result = line.slice(value_start, index);
-    whitespace();
-    if (line[index++] !== ',') break;
-  }
-  return result;
-}
 function error_text(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
@@ -505,20 +445,6 @@ export class CodexAppServerClient {
     params?: Readonly<WireObject>,
     options: CodexRequestOptions = {},
   ): Promise<unknown> {
-    return (await this.request_reply(method, params, options)).envelope.result ?? null;
-  }
-  async request_raw(
-    method: string,
-    params?: Readonly<WireObject>,
-    options: CodexRequestOptions = {},
-  ): Promise<string> {
-    return (await this.request_reply(method, params, options)).raw_result ?? 'null';
-  }
-  private async request_reply(
-    method: string,
-    params: Readonly<WireObject> | undefined,
-    options: CodexRequestOptions,
-  ): Promise<CodexReply> {
     let attempted = false;
     return this.bounded_request(
       method,
@@ -548,7 +474,7 @@ export class CodexAppServerClient {
     const request_id = ++this.request_id;
     let resolve!: Pending['resolve'];
     let reject!: Pending['reject'];
-    const promise = new Promise<CodexReply>((yes, no) => {
+    const promise = new Promise<WireObject>((yes, no) => {
       resolve = yes;
       reject = no;
     });
@@ -574,21 +500,17 @@ export class CodexAppServerClient {
     options: CodexRequestOptions = {},
   ): Promise<unknown> {
     try {
-      return (
-        (
-          await this.bounded_request(
-            method,
-            async (signal) => this.unwrap_reply(method, await this.wait_answer(answer, signal)),
-            options,
-            () => true,
-          )
-        ).envelope.result ?? null
+      return await this.bounded_request(
+        method,
+        async (signal) => this.unwrap_reply(method, await this.wait_answer(answer, signal)),
+        options,
+        () => true,
       );
     } finally {
       this.pending.delete(answer.request_id);
     }
   }
-  private async wait_answer(answer: PendingCodexRequest, signal: AbortSignal): Promise<CodexReply> {
+  private async wait_answer(answer: PendingCodexRequest, signal: AbortSignal): Promise<WireObject> {
     signal.throwIfAborted();
     let abort: (() => void) | undefined;
     try {
@@ -604,18 +526,18 @@ export class CodexAppServerClient {
       this.pending.delete(answer.request_id);
     }
   }
-  private unwrap_reply(method: string, reply: CodexReply): CodexReply {
-    const error = reply.envelope.error;
+  private unwrap_reply(method: string, reply: WireObject): unknown {
+    const error = reply.error;
     if (error !== null && error !== undefined) {
       throw new CodexRequestRejected(
         method,
         object(error) ? (numeric_value(error.code) ?? null) : null,
         object(error) ? String(error.message ?? 'None') : String(error),
         object(error) ? error.data : null,
-        { request_id: String(numeric_value(reply.envelope.id) ?? reply.envelope.id) },
+        { request_id: String(numeric_value(reply.id) ?? reply.id) },
       );
     }
-    return reply;
+    return reply.result ?? null;
   }
   private async bounded_request<T>(
     method: string,
@@ -762,7 +684,7 @@ export class CodexAppServerClient {
         const answer = this.pending.get(request_id);
         if (answer !== undefined) {
           this.pending.delete(request_id);
-          answer.resolve({ envelope: message, raw_result: raw_json_result(line) });
+          answer.resolve(message);
         }
         return;
       }

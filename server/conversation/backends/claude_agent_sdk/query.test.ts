@@ -593,7 +593,7 @@ it('translates only SDK-owned numeric exit failures to the full Python process e
   await pumping();
 });
 
-it('keeps raw token-count numeric kinds on matching results without rewriting wire input', async () => {
+it('preserves native token counts and additional SDK usage fields', async () => {
   const { client, child, yield_message, pumping } = setup();
   await client.connect();
   child.stdout.write(
@@ -606,7 +606,7 @@ it('keeps raw token-count numeric kinds on matching results without rewriting wi
   });
   const result = await client.receive_messages()[Symbol.asyncIterator]().next();
   expect(result.value).toMatchObject({
-    usage: { input_tokens: null, output_tokens: null, cache_read_input_tokens: 7, unrelated: 1.5 },
+    usage: { input_tokens: 5, output_tokens: 5, cache_read_input_tokens: 7, unrelated: 1.5 },
   });
   await client.disconnect();
   await pumping();

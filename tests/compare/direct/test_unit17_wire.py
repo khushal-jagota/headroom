@@ -210,10 +210,6 @@ def test_unit17_wire(
         check=True,
     )
     candidate = json.loads(run.stdout)
-    # Python exposes parsed results. TS additionally proves exact raw usage text.
-    raw_usage = candidate.pop("raw_usage")
-    assert '"usedPercent":25.0' in raw_usage
-    assert json.loads(raw_usage) == candidate["usage"]
     assert candidate == reference
     assert reference["ordering"] == ["handler-start", "handler-end", "reply"]
     assert [reply["label"] for reply in candidate["replies"]] == ["first", "second"]
@@ -235,7 +231,6 @@ def test_unit17_wire(
                 {
                     "python": reference,
                     "typescript": candidate,
-                    "raw_usage": raw_usage,
                     "elapsed_seconds": time.perf_counter() - started,
                     "differences": [],
                 },

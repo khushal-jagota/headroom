@@ -2,7 +2,8 @@ import { ChildProcesses } from '../../../lifecycle/owned_processes.ts';
 import { EventEmitter } from 'node:events';
 import { PassThrough } from 'node:stream';
 import { afterEach, expect, test, vi } from 'vitest';
-import { CodexAppServerClient, CodexWireFailed, raw_json_result } from './client.ts';
+import { CodexAppServerClient, CodexWireFailed } from './client.ts';
+import { stringify_numeric_json } from '../../../core/http/numeric_json.ts';
 import { spawn_codex_process } from './process.ts';
 import type { OwnedCodexProcess } from './process.ts';
 
@@ -84,17 +85,10 @@ async function start() {
   return { client, wire, notifications, warnings, ended };
 }
 
-test('raw result retains nested numeric tokens and escaped top-level names', () => {
-  expect(
-    raw_json_result('{"id":1,"result":{"text":"} , result","used":25.0,"nested":[1e0]}}'),
-  ).toBe('{"text":"} , result","used":25.0,"nested":[1e0]}');
-  expect(raw_json_result('{"result":1,"re\\u0073ult":2.0,"id":1}')).toBe('2.0');
-});
-
-test('malformed consumed notification drops while a valid delta and raw receipt still pass', async () => {
+test('malformed consumed notification drops while a valid delta and reply still pass', async () => {
   const { client, wire, notifications, warnings } = await start();
   try {
-    const pending = client.request_raw('account/rateLimits/read', {});
+    const pending = client.request('account/rateLimits/read', {});
     await new Promise<void>((resolve) => setImmediate(resolve));
     wire.child.stdout.write(
       '{"method":"item/agentMessage/delta","params":{"threadId":"t","turnId":"u","itemId":"m"}}\n',
@@ -103,7 +97,9 @@ test('malformed consumed notification drops while a valid delta and raw receipt 
       '{"method":"item/agentMessage/delta","params":{"threadId":"t","turnId":"u","itemId":"m","delta":"ok"}}\n',
     );
     wire.child.stdout.write('{"id":1,"result":{"rateLimits":{"usedPercent":25.0}}}\n');
-    expect(await pending).toBe('{"rateLimits":{"usedPercent":25.0}}');
+    expect(JSON.parse(stringify_numeric_json(await pending))).toEqual({
+      rateLimits: { usedPercent: 25 },
+    });
     await new Promise<void>((resolve) => setImmediate(resolve));
     expect(warnings).toHaveLength(1);
     expect(warnings[0]).toContain('notification did not decode');
@@ -222,7 +218,7 @@ test('an already aborted request writes nothing and preserves its child', async 
   const reason = new Error('canceled before write');
   abort.abort(reason);
   try {
-    await expect(client.request_raw('usage', {}, { signal: abort.signal })).rejects.toBe(reason);
+    await expect(client.request('usage', {}, { signal: abort.signal })).rejects.toBe(reason);
     expect(write).not.toHaveBeenCalled();
     expect(wire.owned.stop).not.toHaveBeenCalled();
     expect(client.is_alive).toBe(true);
@@ -240,12 +236,12 @@ test('abort releases a blocked write without canceling a queued independent requ
   const refused = expect(blocked).rejects.toBe(reason);
   try {
     await new Promise<void>((resolve) => setImmediate(resolve));
-    const queued = client.request_raw('queued');
+    const queued = client.request('queued');
     abort.abort(reason);
     await refused;
     await new Promise<void>((resolve) => setImmediate(resolve));
     wire.child.stdout.write('{"id":2,"result":{"ok":true}}\n');
-    expect(await queued).toBe('{"ok":true}');
+    expect(await queued).toEqual({ ok: true });
     expect(write).toHaveBeenCalledTimes(2);
     expect(wire.owned.stop).not.toHaveBeenCalled();
     expect(client.is_alive).toBe(true);
@@ -259,9 +255,7 @@ test('deadline poisons future writes while a previously written request can stil
   try {
     const independent = await client.begin_request('independent');
     vi.spyOn(wire.child.stdin, 'write').mockImplementationOnce(() => true);
-    await expect(
-      client.request_raw('blocked', {}, { timeout_seconds: 0.01 }),
-    ).rejects.toMatchObject({
+    await expect(client.request('blocked', {}, { timeout_seconds: 0.01 })).rejects.toMatchObject({
       request_may_have_been_written: true,
       message: 'blocked was not answered',
     });

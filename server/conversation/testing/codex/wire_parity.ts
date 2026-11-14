@@ -77,7 +77,7 @@ export async function run_wire_parity(spec: WireParitySpec): Promise<unknown> {
     const exchange = await client.request('wire/exchange', {});
     await client.request('wire/slow-handler', {});
     ordering.push('reply');
-    const raw_usage = await client.request_raw('account/rateLimits/read', {});
+    const usage = await client.request('account/rateLimits/read', {});
     let rejection: unknown = null;
     try {
       await client.request('wire/reject', {});
@@ -106,8 +106,7 @@ export async function run_wire_parity(spec: WireParitySpec): Promise<unknown> {
       initialize,
       replies,
       exchange,
-      usage: JSON.parse(raw_usage),
-      raw_usage,
+      usage,
       rejection,
       exit_failure,
       notifications,

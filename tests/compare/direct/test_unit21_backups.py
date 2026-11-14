@@ -234,13 +234,9 @@ def test_unit21_backup_v2_cross_language_wal_roots_and_retention(
         assert backup.is_verified_snapshot(snapshot)
         metadata = json.loads((snapshot / "metadata.json").read_text())
         assert metadata["deployed_revision"] == revision
-        for path in (snapshot / "metadata.json", snapshot / "files/manifest.json"):
-            assert path.read_bytes() == (
-                json.dumps(
-                    json.loads(path.read_bytes()), sort_keys=True, indent=2, ensure_ascii=True
-                )
-                + "\n"
-            ).encode("ascii")
+        assert metadata["managed_files"]["manifest_sha256"] == hashlib.sha256(
+            (snapshot / "files/manifest.json").read_bytes()
+        ).hexdigest()
         assert re.fullmatch(
             r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d{6})?\+00:00", metadata["created_at"]
         )

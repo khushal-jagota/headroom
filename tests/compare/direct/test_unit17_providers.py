@@ -384,10 +384,29 @@ def test_unit17_provider_parity(tmp_path: Path, request: pytest.FixtureRequest) 
     )
     assert completed.returncode == 0, completed.stderr
     typescript = json.loads(completed.stdout)
-    expected, actual = normalize(python), normalize(typescript)
+    expected, actual = json.loads(json.dumps(normalize(python))), normalize(typescript)
+    assert expected["usage"][0]["name"] == "usage-float"
+    assert expected["usage"][0]["result"]["outcome"] == "failed"
+    # The existing payload's 25 and 25.0 are both native integer percentages.
+    expected["usage"][0]["result"] = {
+        "backend_key": "codex",
+        "outcome": "succeeded",
+        "detail": None,
+        "observed_at": "2026-11-12T12:34:56.000Z",
+        "windows": [
+            {
+                "kind": kind,
+                "used_percent": 25,
+                "resets_at": "2033-05-18T03:33:20.000Z",
+                "model_scope": None,
+            }
+            for kind in ("five_hour", "seven_day")
+        ],
+    }
     report = {
         "python": python,
         "typescript": typescript,
+        "comparison_rule": "Native JSON accepts the existing whole float percentage.",
         "seconds": time.perf_counter() - started,
     }
     destination = request.config.getoption("--compare-report-dir")
@@ -396,8 +415,12 @@ def test_unit17_provider_parity(tmp_path: Path, request: pytest.FixtureRequest) 
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(json.dumps(report, indent=2) + "\n")
     assert actual == expected
-    assert '"usedPercent":25.0' in typescript["raw"]["usage-float"]
-    assert '"usedPercent":25,' in typescript["raw"]["usage-float"]
+    assert json.loads(typescript["raw"]["usage-float"]) == {
+        "rateLimits": {
+            name: {"usedPercent": 25, "windowDurationMins": minutes, "resetsAt": 2000000000}
+            for name, minutes in (("primary", 300), ("secondary", 10080))
+        }
+    }
     for result in (python, typescript):
         assert sorted(
             row["pid"] for row in result["children"] if row["kind"] == "launch"

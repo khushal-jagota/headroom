@@ -3,10 +3,13 @@
 from pathlib import Path
 
 import pytest
+from tests.compare.json_values import json_values
 from tests.compare.runner import Normalizer
 
 
 def test_payload_differences_survive_normalization(tmp_path: Path) -> None:
+    assert json_values('{"value": true}') != json_values('{"value": 1}')
+    assert json_values("900719925474099312345") != json_values("900719925474099312346")
     left, right = Normalizer({}, tmp_path), Normalizer({}, tmp_path)
     assert left.normalize({"name": "panels_original"}) != right.normalize(
         {"name": "panels_modified"}

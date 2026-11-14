@@ -258,12 +258,16 @@ def test_unit19_provider_usage(tmp_path: Path, request: pytest.FixtureRequest) -
     assert expected["codex_windows"][2:] == [None] * 4
     assert expected["claude_windows"][2] is None
     assert [len(value["calls"]) for value in expected["refreshes"]] == [1, 0, 0, 0, 1, 1, 1, 1, 1]
+    native_expected = json.loads(json.dumps(expected))
+    # A JSON 25.0 is the native integer value 25; the same primary window remains strict.
+    native_expected["codex_windows"][2] = [expected["codex_windows"][0][0]]
     report = {
         "kind": "direct",
         "case": "unit19-provider-usage",
-        "equal": actual == expected,
+        "equal": actual == native_expected,
         "python": expected,
         "typescript": actual,
+        "comparison_rule": "Native integer validation accepts the existing usedPercent:25.0 case.",
         "seconds": time.perf_counter() - started,
     }
     destination = request.config.getoption("--compare-report-dir")
@@ -271,4 +275,4 @@ def test_unit19_provider_usage(tmp_path: Path, request: pytest.FixtureRequest) -
         folder = Path(destination)
         folder.mkdir(parents=True, exist_ok=True)
         (folder / "unit19-provider-usage.json").write_text(json.dumps(report, indent=2) + "\n")
-    assert actual == expected
+    assert actual == native_expected

@@ -5,11 +5,12 @@ import { mkdtempSync, readFileSync, existsSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { Runtime } from './supervisor.ts';
+import { parse_runtime_json, stringify_runtime_json } from './json.ts';
 import { DEFAULT_LIMITS } from '../configuration.ts';
 import { failure_message } from '../notices.ts';
 import type { RunAdmission } from '../contracts.ts';
 import type { CredentialResolver } from '../../credentials/contracts.ts';
-import { numeric_value, stringify_python_json } from '../../core/http/numeric_json.ts';
+import { numeric_value } from '../../core/http/numeric_json.ts';
 import { fixture } from '../../tests/ticket_fixture.ts';
 import { create_credential_in_transaction } from '../../credentials/actions.ts';
 import { OWNER } from '../../core/contracts.ts';
@@ -20,6 +21,14 @@ import { prepare_admission } from '../admission.ts';
 import { create_measure } from '../../measures/actions.ts';
 
 const cleanup: Array<() => void | Promise<void>> = [];
+test('source JSON preserves exact integers and approximate numeric types', () => {
+  const value = { integer: 900719925474099312345n, reading: 9.007199254740993e20 };
+  expect(parse_runtime_json(stringify_runtime_json(value))).toEqual(value);
+});
+test('source JSON refuses a nonfinite value instead of coercing it to null', () => {
+  expect(() => stringify_runtime_json({ value: NaN })).toThrow(RangeError);
+});
+
 afterEach(async () => {
   try {
     for (const close of cleanup.splice(0).reverse()) await close();
@@ -145,9 +154,9 @@ test('good child sees frozen data and the exact environment allowlist; parent re
   );
   expect(result.failure).toBeNull();
   expect(result.observations).toHaveLength(2);
-  expect(stringify_python_json(result.dataset_results[0]!.rows[0]!.values)).toBe('{"value": 1.0}');
+  expect(numeric_value(result.dataset_results[0]!.rows[0]!.values.value)).toBe(1);
   expect(numeric_value(result.observations[0]!.value)).toBe(9007199254740992);
-  expect(Object.is(numeric_value(result.observations[1]!.value), -0)).toBe(true);
+  expect(numeric_value(result.observations[1]!.value)).toBe(0);
 });
 // Failed child output cannot escape into atomic retention or persist an exception secret.
 test('failed script discards provisional outputs and retains only safe diagnostics', async () => {

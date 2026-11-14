@@ -1,7 +1,6 @@
 import { is_record as object } from '../../../core/records.ts';
 import { StringDecoder } from 'node:string_decoder';
 import { Transform } from 'node:stream';
-import { parse_numeric_json, numeric_kind } from '../../../core/http/numeric_json.ts';
 import { PromptWriteFailed } from '../contracts.ts';
 import { CLAUDE_SDK_MAX_BUFFER_SIZE } from './configuration.ts';
 
@@ -94,15 +93,6 @@ export class ObservedStdout extends Transform {
       throw new Error(`Failed to decode JSON: ${[...stripped].slice(0, 100).join('')}...`);
     }
     if (object(value)) {
-      if (value.type === 'result' && object(value.usage)) {
-        const numeric = parse_numeric_json(stripped);
-        if (object(numeric) && object(numeric.usage)) {
-          for (const key of ['input_tokens', 'output_tokens', 'cache_read_input_tokens']) {
-            // Python accepts int counts, but a lexical 5.0 or 5e0 is a float.
-            if (numeric_kind(numeric.usage[key]) === 'float') value.usage[key] = null;
-          }
-        }
-      }
       this.observe(value);
     }
     return true;

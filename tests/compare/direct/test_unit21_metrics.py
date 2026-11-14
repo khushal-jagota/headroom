@@ -1,6 +1,6 @@
 """Compare metrics' typed rules and exact sidecar rows against current Python.
 
-Store/rule parity compares 82 operations and exact rows/compressed bytes.
+Store/rule parity compares decoded rows and checks each representation's byte counts.
 The retained runtime case proves IPC, ready/start costs, and reader replacement.
 The sampler case proves cadence, ownership handoff, and a pending stop.
 The native case proves query/parent-death cleanup through owned pidfds.
@@ -21,6 +21,7 @@ import sqlite3
 import subprocess
 import sys
 import time
+import zlib
 from contextlib import closing
 from dataclasses import replace
 from pathlib import Path
@@ -607,14 +608,42 @@ def test_unit21_metrics_store_and_rules_match_python(
         spec = {**case, "root": str(root), "database": str(root / "typescript.sqlite")}
         actual = _run_probe(root, "store_parity", "metrics_store_parity", spec)
 
-        def meaningful(value: Any) -> Any:
+        def meaningful(value: Any, diagnostic: bool = True) -> Any:
             if isinstance(value, list):
-                return [meaningful(item) for item in value]
+                return [meaningful(item, diagnostic) for item in value]
             if isinstance(value, dict):
-                if set(value) == {"type", "message"}:
+                if set(value) == set(TABLES):
+                    decoded: dict[str, Any] = {}
+                    totals = {"metrics": 0, "snapshots": 0}
+                    for table in ("samples", "snapshots", "aggregates"):
+                        decoded[table] = []
+                        for row in value[table]:
+                            assert set(row["payload"]) == {"hex"}
+                            payload = bytes.fromhex(row["payload"]["hex"])
+                            assert type(row["bytes"]) is int and row["bytes"] == len(payload)
+                            totals[table if table == "snapshots" else "metrics"] += len(payload)
+                            decoded[table].append(meaningful({
+                                **row, "payload": json.loads(zlib.decompress(payload)),
+                                "bytes": "<derived bytes>",
+                            }, False))
+                    metadata = {row["key"]: row["value"] for row in value["metadata"]}
+                    if "latest_bytes" in metadata:
+                        count = json.loads(metadata["latest_bytes"])
+                        assert type(count) is int and count == len(metadata["latest"].encode())
+                    for row in value["payload_totals"]:
+                        assert type(row["bytes"]) is int and row["bytes"] == totals[row["kind"]]
+                    decoded["metadata"] = [meaningful({
+                        **row, "value": "<derived bytes>" if row["key"] == "latest_bytes"
+                        else json.loads(row["value"]),
+                    }, False) for row in value["metadata"]]
+                    decoded["payload_totals"] = [
+                        {**row, "bytes": "<derived bytes>"} for row in value["payload_totals"]
+                    ]
+                    return decoded
+                if diagnostic and set(value) == {"type", "message"}:
                     assert isinstance(value["type"], str) and isinstance(value["message"], str)
                     return {"failure": True}
-                return {key: meaningful(item) for key, item in value.items()}
+                return {key: meaningful(item, diagnostic) for key, item in value.items()}
             if type(value) is float and value.is_integer():
                 return int(value)
             return value
@@ -632,7 +661,7 @@ def test_unit21_metrics_store_and_rules_match_python(
             {
                 "case": case["name"],
                 "operations": len(case["operations"]),
-                "exact_rows_and_compressed_bytes": True,
+                "decoded_rows_and_verified_byte_counts": True,
             }
         )
     report = request.config.getoption("--compare-report-dir")

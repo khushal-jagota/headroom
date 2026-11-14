@@ -279,7 +279,7 @@ in-memory rejection state. Sign-in resolves its executable from the current Code
 The client checks the selected CLI version before it starts the app-server. Unknown
 notifications and item kinds remain unconsumed. A malformed consumed notification warns
 and drops. Session, turn, outcome, permission, and numeric-kind checks remain strict.
-Raw response text is retained for usage reads that must preserve numeric token spelling.
+Usage reads consume parsed JSON values without retaining numeric token spelling.
 
 The direct Unit 17 checks compare fresh Python answers and the same scripted TypeScript
 executable. The startup check intercepts all provider and service-manager launches and
@@ -345,7 +345,7 @@ bound in the Part 2 review. The difference is recorded in `DEVIATIONS.md`.
 
 The provider proof compares paginated and partial model catalogs, login generations and
 rejections, correlated sign-in completion and cancellation races, deadlines, shutdown,
-and usage responses against fresh Python results. Usage returns the original JSON result
+and usage responses against fresh Python results. Usage returns native JSON result
 text and joins its child before completion. Sign-in preserves microseconds in its public
 timestamps. Tests keep production probes unavailable in test context, including a context
 change after provider construction. These scripted checks do not establish real login or

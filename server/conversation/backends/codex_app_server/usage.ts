@@ -1,5 +1,6 @@
-/** One bounded usage probe, with the rate-limit result's original JSON text. */
+/** One bounded usage probe with a JSON rate-limit result. */
 import { homedir } from 'node:os';
+import { stringify_numeric_json } from '../../../core/http/numeric_json.ts';
 import type { OwnedChildProcesses } from '../../../lifecycle/contracts.ts';
 import { CodexAppServerClient, CodexLoginIsDuplicated, CodexRequestRejected } from './client.ts';
 import {
@@ -15,10 +16,7 @@ import {
   CLIENT_VERSION,
   INITIALIZE_CAPABILITIES,
 } from './adapter_configuration.ts';
-type UsageClient = Pick<
-  CodexAppServerClient,
-  'start' | 'stop' | 'request' | 'request_raw' | 'notify'
->;
+type UsageClient = Pick<CodexAppServerClient, 'start' | 'stop' | 'request' | 'notify'>;
 export interface UsageSourceOptions {
   child_processes: OwnedChildProcesses;
   client_factory?: (options: ConstructorParameters<typeof CodexAppServerClient>[0]) => UsageClient;
@@ -71,7 +69,9 @@ export async function read_codex_rate_limits(
     cancel.signal.throwIfAborted();
     await client.notify('initialized');
     cancel.signal.throwIfAborted();
-    return client.request_raw('account/rateLimits/read', {}, { signal: cancel.signal });
+    return stringify_numeric_json(
+      await client.request('account/rateLimits/read', {}, { signal: cancel.signal }),
+    );
   })();
   try {
     return await Promise.race([operation, canceled]);

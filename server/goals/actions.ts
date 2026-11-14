@@ -7,7 +7,7 @@ import { newId } from '../core/ids.ts';
 import {
   clone_numeric_json,
   JsonNumber,
-  stringify_python_json,
+  stringify_numeric_json,
 } from '../core/http/numeric_json.ts';
 import { read_dataset } from '../datasets/data/index.ts';
 import { read_definitions, read_measure } from '../measures/data.ts';
@@ -198,13 +198,9 @@ function values(goal: Goal): Record<string, SqlValue> {
     ...rest,
     active: Number(goal.active),
     completed: Number(binary_checked),
-    page: stringify_python_json(goal.page, { compact: true }),
-    primary_chart: goal.primary_chart
-      ? stringify_python_json(goal.primary_chart, { compact: true, ensure_ascii: true })
-      : null,
-    completion_rule: goal.completion_rule
-      ? stringify_python_json(goal.completion_rule, { compact: true, ensure_ascii: true })
-      : null,
+    page: stringify_numeric_json(goal.page),
+    primary_chart: goal.primary_chart ? stringify_numeric_json(goal.primary_chart) : null,
+    completion_rule: goal.completion_rule ? stringify_numeric_json(goal.completion_rule) : null,
   };
 }
 function prepare(
