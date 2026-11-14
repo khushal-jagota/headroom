@@ -138,11 +138,6 @@ class Normalizer:
         path: str = "",
         apply_rules: bool = True,
     ) -> Any:
-        if apply_rules and not table and path in self.rules.get("response_floats", {}):
-            if value is None:
-                return None
-            assert type(value) in (int, float) and math.isfinite(value), (path, value)
-            return float(value)
         if apply_rules and context in self.rules.get("response_text", {}):
             assert isinstance(value, str) and value, (context, value)
             return "<native diagnostic>"

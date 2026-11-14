@@ -2,15 +2,6 @@
   "ignore": {
     "attention_history_metadata.started_at": "Schema initialization reads real wall time."
   },
-  "response_floats": {
-    "body.receipt.value": "Declared float values compare as finite doubles, independent of JSON number spelling.",
-    "body.state.latest_observation.value": "Declared float values compare as finite doubles, independent of JSON number spelling.",
-    "body.state.observation.value": "Declared float values compare as finite doubles, independent of JSON number spelling.",
-    "body.latest_observation.value": "Declared float values compare as finite doubles, independent of JSON number spelling.",
-    "body.observation.value": "Declared float values compare as finite doubles, independent of JSON number spelling.",
-    "body.values.*.value": "Declared float values compare as finite doubles, independent of JSON number spelling.",
-    "body.values.*.inputs.*.value": "Declared float values compare as finite doubles, independent of JSON number spelling."
-  },
   "response_tokens": {
     "body.coverage.revision": "Navigation continuity revisions count source commits, so compare changes.",
     "body.ordering_generation": "TypeScript uses Intl.Collator under its own approved ordering generation.",
