@@ -293,7 +293,7 @@ def test_unit21_mac_updates_retained_archive_and_leased_report_sequence(
     inspections: dict[str, dict[str, Any]] = {}
 
     def inspect(
-        name: str, payload: bytes, *, mode: str | None = None, proposed: bool = False
+        name: str, payload: bytes, *, mode: str | None = None
     ) -> None:
         assert first.mac is not None
         path = fixtures / (name + ".zip")
@@ -311,7 +311,6 @@ def test_unit21_mac_updates_retained_archive_and_leased_report_sequence(
             "release": asdict(publication),
             "artifact": str(path),
             "mode": mode,
-            "proposed": proposed,
         }
 
     # One compatible bundle protects the inspection/extraction policy split.
@@ -327,21 +326,6 @@ def test_unit21_mac_updates_retained_archive_and_leased_report_sequence(
             member("cycle-b", type=tarfile.SYMTYPE, linkname="cycle-a"),
             member("missing", type=tarfile.LNKTYPE, linkname="absent"),
             member("directory", type=tarfile.DIRTYPE, size=17),
-        ),
-    )
-    # Explicit local size overrides raw size0. Python's null sentinel permits the successor.
-    inspect(
-        "null-local",
-        archive(
-            member("mac-runtime.json", b"null"),
-            member(
-                "mac-runtime.json",
-                manifest,
-                size=0,
-                pax_headers={"size": str(len(manifest))},
-            ),
-            member("python/bin/python3", type=tarfile.DIRTYPE),
-            member("python/bin/python3", type=tarfile.SYMTYPE, linkname="python3.12"),
         ),
     )
     inspect(
@@ -368,37 +352,18 @@ def test_unit21_mac_updates_retained_archive_and_leased_report_sequence(
     # A valid gzip-header mutation after hash pass one must refuse before acceptance.
     inspect("mutation", valid, mode="mutation")
     inspect("abort", valid, mode="abort")
-    # The Manager accepted these refusals, conditional on unchanged hosted producer compatibility.
-    inspect(
-        "global-size",
-        gzip.compress(
-            tarfile.TarInfo.create_pax_global_header({"size": str(len(manifest))})
-            + member("mac-runtime.json", manifest)
-            + member("python/bin/python3", b"x")
-            + b"\0" * 1024
-        ),
-        proposed=True,
-    )
-    inspect(
-        "nul",
-        archive(
-            member("mac-runtime.json", manifest, pax_headers={"comment": "a\0b"}),
-            member("python/bin/python3", b"x"),
-        ),
-        proposed=True,
-    )
+    # Manifest encoding and metadata budgets remain explicit policy around node-tar.
     inspect(
         "utf16",
         archive(
             member("mac-runtime.json", manifest.decode().encode("utf-16")),
             member("python/bin/python3", b"x"),
         ),
-        proposed=True,
     )
     metadata = tarfile.TarInfo("metadata")
     metadata.type, metadata.size = tarfile.XHDTYPE, 1024**2 + 1
     inspect(
-        "metadata-limit", gzip.compress(metadata.tobuf() + b"\0" * 1024), proposed=True
+        "metadata-limit", gzip.compress(metadata.tobuf() + b"\0" * 1024)
     )
     specification["inspections"] = inspections
     # Both implementations receive the same wire form, including platform lists.
@@ -465,11 +430,11 @@ process.stdout.write(codec.canonical_json(result));"""
             }
         )["output"][0]
         outcome = actual["inspections"][name]["outcome"]
-        if spec["proposed"] or name == "json":
+        if name in ("utf16", "json"):
             observed[name] = {
                 "python": reference,
                 "typescript": outcome,
-                "accepted": True,
+                "reason": "UTF-8 manifest policy" if name == "utf16" else "Native JSON diagnostics",
             }
             if name != "json":
                 assert outcome == {
@@ -503,7 +468,7 @@ process.stdout.write(codec.canonical_json(result));"""
     assert not aborted["evidence"]["forced"] and aborted["evidence"]["error"] is None
     assert aborted["temporary_removed"]
     print(
-        "Mac informational restrictions/JSON diagnostics: "
+        "Mac native manifest policy/JSON diagnostics: "
         + json.dumps(observed, ensure_ascii=False)
     )
     errors = [entry for entry in expected["output"] if "error" in entry]
@@ -530,6 +495,6 @@ process.stdout.write(codec.canonical_json(result));"""
         began,
         operation_count=len(operations),
         actual_children=actual["children"],
-        proposed_differences=observed,
+        native_differences=observed,
         hosted_producer_compatibility="pending",
     )

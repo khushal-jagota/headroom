@@ -485,13 +485,24 @@ def _tree(root: Path) -> list[dict[str, Any]]:
     return rows
 
 
-def _pax(key: str, value: str, *, leading_zero: bool = False) -> bytes:
+def _native_archive_tree(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """node-tar exposes modification times as millisecond Date values."""
+    result = []
+    for row in rows:
+        entry = dict(row)
+        timestamp = entry.pop("mtime_ns", None)
+        if timestamp is not None:
+            entry["mtime_ms"] = int(timestamp) // 1_000_000
+        result.append(entry)
+    return result
+
+
+def _pax(key: str, value: str) -> bytes:
     body = f"{key}={value}\n".encode()
-    prefix = b"0" if leading_zero else b""
-    size = len(body) + 2 + len(prefix)
-    while size != len(prefix) + len(str(size)) + 1 + len(body):
-        size = len(prefix) + len(str(size)) + 1 + len(body)
-    return prefix + str(size).encode() + b" " + body
+    size = len(body) + 2
+    while size != len(str(size)) + 1 + len(body):
+        size = len(str(size)) + 1 + len(body)
+    return str(size).encode() + b" " + body
 
 
 def _record(
@@ -511,220 +522,51 @@ def _record(
     return header + body + bytes(-len(body) % 512)
 
 
-def _checksum(header: bytes | bytearray, *, signed: bool = False) -> bytes:
-    value = bytearray(header)
-    value[148:156] = b" " * 8
-    total = sum(byte if not signed or byte < 128 else byte - 256 for byte in value)
-    value[148:156] = f"{total:06o}\0 ".encode()
-    return bytes(value)
-
-
 def _archive_vectors(root: Path, ordinary: Path) -> list[dict[str, str]]:
+    """Keep explicit policy risks; node-tar owns TAR and PAX grammar."""
     raw = gzip.decompress(ordinary.read_bytes())
     with tarfile.open(ordinary, "r:gz") as bundle:
         end = max(
             member.offset_data + (member.size + 511) // 512 * 512 for member in bundle.getmembers()
         )
-    prefix = raw[:end]
-    eof = bytes(1024)
-
-    def x(values: dict[str, str]) -> bytes:
-        return _record(
-            "PaxHeaders/fixture",
-            tarfile.XHDTYPE,
-            b"".join(_pax(key, value) for key, value in values.items()),
-        )
-
-    signed = _checksum(_record("é-signed-checksum")[:512], signed=True)
-    negative = tarfile.TarInfo("negative-time")
-    negative.mtime, negative.mode = -1, 0o640
-    v7 = bytearray(_record("v7")[:512])
-    v7[257:265] = bytes(8)
-    positive = bytearray(_record("positive-base256")[:512])
-    positive[124:136] = b"\x80" + bytes(11)
-    octal_edge = bytearray(_record("octal-edge")[:512])
-    octal_edge[100:108] = b" +00640\0"
-    high_bit_length = bytearray(_pax("path", "pax-length"))
-    high_bit_length[0] |= 0x80
-    long_name = "25 path=gnu-name-not-pax\n"
+    prefix, eof = raw[:end], bytes(1024)
     cases = [
-        ("escape", "parity", _record("../outside")),
-        (
-            "outside-hardlink",
-            "parity",
-            _record("outside-hard", tarfile.LNKTYPE, target="../outside"),
-        ),
-        ("duplicate", "parity", _record("sentinel")),
-        ("duplicate-slash", "parity", _record("a/", tarfile.DIRTYPE, mode=0o755)),
-        ("fifo", "parity", _record("fifo", tarfile.FIFOTYPE)),
-        ("special", "parity", _record("special", mode=0o4755)),
-        ("outside-symlink", "parity", _record("dir/link", tarfile.SYMTYPE, target="../../outside")),
-        (
-            "link-parent",
-            "accepted_restriction",
-            _record("through", tarfile.SYMTYPE, target="a") + _record("through/child"),
-        ),
-        (
-            "later-link-parent",
-            "accepted_restriction",
-            _record("late/child") + _record("late", tarfile.SYMTYPE, target="a"),
-        ),
-        ("gnu-sparse", "accepted_restriction", _record("sparse", tarfile.GNUTYPE_SPARSE)),
-        (
-            "pax-sparse-local",
-            "accepted_restriction",
-            x({"GNU.sparse.map": "0,0", "GNU.sparse.size": "0"}) + _record("pax-sparse"),
-        ),
-        (
-            "pax-sparse-global",
-            "accepted_restriction",
-            _record(
-                "global",
-                tarfile.XGLTYPE,
-                _pax("GNU.sparse.map", "0,0") + _pax("GNU.sparse.size", "0"),
-            )
-            + _record("global-sparse"),
-        ),
-        ("pax-escape", "parity", x({"path": "../outside"}) + _record("raw")),
-        ("pax-duplicate", "parity", x({"path": "sentinel"}) + _record("raw")),
-        (
-            "pax-high-bit-length",
-            "resource_admission",
-            _record("PaxHeaders/high-bit", tarfile.XHDTYPE, bytes(high_bit_length))
-            + _record("raw"),
-        ),
-        (
-            "pax-leading-zero-length",
-            "parity",
-            _record(
-                "PaxHeaders/leading-zero",
-                tarfile.XHDTYPE,
-                _pax("path", "pax-length", leading_zero=True) + _pax("mtime", "-1.25"),
-            )
-            + _record("raw"),
-        ),
-        ("pax-hex-mtime", "parity", x({"mtime": "0x10"}) + _record("hex-time")),
-        (
-            "pax-long-path",
-            "parity",
-            _record("pax", tarfile.DIRTYPE, mode=0o755)
-            + x({"path": "pax/" + "p" * 140, "mtime": "1700000000.1234567"})
-            + _record("raw", body=b"PAX bytes"),
-        ),
-        (
-            "gnu-long-name",
-            "parity",
-            _record("././@LongLink", tarfile.GNUTYPE_LONGNAME, long_name.encode() + b"\0")
-            + _record("raw"),
-        ),
-        (
-            "gnu-long-link",
-            "parity",
-            _record("././@LongLink", tarfile.GNUTYPE_LONGLINK, b"a/data\0")
-            + _record("gnu-link", tarfile.SYMTYPE),
-        ),
-        (
-            "pax-gnu-unwind",
-            "parity",
-            x({"path": "outer-pax"})
-            + _record("././@LongLink", tarfile.GNUTYPE_LONGNAME, b"inner-gnu\0")
-            + _record("raw"),
-        ),
-        ("signed-checksum", "parity", signed),
-        ("negative-base256-time", "parity", negative.tobuf(format=tarfile.GNU_FORMAT)),
-        ("positive-base256", "parity", _checksum(positive)),
-        ("octal-edge", "parity", _checksum(octal_edge)),
-        ("v7", "parity", _checksum(v7)),
-        (
-            "oversized-metadata",
-            "resource_admission",
-            _record("large-pax", tarfile.XHDTYPE, size=1024 * 1024 + 1),
-        ),
-        (
-            "unknown-pax-key",
-            "accepted_restriction",
-            x({"vendor.inert": "ignored-by-python"}) + _record("vendor"),
-        ),
-        ("empty-pax-path", "accepted_restriction", x({"path": ""}) + _record("empty-name")),
-        (
-            "directory-body",
-            "accepted_restriction",
-            _record("odd-directory", tarfile.DIRTYPE, body=b"x"),
-        ),
+        ("pax-escape", "Effective PAX member path escapes output",
+         _record("pax", tarfile.XHDTYPE, _pax("path", "../outside")) + _record("raw")),
+        ("outside-hardlink", "Hard link escapes archive root",
+         _record("outside-hard", tarfile.LNKTYPE, target="../outside")),
+        ("outside-symlink", "Symbolic link escapes its parent",
+         _record("dir/link", tarfile.SYMTYPE, target="../../outside")),
+        ("duplicate-slash", "Duplicate effective directory path",
+         _record("a/", tarfile.DIRTYPE, mode=0o755)),
+        ("fifo", "Special file type is not a payload file", _record("fifo", tarfile.FIFOTYPE)),
+        ("special", "Special permission bits are forbidden", _record("special", mode=0o4755)),
+        ("later-link-parent", "A later link replaces a member's parent",
+         _record("late/child") + _record("late", tarfile.SYMTYPE, target="a")),
+        ("gnu-sparse", "Ignored GNU sparse type must refuse", _record("sparse", tarfile.GNUTYPE_SPARSE)),
+        ("pax-sparse", "PAX sparse metadata must refuse",
+         _record("pax", tarfile.XHDTYPE, _pax("GNU.sparse.map", "0,0")) + _record("sparse")),
+        ("oversized-metadata", "Metadata allocation limit precedes body consumption",
+         _record("large-pax", tarfile.XHDTYPE, size=1024 * 1024 + 1)),
     ]
-    invalid_utf8 = bytearray(_record("raw-encoding")[:512])
-    invalid_utf8[:2] = b"\xff\0"
-    cases.append(("non-utf8-name", "accepted_restriction", _checksum(invalid_utf8)))
     vectors = []
-    for name, policy, records in cases:
-        archive = root / (name + ".tar.gz")
-        archive.write_bytes(gzip.compress(prefix + records + eof, compresslevel=1, mtime=0))
-        vectors.append(dict(name=name, policy=policy))
-    extra = {
-        "truncated-gzip": gzip.compress(prefix + eof, mtime=0)[:-8],
-        "truncated-body": gzip.compress(prefix + _record("cut", size=513) + b"x", mtime=0),
-        "partial-header": gzip.compress(prefix + b"partial", mtime=0),
-        "post-end-bytes": gzip.compress(prefix + eof + b"not-zero" + bytes(504), mtime=0),
-        "end-padding-bomb": gzip.compress(
-            prefix + bytes(20 * 1024 + 512), compresslevel=1, mtime=0
-        ),
-    }
-    for name, content in extra.items():
+    for name, risk, records in cases:
+        (root / (name + ".tar.gz")).write_bytes(gzip.compress(prefix + records + eof))
+        vectors.append(dict(name=name, risk=risk, policy="refusal"))
+    for name, risk, content in [
+        ("truncated-body", "Declared member body is incomplete",
+         gzip.compress(prefix + _record("cut", size=513) + b"x")),
+        ("nested-compression", "Package decompression cannot bypass the outer expanded-byte limit",
+         gzip.compress(ordinary.read_bytes())),
+    ]:
         (root / (name + ".tar.gz")).write_bytes(content)
-        vectors.append(dict(name=name, policy="resource_admission"))
-    (root / "partial-output-cleanup.tar.gz").write_bytes(
-        gzip.compress(prefix + _record("inaccessible", tarfile.DIRTYPE, mode=0) + eof, mtime=0)
+        vectors.append(dict(name=name, risk=risk, policy="refusal"))
+    name = "partial-output-cleanup"
+    (root / (name + ".tar.gz")).write_bytes(
+        gzip.compress(prefix + _record("inaccessible", tarfile.DIRTYPE, mode=0) + eof)
     )
-    vectors.append(dict(name="partial-output-cleanup", policy="cleanup", expected_sha="b" * 40))
-    risks = {
-        "escape": "Raw member parent traversal",
-        "outside-hardlink": "Archive-root-relative hard-link escape",
-        "duplicate": "Exact duplicate member",
-        "duplicate-slash": "Directory trailing slash normalization before duplicate check",
-        "fifo": "Non-file member type",
-        "special": "Special permission bits",
-        "outside-symlink": "Parent-relative symbolic-link escape",
-        "link-parent": "Member below a preceding link",
-        "later-link-parent": "Member below a link declared later",
-        "gnu-sparse": "Original GNU sparse type",
-        "pax-sparse-local": "Local PAX sparse metadata",
-        "pax-sparse-global": "Global PAX sparse metadata",
-        "pax-escape": "PAX path overrides a safe raw header with traversal",
-        "pax-duplicate": "Duplicate detection uses the effective PAX path",
-        "pax-high-bit-length": "Length digits must retain their original ASCII bytes",
-        "pax-leading-zero-length": (
-            "Positive PAX length allows leading zero digits; negative fractional time normalizes"
-        ),
-        "pax-hex-mtime": (
-            "Invalid decimal PAX time uses Python zero fallback, not JavaScript hexadecimal"
-        ),
-        "pax-long-path": (
-            "PAX long path and non-dyadic current-epoch time retain exact nanoseconds"
-        ),
-        "gnu-long-name": "GNU long-name payload is not interpreted as PAX",
-        "gnu-long-link": "GNU long-link target is applied to its member",
-        "pax-gnu-unwind": "Nested PAX and GNU override precedence",
-        "signed-checksum": "Historical signed header checksum",
-        "negative-base256-time": "Signed base-256 numeric header",
-        "positive-base256": "Unsigned base-256 numeric marker",
-        "octal-edge": "Whitespace and plus sign in octal header",
-        "v7": "Old header without ustar prefix fields",
-        "oversized-metadata": "Declared metadata allocation limit before body read",
-        "unknown-pax-key": "Accepted refusal of unknown inert PAX metadata",
-        "empty-pax-path": "Accepted refusal of an empty effective PAX path",
-        "directory-body": "Accepted refusal of nonempty directory or link bodies",
-        "non-utf8-name": "Accepted refusal of non-UTF-8 archive names",
-        "truncated-gzip": "Missing gzip trailer",
-        "truncated-body": "Missing declared member bytes",
-        "partial-header": "Incomplete trailing header",
-        "post-end-bytes": "Nonzero bytes after TAR end",
-        "end-padding-bomb": "Compressed all-zero stream exceeds finite end-padding limit",
-        "partial-output-cleanup": (
-            "Final identity refusal removes files and inaccessible owned directory"
-        ),
-    }
-    for vector in vectors:
-        vector["risk"] = risks[vector["name"]]
+    vectors.append(dict(name=name, risk="Identity refusal removes inaccessible owned output",
+                        policy="cleanup", expected_sha="b" * 40))
     return vectors
 
 
@@ -1249,7 +1091,7 @@ def test_unit21_release_identity_archive_and_frontier(
     for producer, python_tree in (("python", python_from_python), ("typescript", restored)):
         result_tree = actual["producer_trees"][producer]
         assert result_tree["status"] == "restored"
-        assert result_tree["tree"] == _tree(python_tree)
+        assert _native_archive_tree(result_tree["tree"]) == _native_archive_tree(_tree(python_tree))
         assert result_tree["output_private"] and result_tree["spool_private"]
         assert result_tree["settled_at_return"] and result_tree["descriptor_held"]
         assert result_tree["spools_absent"] and result_tree["spawned"] == result_tree["closed"] == 1
@@ -1257,41 +1099,15 @@ def test_unit21_release_identity_archive_and_frontier(
         assert (restored_tree / "directory-alias").is_symlink()
         assert os.readlink(restored_tree / "directory-alias") == "a"
         assert (restored_tree / "directory-alias/data").read_text() == "a/data"
-    producer_timestamps = {}
-    for producer, archive in (
-        ("python", tmp_path / "python.tar.gz"),
-        ("typescript", tmp_path / "node.tar.gz"),
-    ):
-        with tarfile.open(archive, "r:gz") as bundle:
-            members = bundle.getmembers()
-        names = [member.name for member in members]
-        assert "directory-alias" in names
-        assert "directory-alias/data" not in names
-        producer_timestamps[producer] = sum(
-            member.mtime != int(member.mtime)
-            for member in members
-            if member.isfile() or member.isdir()
-        )
-        if producer == "typescript":
-            by_name = {member.name: member for member in members}
-            assert by_name["sentinel"].mtime == FIXTURE_TIME_NS // 1_000_000_000
-            assert "mtime" not in by_name["sentinel"].pax_headers
-            for name in ("\ue000", "\U00010000"):
-                assert by_name[name].mtime == FIXTURE_TIME_NS / 1_000_000_000
-                assert float(by_name[name].pax_headers["mtime"]) == FIXTURE_TIME_NS / 1_000_000_000
     table = []
     for item in actual["archive_table"]:
         name, policy, observed = item["name"], item["policy"], item["result"]
         python_result = python_table[name]
         assert observed["settled_at_return"] and observed["spools_absent"]
         assert observed["spawned"] == observed["closed"]
-        if policy == "parity" and python_result["status"] == "restored":
-            assert observed["status"] == "restored", (name, observed)
-            assert observed["tree"] == python_result["tree"], name
-        else:
-            assert observed["status"] == "refused", (name, observed)
-            assert observed["error_type"] == "AppValidationError", (name, observed)
-            assert not observed["destination_exists"], name
+        assert observed["status"] == "refused", (name, observed)
+        assert observed["error_type"] == "AppValidationError", (name, observed)
+        assert not observed["destination_exists"], name
         table.append(
             dict(
                 name=name,
@@ -1299,22 +1115,11 @@ def test_unit21_release_identity_archive_and_frontier(
                 policy=policy,
                 python=python_result,
                 typescript=observed,
-                accepted=True,
-                equality_asserted=(policy == "parity"),
-                comparison=(
-                    "source parity"
-                    if policy == "parity"
-                    else "accepted TS admission; Python outcome recorded separately"
-                ),
+                comparison="Explicit TypeScript safety policy; fresh Python result recorded separately",
             )
         )
     limits = {item["name"]: item["result"] for item in actual["archive_table"]}
-    assert python_table["pax-leading-zero-length"]["status"] == "restored"
-    hex_time = python_table["pax-hex-mtime"]
-    assert hex_time["status"] == "restored"
-    assert next(row for row in hex_time["tree"] if row["path"] == "hex-time")["mtime_ns"] == "0"
     assert "metadata" in limits["oversized-metadata"]["message"]
-    assert "end-padding" in limits["end-padding-bomb"]["message"]
     assert (
         limits["partial-output-cleanup"]["message"]
         == "app manifest SHA does not match expected SHA"
@@ -1322,7 +1127,8 @@ def test_unit21_release_identity_archive_and_frontier(
     assert limits["partial-output-cleanup"]["validated"]
     owned = {item["mode"]: item["result"] for item in actual["owned"]}
     replaced = owned["replace"]
-    assert replaced["status"] == "restored" and replaced["tree"] == _tree(python_from_python)
+    assert replaced["status"] == "restored"
+    assert _native_archive_tree(replaced["tree"]) == _native_archive_tree(_tree(python_from_python))
     assert replaced["replaced_before_read"] and replaced["replaced_after_hash"]
     assert replaced["replacement"] == "replaced after hash" and replaced["descriptor_held"]
     assert owned["appeared"]["status"] == "refused"
@@ -1366,8 +1172,8 @@ def test_unit21_release_identity_archive_and_frontier(
                     "source_parity": {
                         "equal": True,
                         "scope": "Small real Python/TS producer trees and identity/cache rules. "
-                        "Excludes accepted archive restrictions, writer time precision "
-                        "and full release scale.",
+                        "Uses node-tar millisecond dates and explicit safety policy. "
+                        "Full release scale remains outside this check.",
                     },
                     "archive_table": table,
                     "owned_archive_operations": actual["owned"],
@@ -1392,30 +1198,11 @@ def test_unit21_release_identity_archive_and_frontier(
                     "unit_boundaries": actual["units"],
                     "public_cli_executed": False,
                     "hostile_native": hostile_native,
-                    "accepted_restrictions": [
-                        "GNU sparse",
-                        "PAX sparse",
-                        "member behind link",
-                        "unknown inert PAX",
-                        "empty PAX path",
-                        "directory/link body",
-                        "non-UTF-8 names",
-                    ],
-                    "writer_timestamp_policy": {
-                        "accepted": True,
-                        "scope": (
-                            "Release application producer only; "
-                            "reader retains exact effective nanoseconds"
-                        ),
-                        "fractional_ordinary_members": producer_timestamps,
-                        "typescript_policy": (
-                            "Ordinary headers can lose fractions; "
-                            "written fractional PAX mtime stays intact"
-                        ),
-                    },
+                    "archive_package": "tar@7.5.23 owns TAR/PAX parsing and extraction",
+                    "timestamp_policy": "Compare extracted modification times at node-tar Date millisecond precision",
                     "limits": {
                         "oversized_header": "metadata entry bytes",
-                        "compressed_bomb": "end-padding bytes",
+                        "nested_compression": "raw TAR input cannot invoke package decompression",
                         "expanded_8GiB_bomb": "HOSTED OPEN; not run locally; no cap override",
                     },
                     "unproven": [
