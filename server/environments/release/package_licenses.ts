@@ -87,7 +87,8 @@ export async function inventory_package_licenses(
     const slot = archive_path(path);
     if (!installed_slot(slot) || !(await lstat(path)).isSymbolicLink()) continue;
     const actual = await realpath(path);
-    if (!path_is_within(root, actual)) throw new AppValidationError('package alias escapes the payload');
+    if (!path_is_within(root, actual))
+      throw new AppValidationError('package alias escapes the payload');
     const record = packages.get(actual);
     if (!record) throw new AppValidationError('package alias has no bundled package metadata');
     record.installed_slots.push(slot);
@@ -131,7 +132,8 @@ export async function inventory_package_licenses(
       continue;
     }
     const record = owner(path);
-    if (!path_is_within(root, actual) || owner(actual) !== record || !(await is_file(actual))) continue;
+    if (!path_is_within(root, actual) || owner(actual) !== record || !(await is_file(actual)))
+      continue;
     const file = await retained(path, actual);
     (license
       ? (record?.license_files ?? source_license_files)
@@ -154,11 +156,13 @@ export async function inventory_package_licenses(
         if (owner(file) !== record) finding = 'outside-package';
         else {
           const actual = await realpath(file);
-          if (!path_is_within(root, actual) || owner(actual) !== record) finding = 'outside-package';
+          if (!path_is_within(root, actual) || owner(actual) !== record)
+            finding = 'outside-package';
           else if (!(await is_file(actual))) finding = 'not-file';
           else {
             const physical = join(await realpath(dirname(file)), basename(file));
-            if (!path_is_within(root, physical) || owner(physical) !== record) finding = 'outside-package';
+            if (!path_is_within(root, physical) || owner(physical) !== record)
+              finding = 'outside-package';
             else {
               const retained_file = await retained(physical, actual);
               if (!record.license_files.some((entry) => entry.path === retained_file.path))

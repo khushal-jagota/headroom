@@ -83,8 +83,10 @@ try {
         if (closed) {
           const observed = await observe_promise(
             closed,
-            Math.max(0, Math.min(deadline - performance.now() / 1000, MANAGED_STOP_CLIENT_SECONDS)) *
-              1000,
+            Math.max(
+              0,
+              Math.min(deadline - performance.now() / 1000, MANAGED_STOP_CLIENT_SECONDS),
+            ) * 1000,
           );
           if (!observed.completed)
             throw new Error('Foreground supervisor close exceeded its stop budget');

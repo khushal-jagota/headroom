@@ -4,6 +4,7 @@ import { constants as os_constants } from 'node:os';
 import { delimiter, join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { OwnedCodexProcess } from '../../../conversation/backends/codex_app_server/process.ts';
+import { copy_environment } from '../../../core/environment.ts';
 import { SUPERVISOR_APP_STOP_SECONDS } from '../../../lifecycle/configuration.ts';
 import type { OwnedChildProcesses, OwnedOneShotChildren } from '../../../lifecycle/contracts.ts';
 import type { MacRuntimeSelection } from '../../wire.generated.ts';
@@ -91,7 +92,7 @@ export async function supervise(
     options.signal.throwIfAborted();
     const directory = runtime ?? options.baseline_root;
     const node = runtime === null ? options.baseline_node : join(directory, 'node/bin/node');
-    const environment = { ...options.environment };
+    const environment = copy_environment(options.environment);
     environment[MAC_RUNTIME_CHILD_ENV] = '1';
     delete environment[MAC_RUNTIME_READY_ENV];
     delete environment[MAC_RUNTIME_HANDOFF_ENV];

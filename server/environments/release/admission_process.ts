@@ -100,8 +100,7 @@ async function run_owned(
     error_path = path + '.stderr';
   const output = await open(path, 'wx+', 0o600);
   let errors: FileHandle | undefined;
-  let timeout: AbortSignal | undefined,
-    abort: (() => void) | undefined;
+  let timeout: AbortSignal | undefined, abort: (() => void) | undefined;
   let actually_closed = false,
     deferred_cleanup: Promise<void> | undefined;
   const cleanup = async (): Promise<void> => {

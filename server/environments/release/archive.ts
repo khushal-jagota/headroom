@@ -160,7 +160,9 @@ export async function inspect_mac_archive(
     throw new AppValidationError('Mac archive inspection deadline expired before admission');
   const signal = AbortSignal.any([
     execution.signal,
-    AbortSignal.timeout(Math.max(0, Math.ceil((execution.deadline - performance.now() / 1000) * 1000))),
+    AbortSignal.timeout(
+      Math.max(0, Math.ceil((execution.deadline - performance.now() / 1000) * 1000)),
+    ),
   ]);
   let interrupt: ((reason: unknown) => void) | undefined;
   let stopped!: (reason: unknown) => void;
@@ -450,7 +452,7 @@ async function extract_archive(
           result === undefined &&
           is_record(message.manifest)
         ) {
-          result = message.manifest as AppManifest;
+          result = message.manifest as unknown as AppManifest;
           continue;
         } else if (
           purpose.purpose === 'source-export' &&

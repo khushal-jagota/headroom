@@ -164,11 +164,12 @@ export class ArchiveMembers {
   }
   feed(chunk: Buffer): void {
     if (!this.#started) {
-      chunk = Buffer.concat([this.#prefix, chunk]);
-      if (chunk.length < 2) {
-        this.#prefix = chunk;
+      const prefix = Buffer.concat([this.#prefix, chunk]);
+      if (prefix.length < 2) {
+        this.#prefix = prefix;
         return;
       }
+      chunk = prefix;
       // The caller already inflated and counted raw TAR bytes. Do not inflate twice.
       if (chunk[0] === 0x1f && chunk[1] === 0x8b) refuse('app archive contains nested gzip data');
       this.#started = true;
