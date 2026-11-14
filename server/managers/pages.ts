@@ -78,7 +78,7 @@ export function page_readings(
   let today: string;
   let midnight: Date;
   if (calendar_iso !== undefined) {
-    // TestClock retains its explicit fixed offset, as Python datetime.fromisoformat does.
+    // Fixed-clock text retains its explicit offset.
     today = calendar_iso.slice(0, 10);
     const offset = /([+-]\d{2}:\d{2}|Z)$/.exec(calendar_iso)?.[1] ?? '';
     const tomorrow = new Date(today + 'T00:00:00Z');

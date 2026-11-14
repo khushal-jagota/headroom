@@ -206,7 +206,8 @@ export async function probe_claude_model_catalog(
           spawnClaudeCodeProcess(options) {
             const started = children.spawn(options.command, options.args, {
               cwd: options.cwd,
-              // The SDK adds and removes launch variables. Python's environment remains canonical.
+              // The SDK adds and removes launch variables.
+              // The configured environment stays canonical.
               env: child_environment,
               stdio: ['pipe', 'pipe', 'pipe'],
             });
@@ -250,6 +251,6 @@ export async function probe_claude_model_catalog(
     await cleanup();
   }
   if (failed) throw failure;
-  // Python wraps startup failures, but transformation failures remain their own type.
+  // Startup failures are wrapped above. Catalog transformation errors keep their own type.
   return claude_model_catalog_from_init(info);
 }

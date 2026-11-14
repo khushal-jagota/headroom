@@ -40,7 +40,7 @@ export async function safe_under(root: string, path: string, directory: boolean)
 }
 export async function modified_microseconds(path: string): Promise<bigint> {
   const metadata = await stat(path, { bigint: true });
-  // Python stat exposes floating-point seconds before datetime rounds to microseconds.
+  // Round floating-point stat seconds to microseconds.
   const seconds = Number(metadata.mtimeNs) / 1_000_000_000;
   const whole = Math.floor(seconds);
   return BigInt(whole) * 1_000_000n + BigInt(Math.round((seconds - whole) * 1_000_000));

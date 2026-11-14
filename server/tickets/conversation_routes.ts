@@ -241,7 +241,7 @@ export const conversation_routes: FastifyPluginAsync<AreaServices> = async (app,
       const body = parse_owner_send_body(request.body, reply);
       if (body === null) return;
       const created_conversation_id = conversation_start.new_conversation_id();
-      // Python resolves Chief launch overrides before attachment admission.
+      // Resolve Chief launch overrides before attachment admission.
       const chief_overrides = kind === 'chief' ? runs_under(body) : null;
       const principal = services.identity(request).principal;
       const target =

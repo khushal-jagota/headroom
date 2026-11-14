@@ -1,7 +1,7 @@
 /**
  * UsageService adapted from T3 75e4ceb96489a2fe92c710c79dbea59778cccfd1.
  * Copyright (c) 2026 T3 Tools Inc. MIT. See T3-LICENSE.
- * Effect construction becomes injected asynchronous dependencies with Python's cache policy.
+ * Asynchronous dependencies are injected alongside the retained scan cache policy.
  */
 import { is_record as object } from '../../core/records.ts';
 import { access, readFile, writeFile } from 'node:fs/promises';

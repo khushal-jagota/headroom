@@ -169,7 +169,7 @@ function missing(reason: string, day: string | null = null): CategoryChartValue 
     reasons: [reason],
   });
 }
-/** CPython math.fsum's partial expansion and final half-even correction. */
+/** Accumulate a partial expansion, then apply the final half-even correction. */
 function sum(values: number[]): number | null {
   const partials: number[] = [];
   for (let x of values) {

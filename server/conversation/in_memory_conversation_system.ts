@@ -427,7 +427,7 @@ export class InMemoryConversationSystem implements ConversationSystem {
     let fate: HeldPromptPromotionFate;
     if (mode === 'send_now') {
       if (state.running_turn !== null) this._end_running_turn(state, 'interrupted');
-      // Python forwards the held record, not reasoning_effort_is_set directly.
+      // Forward the held record without a separate reasoning_effort_is_set argument.
       fate = this._start_turn(state, held.content, held.sender_label, 'send_now', {
         ...held,
         reasoning_effort_is_set: false,

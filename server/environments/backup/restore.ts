@@ -55,7 +55,7 @@ async function restore_managed_files(
   try {
     for (const name of recorded.roots) {
       const target = roots[name as ManagedRootName];
-      // Python's fixed root map refuses unknown recorded names at the same boundary.
+      // Only names in the fixed managed-root map may be restored.
       if (target === undefined) throw new Error(`unknown managed root: ${name}`);
       await fs.mkdir(dirname(target), { recursive: true });
       const staged = sibling(target, 'tmp');

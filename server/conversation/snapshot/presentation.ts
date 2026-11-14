@@ -1,4 +1,4 @@
-/** Public cards retain Python's field names and UTC timestamp text. */
+/** Public cards use the shared field names and UTC timestamp text. */
 import type { BackendSnapshot } from './contracts.ts';
 import type { BackendStateStore } from '../backend_state.ts';
 import type { BackendUsageWindow } from '../backend_usage/contracts.ts';

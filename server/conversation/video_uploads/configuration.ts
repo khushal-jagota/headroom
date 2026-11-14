@@ -1,4 +1,4 @@
-/** Video intake limits match the Python configuration. */
+/** Video intake limits. */
 export const MAX_VIDEO_BYTES = 250 * 1024 * 1024;
 export const VIDEO_BUDGET_BYTES = 10 * 1024 * 1024 * 1024;
 export const FREE_SPACE_FLOOR_BYTES = 5 * 1024 * 1024 * 1024;

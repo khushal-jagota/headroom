@@ -20,5 +20,5 @@ function edges(value: string, space: (code: number) => boolean): string {
   return value.slice(start, end);
 }
 export const strip = (value: string): string => edges(value, python_space);
-/** Pydantic's number parser uses Unicode White_Space, without Python's four separators. */
+/** Numeric parsing uses Unicode White_Space, excluding U+001C through U+001F. */
 export const strip_unicode_space = (value: string): string => edges(value, unicode_space);

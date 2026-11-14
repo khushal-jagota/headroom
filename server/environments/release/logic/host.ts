@@ -61,7 +61,7 @@ export function require_host_node(version: string, contract: RuntimeContract): v
     throw new AppValidationError(`runtime requires Node ${contract.node_major}`);
   if (contract.version === 2) require_minimum_node(version.replace(/^v/, ''), contract);
 }
-/** Python's os-release data reader: quotes and shell escapes are data, never evaluated. */
+/** Read os-release fields without evaluating quotes or shell escapes. */
 export function os_release_values(text: string): Record<string, string> {
   const values: Record<string, string> = {};
   for (const line of text.split(/\r?\n/)) {

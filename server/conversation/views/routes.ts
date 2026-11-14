@@ -65,7 +65,7 @@ function fail(status: number, detail: string): never {
 function text(value: unknown): value is string {
   return typeof value === 'string';
 }
-// Pydantic permits underscores in the integer part, but not fractional zeros.
+// Route integers permit underscores in the integer part, but not fractional zeros.
 function normalized_integer_text(raw: string): string {
   const point = raw.indexOf('.');
   const whole = point < 0 ? raw : raw.slice(0, point);

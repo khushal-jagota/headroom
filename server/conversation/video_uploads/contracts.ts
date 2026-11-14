@@ -38,7 +38,7 @@ export class VideoUploadError extends Error {
     this.status_code = status_code;
   }
 }
-/** Pydantic model_dump_json emits declaration order with compact separators. */
+/** Persist declared fields in order with compact JSON separators. */
 export function destination_to_json(destination: UploadDestination): string {
   return JSON.stringify({
     kind: destination.kind,

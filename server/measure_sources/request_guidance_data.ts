@@ -1,4 +1,4 @@
-/** Offline declarations: generated from fresh Python during migration. */
+/** Offline source creation declarations. */
 export const CREATE = JSON.parse(`{
   "schema": {
     "$defs": {
@@ -73,7 +73,7 @@ export const CREATE = JSON.parse(`{
   ]
 }`) as Record<string, any>;
 
-/** Offline declarations: generated from fresh Python during migration. */
+/** Offline script submission declarations. */
 export const SCRIPT_DATA = JSON.parse(`{
   "schema": {
     "additionalProperties": false,
@@ -113,7 +113,7 @@ export const SCRIPT_NOTES = {
 
 export const SCRIPT: Record<string, any> = { ...SCRIPT_DATA, notes: Object.values(SCRIPT_NOTES) };
 
-/** Offline declarations: generated from fresh Python during migration. */
+/** Offline source run declarations. */
 export const RUN_DATA = JSON.parse(`{
   "schema": {
     "$defs": {

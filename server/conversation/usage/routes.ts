@@ -67,8 +67,8 @@ function summary_input(raw: Record<string, unknown>): UsageSummaryInput {
     timezone(timeZone);
     for (const name of ['sinceDay', 'untilDay']) {
       const value = query[name] as string;
-      // strptime's year accepts Unicode decimal digits. Its two-digit month
-      // and leading day alternatives retain the Python format's ASCII ranges.
+      // Years accept Unicode decimal digits. Two-digit months and leading day
+      // alternatives retain the route's ASCII ranges.
       if (
         !/^\p{Decimal_Number}{4}-(?:0[1-9]|1[0-2])-(?:[0-2]\p{Decimal_Number}|3[01])$/u.test(value)
       )
@@ -119,7 +119,7 @@ export function createUsageRoutes(runtime: UsageHttpRuntime): FastifyPluginAsync
       return result;
     });
     await app.register(async (scope) => {
-      // Python ignores this request body, including malformed JSON.
+      // This route ignores the request body, including malformed JSON.
       scope.removeAllContentTypeParsers();
       scope.addContentTypeParser('*', { parseAs: 'buffer' }, (_request, body, done) =>
         done(null, body),

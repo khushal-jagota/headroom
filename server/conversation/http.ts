@@ -173,7 +173,7 @@ export function parse_owner_send_body(
     add('list_type', ['content'], 'Input should be a valid list', raw.content);
   else
     for (const [index, value] of raw.content.entries()) {
-      // Untagged Pydantic unions report each rejected model, in declaration order.
+      // Report each rejected content variant in declaration order.
       const variants = [
         ['text', 'SentTextPiece'],
         ['image', 'SentImagePiece'],

@@ -120,7 +120,7 @@ export function credentialSnapshot(value: unknown): CredentialRequestRowBody {
     };
     const authKind = (value: unknown) =>
       choice(value, { bearer: 'bearer', header: 'header' } as const, 'auth_kind');
-    // Pydantic's integer fields accept integral numbers and numeric strings.
+    // Snapshot integer fields accept integral numbers and numeric strings.
     const revision = (fields: ObjectValue) => {
       const value = required(fields, 'revision');
       if (typeof value === 'string' && !/^[+-]?\d+(?:\.0+)?$/.test(value.trim()))

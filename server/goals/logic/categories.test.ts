@@ -1,5 +1,5 @@
 import { prepare_document, validate_chart } from './documents.ts';
-/** The thirteen Python rule groups protect retained category arithmetic and coverage. */
+/** Retained category arithmetic and coverage. */
 import { expect, test } from 'vitest';
 import type {
   ChartBlock,

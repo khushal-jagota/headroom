@@ -1,4 +1,4 @@
-/** Offline declarations: generated from fresh Python during migration. */
+/** Offline measure request declarations. */
 export const CREATE = JSON.parse(`{
   "schema": {
     "$defs": {

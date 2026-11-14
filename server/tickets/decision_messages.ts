@@ -17,7 +17,7 @@ export function validate_request(
     throw new PlannerError('validation', 'decision_id must contain 1 to 200 characters');
 }
 export function request_json(principal: Principal, values: Record<string, unknown>): string {
-  // Python sorts every dictionary level, including the next holder.
+  // Stable decision fingerprints sort every object level, including the next holder.
   return JSON.stringify(
     { sender_kind: principal.kind, sender_id: principal.id, ...values },
     (_key, value: unknown) =>

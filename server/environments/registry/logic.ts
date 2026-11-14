@@ -33,7 +33,7 @@ const FORBIDDEN = new Set([
   'VIRTUAL_ENV',
   'VIRTUAL_ENV_PROMPT',
 ]);
-/** Path.resolve without expanduser: relative '~' remains a literal filename, as Python does. */
+/** Resolve paths without expanding home prefixes: relative '~' remains a literal filename. */
 export const canonical_path = (path: string): Promise<string> =>
   resolved_path(isAbsolute(path) ? path : process.cwd() + '/' + path);
 export function validate_instance_id(kind: EnvironmentKind, id: string | null = null): string {

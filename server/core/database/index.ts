@@ -204,7 +204,6 @@ function scope<T, Sql extends ReadSql = TransactionSql>(
                 if (!connection.inTransaction)
                   throw new TypeError('incremental vacuum requires a write transaction');
                 integer(pages, 'pages', 1);
-                // Python execute() discards the cursor after its first SQLite step.
                 // run() steps once and resets; pragma() would consume every page.
                 connection.prepare(`PRAGMA incremental_vacuum(${pages})`).run();
               },
@@ -526,7 +525,7 @@ function requireDatabaseVersion(
   refusalMessage: string,
 ): void {
   if (Number(connection.pragma('user_version', { simple: true })) !== expectedVersion)
-    throw Object.assign(new Error(refusalMessage), { name: 'ValueError' });
+    throw new Error(refusalMessage);
 }
 
 /** Check an existing format before its caller creates directories or takes a process lock. */

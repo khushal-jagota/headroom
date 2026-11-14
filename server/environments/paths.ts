@@ -1,4 +1,4 @@
-/** Existing Python Path.expanduser/resolve(strict=False) behavior for environment paths. */
+/** Expand home prefixes and resolve environment paths, permitting missing tails. */
 import { lstat, readlink } from 'node:fs/promises';
 import { dirname, isAbsolute } from 'node:path';
 import { homedir, userInfo } from 'node:os';
@@ -35,7 +35,7 @@ export function expand_path(path: string, home?: string): string {
   if (!path.startsWith('~')) return path;
   const slash = path.indexOf('/');
   const username = path.slice(1, slash < 0 ? undefined : slash);
-  // CPython expanduser returns root for bare '~' when HOME is explicitly empty.
+  // An explicitly empty HOME resolves bare '~' to root.
   if (!username && home === '') return slash < 0 ? '/' : path.slice(slash);
   const selected_home = username ? account_home(username) : (home ?? homedir());
   if (selected_home === undefined) throw new TypeError('Could not determine home directory.');

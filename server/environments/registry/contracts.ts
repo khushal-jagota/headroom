@@ -1,4 +1,4 @@
-/** Existing Python environment identities, manifests, and operator inputs. */
+/** Environment identities, manifests, and operator inputs. */
 export type EnvironmentKind = 'live' | 'staging';
 /** An invocation-bound guard returns the physical path that the caller can use. */
 export type PathAdmission = (path: string) => string;

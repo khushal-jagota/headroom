@@ -109,7 +109,7 @@ async function replace_fixture(
       throw error;
     }
   } finally {
-    // Python also discards the staged predecessor if both replacement AND rollback fail.
+    // Discard the staged predecessor even when replacement and rollback both fail.
     await rm(admit_path?.(temporary) ?? temporary, { recursive: true, force: true }).catch(
       () => {},
     );

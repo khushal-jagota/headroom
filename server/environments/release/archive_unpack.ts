@@ -167,7 +167,7 @@ async function extract_members(
     else {
       await symlink(member.linkpath, path);
       if (source_umask !== null && process.platform === 'darwin') {
-        // Python source extraction keeps the caller's symlink creation mode on Darwin.
+        // Source extraction keeps the caller's symlink creation mode on Darwin.
         fence();
         await lchmod(path, 0o777 & ~source_umask);
       }

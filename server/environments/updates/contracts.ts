@@ -1,4 +1,4 @@
-/** Persisted and in-process contracts from Python's update_contracts.py. */
+/** Persisted and in-process update contracts. */
 import type { ConversationSystem } from '../../conversation/contracts.ts';
 import type { Database } from '../../core/database/contracts.ts';
 import type { NumericJSON } from '../../core/http/numeric_json.ts';

@@ -9,7 +9,7 @@ export function goal_status(completed: boolean, deadline: string | null, today: 
   if (deadline === null || today < deadline) return 'neutral';
   return today === deadline ? 'attention' : 'bad';
 }
-/** Explicit fixed-offset clock text preserves Python TestClock's calendar. */
+/** Explicit fixed-offset clock text preserves the supplied calendar. */
 export function calendar_projection(now: Date, calendar_iso?: string): [string, number] {
   return calendar_parts(with_calendar_iso(now, calendar_iso));
 }

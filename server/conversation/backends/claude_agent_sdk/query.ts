@@ -77,7 +77,7 @@ interface CancelAttempt {
 }
 
 // SDK 0.3.316 readMessages consumes control/keep-alive/mirror/host-only frames.
-// Count only the native message families that the Python adapter can consume.
+// Count only the native message families consumed by the adapter.
 // The version assertion in query.test.ts forces review when the SDK pin changes.
 const ORDERED_SYSTEM_SUBTYPES = {
   api_retry: true,
@@ -206,7 +206,7 @@ class ObservedClaudeSdkClient implements ClaudeSdkClient {
     delete environment.CLAUDECODE;
     environment.CLAUDE_CODE_ENTRYPOINT = 'sdk-ts';
     Object.assign(environment, overrides);
-    // These are the two explicitly accepted migration differences from Python.
+    // Report the active JavaScript SDK identity after explicit environment overrides.
     environment.CLAUDE_CODE_ENTRYPOINT = 'sdk-ts';
     environment.CLAUDE_AGENT_SDK_VERSION = CLAUDE_AGENT_SDK_VERSION;
     if (this.options.cwd) environment.PWD = this.options.cwd;

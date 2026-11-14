@@ -2,7 +2,7 @@ import type { FastifyInstance, FastifyRequest } from 'fastify';
 import { JsonNumber, parse_numeric_json, stringify_numeric_json } from './numeric_json.ts';
 import { MAX_PYTHON_JSONDICT_DEPTH } from './configuration.ts';
 import { ResponseDepthError } from './errors.ts';
-/** Pydantic's dict[str, Any] response serializer admits descendants through depth 255. */
+/** Response objects admit descendants through depth 255. */
 export function stringify_numeric_response(
   payload: unknown,
   checkDepth = true,
@@ -12,7 +12,7 @@ export function stringify_numeric_response(
   while (checkDepth && pending.length) {
     const { value, depth } = pending.pop()!;
     if (depth > maxDepth) throw new ResponseDepthError('response exceeds the supported JSON depth');
-    // Retained numeric metadata represents a scalar on Python's response boundary.
+    // Retained numeric metadata represents a scalar in the response.
     if (value !== null && typeof value === 'object' && !(value instanceof JsonNumber)) {
       for (const child of Object.values(value)) pending.push({ value: child, depth: depth + 1 });
     }

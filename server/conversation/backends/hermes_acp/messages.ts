@@ -54,7 +54,7 @@ export class HermesMessages {
   async piece_of(content: ContentBlock): Promise<MessagePiece | null> {
     if (content.type === 'text') return new MessageText({ text: content.text });
     if (content.type !== 'image') return null;
-    // Buffer's decoder silently accepts junk. Python uses b64decode(validate=True).
+    // Buffer's decoder silently accepts junk. Check the base64 alphabet and padding first.
     if (!/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(content.data))
       return null;
     try {

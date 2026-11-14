@@ -1,4 +1,4 @@
-/** HTTPX content decoding and json.loads(bytes) encoding selection. */
+/** Decode supported HTTP content encodings and detect the JSON byte encoding. */
 import { constants, gunzipSync, inflateRawSync, inflateSync } from 'node:zlib';
 
 export function decode_voice_content(body: Uint8Array, content_encoding = ''): Uint8Array {
@@ -15,8 +15,7 @@ export function decode_voice_content(body: Uint8Array, content_encoding = ''): U
         decoded = inflateRawSync(decoded, { finishFlush: constants.Z_SYNC_FLUSH });
       }
     }
-    // The pinned Python HTTPX environment has no optional Brotli or Zstandard decoder.
-    // HTTPX leaves unknown or unavailable content encodings unchanged.
+    // Unknown or unavailable content encodings remain unchanged.
   }
   return decoded;
 }
@@ -26,8 +25,8 @@ function utf8(body: Uint8Array): string {
   try {
     return decoder.decode(body);
   } catch {
-    // Python json.loads uses surrogatepass. Preserve raw surrogate triples while
-    // the strict decoder still refuses every other malformed UTF-8 sequence.
+    // Preserve raw surrogate triples while the strict decoder still refuses
+    // every other malformed UTF-8 sequence.
     const pieces: string[] = [];
     let start = 0;
     for (let offset = 0; offset + 2 < body.length; offset++) {

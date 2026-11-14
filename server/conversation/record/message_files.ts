@@ -1,4 +1,4 @@
-/** Durable message bytes beside the conversation record, with Python-compatible IDs. */
+/** Durable message bytes beside the conversation record, with stable file identities. */
 import { createHash, randomUUID } from 'node:crypto';
 import { lstatSync, realpathSync, statSync } from 'node:fs';
 import { mkdir, readFile, rename, unlink, writeFile } from 'node:fs/promises';

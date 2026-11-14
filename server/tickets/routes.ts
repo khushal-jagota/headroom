@@ -58,7 +58,7 @@ export function parse_principal(
       [field]: raw,
     });
   const choices = allow_ticket ? 'owner, chief, manager, or ticket' : 'owner, chief, or manager';
-  // Python PrincipalKind includes goal. Keep its constructor semantics here too.
+  // Goal principals remain valid input for the shared principal contract.
   if (
     typeof raw.kind !== 'string' ||
     !['owner', 'chief', 'manager', 'goal', ...(allow_ticket ? ['ticket'] : [])].includes(raw.kind)
@@ -640,7 +640,7 @@ export const routes: FastifyPluginAsync<AreaServices> = async (app, services) =>
     const response = services.database.read((sql) =>
       workspace_ticket(sql, request.params.ticket_id),
     ) as unknown as Json;
-    // Python's valid HTTP response contract filters these fields. Resource bodies retain them.
+    // Valid HTTP responses omit these fields. Resource bodies retain them.
     if (!('integrity_error' in response)) {
       delete response.recap_updated_at;
       delete response.recap_stage_changed;
