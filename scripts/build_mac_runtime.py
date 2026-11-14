@@ -2,7 +2,7 @@
 
 This script never signs an app or accesses a personal Mac. The archive includes a
 portable interpreter, installed runtime dependencies and native npm dependencies.
-Node 22 and owner-managed provider credentials remain external prerequisites.
+Node 22 or newer and owner-managed provider credentials remain external prerequisites.
 """
 
 from __future__ import annotations
@@ -491,7 +491,7 @@ def prove_archive(archive: Path, work: Path, *, revision: str) -> dict[str, obje
     state.mkdir()
     node = shutil.which("node")
     if node is None:
-        raise ValueError("Native proof requires the external Node 22 prerequisite")
+        raise ValueError("Native proof requires the external Node 22 or newer prerequisite")
     environment = {
         "PATH": f"{extracted / 'python/bin'}:{Path(node).parent}:/usr/bin:/bin:/usr/sbin:/sbin",
         "HOME": str(state),

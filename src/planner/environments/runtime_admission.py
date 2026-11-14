@@ -229,10 +229,9 @@ def _require_minimum_node(version: str, contract: NodeRuntimeContract) -> None:
         raise AppValidationError(f"unreadable Node version: {version[:40]}")
     found = (int(match[1]), int(match[2]), int(match[3]))
     minimum = tuple(int(part) for part in contract.minimum_node_version.split("."))
-    if found[0] != contract.node_major or found < minimum:
+    if found[0] < contract.node_major or found < minimum:
         raise AppValidationError(
-            f"runtime requires Node {contract.minimum_node_version} or a later Node "
-            f"{contract.node_major}"
+            f"runtime requires Node {contract.minimum_node_version} or newer"
         )
 
 
