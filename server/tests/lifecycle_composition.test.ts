@@ -621,6 +621,73 @@ test('startServer closes both services after a background start failure while re
   }
 });
 
+// Gap: startup failures do not prove custody of a factory result returned after stop.
+// Reuse the existing database fixture. No listener or provider starts in this case.
+test('startup retains a late environment until its actual cleanup settles', async () => {
+  const { database, path } = setup();
+  database.write((sql) =>
+    sql.run("INSERT INTO navigation_meta VALUES(1,'unit21',?,'late-start',0)", [SCHEMA_VERSION]),
+  );
+  database.close();
+  const entered = done<void>(),
+    release_factory = done<void>();
+  const stop_entered = done<void>(),
+    release_cleanup = done<void>();
+  const complete = vi.fn();
+  const close_environment = vi.fn(() => {
+    stop_entered.resolve();
+  });
+  const start_environment = vi.fn();
+  for (const [key, value] of Object.entries({
+    PLAN_DB_PATH: path,
+    PLAN_CONFIG_PATH: path + '.absent-config',
+    PLAN_PORT: '0',
+    PLAN_TEST_MODE: '1',
+    PLAN_DISPATCH_ENABLED: 'false',
+    PLAN_CREDENTIAL_KEY_PATH: path + '.key',
+  }))
+    vi.stubEnv(key, value);
+  const starting = startServer({
+    onShutdownComplete: complete,
+    async createEnvironments(context) {
+      entered.resolve();
+      await release_factory.promise;
+      return {
+        areas: [],
+        resourceProviders: [],
+        before_worker_readiness_poll: () => false,
+        start: start_environment,
+        close() {
+          context.require_runtime_ownership();
+          close_environment();
+        },
+        settled: () => release_cleanup.promise,
+      };
+    },
+  });
+  const rejected = expect(starting).rejects.toThrow('Server closed during startup');
+  try {
+    await entered.promise;
+    process.emit('SIGTERM');
+    release_factory.resolve();
+    await stop_entered.promise;
+    await next_turn();
+    expect(close_environment).toHaveBeenCalledOnce();
+    expect(start_environment).not.toHaveBeenCalled();
+    expect(complete).not.toHaveBeenCalled();
+    expect(() => acquireRuntimeOwnership(path)).toThrow('ConversationRuntimeAlreadyOwned');
+    release_cleanup.resolve();
+    await rejected;
+    expect(complete).toHaveBeenCalledExactlyOnceWith(0);
+    acquireRuntimeOwnership(path).close();
+  } finally {
+    release_factory.resolve();
+    release_cleanup.resolve();
+    await rejected;
+    vi.unstubAllEnvs();
+  }
+});
+
 // Gap: individual observer tests cannot prove cancellation at one shared lifecycle
 // deadline while both automatic producers own active sends.
 test('composed Worker and Manager sends share a deadline and leave no late database access', async () => {
