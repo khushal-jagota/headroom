@@ -26,7 +26,6 @@ import {
 import { NATIVE_NODE_PROBE } from './admission_probe.ts';
 import { NATIVE_PYTHON_PROBE } from './python_admission_probe.ts';
 import { resolved_path } from '../paths.ts';
-import { python_os_error_message } from '../../core/os_errors.ts';
 
 const HOST_PATH = '/usr/local/bin:/usr/bin:/bin';
 function current(deadline: number): void {
@@ -76,7 +75,7 @@ async function verify_host(
     cpuinfo = await text('/proc/cpuinfo');
   } catch (error) {
     if (!(error instanceof Error)) throw error;
-    throw new AppValidationError(`unsupported runtime host: ${python_os_error_message(error)}`);
+    throw new AppValidationError(`unsupported runtime host: ${error.message}`);
   }
   const distribution = os_release_values(release);
   const report = process.report.getReport() as unknown as {
