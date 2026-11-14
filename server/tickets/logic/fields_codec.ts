@@ -1,7 +1,6 @@
 import { is_record as object } from '../../core/records.ts';
 import { PlannerError, type Principal } from '../../core/contracts.ts';
 import type { WorkflowDefinition } from '../../worker_types/contracts.ts';
-import { python_json_dumps } from '../../worker_types/store.ts';
 import type {
   PendingTicketProposal,
   TicketFieldApproval,
@@ -15,7 +14,7 @@ function require(condition: unknown): asserts condition {
 const exact = (v: Record<string, unknown>, keys: string[]) =>
   Object.keys(v).sort().join('\0') === keys.sort().join('\0');
 export function values_to_json(values: TicketFieldValues): string {
-  return python_json_dumps(values);
+  return JSON.stringify(values);
 }
 export function stored_values_from_json(raw: string): TicketFieldValues {
   const v: unknown = JSON.parse(raw);
@@ -40,7 +39,7 @@ export function replace_declared_values(
   });
 }
 export function proposal_to_json(proposal: PendingTicketProposal | null): string | null {
-  return proposal === null ? null : python_json_dumps(proposal);
+  return proposal === null ? null : JSON.stringify(proposal);
 }
 export function proposal_from_json(raw: string | null): PendingTicketProposal | null {
   if (raw === null) return null;
@@ -89,7 +88,7 @@ export function field_value(
   return values[field] ?? null;
 }
 export function approvals_to_json(approvals: TicketFieldApprovals): string {
-  return python_json_dumps(approvals);
+  return JSON.stringify(approvals);
 }
 export function approvals_from_json(raw: string, values: TicketFieldValues): TicketFieldApprovals {
   const obj: unknown = JSON.parse(raw);
@@ -129,7 +128,7 @@ export function replace_declared_approvals(
   approvals: TicketFieldApprovals,
   field_ids: readonly string[],
 ): string {
-  return python_json_dumps({
+  return JSON.stringify({
     ...Object.fromEntries(
       Object.entries(JSON.parse(raw) as Record<string, unknown>).filter(
         ([k]) => !field_ids.includes(k),

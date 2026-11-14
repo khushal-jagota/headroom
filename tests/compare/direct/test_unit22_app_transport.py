@@ -728,12 +728,34 @@ def test_unit22_executor_real_wire(tmp_path: Path, request: pytest.FixtureReques
             assert final["catalog_state"] == "withdrawn" and final["descriptors"] == []
             assert final["poll_disconnected"] is True
             assert final["reports"] == updates.reports
-            assert actual == expected and actual_core == expected_core
+
+            def comparable(rows: list[Any]) -> list[Any]:
+                status, content, headers = rows[-2]  # The invalid MacUpdateReport phase.
+                assert status == 409 and set(content) == {"detail"}
+                detail = content["detail"]
+                assert isinstance(detail, str) and "phase" in detail
+                for phase in (
+                    "waiting",
+                    "downloading",
+                    "ready_to_restart",
+                    "current",
+                    "failed",
+                    "reverted",
+                ):
+                    assert phase in detail
+                return [
+                    *rows[:-2],
+                    [status, {"detail": "<invalid update phase>"}, headers],
+                    rows[-1],
+                ]
+
+            assert comparable(actual) == comparable(expected) and actual_core == expected_core
             return {
                 "source": expected,
                 "candidate": actual,
                 "core_source": expected_core,
                 "core_candidate": actual_core,
+                "comparison_rule": "Invalid phase keeps its shape and choices with native text.",
                 "guard_refusals": 3,
                 "refused_connection_attempts": 0,
                 "remaining_input_descriptors": [],

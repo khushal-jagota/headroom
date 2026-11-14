@@ -7,7 +7,7 @@ import {
   QueryIntegerError,
   scalarQueries,
 } from '../list_reads/http.ts';
-import { JsonNumber, numeric_kind, numeric_value } from '../core/http/numeric_json.ts';
+import { numeric_kind, numeric_value } from '../core/http/numeric_json.ts';
 import { install_numeric_json_parser } from '../core/http/numeric_intake.ts';
 import {
   list_datasets,
@@ -76,21 +76,7 @@ export const routes: FastifyPluginAsync<AreaServices> = async (app, services) =>
     const result = services.database.read((sql) =>
       read_values(sql, body, services.clock.nowUnix()),
     );
-    return {
-      ...result,
-      results: result.results.map((item) => ({
-        ...item,
-        query_end_at: new JsonNumber(
-          Object.is(item.query_end_at, -0) ? '-0.0' : item.query_end_at.toExponential(),
-        ),
-        query_start_at:
-          item.query_start_at === null
-            ? null
-            : new JsonNumber(
-                Object.is(item.query_start_at, -0) ? '-0.0' : item.query_start_at.toExponential(),
-              ),
-      })),
-    };
+    return result;
   });
   app.get<{ Params: { dataset_id: string } }>('/datasets/:dataset_id', async (request) =>
     services.database.read((sql) => read_dataset(sql, request.params.dataset_id)),

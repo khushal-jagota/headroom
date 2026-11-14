@@ -25,10 +25,4 @@ export function numeric_projection<T>(value: NumericJSON<T>): T {
     ) as T;
   return value as T;
 }
-export const codepoint_order = (a: string, b: string): number => {
-  const left = Array.from(a, (c) => c.codePointAt(0)!);
-  const right = Array.from(b, (c) => c.codePointAt(0)!);
-  for (let i = 0; i < Math.min(left.length, right.length); i++)
-    if (left[i] !== right[i]) return left[i]! - right[i]!;
-  return left.length - right.length;
-};
+export const text_order = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0);

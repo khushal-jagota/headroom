@@ -29,9 +29,9 @@ import { sequence_expired } from '../omissions.ts';
 
 export class ViewBodyChanged extends Error {}
 
-function* wire_fragments(value: unknown, field?: string): Generator<string> {
+function* wire_fragments(value: unknown): Generator<string> {
   if (value === null || typeof value !== 'object') {
-    yield canonical_json(value, field);
+    yield canonical_json(value);
     return;
   }
   if (Array.isArray(value)) {
@@ -53,7 +53,7 @@ function* wire_fragments(value: unknown, field?: string): Generator<string> {
       yield ',';
     }
     yield JSON.stringify(key) + ':';
-    yield* wire_fragments(child, key);
+    yield* wire_fragments(child);
   }
   yield '}';
 }

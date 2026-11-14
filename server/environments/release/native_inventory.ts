@@ -2,7 +2,7 @@
 import { createHash } from 'node:crypto';
 import { lstat, mkdir, realpath, writeFile } from 'node:fs/promises';
 import { join, relative } from 'node:path';
-import { inside } from '../ticket_scratch/logic.ts';
+import { path_is_within } from '../../core/path_containment.ts';
 import { is_directory, is_file } from '../backup/evidence.ts';
 import { isDeepStrictEqual } from 'node:util';
 import type {
@@ -75,7 +75,7 @@ export async function complete_node_runtime(
   const library_root = join(app_root, PRIVATE_LIBRARY_DIRECTORY);
   // Candidate links must not redirect the builder's copies outside its app tree.
   const { resolved_path } = await import('../paths.ts');
-  if (!inside(await resolved_path(library_root), app_root))
+  if (!path_is_within(app_root, await resolved_path(library_root)))
     throw new RuntimeContractError('native library directory escapes archive');
   assert_release_execution(execution);
   await mkdir(library_root, { recursive: true });
@@ -148,7 +148,7 @@ export async function complete_node_runtime(
         const provider_source = await resolve_provider(needed, object, ancestors, cache);
         const provider_object = await source_object(provider_source);
         let provider = provider_source;
-        if (!inside(provider, app_root)) {
+        if (!path_is_within(app_root, provider)) {
           const destination = join(library_root, needed);
           if ((await is_file(destination)) || (await is_directory(destination))) {
             const original = origins.get(relative(app_root, destination)) ?? destination;
@@ -233,7 +233,7 @@ export async function complete_node_runtime(
       for (const needed of dynamic.needed) {
         if (external.has(needed)) continue;
         const provider = await resolve_provider(needed, { path, dynamic }, [], new Map());
-        if (!inside(provider, app_root))
+        if (!path_is_within(app_root, provider))
           throw new RuntimeContractError(`native dependency escapes archive: ${path}: ${needed}`);
         if (provider !== (await realpath(join(app_root, draft.providers[needed]))))
           throw new RuntimeContractError(`final native provider changed: ${path}: ${needed}`);

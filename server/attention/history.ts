@@ -1,6 +1,5 @@
 import type { TransactionSql } from '../core/database/contracts.ts';
 import type { Principal } from '../core/contracts.ts';
-import { python_json_dumps } from '../worker_types/store.ts';
 function installed(sql: TransactionSql): boolean {
   return !!sql.get(
     "SELECT 1 FROM sqlite_master WHERE type='table' AND name='attention_history_metadata'",
@@ -48,7 +47,7 @@ export function capture_gate(
   if (!target) return;
   sql.run(
     'INSERT INTO attention_gate_intervals(ticket_id,destination_json,opened_at,observed_since) VALUES (?,?,?,?)',
-    [ticket_id, python_json_dumps(target, false, true), now, now],
+    [ticket_id, JSON.stringify(target), now, now],
   );
 }
 export function record_approval(
@@ -66,14 +65,6 @@ export function record_approval(
   if (!target) return;
   sql.run(
     'INSERT INTO attention_approval_events(ticket_id,field,actor_kind,actor_id,method,occurred_at,destination_json) VALUES (?,?,?,?,?,?,?)',
-    [
-      ticket_id,
-      field,
-      principal.kind,
-      principal.id,
-      method,
-      now,
-      python_json_dumps(target, false, true),
-    ],
+    [ticket_id, field, principal.kind, principal.id, method, now, JSON.stringify(target)],
   );
 }

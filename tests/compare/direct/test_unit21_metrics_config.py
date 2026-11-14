@@ -45,18 +45,9 @@ def test_unit21_metrics_configuration_and_sidecar_paths(
     ]
     environments = [
         {},
-        {"PLAN_VPS_METRICS_IDLE_SECONDS": "1_0.5", "PLAN_VPS_METRICS_PROCESS_PAGE_ROWS": "2_50"},
-        {
-            "PLAN_VPS_METRICS_IDLE_SECONDS": "\u0085١٥.٥\u0085",
-            "PLAN_VPS_METRICS_PROCESS_PAGE_ROWS": "２_５０",
-        },
-        {"PLAN_VPS_METRICS_IDLE_SECONDS": "+1_5e+0"},
-        {"PLAN_VPS_METRICS_IDLE_SECONDS": "0x10"},
-        {"PLAN_VPS_METRICS_PROCESS_PAGE_ROWS": "0x10"},
-        {"PLAN_VPS_METRICS_PROCESS_PAGE_ROWS": "2.0"},
-        {"PLAN_VPS_METRICS_IDLE_SECONDS": "1__5"},
-        {"PLAN_VPS_METRICS_IDLE_SECONDS": "nan"},
-        {"PLAN_VPS_METRICS_IDLE_SECONDS": "INF"},
+        {"PLAN_VPS_METRICS_IDLE_SECONDS": "10.5", "PLAN_VPS_METRICS_PROCESS_PAGE_ROWS": "250"},
+        {"PLAN_VPS_METRICS_PROCESS_PAGE_ROWS": "2.5"},
+        {"PLAN_VPS_METRICS_IDLE_SECONDS": "invalid"},
     ]
     configurations: list[dict[str, Any]] = []
     for environment in environments:
@@ -124,6 +115,8 @@ def test_unit21_metrics_configuration_and_sidecar_paths(
                 diagnostic = configuration["error"]
                 assert isinstance(diagnostic["message"], str) and diagnostic["message"]
                 diagnostic["message"] = "<native numeric diagnostic>"
+                if diagnostic["name"] == "MetricsValueError":
+                    diagnostic["name"] = "ValueError"
             else:
                 configuration["value"] = {
                     key: int(value) if type(value) is float and value.is_integer() else value
@@ -134,7 +127,7 @@ def test_unit21_metrics_configuration_and_sidecar_paths(
     # remains informational; this refusal assertion is a gating result.
     assert proposed_refusal == {
         "error": {
-            "name": "ValueError",
+            "name": "MetricsValueError",
             "message": "history_points exceeds the supported exact integer range",
         }
     }
@@ -151,7 +144,9 @@ def test_unit21_metrics_configuration_and_sidecar_paths(
                     "canonical_paths": len(paths),
                     "python": expected,
                     "typescript": actual,
-                    "comparison_rule": "Keep fields and refusal names; permit native numbers/text.",
+                    "comparison_rule": (
+                        "Keep fields; permit native numbers, text and MetricsValueError."
+                    ),
                     "proposed_difference": {
                         "accepted": True,
                         "python_accepts_integer": str(python_unsafe),

@@ -197,12 +197,22 @@ def test_unit12_goal_deletion_transfer_and_files(
             text=True,
         )
     )
+    native_expected = json.loads(json.dumps(expected))
+    for case in native_expected:
+        for wake in case["tables"]["manager_wakes"]:
+            if wake["created_at"] == NOW + 3:
+                wake["summary"] = wake["summary"].replace(
+                    f"Measure source {source.name!r} in ",
+                    f"Measure source {json.dumps(source.name, ensure_ascii=False)} in ",
+                    1,
+                )
     report = {
         "kind": "direct",
         "case": "unit12-goal-deletion",
-        "equal": actual == expected,
+        "equal": actual == native_expected,
         "python": expected,
         "typescript": actual,
+        "accepted_differences": {"manager_wakes.summary": "Source names use native JSON quotes."},
         "seconds": time.perf_counter() - started,
     }
     destination = request.config.getoption("--compare-report-dir")
@@ -210,4 +220,4 @@ def test_unit12_goal_deletion_transfer_and_files(
         path = Path(destination)
         path.mkdir(parents=True, exist_ok=True)
         (path / "unit12-goal-deletion.json").write_text(json.dumps(report, indent=2) + "\n")
-    assert actual == expected
+    assert actual == native_expected

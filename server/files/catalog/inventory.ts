@@ -1,24 +1,10 @@
 import { createHash } from 'node:crypto';
 import { performance } from 'node:perf_hooks';
 import { dirname } from 'node:path';
-import { comparePythonText, foldDirectory } from '../logic/listing.ts';
+import { foldDirectory } from '../logic/listing.ts';
 import { symlink } from '../logic/paths.ts';
 import type { ArtifactEntry, Inventory } from '../contracts.ts';
 import * as config from './config.ts';
-// Python's json.dumps uses spaces after separators, and recursive sorted keys.
-export function pythonJson(value: unknown, sorted = false): string {
-  if (Array.isArray(value)) return '[' + value.map((v) => pythonJson(v, sorted)).join(', ') + ']';
-  if (value !== null && typeof value === 'object') {
-    const entries = Object.entries(value);
-    if (sorted) entries.sort(([a], [b]) => comparePythonText(a, b));
-    return (
-      '{' +
-      entries.map(([k, v]) => JSON.stringify(k) + ': ' + pythonJson(v, sorted)).join(', ') +
-      '}'
-    );
-  }
-  return JSON.stringify(value);
-}
 const cache = new Map<string, Inventory>();
 export async function inventory(root: string, prefix: string): Promise<Inventory> {
   const prior = cache.get(root),
@@ -66,7 +52,7 @@ export async function inventory(root: string, prefix: string): Promise<Inventory
     if (dirname(path) === path) break;
   }
   visit(unsafe ? [] : await foldDirectory(root), '');
-  const encoded = Buffer.from(pythonJson(result.directories, true));
+  const encoded = Buffer.from(JSON.stringify(result.directories));
   result.revision = createHash('sha256').update(encoded).digest('hex');
   result.bytes = encoded.length;
   cache.delete(root);

@@ -8,7 +8,7 @@ export function error_wire(error: unknown): MetricsErrorWire {
 export function error_from_wire(error: MetricsErrorWire): Error {
   if (error.name === 'SnapshotExpiredError') return new SnapshotExpiredError(error.message);
   if (error.name === 'QueryLimitError') return new QueryLimitError(error.message);
-  if (error.name === 'OperationalError' || error.code?.startsWith('SQLITE_'))
+  if (error.name === 'MetricsOperationalError' || error.code?.startsWith('SQLITE_'))
     return new MetricsOperationalError(error.message);
   const restored = new Error(error.message);
   restored.name = error.name;

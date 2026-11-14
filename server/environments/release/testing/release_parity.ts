@@ -568,23 +568,19 @@ export async function admission_group_parity(root: string): Promise<unknown> {
   const owner = new ChildProcesses(),
     spawn = owner.spawn.bind(owner);
   const original_timer = globalThis.setTimeout;
+  const original_timeout = AbortSignal.timeout;
   let timeout: (() => void) | undefined, timer_delay: number | undefined;
   let flight: Promise<string> | undefined;
   owner.spawn = ((command: string, args: readonly string[], options: SpawnOptions) => {
     const child = spawn(command, args, options);
-    // run_runtime_probe synchronously registers exactly one timer after this spawn returns.
-    globalThis.setTimeout = ((
-      callback: (...values: unknown[]) => void,
-      delay?: number,
-      ...values: unknown[]
-    ) => {
-      globalThis.setTimeout = original_timer;
+    // run_runtime_probe creates exactly one deadline signal after this spawn returns.
+    AbortSignal.timeout = (delay: number) => {
+      AbortSignal.timeout = original_timeout;
       timer_delay = delay;
-      timeout = () => callback(...values);
-      const handle = original_timer(() => {}, delay);
-      clearTimeout(handle);
-      return handle;
-    }) as typeof setTimeout;
+      const controller = new AbortController();
+      timeout = () => controller.abort();
+      return controller.signal;
+    };
     return child;
   }) as typeof owner.spawn;
   const marker = join(root, 'group-identities.json');
@@ -627,7 +623,7 @@ export async function admission_group_parity(root: string): Promise<unknown> {
       throw new Error('Admission did not reject its timeout');
     return { message, timer_delay, timeout_callback_released_after_pin: true };
   } finally {
-    globalThis.setTimeout = original_timer;
+    AbortSignal.timeout = original_timeout;
     owner.force_kill(performance.now() / 1000 + 5);
     await flight?.catch(() => {});
     await owner.settled();

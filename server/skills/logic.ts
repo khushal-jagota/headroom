@@ -37,8 +37,8 @@ export function parse_skill(source_text: string, name: string): ManagedSkill {
     source_text,
   };
 }
-// Python json.dumps uses ASCII escapes, including surrogate pairs for non-BMP text.
-export function python_json_string(value: string): string {
+// Canonical frontmatter bytes feed persisted skill-version IDs and content hashes.
+export function skill_yaml_string(value: string): string {
   return JSON.stringify(value).replace(
     /[\u007f-\uffff]/g,
     (c) => `\\u${c.charCodeAt(0).toString(16).padStart(4, '0')}`,
@@ -67,8 +67,8 @@ export function render_skill_from_existing_frontmatter(
     spans.set(key, [start, Math.min(lines.length, end)]);
   }
   const replacement: Record<string, string> = {
-    name: `name: ${python_json_string(values.expected_skill_name)}\n`,
-    description: `description: ${python_json_string(values.description)}\n`,
+    name: `name: ${skill_yaml_string(values.expected_skill_name)}\n`,
+    description: `description: ${skill_yaml_string(values.description)}\n`,
   };
   const result = ['---\n'];
   for (let i = 0; i < lines.length;) {
@@ -87,7 +87,7 @@ export function render_skill_from_existing_frontmatter(
   return result.join('');
 }
 export function render_new_skill(name: string, description: string, markdown_body: string): string {
-  return render_skill_from_existing_frontmatter(`---\nname: ${python_json_string(name)}\n---\n`, {
+  return render_skill_from_existing_frontmatter(`---\nname: ${skill_yaml_string(name)}\n---\n`, {
     expected_skill_name: name,
     description,
     markdown_body,

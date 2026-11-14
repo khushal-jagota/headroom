@@ -63,7 +63,7 @@ function rows(sql: ReadSql): Record<string, unknown[]> {
 function error_result(error: unknown): { type: string; message: string } {
   const value = error as Error & { code?: string };
   return {
-    type: value.code?.startsWith('SQLITE_') ? 'OperationalError' : value.name,
+    type: value.name,
     message: value.message,
   };
 }

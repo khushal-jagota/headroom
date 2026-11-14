@@ -22,6 +22,7 @@ from unittest.mock import patch
 from uuid import UUID
 
 import pytest
+from pydantic import ValidationError
 from tests.support.executor_presence import lease_request, mac_identity
 
 from planner.conversation.contracts import PromptDeliveryMode
@@ -840,7 +841,12 @@ async def _outcome(work: Any) -> dict[str, Any]:
             task.uncancel()
         return {"ok": False, "type": "CancelledError", "message": ""}
     except Exception as error:
-        return {"ok": False, "type": type(error).__name__, "message": str(error)}
+        result = {"ok": False, "type": type(error).__name__, "message": str(error)}
+        if isinstance(error, ValidationError):
+            result["issues"] = [
+                {"type": issue["type"], "loc": list(issue["loc"])} for issue in error.errors()
+            ]
+        return result
 
 
 def test_unit22_mailbox_exchange(tmp_path: Path, request: pytest.FixtureRequest) -> None:
@@ -919,13 +925,31 @@ def test_unit22_mailbox_exchange(tmp_path: Path, request: pytest.FixtureRequest)
                         row[column] = serialize(replace(value, command_id=replacement))
             return snapshot
 
+        def compared(outcome: dict[str, Any]) -> dict[str, Any]:
+            if outcome.get("type") == "ValidationError" and outcome["ok"] is False:
+                assert isinstance(outcome["message"], str) and outcome["message"]
+                return {**outcome, "message": "<validation diagnostic>"}
+            return outcome
+
         async def paired(action: dict[str, Any]) -> Any:
             expected = await _outcome(lambda: source.execute(action))
             actual = await node(action)
-            assert actual == expected, (action.get("method", action["op"]), actual, expected)
-            if not expected["ok"]:
+            reference_error, native_error = expected, actual
+            if action["op"] == "join" and expected["ok"] and actual["ok"]:
+                # A joined fixture task returns its held Outcome, not a wire value.
+                reference_error, native_error = expected["value"], actual["value"]
+                left = {**expected, "value": compared(reference_error)}
+                right = {**actual, "value": compared(native_error)}
+            else:
+                left, right = compared(expected), compared(actual)
+            assert right == left, (action.get("method", action["op"]), actual, expected)
+            if not reference_error["ok"]:
                 observed_errors.append(
-                    {"operation": action.get("method", action["op"]), **expected}
+                    {
+                        "operation": action.get("method", action["op"]),
+                        **reference_error,
+                        "typescript_message": native_error["message"],
+                    }
                 )
             return expected.get("value")
 

@@ -1,4 +1,3 @@
-import { python_string_repr } from '../core/python_repr.ts';
 /** Canonical responsibility transfer used by Goal deletion; source execution stays separate. */
 import { PlannerError } from '../core/contracts.ts';
 import type { Principal } from '../core/contracts.ts';
@@ -36,9 +35,6 @@ export function failure_message(
   if (f.source_line != null) message += ` Source line: ${f.source_line}.`;
   return message;
 }
-function repr(value: string): string {
-  return python_string_repr(value);
-}
 export function notify_episode(
   sql: TransactionSql,
   source: Record<string, unknown>,
@@ -65,12 +61,13 @@ export function notify_episode(
       "SELECT finished_at FROM measure_source_runs WHERE source_id=? AND mode='collection' AND status='succeeded' ORDER BY finished_at DESC,rowid DESC LIMIT 1",
       [String(source.id)],
     );
-  const message = failure_message(run.failure ? JSON.parse(run.failure) : null) ?? 'None';
+  const message =
+    failure_message(run.failure ? JSON.parse(run.failure) : null) ?? 'No failure details.';
   const dates = [
     ...(JSON.parse(run.required_outputs) as { required_date: string }[]).slice(0, 5),
     ...(JSON.parse(run.dataset_outputs) as { required_date: string }[]).slice(0, 5),
   ].map((v) => v.required_date);
-  const summary = `Measure source ${repr(String(source.name))} in ${project?.name ?? source.project_id} / ${source.account} failed. ${message} Last successful collection timestamp: ${success?.finished_at ?? 'none'}. Suggested collection dates: ${[...new Set(dates)].join(', ')}. Inspect source ${source.id} and run ${run.id}. Repair the source script with measure-source submit-script, then request-run to collect. Credential replacement requires owner API submission. If you cannot repair it, message the user through the existing conversation route. Only a successful collection restores source health.`;
+  const summary = `Measure source ${JSON.stringify(String(source.name))} in ${project?.name ?? source.project_id} / ${source.account} failed. ${message} Last successful collection timestamp: ${success?.finished_at ?? 'none'}. Suggested collection dates: ${[...new Set(dates)].join(', ')}. Inspect source ${source.id} and run ${run.id}. Repair the source script with measure-source submit-script, then request-run to collect. Credential replacement requires owner API submission. If you cannot repair it, message the user through the existing conversation route. Only a successful collection restores source health.`;
   let target: Principal = { kind: 'chief', id: 'chief' };
   if (source.responsible_kind === 'manager')
     target = { kind: 'manager', id: String(source.responsible_manager_id) };

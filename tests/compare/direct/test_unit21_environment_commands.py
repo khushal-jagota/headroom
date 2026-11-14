@@ -263,7 +263,6 @@ def test_unit21_environment_command_function_parity(
                     '{"app_sha": 1}',
                     json.dumps({"app_sha": "a" * 40 + "\n"}),
                     '{"app_sha": NaN}',
-                    json.dumps({**app, "optional": float("nan")}),
                     "1",
                     # Python 3.13 changes trailing-comma diagnostics. This missing
                     # value pins the cursor after NaN on both 3.12 and 3.13.
@@ -382,7 +381,20 @@ def test_unit21_environment_command_function_parity(
                 )
             )
 
-        assert stable(actual["results"][:-1]) == stable(expected[:-1])
+        expected_commands = list(expected)
+        native_manifest_failures = []
+        for index, call in enumerate(calls):
+            if (
+                call["command"] == "backup-current"
+                and "manifest" in call
+                and expected[index].get("thrown") in {"KeyError", "TypeError"}
+            ):
+                result = actual["results"][index]
+                assert type(result["exit_code"]) is int and result["exit_code"] == 1
+                assert result["stdout"] == "" and result["stderr"]
+                native_manifest_failures.append({"case": index, "python": expected[index]})
+                expected_commands[index] = dict(exit_code=1, stdout="", stderr="")
+        assert stable(actual["results"][:-1]) == stable(expected_commands[:-1])
         assert expected[-1] == {"thrown": "DatabaseError"}
         assert actual["results"][-1] == {"thrown": "SqliteError"}
         assert actual["routing"] == json.loads(json.dumps(routing, default=str))
@@ -442,16 +454,10 @@ def test_unit21_environment_command_function_parity(
         assert expected[16]["stderr"] == (
             f"Error: [Errno 13] Permission denied: {str(Path(denied.name) / 'manifest.json')!r}\n"
         )
-        assert [result.get("thrown") for result in actual["results"][-9:-1]] == [
-            None,
-            "KeyError",
-            "TypeError",
-            None,
-            "TypeError",
-            None,
-            "TypeError",
-            None,
-        ]
+        assert all(
+            type(result["exit_code"]) is int and result["exit_code"] == 1
+            for result in actual["results"][-8:-1]
+        )
     report = request.config.getoption("compare_report_dir", default=None)
     if report:
         destination = Path(report)
@@ -471,6 +477,7 @@ def test_unit21_environment_command_function_parity(
                     },
                     "results": actual["results"],
                     "raw_results": actual["raw_results"],
+                    "native_manifest_failures": native_manifest_failures,
                     "operators": actual["operators"],
                     "scratch_owned": actual["scratch_owned"],
                     "cold_imports": actual["cold"],

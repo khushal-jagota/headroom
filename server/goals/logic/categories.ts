@@ -23,7 +23,7 @@ import {
   local_midnight,
   invalid,
 } from '../../measures/logic/dates.ts';
-import { numeric_projection, codepoint_order } from '../category_contracts.ts';
+import { numeric_projection, text_order } from '../category_contracts.ts';
 import type { ChartInput, DatasetReading } from '../category_contracts.ts';
 import { MAX_SCALAR_PROJECTION_DATES } from '../configuration.ts';
 function fail(message: string): never {
@@ -157,7 +157,7 @@ function value(
     numerator: options.numerator ?? null,
     denominator: options.denominator ?? null,
     partial: options.partial ?? false,
-    missing_dates: [...new Set(options.missing_dates ?? [])].sort(codepoint_order),
+    missing_dates: [...new Set(options.missing_dates ?? [])].sort(text_order),
     reasons: [...new Set(reasons)],
     ...('coverage_status' in options ? { coverage_status: options.coverage_status } : {}),
   };
@@ -283,7 +283,7 @@ function quantity(chart: ChartBlock, actual: CategoryChartValue): CategoryChartV
   return actual;
 }
 function reference(chart: ChartBlock, day: string | null): CategoryChartValue | null {
-  const references = [...(chart.reference ?? [])].sort((a, b) => codepoint_order(a.date, b.date));
+  const references = [...(chart.reference ?? [])].sort((a, b) => text_order(a.date, b.date));
   if (references.length) {
     if (day === null) return null;
     const exact = references.find((item) => item.date === day);
@@ -385,7 +385,7 @@ function dataset_value(
         .filter((name) => !dimensions.has(name))
         .concat(metric_fields(binding).filter((name) => !fields.has(name))),
     ),
-  ].sort(codepoint_order);
+  ].sort(text_order);
   if (absent.length)
     return missing(`The retained declaration for ${day} lacks: ${absent.join(', ')}.`);
   const required = metric_fields(binding),
@@ -513,7 +513,7 @@ export function dataset_chart_projection(
           .at(-1) ?? null;
     const codes = [
       ...new Set(days.flatMap((day) => [...(grouped_rows.get(day)?.keys() ?? [])])),
-    ].sort(codepoint_order);
+    ].sort(text_order);
     const day_totals = new Map(
       days.map((day) => [
         day,
@@ -605,7 +605,7 @@ export function dataset_chart_projection(
     timezone: definition.timezone,
     ranges,
     dataset_results: [...retained_results]
-      .sort(([a], [b]) => codepoint_order(a, b))
+      .sort(([a], [b]) => text_order(a, b))
       .filter(([day]) => lower <= day && day <= upper)
       .map(([, result]) => result),
     measure_values: [],

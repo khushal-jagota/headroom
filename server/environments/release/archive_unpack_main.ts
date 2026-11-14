@@ -5,16 +5,15 @@ import {
   write_archive_message,
 } from './archive_unpack.ts';
 import type { UnpackRequest } from './archive_unpack.ts';
+import { is_record } from '../../core/records.ts';
 let purpose: unknown;
 try {
   const inherited_umask = process.umask();
   process.umask(0o077);
   const request: unknown = JSON.parse(process.argv[2] ?? '');
-  purpose =
-    request && typeof request === 'object' && 'purpose' in request ? request.purpose : undefined;
+  purpose = is_record(request) ? request.purpose : undefined;
   if (
-    !request ||
-    typeof request !== 'object' ||
+    !is_record(request) ||
     !['spool_root'].every((key) => typeof (request as Record<string, unknown>)[key] === 'string') ||
     !('purpose' in request) ||
     !(

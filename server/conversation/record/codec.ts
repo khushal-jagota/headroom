@@ -1,4 +1,4 @@
-/** The Python record's canonical JSON and legacy stored-payload decoder. */
+/** Event JSON encoding and the legacy stored-payload decoder. */
 import { is_record } from '../../core/records.ts';
 import * as E from '../events.ts';
 import {
@@ -537,49 +537,23 @@ export function conversation_event_payload_json_object(
   }
 }
 
-function codePointOrder(a: string, b: string): number {
-  const left = Array.from(a, (character) => character.codePointAt(0)!),
-    right = Array.from(b, (character) => character.codePointAt(0)!);
-  for (let i = 0; i < Math.min(left.length, right.length); i++)
-    if (left[i] !== right[i]) return left[i] - right[i];
-  return left.length - right.length;
-}
-/** Python float repr differs from JSON.stringify at integral values and exponent thresholds. */
-function pythonFloat(value: number): string {
-  if (!Number.isFinite(value)) throw new Error('non-finite event number');
-  if (Object.is(value, -0)) return '-0.0';
-  const magnitude = Math.abs(value);
-  let raw =
-    magnitude !== 0 && (magnitude < 1e-4 || magnitude >= 1e16)
-      ? value.toExponential()
-      : String(value);
-  if (raw.includes('e'))
-    raw = raw.replace(
-      /e([+-]?)(\d+)$/,
-      (_, sign: string, digits: string) => 'e' + (sign || '+') + digits.padStart(2, '0'),
-    );
-  else if (!raw.includes('.')) raw += '.0';
-  return raw;
-}
-/** Sorted keys are emitted directly, so numeric-looking keys retain Python lexical order. */
-export function canonical_json(value: unknown, field?: string): string {
-  if (value === null) return 'null';
-  if (typeof value === 'number') {
-    if (field === 'cost_usd') return pythonFloat(value);
-    if (!Number.isFinite(value)) throw new Error('non-finite event number');
-    return JSON.stringify(value);
-  }
-  if (typeof value === 'string' || typeof value === 'boolean') return JSON.stringify(value);
-  if (Array.isArray(value)) return '[' + value.map((item) => canonical_json(item)).join(',') + ']';
-  const fields = object(value, 'event JSON value is not serializable');
-  return (
-    '{' +
-    Object.keys(fields)
-      .sort(codePointOrder)
-      .map((key) => JSON.stringify(key) + ':' + canonical_json(fields[key], key))
-      .join(',') +
-    '}'
-  );
+/** Stable keys support repeatable records. Numeric spellings follow native JSON. */
+export function canonical_json(value: unknown): string {
+  return JSON.stringify(value, (_key, item: unknown) => {
+    if (typeof item === 'number' && !Number.isFinite(item))
+      throw new Error('non-finite event number');
+    if (item !== null && typeof item === 'object' && !Array.isArray(item)) {
+      const fields = object(item, 'event JSON value is not serializable');
+      return Object.fromEntries(
+        Object.keys(fields)
+          .sort()
+          .map((key) => [key, fields[key]]),
+      );
+    }
+    if (item === undefined || typeof item === 'function' || typeof item === 'symbol')
+      throw new TypeError('event JSON value is not serializable');
+    return item;
+  });
 }
 export function conversation_event_payload_to_canonical_json(
   payload: E.ConversationEventPayload,

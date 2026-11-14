@@ -606,11 +606,28 @@ def test_unit21_metrics_store_and_rules_match_python(
             assert expected["operations"][3]["result"] == 2
         spec = {**case, "root": str(root), "database": str(root / "typescript.sqlite")}
         actual = _run_probe(root, "store_parity", "metrics_store_parity", spec)
-        if actual != expected:
+
+        def meaningful(value: Any) -> Any:
+            if isinstance(value, list):
+                return [meaningful(item) for item in value]
+            if isinstance(value, dict):
+                if set(value) == {"type", "message"}:
+                    assert isinstance(value["type"], str) and isinstance(value["message"], str)
+                    return {"failure": True}
+                return {key: meaningful(item) for key, item in value.items()}
+            if type(value) is float and value.is_integer():
+                return int(value)
+            return value
+
+        if json.dumps(meaningful(actual), sort_keys=True) != json.dumps(
+            meaningful(expected), sort_keys=True
+        ):
             (root / "difference.json").write_text(
                 json.dumps({"python": expected, "typescript": actual}, indent=2, ensure_ascii=False)
             )
-        assert actual == expected, f"{case['name']}: see {root / 'difference.json'}"
+        assert json.dumps(meaningful(actual), sort_keys=True) == json.dumps(
+            meaningful(expected), sort_keys=True
+        ), f"{case['name']}: see {root / 'difference.json'}"
         reports.append(
             {
                 "case": case["name"],
@@ -663,9 +680,9 @@ def _line(process: subprocess.Popen[bytes], seconds: float = 30) -> dict[str, An
         selector.register(process.stdout, selectors.EVENT_READ)
         while not line.endswith(b"\n"):
             remaining = deadline - time.monotonic()
-            assert remaining > 0 and selector.select(remaining) and time.monotonic() < deadline, (
-                "owned runtime did not emit its next state"
-            )
+            assert (
+                remaining > 0 and selector.select(remaining) and time.monotonic() < deadline
+            ), "owned runtime did not emit its next state"
             # No text/read-ahead buffer can hide the next complete state from select.
             value = os.read(process.stdout.fileno(), 1)
             assert value, "owned runtime exited without its state"
@@ -997,9 +1014,9 @@ def test_unit21_metrics_native_deadline_and_parent_death_release_wal(
                                         remaining.remove(pid)
                             if remaining:
                                 time.sleep(0.005)
-                        assert not remaining, (
-                            f"owned readers did not exit after APP EOF: {remaining}"
-                        )
+                        assert (
+                            not remaining
+                        ), f"owned readers did not exit after APP EOF: {remaining}"
                     finally:
                         for handle in handles.values():
                             os.close(handle)
@@ -1153,9 +1170,13 @@ def test_unit21_metrics_routes_populated_errors_and_callers_match_python(
                 expected.append(
                     {
                         "status": response.status_code,
-                        "body": response.json()
-                        if response.headers.get("content-type", "").startswith("application/json")
-                        else response.text,
+                        "body": (
+                            response.json()
+                            if response.headers.get("content-type", "").startswith(
+                                "application/json"
+                            )
+                            else response.text
+                        ),
                     }
                 )
     finally:

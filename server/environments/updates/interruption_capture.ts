@@ -7,8 +7,6 @@ import {
   ConversationRuntimeAlreadyOwnedError,
 } from '../../core/locks/index.ts';
 import { assert_test_database_path } from '../../core/test_paths.ts';
-import { python_os_error_message } from '../../core/os_errors.ts';
-import { is_os_error } from '../../core/system_errors.ts';
 import { read_unresolved_turns } from '../../conversation/deploy_interruptions/capture.ts';
 import { CAPTURE_VERSION } from '../../conversation/deploy_interruptions/contracts.ts';
 import type {
@@ -27,50 +25,6 @@ function failure_detail(error: unknown, canonical: string): string {
   if (error instanceof ConversationRuntimeAlreadyOwnedError)
     return `ConversationRuntimeAlreadyOwned: ${canonical}`;
   if (!(error instanceof Error)) return `Error: ${String(error)}`;
-  if ('code' in error && typeof error.code === 'string') {
-    const code = error.code.split('_').slice(0, 2).join('_');
-    if (code.startsWith('SQLITE_')) {
-      const kinds: Record<string, string> = {
-        SQLITE_INTERNAL: 'InternalError',
-        SQLITE_NOTFOUND: 'InternalError',
-        SQLITE_NOMEM: 'MemoryError',
-        SQLITE_TOOBIG: 'DataError',
-        SQLITE_CONSTRAINT: 'IntegrityError',
-        SQLITE_MISMATCH: 'IntegrityError',
-        SQLITE_MISUSE: 'InterfaceError',
-        SQLITE_RANGE: 'InterfaceError',
-      };
-      const operational = new Set([
-        'ERROR',
-        'PERM',
-        'ABORT',
-        'BUSY',
-        'LOCKED',
-        'READONLY',
-        'INTERRUPT',
-        'IOERR',
-        'FULL',
-        'CANTOPEN',
-        'PROTOCOL',
-        'EMPTY',
-        'SCHEMA',
-      ]);
-      const kind =
-        kinds[code] ?? (operational.has(code.slice(7)) ? 'OperationalError' : 'DatabaseError');
-      return `${kind}: ${code === 'SQLITE_NOMEM' ? '' : error.message}`;
-    }
-    if (is_os_error(error)) {
-      const kinds: Record<string, string> = {
-        ENOENT: 'FileNotFoundError',
-        EACCES: 'PermissionError',
-        EPERM: 'PermissionError',
-        EISDIR: 'IsADirectoryError',
-        ENOTDIR: 'NotADirectoryError',
-        EEXIST: 'FileExistsError',
-      };
-      return `${kinds[error.code] ?? 'OSError'}: ${python_os_error_message(error)}`;
-    }
-  }
   return `${error.name}: ${error.message}`;
 }
 

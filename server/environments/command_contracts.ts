@@ -77,8 +77,7 @@ export class AppManifestValidationFailure extends Error {
   constructor(category: 'os' | 'value' | 'runtime', message: string) {
     super(message);
     this.category = category;
-    this.name =
-      category === 'os' ? 'OSError' : category === 'value' ? 'ValueError' : 'RuntimeError';
+    this.name = 'AppManifestValidationFailure';
   }
 }
 export interface CurrentAppCommandDependencies extends OperatorPathInputs {

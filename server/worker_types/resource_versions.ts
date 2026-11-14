@@ -4,7 +4,6 @@ import type { ReadSql } from '../core/database/contracts.ts';
 import type { ResourceProvider, ResourceSnapshot } from '../resource_versions/contracts.ts';
 import { configured_worker_type_registry } from './configuration.ts';
 import type { WorkerTypeRegistry } from './registry.ts';
-import { python_json_dumps } from './store.ts';
 export class WorkerTypeResources implements ResourceProvider {
   private cachedRegistry: WorkerTypeRegistry | null = null;
   private readonly cached = new Map<string, ResourceSnapshot>();
@@ -27,9 +26,7 @@ export class WorkerTypeResources implements ResourceProvider {
       if (subject === null) return null;
       const body = { worker_types: subject.map((name) => registry.manifest(name)) };
       snapshot = {
-        revision: createHash('sha256')
-          .update(python_json_dumps(body, true, true))
-          .digest('hex'),
+        revision: createHash('sha256').update(JSON.stringify(body)).digest('hex'),
         read: () => body,
       };
       this.cached.set(key, snapshot);

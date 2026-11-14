@@ -41,13 +41,13 @@ export function query_services(
       child.stdout.destroy();
     };
     const timer = setTimeout(
-      () => fail(evidence_error('TimeoutError', 'service query timed out')),
+      () => fail(evidence_error('ETIMEDOUT', 'service query timed out')),
       timeout * 1000,
     );
     child.stdout.on('data', (chunk: Buffer) => {
       if (failure !== undefined) return;
       if (length + chunk.length > output_bytes) {
-        fail(evidence_error('ValueError', 'service query exceeded output limit'));
+        fail(evidence_error('TypeError', 'service query exceeded output limit'));
         return;
       }
       length += chunk.length;
@@ -58,7 +58,7 @@ export function query_services(
     child.on('close', (code) => {
       clearTimeout(timer);
       if (failure !== undefined) reject(failure);
-      else if (code !== 0) reject(evidence_error('OSError', 'service manager unavailable'));
+      else if (code !== 0) reject(evidence_error('EIO', 'service manager unavailable'));
       else resolve(Buffer.concat(chunks, length).toString('utf8'));
     });
   });

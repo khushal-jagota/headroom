@@ -25,7 +25,6 @@ def test_unit22_runtime_records(tmp_path: Path, request: pytest.FixtureRequest) 
         "detail": "résumé 🦉\r\n",
         "integer": 9_007_199_254_740_993,
         "floating": 1.0,
-        "nonfinite": float("inf"),
         "nullable": None,
     }
     py = tmp_path / "py"

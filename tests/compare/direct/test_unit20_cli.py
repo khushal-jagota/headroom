@@ -234,9 +234,7 @@ def compare_cli_sequence(
     proof: dict[str, Any] = {
         "list": list_path.name,
         "candidate_backend": backend,
-        "boundary": (
-            "Python baseline vs TS CLI: both modes on Python; human text on TS"
-        ),
+        "boundary": ("Python baseline vs TS CLI: both modes on Python; human text on TS"),
         "strategy": {"python": "CliRunner.invoke", "typescript": "subprocess"},
         "seed_capture_names": sorted(captures),
         "comparisons": {},
@@ -395,7 +393,7 @@ def test_unit20_every_help_and_group_usage(tmp_path: Path, request: pytest.Fixtu
 def test_unit20_declarations_match_fresh_python(
     tmp_path: Path, request: pytest.FixtureRequest
 ) -> None:
-    """Pin complete parser declarations without another connected host or CLI invocation."""
+    """Pin functional parser metadata without requiring Python help presentation."""
     import os
     import sys
 
@@ -435,8 +433,9 @@ def test_unit20_declarations_match_fresh_python(
         "unit20-declaration-drift",
         {
             "seconds": time.perf_counter() - started,
-            "scope": "Complete declarations: command/parameter order, "
-            "hidden/default/path/nargs/envvar metadata.",
+            "scope": "Functional declarations: command/parameter order, options, "
+            "types, defaults, choices, path rules, nargs and environment variables. "
+            "Human help and layout metadata are excluded.",
             "python": left,
             "typescript": right,
         },
@@ -447,5 +446,22 @@ def test_unit20_declarations_match_fresh_python(
 
         # This is review evidence, never a repository mutation or a test bypass.
         (Path(destination) / "unit20-fresh-commands.ts").write_text(render_declarations(left))
-    # JSON spelling also distinguishes booleans/numbers and integer/float defaults.
-    assert json.dumps(left, sort_keys=True) == json.dumps(right, sort_keys=True)
+
+    def functional(value: Any, metadata: bool = True) -> Any:
+        if isinstance(value, list):
+            return [functional(item, metadata) for item in value]
+        if isinstance(value, dict):
+            return {
+                key: functional(item, metadata and key == "parameters")
+                for key, item in value.items()
+                if not metadata
+                or key not in {"help", "short_help", "epilog", "metavar", "show_default"}
+            }
+        if type(value) is float and value.is_integer():
+            return int(value)
+        return value
+
+    # JSON keeps boolean/number distinctions while allowing equivalent numeric spellings.
+    assert json.dumps(functional(left), sort_keys=True) == json.dumps(
+        functional(right), sort_keys=True
+    )

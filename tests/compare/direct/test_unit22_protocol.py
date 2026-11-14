@@ -21,6 +21,7 @@ from typing import Any
 
 import pytest
 from jsonschema import Draft202012Validator  # type: ignore[import-untyped]
+from pydantic import ValidationError
 from tests.compare.direct.export_unit22_wire import export_wire
 
 from planner import execution_identity as identity_contract
@@ -413,6 +414,16 @@ def _reference_case(case: dict[str, Any]) -> dict[str, Any]:
             "type": type(error).__name__,
             "message": str(error),
             "value_error": isinstance(error, ValueError),
+            **(
+                {
+                    "issues": [
+                        {"type": issue["type"], "loc": list(issue["loc"])}
+                        for issue in error.errors(include_url=False)
+                    ]
+                }
+                if isinstance(error, ValidationError)
+                else {}
+            ),
         }
 
 
@@ -630,7 +641,11 @@ def test_unit22_shared_protocol_exchange(tmp_path: Path, request: pytest.Fixture
                 "name"
             ]
         else:
-            assert actual == expected
+            # Native diagnostics differ. Refusal classes, field paths and issue kinds stay exact.
+            assert isinstance(actual["message"], str) and actual["message"]
+            assert {key: value for key, value in actual.items() if key != "message"} == {
+                key: value for key, value in expected.items() if key != "message"
+            }
     assert set(candidate["events"]) == set(events)
     for root, result in candidate["events"].items():
         assert result["instance"] is True and result["exact_constructor"] is True
@@ -689,6 +704,8 @@ def test_unit22_shared_protocol_exchange(tmp_path: Path, request: pytest.Fixture
                     "roots": sorted(fixtures),
                     "events": sorted(events),
                     "cases": expected_cases,
+                    "candidate_cases": candidate["cases"],
+                    "diagnostic_rule": "Compare refusal classes, issue kinds and paths.",
                     "identity_cases": expected_identities,
                     "sender_depth": sender_depth,
                     "sender_integer": sender_integer,

@@ -15,6 +15,7 @@ import { PromptDeliveryRefusalReason as R, ResolvedConversationStart } from '../
 import { PromptDiscardedEventPayload } from '../events.ts';
 import { one_prompt_from } from '../logic/held_line.ts';
 import { prefix_message_content_text } from '../message_content.ts';
+import { normalized_failure_summary } from '../logic/backend_events.ts';
 import type { MessageContent } from '../message_content.ts';
 import type { DeliveryAttempt, DeliveryServices, Message, ReservedTurn } from './contracts.ts';
 import type { ConversationState } from './state.ts';
@@ -229,6 +230,11 @@ export async function deliver_prompt(
     child = await ensure_child(host, state, reservation, first);
   } catch (error) {
     if (error instanceof BackendSpawnFailed) {
+      console.error('Conversation backend did not start', {
+        conversation_id: state.record.conversation_id,
+        backend_key: state.record.backend_key,
+        reason: normalized_failure_summary(error.message),
+      });
       return result({
         refusal_reason: R.backend_did_not_start,
         refusal_detail: error.message,

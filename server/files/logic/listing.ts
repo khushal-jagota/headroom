@@ -1,21 +1,12 @@
 import { readdir, lstat } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { ArtifactEntry } from '../contracts.ts';
-/** Python compares Unicode code points, including names outside the BMP. */
-export function comparePythonText(a: string, b: string): number {
-  const left = Array.from(a, (c) => c.codePointAt(0)!);
-  const right = Array.from(b, (c) => c.codePointAt(0)!);
-  for (let i = 0; i < Math.min(left.length, right.length); i++) {
-    if (left[i] !== right[i]) return left[i]! - right[i]!;
-  }
-  return left.length - right.length;
-}
 async function children(
   root: string,
 ): Promise<{ name: string; file: boolean; modified: number }[]> {
   const names = await readdir(root).catch(() => []);
   const result = [];
-  for (const name of names.sort(comparePythonText)) {
+  for (const name of names.sort()) {
     const info = await lstat(join(root, name));
     if (!info.isSymbolicLink() && (info.isFile() || info.isDirectory()))
       result.push({ name, file: info.isFile(), modified: info.mtimeMs / 1000 });
@@ -58,11 +49,12 @@ export async function foldDirectory(root: string, prefix = ''): Promise<Artifact
       }
     }
   }
-  entries.sort(
-    (a, b) =>
-      b.modified_at - a.modified_at ||
-      comparePythonText(a.name.toLowerCase(), b.name.toLowerCase()) ||
-      comparePythonText(a.name, b.name),
-  );
+  entries.sort((a, b) => {
+    if (a.modified_at !== b.modified_at) return b.modified_at - a.modified_at;
+    const left = a.name.toLowerCase(),
+      right = b.name.toLowerCase();
+    if (left !== right) return left < right ? -1 : 1;
+    return a.name < b.name ? -1 : a.name > b.name ? 1 : 0;
+  });
   return entries;
 }

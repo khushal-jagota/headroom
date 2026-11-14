@@ -1,7 +1,6 @@
 /** Bounded prior-conversation metadata in one read-only database snapshot. */
 import type { ReadSql } from '../../core/database/contracts.ts';
 import { PlannerError } from '../../core/contracts.ts';
-import { stringify_python_json } from '../../core/http/numeric_json.ts';
 import { PAGE_MAX_BYTES, PAGE_SIZE } from '../../files/catalog/config.ts';
 import type {
   ConversationHistoryEntry,
@@ -110,7 +109,7 @@ export function read_history_page(sql: ReadSql, input: HistoryPageInput): Conver
     let bytes_used = 0;
     for (const row of rows) {
       const value = entry(row);
-      const bytes = Buffer.byteLength(stringify_python_json(value), 'utf8');
+      const bytes = Buffer.byteLength(JSON.stringify(value), 'utf8');
       if (bytes_used + bytes > PAGE_MAX_BYTES) {
         if (entries.length === 0)
           throw new PlannerError('validation', 'conversation metadata exceeds page budget');

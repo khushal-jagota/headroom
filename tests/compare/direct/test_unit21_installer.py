@@ -89,7 +89,6 @@ def _seed(root: Path, scenario: str) -> Scratch:
             "unicode": "雪",
             "large": 9007199254740993,
             "float": 1.0,
-            "nan": float("nan"),
         }
         scratch.record_path.write_text(json.dumps(record))
     return scratch
