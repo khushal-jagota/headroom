@@ -216,6 +216,7 @@ def test_install_preflight_accepts_current_node_and_refuses_old_node(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, major: int
 ) -> None:
     """Bootstrap must accept newer Node before any release download or service write."""
+    import shutil
     import subprocess
 
     args = bootstrap.parser().parse_args(
@@ -223,7 +224,7 @@ def test_install_preflight_accepts_current_node_and_refuses_old_node(
     )
     node = tmp_path / "node"
     node.touch()
-    monkeypatch.setattr(bootstrap.shutil, "which", lambda *_: str(node))
+    monkeypatch.setattr(shutil, "which", lambda *_: str(node))
     monkeypatch.setattr(Path, "home", lambda: tmp_path)
 
     def run(*command: str, **kwargs: object) -> subprocess.CompletedProcess[str]:
