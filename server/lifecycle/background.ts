@@ -11,7 +11,7 @@ import { reconcile_attention } from '../notifications/data.ts';
 import { StallChecker } from '../stalls/checker.ts';
 import { WAITS } from '../stalls/registry.ts';
 import type { StallSource } from '../stalls/contracts.ts';
-import { observe_shutdown } from './deadline.ts';
+import { observe_shutdown } from '../conversation/shutdown.ts';
 import { ShutdownDeadlineExceeded } from './contracts.ts';
 import type {
   BackgroundCompositionContext,
@@ -72,7 +72,12 @@ export function production_stall_checker(
       start: () => checker.start(),
       close(stop) {
         actual = checker.close();
-        return observe_shutdown(actual, stop, 'stall checker');
+        return observe_shutdown(
+          actual,
+          stop,
+          new ShutdownDeadlineExceeded(['stall checker']).message,
+          ['stall checker'],
+        );
       },
       settled: () => actual,
     };
@@ -107,11 +112,8 @@ export function compose_background_services(
           // The earlier close saw no service. Join this late cleanup explicitly.
           if (service !== closed_service) {
             closed_service = service;
-            let resolve!: () => void, reject!: (error: unknown) => void;
-            late_cleanup = new Promise<void>((yes, no) => {
-              resolve = yes;
-              reject = no;
-            });
+            const { promise, resolve, reject } = Promise.withResolvers<void>();
+            late_cleanup = promise;
             void late_cleanup.catch(() => {});
             const actuals: Promise<unknown>[] = [];
             try {
@@ -231,7 +233,12 @@ export function compose_background_services(
           );
       });
       // Publish the fixed observer before any close callback can reenter composition.
-      stopped = observe_shutdown(actual_stop, stop, 'background services');
+      stopped = observe_shutdown(
+        actual_stop,
+        stop,
+        new ShutdownDeadlineExceeded(['background services']).message,
+        ['background services'],
+      );
       // Every close fences its producer synchronously, before any drain is awaited.
       for (const service of services) {
         try {

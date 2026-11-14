@@ -8,7 +8,7 @@ import { error_from_wire } from './errors.ts';
 import { MetricsReaders } from './readers/pool.ts';
 import type { MetricsRead } from './readers/contracts.ts';
 import type { CollectorFactory, SamplerReply } from './sampler/contracts.ts';
-import { observe_shutdown } from '../../lifecycle/deadline.ts';
+import { observe_shutdown } from '../../conversation/shutdown.ts';
 import { ShutdownDeadlineExceeded, type StopOptions } from '../../lifecycle/contracts.ts';
 
 export interface MetricsRuntimeOptions {
@@ -168,12 +168,15 @@ export class MetricsRuntime {
           'VPS metrics shutdown failed',
         );
     });
-    this.stopping = observe_shutdown(this.shutdown_settlement, options, 'VPS metrics').catch(
-      (error) => {
-        if (error instanceof ShutdownDeadlineExceeded) this.terminate_worker();
-        throw error;
-      },
-    );
+    this.stopping = observe_shutdown(
+      this.shutdown_settlement,
+      options,
+      'Shutdown deadline expired; ownership retained: VPS metrics',
+      ['VPS metrics'],
+    ).catch((error) => {
+      if (error instanceof ShutdownDeadlineExceeded) this.terminate_worker();
+      throw error;
+    });
     try {
       this.worker?.postMessage({ type: 'stop' });
     } catch (error) {

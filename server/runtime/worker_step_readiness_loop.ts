@@ -4,7 +4,7 @@ import {
   conversation_operation_scope,
   observe_conversation_operation,
 } from './abort.ts';
-import { observe_shutdown } from '../lifecycle/deadline.ts';
+import { observe_shutdown } from '../conversation/shutdown.ts';
 import type { StopOptions } from '../lifecycle/contracts.ts';
 import { PlannerError } from '../core/contracts.ts';
 import type { Database } from '../core/database/contracts.ts';
@@ -422,7 +422,12 @@ export class WorkerStepReadinessLoop {
         if (failure?.status === 'rejected') throw failure.reason;
       },
     );
-    this.closing = observe_shutdown(this.shutdown_settlement, { deadline }, 'worker readiness');
+    this.closing = observe_shutdown(
+      this.shutdown_settlement,
+      { deadline },
+      'Shutdown deadline expired; ownership retained: worker readiness',
+      ['worker readiness'],
+    );
     // Cancel caller observers now. Their raw operation scopes remain owned above.
     for (const controller of this.controllers.values()) controller.abort();
     return this.closing;
