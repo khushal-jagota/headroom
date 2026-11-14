@@ -1,6 +1,6 @@
 import type { ScratchRuntime, ScratchRuntimeOptions } from './contracts.ts';
 import { CLEANUP_INTERVAL_SECONDS } from './configuration.ts';
-import { observe_shutdown } from '../../lifecycle/deadline.ts';
+import { observe_shutdown } from '../../conversation/shutdown.ts';
 
 /** Independent of readiness/dispatch, with Python's initial ten-minute wait. */
 export function create_ticket_scratch_runtime(options: ScratchRuntimeOptions): ScratchRuntime {
@@ -49,7 +49,12 @@ export function create_ticket_scratch_runtime(options: ScratchRuntimeOptions): S
     close(stop) {
       if (closing) return closing;
       shutdown_settlement = Promise.resolve().then(() => flight);
-      closing = observe_shutdown(shutdown_settlement, stop, 'ticket scratch');
+      closing = observe_shutdown(
+        shutdown_settlement,
+        stop,
+        'Shutdown deadline expired; ownership retained: ticket scratch',
+        ['ticket scratch'],
+      );
       controller.abort();
       clearTimeout(timer);
       timer = undefined;

@@ -6,7 +6,7 @@ import { failure } from './contracts.ts';
 import { DEFAULT_LIMITS, MAX_CONCURRENT_RUNS } from './configuration.ts';
 import { prepare_admission } from './admission.ts';
 import { claim_run, complete_run, interrupt_abandoned_runs } from './run_actions.ts';
-import { observe_shutdown } from '../lifecycle/deadline.ts';
+import { observe_shutdown } from '../conversation/shutdown.ts';
 import type { StopOptions } from '../lifecycle/contracts.ts';
 export interface SourceDispatcherOptions {
   context: OwnedAreaContext;
@@ -178,7 +178,12 @@ export class SourceDispatcher {
       }
       if (failures.length) throw new AggregateError(failures, 'Source shutdown failed');
     });
-    this.closing = observe_shutdown(this.shutdown_settlement, options, 'source runtimes');
+    this.closing = observe_shutdown(
+      this.shutdown_settlement,
+      options,
+      'Shutdown deadline expired; ownership retained: source runtimes',
+      ['source runtimes'],
+    );
     try {
       this.unsubscribe?.();
     } catch (error) {

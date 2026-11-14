@@ -12,17 +12,13 @@ import type { BackendHttpRuntime } from '../conversation/snapshot/contracts.ts';
 import type { ProductionBindingContext } from './production_bindings.ts';
 import type { ProductionBackendLaunches } from './production_launches.ts';
 import { ShutdownDeadlineExceeded } from './contracts.ts';
-import { observe_shutdown } from './deadline.ts';
+import { observe_shutdown } from '../conversation/shutdown.ts';
 
 function own_hermes_catalog(
   base: BackendHttpRuntime,
   owner: HermesModelCatalogOwner,
 ): BackendHttpRuntime {
-  let resolve!: () => void, reject!: (error: unknown) => void;
-  const actual = new Promise<void>((yes, no) => {
-    resolve = yes;
-    reject = no;
-  });
+  const { promise: actual, resolve, reject } = Promise.withResolvers<void>();
   let attempt: Promise<void> | undefined;
   let invoking = false,
     finished = false;
@@ -46,12 +42,13 @@ function own_hermes_catalog(
     machine_catalog: () => base.machine_catalog(),
     shutdown(options) {
       if (!finished && !invoking) {
-        let resolve_attempt!: () => void, reject_attempt!: (error: unknown) => void;
+        const {
+          promise,
+          resolve: resolve_attempt,
+          reject: reject_attempt,
+        } = Promise.withResolvers<void>();
         // Reserve this observer before either owner can synchronously reenter shutdown.
-        attempt = new Promise<void>((yes, no) => {
-          resolve_attempt = yes;
-          reject_attempt = no;
-        });
+        attempt = promise;
         const base_stop = invoke(() => base.shutdown?.(options));
         const hermes_stop = invoke(() => owner.shutdown());
         void (async () => {
@@ -80,7 +77,12 @@ function own_hermes_catalog(
           await actual;
         })().then(resolve_attempt, reject_attempt);
       }
-      return observe_shutdown(attempt ?? actual, options, 'production backend resources');
+      return observe_shutdown(
+        attempt ?? actual,
+        options,
+        new ShutdownDeadlineExceeded(['production backend resources']).message,
+        ['production backend resources'],
+      );
     },
     settled: () => actual,
   };

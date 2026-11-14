@@ -21,7 +21,7 @@ import {
   conversation_operation_scope,
   observe_conversation_operation,
 } from '../runtime/abort.ts';
-import { observe_shutdown } from '../lifecycle/deadline.ts';
+import { observe_shutdown } from '../conversation/shutdown.ts';
 import type { StopOptions } from '../lifecycle/contracts.ts';
 import { read_manager } from '../managers/data.ts';
 import { manager_lifecycle_lock } from '../managers/service.ts';
@@ -524,7 +524,12 @@ export class ManagerWakeLoop {
       if (failure?.status === 'rejected') throw failure.reason;
     });
     const deadline = options.deadline;
-    this.closing = observe_shutdown(this.shutdown_settlement, { deadline }, 'manager wakes');
+    this.closing = observe_shutdown(
+      this.shutdown_settlement,
+      { deadline },
+      'Shutdown deadline expired; ownership retained: manager wakes',
+      ['manager wakes'],
+    );
     // Cancellation records uncertainty while this invocation still owns the DB.
     for (const observer of this.observers.values()) observer.cancel();
     return this.closing;

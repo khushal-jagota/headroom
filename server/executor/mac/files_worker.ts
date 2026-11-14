@@ -1,12 +1,12 @@
 /** This owned thread serializes file operations and retains directory capabilities. */
-import { closeSync, readdirSync } from 'node:fs';
+import { readdirSync } from 'node:fs';
 import { parentPort } from 'node:worker_threads';
 import * as files from './file_worker_operations.ts';
 import * as transfers from './transfer_file_operations.ts';
 import * as records from './runtime/record_operations.ts';
 import * as archives from './updates/archive_operations.ts';
 import { close_retained } from './retained_cleanup.ts';
-import { sync_directory_descriptor, unlink_relative } from './platform.ts';
+import { close_native_descriptor, sync_directory_descriptor, unlink_relative } from './platform.ts';
 import type {
   FileOperationResults,
   FileWorkerError,
@@ -79,7 +79,7 @@ async function execute(
     case 'close_directory': {
       const [handle] = message.arguments;
       const fd = descriptor(handle);
-      closeSync(fd);
+      close_native_descriptor(fd);
       directories.delete(handle);
       return;
     }
@@ -110,7 +110,7 @@ function error_body(error: unknown): FileWorkerError {
 function close_handles(): unknown {
   const failures: unknown[] = [
     transfers.close_transfers(),
-    close_retained(directories, closeSync),
+    close_retained(directories, close_native_descriptor),
   ].filter((failure) => failure !== undefined);
   for (const cleanup of [records.cleanup_record_handles, archives.cleanup_archive_handles]) {
     try {
