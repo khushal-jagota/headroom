@@ -24,7 +24,6 @@ import { probe_environment } from './admission_process.ts';
 import { extract_git_export, remove_owned_tree } from './archive.ts';
 import { read_migration_graph, migration_frontier } from './migrations.ts';
 import { resolved_path, expand_path } from '../paths.ts';
-import { stringify_python_json } from '../../core/http/numeric_json.ts';
 import { exists, is_symlink } from '../backup/evidence.ts';
 import { write_installer_file_manifest } from './installer_bundle.ts';
 
@@ -242,10 +241,7 @@ export async function build_exported_app(
     assert_release_execution(execution);
     await writeFile(
       join(payload, 'manifest.json'),
-      stringify_python_json(
-        { format: APP_FORMAT, ...manifest },
-        { sort_keys: true, indent: 2, ensure_ascii: true },
-      ) + '\n',
+      JSON.stringify({ format: APP_FORMAT, ...manifest }, null, 2) + '\n',
     );
     assert_release_execution(execution);
     await chmod(payload, 0o755);
