@@ -144,12 +144,12 @@ final class ReviewFinalPageTests: XCTestCase {
         attachment.name = name; attachment.lifetime = .keepAlways; add(attachment)
     }
 
-    private func proof(_ base: String, _ operation: String) async throws {
+    @MainActor private func proof(_ base: String, _ operation: String) async throws {
         let (_, response) = try await URLSession.shared.data(from: URL(string: base + "/proof/" + operation)!)
         XCTAssertEqual((response as? HTTPURLResponse)?.statusCode, 200)
     }
 
-    private func recordedWrites(_ base: String) async throws -> [Any] {
+    @MainActor private func recordedWrites(_ base: String) async throws -> [Any] {
         let (data, _) = try await URLSession.shared.data(from: URL(string: base + "/proof/writes")!)
         return try XCTUnwrap(try JSONSerialization.jsonObject(with: data) as? [Any])
     }
