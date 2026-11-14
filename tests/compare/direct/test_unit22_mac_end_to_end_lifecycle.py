@@ -449,6 +449,8 @@ def test_exact_model_and_effort_cross_authenticated_native_dispatch(tmp_path: Pa
                     if row["turn"]["conversation_id"] == conversation
                 ]
                 assert len(delivered) == 3 and exact in delivered[0]["text"]
-                await harness.wait_calls(stops=0)
+                assert (await harness.state())["calls"]["stops_by_conversation"].get(
+                    "c_scripted", 0
+                ) == 0
 
     asyncio.run(run())

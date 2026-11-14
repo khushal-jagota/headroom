@@ -39,6 +39,9 @@ import { text_message_content } from '../../../conversation/message_content.ts';
 import { create_claude_backend_child_factory } from '../../../conversation/backends/claude_agent_sdk/adapter.ts';
 import { create_claude_cleanup_fixture } from './claude_cleanup.ts';
 
+// Stdout belongs to the fixture protocol. Keep host diagnostics in the existing log.
+console.debug = console.error;
+
 const input = JSON.parse(await readFile(process.argv[2], 'utf8'));
 // These values come from the parent's bound fixture, before MacService can open a root or HTTP session.
 const origin = new URL(input.origin);
@@ -76,6 +79,7 @@ const calls = {
   starts: 0,
   prompts: 0,
   stops: 0,
+  stops_by_conversation: {} as Record<string, number>,
   cancels: 0,
   steers: 0,
   starts_details: [] as unknown[],
@@ -169,6 +173,8 @@ const bindings: MacHostBindings = {
                   new VendorSessionCursorRebound({ vendor_session_cursor: 'cleanup-cursor' }),
                 );
               calls.stops++;
+              calls.stops_by_conversation[resolved.conversation_id] =
+                (calls.stops_by_conversation[resolved.conversation_id] ?? 0) + 1;
             },
             async answer_permission_ask(id, option) {
               calls.answers.push([id, option]);
