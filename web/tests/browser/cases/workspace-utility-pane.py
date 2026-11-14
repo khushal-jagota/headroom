@@ -1092,7 +1092,9 @@ def verify_empty_handoff(page, url, fixture, evidence):
               "worker_type": "coding", "stage": "needs_implementation", "ticket_status": "agent",
               "conversation_id": "handoff_conversation",
               "conversation_signal": {"working": False, "message_for_owner": False}}
-    fixture.update(enabled=True, board={"managers": [], "columns": [{"cards": [ticket]}]}, chief={"label": "Chief"})
+    neighbor = {"id": "handoff_neighbor", "manager_id": None, "title": "A neighbor moves at the same time",
+                "worker_type": "coding", "stage": "needs_implementation", "ticket_status": "agent"}
+    fixture.update(enabled=True, board={"managers": [], "columns": [{"cards": [ticket, neighbor]}]}, chief={"label": "Chief"})
     page.set_viewport_size({"width": 1280, "height": 900})
     page.emulate_media(reduced_motion="no-preference")
     page.mouse.move(1100, 800)
@@ -1144,9 +1146,22 @@ def verify_empty_handoff(page, url, fixture, evidence):
     expect(row.locator('[data-approval-mark]')).to_have_count(0)
     assert bucket() == "awaiting_approval"
     page.screenshot(path=str(evidence / "handoff-cleared-approval.png"))
+    # The release glides to Agent like any other move. It waits for a neighbor's
+    # move that is already playing, and does not cut that move short.
+    neighbor.update(ticket_status="awaiting_approval", awaiting_approval=True)
+    refresh()
+    page.wait_for_function("""() => { window.__neighborCancelled = 0;
+      const moving = document.querySelector('[data-ticket-id="handoff_neighbor"]')?.getAnimations()
+        .filter(a => a.playState === 'running' && JSON.stringify(a.effect.getKeyframes()).includes('translate')) ?? [];
+      for (const a of moving) a.addEventListener('cancel', () => window.__neighborCancelled++);
+      return moving.length > 0; }""", polling="raf", timeout=2000)
     ticket.update(ticket_status="agent")
     refresh()
+    page.wait_for_function("""() => document.querySelector('[data-ticket-id="handoff_worker"]')?.getAnimations()
+      .some(a => a.playState === 'running' && JSON.stringify(a.effect.getKeyframes()).includes('translate'))""", polling="raf", timeout=2000)
     wait_settled(page, '.workspace-rail')
+    assert bucket() == "agent"
+    assert page.evaluate("window.__neighborCancelled") == 0
 
     # Focus filters the retained Agent placement with the fresh unread fact.
     ticket["conversation_signal"]["message_for_owner"] = True
