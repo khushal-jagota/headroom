@@ -138,3 +138,18 @@ The Manager requested this default-root difference. Explicit configuration refus
 `packaging/build.ts` produces the runtime archive and unsigned app and LaunchAgent assets.
 The [installation document](../../../ops/mac-executor/typescript-installation.md) records the exact paths and later owner procedure.
 Real-Mac installation, consent, and provider checks remain unproved.
+
+## Hosted end-to-end checks
+
+The five `tests/compare/direct/test_unit22_mac_end_to_end*.py` modules retain all 24 original names and 29 expanded cases against the Python VPS.
+They reuse its TLS proxy, core, database, and scripted providers with one Node Mac host.
+The companion refuses any peer outside the fixture's allocated loopback port before it opens the host.
+The hosted direct comparison job collects these cases automatically. Run them only on a hosted runner:
+
+```sh
+scripts/dev pytest tests/compare/direct/test_unit22_mac_end_to_end*.py
+```
+
+The Manager dropped `test_three_sleep_cycles_lose_and_duplicate_nothing` on Linux.
+Sleep and wake require the later real-Mac session with the owner, as described in the installation document.
+The TS/TS run needs the same VPS fixtures bound to the TypeScript VPS API and core after both halves merge.
