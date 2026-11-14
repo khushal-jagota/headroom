@@ -45,7 +45,7 @@ class CountedAdmission(WorkspaceAdmission):
         self.exits = 0
 
     @contextmanager
-    def operation(self) -> Iterator[bool]:
+    def operation(self, *, starts: bool = False) -> Iterator[bool]:
         self.entries += 1
         try:
             with super().operation() as admitted:

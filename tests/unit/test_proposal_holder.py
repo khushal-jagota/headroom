@@ -426,13 +426,13 @@ def test_proposal_waits_only_before_effects_and_saves_once(
         current_write_admission,
     )
     from planner.core.db import connect
-    from planner.tickets import config, proposal_contention
+    from planner.tickets import config
 
     admission = WorkspaceAdmission()
     lease = RequestAdmissionLease(admission)
     assert lease.resume()
     token = current_write_admission.set(lease)
-    sleep = proposal_contention.time.sleep
+    sleep = time.sleep
     backoffs = 0
 
     def observe_backoff(seconds: float) -> None:
@@ -445,7 +445,7 @@ def test_proposal_waits_only_before_effects_and_saves_once(
             lease.close()
         sleep(seconds)
 
-    monkeypatch.setattr(proposal_contention.time, "sleep", observe_backoff)
+    monkeypatch.setattr(time, "sleep", observe_backoff)
     ticket = data.create_ticket(
         tmp_db,
         title="Contended proposal",

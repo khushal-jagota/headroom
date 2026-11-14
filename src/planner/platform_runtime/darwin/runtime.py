@@ -5,6 +5,7 @@ from __future__ import annotations
 import platform
 import shutil
 from pathlib import Path
+from re import fullmatch
 
 from planner.environments.app import AppValidationError
 from planner.platform_runtime.contracts import RuntimeRequirements
@@ -49,10 +50,13 @@ class DarwinRuntime:
             raise AppValidationError(str(exc)) from exc
         executable = shutil.which("node")
         if executable is None:
-            raise AppValidationError("runtime host prerequisite is missing: Node 22")
+            raise AppValidationError("runtime host prerequisite is missing: Node 22 or newer")
         node = _run_probe([str(Path(executable).resolve()), "--version"], state=state)
-        if node.split(".")[0] != f"v{contract.node_major}":
-            raise AppValidationError(f"runtime requires Node {contract.node_major}")
+        if (
+            (match := fullmatch(r"v(\d+)\.\d+\.\d+", node.strip())) is None
+            or int(match[1]) < contract.node_major
+        ):
+            raise AppValidationError(f"runtime requires Node {contract.node_major} or newer")
 
     def native_tool_commands(
         self, root: Path, contract: RuntimeRequirements, *, node: str = "node"
@@ -60,7 +64,7 @@ class DarwinRuntime:
         modules = root / "agent_backends/node_modules"
         executable = shutil.which("node")
         if executable is None:
-            raise AppValidationError("runtime host prerequisite is missing: Node 22")
+            raise AppValidationError("runtime host prerequisite is missing: Node 22 or newer")
         return [
             [
                 str(Path(executable).resolve()),
