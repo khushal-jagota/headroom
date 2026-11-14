@@ -134,7 +134,6 @@ jobs:
           const { run_release_command } = await load('server/environments/release/process.ts');
           const { hash_archive, inspect_mac_archive } = await load('server/environments/release/archive.ts');
           const { MacArchiveInspectionUnsettled } = await load('server/environments/release/contracts.ts');
-          const { python_json_equal } = await load('server/environments/release/logic/manifest.ts');
           assert.equal(process.platform, 'darwin');
           assert.equal(process.arch, 'arm64');
           const revision = process.env.MAC_SOURCE_REVISION;
@@ -191,9 +190,9 @@ jobs:
               child_processes: owner, signal: controller.signal, deadline: inspectionDeadline,
             });
             controller.signal.throwIfAborted();
-            assert(python_json_equal(result.manifest, {
+            assert.deepEqual(result.manifest, {
               schema_version: 1, application_revision: revision, platform: 'darwin', architecture: 'arm64',
-            }));
+            });
             assert.equal(result.python, true);
             const after = { sha256: await hash_archive(archive), size: (await fs.stat(archive)).size };
             controller.signal.throwIfAborted();
