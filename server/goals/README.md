@@ -8,7 +8,7 @@ This area owns the seven Goal routes, saved Goal facts, completion rules, rich p
 
 `logic/documents.ts` extends the existing Manager page preparer with chart validation and canonical dependency collectors. `manager_documents.ts` composes the four Manager seams: held Goals, rich preparation, binding validation, and document readings. `resource_versions.ts` keeps saved Goal revisions separate from measurement revisions and adds dependency-local calendar dates to readings.
 
-Authored documents retain `JsonNumber` metadata through the shared numeric JSON helpers. Validation and arithmetic use numeric projections. Storage preserves Python’s numeric kinds, exact integer digits, escaping, and separators. Deadline and reference-date checks share `calendar.ts`. The accepted depth policy remains in the [measure README](../measures/README.md) and [deviation record](../DEVIATIONS.md).
+Authored documents retain `JsonNumber` metadata through the shared numeric JSON helpers. Validation and arithmetic use numeric projections. Storage uses native JSON and preserves exact integer digits. Deadline and reference-date checks share `calendar.ts`. The accepted depth policy remains in the [measure README](../measures/README.md) and [deviation record](../DEVIATIONS.md).
 
 Completion requires retained, dated evidence. `rule_evaluation.ts` finds the first proven date. `outcomes.ts` reconciles persisted completion facts without replacing them after a failed evaluation. `scheduling.ts` supplies `GoalCompletionParticipant` without its own timer or writer. Unit 13 still must attach this participant to the shared collection clock and prove that integration.
 

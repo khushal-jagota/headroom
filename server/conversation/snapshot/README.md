@@ -14,7 +14,7 @@ closure. HTTP transports use `redirect: 'manual'`, so a redirect cannot resend a
 usage credential. The focused scripted-child and mocked-redirect checks prove
 these boundaries without a provider executable or network request.
 
-`provider_contracts.ts` defines the Python-shaped handoff:
+`provider_contracts.ts` defines the provider handoff:
 
 | Interface | Real implementation owner | Current production binding |
 | --- | --- | --- |
@@ -39,10 +39,9 @@ and duplicate login with the declared usage errors. Pass that source into
 `CodexUsageAdapter`, then inject the adapter through `BackendProviders.usage`.
 This real binding is composed in `production.ts`. Hermes intentionally has no usage adapter.
 
-`CodexUsageSource` returns the raw JSON text of the `account/rateLimits/read`
-result. The source must preserve numeric tokens instead of parsing and
-reserializing them. `parse_codex_windows` owns the numeric JSON parse and rejects
-floating-point tokens such as `25.0` where Python requires a strict integer.
+`CodexUsageSource` returns JSON text for the parsed `account/rateLimits/read`
+result. `parse_codex_windows` uses native JSON values and validates the complete
+answer. Whole numeric values such as `25.0` pass integer checks.
 
 `BackendProviders.machine_catalog` supplies `RemoteCatalogSource` for Tickets on
 the Mac. The production binding currently returns `null`. Executor Unit 22 must

@@ -1,10 +1,10 @@
 # Managers during the TypeScript migration
 
-Manager and Chief pages use `core/http/numeric_json.ts`. Page intake retains each native JSON number's integer or float kind. Integer markers keep a bigint, so parsing never rounds their digits. The shared encoder writes Python's spaced JSON form. Native `JSON.rawJSON` emits markers as numbers in HTTP responses. Ordinary routes retain their existing parser.
+Manager and Chief pages use `core/http/numeric_json.ts`. Page intake retains numeric markers for validation and exact integer storage. Integer markers keep a bigint, so parsing never rounds their digits. Native `JSON.rawJSON` emits these integers as JSON numbers. Ordinary routes retain their existing parser.
 
-Use `parse_numeric_json` before document validation and `stringify_python_json` for stored documents. `clone_numeric_json` preserves immutable numeric markers. Use `numeric_value` only for validation or calculations. Do not replace the stored marker with that projection. `ManagerPageDocument` exposes the marker form through a mapped type of the wire page contract.
+Use `parse_numeric_json` before document validation and `JSON.stringify` for stored documents. `clone_numeric_json` preserves immutable numeric markers. Use `numeric_value` only for validation or calculations. Do not replace an exact integer with that projection. `ManagerPageDocument` exposes the marker form through a mapped type of the wire page contract.
 
-This encoder supplies the page paths' `ensure_ascii=False` form with ordinary spaced separators. It does not supply arbitrary dictionary ordering or sorted-key/ASCII modes that these paths do not need. Page schemas reject arbitrary numeric-looking dictionary keys. Valid plain numeric fields must remain finite.
+Stored documents use native compact JSON and number spelling. Page schemas reject arbitrary numeric-looking dictionary keys. Valid plain numeric fields must remain finite.
 
 `configure_manager_documents` accepts four dependencies for the goals unit:
 
