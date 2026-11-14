@@ -33,7 +33,7 @@ import {
   LifecycleStatus as S,
 } from '../record/lifecycle.ts';
 import type { JsonObject } from '../../executor/wire.generated.ts';
-import { admit_remote_turn } from './remote_turn.ts';
+import { RemoteTurnRejected, admit_remote_turn } from './remote_turn.ts';
 import type { SqliteProcessConversationSystem } from '../system.ts';
 import { ConversationState, own_settlement, same_turn, set_phase } from './state.ts';
 import { background_tasks_ended_with_child } from './maintenance.ts';
@@ -53,7 +53,7 @@ function admitted_runs(factory: BackendChildFactory): readonly AdoptedRun[] {
     try {
       turn = admit_remote_turn(run.turn);
     } catch (error) {
-      if (!(error instanceof TypeError)) throw error;
+      if (!(error instanceof RemoteTurnRejected)) throw error;
       console.error(
         `Refusing retained run: conversation=${run.reference.conversation_id} child=${run.reference.child_id}`,
         error,

@@ -11,12 +11,41 @@ import {
   BackendPromptAccepted,
   BackendUserInputRequest,
   PermissionAskRaised,
+  RetainedBackendRun,
   TurnEnded,
   UserInputRequested,
 } from '../backends/contracts.ts';
 import type { WireValue } from '../../executor/contracts.ts';
 import { text_message_content } from '../message_content.ts';
 import { Deferred } from './state.ts';
+import { retained_open_runs } from './remote.ts';
+
+test('retained-run admission drops explicit rejections and propagates programming errors', () => {
+  const run = new RetainedBackendRun({
+    reference: { conversation_id: 'remote', executor_incarnation: 'synthetic', child_id: 'child' },
+    turn: { conversation_id: 'remote', turn_number: Number.MAX_SAFE_INTEGER + 1 },
+    delivery_uncertain: false,
+    retirement_confirmed: false,
+  });
+  const factory = Object.assign(
+    () => {
+      throw new Error('No child starts in admission');
+    },
+    {
+      recover: () => null,
+      retained_runs: () => [run],
+    },
+  );
+  const diagnostic = vi.spyOn(console, 'error').mockImplementation(() => {});
+  try {
+    expect(retained_open_runs({ codex: factory }).size).toBe(0);
+    // A malformed internal turn triggers a real property-read TypeError in admission.
+    Reflect.set(run, 'turn', undefined);
+    expect(() => retained_open_runs({ codex: factory })).toThrow(TypeError);
+  } finally {
+    diagnostic.mockRestore();
+  }
+});
 
 // The SQL-only inbox proof cannot detect predictions or a global Signal batch
 // that escapes before a permanent refusal receipt commits through the real core.
