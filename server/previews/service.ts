@@ -1,3 +1,4 @@
+import { ShutdownDeadlineExceeded } from '../lifecycle/contracts.ts';
 /** Async inspection never holds a database transaction across an await. */
 import { randomBytes } from 'node:crypto';
 import { resolve, join } from 'node:path';
@@ -9,7 +10,7 @@ import { PreviewError, type PreviewRecord } from './contracts.ts';
 import { require_eligible, require_port, require_vps } from './logic/eligibility.ts';
 import { LinuxProcessInspector, validate_worktree } from './process.ts';
 import type { StopOptions } from '../lifecycle/contracts.ts';
-import { observe_shutdown } from '../lifecycle/deadline.ts';
+import { observe_shutdown } from '../conversation/shutdown.ts';
 export class PreviewService {
   readonly database: Database;
   readonly public_origin: string;
@@ -44,10 +45,7 @@ export class PreviewService {
     )
       throw new PreviewError('Preview inspection is busy; try again shortly.', 503);
     this.outstanding++;
-    let release!: () => void;
-    const actual = new Promise<void>((resolve) => {
-      release = resolve;
-    });
+    const { promise: actual, resolve: release } = Promise.withResolvers<void>();
     this.pending.add(actual);
     const submitted = performance.now();
     const waiters = lifecycle ? this.lifecycle_waiters : this.inspection_waiters;
@@ -282,7 +280,12 @@ export class PreviewService {
   close(options: StopOptions): Promise<void> {
     if (!this.closing) {
       this.seal();
-      this.closing = observe_shutdown(this.settled(), options, 'preview inspections');
+      this.closing = observe_shutdown(
+        this.settled(),
+        options,
+        new ShutdownDeadlineExceeded(['preview inspections']).message,
+        ['preview inspections'],
+      );
     }
     return this.closing;
   }

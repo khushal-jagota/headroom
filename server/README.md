@@ -171,7 +171,7 @@ The scripted test host can open and continue conversations through these routes.
 
 The SDK public spawn hook owns the exact child and its required WorkerUnit. An input queue offer proves neither a completed write nor native acceptance. Ordinary delivery needs UUID admission receipts; native commands retain Python's write-completion contract. Stop requires a valid cancellation receipt with an empty `still_queued` set and settlement of the active command.
 
-The Claude spawn hook uses `codex_app_server/process.ts` for process custody, signals, and bounded termination. SDK exit callbacks still follow stream closure. Cleanup observes direct-child exit first, then a separate bounded output drain. Each Claude shutdown phase retains its five-second limit.
+The Claude spawn hook and Codex adapter use `lifecycle/owned_processes.ts` for process custody, signals, and bounded termination. SDK exit callbacks still follow stream closure. Cleanup observes direct-child exit first, then a separate bounded output drain. Each Claude shutdown phase retains its five-second limit.
 
 `tests/compare/direct/test_unit18_adapter.py` drives the TS scripted CLI through both real adapters and conversation cores. It compares events, lifecycle facts, view rows, and delivery fates. This scripted proof does not establish real-provider coverage of all 19 backend events.
 
@@ -231,6 +231,9 @@ Inspection observes existing kernel lock evidence without creating or acquiring 
 Normal Python supervisor launches remain excluded through the existing port lease.
 An unmodified legacy Python direct launch does not take the new stable guard after its old DB sidecar moves; that mixed-version race is not claimed solved.
 The service/interface hand-over explains the shared `child_processes` and `one_shot_children` ownership arguments.
+`lifecycle/owned_processes.ts` owns child creation, exit and close tracking, guarded signals, and one-shot scopes.
+Protocol framing, output limits, and result interpretation stay with each caller.
+The supervisor owns its application child in a separate scope through the same process primitive.
 
 To compare the in-memory instrument against TypeScript, run:
 

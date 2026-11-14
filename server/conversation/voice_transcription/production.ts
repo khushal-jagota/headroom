@@ -1,5 +1,5 @@
 /** Only these production adapters can start ffmpeg or contact the provider. */
-import { spawn } from 'node:child_process';
+import { ChildProcesses, signal_child } from '../../lifecycle/owned_processes.ts';
 import type { VoiceTranscriptionAdapters } from './contracts.ts';
 import { FFMPEG_PATH, SILENCE_TRIM_FILTER, SILENCE_TRIM_TIMEOUT_SECONDS } from './configuration.ts';
 import { silence_trim_result } from './logic.ts';
@@ -11,7 +11,8 @@ export async function trim_surrounding_silence(
 ): Promise<readonly [Uint8Array, boolean]> {
   options.signal?.throwIfAborted();
   require_production_voice_io();
-  const child = spawn(
+  const children = new ChildProcesses();
+  const child = children.spawn(
     FFMPEG_PATH,
     [
       '-hide_banner',
@@ -31,19 +32,16 @@ export async function trim_surrounding_silence(
   );
   const chunks: Buffer[] = [];
   let failed = false;
-  let settled = false;
   const kill_group = () => {
-    if (settled || child.exitCode !== null || child.signalCode !== null) return;
     try {
-      if (child.pid !== undefined) process.kill(-child.pid, 'SIGKILL');
+      signal_child(child, 'SIGKILL');
     } catch (error) {
       if (
         !(error instanceof Error && 'code' in error && error.code === 'ESRCH') &&
-        !settled &&
         child.exitCode === null &&
         child.signalCode === null
       )
-        child.kill('SIGKILL');
+        signal_child(child, 'SIGKILL', false);
     }
   };
   const stop = () => {
@@ -56,12 +54,10 @@ export async function trim_surrounding_silence(
     child.once('error', () => {
       failed = true;
       if (child.pid === undefined) {
-        settled = true;
         resolve(-1);
       } else stop();
     });
     child.once('exit', (code) => {
-      settled = true;
       resolve(code);
     });
   });
@@ -107,11 +103,13 @@ export async function trim_surrounding_silence(
   } finally {
     clearTimeout(timer);
     options.signal?.removeEventListener('abort', abort);
-    if (!settled) stop();
+    stop();
     await exited;
     child.stdin.destroy();
     child.stdout.destroy();
     child.stderr.destroy();
+    children.seal();
+    await children.settled();
   }
 }
 export const production_voice_transcription_adapters: VoiceTranscriptionAdapters = {

@@ -1,6 +1,6 @@
 /** Bounded local ffprobe adapter. A valid stream is not a full decode proof. */
 import { is_record as object } from '../../core/records.ts';
-import { spawn } from 'node:child_process';
+import { ChildProcesses, signal_child } from '../../lifecycle/owned_processes.ts';
 import { accessSync, constants, statSync } from 'node:fs';
 import { open } from 'node:fs/promises';
 import { delimiter, extname, isAbsolute, join, resolve } from 'node:path';
@@ -29,7 +29,8 @@ export async function probe_video(
   options: { signal?: AbortSignal } = {},
 ): Promise<string> {
   options.signal?.throwIfAborted();
-  const child = spawn(
+  const children = new ChildProcesses();
+  const child = children.spawn(
     require_probe(),
     [
       '-v',
@@ -48,36 +49,30 @@ export async function probe_video(
   let bytes = 0;
   let timed_out = false;
   let overflow = false;
-  let settled = false;
   const exited = new Promise<number | null>((resolve, reject) => {
     child.once('error', (error) => {
-      settled = true;
       reject(error);
     });
     child.once('exit', (code) => {
-      settled = true;
       resolve(code);
     });
   });
   const output_ended = new Promise<void>((resolve) => {
-    child.stdout.once('end', resolve);
-    child.stdout.once('close', resolve);
-    child.stdout.once('error', () => resolve());
+    child.stdout!.once('end', resolve);
+    child.stdout!.once('close', resolve);
+    child.stdout!.once('error', () => resolve());
   });
   const stop = () => {
-    child.stdout.destroy();
-    if (settled || child.pid === undefined || child.exitCode !== null || child.signalCode !== null)
-      return;
+    child.stdout!.destroy();
     try {
-      process.kill(-child.pid, 'SIGKILL');
+      signal_child(child, 'SIGKILL');
     } catch (error) {
       if (
         !(error instanceof Error && 'code' in error && error.code === 'ESRCH') &&
-        !settled &&
         child.exitCode === null &&
         child.signalCode === null
       )
-        child.kill('SIGKILL');
+        signal_child(child, 'SIGKILL', false);
     }
   };
   const abort = () => stop();
@@ -88,7 +83,7 @@ export async function probe_video(
     stop();
   }, PROBE_TIMEOUT_SECONDS * 1000);
   try {
-    child.stdout.on('data', (chunk: Buffer) => {
+    child.stdout!.on('data', (chunk: Buffer) => {
       bytes += chunk.length;
       if (bytes > PROBE_OUTPUT_BYTES) {
         overflow = true;
@@ -167,8 +162,10 @@ export async function probe_video(
   } finally {
     clearTimeout(timer);
     options.signal?.removeEventListener('abort', abort);
-    if (!settled) stop();
+    stop();
     await exited.catch(() => {});
-    child.stdout.destroy();
+    child.stdout!.destroy();
+    children.seal();
+    await children.settled();
   }
 }

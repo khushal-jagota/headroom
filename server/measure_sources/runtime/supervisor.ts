@@ -1,5 +1,5 @@
 /** One filtered-environment child per trusted script. Only the parent accepts provisional output. */
-import { spawn } from 'node:child_process';
+import { ChildProcesses, child_lifetime, signal_child } from '../../lifecycle/owned_processes.ts';
 import type { ChildProcess } from 'node:child_process';
 import type { Duplex } from 'node:stream';
 import { mkdtemp, writeFile, rm } from 'node:fs/promises';
@@ -96,15 +96,10 @@ export class Runtime {
     let process: ChildProcess | undefined;
     let directory: string | undefined;
     let timer: ReturnType<typeof setTimeout> | undefined;
+    const children = new ChildProcesses();
     let childExited: Promise<void> | undefined;
     const kill = () => {
-      if (process?.pid) {
-        try {
-          globalThis.process.kill(-process.pid, 'SIGKILL');
-        } catch (error) {
-          if ((error as NodeJS.ErrnoException).code !== 'ESRCH') throw error;
-        }
-      }
+      if (process) signal_child(process, 'SIGKILL');
     };
     let finish: (value: RunFailure | null) => void = () => {};
     let stopped = false;
@@ -134,7 +129,7 @@ export class Runtime {
         resultFailure = failure('budget_exhausted', { budget: 'wall_seconds' });
         return { observations: [], dataset_results: [], failure: resultFailure, metrics };
       }
-      process = spawn(
+      process = children.spawn(
         globalThis.process.execPath,
         [
           `--max-old-space-size=${admission.limits.heap_megabytes}`,
@@ -158,12 +153,7 @@ export class Runtime {
           stdio: ['ignore', 'pipe', 'pipe', 'pipe'],
         },
       );
-      childExited = new Promise<void>((resolve) => {
-        process!.once('exit', () => resolve());
-        process!.once('error', () => {
-          if (process!.pid === undefined) resolve();
-        });
-      });
+      childExited = child_lifetime(process).exited;
       const channel = process.stdio[3] as Duplex;
       const complete = new Promise<RunFailure | null>((resolve) => {
         let settled = false;
@@ -375,6 +365,7 @@ export class Runtime {
       // Drain already-readable bytes once; descendant-held EOF is not a gate.
       await new Promise<void>((resolve) => setImmediate(resolve));
       process?.stdio.forEach((stream) => stream?.destroy());
+      await children.settled();
       if (directory) await rm(directory, { recursive: true, force: true });
       this.active.delete(admission.run.id);
       metrics.elapsed_milliseconds = Math.trunc((performance.now() / 1000 - started) * 1000);

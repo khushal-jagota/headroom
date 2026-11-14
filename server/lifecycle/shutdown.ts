@@ -54,11 +54,7 @@ export class ShutdownCoordinator implements ShutdownOwner, ShutdownStages {
     });
   }
   own(name: string, operation: () => unknown | Promise<unknown>): Promise<void> {
-    let resolve!: () => void, reject!: (error: unknown) => void;
-    const actual = new Promise<void>((yes, no) => {
-      resolve = yes;
-      reject = no;
-    });
+    const { promise: actual, resolve, reject } = Promise.withResolvers<void>();
     const stage: Stage = { name, actual, pending: true };
     this.#stages.push(stage);
     void actual.catch(() => {});
@@ -84,12 +80,9 @@ export class ShutdownCoordinator implements ShutdownOwner, ShutdownStages {
     const started = performance.now() / 1000;
     this.#soft_deadline = Math.min(options.deadline, started + this.#composition.grace_seconds);
     this.#hard_deadline = started + this.#composition.hard_seconds;
-    let resolve!: () => void, reject!: (error: unknown) => void;
+    const { promise, resolve, reject } = Promise.withResolvers<void>();
     // Publish the stop flight and referenced deadline timers before user callbacks.
-    this.#closing = new Promise<void>((yes, no) => {
-      resolve = yes;
-      reject = no;
-    });
+    this.#closing = promise;
     void this.#closing.catch(() => {});
     this.#kind = 'stopping';
     this.#grace_timer = setTimeout(

@@ -20,3 +20,9 @@ def test_comparison(comparison_list: Path, tmp_path: Path, request: pytest.Fixtu
         (destination / f"{comparison_list.stem}.json").write_text(json.dumps(report, indent=2))
     print(json.dumps({k: v for k, v in report.items() if k != "rules"}))
     assert not report["differences"], json.dumps(report["differences"], indent=2)
+    if comparison_list.stem == "unit-15.real-core-reruns.unit-11.files":
+        observed = report["captures"]
+        # Same-route token history also requires these transitions in the candidate.
+        assert observed["catalog_0"]["revision"] == observed["catalog_1"]["revision"]
+        assert observed["catalog_1"]["revision"] != observed["catalog_2"]["revision"]
+        assert observed["catalog_6"]["revision"] != observed["goal_after_refresh"]["revision"]

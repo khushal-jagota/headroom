@@ -168,12 +168,10 @@ def test_unit22_mac_skills(tmp_path: Path, request: pytest.FixtureRequest) -> No
         "rejected": True,
         "faults": [],
         "blocked": [".install.lock"],
-        "close_retry": {"retained": True, "cleared": True, "close_failed": True},
     }
     elapsed = time.perf_counter() - started
     request.node.user_properties.extend(
         [
-            ("cleanup_worker_ms", round(result["cleanup_worker_ms"], 3)),
             ("elapsed_seconds", round(elapsed, 3)),
         ]
     )
@@ -188,7 +186,6 @@ def test_unit22_mac_skills(tmp_path: Path, request: pytest.FixtureRequest) -> No
                     "reference": "fresh branch Python on synthetic populated state",
                     "elapsed_seconds": elapsed,
                     "node_seconds": node_seconds,
-                    "cleanup_worker_ms": result["cleanup_worker_ms"],
                     "observations": result["report"],
                     "lifecycle": result["lifecycle"],
                     "accepted_mac_differences": result["mac_only"],
