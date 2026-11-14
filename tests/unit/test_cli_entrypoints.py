@@ -168,6 +168,21 @@ def test_manager_commands_reject_old_names(monkeypatch: pytest.MonkeyPatch) -> N
     assert targets == [{"kind": "manager", "id": "si_same"}]
 
 
+def test_send_message_requires_one_explicit_recipient(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A Worker cannot fall back to its ceiling holder when the recipient is absent."""
+    def unexpected_send(*args: Any, **kwargs: Any) -> dict[str, Any]:
+        pytest.fail("Recipient validation must precede HTTP delivery")
+
+    monkeypatch.setattr(http, "send", unexpected_send)
+    runner = CliRunner()
+    for recipients in ([], ["--owner", "--chief"]):
+        result = runner.invoke(
+            cli_main.main, ["send-message", *recipients, "--message", "Please decide."]
+        )
+        assert result.exit_code != 0
+        assert "requires exactly one of --owner, --chief, --ticket, or --manager" in result.output
+
+
 @pytest.mark.parametrize("prefix", [("manager",)])
 def test_manager_state_survives_cli_reads_and_filters(
     monkeypatch: pytest.MonkeyPatch, prefix: tuple[str, ...]

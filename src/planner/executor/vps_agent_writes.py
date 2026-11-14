@@ -153,7 +153,7 @@ class AgentWrites:
             raise ValueError("CLI conversation conflicts with envelope")
         principal = await run_on_worker_thread(self.runs.authority, write.child)
         published = await publish()
-        if write.operation in ("message.send", "ticket.request_help"):
+        if write.operation == "message.send":
             return await self._deliver_message(envelope, write, principal, identity, published)
         from planner.tickets.review_transfer import notify_review_transfers
 
@@ -189,20 +189,6 @@ class AgentWrites:
             finally:
                 connection.close()
         return receipt
-
-    def _help_recipient(
-        self, conn: sqlite3.Connection, write: CliWrite, principal: Principal
-    ) -> Principal:
-        from planner.tickets import data
-
-        ticket_id = write.arguments.get("ticket_id")
-        if not isinstance(ticket_id, str) or principal != Principal(
-            PrincipalKind.ticket, ticket_id
-        ):
-            raise PlannerError(
-                ErrorCode.agent_forbidden, "only the Ticket Worker can request help", {}
-            )
-        return data.read_ticket(conn, ticket_id).ceiling_holder
 
     async def _deliver_message(
         self,
@@ -267,28 +253,18 @@ class AgentWrites:
             if not isinstance(body, dict):
                 raise PlannerError(ErrorCode.validation, "message body must be an object", {})
             message = api._message_text(body.get("message"))
-            if write.operation == "ticket.request_help" and set(body) - {"message", "recipient"}:
-                raise PlannerError(ErrorCode.validation, "unknown help request field", {})
             mode = (
                 api._message_delivery_mode(body["mode"])
                 if "mode" in body
                 else api._message_delivery_mode()
             )
-            if write.operation == "message.send":
-                recipient = api._principal(body.get("target"))
-            else:
-                default = self._help_recipient(conn, write, principal)
-                recipient = api._principal(body["recipient"]) if body.get("recipient") else default
+            recipient = api._principal(body.get("target"))
             admit_command(
                 conn,
                 principal,
                 "POST",
-                (
-                    "/api/messages/send"
-                    if write.operation == "message.send"
-                    else "/api/tickets/{ticket_id}/request-help"
-                ),
-                {"ticket_id": write.arguments.get("ticket_id")},
+                "/api/messages/send",
+                {},
                 body,
             )
             # The files' owner is the child's open assignment, read under this writer.

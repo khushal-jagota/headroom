@@ -26,7 +26,6 @@ COMMAND_RECOVERY_SHAPES: dict[str, str] = {
     "panels manager settle": "panels manager settle ITEM_ID",
     "panels ticket edit": "panels ticket edit TICKET_ID --input-json FILE",
     "panels ticket proposal": "panels ticket proposal TICKET_ID ACTION",
-    "panels ticket request-help": "panels ticket request-help TICKET_ID < MESSAGE_FILE",
     "panels ticket complete": "panels ticket complete TICKET_ID FIELD --value VALUE",
     "panels manager create": ("panels manager create --title TEXT --project-id PROJECT_ID"),
     "panels manager delete": "panels manager delete ITEM_ID --yes",
@@ -35,7 +34,6 @@ COMMAND_RECOVERY_SHAPES: dict[str, str] = {
     "panels manager set": "panels manager set ITEM_ID FIELD --value VALUE",
     "panels manager conversation send": ("panels manager conversation send ITEM_ID --message TEXT"),
     "panels worker propose": "panels worker propose TICKET_ID < PROPOSAL_FILE",
-    "panels worker request-help": "panels worker request-help TICKET_ID < MESSAGE_FILE",
     "panels worker recap": "panels worker recap TICKET_ID < RECAP_FILE",
 }
 

@@ -27,13 +27,15 @@ Every non-terminal Stage has a default ownership mode.
 
 Everything runs through the `panels` command — `panels --help` for full usage. You often use panels worker and panels ticket.
 
-`panels worker propose` and `recap` take their text on stdin only. `panels ticket request-help [id]` also reads its message from stdin. The current ceiling holder is the default recipient. Select exactly one recipient override only when another principal must answer.
+`panels worker propose` and `recap` take their text on stdin only.
 
 - `panels worker propose <id>`, with the proposal text piped on stdin. A proposal does
   not carry the recap. Write the recap when you propose, and whenever what the Ticket is
   waiting on has changed since you last wrote it.
 - `panels worker recap <id>`, with the recap text piped on stdin.
-- `panels ticket request-help [id]`, with the help message piped on stdin. The current ceiling holder receives it by default. Use exactly one of `--owner`, `--chief`, `--ticket <id>`, or `--manager <id>` only to select another recipient.
+- `panels send-message` sends an ordinary message. Select exactly one of `--owner`, `--chief`, `--ticket <id>`, or `--manager <id>`. Supply text with `--message TEXT` or `--body-file FILE` (`-` reads stdin).
+
+Choose Khushal when he raised the matter or the decision belongs to him. Otherwise, choose your assigned Manager or Chief. There is no default recipient. Keep the message short.
 
 Send Khushal a message only when he needs to decide or do something. Give only the context that explains that decision or action. Do not accompany it with an account of completed work.
 

@@ -62,7 +62,7 @@ class CrashAfterCanonicalOwnerMessage(SqliteProcessConversationSystem):
 
 
 @pytest.mark.parametrize("committed", [True, False])
-def test_help_replay_after_domain_commit_keeps_original_holder(
+def test_message_replay_after_domain_commit_keeps_explicit_recipient(
     tmp_db: Connection,
     tmp_path: Path,
     committed: bool,
@@ -141,10 +141,12 @@ def test_help_replay_after_domain_commit_keeps_original_holder(
                 recipient=sender,
             )
             write = CliWrite(
-                "ticket.request_help",
+                "message.send",
                 {
-                    "ticket_id": ticket.id,
-                    "body": {"message": "Please help with this decision."},
+                    "body": {
+                        "message": "Please help with this decision.",
+                        "target": {"kind": "owner", "id": "owner"},
+                    },
                 },
                 reference,
                 TurnToken("c_source", 1),
@@ -157,7 +159,7 @@ def test_help_replay_after_domain_commit_keeps_original_holder(
                     conversation_id="c_source",
                     kind=EnvelopeKind.cli_write,
                     payload=payload,
-                    submission_id="native_help",
+                    submission_id="native_message",
                 )
             )
             with pytest.raises(SimulatedCrash):
@@ -193,7 +195,7 @@ def test_help_replay_after_domain_commit_keeps_original_holder(
             assert native_calls == native_before
             rows = tmp_db.execute(
                 "SELECT count(*) FROM conversation_events "
-                "WHERE json_extract(payload,'$.sender_message_id')='native_help'"
+                "WHERE json_extract(payload,'$.sender_message_id')='native_message'"
             ).fetchone()[0]
             assert rows == int(committed)
             spool.close()
