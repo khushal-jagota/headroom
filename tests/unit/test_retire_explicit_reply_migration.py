@@ -18,7 +18,6 @@ from typing import Any
 
 import pytest
 from tests.support.migration_head import shipped_migration_head
-from tests.unit.test_worker_memory import _make_conversation
 
 from planner.conversation.events import (
     ConversationEventKind,
@@ -165,7 +164,12 @@ def test_upgrade_deletes_marker_rows_and_moves_the_rest_line_to_what_remains(
 ) -> None:
     path = _staging_shape(tmp_path)
     with closing(connect(str(path))) as conn:
-        _make_conversation(conn, "retired", compacted=0)
+        # Seed the historical schema without columns from later migrations.
+        conn.execute(
+            "INSERT INTO conversations (conversation_id, backend_key, workspace_folder, access, "
+            "created_at, automatically_compacted_through_sequence) "
+            "VALUES ('retired', 'claude', '/tmp', 'full', 0, 0)"
+        )
         for sequence, (kind, payload) in enumerate(EVENTS, start=1):
             encoded = json.dumps(payload)
             conn.execute(

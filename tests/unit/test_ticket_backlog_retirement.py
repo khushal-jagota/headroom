@@ -1,6 +1,7 @@
 """Explicit deferral preserves work; removed lifecycle states are invalid."""
 
 from sqlite3 import Connection
+from typing import Any, cast
 
 from fastapi.testclient import TestClient
 from tests.support.api_app import _app
@@ -209,3 +210,38 @@ def test_resume_keeps_ceiling_and_parks_new_proposal_at_its_gate(tmp_db: Connect
     assert proposed.pending_proposal.field == "what_changes"
     assert proposed.pending_proposal.body == "Observable result"
     assert "what_changes" not in proposed.field_values
+
+
+def test_active_list_filters_before_pagination_and_resume_restores_membership(
+    tmp_db: Connection,
+) -> None:
+    deferred, finished, active = (create(tmp_db) for _ in range(3))
+    backlog(tmp_db, deferred)
+    tmp_db.execute(
+        "UPDATE tickets SET stage='done', pending_proposal=NULL WHERE id=?", (finished,)
+    )
+    tmp_db.commit()
+    with TestClient(_app(tmp_db)) as client:
+        def listed(**params: str | int | bool) -> dict[str, Any]:
+            response = client.get("/api/tickets", params={"detail": "summary", **params})
+            assert response.status_code == 200, response.text
+            return cast(dict[str, Any], response.json())
+
+        inventory = listed()
+        assert {row["id"] for row in inventory["tickets"]} == {deferred, active}
+        selected = listed(active=True, limit=1)
+        assert [row["id"] for row in selected["tickets"]] == [active]
+        assert selected["page"]["match_count"] == 1
+        assert selected["page"]["complete"] is True
+        assert {row["id"] for row in listed(include_terminal=True)["tickets"]} == {
+            deferred, finished, active,
+        }
+        assert [row["id"] for row in listed(is_backlogged=True)["tickets"]] == [deferred]
+        for conflict in ({"is_backlogged": True}, {"include_terminal": True}):
+            rejected = client.get(
+                "/api/tickets", params={"detail": "summary", "active": True, **conflict}
+            )
+            assert rejected.status_code == 400, rejected.text
+            assert "active excludes" in rejected.json()["error"]["message"]
+        backlog(tmp_db, deferred, False)
+        assert {row["id"] for row in listed(active=True)["tickets"]} == {deferred, active}

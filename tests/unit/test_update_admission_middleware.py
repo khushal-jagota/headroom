@@ -48,7 +48,7 @@ class CountedAdmission(WorkspaceAdmission):
     def operation(self, *, starts: bool = False) -> Iterator[bool]:
         self.entries += 1
         try:
-            with super().operation() as admitted:
+            with super().operation(starts=starts) as admitted:
                 yield admitted
         finally:
             self.exits += 1

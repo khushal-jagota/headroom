@@ -66,7 +66,7 @@ from planner.list_reads.detail import (
     require_full_for_one,
 )
 from planner.message_delivery import service as message_delivery_service
-from planner.message_delivery.contracts import MessageDeliveryResult, MessageRecordedToOwner
+from planner.message_delivery.contracts import MessageDeliveryResult
 from planner.projects import data as projects_data
 from planner.runtime import conversation_start
 from planner.runtime.logic.conversation_start_resolution import (
@@ -587,6 +587,7 @@ async def read_tickets(
     is_backlogged: bool | None = None,
     worker_type: Annotated[list[str] | None, Query()] = None,
     include_terminal: bool = False,
+    active: bool = False,
     search: str | None = None,
     project: str | None = None,
     project_id: str | None = None,
@@ -606,6 +607,7 @@ async def read_tickets(
             "ticket_status": ticket_status,
             "exclude_ticket_status": exclude_ticket_status,
             "is_backlogged": is_backlogged,
+            "active": active or None,
             "worker_type": worker_type,
             "include_terminal": include_terminal or None,
             "search": search,
@@ -635,6 +637,7 @@ async def read_tickets(
                     "manager_kind": manager_kind,
                     "manager_id": manager_id,
                     "is_backlogged": is_backlogged,
+                    "active": active or None,
                     "worker_type": worker_type,
                     "exclude_stage": exclude_stage,
                     "ticket_status": ticket_status,
@@ -659,6 +662,13 @@ async def read_tickets(
                 manager_id=manager_id,
             )
             return {"tickets": rows}, rows
+
+        if active and (is_backlogged is True or include_terminal):
+            raise PlannerError(
+                ErrorCode.validation,
+                "active excludes backlogged and terminal Tickets",
+                {},
+            )
 
         manager = None
         if manager_kind is not None or manager_id is not None:
@@ -706,6 +716,7 @@ async def read_tickets(
                 is_backlogged=is_backlogged,
                 worker_types=tuple(worker_type or ()),
                 include_terminal=include_terminal,
+                active=active,
                 search=search,
             ),
             project_id=resolved_project.id if resolved_project is not None else None,
@@ -1389,39 +1400,6 @@ async def complete_user_owned_gate(
             now=now,
         )
     return tickets_views.ticket_json(ticket, now)
-
-
-@router.post("/tickets/{ticket_id}/request-help")
-async def request_help(
-    ticket_id: str,
-    body: JsonDict,
-    request: Request,
-    ctx: Ctx,
-    clk: Clk,
-    conversations: Conversations,
-) -> JsonDict:
-    if set(body) - {"message", "recipient"}:
-        raise PlannerError(ErrorCode.validation, "unknown help request field", {})
-    message = body_str(body, "message")
-    if not message.strip():
-        raise PlannerError(ErrorCode.validation, "help message must not be empty", {})
-    async with connection_off_the_loop(request) as conn:
-        ticket = await run_on_worker_thread(tickets_data.read_ticket, conn, ticket_id)
-        named = _parse_principal(body.get("recipient"), "recipient", allow_ticket=True)
-        recipient = named or ticket.ceiling_holder
-        delivered = await message_delivery_service.send_message(
-            conversations, conn, clk, ctx, recipient, message
-        )
-    fate = (
-        {"fate": "recorded"}
-        if isinstance(delivered.fate, MessageRecordedToOwner)
-        else delivery_fate_json(delivered.fate)
-    )
-    return {
-        "target": {"kind": recipient.kind.value, "id": recipient.id},
-        "conversation_id": delivered.conversation_id,
-        **fate,
-    }
 
 
 @router.get("/tickets/{ticket_id}/copy-text", response_class=PlainTextResponse)

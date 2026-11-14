@@ -48,7 +48,7 @@ Before asking the user anything, resolve the sprint being reviewed and classify 
 
 Inspect individual records only where their detail can change the judgment. Turn the evidence into a decision-ready opening, not a ticket ledger. Compare actual outcomes with the limiting factor, primary bet, supports, and pre-mortem. Distinguish completed, moved-but-incomplete, blocked or displaced, and materially unplanned work. Flag contradictions; an implementation report is evidence, not automatic proof of its parent outcome. Use a beautifiul artifact for the review of the sprint and to make your points.
 
-Show the factual picture, then ask for the user's reflection before giving the final worker interpretation. Send that bounded opening in Ticket Chat and call `panels worker request-help <ticket-id>`. Work through:
+Show the factual picture, then ask for the user's reflection before giving the final worker interpretation. Send that bounded opening through `panels send-message --owner --body-file -`. Work through:
 
 1. outcomes;
 2. the user's solo reflection;
@@ -62,7 +62,7 @@ Do not propose while strategic questions remain open. After the user explicitly 
 
 ### needs\_next\_sprint — choose the next commitment
 
-Begin only from the approved Review. Refresh evidence whose change could alter planning, then prepare a bounded opening with plausible constraints and material candidate work, not a predetermined sprint. Send it in Ticket Chat and call `panels worker request-help <ticket-id>`.
+Begin only from the approved Review. Refresh evidence whose change could alter planning, then prepare a bounded opening with plausible constraints and material candidate work, not a predetermined sprint. Send it through `panels send-message --owner --body-file -`.
 
 Settle the decisions in order:
 

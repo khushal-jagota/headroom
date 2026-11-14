@@ -999,8 +999,8 @@ class SleepCycles:
     """Boots the isolated world, runs the cycles, judges each one, and stops everything
     it started."""
 
-    conversations = ("ca", "cb", "cc")
-    roles = ("stream", "ask", "idle")
+    conversations: tuple[str, ...] = ("ca", "cb", "cc")
+    roles: tuple[str, ...] = ("stream", "ask", "idle")
 
     def __init__(
         self, work: Path, out: Path, schedule: CycleSchedule, seed: int, *, keep_going: bool

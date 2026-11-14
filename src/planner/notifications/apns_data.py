@@ -7,6 +7,7 @@ from typing import Literal, cast
 from uuid import uuid4
 
 from planner.core.contracts import OWNER_PRINCIPAL_ID
+from planner.notifications.attention import TASK_ALERT_IS_CURRENT
 from planner.notifications.config import (
     APNS_BATCH_SIZE,
     APNS_DELIVERY_TTL_SECONDS,
@@ -97,6 +98,7 @@ def pending_deliveries(conn: sqlite3.Connection, now: int) -> tuple[PendingAPNsD
         "(SELECT 1 FROM tickets WHERE id=d.subject_id)) OR "
         "(d.subject_kind='manager' AND EXISTS (SELECT 1 FROM managers WHERE id=d.subject_id)) OR "
         "(d.subject_kind='agent' AND EXISTS (SELECT 1 FROM agents WHERE agent_key=d.subject_id))) "
+        f"AND {TASK_ALERT_IS_CURRENT} "
         "ORDER BY d.next_attempt_at,d.device_id LIMIT ?",
         (now, APNS_BATCH_SIZE),
     ).fetchall()

@@ -299,6 +299,8 @@ def list_ticket_summaries(
             continue
         if status in excluded_statuses:
             continue
+        if filters.active and (row["terminal"] or row["is_backlogged"]):
+            continue
         if row["broken"]:
             broken = _broken(conn, str(row["id"]))
             assert broken is not None

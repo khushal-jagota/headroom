@@ -182,7 +182,7 @@ def test_linux_executor_upgrade_preserves_credential_after_merged_home_head(tmp_
         )
         conn.commit()
         create_schema(conn)
-        assert _revision(conn) == "linux_executor_platform"
+        assert _revision(conn) == shipped_migration_head()
         assert tuple(conn.execute(
             "SELECT credential_sha256,platform FROM machine_executor_credentials "
             "WHERE machine_id=?",

@@ -2,6 +2,8 @@
 
 from typing import Any, cast
 
+import pytest
+
 from planner.conversation.usage.usagePricing import (
     cacheSavingsUsd,
     createOverrideRateTable,
@@ -130,3 +132,42 @@ def test_leaves_an_ambiguous_bare_name_unpriced() -> None:
         == 3
     )
     assert lookupRate(table, "example-model") is None
+
+
+def test_selects_long_context_rates_per_prompt_and_keeps_override_precedence() -> None:
+    table = parseRateTable(
+        {
+            "model": {
+                "input_cost_per_token": 2e-6,
+                "output_cost_per_token": 10e-6,
+                "cache_read_input_token_cost": 0.2e-6,
+                "input_cost_per_token_above_272k_tokens": 4e-6,
+                "output_cost_per_token_above_272k_tokens": 15e-6,
+                "cache_read_input_token_cost_above_272k_tokens": 0.4e-6,
+            }
+        }
+    )
+    for cached, inputRate, outputRate, cacheRate in (
+        (271_999, 2e-6, 10e-6, 0.2e-6),
+        (272_000, 4e-6, 15e-6, 0.4e-6),
+    ):
+        totals = dict(
+            uncachedInputTokens=1,
+            cachedInputTokens=cached,
+            cacheCreationTokens=0,
+            outputTokens=999_999,
+            reasoningTokens=999_999,
+        )
+        assert priceUsage(table, "model", totals, None)["costUsd"] == pytest.approx(
+            inputRate + cached * cacheRate + 999_999 * outputRate
+        )
+        assert cacheSavingsUsd(table, "model", totals) == pytest.approx(
+            cached * (inputRate - cacheRate)
+        )
+        assert priceUsage(table, "model", totals, 17)["costUsd"] == 17
+        overrides = createOverrideRateTable(
+            {"model": dict(inputCostPerMillionTokens=1, outputCostPerMillionTokens=1)}
+        )
+        assert priceUsage(table, "model", totals, 17, overrides)["costUsd"] == pytest.approx(
+            (1 + cached + 999_999) * 1e-6
+        )

@@ -4,6 +4,8 @@ import json
 from typing import Any
 
 from planner.conversation.usage.usageScanCache import (
+    INVALID,
+    decodeCodexState,
     decodeScanCache,
     dedupeWithinFile,
     encodeScanCache,
@@ -58,7 +60,14 @@ def test_restores_records_unchanged() -> None:
     """restores records unchanged"""
     original = cacheWith(
         [
-            ("/a.jsonl", 100, [record(), record(dedupeKey="msg_2:", model="claude-opus-5")]),
+            (
+                "/a.jsonl",
+                100,
+                [
+                    record(),
+                    record(dedupeKey="msg_2:", model="claude-opus-5", cacheCreation1hTokens=7),
+                ],
+            ),
             ("/b.jsonl", 200, [record(sessionId="session-b", reportedCostUsd=1.5)]),
         ]
     )
@@ -84,6 +93,11 @@ def test_restores_records_unchanged() -> None:
                 sawSessionMeta=True,
                 suppressingForkCopies=False,
                 forkCopyAnchorMs=0,
+                serviceTier=None,
+                compactions={},
+                compactionMarkers={},
+                completedCompactions=[],
+                cumulativeUsage=None,
             )
         ),
     )
@@ -98,6 +112,15 @@ def test_drops_an_entry_whose_persisted_parse_state_is_corrupt() -> None:
     encoded = encodeScanCache(cacheWith([("/a.jsonl", 100, [record()])]))
     encoded["files"]["/a.jsonl"]["cs"] = dict(model=42)
     assert "/a.jsonl" not in decodeScanCache(roundtrip(encoded))
+    from planner.conversation.usage.usageTranscripts import initialCodexScanState
+
+    for key, bad in (("serviceTier", 1), ("cumulativeUsage", []), ("compactions", {"id": {}})):
+        state = initialCodexScanState()
+        state[key] = bad
+        assert decodeCodexState(state) is INVALID
+    encoded = encodeScanCache(cacheWith([("/a.jsonl", 100, [record()])]))
+    encoded["files"]["/a.jsonl"]["r"][0][11] = {"provider": "codex"}
+    assert decodeScanCache(roundtrip(encoded)) == {}
 
 
 def test_drops_an_entry_whose_guard_length_is_outside_the_supported_range() -> None:
@@ -110,7 +133,7 @@ def test_drops_an_entry_whose_guard_length_is_outside_the_supported_range() -> N
 def test_rejects_a_document_from_the_previous_cache_version() -> None:
     """rejects a document from the previous cache version"""
     encoded = encodeScanCache(cacheWith([("/a.jsonl", 100, [record()])]))
-    encoded["version"] = 2
+    encoded["version"] = 4
     assert len(decodeScanCache(roundtrip(encoded))) == 0
 
 

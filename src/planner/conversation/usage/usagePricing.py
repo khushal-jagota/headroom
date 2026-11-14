@@ -10,6 +10,13 @@ from typing import Any
 from .usageTranscripts import finiteNumber
 
 RateTable = dict[str, dict[str, float]]
+LONG_CONTEXT_THRESHOLD = 272_000
+LONG_CONTEXT_RATE_KEYS = {
+    "inputCostPerToken": "input_cost_per_token_above_272k_tokens",
+    "outputCostPerToken": "output_cost_per_token_above_272k_tokens",
+    "cacheReadCostPerToken": "cache_read_input_token_cost_above_272k_tokens",
+    "cacheCreationCostPerToken": "cache_creation_input_token_cost_above_272k_tokens",
+}
 UNPRICEABLE_MODELS = {"<synthetic>", "synthetic", "opus", "sonnet", "haiku", "fable"}
 
 
@@ -59,6 +66,13 @@ def parseRateTable(document: Any) -> RateTable:
             if finiteNumber(raw.get("cache_creation_input_token_cost"))
             else inputRate,
         )
+        for rateKey, sourceKey in LONG_CONTEXT_RATE_KEYS.items():
+            if finiteNumber(raw.get(sourceKey)):
+                table[key][rateKey + "Above272k"] = raw[sourceKey]
+        if finiteNumber(raw.get("cache_creation_input_token_cost_above_1hr")):
+            table[key]["cacheCreation1hCostPerToken"] = raw[
+                "cache_creation_input_token_cost_above_1hr"
+            ]
     aliasCandidates: dict[str, dict[str, float] | None] = {}
     for key, rate in table.items():
         alias = bareModelName(key)
@@ -94,23 +108,51 @@ def lookupRate(table: RateTable, model: str) -> dict[str, float] | None:
     return table.get(key)
 
 
+def selectRecordRate(
+    table: RateTable, model: str, totals: dict[str, Any], overrides: RateTable | None
+) -> dict[str, float] | None:
+    override = (overrides or {}).get(model.strip())
+    if override is not None:
+        return override
+    rate = lookupRate(table, model)
+    if rate is None:
+        return None
+    promptTokens = (
+        totals["uncachedInputTokens"] + totals["cachedInputTokens"] + totals["cacheCreationTokens"]
+    )
+    if promptTokens <= LONG_CONTEXT_THRESHOLD:
+        return rate
+    return {
+        **rate,
+        **{
+            key: rate[key + "Above272k"]
+            for key in LONG_CONTEXT_RATE_KEYS
+            if key + "Above272k" in rate
+        },
+    }
+
+
 def priceUsage(
     table: RateTable,
     model: str,
     totals: dict[str, Any],
     reportedCostUsd: float | None,
     overrides: RateTable | None = None,
+    cacheCreation1hTokens: int = 0,
 ) -> dict[str, Any]:
     override = (overrides or {}).get(model.strip())
     if override is None and reportedCostUsd is not None and finiteNumber(reportedCostUsd):
         return dict(costUsd=reportedCostUsd, costSource="providerReported")
-    rate = override if override is not None else lookupRate(table, model)
+    rate = selectRecordRate(table, model, totals, overrides)
     if rate is None:
         return dict(costUsd=0, costSource="unpriced")
+    oneHourTokens = min(totals["cacheCreationTokens"], max(0, cacheCreation1hTokens))
+    oneHourRate = rate.get("cacheCreation1hCostPerToken", rate["cacheCreationCostPerToken"])
     costUsd = (
         totals["uncachedInputTokens"] * rate["inputCostPerToken"]
         + totals["cachedInputTokens"] * rate["cacheReadCostPerToken"]
-        + totals["cacheCreationTokens"] * rate["cacheCreationCostPerToken"]
+        + (totals["cacheCreationTokens"] - oneHourTokens) * rate["cacheCreationCostPerToken"]
+        + oneHourTokens * oneHourRate
         + totals["outputTokens"] * rate["outputCostPerToken"]
     )
     return dict(costUsd=costUsd, costSource="modelPriced")
@@ -119,7 +161,7 @@ def priceUsage(
 def cacheSavingsUsd(
     table: RateTable, model: str, totals: dict[str, Any], overrides: RateTable | None = None
 ) -> float:
-    rate = (overrides or {}).get(model.strip()) or lookupRate(table, model)
+    rate = selectRecordRate(table, model, totals, overrides)
     if rate is None:
         return 0
     return float(

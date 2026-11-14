@@ -21,6 +21,12 @@ from planner.measure_sources.contracts import FailureNoticeIdentity
 from planner.measure_sources.notices import notice_is_current
 from planner.tickets.logic.proposal_routing import parked_destination, route_to_holder
 
+# Deferred proposals remain open, but do not take a delivery slot from other notices.
+_PROPOSAL_IS_NOT_BACKLOGGED = (
+    "NOT (w.source_kind='proposal' AND EXISTS "
+    "(SELECT 1 FROM tickets t WHERE t.id=w.ticket_id AND t.is_backlogged=1))"
+)
+
 
 def create_wake(
     conn: sqlite3.Connection,
@@ -319,7 +325,14 @@ def admit_notice_batch(
         for row in rows
         if row["source_kind"] == "proposal" and (value := _obsolete_proposal(conn, row)) is not None
     )
-    if obsolete or stale_sources:
+    paused = any(
+        row["source_kind"] == "proposal"
+        and conn.execute(
+            "SELECT 1 FROM tickets WHERE id=? AND is_backlogged=1", (row["ticket_id"],)
+        ).fetchone() is not None
+        for row in rows
+    )
+    if obsolete or stale_sources or paused:
         for row in stale_sources:
             conn.execute("UPDATE manager_wakes SET closed_at=? WHERE id=?", (now, row["id"]))
         for value in obsolete:
@@ -327,6 +340,10 @@ def admit_notice_batch(
         reasons = {value.reason.value for value in obsolete}
         if stale_sources:
             reasons.add("source_failure_changed")
+        if paused:
+            # Discard this immutable message, not its source. Resume can batch the
+            # same still-current proposal again without replaying delivered history.
+            reasons.add("ticket_backlogged")
         reason = ",".join(sorted(reasons))
         conn.execute(
             "UPDATE manager_wake_batches SET status='discarded',updated_at=? WHERE id=?",
@@ -374,7 +391,7 @@ def claim_next_batch(conn: sqlite3.Connection, *, process_token: str, now: int) 
         _retire_obsolete_source_notices(conn, now=now)
         target = conn.execute(
             "SELECT w.target_kind,w.target_id FROM manager_wakes w "
-            "WHERE w.closed_at IS NULL AND NOT EXISTS ("
+            f"WHERE w.closed_at IS NULL AND {_PROPOSAL_IS_NOT_BACKLOGGED} AND NOT EXISTS ("
             "SELECT 1 FROM manager_wake_batch_members m "
             "JOIN manager_wake_batches b ON b.id=m.batch_id "
             "WHERE m.wake_id=w.id "
@@ -395,7 +412,7 @@ def claim_next_batch(conn: sqlite3.Connection, *, process_token: str, now: int) 
         rows = conn.execute(
             "SELECT w.id,w.summary FROM manager_wakes w "
             "WHERE w.target_kind=? AND w.target_id=? "
-            "AND w.closed_at IS NULL AND NOT EXISTS ("
+            f"AND w.closed_at IS NULL AND {_PROPOSAL_IS_NOT_BACKLOGGED} AND NOT EXISTS ("
             "SELECT 1 FROM manager_wake_batch_members m "
             "JOIN manager_wake_batches b ON b.id=m.batch_id "
             "WHERE m.wake_id=w.id "
