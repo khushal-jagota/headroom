@@ -1,4 +1,5 @@
 /** Shared owner-send intake and delivery envelopes from conversation/api.py. */
+import { is_record as object } from '../core/records.ts';
 import type { FastifyReply } from 'fastify';
 import { HttpError } from '../core/http/errors.ts';
 import type { VideoSendAdmission } from './video_send_admission.ts';
@@ -60,8 +61,6 @@ interface ValidationIssue {
   input: unknown;
   ctx?: unknown;
 }
-const object = (value: unknown): value is Record<string, unknown> =>
-  value !== null && typeof value === 'object' && !Array.isArray(value);
 export function parse_owner_send_body(
   raw: unknown,
   reply: FastifyReply,

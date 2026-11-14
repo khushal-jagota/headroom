@@ -1,4 +1,5 @@
 import { PlannerError } from '../core/contracts.ts';
+import { is_record as record } from '../core/records.ts';
 import type { ReadSql, TransactionSql } from '../core/database/contracts.ts';
 import type {
   FieldDefinition,
@@ -12,8 +13,6 @@ import { validate_definition, validate_workflow } from './registry.ts';
 const fail = (message: string, detail: Record<string, unknown> = {}): never => {
   throw new PlannerError('validation', message, detail);
 };
-const record = (value: unknown): value is Record<string, unknown> =>
-  typeof value === 'object' && value !== null && !Array.isArray(value);
 function exact(value: unknown, keys: readonly string[], what: string): Record<string, unknown> {
   if (!record(value) || Object.keys(value).sort().join('\0') !== [...keys].sort().join('\0'))
     return fail(`stored worker type has a malformed ${what}`, {

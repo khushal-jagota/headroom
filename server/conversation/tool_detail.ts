@@ -1,8 +1,6 @@
 /** Readable tool output shared by public conversation reads. */
+import { is_record as object } from '../core/records.ts';
 import type { ConversationBackendKey } from './contracts.ts';
-function object(value: unknown): value is Record<string, unknown> {
-  return value !== null && typeof value === 'object' && !Array.isArray(value);
-}
 function legacy_image_block(value: unknown): boolean {
   if (
     !object(value) ||

@@ -1,0 +1,86 @@
+name: TypeScript production smoke
+
+on:
+  push:
+    branches: [feature/typescript-backend]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  production-smoke:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '22'
+      - name: Build and smoke the production server with a private populated fixture
+        shell: bash
+        run: |
+          env -i PATH="$PATH" LANG=C.UTF-8 LC_ALL=C.UTF-8 \
+            GITHUB_ACTIONS=true GITHUB_WORKSPACE="$GITHUB_WORKSPACE" \
+            SMOKE_PARENT="$RUNNER_TEMP/typescript-production-smoke" \
+            SMOKE_ROOT="$RUNNER_TEMP/typescript-production-smoke/state" \
+            HOME="$RUNNER_TEMP/typescript-production-smoke/bootstrap/home" \
+            CODEX_HOME="$RUNNER_TEMP/typescript-production-smoke/bootstrap/home/.codex" \
+            CLAUDE_CONFIG_DIR="$RUNNER_TEMP/typescript-production-smoke/bootstrap/home/.claude" \
+            HERMES_HOME="$RUNNER_TEMP/typescript-production-smoke/bootstrap/home/.hermes" \
+            PLAN_HERMES_HOME="$RUNNER_TEMP/typescript-production-smoke/bootstrap/home/.hermes" \
+            XDG_CONFIG_HOME="$RUNNER_TEMP/typescript-production-smoke/bootstrap/config" \
+            XDG_CACHE_HOME="$RUNNER_TEMP/typescript-production-smoke/bootstrap/home/.cache" \
+            XDG_DATA_HOME="$RUNNER_TEMP/typescript-production-smoke/bootstrap/data" \
+            XDG_STATE_HOME="$RUNNER_TEMP/typescript-production-smoke/bootstrap/state" \
+            XDG_RUNTIME_DIR="$RUNNER_TEMP/typescript-production-smoke/bootstrap/run" \
+            TMPDIR="$RUNNER_TEMP/typescript-production-smoke" \
+            TMP="$RUNNER_TEMP/typescript-production-smoke" \
+            TEMP="$RUNNER_TEMP/typescript-production-smoke" \
+            PIP_CONFIG_FILE=/dev/null \
+            npm_config_cache="$RUNNER_TEMP/typescript-production-smoke/bootstrap/home/.npm" \
+            PLAN_CONFIG_PATH="$RUNNER_TEMP/typescript-production-smoke/bootstrap/config.yaml" \
+            PLAN_DB_PATH="$RUNNER_TEMP/typescript-production-smoke/bootstrap/data/bootstrap.db" \
+            PLAN_APP_ROOT="$GITHUB_WORKSPACE" \
+            PLAN_WORKSPACE_ROOT="$RUNNER_TEMP/typescript-production-smoke/bootstrap/workspace" \
+            PLAN_LOGS_DIR="$RUNNER_TEMP/typescript-production-smoke/bootstrap/logs" \
+            PLAN_BACKUP_DIR="$RUNNER_TEMP/typescript-production-smoke/bootstrap/backups" \
+            PLAN_CREDENTIAL_KEY_PATH="$RUNNER_TEMP/typescript-production-smoke/bootstrap/data/key" \
+            PLAN_DISPATCHER_LOCK_PATH="$RUNNER_TEMP/typescript-production-smoke/bootstrap/run/dispatcher.lock" \
+            PLAN_SERVER_CONTROL_SOCKET="$RUNNER_TEMP/typescript-production-smoke/bootstrap/run/control.sock" \
+            PLAN_SERVER_LIFECYCLE_LEASE_PATH="$RUNNER_TEMP/typescript-production-smoke/bootstrap/run/lifecycle.lock" \
+            PLAN_SERVER_URL=http://127.0.0.1:0 PLAN_PORT=0 \
+            PLAN_TEST_MODE=1 PLAN_DISPATCH_ENABLED=false \
+            bash --noprofile --norc -euo pipefail <<'SMOKE'
+          umask 077
+          mkdir -p "$HOME"/{.codex,.claude,.hermes,.cache,.npm} \
+            "$SMOKE_PARENT/bootstrap"/{config,data,state,run,workspace,logs,backups}
+          exec > >(tee "$SMOKE_PARENT/job.log") 2>&1
+          printf '{}\n' > "$PLAN_CONFIG_PATH"
+          sudo apt-get update
+          sudo apt-get install -y libicu-dev pkg-config build-essential
+          scripts/dev setup
+          scripts/dev npm --prefix web run build
+          .venv/bin/python -m playwright install --with-deps --only-shell chromium
+          # The entry owns seeding and switches its actual server to production mode.
+          mkdir "$SMOKE_ROOT"
+          node server/tools/smoke.ts --app-root "$GITHUB_WORKSPACE" --state-root "$SMOKE_ROOT"
+          SMOKE
+      - name: Preserve private smoke evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: typescript-production-smoke
+          path: |
+            ${{ runner.temp }}/typescript-production-smoke/job.log
+            ${{ runner.temp }}/typescript-production-smoke/state/evidence/
+          if-no-files-found: warn

@@ -1,5 +1,9 @@
 /** Pure conversion of consumed Codex items into Panels values. */
-import { JsonNumber, numeric_kind, numeric_value } from '../../../core/http/numeric_json.ts';
+import {
+  is_json_record as object,
+  numeric_kind,
+  numeric_value,
+} from '../../../core/http/numeric_json.ts';
 import { PlanEntry, PlanEntryStatus, ToolCallStatus } from '../../events.ts';
 import type * as P from './protocol.ts';
 import {
@@ -98,14 +102,6 @@ export function normalized_failure_summary(
   return Array.from(text).length > 240
     ? Array.from(text).slice(0, 239).join('').trimEnd() + '…'
     : text;
-}
-function object(value: unknown): value is Record<string, unknown> {
-  return (
-    value !== null &&
-    typeof value === 'object' &&
-    !Array.isArray(value) &&
-    !(value instanceof JsonNumber)
-  );
 }
 export function error_summary(error: P.TurnError | null): string {
   if (error === null) return normalized_failure_summary(null);

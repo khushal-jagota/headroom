@@ -1,3 +1,4 @@
+import { is_record as object } from '../../core/records.ts';
 import type { ViewRequest, ViewWindowRequest } from '../../../web/src/lib/navigation/contracts.ts';
 import { compact, digest } from './json.ts';
 import { VIEW_CONFIG } from '../views/configuration.ts';
@@ -26,9 +27,6 @@ const groups = [
   'blocked',
   'done',
 ];
-function object(value: unknown): value is Record<string, unknown> {
-  return value !== null && typeof value === 'object' && !Array.isArray(value);
-}
 function fields(value: unknown, names: string[]): value is Record<string, unknown> {
   return object(value) && compact(Object.keys(value).sort()) === compact([...names].sort());
 }

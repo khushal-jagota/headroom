@@ -1,4 +1,5 @@
 /** Native Claude facts enter the unchanged backend event seam here. */
+import { is_record } from '../../../core/records.ts';
 import { python_truth } from '../../../core/python_truth.ts';
 export { python_truth } from '../../../core/python_truth.ts';
 import { ComposerCatalogEntry, ComposerCatalogEntryKind } from '../../contracts.ts';
@@ -10,9 +11,7 @@ import type { TurnInFlight } from './turn.ts';
 import { display_text } from './failure_summary.ts';
 
 export function record(value: unknown): Record<string, unknown> | null {
-  return value !== null && typeof value === 'object' && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : null;
+  return is_record(value) ? value : null;
 }
 function required(fields: Record<string, unknown>, key: string, kind: string): unknown {
   if (!Object.hasOwn(fields, key))
