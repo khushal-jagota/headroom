@@ -1,5 +1,6 @@
 /** Durable notices use the same conversation doors as ordinary messages. */
 import { randomUUID } from 'node:crypto';
+import { automatic_ticket_admitted } from '../runtime/automatic_work.ts';
 import type {
   Database,
   ReadSql,
@@ -32,6 +33,7 @@ import type { WakeBatch } from './contracts.ts';
 
 export const WAKE_SENDER_LABEL = 'Panels';
 export interface WakeWorkspaceContext {
+  automatic_tickets_created_after?: number;
   db_path: string;
   workspace_root: string | null;
 }
@@ -142,8 +144,10 @@ function target_admitted(
   database: Database,
   sql: ReadSql,
   target: import('../core/contracts.ts').Principal,
+  created_after?: number,
 ): boolean {
   if (target.kind !== 'ticket') return true;
+  if (!automatic_ticket_admitted(sql, target.id!, created_after)) return false;
   let ticket;
   try {
     ticket = read_ticket(sql, target.id!);
@@ -195,7 +199,17 @@ async function admitted_deliver_batch(
       conversation_start.configured_ticket_execution_refusal(database, sql, ticket),
   });
   const target = batch.target;
-  if (!database.read((sql) => target_admitted(database, sql, target))) return false;
+  if (
+    !database.read((sql) =>
+      target_admitted(
+        database,
+        sql,
+        target,
+        options.workspace_context.automatic_tickets_created_after,
+      ),
+    )
+  )
+    return false;
   let agent_key: string | null;
   let required_manager_id: string | null = null;
   let resolved: ReturnType<typeof conversation_start.agent_resolve>;
@@ -396,8 +410,15 @@ export class ManagerWakeLoop {
     const options = {
       process_token: this.process_token,
       now: clock.nowUnix(),
+      automatic_tickets_created_after:
+        this.options.workspace_context.automatic_tickets_created_after,
       target_admitted: (sql: ReadSql, target: import('../core/contracts.ts').Principal) =>
-        target_admitted(database, sql, target),
+        target_admitted(
+          database,
+          sql,
+          target,
+          this.options.workspace_context.automatic_tickets_created_after,
+        ),
     };
     reconcile_batch_outcomes(database, options);
     database.write((sql) => data.preserve_interrupted_dispatches(sql, options));

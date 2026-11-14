@@ -350,7 +350,11 @@ export function mark_notices_leaving_queue(
 
 export function admit_notice_batch(
   sql: TransactionSql,
-  options: { conversation_id: string; sender_message_id: string | null; now: number },
+  options: {
+    conversation_id: string;
+    sender_message_id: string | null;
+    now: number;
+  },
 ): readonly [boolean, string | null] {
   const batch = sql.get<{ id: number; status: WakeBatchStatus }>(
     'SELECT id,status FROM manager_wake_batches WHERE conversation_id=? AND sender_message_id=?',
@@ -421,30 +425,37 @@ export function claim_next_batch(
   options: {
     process_token: string;
     now: number;
+    automatic_tickets_created_after?: number;
     target_admitted?: (sql: ReadSql, target: Principal) => boolean;
   },
 ): WakeBatch | null {
   retire_obsolete_unsent_proposals(sql, options.now);
   retire_obsolete_source_notices(sql, options.now);
+  const cutoff = options.automatic_tickets_created_after;
+  const parameters = cutoff === undefined ? [options.now - 5] : [options.now - 5, cutoff];
   const available = `w.closed_at IS NULL AND NOT EXISTS (
     SELECT 1 FROM manager_wake_batch_members m JOIN manager_wake_batches b ON b.id=m.batch_id
     WHERE m.wake_id=w.id AND b.status IN ('pending','offering','dispatching','accepted','uncertain'))
     AND NOT EXISTS (SELECT 1 FROM manager_wake_batch_members recent_m
     JOIN manager_wake_batches recent_b ON recent_b.id=recent_m.batch_id
-    WHERE recent_m.wake_id=w.id AND recent_b.status IN ('refused','discarded') AND recent_b.updated_at > ?)`;
+    WHERE recent_m.wake_id=w.id AND recent_b.status IN ('refused','discarded') AND recent_b.updated_at > ?)${
+      cutoff === undefined
+        ? ''
+        : ' AND EXISTS (SELECT 1 FROM tickets source_ticket WHERE source_ticket.id=w.ticket_id AND source_ticket.created_at>=?)'
+    }`;
   type Target = { target_kind: Principal['kind']; target_id: string };
   const target =
     options.target_admitted === undefined
       ? sql.get<Target>(
           `SELECT w.target_kind,w.target_id FROM manager_wakes w WHERE ${available}
      ORDER BY w.created_at,w.id LIMIT 1`,
-          [options.now - 5],
+          parameters,
         )
       : sql
           .all<Target>(
             `SELECT w.target_kind,w.target_id FROM manager_wakes w WHERE ${available}
      ORDER BY w.created_at,w.id`,
-            [options.now - 5],
+            parameters,
           )
           .find((candidate) =>
             options.target_admitted!(sql, { kind: candidate.target_kind, id: candidate.target_id }),
@@ -453,7 +464,7 @@ export function claim_next_batch(
   const rows = sql.all<Pick<WakeRow, 'id' | 'summary'>>(
     `SELECT w.id,w.summary FROM manager_wakes w
      WHERE w.target_kind=? AND w.target_id=? AND ${available} ORDER BY w.created_at,w.id`,
-    [target.target_kind, target.target_id, options.now - 5],
+    [target.target_kind, target.target_id, ...parameters],
   );
   const id = Number(
     sql.run(

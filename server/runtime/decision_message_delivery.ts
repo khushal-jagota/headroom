@@ -1,5 +1,6 @@
 /** Deliver immutable Ticket decisions through the ordinary conversation door. */
 import type { Database } from '../core/database/contracts.ts';
+import { automatic_ticket_admitted } from './automatic_work.ts';
 import {
   require_conversation_backend_key,
   PromptDeliveryStarted,
@@ -28,10 +29,17 @@ export async function deliver_ticket_decision_messages(
     worker_type_registry: WorkerTypeRegistry;
     now: () => number;
     signal?: AbortSignal;
+    automatic_tickets_created_after?: number;
   },
 ): Promise<PromptDeliveryFate | null> {
   let last_fate: PromptDeliveryFate | null = null;
   const database = options.connect_database();
+  if (
+    !database.read((sql) =>
+      automatic_ticket_admitted(sql, ticket_id, options.automatic_tickets_created_after),
+    )
+  )
+    return null;
   return start.conversation_link_lock(`ticket:${ticket_id}`).run(async () => {
     let ticket = database.read((sql) => tickets.read_ticket(sql, ticket_id));
     const admitted = database.read(

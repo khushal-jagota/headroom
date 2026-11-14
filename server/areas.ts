@@ -256,10 +256,11 @@ export function composeAreaLoops(context: OwnedAreaContext, options: AreaLoopOpt
       workspace_context: {
         db_path: context.config.db_path,
         workspace_root: context.config.workspace_root,
+        automatic_tickets_created_after: context.config.automatic_tickets_created_after,
       },
     });
   }
-  if (options.measureSources) {
+  if (options.measureSources && context.config.automatic_tickets_created_after === undefined) {
     context.assert_database_owned();
     sources = new SourceScheduleLoop({
       database: context.database,

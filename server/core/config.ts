@@ -43,6 +43,7 @@ export const EXTERNAL_RUNTIME_ENVIRONMENT_KEYS: ReadonlySet<string> = new Set([
   'PLAN_BOUNDARY_HOUR',
   'PLAN_TICK_SECONDS',
   'PLAN_DISPATCH_ENABLED',
+  'PLAN_AUTOMATIC_TICKETS_CREATED_AFTER',
   'PLAN_NOTIFICATIONS_ENABLED',
   'PLAN_WORKER_UNIT_PREFIX',
   'PLAN_WORKER_READ_ONLY_PATHS',
@@ -77,6 +78,7 @@ export interface Config {
   port: number;
   tick_seconds: number;
   dispatch_enabled: boolean;
+  automatic_tickets_created_after?: number;
   notifications_enabled?: boolean;
   dispatcher_lock_path: string;
   logs_dir: string;
@@ -358,6 +360,17 @@ export function loadConfig(
   if (executor_id && !/^[A-Za-z0-9_.:-]{1,128}$/.test(executor_id))
     throw new PlannerError('validation', 'executor_id must name a logical executor');
   const db_path = text('db_path', 'PLAN_DB_PATH', 'data/planning.db');
+  const automatic_cutoff = optional(
+    'automatic_tickets_created_after',
+    'PLAN_AUTOMATIC_TICKETS_CREATED_AFTER',
+  );
+  const automatic_tickets_created_after =
+    automatic_cutoff === null ? undefined : Number(automatic_cutoff);
+  if (
+    automatic_tickets_created_after !== undefined &&
+    (!Number.isFinite(automatic_tickets_created_after) || automatic_tickets_created_after < 0)
+  )
+    throw new Error('Automatic Ticket creation cutoff must be a nonnegative Unix timestamp');
   const timeout = integer(
     'measure_source_timeout_seconds',
     'PLAN_MEASURE_SOURCE_TIMEOUT_SECONDS',
@@ -371,6 +384,7 @@ export function loadConfig(
   return {
     apns: load_apns_config(env),
     db_path,
+    automatic_tickets_created_after,
     port: integer('port', 'PLAN_PORT', 8767),
     tick_seconds: integer('tick_seconds', 'PLAN_TICK_SECONDS', 60),
     dispatch_enabled: parseConfigBoolean(

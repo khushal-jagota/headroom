@@ -68,6 +68,21 @@ function setup() {
 
 // Python restart ports: the existing sequential HTTP list cannot interleave a
 // Worker proposal or replacement claim with an awaited kill, or race the link lock.
+test('the trial automatically starts only new Tickets without changing copied Tickets', async () => {
+  const { db, options } = setup();
+  const copied = create_ticket(db, { now: now - 1 });
+  const fresh = create_ticket(db, { now });
+  const before = read(db, copied.id);
+  const automatic = { ...options, automatic_tickets_created_after: now };
+  const loop = new WorkerStepReadinessLoop(automatic);
+  expect(loop.poll_once()).toEqual([fresh.id]);
+  await loop.drain();
+  expect(read(db, copied.id)).toEqual(before);
+  expect(read(db, fresh.id).conversation_id).not.toBeNull();
+  expect((await start_ready_worker_step(copied.id, automatic)).started).toBe(false);
+  expect((await start_ready_worker_step(copied.id, options)).started).toBe(true);
+});
+
 test('restart keeps a worker completion that lands during kill', async () => {
   const { db, system, options } = setup();
   const ticket = create(db);
