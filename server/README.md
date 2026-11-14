@@ -202,6 +202,10 @@ Core factories must also bind `on_held_model_change` to `write_held_ticket_confi
 Without a core factory, the server supplies record reads and real publication from durable facts, with no local turn or substitute provider.
 An explicitly selected in-memory instrument remains separate. The idle authority helpers remain for their isolated tests.
 
+`core/start.ts` owns shutdown order. `core/server_services.ts` constructs the record, conversation, environment, background, HTTP, and recovery services.
+Service reservations in `core/service_resources.ts` retain each identity once, including results returned after stop begins.
+The setup flight joins late cleanup before database or lock finalizers can run.
+
 Shutdown seals new request/write admission and stops new connections before any wait.
 It closes event streams immediately. Ordinary admitted responses and media work can finish during the shared grace.
 At grace expiry it logs named pending stages, closes remaining connections, and aborts remaining media work.
