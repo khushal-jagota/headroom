@@ -84,4 +84,5 @@ jobs:
           path: |
             ${{ runner.temp }}/typescript-production-smoke/job.log
             ${{ runner.temp }}/typescript-production-smoke/state/evidence/
+            ${{ runner.temp }}/typescript-production-smoke/state/seed-source/server.log
           if-no-files-found: warn
