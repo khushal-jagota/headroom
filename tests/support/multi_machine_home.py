@@ -381,7 +381,15 @@ class Executor:
         from planner.executor.credential_file import credential_path, write_credential
         from planner.executor.mac_service import MacService
 
-        self.native = ScriptedNativeChild()
+        class CliNativeChild(ScriptedNativeChild):
+            async def start(self, resolved_start: Any, **kwargs: Any) -> None:
+                self.environment = dict(
+                    resolved_start.role_materials.identity_environment_variables
+                )
+                self.environment["PLAN_CONVERSATION_ID"] = resolved_start.conversation_id
+                await super().start(resolved_start, **kwargs)
+
+        self.native = CliNativeChild()
         self.mac = MacService(
             paths=ExecutorPaths(root),
             revision="a" * 40,
@@ -390,6 +398,22 @@ class Executor:
             ssl_context=ssl.create_default_context(cafile=str(proxy.ca_path)),
         )
         write_credential(credential_path(root), grant.credential)
+        self.submitted: dict[str, Any] = {}
+        self.receipted: dict[str, Any] = {}
+        add = self.mac.outbox.add
+        acknowledge = self.mac.outbox.acknowledge
+
+        def observed_add(*args: Any, **kwargs: Any) -> Any:
+            envelope = add(*args, **kwargs)
+            self.submitted[envelope.submission_id] = envelope
+            return envelope
+
+        def observed_acknowledge(receipt: Any) -> None:
+            self.receipted[receipt.submission_id] = receipt
+            acknowledge(receipt)
+
+        self.mac.outbox.add = observed_add  # type: ignore[method-assign]
+        self.mac.outbox.acknowledge = observed_acknowledge  # type: ignore[method-assign]
         observer = ScriptedBackendSnapshots(lambda: self.mac.identity)
         observer.model = "scripted"
         self.mac.catalog.snapshots = observer
@@ -406,6 +430,17 @@ class Executor:
 
         self.mac.client.lease = lease  # type: ignore[method-assign]
         self.task: asyncio.Task[None] | None = None
+
+    async def send_message(self, message: str) -> str:
+        environment = clean_environment(self.mac.paths.root)
+        environment.update(self.native.environment)
+        process = await asyncio.create_subprocess_exec(
+            sys.executable, "-m", "planner", "send-message", "--owner", "--message", message,
+            env=environment, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+        )
+        stdout, stderr = await asyncio.wait_for(process.communicate(), 40)
+        assert process.returncode == 0, (stdout.decode(), stderr.decode())
+        return stdout.decode()
 
     async def __aenter__(self) -> Executor:
         self.task = asyncio.create_task(self.mac.run())
