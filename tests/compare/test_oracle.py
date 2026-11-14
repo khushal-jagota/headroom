@@ -79,6 +79,19 @@ def test_scoped_rule_does_not_cross_payload_boundaries(tmp_path: Path) -> None:
         diagnostics.normalize({"body": {"detail": 1}}, route)
 
 
+def test_stored_json_counts_keep_presence_type_and_empty_state(tmp_path: Path) -> None:
+    normalizer = Normalizer(
+        {"response_counts": {"body.page_character_count": "native JSON"}}, tmp_path
+    )
+    expected = normalizer.normalize({"body": {"page_character_count": 351}})
+    assert expected == normalizer.normalize({"body": {"page_character_count": 347}})
+    assert expected != normalizer.normalize({"body": {"page_character_count": 0}})
+    assert expected != normalizer.normalize({"body": {}})
+    assert normalizer.normalize({"byte_count": 351}) != normalizer.normalize({"byte_count": 347})
+    with pytest.raises(AssertionError):
+        normalizer.normalize({"body": {"page_character_count": True}})
+
+
 def test_known_parent_rows_ignore_physical_insertion_order(tmp_path: Path) -> None:
     import sqlite3
 
