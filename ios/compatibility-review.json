@@ -1,6 +1,6 @@
 {
   "oldest_supported_build": 1,
   "decision": "compatible",
-  "contract_sha256": "ef9b2257df01cf60b045b184a6fb93cd5a1f8de1feabeef63db93a23d965920c",
-  "evidence": "Source review against native build 1 for Codex compaction imports: usage routes, request parameters, contractVersion 5, bucket token fields, numeric costUsd, and costSource values remain unchanged. RecordedUsageSummary in ios/Panels/Features/More/Usage/UsageModels.swift decodes the same aggregate fields. Response IDs, pending matches, service tiers, and overlap markers stay internal to transcript records and the private scan cache. The 85 usage tests pass. An isolated built-browser proof checks the actual summary API with corrected compaction totals. No signed-device, TestFlight, or native reconnect checks ran. The minimum build remains 1."
+  "contract_sha256": "1af8a884dab67bbf9f3c7be5f98d4ee0c41d4b5d2a33765e984de3d19e0a3767",
+  "evidence": "Source review against native build 1 for removal of ticket help requests: no native source calls the removed route or CLI operation. Changes remove only Worker CLI, help-route authority, and executor help dispatch paths. Ordinary message delivery, conversation routes, response shapes, build gate, and native models remain unchanged. All 34 focused CLI, supervisor authority, and executor message tests pass with temporary state. No signed-device, TestFlight, or native reconnect checks ran. The minimum build remains 1."
 }
