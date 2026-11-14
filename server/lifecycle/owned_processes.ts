@@ -16,6 +16,7 @@ import type {
 } from './contracts.ts';
 import { observe_promise } from '../core/promise_observer.ts';
 import { CONTROL_TIMEOUT_SECONDS } from '../conversation/worker_unit/configuration.ts';
+import { worker_unit_prefix } from '../core/config.ts';
 
 /** Native exit and stream closure are separate facts. Never signal a retired PID. */
 export class ChildLifetime {
@@ -90,6 +91,7 @@ interface UnitRegistration {
 }
 /** Actual native lifetimes belong to the invocation, independently of adapter outcomes. */
 export class ChildProcesses implements OwnedChildProcesses {
+  readonly #worker_unit_prefix = worker_unit_prefix();
   readonly #children = new Set<ChildRegistration>();
   readonly #units = new Map<OwnedWorkerUnit, UnitRegistration>();
   readonly #failures: unknown[] = [];
@@ -151,7 +153,10 @@ export class ChildProcesses implements OwnedChildProcesses {
     return child;
   }
   retain_worker_unit(unit: OwnedWorkerUnit): OwnedUnitControl {
-    if (!/^panels-worker-[a-f0-9]{32}\.service$/.test(unit.name))
+    if (
+      !unit.name.startsWith(this.#worker_unit_prefix) ||
+      !/^[a-f0-9]{32}\.service$/.test(unit.name.slice(this.#worker_unit_prefix.length))
+    )
       throw new Error('Invalid owned worker unit identity');
     if (this.#forcing) throw new Error('Worker unit admission is closed at hard shutdown');
     if (this.#sealed) throw new Error('Worker unit admission is closed at shutdown');

@@ -84,6 +84,26 @@ afterEach(() => {
 
 const linux = describe.skipIf(process.platform !== 'linux');
 linux('Worker containment policy, with no service-manager connection', () => {
+  it('isolates trial services and cleanup from live Worker names', async () => {
+    vi.stubEnv('PLAN_WORKER_UNIT_PREFIX', 'panels-trial-');
+    vi.stubEnv('PLAN_WORKER_READ_ONLY_PATHS', '/synthetic-live');
+    fake.control.mockResolvedValue([0, 'LoadState=loaded\nCPUWeight=10']);
+    const owner = new ChildProcesses();
+    const unit = await WorkerUnit.create({ PLAN_TICKET_ID: 'trial' }, fake.home, {
+      child_processes: owner,
+    });
+    expect(unit!.name).toMatch(/^panels-trial-[0-9a-f]{32}\.service$/);
+    expect(unit!.argv(['/bin/true'])).toContain('--slice=panels-trial-workers.slice');
+    expect(unit!.argv(['/bin/true'])).toContain('--property=ReadOnlyPaths=/synthetic-live');
+    expect(() =>
+      owner.retain_worker_unit({
+        name: 'panels-worker-' + 'a'.repeat(32) + '.service',
+        finished: Promise.resolve(),
+      }),
+    ).toThrow('Invalid owned worker unit identity');
+    await unit!.stop();
+  });
+
   it('does not take inherited Worker identity as role identity', async () => {
     vi.stubEnv('PLAN_TICKET_ID', 'inherited-worker');
     expect(

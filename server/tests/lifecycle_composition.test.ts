@@ -188,6 +188,25 @@ test('startup integrity notice preserves cancellation from the ordinary send doo
   expect(logged).not.toHaveBeenCalled();
 });
 
+test('explicit notifications run with automatic work disabled', async () => {
+  const { context } = setup();
+  context.config = loadConfig('/missing-trial-config', {
+    PLAN_DISPATCH_ENABLED: 'false',
+    PLAN_NOTIFICATIONS_ENABLED: 'true',
+  });
+  const start = vi.fn(),
+    workers = vi.spyOn(WorkerStepReadinessLoop.prototype, 'start');
+  const service = compose_background_services(context, {
+    dispatcher_owned: true,
+    enable_worker_readiness: true,
+    notificationDelivery: () => ({ start, close() {}, settled: async () => {} }),
+  });
+  await service.start();
+  expect(start).toHaveBeenCalledOnce();
+  expect(workers).not.toHaveBeenCalled();
+  await service.close({ deadline: performance.now() / 1000 + 1 });
+});
+
 test('one dispatcher owner admits dispatch loops while the explicit checker is independent', async () => {
   const { context, database, path } = setup();
   const owner = acquireLock(context.config.dispatcher_lock_path);

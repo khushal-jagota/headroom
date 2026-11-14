@@ -1,7 +1,7 @@
 import type { APNsConfig } from '../notifications/contracts.ts';
 import { load_apns_config } from '../notifications/config.ts';
 import { readFileSync, existsSync, realpathSync, statSync } from 'node:fs';
-import { isAbsolute, dirname, join } from 'node:path';
+import { isAbsolute, dirname, join, delimiter } from 'node:path';
 import { homedir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { parse } from 'yaml';
@@ -12,6 +12,19 @@ export const SSE_HEARTBEAT_MS = 15000;
 export const DB_BUSY_TIMEOUT_MS = 5000;
 export { SHUTDOWN_GRACE_SECONDS } from '../lifecycle/configuration.ts';
 export const MAX_CONVERSATION_SEND_REQUEST_BYTES = 20 * 1024 * 1024;
+/** Separate installations own separate Worker service and slice names. */
+export function worker_unit_prefix(env: Readonly<NodeJS.ProcessEnv> = process.env): string {
+  const prefix = env.PLAN_WORKER_UNIT_PREFIX ?? 'panels-worker-';
+  if (!/^panels-(?:[a-z0-9]+-)+(?![\s\S])/.test(prefix))
+    throw new Error('Invalid Worker unit prefix');
+  return prefix;
+}
+export function worker_read_only_paths(env: Readonly<NodeJS.ProcessEnv> = process.env): string[] {
+  const paths = env.PLAN_WORKER_READ_ONLY_PATHS?.split(delimiter) ?? [];
+  if (paths.some((path) => !isAbsolute(path) || /[\0\r\n]/.test(path)))
+    throw new Error('Worker read-only paths must be absolute paths');
+  return paths;
+}
 /** Only these explicit host inputs cross the installed application launcher boundary. */
 export const EXTERNAL_RUNTIME_ENVIRONMENT_KEYS: ReadonlySet<string> = new Set([
   'HOME',
@@ -30,6 +43,9 @@ export const EXTERNAL_RUNTIME_ENVIRONMENT_KEYS: ReadonlySet<string> = new Set([
   'PLAN_BOUNDARY_HOUR',
   'PLAN_TICK_SECONDS',
   'PLAN_DISPATCH_ENABLED',
+  'PLAN_NOTIFICATIONS_ENABLED',
+  'PLAN_WORKER_UNIT_PREFIX',
+  'PLAN_WORKER_READ_ONLY_PATHS',
   'PLAN_DISPATCHER_LOCK_PATH',
   'PLAN_LOGS_DIR',
   'PLAN_BACKUP_DIR',
@@ -61,6 +77,7 @@ export interface Config {
   port: number;
   tick_seconds: number;
   dispatch_enabled: boolean;
+  notifications_enabled?: boolean;
   dispatcher_lock_path: string;
   logs_dir: string;
   backup_dir: string;
@@ -360,6 +377,13 @@ export function loadConfig(
       raw('dispatch_enabled', 'PLAN_DISPATCH_ENABLED', true),
       'dispatch_enabled',
     ),
+    notifications_enabled:
+      raw('notifications_enabled', 'PLAN_NOTIFICATIONS_ENABLED') == null
+        ? undefined
+        : parseConfigBoolean(
+            raw('notifications_enabled', 'PLAN_NOTIFICATIONS_ENABLED'),
+            'notifications_enabled',
+          ),
     dispatcher_lock_path: text(
       'dispatcher_lock_path',
       'PLAN_DISPATCHER_LOCK_PATH',
