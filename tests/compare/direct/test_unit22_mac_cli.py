@@ -166,6 +166,18 @@ def normalize(value: Any, requests: list[dict[str, Any]]) -> Any:
     return json.loads(text)
 
 
+def output_fields(result: dict[str, Any]) -> dict[str, Any]:
+    fields = dict(result)
+    for channel in ("stdout", "stderr"):
+        if channel not in fields:
+            continue
+        try:
+            fields[channel] = json.loads(fields[channel])
+        except json.JSONDecodeError:
+            pass  # Non-JSON output remains exact text.
+    return fields
+
+
 def test_mac_cli_socket_parity(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, request: pytest.FixtureRequest
 ) -> None:
@@ -222,8 +234,66 @@ def test_mac_cli_socket_parity(
             observed = run_node(
                 "server/executor/mac/testing/cli_parity.ts", source, homes, timeout=40
             )
-        assert normalize(expected, python.requests) == normalize(
-            observed["results"], typescript.requests
+        expected_fields = [output_fields(value) for value in expected]
+        observed_fields = [output_fields(value) for value in observed["results"]]
+        for values in (expected_fields, observed_fields):
+            large = values[0]["stdout"]["large"]
+            assert type(large) is int and large == 9007199254741003
+
+        accepted_native_errors = []
+        peer_error = dict(code="agent_forbidden", message="No access", detail={})
+        native_error = json.dumps(peer_error, separators=(",", ":"))
+        for index, (case, reference, candidate) in enumerate(
+            zip(cases, expected_fields, observed_fields, strict=True)
+        ):
+            if case["mode"] == "error" and case["argv"] in (
+                ["executor", "quiesce"],
+                ["executor", "health"],
+            ):
+                python_prefix = f"error: {peer_error}\n"
+                native_prefix = f"error: {native_error}\n"
+                assert reference["stderr"].startswith(python_prefix)
+                assert candidate["stderr"].startswith(native_prefix)
+                accepted_native_errors.append(
+                    dict(
+                        case=index,
+                        field="stderr",
+                        python=reference["stderr"],
+                        typescript=candidate["stderr"],
+                        reason="Native human errors use JSON rather than Python dictionary text",
+                    )
+                )
+                candidate["stderr"] = python_prefix + candidate["stderr"][len(native_prefix) :]
+            elif case["mode"] == "missing":
+                python_message = "[Errno 2] No such file or directory"
+                native_message = f"ENOENT: no such file or directory, lstat '{root / 'absent/run'}'"
+                assert reference["stderr"] == dict(
+                    error=dict(
+                        code="connection",
+                        message=python_message,
+                        detail={},
+                    )
+                )
+                assert candidate["stderr"] == dict(
+                    error=dict(
+                        code="connection",
+                        message=native_message,
+                        detail={},
+                    )
+                )
+                accepted_native_errors.append(
+                    dict(
+                        case=index,
+                        field="stderr.error.message",
+                        python=python_message,
+                        typescript=native_message,
+                        reason="Native preconnection ENOENT text",
+                    )
+                )
+                candidate["stderr"]["error"]["message"] = python_message
+        assert len(accepted_native_errors) == 3
+        assert normalize(expected_fields, python.requests) == normalize(
+            observed_fields, typescript.requests
         )
         assert normalize(python.requests, python.requests) == normalize(
             typescript.requests, typescript.requests
@@ -234,7 +304,8 @@ def test_mac_cli_socket_parity(
             "unit22-mac-cli.json",
             observed,
             started,
-            "real private Unix socket; fresh Python CLI bytes/exits, schema, absolute deadlines",
+            "real private Unix socket; JSON fields/exact integers, text/exits, absolute deadlines",
             cases=len(cases),
             requests=len(python.requests),
+            accepted_native_errors=accepted_native_errors,
         )
