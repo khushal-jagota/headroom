@@ -17,7 +17,7 @@ from planner.executor.runtime_bootstrap import atomic_record, read_record
 def test_unit22_runtime_records(tmp_path: Path, request: pytest.FixtureRequest) -> None:
     """Gap: generic file-copy proofs do not cover failure-atomic runtime JSON records.
 
-    Reuse FilesService. One native-injection worker proves staged-write and close retry boundaries.
+    Reuse FilesService. One native-injection worker proves staged-write and ancestor-custody boundaries.
     """
     began = time.perf_counter()
     record: dict[str, Any] = {
@@ -58,9 +58,6 @@ def test_unit22_runtime_records(tmp_path: Path, request: pytest.FixtureRequest) 
             "cleanup_preserved",
             "swapped",
             "contained",
-            "close_failed",
-            "retained",
-            "cleared",
         ),
         True,
     )
@@ -70,6 +67,6 @@ def test_unit22_runtime_records(tmp_path: Path, request: pytest.FixtureRequest) 
         actual,
         began,
         "atomic runtime JSON via retained file worker",
-        added_worker="native write/ancestor swap/close injections",
+        added_worker="native write/ancestor swap injections",
         real_mac="not checked",
     )

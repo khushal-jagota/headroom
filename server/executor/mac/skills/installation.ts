@@ -1,7 +1,6 @@
 /** Blocking publication runs only in the owned worker, before provider creation. */
 import { createHash, randomUUID } from 'node:crypto';
 import {
-  closeSync,
   constants,
   fstatSync,
   lstatSync,
@@ -15,6 +14,7 @@ import { setTimeout as pause } from 'node:timers/promises';
 import { BackendSpawnFailed } from '../../../conversation/backends/contracts.ts';
 import { prepare_native_skill_publication } from '../../../skills/native_publication.ts';
 import {
+  close_native_descriptor,
   flock_descriptor,
   open_directory_descriptor,
   open_relative,
@@ -47,7 +47,7 @@ function open_directory_at(parent: number, name: string): number {
   return retain(open_relative(parent, name, directory_open_flags));
 }
 function close_handle(fd: number): void {
-  closeSync(fd);
+  close_native_descriptor(fd);
   retained_descriptors.delete(fd);
 }
 export function cleanup_handles(): void {

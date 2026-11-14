@@ -1,7 +1,6 @@
 /** Node runtime archives use the existing bounded TAR format and retained directory writes. */
 import { createHash, randomUUID } from 'node:crypto';
 import {
-  closeSync,
   constants,
   createReadStream,
   fchmodSync,
@@ -29,6 +28,7 @@ import {
 } from '../configuration.ts';
 import { close_retained } from '../retained_cleanup.ts';
 import {
+  close_native_descriptor,
   cleanup_directory_readers,
   owns_directory_readers,
   directory_open_flags,
@@ -51,7 +51,7 @@ const retain = (fd: number) => {
   return fd;
 };
 function close(fd: number): void {
-  closeSync(fd);
+  close_native_descriptor(fd);
   handles.delete(fd);
 }
 export function owns_archive_handles(): boolean {
@@ -64,7 +64,7 @@ export function cleanup_archive_handles(): void {
   } catch (error) {
     failures.push(error);
   }
-  const failure = close_retained(handles, closeSync);
+  const failure = close_retained(handles, close_native_descriptor);
   if (failure !== undefined) failures.push(failure);
   if (failures.length === 1) throw failures[0];
   if (failures.length) throw new AggregateError(failures, 'Runtime archive cleanup failed.');
