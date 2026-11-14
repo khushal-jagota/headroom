@@ -153,9 +153,10 @@ class _World:
         with self.connect() as conn:
             conn.execute(
                 "INSERT INTO conversations (conversation_id, backend_key, workspace_folder, "
-                "access, created_at, automatically_compacted_through_sequence) VALUES "
-                "(?, 'claude', '/tmp', 'full', 0, ?)",
-                (conversation_id, compacted_through),
+                "access, created_at, automatically_compacted_through_sequence, "
+                "working_turn_compacted_through_sequence) VALUES "
+                "(?, 'claude', '/tmp', 'full', 0, ?, ?)",
+                (conversation_id, compacted_through, compacted_through),
             )
             conn.execute(
                 "INSERT INTO conversation_events (conversation_id, sequence, kind, payload, "
@@ -942,8 +943,8 @@ def test_a_worker_compacted_part_way_through_a_step_is_told_without_waiting_for_
     world.start_conversation("conv-mid-step")
     assert world.start_step(ticket_id).started is True
     assert world.ticket(ticket_id).worker_step_claim is WorkerStepClaim.out
-    # The step is still out, and the worker is between turns. That is when Panels
-    # compacts an idle worker, and it is the case a later wake never reaches.
+    # The step is still out, and the worker's context filled up inside its turn, which
+    # then ended. A later wake may never come, so the notice goes now.
     world.conversations.complete_running_turn("conv-mid-step")
     world.record_compacted_conversation(
         "conv-mid-step", last_worker_step_sequence=4, compacted_through=9

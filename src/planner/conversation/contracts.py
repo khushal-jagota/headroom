@@ -834,6 +834,15 @@ class ConversationSystem(Protocol):
         """Return the messages still held by the system, in FIFO order."""
         ...
 
+    async def sender_message_ids_awaiting_outcome(self, conversation_id: str) -> frozenset[str]:
+        """Return the sender ids of every message accepted here whose outcome is not recorded.
+
+        That is a held message, and also one that has left the queue or been admitted but
+        has no prompt, refusal, uncertainty or discard row yet. ``held_prompts`` alone
+        misses the second kind, so a sender that must not repeat itself asks this.
+        """
+        ...
+
     async def promote_held_prompt(
         self,
         conversation_id: str,
