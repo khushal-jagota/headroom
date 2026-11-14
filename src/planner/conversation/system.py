@@ -1475,6 +1475,23 @@ class SqliteProcessConversationSystem:
             for held in state.held_prompts
         )
 
+    async def sender_message_ids_awaiting_outcome(self, conversation_id: str) -> frozenset[str]:
+        """Read held, admitted and leaving messages together, with no await between them.
+
+        A held message moves to ``sender_messages_being_delivered`` in the same synchronous
+        step that takes it off the queue, so no message slips between the two reads.
+        """
+        state = await self._conversation_state(conversation_id)
+        if state is None:
+            return frozenset()
+        return frozenset(
+            (
+                *(held.sender_message_id for held in state.held_prompts if held.sender_message_id),
+                *state.admitted_sender_messages,
+                *state.sender_messages_being_delivered,
+            )
+        )
+
     async def promote_held_prompt(
         self,
         conversation_id: str,
@@ -3962,6 +3979,9 @@ class SqliteProcessConversationSystem:
                 ),
                 agent_activity=not _turn_is_maintenance(running),
                 automatic_compaction_confirmed=running.compaction_confirmed,
+                working_turn_compaction_confirmed=(
+                    running.compaction_confirmed and not running.automatic_compaction
+                ),
                 automatic_compaction_result=automatic_compaction_result,
                 create_failure_notice=interpreted.failure_notice,
             ),
@@ -5126,6 +5146,10 @@ class SqliteProcessConversationSystem:
                 and running is not None
                 and running.compaction_confirmed
             )
+            # Panels' own idle /compact is the one compaction that interrupts no step.
+            working_turn_compaction_confirmed = (
+                compaction_confirmed and running is not None and not running.automatic_compaction
+            )
 
             def write(
                 conn: sqlite3.Connection,
@@ -5138,6 +5162,7 @@ class SqliteProcessConversationSystem:
                     lifecycle=lifecycle,
                     agent_activity=agent_activity,
                     automatic_compaction_confirmed=compaction_confirmed,
+                    working_turn_compaction_confirmed=working_turn_compaction_confirmed,
                     automatic_compaction_result=compaction_result,
                     create_failure_notice=failure_notice,
                 )

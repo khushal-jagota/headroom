@@ -93,18 +93,20 @@ def test_mac_refusal_during_held_prompt_await_prevents_send(
 
     monkeypatch.setattr(world, "connect", tracked_connect)
 
-    async def held_prompts(conversation_id: str) -> tuple[()]:
+    async def awaiting_outcome(conversation_id: str) -> frozenset[str]:
         held_reads.append(conversation_id)
         assert not connections[-1].in_transaction
         await asyncio.sleep(0)
         # Away no longer revokes admission; a refusal does.
         _refuse_old_mac(db_path)
-        return ()
+        return frozenset()
 
     async def send(*args: object, **kwargs: object) -> None:
         raise AssertionError("send after admission was refused during held-prompt read")
 
-    monkeypatch.setattr(world.conversations, "held_prompts", held_prompts)
+    monkeypatch.setattr(
+        world.conversations, "sender_message_ids_awaiting_outcome", awaiting_outcome
+    )
     monkeypatch.setattr(world.conversations, "send", send)
     assert not asyncio.run(
         tell_a_worker_it_lost_its_memory(

@@ -1317,6 +1317,44 @@ def test_maintenance_releases_owner_and_worker_messages_in_order(
 # --- maintenance does not schedule more maintenance --------------------------------------
 
 
+def _compaction_boundaries(db_path: Path, conversation_id: str) -> tuple[int, int]:
+    conn = connect(str(db_path))
+    try:
+        row = conn.execute(
+            "SELECT automatically_compacted_through_sequence, "
+            "working_turn_compacted_through_sequence FROM conversations "
+            "WHERE conversation_id=?",
+            (conversation_id,),
+        ).fetchone()
+    finally:
+        conn.close()
+    return int(row[0]), int(row[1])
+
+
+@pytest.mark.parametrize("working_turn", (False, True), ids=("idle-compact", "working-turn"))
+def test_only_a_compaction_inside_a_working_turn_sets_the_working_turn_boundary(
+    harness: _Harness, working_turn: bool
+) -> None:
+    async def exercise() -> None:
+        await _start(harness, "c")
+        await harness.system.send("c", text_message_content("real work"), sender_label="owner")
+        if not working_turn:
+            await harness.complete_turn("c")
+            harness.clock.advance(50 * 60)
+            await _sweep(harness)
+            assert harness.backend("c").written_texts()[-1] == "/compact"
+        await harness.confirm_compaction("c")
+        await harness.complete_turn("c")
+
+        compacted_through, working_turn_compacted_through = _compaction_boundaries(
+            harness.db_path, "c"
+        )
+        assert compacted_through > 0
+        assert working_turn_compacted_through == (compacted_through if working_turn else 0)
+
+    _run(exercise)
+
+
 def _link_worker_ticket(db_path: Path, conversation_id: str, ticket_id: str = "t_worker") -> None:
     """A Ticket whose current conversation this is, with the history row its start writes."""
     _link_test_ticket_to_conversation(db_path, conversation_id, ticket_id=ticket_id)
@@ -1602,6 +1640,9 @@ def test_dequeued_sender_identity_stays_admitted_until_the_prompt_row_exists(
 
         ending = asyncio.create_task(harness.complete_turn("c"))
         await backend.write_has_begun.wait()
+        # Off the queue and not yet in the record: only the awaiting read still sees it.
+        assert await harness.system.held_prompts("c") == ()
+        assert await harness.system.sender_message_ids_awaiting_outcome("c") == {"held-race"}
         duplicate = asyncio.create_task(
             harness.system.send("c", content, sender_label="owner", sender_message_id="held-race")
         )
@@ -1611,6 +1652,7 @@ def test_dequeued_sender_identity_stays_admitted_until_the_prompt_row_exists(
         await ending
         assert await duplicate == PromptDeliveryStarted()
         assert backend.written_texts().count("held once") == 1
+        assert await harness.system.sender_message_ids_awaiting_outcome("c") == frozenset()
 
     _run(exercise)
 

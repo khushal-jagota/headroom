@@ -15,10 +15,9 @@ from __future__ import annotations
 
 import sqlite3
 from collections.abc import Iterable
-from typing import Final
+from typing import Final, Literal
 from uuid import uuid4
 
-from planner.conversation.contracts import HeldPrompt
 from planner.tickets import data as tickets_data
 from planner.tickets import locale_configuration
 from planner.tickets.contracts import TicketLocale
@@ -48,16 +47,17 @@ def is_memory_notice_sender_message_id(sender_message_id: str | None) -> bool:
     )
 
 
-def an_answer_is_already_waiting(held_prompts: Iterable[HeldPrompt]) -> bool:
-    """Report whether a worker-step message is queued but not yet delivered.
+def an_answer_is_already_waiting(sender_message_ids_awaiting_outcome: Iterable[str]) -> bool:
+    """Report whether a worker-step message is on its way but not yet recorded.
 
-    A queued message has no event row until it runs, so the boundary still looks
-    unanswered to the record. Asking the conversation what it is holding is what stops a
-    second notice being sent every poll while the first one waits.
+    Such a message has no event row yet, so the boundary still looks unanswered to the
+    record. That covers a queued message, and one that has just left the queue for the
+    backend. Asking the conversation for both is what stops a second notice being sent
+    every poll while the first one waits or is being written.
     """
     return any(
-        (held.sender_message_id or "").startswith(ANSWERING_SENDER_MESSAGE_PREFIX)
-        for held in held_prompts
+        sender_message_id.startswith(ANSWERING_SENDER_MESSAGE_PREFIX)
+        for sender_message_id in sender_message_ids_awaiting_outcome
     )
 
 
@@ -79,12 +79,39 @@ def memory_was_lost_unanswered(
 def conversation_holds_an_unanswered_memory_loss(
     conn: sqlite3.Connection, conversation_id: str | None
 ) -> bool:
-    """Ask the rule about one conversation. A Ticket with no conversation has no memory."""
+    """Ask the rule about one conversation. A Ticket with no conversation has no memory.
+
+    Every compaction counts here, Panels' own idle ``/compact`` included: the next wake
+    carries the note whichever kind it was.
+    """
+    return _boundary_is_unanswered(
+        conn, conversation_id, "automatically_compacted_through_sequence"
+    )
+
+
+def _working_turn_compaction_is_unanswered(
+    conn: sqlite3.Connection, conversation_id: str | None
+) -> bool:
+    """Ask the rule about compactions inside a working turn only.
+
+    Panels runs its own ``/compact`` after the conversation sat idle. The Worker was not
+    part-way through anything then, so that boundary waits for the next wake instead of
+    sending a notice that tells an idle Worker to continue.
+    """
+    return _boundary_is_unanswered(conn, conversation_id, "working_turn_compacted_through_sequence")
+
+
+def _boundary_is_unanswered(
+    conn: sqlite3.Connection,
+    conversation_id: str | None,
+    boundary_column: Literal[
+        "automatically_compacted_through_sequence", "working_turn_compacted_through_sequence"
+    ],
+) -> bool:
     if conversation_id is None:
         return False
     row = conn.execute(
-        "SELECT automatically_compacted_through_sequence FROM conversations "
-        "WHERE conversation_id = ?",
+        f"SELECT {boundary_column} FROM conversations WHERE conversation_id = ?",
         (conversation_id,),
     ).fetchone()
     if row is None:
@@ -131,7 +158,7 @@ def ticket_needs_memory_notice(conn: sqlite3.Connection, ticket_id: str) -> bool
     if row is None or not locale_configuration.can_execute_locale(conn, TicketLocale(row[1])):
         return False
     conversation_id = row[0]
-    if not conversation_holds_an_unanswered_memory_loss(conn, conversation_id):
+    if not _working_turn_compaction_is_unanswered(conn, conversation_id):
         return False
     # A backlogged Ticket keeps its claim, so the claim alone does not permit a wake.
     if tickets_data.automated_maintenance_suppression_reason(conn, conversation_id) is not None:
@@ -143,7 +170,7 @@ def ticket_needs_memory_notice(conn: sqlite3.Connection, ticket_id: str) -> bool
         conn.execute(
             "SELECT 1 FROM conversation_events e JOIN conversations c USING(conversation_id) "
             "WHERE e.conversation_id=? AND e.kind='prompt_delivery_uncertain' "
-            "AND e.sequence > c.automatically_compacted_through_sequence "
+            "AND e.sequence > c.working_turn_compacted_through_sequence "
             "AND substr(json_extract(e.payload,'$.sender_message_id'),1,?)=? LIMIT 1",
             (conversation_id, len(MEMORY_NOTICE_MESSAGE_PREFIX), MEMORY_NOTICE_MESSAGE_PREFIX),
         ).fetchone()
