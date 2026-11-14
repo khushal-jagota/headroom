@@ -1,6 +1,6 @@
 {
   "oldest_supported_build": 1,
   "decision": "compatible",
-  "contract_sha256": "1af8a884dab67bbf9f3c7be5f98d4ee0c41d4b5d2a33765e984de3d19e0a3767",
-  "evidence": "Source review against native build 1 for removal of ticket help requests: no native source calls the removed route or CLI operation. Changes remove only Worker CLI, help-route authority, and executor help dispatch paths. Ordinary message delivery, conversation routes, response shapes, build gate, and native models remain unchanged. All 34 focused CLI, supervisor authority, and executor message tests pass with temporary state. No signed-device, TestFlight, or native reconnect checks ran. The minimum build remains 1."
+  "contract_sha256": "9df06d0de8496abbb9cd13c9fc31d6073a9fea4865cc6bbf22f37e03dae23afd",
+  "evidence": "Source review against native build 1 for deferred Ticket summaries and automatic obligations: the active list filter is optional and defaults remain unchanged. Native APIClient already selects is_backlogged=false for active children, and NavigationPresentation already excludes deferred proposals. No response fields, conversation routes, APNs payloads, notification destination routes, or build-gate contracts change. Manager rollups and queued task-alert eligibility now exclude deferred work as intended. All 104 focused unit cases pass, including APNs queue and mid-batch deferral checks; existing browser lifecycle dogfood passes. No signed-device, TestFlight, or native reconnect checks ran. The minimum build remains 1."
 }
