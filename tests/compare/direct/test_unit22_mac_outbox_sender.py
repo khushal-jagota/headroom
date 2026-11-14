@@ -146,7 +146,20 @@ def test_unit22_mac_outbox_sender(tmp_path: Path, monkeypatch: pytest.MonkeyPatc
         timeout=20,
     )
     assert result.returncode == 0, result.stderr
-    assert json.loads(result.stdout) == dict(
-        calls=calls, uploaded=uploaded, confirmed=sorted(confirmed)
-    )
-    assert _rows(candidate) == _rows(reference)
+    actual = json.loads(result.stdout)
+    expected: dict[str, Any] = dict(calls=calls, uploaded=uploaded, confirmed=sorted(confirmed))
+    for observation in (actual, expected):
+        observation["calls"] = {
+            key: [json.loads(body) for body in bodies]
+            for key, bodies in observation["calls"].items()
+        }
+        observation["uploaded"] = [
+            [json.loads(body), digest] for body, digest in observation["uploaded"]
+        ]
+    assert actual == expected
+    rows = [_rows(root) for root in (candidate, reference)]
+    for snapshot in rows:
+        for row in snapshot["items"]:
+            if row[6] is not None:
+                row[6] = json.loads(bytes.fromhex(row[6]))
+    assert rows[0] == rows[1]

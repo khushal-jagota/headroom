@@ -34,7 +34,8 @@ import {
   safe_component,
   unlink_at,
 } from './files.ts';
-import { as_object, ExecutorValidationError } from './protocol.ts';
+import { ExecutorValidationError } from './protocol.ts';
+import { file_manifest_key } from './file_manifest.ts';
 function aborted(signal: AbortSignal): unknown {
   return is_shutdown_business_cancellation(signal.reason)
     ? signal.reason
@@ -87,15 +88,7 @@ export class FileStaging {
   }
   async staged_file(manifest: WireValue<'FileManifest'>): Promise<string> {
     await this.file_target(manifest);
-    const value = as_object(manifest, 'FileManifest');
-    // This private filename retains its existing fixed-field, alphabetic hash input.
-    const record = JSON.stringify({
-      byte_count: value.byte_count,
-      owner_id: value.owner_id,
-      relative_path: value.relative_path,
-      scope: value.scope,
-      sha256: value.sha256,
-    });
+    const record = file_manifest_key(manifest);
     return join(this.staging, createHash('sha256').update(record).digest('hex'));
   }
   async store_upload(

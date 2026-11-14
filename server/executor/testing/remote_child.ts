@@ -139,7 +139,7 @@ try {
   disposition = 'succeeded';
   result = { kind: 'steer_refused', refusal_reason: 'backend_rejected_steer' };
   await observe(steer);
-  result = { kind: 'steer_accepted', composed_content_delivered: {} };
+  result = { kind: 'steer_accepted', composed_content_delivered: false };
   await observe(steer);
   result = { kind: 'steer_refused', refusal_reason: 123456789 };
   await observe(steer);
