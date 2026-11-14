@@ -60,7 +60,7 @@ An errored claim stops automatic progress. Restarting the Worker is the explicit
 
 ## Backlog and delete
 
-Backlog pauses the next automatic Worker step. The stage, any parked proposal, the conversation, and the artifacts stay. Messages and approvals still work, and a turn already running keeps running. Resume clears the pause and nothing else.
+Backlog pauses the next automatic Worker step. The stage, any parked proposal, the conversation, and the artifacts stay. Messages and approvals still work, and a turn already running keeps running. Resume clears the pause and restores eligibility under the ordinary checks. Deferred children do not contribute to a Manager's active-work rollup. Their direct records retain the proposal and conversation facts.
 
 Tickets come from Khushal, Chief, or Managers. Tickets cannot be created on a timer. Daily schedules for measure sources remain separate.
 

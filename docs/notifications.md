@@ -29,6 +29,8 @@ A notification is a phone or desktop push for a kind of attention Khushal opted 
 
 The writer records the flag and the edge in the same transaction as the change that caused them. A background pass later turns edges into deliveries, so several commits stay distinct even when one pass sends them. Each device gets its own delivery, retried with backoff. An expired subscription disables that device.
 
+Backlog suppresses Ticket approval, assignment, and pending-answer alerts, including queued delivery. Resume restores eligibility for the current obligation. Unread-message and failure alerts still describe real events.
+
 The flags are separate because the events are separate. Held as one flag, a message and an ask that arrived second would raise no edge and reach nobody. An ask awaits an answer only while its turn is open. When the turn ends, its unanswered asks clear, so the next ask can raise a new edge.
 
 A push carries a short title, a body such as "has a message for you", a link, and one replacement tag per subject, so a newer push replaces the older one on the device. It never carries the transcript, the prompt, or the text of an ask. The link opens the Ticket, Chief, or Manager it is about.

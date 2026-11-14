@@ -10,6 +10,8 @@ For a date range, Headroom groups three things by Project, Manager, Ticket, or g
 - **Owner approvals.** Explicit acceptances by him. Automatic acceptance and agent approval do not count.
 - **Approval waits.** Elapsed time that a Ticket sat at an open gate.
 
+Backlog closes an approval wait. Resume opens a new interval if the owner still holds the proposal. Earlier recorded activity stays in history. Active Tickets here means Tickets with activity in the selected period, not the current active-work list.
+
 Each group also shows the preceding period of equal length, the difference, its share of the total, and the share of active Tickets with no owner involvement. Dates are inclusive and fixed to the Europe/Berlin calendar. Today is partial.
 
 ## Where the facts come from

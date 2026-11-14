@@ -2231,4 +2231,5 @@ def set_ticket_backlog(
                 "UPDATE tickets SET is_backlogged=?, updated_at=? WHERE id=?",
                 (int(is_backlogged), now, ticket_id),
             )
+            capture_ticket_attention(conn, ticket_id, now)
         return _load_ticket_for_write(conn, ticket_id)

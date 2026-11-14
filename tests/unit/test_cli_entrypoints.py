@@ -354,3 +354,29 @@ def test_recap_request_commands_use_the_shared_door(
     assert result.exit_code == 0, result.output
     assert json.loads(result.output) == {"fate": "queued"}
     assert calls == [("POST", "/api/recap-requests", {"target": {"kind": kind, "id": "example"}})]
+
+
+def test_ticket_list_active_reaches_api_without_changing_inventory_default(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[dict[str, Any]] = []
+
+    def send(method: str, path: str, **kwargs: Any) -> dict[str, Any]:
+        assert method == "GET" and path == "/api/tickets"
+        calls.append(kwargs["params"])
+        return {
+            "tickets": [],
+            "page": {
+                "match_count": 0, "return_count": 0, "limit": 30, "offset": 0,
+                "omitted_before": 0, "omitted_after": 0, "complete": True,
+                "next_offset": None,
+            },
+        }
+
+    monkeypatch.setattr(http, "send", send)
+    runner = CliRunner()
+    for options in ([], ["--active"]):
+        result = runner.invoke(cli_main.main, ["ticket", "list", *options, "--json"])
+        assert result.exit_code == 0, result.output
+    assert "active" not in calls[0]
+    assert calls[1]["active"] is True

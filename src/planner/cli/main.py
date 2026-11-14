@@ -1053,6 +1053,7 @@ def ticket_delete(ticket_id: str | None, force: bool, as_json: bool) -> None:
 
 
 @ticket.command("list")
+@click.option("--active", is_flag=True, help="Only unfinished, non-backlogged Tickets.")
 @click.option(
     "--backlogged/--not-backlogged",
     "is_backlogged",
@@ -1090,6 +1091,7 @@ def ticket_delete(ticket_id: str | None, force: bool, as_json: bool) -> None:
 @bounded_options
 @json_option
 def ticket_list(
+    active: bool,
     is_backlogged: bool | None,
     worker_type: tuple[str, ...],
     stage: tuple[str, ...],
@@ -1108,6 +1110,7 @@ def ticket_list(
     params = _drop_none(
         {
             "is_backlogged": is_backlogged,
+            "active": active or None,
             "worker_type": list(worker_type) or None,
             "stage": list(stage) or None,
             "exclude_stage": list(exclude_stage) or None,

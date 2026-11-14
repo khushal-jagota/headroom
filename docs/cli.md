@@ -23,6 +23,8 @@ Manager commands accept `panels manager` and `--manager`. The old Sprint Item an
 
 A `show` returns a short header and a list of parts, and the caller names the parts to expand. Lists come in pages and say what they left out. Backlog and resume need no record fingerprint. `ticket delete` needs no confirmation flag, but a running Ticket still needs `--force`. `ticket create --input-json FILE` sends one object to the same create route as the browser, which validates the whole Ticket before one write. A new Ticket starts from a preset or custom stages. Custom stages carry their result fields, ownership, and instructions together.
 
+`ticket list --active` selects unfinished Tickets outside backlog. The default list remains an inventory that includes deferred Tickets. Manager rollups exclude deferred children, while a Manager workspace keeps the complete child inventory and its backlog marks.
+
 Ticket and Manager lists include each recap and its age. Missing recaps and unknown ages are explicit. Ticket overviews also flag a stage change since the recap. JSON carries the recap timestamp, so agents can calculate its age.
 
 `ticket request-recap ID` and `manager request-recap ID` ask for a fresh recap within the caller's supervision scope. See [conversations](conversations.md).

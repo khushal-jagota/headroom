@@ -583,6 +583,7 @@ async def read_tickets(
     is_backlogged: bool | None = None,
     worker_type: Annotated[list[str] | None, Query()] = None,
     include_terminal: bool = False,
+    active: bool = False,
     search: str | None = None,
     project: str | None = None,
     project_id: str | None = None,
@@ -602,6 +603,7 @@ async def read_tickets(
             "ticket_status": ticket_status,
             "exclude_ticket_status": exclude_ticket_status,
             "is_backlogged": is_backlogged,
+            "active": active or None,
             "worker_type": worker_type,
             "include_terminal": include_terminal or None,
             "search": search,
@@ -631,6 +633,7 @@ async def read_tickets(
                     "manager_kind": manager_kind,
                     "manager_id": manager_id,
                     "is_backlogged": is_backlogged,
+                    "active": active or None,
                     "worker_type": worker_type,
                     "exclude_stage": exclude_stage,
                     "ticket_status": ticket_status,
@@ -655,6 +658,13 @@ async def read_tickets(
                 manager_id=manager_id,
             )
             return {"tickets": rows}, rows
+
+        if active and (is_backlogged is True or include_terminal):
+            raise PlannerError(
+                ErrorCode.validation,
+                "active excludes backlogged and terminal Tickets",
+                {},
+            )
 
         manager = None
         if manager_kind is not None or manager_id is not None:
@@ -702,6 +712,7 @@ async def read_tickets(
                 is_backlogged=is_backlogged,
                 worker_types=tuple(worker_type or ()),
                 include_terminal=include_terminal,
+                active=active,
                 search=search,
             ),
             project_id=resolved_project.id if resolved_project is not None else None,
