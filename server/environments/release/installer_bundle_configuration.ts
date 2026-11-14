@@ -21,6 +21,7 @@ export const INSTALLER_SOURCE_FILES = [
   'server/core/environment.ts',
   'server/core/locks/flock.ts',
   'server/core/path_containment.ts',
+  'server/core/promise_observer.ts',
   'server/core/records.ts',
   'server/core/python_repr.ts',
   'server/core/python_repr_unicode.ts',
