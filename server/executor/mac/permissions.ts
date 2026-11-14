@@ -4,12 +4,12 @@ import { opendir, open, realpath, stat, unlink } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import type { CommandResult, Invocation } from '../../cli/contracts.ts';
 import { human_error } from '../../cli/errors.ts';
-import { inside } from '../../environments/ticket_scratch/logic.ts';
+import { path_is_within } from '../../core/path_containment.ts';
 import { expand_executor_path } from './platform.ts';
 
 function description(path: string, home: string): string {
   for (const directory of ['Desktop', 'Documents', 'Downloads'])
-    if (inside(path, join(home, directory)))
+    if (path_is_within(join(home, directory), path))
       return `${directory}: macOS can request Files and Folders consent.`;
   return 'Ordinary account access; a redirected or protected path can require separate consent.';
 }
@@ -54,7 +54,7 @@ export async function permissions(invocation: Invocation): Promise<CommandResult
     `Workspace directory read: ${workspace}`,
     description(workspace, home),
     `Output temporary write/read/remove: ${output}`,
-    inside(output, workspace)
+    path_is_within(workspace, output)
       ? 'Output reuses the workspace scope, subject to macOS protections.'
       : description(output, home),
     'No Full Disk Access or unrelated permission is requested. Python consent does not transfer automatically.',

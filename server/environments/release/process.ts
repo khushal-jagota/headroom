@@ -85,14 +85,19 @@ export async function run_release_command(
       }
     }
   };
-  const abort = () => fail(execution.signal.reason);
-  execution.signal.addEventListener('abort', abort);
-  const timer = Number.isFinite(until)
-    ? setTimeout(
-        () => fail(new AppValidationError(`release command timed out: ${argv[0]}`)),
-        Math.max(0, until - performance.now() / 1000) * 1000,
-      )
-    : undefined;
+  const signal = Number.isFinite(until)
+    ? AbortSignal.any([
+        execution.signal,
+        AbortSignal.timeout(Math.max(1, Math.ceil((until - performance.now() / 1000) * 1000))),
+      ])
+    : execution.signal;
+  const abort = () =>
+    fail(
+      execution.signal.aborted
+        ? execution.signal.reason
+        : new AppValidationError(`release command timed out: ${argv[0]}`),
+    );
+  signal.addEventListener('abort', abort);
   const fence = () => {
     if (failure !== undefined) throw failure;
     assert_release_execution(execution);
@@ -166,8 +171,7 @@ export async function run_release_command(
     throw failure;
   } finally {
     if (spawned) await closed;
-    clearTimeout(timer);
-    execution.signal.removeEventListener('abort', abort);
+    signal.removeEventListener('abort', abort);
     try {
       await errors?.close();
     } finally {

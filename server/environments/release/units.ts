@@ -6,7 +6,8 @@ import { TYPESCRIPT_SERVICE_NAME } from '../../lifecycle/service_identity.ts';
 import { CAPABILITY_FILENAME, UNIT_TIMEOUT_STOP_SECONDS } from '../../lifecycle/configuration.ts';
 import type { ManagedUnitFiles, WatchdogUnitFiles } from '../../lifecycle/contracts.ts';
 import { resolved_path } from '../paths.ts';
-import { inside } from '../ticket_scratch/logic.ts';
+import { path_is_within } from '../../core/path_containment.ts';
+import { is_record } from '../../core/records.ts';
 
 export type ClassifiedRuntime = 'node-v2' | 'python-v1' | 'python-legacy-null';
 export interface ManagedUnitOptions {
@@ -38,7 +39,7 @@ export const INSTALLED_RUNTIME_CLASSIFIER_SOURCE = String.raw`
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 function classify_installed_runtime(input, admitted_null_sha) {
-  const object = value => value !== null && typeof value === 'object' && !Array.isArray(value);
+  const object = ${is_record.toString()};
   const matches = (pattern, value) => typeof value === 'string' && pattern.exec(value)?.[0] === value;
   const fail = message => { throw new Error(message); };
   if (!path.isAbsolute(input)) fail('application root must be absolute');
@@ -163,7 +164,7 @@ function environment_bundle(
 async function shared_address(value: string): Promise<string> {
   const path = await resolved_path(absolute(value));
   for (const temporary of ['/tmp', '/var/tmp'])
-    if (inside(path, await resolved_path(temporary)))
+    if (path_is_within(await resolved_path(temporary), path))
       throw new Error('Unit control and lease paths must be outside private temporary directories');
   return path;
 }

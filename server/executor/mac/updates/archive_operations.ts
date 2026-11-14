@@ -1,4 +1,4 @@
-/** Node runtime archives use the existing bounded TAR format and retained directory writes. */
+/** Node-tar reads runtime payloads; retained descriptors own every directory write. */
 import { createHash, randomUUID } from 'node:crypto';
 import {
   closeSync,
@@ -253,7 +253,7 @@ async function extract(
   bytes: number,
 ): Promise<void> {
   for (const member of members)
-    if (member.type === '5')
+    if (member.type === 'Directory')
       at(root, member.path, true, (parent, leaf) => {
         try {
           mkdir_relative(parent, leaf, 0o777);
@@ -261,60 +261,65 @@ async function extract(
           if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
         }
       });
-  const files = members.filter((member) => ['0', '\0', '7'].includes(member.type));
   let index = 0,
-    position = 0,
     current: number | undefined;
-  const complete = () => {
-    const member = files[index]!;
-    fchmodSync(current!, file_mode(member.mode));
-    futimesSync(current!, member.mtime, member.mtime);
-    sync_file_descriptor(current!);
-    close(current!);
-    current = undefined;
-    index++;
-  };
+  const parser = new ArchiveMembers('extraction', (entry, parsed) => {
+    const member = members[index++];
+    if (
+      !member ||
+      member.path !== parsed.path ||
+      member.type !== parsed.type ||
+      member.size !== parsed.size ||
+      member.mode !== parsed.mode ||
+      member.linkpath !== parsed.linkpath ||
+      member.mtime?.getTime() !== parsed.mtime?.getTime()
+    )
+      throw new Error('Runtime archive changed after validation.');
+    if (['File', 'OldFile', 'ContiguousFile'].includes(member.type)) {
+      current = at(root, member.path, true, (parent, leaf) =>
+        retain(
+          open_relative(
+            parent,
+            leaf,
+            constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW,
+            0o600,
+          ),
+        ),
+      );
+      entry.on('data', (chunk: Buffer) => write_all(current!, chunk));
+      entry.on('end', () => {
+        fchmodSync(current!, file_mode(member.mode));
+        if (member.mtime) futimesSync(current!, member.mtime, member.mtime);
+        sync_file_descriptor(current!);
+        close(current!);
+        current = undefined;
+      });
+    }
+  });
   try {
     await inflated(fd, sha, bytes, (chunk) => {
-      const end = position + chunk.length;
-      while (index < files.length) {
-        const member = files[index]!;
-        if (member.offset > end || (member.offset === end && member.size !== 0)) break;
-        if (current === undefined)
-          current = at(root, member.path, true, (parent, leaf) =>
-            retain(
-              open_relative(
-                parent,
-                leaf,
-                constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW,
-                0o600,
-              ),
-            ),
-          );
-        const start = Math.max(position, member.offset),
-          until = Math.min(end, member.offset + member.size);
-        if (until > start) write_all(current, chunk.subarray(start - position, until - position));
-        if (member.offset + member.size > end) break;
-        complete();
-      }
-      position = end;
+      parser.feed(chunk);
     });
-    if (index !== files.length) throw new Error('Runtime archive is truncated.');
+    parser.finish();
+    if (index !== members.length || current !== undefined)
+      throw new Error('Runtime archive is truncated.');
   } finally {
     if (current !== undefined) close(current);
   }
   for (const member of members)
-    if (member.type === '2')
+    if (member.type === 'SymbolicLink')
       at(root, member.path, true, (parent, leaf) =>
         symlink_relative(parent, leaf, member.linkpath),
       );
-  for (const member of [...members].reverse())
-    if (member.type === '5')
+  for (const member of [...members].reverse()) {
+    const mtime = member.mtime;
+    if (member.type === 'Directory' && mtime)
       at(root, member.path, false, (parent, leaf) =>
         owned(retain(open_relative(parent, leaf, directory_open_flags)), (directory) => {
-          futimesSync(directory, member.mtime, member.mtime);
+          futimesSync(directory, mtime, mtime);
         }),
       );
+  }
 }
 function flush_tree(root: number): void {
   for (const name of read_directory_names(root)) {
@@ -356,6 +361,8 @@ export async function extract_runtime(
   try {
     if (fstatSync(input).size !== bytes)
       throw new Error('Runtime archive size differs from approval.');
+    if ((await digest(input, bytes)) !== sha)
+      throw new Error('Runtime archive digest differs from approval.');
     try {
       release = retain(open_directory_descriptor(releases));
     } catch (error) {
@@ -370,8 +377,6 @@ export async function extract_runtime(
       }
     if (existing !== undefined) {
       owned(existing, () => revision(existing!, expected));
-      if ((await digest(input, bytes)) !== sha)
-        throw new Error('Runtime archive digest differs from approval.');
       return join(releases, destination);
     }
     const parser = new ArchiveMembers('extraction');
@@ -387,7 +392,11 @@ export async function extract_runtime(
     });
     parser.finish();
     for (const member of parser.members) {
-      if (!member.path || member.path.includes('\\') || member.type === '1')
+      if (
+        !member.path ||
+        member.path.includes('\\') ||
+        !['File', 'OldFile', 'ContiguousFile', 'Directory', 'SymbolicLink'].includes(member.type)
+      )
         throw new Error('Runtime archive contains an unsafe member.');
     }
     release ??= retain(open_directory_descriptor(releases, { create: true }));

@@ -140,8 +140,7 @@ it('keeps the frozen payload complete for static installer and trusted admission
   }
   visit(INSTALLER_ENTRY);
   visit('server/environments/release/admission.ts');
-  assert(seen.has('server/environments/ticket_scratch/logic.ts'));
-  assert(seen.has('server/environments/ticket_scratch/configuration.ts'));
+  assert(seen.has('server/core/path_containment.ts'));
   assert.deepEqual([...seen].filter((name) => !frozen.has(name)).sort(), []);
 });
 

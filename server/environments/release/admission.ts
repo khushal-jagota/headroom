@@ -3,7 +3,8 @@ import { access, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:
 import { tmpdir } from 'node:os';
 import { isAbsolute, join } from 'node:path';
 import { constants } from 'node:fs';
-import { inside } from '../ticket_scratch/logic.ts';
+import { path_is_within } from '../../core/path_containment.ts';
+import { is_record } from '../../core/records.ts';
 import { is_file } from '../backup/evidence.ts';
 import type { OwnedChildProcesses } from '../../lifecycle/contracts.ts';
 import type { AppManifest, RuntimeContract, NodeRuntimeContract } from './contracts.ts';
@@ -32,16 +33,13 @@ function current(deadline: number): void {
   if (performance.now() / 1000 >= deadline)
     throw new AppValidationError('runtime admission exceeded its time budget');
 }
-function object(value: unknown): value is Record<string, unknown> {
-  return value !== null && typeof value === 'object' && !Array.isArray(value);
-}
 export async function candidate_tool_path(
   root: string,
   path: string,
   executable: boolean,
 ): Promise<string> {
   const actual = await realpath(path);
-  if (!inside(actual, root) || !(await is_file(actual)))
+  if (!path_is_within(root, actual) || !(await is_file(actual)))
     throw new AppValidationError('runtime tool resolves outside the candidate or is not a file');
   if (executable) await access(actual, constants.X_OK);
   return actual;
@@ -148,7 +146,7 @@ export async function validate_node_probe_report(
   report: unknown,
 ): Promise<void> {
   if (
-    !object(report) ||
+    !is_record(report) ||
     Object.keys(report).sort().join(',') !==
       ['node_version', 'native', 'loaded_libraries', 'package_paths'].sort().join(',')
   )
@@ -167,7 +165,7 @@ export async function validate_node_probe_report(
   )
     throw new AppValidationError('runtime probe reported malformed loaded libraries');
   for (const path of libraries)
-    if (path.endsWith('.node') && !inside(await resolved_path(path), root))
+    if (path.endsWith('.node') && !path_is_within(root, await resolved_path(path)))
       throw new AppValidationError('runtime probe loaded a native addon outside the candidate');
   const declared: unknown = JSON.parse(
     new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(
@@ -175,9 +173,9 @@ export async function validate_node_probe_report(
     ),
   );
   if (
-    !object(declared) ||
-    !object(declared.dependencies) ||
-    !object(report.package_paths) ||
+    !is_record(declared) ||
+    !is_record(declared.dependencies) ||
+    !is_record(report.package_paths) ||
     !python_json_equal(
       Object.keys(report.package_paths).sort(),
       Object.keys(declared.dependencies).sort(),
@@ -185,7 +183,7 @@ export async function validate_node_probe_report(
   )
     throw new AppValidationError("runtime probe packages differ from the candidate's own");
   for (const value of Object.values(report.package_paths))
-    if (typeof value !== 'string' || !inside(await resolved_path(value), root))
+    if (typeof value !== 'string' || !path_is_within(root, await resolved_path(value)))
       throw new AppValidationError("runtime probe packages differ from the candidate's own");
 }
 export async function admit_runtime(
