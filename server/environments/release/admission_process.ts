@@ -6,7 +6,7 @@ import type { ChildProcess } from 'node:child_process';
 import { join } from 'node:path';
 import type { OwnedChildProcesses } from '../../lifecycle/contracts.ts';
 import { stop_one_shot_child } from '../../lifecycle/one_shot_children.ts';
-import { observe_shutdown } from '../../conversation/shutdown.ts';
+import { observe_promise } from '../../core/promise_observer.ts';
 import { python_os_error_message } from '../../core/os_errors.ts';
 import { AppValidationError } from './contracts.ts';
 import {
@@ -100,7 +100,8 @@ async function run_owned(
     error_path = path + '.stderr';
   const output = await open(path, 'wx+', 0o600);
   let errors: FileHandle | undefined;
-  let timer: ReturnType<typeof setTimeout> | undefined;
+  let timeout: AbortSignal | undefined,
+    abort: (() => void) | undefined;
   let actually_closed = false,
     deferred_cleanup: Promise<void> | undefined;
   const cleanup = async (): Promise<void> => {
@@ -159,19 +160,21 @@ async function run_owned(
       actually_closed = true;
       close({ code, signal });
     });
-    timer = setTimeout(
-      () => fail(new AppValidationError('runtime probe failed: command timed out')),
-      Math.max(0, until - performance.now() / 1000) * 1000,
+    timeout = AbortSignal.timeout(
+      Math.max(1, Math.ceil((until - performance.now() / 1000) * 1000)),
     );
+    abort = () => fail(new AppValidationError('runtime probe failed: command timed out'));
+    timeout.addEventListener('abort', abort, { once: true });
     let result = await Promise.race([closed, force_failure]);
     if (result === null) {
-      try {
-        await observe_shutdown(
-          closed,
-          { deadline },
+      const observed = await observe_promise(
+        closed,
+        Math.max(0, deadline - performance.now() / 1000) * 1000,
+      );
+      if (!observed.completed) {
+        const observation = new AppValidationError(
           'Runtime probe did not close before its original admission deadline',
         );
-      } catch (observation) {
         if (!actually_closed) {
           deferred_cleanup = closed.then(cleanup);
           // The caller receives this actual continuation even after its bounded observer fails.
@@ -183,11 +186,11 @@ async function run_owned(
         }
         throw failure;
       }
-      result = await closed;
+      result = observed.value;
     }
     if (performance.now() / 1000 >= until)
       fail(new AppValidationError('runtime probe failed: command timed out'));
-    clearTimeout(timer);
+    timeout.removeEventListener('abort', abort);
     if (failure !== undefined) throw failure;
     if (result.code !== 0 || result.signal !== null)
       throw new AppValidationError(`runtime probe failed: ${await tail(errors)}`);
@@ -199,7 +202,7 @@ async function run_owned(
       throw new AppValidationError('runtime probe returned no valid JSON');
     }
   } finally {
-    clearTimeout(timer);
+    if (timeout && abort) timeout.removeEventListener('abort', abort);
     if (deferred_cleanup === undefined) await cleanup();
   }
 }
