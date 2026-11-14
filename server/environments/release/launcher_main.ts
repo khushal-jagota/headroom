@@ -1,6 +1,7 @@
 /** Fixed private service route. Unit 20 owns the public command dispatcher. */
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { isAbsolute } from 'node:path';
+import { copy_environment } from '../../core/environment.ts';
 import { launch_app } from './entrypoints.ts';
 import type { PackagedLauncherArguments } from './contracts.ts';
 
@@ -18,9 +19,7 @@ export function launcher_arguments(argv: readonly string[]): PackagedLauncherArg
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   try {
     const args = launcher_arguments(process.argv.slice(2));
-    const ambient = Object.fromEntries(
-      Object.entries(process.env).filter((pair): pair is [string, string] => pair[1] !== undefined),
-    );
+    const ambient = copy_environment(process.env);
     await launch_app(fileURLToPath(new URL('../../../', import.meta.url)), args, ambient);
   } catch (error) {
     console.error(error instanceof Error ? error.message : 'Panels launcher failed');

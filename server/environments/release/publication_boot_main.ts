@@ -16,7 +16,7 @@ import { replace_existing_json } from '../updates/attempts.ts';
 import { healthy } from '../updates/installer/health.ts';
 import { UPDATE_HEALTH_TIMEOUT_SECONDS } from '../updates/configuration.ts';
 import { MANAGED_STOP_CLIENT_SECONDS } from '../../lifecycle/configuration.ts';
-import { observe_shutdown } from '../../conversation/shutdown.ts';
+import { observe_promise } from '../../core/promise_observer.ts';
 
 async function loopback_port(): Promise<number> {
   const server = createServer();
@@ -81,14 +81,16 @@ try {
         )
           throw new Error('Foreground supervisor TERM delivery was not confirmed');
         if (closed) {
-          await observe_shutdown(
+          const observed = await observe_promise(
             closed,
-            {
-              deadline: Math.min(deadline, performance.now() / 1000 + MANAGED_STOP_CLIENT_SECONDS),
-            },
-            'Foreground supervisor close exceeded its stop budget',
+            Math.max(
+              0,
+              Math.min(deadline - performance.now() / 1000, MANAGED_STOP_CLIENT_SECONDS),
+            ) * 1000,
           );
-          return await closed;
+          if (!observed.completed)
+            throw new Error('Foreground supervisor close exceeded its stop budget');
+          return observed.value;
         }
       })());
     try {

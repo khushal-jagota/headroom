@@ -2,7 +2,7 @@
 import { access, chmod, mkdir, realpath, writeFile } from 'node:fs/promises';
 import { constants } from 'node:fs';
 import { isAbsolute, join } from 'node:path';
-import { inside } from '../ticket_scratch/logic.ts';
+import { path_is_within } from '../../core/path_containment.ts';
 import { is_file } from '../backup/evidence.ts';
 import { shell_quote } from '../../conversation/worker_unit/logic.ts';
 import { EXTERNAL_RUNTIME_ENVIRONMENT_KEYS } from '../../core/config.ts';
@@ -23,7 +23,7 @@ export async function validate_public_cli_entrypoint(root: string, input: string
       'public CLI entrypoint must be an explicit app-relative executable',
     );
   const public_cli = await realpath(join(root, input));
-  if (!inside(public_cli, root) || !(await is_file(public_cli)))
+  if (!path_is_within(root, public_cli) || !(await is_file(public_cli)))
     throw new AppValidationError('public CLI entrypoint must remain inside the application');
   try {
     await access(public_cli, constants.X_OK);

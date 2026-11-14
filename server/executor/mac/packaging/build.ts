@@ -16,7 +16,7 @@ import { basename, dirname, isAbsolute, join, relative } from 'node:path';
 import { create as create_tar } from 'tar';
 import { hash_archive } from '../../../environments/release/archive.ts';
 import { ARCHIVE_GZIP_LEVEL } from '../../../environments/release/configuration.ts';
-import { inside } from '../../../environments/ticket_scratch/logic.ts';
+import { path_is_within } from '../../../core/path_containment.ts';
 import { mac_installation_assets } from '../platform.ts';
 import {
   MAC_RUNTIME_ARCHIVE_NAME,
@@ -85,7 +85,7 @@ export async function build_mac_package(options: MacPackageOptions) {
     modules = await realpath(options.production_node_modules);
   if (!isAbsolute(options.output)) throw new Error('Package output must be absolute.');
   const output = join(await realpath(dirname(options.output)), basename(options.output));
-  if ([source, node, modules].some((root) => inside(output, root)))
+  if ([source, node, modules].some((root) => path_is_within(root, output)))
     throw new Error('Package output must be outside its inputs.');
   await macho_arm64(join(node, 'bin/node'), true);
   const version = await node_version(node);
@@ -178,7 +178,7 @@ export async function build_mac_package(options: MacPackageOptions) {
       throw new Error(`Unsupported runtime name: ${path}`);
     const info = await lstat(path);
     if (info.isSymbolicLink()) {
-      if (isAbsolute(await readlink(path)) || !inside(await realpath(path), runtime))
+      if (isAbsolute(await readlink(path)) || !path_is_within(runtime, await realpath(path)))
         throw new Error(`Runtime link escapes the package: ${path}`);
     } else if (info.isFile()) expanded += info.size;
     else if (!info.isDirectory()) throw new Error(`Unsupported runtime entry: ${path}`);

@@ -11,7 +11,7 @@ import type {
   SpawnOptionsWithoutStdio,
 } from 'node:child_process';
 import { ChildProcesses } from '../../lifecycle/owned_processes.ts';
-import { observe_shutdown } from '../../conversation/shutdown.ts';
+import { observe_promise } from '../../core/promise_observer.ts';
 import { probe_environment } from './admission_process.ts';
 import { remove_owned_tree } from './archive.ts';
 import { PUBLICATION_ENTRY_SECONDS } from './publication_configuration.ts';
@@ -151,12 +151,12 @@ export async function with_publication_entry(
     actual_settled = true;
   });
   try {
-    await observe_shutdown(
+    const observed = await observe_promise(
       actual,
-      { deadline },
-      'Publication entry exceeded its original deadline',
+      Math.max(0, deadline - performance.now() / 1000) * 1000,
     );
-    return await actual;
+    if (!observed.completed) throw new Error('Publication entry exceeded its original deadline');
+    return observed.value;
   } catch (error) {
     if (performance.now() / 1000 < deadline) throw error;
     failures.add(error);

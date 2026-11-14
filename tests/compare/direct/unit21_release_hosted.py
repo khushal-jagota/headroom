@@ -165,9 +165,9 @@ def compare(left: Path, right: Path, record: dict[str, Any]) -> dict[str, Any]:
             if targets[0] != targets[1]:
                 differences["symlink_target"] = targets
         else:
-            times = [str(info.st_mtime_ns) for info in information]
-            if times[0] != times[1]:
-                differences["mtime_ns"] = times
+            times = [info.st_mtime_ns for info in information]
+            if abs(times[0] - times[1]) > 1_000_000:
+                differences["mtime_ns"] = [str(value) for value in times]
             if stat.S_ISREG(information[0].st_mode):
                 lengths = [info.st_size for info in information]
                 if lengths[0] != lengths[1]:
@@ -198,7 +198,7 @@ def compare(left: Path, right: Path, record: dict[str, Any]) -> dict[str, Any]:
     result = dict(
         equal=not total,
         paths=len(left_names),
-        mtime="exact filesystem st_mtime_ns; no tolerance",
+        mtime="node-tar Date precision: absolute difference <=1 ms, including filesystem rounding",
         mismatch_count=total,
         mismatch_categories=categories,
         first_mismatches=mismatches,

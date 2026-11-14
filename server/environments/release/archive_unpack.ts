@@ -9,6 +9,9 @@ import type { Readable, Writable } from 'node:stream';
 import { Transform } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import { createGunzip } from 'node:zlib';
+import { Unpack } from 'tar';
+import type { ReadEntry } from 'tar';
+import { is_record } from '../../core/records.ts';
 import { AppValidationError, MacArchiveInspectionError, MacArchiveJsonError } from './contracts.ts';
 import type {
   ArchiveUnpackRequest,
@@ -18,7 +21,6 @@ import type {
 import { MAX_MAC_RUNTIME_ARCHIVE_BYTES } from '../updates/mac/configuration.ts';
 import { validate_app_manifest } from './identity.ts';
 import { ArchiveMembers } from './logic/archive_members.ts';
-import { set_archive_times } from './archive_times.ts';
 import {
   ARCHIVE_MAX_COMPRESSED_BYTES,
   ARCHIVE_MAX_EXPANDED_BYTES,
@@ -77,11 +79,10 @@ export async function* read_archive_messages(
       pending = Buffer.concat([pending, chunk.subarray(start, end)]);
       if (newline < 0) break;
       const value: unknown = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(pending));
-      if (!value || typeof value !== 'object' || Array.isArray(value))
-        throw new AppValidationError('app archive child message is invalid');
+      if (!is_record(value)) throw new AppValidationError('app archive child message is invalid');
       pending = Buffer.alloc(0);
       start = end + 1;
-      yield value as Record<string, unknown>;
+      yield value;
     }
   }
   if (pending.length) throw new AppValidationError('app archive child message is truncated');
@@ -108,8 +109,8 @@ async function extract_members(
   reader: ArchiveMembers,
   fence: () => void,
   source_umask: number | null,
+  signal: AbortSignal,
 ): Promise<void> {
-  const buffer = Buffer.alloc(ARCHIVE_STREAM_CHUNK_BYTES);
   const directories = new Set<string>([destination]);
   const directory = async (path: string): Promise<void> => {
     fence();
@@ -117,41 +118,52 @@ async function extract_members(
     for (let current = path; current !== destination; current = dirname(current))
       directories.add(current);
   };
+  const entries = new Map(reader.members.map((member) => [member.path, member]));
+  const file_mode = (mode: number): number => {
+    if (source_umask === null) return mode;
+    mode &= 0o755;
+    if (!(mode & 0o100)) mode &= ~0o111;
+    return mode | 0o600;
+  };
+  const unpack = new Unpack({
+    cwd: destination,
+    strict: true,
+    preserveOwner: false,
+    noMtime: true,
+    chmod: true,
+    umask: 0,
+    dmode: 0o700,
+    filter(path, item) {
+      const entry = item as ReadEntry;
+      const name = path
+        .split('/')
+        .filter((part) => part && part !== '.')
+        .join('/');
+      const member = entries.get(name)!;
+      if (!name || ['Link', 'SymbolicLink'].includes(member.type)) return false;
+      entry.mode = member.type === 'Directory' ? 0o700 : file_mode(member.mode) | 0o400;
+      return true;
+    },
+  });
+  await pipeline(createReadStream('', { fd: spool.fd, start: 0, autoClose: false }), unpack, {
+    signal,
+  });
   for (const member of reader.members) {
-    fence();
     const path = join(destination, member.path);
-    if (member.type === '5') await directory(path);
-    else if (!['1', '2'].includes(member.type)) {
-      await directory(dirname(path));
-      fence();
-      const file = await open(path, 'wx', 0o600);
-      try {
-        let offset = 0;
-        while (offset < member.size) {
-          fence();
-          const { bytesRead } = await spool.read(
-            buffer,
-            0,
-            Math.min(buffer.length, member.size - offset),
-            member.offset + offset,
-          );
-          if (!bytesRead) throw new AppValidationError('app archive spool is truncated');
-          fence();
-          await write_all(file, buffer.subarray(0, bytesRead), offset);
-          offset += bytesRead;
-        }
-        await file.sync();
-      } finally {
-        await file.close();
-      }
-    }
+    if (member.type === 'Directory') {
+      for (let current = path; current !== destination; current = dirname(current))
+        directories.add(current);
+    } else await directory(dirname(path));
   }
-  for (const member of reader.members.filter((member) => ['1', '2'].includes(member.type))) {
+  // Links wait for all regular targets, including forward hard links.
+  for (const member of reader.members.filter((member) =>
+    ['Link', 'SymbolicLink'].includes(member.type),
+  )) {
     fence();
     const path = join(destination, member.path);
     await directory(dirname(path));
     fence();
-    if (member.type === '1') await link(join(destination, member.linkpath), path);
+    if (member.type === 'Link') await link(join(destination, member.linkpath), path);
     else {
       await symlink(member.linkpath, path);
       if (source_umask !== null && process.platform === 'darwin') {
@@ -161,16 +173,10 @@ async function extract_members(
       }
     }
   }
-  const ordinary = reader.members.filter((member) => member.path && member.type !== '2');
-  for (const member of ordinary.filter((member) => member.type !== '5')) {
+  const ordinary = reader.members.filter((member) => member.path && member.type !== 'SymbolicLink');
+  for (const member of ordinary.filter((member) => member.type !== 'Directory')) {
     fence();
-    let mode = member.mode;
-    if (source_umask !== null) {
-      // Python tarfile's data_filter: owner RW, no go-w, owner-X gates all X.
-      mode &= 0o755;
-      if (!(mode & 0o100)) mode &= ~0o111;
-      mode |= 0o600;
-    }
+    const mode = file_mode(member.mode);
     // A preceding hard-link member can already have removed read access on this inode.
     await chmod(join(destination, member.path), mode | 0o400);
     const file = await open(
@@ -178,7 +184,7 @@ async function extract_members(
       constants.O_RDONLY | constants.O_NOFOLLOW,
     );
     try {
-      set_archive_times(file.fd, member.mtime, fence);
+      if (member.mtime) await file.utimes(member.mtime, member.mtime);
       await file.chmod(mode);
       await file.sync();
     } finally {
@@ -187,7 +193,7 @@ async function extract_members(
   }
   const declared = new Map(
     reader.members
-      .filter((member) => member.type === '5')
+      .filter((member) => member.type === 'Directory')
       .map((member) => [join(destination, member.path), member]),
   );
   for (const path of [...directories].sort((a, b) => b.split('/').length - a.split('/').length)) {
@@ -195,7 +201,7 @@ async function extract_members(
     const file = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW);
     try {
       const member = declared.get(path);
-      if (member) set_archive_times(file.fd, member.mtime, fence);
+      if (member?.mtime) await file.utimes(member.mtime, member.mtime);
       await file.chmod(
         path === destination
           ? 0o700
@@ -411,6 +417,7 @@ export async function unpack_archive_child(
       reader,
       fence,
       source_export ? inherited_umask : null,
+      controller.signal,
     );
     fence();
     let result: ArchiveUnpackResult;

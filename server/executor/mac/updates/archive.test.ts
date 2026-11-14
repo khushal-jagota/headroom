@@ -37,6 +37,7 @@ function fixture(unsafe = false) {
   services.push(files);
   return {
     root,
+    archive,
     releases,
     destination: join(releases, revision + '-' + sha),
     files,
@@ -67,6 +68,12 @@ test('refuses a traversal member before release publication', async () => {
   const f = fixture(true);
   await expect(f.install()).rejects.toThrow();
   expect(existsSync(join(f.root, 'escape'))).toBe(false);
+  expect(existsSync(f.releases)).toBe(false);
+});
+test('checks the approved digest before it decodes the runtime archive', async () => {
+  const f = fixture();
+  writeFileSync(f.archive, Buffer.alloc(readFileSync(f.archive).length));
+  await expect(f.install()).rejects.toThrow('Runtime archive digest differs from approval.');
   expect(existsSync(f.releases)).toBe(false);
 });
 test('ordered async work finishes before queued cleanup after an expired stop observer', async () => {
