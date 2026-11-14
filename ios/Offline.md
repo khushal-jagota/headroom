@@ -8,6 +8,13 @@ supplies neither stream coverage nor read credit. Fresh streams establish their
 own authority. Navigation and conversation owners checkpoint during updates and
 on background entry.
 
+The current owner reference in the navigation view selects the conversation on
+screen. A replacement or a cleared reference supersedes saved transcript and
+outbox IDs, and clears the old display before the next transcript arrives.
+Unsent drafts and attachments remain with their owner. Recorded outgoing messages
+keep their original destination and receipt. Explicit history links retain their
+requested conversation and remain read only when it is no longer current.
+
 Saved responses can supply display while fresh reads run. New responses apply immediately,
 including changes that move rows. If the server cannot be reached, a Tailscale
 reminder covers the current screen with Try again. The underlying routes keep

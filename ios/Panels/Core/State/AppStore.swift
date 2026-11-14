@@ -222,6 +222,23 @@ import Observation
         if persist { checkpointNavigation(snapshot) }
     }
 
+    /// Outer nil means that this view does not carry the owner. Inner nil is a
+    /// known cleared link, and must not fall back to a saved conversation.
+    func currentConversationID(_ owner: ConversationOwner) -> String?? {
+        switch owner {
+        case .chief:
+            guard let chief = presentation?.chief else { return nil }
+            return .some(chief.conversationId)
+        case .manager(let id):
+            guard let manager = presentation?.managersById[id] else { return nil }
+            return .some(manager.conversationId)
+        case .ticket(let id):
+            guard let ticket = presentation?.ticketsById[id] else { return nil }
+            return .some(ticket.conversationId)
+        case .goal: return nil
+        }
+    }
+
     // MARK: Reload identities
 
     func ticketStamp(_ id: String) -> String? { recordStamps[RecordKey(kind: "ticket", id: id)] }

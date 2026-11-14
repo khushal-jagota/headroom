@@ -6,6 +6,8 @@ import hashlib
 import http.server
 import json
 import os
+import plistlib
+import sqlite3
 import signal
 import socket
 import subprocess
@@ -31,7 +33,8 @@ LANE_LOCK = (
 )
 BUNDLE = os.environ.get("PANELS_OFFLINE_BUNDLE", "app.panels.ios.pios-offline")
 GOALS_SMOKE = os.environ.get("PANELS_GOALS_SMOKE") == "1"
-REVIEW_MESSAGES = os.environ.get("PANELS_REVIEW_MESSAGES") == "1" or GOALS_SMOKE
+REPLACEMENT_SMOKE = os.environ.get("PANELS_REPLACEMENT_SMOKE") == "1"
+REVIEW_MESSAGES = os.environ.get("PANELS_REVIEW_MESSAGES") == "1" or GOALS_SMOKE or REPLACEMENT_SMOKE
 
 
 def main() -> int:
@@ -268,6 +271,8 @@ def main() -> int:
         "messages": [],
         "recording": None,
         "goal_patch_attempts": 0,
+        "chief_conversation": "stub",
+        "tail_requests": [],
     }
     state.update(
         read_through=1,
@@ -291,6 +296,36 @@ def main() -> int:
             )
         except (KeyError, ValueError):
             return False
+
+    def saved_replacement_reference() -> dict[str, Any]:
+        """Read the owned test app's actual saved view, without modifying its store."""
+        device = os.environ.get("PANELS_REPLACEMENT_DEVICE_ID")
+        if not device or "PANELS_OFFLINE_BUNDLE" not in os.environ:
+            raise ValueError("Replacement disk proof requires an explicit test device and bundle")
+        containers = Path.home() / "Library/Developer/CoreSimulator/Devices" / device / "data/Containers/Data/Application"
+        matches = [
+            path.parent
+            for path in containers.glob("*/.com.apple.mobile_container_manager.metadata.plist")
+            if plistlib.loads(path.read_bytes()).get("MCMMetadataIdentifier") == BUNDLE
+        ]
+        if len(matches) != 1:
+            raise ValueError("The owned replacement app has no unique data container")
+        store = matches[0] / "Library/Application Support/PanelsPhone/phone.store"
+        with sqlite3.connect("file:" + str(store) + "?mode=ro", uri=True) as connection:
+            rows = connection.execute("SELECT ZKEY, ZPAYLOAD FROM ZLOCALRECORD WHERE ZKIND = 'cache' AND ZSERVER = ?", (url,)).fetchall()
+        saved = {}
+        for key, payload in rows:
+            if "/api/navigation/view/snapshot#" not in key:
+                continue
+            snapshot = json.loads(payload)
+            chief = next((record["value"] for record in snapshot["content"]["records"] if record["kind"] == "chief"), None)
+            if chief is not None:
+                saved[key.rsplit("#", 1)[-1]] = chief.get("conversation_id")
+        if saved.get("latest") != "stub" or saved.get("workspace") != "stub":
+            raise ValueError("The app did not persist its old Chief reference before relaunch")
+        proof = {"device": device, "bundle": BUNDLE, "saved_chief_references": saved, "store_open_mode": "read-only"}
+        (output / "replacement-saved-reference.json").write_text(json.dumps(proof, indent=2))
+        return proof
 
     def stop_clip() -> None:
         recording = state["recording"]
@@ -361,7 +396,7 @@ def main() -> int:
             ("chief", "chief"): {
                 "kind": "chief",
                 "id": "chief",
-                "value": {"label": "Chief of Staff", "conversation_id": "stub"},
+                "value": {"label": "Chief of Staff", "conversation_id": state["chief_conversation"]},
             }
         }
         cards: dict[tuple[str, str], int] = {}
@@ -391,7 +426,7 @@ def main() -> int:
                     "ticket" if owner == "ticket-stacked" else owner,
                     stub_owner[owner],
                     "stub",
-                    True,
+                    state["chief_conversation"] == "stub",
                     (1 if state["read_through"] < 3 else 3) if unread else None,
                 ),
                 (
@@ -527,6 +562,20 @@ def main() -> int:
                 "rest": {"plan_progress": {}},
             },
         }
+        if REPLACEMENT_SMOKE and "/conversations/" in path:
+            identity = path.split("/conversations/", 1)[1].split("/", 1)[0]
+            text = "New Chief transcript" if identity == "replacement" else "Old Chief transcript"
+            value["page"]["items"] = [
+                {
+                    "kind": "row",
+                    "key": identity + "-message",
+                    "body": {"kind": "inline", "value": {
+                        "kind": "agent_message", "content": [{"piece": "text", "text": text}],
+                    }},
+                }
+            ]
+            value["coverage"]["through_sequence"] = 8
+            value["status"]["rest"]["latest_happened"] = {"kind": "agent_message", "excerpt": text}
         if REVIEW_MESSAGES and "/conversations/history/" in path:
             value["page"]["items"] = [
                 {
@@ -575,6 +624,37 @@ def main() -> int:
             query = parse_qs(urlparse(self.path).query)
             if path.startswith("/proof/"):
                 name = path.removeprefix("/proof/")
+                if REPLACEMENT_SMOKE and name.startswith("replacement/"):
+                    action = name.split("/", 1)[1]
+                    with lock:
+                        if action == "old":
+                            state["chief_conversation"] = "stub"
+                        elif action == "clear":
+                            state["chief_conversation"] = None
+                        elif action == "new":
+                            state["chief_conversation"] = "replacement"
+                        elif action == "relaunch-new":
+                            try:
+                                saved_replacement_reference()
+                            except (ValueError, OSError, sqlite3.Error) as error:
+                                self.respond({"error": str(error)}, 409)
+                                return
+                            state["chief_conversation"] = "replacement"
+                        elif action == "unread":
+                            state["read_through"] = 1
+                        elif action == "state":
+                            self.respond({
+                                "current": state["chief_conversation"],
+                                "tails": state["tail_requests"],
+                            })
+                            return
+                        elif action == "review-observation":
+                            (output / "replacement-review-observation.json").write_text(json.dumps(query))
+                        else:
+                            self.respond({"error": "Unknown replacement action"}, 400)
+                            return
+                    self.respond({})
+                    return
                 if name.startswith("review-owner/"):
                     state["review_owner"] = name.split("/")[-1]
                 elif name == "new-message":
@@ -638,9 +718,14 @@ def main() -> int:
                 # The navigation view and conversation tail send a fresh snapshot frame each
                 # second, so the app follows fixture changes without a change-driven read.
                 view = json.loads(query["view"][0]) if "view" in query else None
+                if REPLACEMENT_SMOKE and path.endswith("/view/tail"):
+                    state["tail_requests"].append(path.split("/conversations/", 1)[1].split("/", 1)[0])
+                    (output / "replacement-tail-requests.json").write_text(json.dumps(state["tail_requests"]))
                 # A cold slow load holds the view's first frame as it held the snapshot read.
-                while view is not None and state["slow"]:
+                while view is not None and state["slow"] and not state["offline"]:
                     time.sleep(0.1)
+                if state["offline"]:
+                    return
                 self.send_response(200)
                 self.send_header("Content-Type", "text/event-stream")
                 self.end_headers()
@@ -731,7 +816,13 @@ def main() -> int:
                 self.end_headers()
                 self.wfile.write(content)
                 return
-            if path == "/api/managers":
+            if REPLACEMENT_SMOKE and path == "/api/goals":
+                value = {"goals": [], "status_date": "2026-11-14", "next_refresh_at": time.time() + 3600}
+            elif REPLACEMENT_SMOKE and path.endswith("/page"):
+                value = {"page": {"blocks": []}, "page_revision": 1}
+            elif REPLACEMENT_SMOKE and path.endswith("/page/readings"):
+                value = {"values": [], "sources": []}
+            elif path == "/api/managers":
                 value = {"managers": [], "page": page}
             elif path == "/api/tickets":
                 value = tickets[query["id"][0]] if "id" in query else {"tickets": [], "page": page}
@@ -790,7 +881,7 @@ def main() -> int:
                 )
                 value["manager"]["conversation_id"] = "stub"
             elif path == "/api/chief/conversation":
-                value = {"conversation_id": "stub"}
+                value = {"conversation_id": state["chief_conversation"]}
             elif path == "/api/deployment-status":
                 value = {"state": "idle"}
             elif path.endswith("/manifest"):
@@ -811,6 +902,7 @@ def main() -> int:
                 value = conversation_view(path)
             elif (
                 path.endswith("/conversations/stub")
+                or (REPLACEMENT_SMOKE and path.endswith("/conversations/replacement"))
                 or path.endswith("/conversations/history")
                 or path.endswith("/start-values")
             ):

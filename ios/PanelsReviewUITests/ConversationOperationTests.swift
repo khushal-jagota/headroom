@@ -2,6 +2,104 @@ import XCTest
 
 /// One-off native detail and Dynamic Type reviews. Excluded from permanent release checks.
 final class ConversationOperationTests: XCTestCase {
+    /// One-off replacement proof through the real shell and navigation stream.
+    /// Model checks cannot prove that the Chief page follows a changed server reference.
+    @MainActor func testOwnerReplacementAgainstLocalStub() async throws {
+        continueAfterFailure = false
+        let base = try XCTUnwrap(ProcessInfo.processInfo.environment["PANELS_OFFLINE_STUB_URL"])
+        XCTAssertEqual(URL(string: base)?.host, "127.0.0.1")
+        let app = XCUIApplication()
+        app.launchArguments = ["--conversation-stub", base]
+        defer { app.terminate() }
+        try await proof(base, "replacement/old")
+        app.launch()
+        // WorkspaceContextMenu wraps this link and drops its source identifier.
+        // Use the unique Chief title, as the admitted Review screen walk does.
+        let chief = app.buttons.matching(NSPredicate(format: "label CONTAINS 'Chief of Staff'")).firstMatch
+        XCTAssertTrue(chief.waitForExistence(timeout: 8)); chief.tap()
+        let line = app.buttons["conversation-line"]
+        XCTAssertTrue(line.waitForExistence(timeout: 8))
+        let input = app.descendants(matching: .any).matching(identifier: "conversation-input").firstMatch
+        XCTAssertTrue(input.waitForExistence(timeout: 8))
+        if input.value as? String != "Draft survives replacement" {
+            input.tap(); input.typeText("Draft survives replacement")
+        }
+        line.tap()
+        let old = app.staticTexts["Old Chief transcript"]
+        let replacement = app.staticTexts["New Chief transcript"]
+        XCTAssertTrue(old.waitForExistence(timeout: 8))
+        capture(app, "replacement-before")
+        try await proof(base, "replacement/clear")
+        XCTAssertTrue(old.waitForNonExistence(timeout: 8), "An unlinked owner retained its old transcript")
+        XCTAssertEqual(input.value as? String, "Draft survives replacement")
+        capture(app, "replacement-cleared")
+        try await proof(base, "replacement/new")
+        XCTAssertTrue(replacement.waitForExistence(timeout: 8))
+        XCTAssertFalse(old.exists)
+        XCTAssertEqual(input.value as? String, "Draft survives replacement")
+        capture(app, "replacement-after")
+
+        // Persist the OLD navigation and display through the normal app before
+        // relaunch. The fixture reads the owned app's store in read-only mode
+        // and refuses the transition unless BOTH saved views still name OLD.
+        // The server then returns NEW through the normal startup stream.
+        try await proof(base, "replacement/old")
+        XCTAssertTrue(old.waitForExistence(timeout: 8))
+        XCUIDevice.shared.press(.home)
+        XCTAssertTrue(app.wait(for: .runningBackground, timeout: 5))
+        app.terminate()
+        try await proof(base, "replacement/relaunch-new")
+        app.launch()
+        XCTAssertTrue(chief.waitForExistence(timeout: 8)); chief.tap()
+        XCTAssertTrue(line.waitForExistence(timeout: 8)); line.tap()
+        XCTAssertTrue(replacement.waitForExistence(timeout: 8))
+        XCTAssertFalse(old.exists)
+        XCTAssertEqual(input.value as? String, "Draft survives replacement")
+        capture(app, "replacement-cold-fresh-new")
+
+        // An explicit Review link must keep its historical destination.
+        let back = app.buttons["detail-back"]
+        back.tap(); XCTAssertTrue(line.waitForExistence(timeout: 5)); back.tap()
+        let review = app.tabBars.buttons["Review"]
+        XCTAssertTrue(review.waitForExistence(timeout: 5)); review.tap()
+        try await proof(base, "replacement/unread")
+        XCTAssertTrue(app.staticTexts["First unread message"].waitForExistence(timeout: 8))
+        let open = app.buttons["review.openConversation"]
+        XCTAssertTrue(open.waitForExistence(timeout: 8)); open.tap()
+        XCTAssertTrue(old.waitForExistence(timeout: 8))
+        XCTAssertTrue(app.staticTexts["Historical conversation · read only"].waitForExistence(timeout: 8))
+        XCTAssertFalse(app.buttons["Send message"].exists)
+        capture(app, "replacement-explicit-history")
+        back.tap(); XCTAssertTrue(line.waitForExistence(timeout: 5)); back.tap()
+
+        // Record the separate Review-card risk. This is an observation, not a
+        // claim that this Ticket fixes Review or all failures on the phone.
+        try await proof(base, "replacement/old")
+        app.tabBars.buttons["Workspace"].tap()
+        XCTAssertTrue(chief.waitForExistence(timeout: 5)); chief.tap()
+        XCTAssertTrue(line.waitForExistence(timeout: 5)); line.tap()
+        XCTAssertTrue(old.waitForExistence(timeout: 8))
+        back.tap(); XCTAssertTrue(line.waitForExistence(timeout: 5)); back.tap()
+        try await proof(base, "replacement/unread")
+        review.tap()
+        XCTAssertTrue(app.staticTexts["First unread message"].waitForExistence(timeout: 8))
+        let historical = app.staticTexts["Historical conversation · read only"]
+        XCTAssertTrue(historical.waitForNonExistence(timeout: 5))
+        try await proof(base, "replacement/new")
+        // Observe the historical state through the next streamed snapshots.
+        // This observation can remain false without failing the Chief proof.
+        _ = historical.waitForExistence(timeout: 3)
+        let observation = "replacement/review-observation?historical=" + String(historical.exists)
+            + "&reply=" + String(app.buttons["Send message"].exists)
+        try await proof(base, observation)
+        capture(app, "replacement-review-observation")
+        let (data, _) = try await URLSession.shared.data(from: URL(string: base + "/proof/replacement/state")!)
+        let state = try XCTUnwrap(try JSONSerialization.jsonObject(with: data) as? [String: Any])
+        let tails = try XCTUnwrap(state["tails"] as? [String])
+        XCTAssertTrue(tails.contains("stub")); XCTAssertTrue(tails.contains("replacement"))
+        print("Replacement transcript requests: \(tails)")
+    }
+
     /// Reuses the existing host to prove native push/pop, draft ownership and page
     /// scroll restoration. Host-only tests cannot exercise UIKit's edge gesture.
     @MainActor func testDetailPagePushAgainstLocalStub() async throws {

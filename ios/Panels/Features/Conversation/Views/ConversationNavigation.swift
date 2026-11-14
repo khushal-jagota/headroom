@@ -77,19 +77,28 @@ private struct ConversationSurface: View {
     var retry: (() async -> Void)?
     var checksCurrentConversation = false
     @State private var currentConversationConfirmed = false
-    private var readOnly: Bool { checksCurrentConversation && !currentConversationConfirmed }
+    private var currentReference: String?? {
+        if let current = store.currentConversationID(owner) { return .some(current) }
+        return conversationID.map { .some($0) }
+    }
+    private var currentReferenceKey: String {
+        guard let current = currentReference else { return "unknown" }
+        return current.map { "conversation:" + $0 } ?? "none"
+    }
+    private var readOnly: Bool {
+        guard checksCurrentConversation else { return false }
+        if let current = store.currentConversationID(owner) { return current != conversationID }
+        return !currentConversationConfirmed
+    }
     @State private var changingQueue = false
 
     var body: some View {
         conversation
-        .task(id: "\(store.baseURL)|\(conversationID ?? "new")|\(scenePhase == .active)|\(active)|\(store.serverUnreachable)") {
+        .task(id: "\(store.baseURL)|\(conversationID ?? "new")|\(scenePhase == .active)|\(active)|\(store.serverUnreachable)|\(currentReferenceKey)") {
             guard active, !store.serverUnreachable, scenePhase == .active else { return }
-            model.conversationID = conversationID ?? model.conversationID
-            if owner == .chief, model.conversationID == nil {
-                let saved: ConversationReference? = store.client.cached("/api/chief/conversation")
-                model.conversationID = saved?.conversationId
-            }
-            model.restore(owner: owner, api: store.client)
+            if checksCurrentConversation { model.selectConversation(conversationID) }
+            else if let current = currentReference { model.selectConversation(current) }
+            model.restore(owner: owner, api: store.client, recoverConversationID: false)
             if case .ticket(let id) = owner {
                 let api = store.client
                 let ticket = store.resources.handle(TicketResources.detail(id))
@@ -99,14 +108,17 @@ private struct ConversationSurface: View {
                 guard !Task.isCancelled, api.baseURL == store.baseURL else { return }
                 model.machineLocale = ticket.value?.detail.locale
             }
-            if owner == .chief, model.conversationID == nil {
-                let currentID = try? await store.client.chiefConversation().conversationId
-                guard !Task.isCancelled else { return }
-                model.conversationID = currentID
-            }
-            if checksCurrentConversation {
-                do { currentConversationConfirmed = try await store.client.currentConversation(owner) == conversationID }
-                catch { currentConversationConfirmed = false; model.error = error.localizedDescription }
+            if checksCurrentConversation, store.currentConversationID(owner) == nil {
+                let generation = model.readerGeneration
+                currentConversationConfirmed = false
+                do {
+                    let current = try await store.client.currentConversation(owner)
+                    guard !Task.isCancelled, generation == model.readerGeneration else { return }
+                    currentConversationConfirmed = current == conversationID
+                } catch {
+                    guard !Task.isCancelled, generation == model.readerGeneration else { return }
+                    model.error = error.localizedDescription
+                }
             }
             // The open tail below delivers the transcript and status. A conversation that
             // has not started yet has only its owner's start values to read.
@@ -130,7 +142,7 @@ private struct ConversationSurface: View {
                         applied = true
                     }
                 } catch {
-                    if Task.isCancelled { return }
+                    if Task.isCancelled || model.conversationID != id { return }
                     model.error = error.localizedDescription
                     applied = false
                     failed = true
@@ -163,7 +175,9 @@ private struct ConversationSurface: View {
 
     private func readConfiguration() async {
         let api = store.client
-        if let configuration = try? await api.conversationConfiguration(owner, id: model.conversationID), !Task.isCancelled, api.baseURL == store.baseURL {
+        let id = model.conversationID, generation = model.readerGeneration
+        if let configuration = try? await api.conversationConfiguration(owner, id: id), !Task.isCancelled,
+           api.baseURL == store.baseURL, generation == model.readerGeneration, id == model.conversationID {
             model.applyConfiguration(configuration)
         }
     }
@@ -280,14 +294,20 @@ private struct ConversationSurface: View {
     private func changeQueue(_ held: ConversationConfiguration.HeldPrompt, discard: Bool) {
         guard let id = model.conversationID, !changingQueue else { return }
         changingQueue = true
+        let generation = model.readerGeneration
         Task {
             defer { changingQueue = false }
             do {
                 let result = try await store.client.changeHeldPrompt(id, heldID: held.heldPromptId, discard: discard)
+                guard generation == model.readerGeneration, id == model.conversationID else { return }
                 model.applyHeldChange(result, senderID: held.senderMessageId ?? held.heldPromptId)
                 await model.refresh(using: store.client, transcript: true)
-                model.applyConfiguration(try await store.client.conversationConfiguration(owner, id: id))
-            } catch { model.error = error.localizedDescription }
+                let configuration = try await store.client.conversationConfiguration(owner, id: id)
+                guard generation == model.readerGeneration, id == model.conversationID else { return }
+                model.applyConfiguration(configuration)
+            } catch {
+                if generation == model.readerGeneration, id == model.conversationID { model.error = error.localizedDescription }
+            }
         }
     }
 }
