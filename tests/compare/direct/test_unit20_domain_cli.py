@@ -358,8 +358,8 @@ def _runtime_proof(reference: ServerHandle, candidate: ServerHandle, root: Path)
         root / "runtime-export",
         """
 import {runtime_guide,SCRIPT,RUN} from './server/measure_sources/guidance.ts';
-import {goal_guidance} from './server/goals/cli/guidance.ts';
-import {page_guidance} from './server/managers/page_cli/guidance.ts';
+import goal_guidance from './server/goals/cli/guidance.json' with {type:'json'};
+import page_guidance from './server/managers/page_cli/guidance.json' with {type:'json'};
 import {CREATE as MEASURE} from './server/measures/cli/schema.ts';
 import {prepare_document} from './server/goals/logic/documents.ts';
 import {prepare_plain_document} from './server/managers/logic/documents.ts';

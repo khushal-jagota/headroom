@@ -127,8 +127,8 @@ def render_declarations(records: list[dict[str, Any]]) -> str:
 
 
 SCHEMA_FILES = {
-    "goal": ("server/goals/cli/guidance.ts", "goal_guidance"),
-    "page": ("server/managers/page_cli/guidance.ts", "page_guidance"),
+    "goal": ("server/goals/cli/guidance.json", None),
+    "page": ("server/managers/page_cli/guidance.json", None),
     "measure": ("server/measures/cli/schema.ts", "CREATE"),
 }
 
@@ -149,8 +149,10 @@ def schema_declarations() -> dict[str, Any]:
     }
 
 
-def render_schema(value: Any, export: str) -> str:
+def render_schema(value: Any, export: str | None) -> str:
     document = json.dumps(value, ensure_ascii=False, indent=2)
+    if export is None:
+        return document + "\n"
     document = document.replace("\\", "\\\\").replace("`", "\\`").replace("${", "\\${")
     return (
         "/** Offline declarations: generated from fresh Python during migration. */\n"

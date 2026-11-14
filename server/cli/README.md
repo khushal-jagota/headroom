@@ -32,8 +32,10 @@ proof instead invokes both CLIs through the guarded synthetic-host driver. It
 compares JSON fields and exit codes against fresh Python. An offline drift check compares
 the complete fresh Python declarations with `commands.ts` without writing repository
 files or starting another server. The exporter rejects unsupported parameter types.
-The same exporter refreshes the goal, holder-page and measure offline declarations.
-Their readable TypeScript data is checked against fresh Python exports during migration.
+The same exporter refreshes goal and holder-page guidance as plain JSON documents
+at `server/goals/cli/guidance.json` and `server/managers/page_cli/guidance.json`.
+Their schema commands import JSON only when selected. Measure declarations remain
+TypeScript. All three compare with fresh Python exports during migration.
 Pure canonical chart, page and measure validators also accept a printed example from
 each area; this checks the contract without another application host.
 Help lists the declared commands and options without reproducing Click layout.

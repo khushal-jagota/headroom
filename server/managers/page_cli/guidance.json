@@ -1,6 +1,4 @@
-/** Offline declarations: generated from fresh Python during migration. */
-import { parse_numeric_json } from '../../core/http/numeric_json.ts';
-export const page_guidance = parse_numeric_json(`{
+{
   "schema": {
     "$defs": {
       "BinaryExpression": {
@@ -1519,4 +1517,4 @@ export const page_guidance = parse_numeric_json(`{
     "A tickets block places the holder's current Workers in the document. Without one, Workers appear below it. Artifacts are supporting files, not the document.",
     "Block and checklist-item IDs can be omitted and are generated. Keep saved IDs on later edits. Segmented view IDs are required. Sections use exactly one of blocks or views. Measure and dataset bindings must name existing records."
   ]
-}`) as Record<string, any>;
+}

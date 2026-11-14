@@ -1,6 +1,4 @@
-/** Offline declarations: generated from fresh Python during migration. */
-import { parse_numeric_json } from '../../core/http/numeric_json.ts';
-export const goal_guidance = parse_numeric_json(`{
+{
   "create": {
     "schema": {
       "$defs": {
@@ -4246,4 +4244,4 @@ export const goal_guidance = parse_numeric_json(`{
       "measure_id must name an existing measure. Formula expectations require a measure-bound, nonstacked line or number without aggregates or manual controls. Category bindings, manual controls and other chart kinds retain their existing semantic checks."
     ]
   }
-}`) as Record<string, any>;
+}
