@@ -3,6 +3,7 @@
     "attention_history_metadata.started_at": "Schema initialization reads real wall time."
   },
   "response_tokens": {
+    "body.revision": "Artifact catalog revisions are opaque inventory tokens. Preserve their equality/change history; entries, paging fields and revision string types remain strict.",
     "body.coverage.revision": "Navigation continuity revisions count source commits, so compare changes.",
     "body.ordering_generation": "TypeScript uses Intl.Collator under its own approved ordering generation.",
     "body.content.windows.*.next": "Opaque cursor/binding digest includes backend-specific collation operands or epoch. Ordered members and record contents are compared without normalization.",

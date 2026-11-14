@@ -620,6 +620,13 @@ def run_list(
                             }
                         if side == 0 and resolved["path"].startswith("/api/test/poll/"):
                             loop_results[resolved["path"]] = body
+                        if (
+                            resolved["path"].startswith("/api/artifact-catalog/")
+                            and answer["status"] == 200
+                        ):
+                            assert isinstance(body["revision"], str) and body["revision"], (
+                                index, side, body,
+                            )
                         capture_values(body, call, captures[side])
                         answers.append(
                             norms[side].normalize(
