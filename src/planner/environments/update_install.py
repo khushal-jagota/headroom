@@ -12,9 +12,7 @@ from contextlib import closing
 from pathlib import Path
 
 from planner.environments.update_configuration import INSTALLER_FILE_NAME
-
-_INSTALLER_SOURCE = Path(__file__).with_name("update_installer.py")
-_HOST_PYTHON_PATH = "/usr/local/bin:/usr/bin:/bin"
+from planner.platform_runtime.selection import get_platform_adapter
 
 
 def migration_graph(app_root: Path) -> dict[str, tuple[str, ...]]:
@@ -81,31 +79,14 @@ def require_exact_schema_frontier(database: Path, staged_app: Path) -> None:
 
 
 def own_service_unit(cgroup: str | None = None) -> str | None:
-    """Name the systemd service this process runs in, or None outside one.
-
-    The installer stops and starts exactly this unit, so a server can only ever restart
-    itself. A copy of Panels running anywhere else cannot stop the live service.
-    """
-    if cgroup is None:
-        try:
-            cgroup = Path("/proc/self/cgroup").read_text()
-        except OSError:
-            return None
-    for line in cgroup.splitlines():
-        hierarchy, _, path = line.partition("::")
-        if hierarchy != "0":
-            continue
-        leaf = path.rstrip("/").rsplit("/", 1)[-1]
-        if leaf.endswith(".service") and not leaf.startswith("user@"):
-            return leaf
-    return None
+    return get_platform_adapter().own_service_unit(cgroup)
 
 
 def write_installer(data_directory: Path) -> Path:
     """Copy the installer out of this app, so the app swap cannot change the code it runs."""
     destination = data_directory / INSTALLER_FILE_NAME
     temporary = destination.with_name(f".{destination.name}.tmp")
-    shutil.copyfile(_INSTALLER_SOURCE, temporary)
+    shutil.copyfile(get_platform_adapter().installer_source(), temporary)
     temporary.replace(destination)
     return destination
 
@@ -119,11 +100,9 @@ def installer_command(
     health_url: str,
     health_timeout_seconds: float,
 ) -> list[str]:
-    python = shutil.which("python3", path=_HOST_PYTHON_PATH)
-    if python is None:
-        raise OSError("The host has no python3 for the installer.")
+    python = get_platform_adapter().installer_python(current_root)
     return [
-        python, "-I", "-S", "-B", str(installer),
+        str(python), "-I", "-S", "-B", str(installer),
         "--current-root", str(current_root),
         "--attempt-id", attempt_id,
         "--service", service,

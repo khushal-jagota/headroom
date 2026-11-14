@@ -36,6 +36,9 @@ HOST: Final = "127.0.0.1"  # §2: the bind is fixed, not tunable
 DEFAULT_CONFIG_PATH: Final = "config.yaml"
 SSE_HEARTBEAT_MS: Final = 15000
 DB_BUSY_TIMEOUT_MS: Final = 5000
+# Match the pinned AnyIO request-worker limiter (40), retaining ordinary bursts
+# without repeated schema parsing. Loans beyond this budget still open fresh.
+RUNTIME_DATABASE_CONNECTIONS: Final = 40
 SHUTDOWN_GRACE_SECONDS: Final = 30
 
 _TRUE: Final = frozenset({"1", "true", "yes", "on"})
@@ -75,6 +78,8 @@ class Config:
     # Both unset: no Ticket scratch is ever removed.
     ticket_scratch_root: Path | None = None
     ticket_scratch_database: str | None = None
+    # None preserves installed-release provisioning. Source home setup selects explicitly.
+    provision_account_skills: bool | None = None
     # Live ingress only. Consume the environment input before agent children start.
     refuse_unidentified_agent_calls: bool = False
 
@@ -301,7 +306,13 @@ def load_config(path: str | None = None, env: Mapping[str, str] | None = None) -
     if executor_id is not None and re.fullmatch(r"[A-Za-z0-9_.:-]{1,128}", executor_id) is None:
         raise PlannerError(ErrorCode.validation, "executor_id must name a logical executor")
 
-    db_path = _str_value(cfg, env, "db_path", "PLAN_DB_PATH", "data/planning.db")
+    from planner.platform_runtime.paths import installation_data_directory
+
+    data_directory = installation_data_directory(Path("."))
+    db_path = _str_value(cfg, env, "db_path", "PLAN_DB_PATH", str(data_directory / "planning.db"))
+    account_skills = cfg.get("provision_account_skills")
+    if "PLAN_PROVISION_ACCOUNT_SKILLS" in env:
+        account_skills = env["PLAN_PROVISION_ACCOUNT_SKILLS"]
     credential_key_path = _str_value(
         cfg,
         env,
@@ -312,6 +323,11 @@ def load_config(path: str | None = None, env: Mapping[str, str] | None = None) -
     return Config(
         refuse_unidentified_agent_calls=refuse_unidentified_agent_calls,
         db_path=db_path,
+        provision_account_skills=(
+            None
+            if account_skills is None
+            else _parse_bool(account_skills, "provision_account_skills")
+        ),
         workspace_root=_workspace_root_value(cfg, env),
         ticket_scratch_root=_existing_directory_value(
             cfg, env, "ticket_scratch_root", "PLAN_TICKET_SCRATCH_ROOT"
@@ -327,10 +343,16 @@ def load_config(path: str | None = None, env: Mapping[str, str] | None = None) -
         tick_seconds=_int_value(cfg, env, "tick_seconds", "PLAN_TICK_SECONDS", 60),
         dispatch_enabled=_bool_value(cfg, env, "dispatch_enabled", "PLAN_DISPATCH_ENABLED", True),
         dispatcher_lock_path=_str_value(
-            cfg, env, "dispatcher_lock_path", "PLAN_DISPATCHER_LOCK_PATH", "data/dispatcher.lock"
+            cfg,
+            env,
+            "dispatcher_lock_path",
+            "PLAN_DISPATCHER_LOCK_PATH",
+            str(data_directory / "dispatcher.lock"),
         ),
-        logs_dir=_str_value(cfg, env, "logs_dir", "PLAN_LOGS_DIR", "data/logs"),
-        backup_dir=_str_value(cfg, env, "backup_dir", "PLAN_BACKUP_DIR", "data/backups"),
+        logs_dir=_str_value(cfg, env, "logs_dir", "PLAN_LOGS_DIR", str(data_directory / "logs")),
+        backup_dir=_str_value(
+            cfg, env, "backup_dir", "PLAN_BACKUP_DIR", str(data_directory / "backups")
+        ),
         voice_transcription_base_url=_str_value(
             cfg,
             env,

@@ -11,6 +11,8 @@ from urllib.parse import parse_qs, quote, unquote, urlsplit
 from markdown_it import MarkdownIt
 from markdown_it.token import Token
 
+from planner.files.logic.paths import PRIVATE_TICKET_NAMES
+
 _PARSER = MarkdownIt("gfm-like")
 _UNSAFE = re.compile(r"%(?:25|2e|2f|5c)", re.IGNORECASE)
 _BAD_PERCENT = re.compile(r"%(?![a-fA-F0-9]{2})")
@@ -107,6 +109,8 @@ def managed_href(href: str, origin: str) -> str | None:
         or _UNSAFE.search(file_path)
         or any(part in {"", ".", ".."} for part in file_path.split("/"))
     ):
+        return None
+    if kind == "tickets" and file_path.split("/", 1)[0] in PRIVATE_TICKET_NAMES:
         return None
     return f"/files/{kind}/{owner}/" + "/".join(
         quote(part, safe="~!*'()") for part in file_path.split("/")

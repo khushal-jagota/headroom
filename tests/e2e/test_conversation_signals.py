@@ -190,8 +190,8 @@ def test_exact_conversation_signals_cross_runtime_stream_and_surfaces(
         expect(signal.locator('[data-conversation-signal="message"]')).to_have_count(
             int(message), timeout=WAIT_MS
         )
-        # At rest the status line over the composer says Working. An open conversation shows
-        # its Stop control instead.
+        # At rest the status line says Working, with an optional elapsed time.
+        # An open conversation shows its Stop control instead.
         state = pane.locator("[data-conversation-pane]").get_attribute("data-conversation-state")
         if state == "rest":
             line = pane.locator("[data-conversation-rest-line]")

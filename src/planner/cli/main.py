@@ -40,6 +40,7 @@ from planner.datasets.cli import dataset as dataset_group
 from planner.environments.cli import environment as environment_group
 from planner.executor.cli import executor_group
 from planner.goals.cli import goal as goal_group
+from planner.installation.join_cli import machine_join_command
 from planner.list_reads.configuration import DEFAULT_LIST_LIMIT
 from planner.managers.page_cli import page as page_group
 from planner.measure_sources.cli import measure_source as measure_source_group
@@ -240,6 +241,8 @@ def _ticket_record(
         "title",
         "worker_type",
         "locale",
+        "machine_id",
+        "machine_name",
         "employee_backend",
         "employee_launch_model",
         "employee_launch_reasoning_effort",
@@ -946,6 +949,52 @@ def project_set(
     http.emit(data, as_json, f"{data['id']} {field} set")
 
 
+# --- machine ------------------------------------------------------------------
+
+
+@main.group("machine")
+def machine() -> None:
+    """Read named execution destinations."""
+
+
+machine.add_command(machine_join_command)
+
+
+@machine.command("register")
+@click.argument("name")
+@json_option
+def machine_register(name: str, as_json: bool) -> None:
+    """Register an extra machine and print its credential once."""
+    data = http.send(
+        "POST", "/api/machines", as_json=as_json, json_body={"name": name}
+    )
+    http.emit(data, True, "")
+
+
+@machine.command("replace-credential")
+@click.argument("machine_id")
+@json_option
+def machine_replace_credential(machine_id: str, as_json: bool) -> None:
+    """Revoke the old credential and print its replacement once."""
+    data = http.send(
+        "POST", f"/api/machines/{quote(machine_id, safe='')}/credential", as_json=as_json
+    )
+    http.emit(data, True, "")
+
+
+@machine.command("list")
+@json_option
+def machine_list(as_json: bool) -> None:
+    """List stable destination identities and their current availability."""
+    data = http.send("GET", "/api/machines", as_json=as_json)
+    rows = [
+        f"{entry['machine_id']} {entry['name']} "
+        f"{'Available' if entry['available'] else 'Away'}"
+        for entry in data["machines"]
+    ]
+    http.emit(data, as_json, "\n".join(rows))
+
+
 # --- ticket -------------------------------------------------------------------
 
 
@@ -960,11 +1009,27 @@ def ticket() -> None:
     required=True,
     help="Read one Ticket create object from this file, or - for standard input.",
 )
-@click.option("--locale", type=click.Choice(_LOCALES), default=None)
+@click.option(
+    "--machine-id",
+    default=None,
+    help="Destination identity from panels machine list. Defaults to the home.",
+)
+@click.option(
+    "--locale",
+    type=click.Choice(_LOCALES),
+    default=None,
+    help="Legacy alias for the original home or Mac.",
+)
 @json_option
-def ticket_create(input_json: str, locale: str | None, as_json: bool) -> None:
+def ticket_create(
+    input_json: str, machine_id: str | None, locale: str | None, as_json: bool
+) -> None:
     """Create one Ticket from one JSON object through the existing atomic writer."""
     body = _read_json_object(input_json, as_json, "Ticket create input")
+    if machine_id is not None:
+        if "machine_id" in body:
+            http.fail_validation("machine_id accepts one input source", as_json)
+        body["machine_id"] = machine_id
     if locale is not None:
         if "locale" in body:
             http.fail_validation("locale accepts one input source", as_json)
@@ -1367,6 +1432,19 @@ def ticket_history(
         "has_more": page["has_more"],
     }
     http.emit(data, as_json, f"{tid} {len(data['events'])} history events")
+
+
+@ticket.command("recheck-worker-cleanup")
+@click.argument("ticket_id")
+@json_option
+def ticket_recheck_worker_cleanup(ticket_id: str, as_json: bool) -> None:
+    """Recheck exact Worker cleanup without starting work or discarding evidence."""
+    data = http.send(
+        "POST", f"/api/tickets/{ticket_id}/recheck-worker-cleanup",
+        as_json=as_json, json_body={},
+    )
+    state = "complete" if data["complete"] else "not proven"
+    http.emit(data, as_json, f"Worker cleanup {state}: {data['reason']}")
 
 
 @ticket.command("restart-worker")
@@ -2026,6 +2104,7 @@ _PUBLIC_COMMAND_HELP = {
     ("ticket", "proposal"): "Submit, accept, or revise the current Ticket proposal.",
     ("ticket", "complete"): "Complete one user-owned Stage directly.",
     ("ticket", "history"): "Read the current Worker conversation for one Ticket.",
+    ("ticket", "recheck-worker-cleanup"): "Recheck exact Worker cleanup without starting work.",
     (
         "ticket",
         "restart-worker",

@@ -58,6 +58,7 @@ from planner.conversation.message_content import (
 )
 from planner.conversation.workspace_admission import WorkspaceAdmission
 from planner.core.contracts import Principal
+from planner.worker_supervision.contracts import CleanupResult
 
 
 class InMemoryConversationObservationKind(StrEnum):
@@ -222,6 +223,7 @@ class InMemoryConversationSystem:
     def __init__(self) -> None:
         self._conversations: dict[str, _ConversationState] = {}
         self.workspace_admission = WorkspaceAdmission()
+        self.kill_failures: dict[str, Exception] = {}
 
     # --- the contract ---
 
@@ -234,6 +236,24 @@ class InMemoryConversationSystem:
         ):
             return "busy"
         return "idle"
+
+    async def prepare_update(self, mode: Literal["idle", "now"]) -> bool:
+        self.workspace_admission.claim(lambda: None, idle=lambda: True, require_idle=False)
+        if self.workspace_admission.active:
+            return False
+        if mode == "now":
+            for conversation_id in tuple(self._conversations):
+                await self.kill(conversation_id)
+        return not any(state.running_turn is not None or state.held_prompts
+                       for state in self._conversations.values())
+
+    def update_waiting_work(self) -> tuple[str, ...]:
+        return tuple("Active conversation" for state in self._conversations.values()
+                     if state.running_turn is not None or state.held_prompts)
+
+    def cancel_update(self) -> bool:
+        self.workspace_admission.reopen()
+        return True
 
     async def run_with_workspace_admission(
         self,
@@ -649,7 +669,12 @@ class InMemoryConversationSystem:
             return True
         return False
 
+    async def recheck_worker_cleanup(self, ticket_id: str) -> CleanupResult:
+        return CleanupResult(True, "No retained Worker processes")
+
     async def kill(self, conversation_id: str) -> None:
+        if failure := self.kill_failures.get(conversation_id):
+            raise failure
         state = self._conversations.get(conversation_id)
         if state is None:
             return

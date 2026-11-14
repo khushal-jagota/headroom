@@ -2,7 +2,7 @@
 
 This script never signs an app or accesses a personal Mac. The archive includes a
 portable interpreter, installed runtime dependencies and native npm dependencies.
-Node 22 and owner-managed provider credentials remain external prerequisites.
+Node 22 or newer and owner-managed provider credentials remain external prerequisites.
 """
 
 from __future__ import annotations
@@ -26,6 +26,10 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 from planner.environments.mac_runtime_configuration import (  # noqa: E402
     MAC_BUILD_TOOL_REQUIREMENTS,
+    MAC_ICU_BUILD_JOBS,
+    MAC_ICU_SOURCE_SHA256,
+    MAC_ICU_SOURCE_URL,
+    MAC_ICU_VERSION,
     MAC_PYTHON_SHA256,
     MAC_PYTHON_URL,
     MAC_PYTHON_VERSION,
@@ -86,6 +90,10 @@ def runtime_requirements(source: Path) -> list[str]:
             raise ValueError(f"Runtime dependency lacks a canonical pin: {name}")
         pinned_name, version = pins[name].split("==", 1)
         result.append(f"{pinned_name}{match.group(2) or ''}=={version}")
+    # Include native proof and server imports beyond the declared project roots.
+    result.extend(
+        pins[name] for name in ("greenlet", "markdown-it-py", "websockets", "linkify-it-py")
+    )
     return result
 
 
@@ -138,9 +146,220 @@ def write_panels_launcher(runtime: Path) -> None:
     launcher.chmod(0o755)
 
 
-def _rpaths(path: Path, *, root: Path, environment: dict[str, str]) -> list[str]:
-    text = run(["/usr/bin/otool", "-l", str(path)], cwd=root, environment=environment)
+def private_icu_environment(prefix: Path, base: dict[str, str]) -> dict[str, str]:
+    """Keep ICU discovery and compiler flags inside the private source build."""
+    flags = f"-arch arm64 -mmacosx-version-min={MAC_RUNTIME_MINIMUM_OS}"
+    return {
+        **base,
+        "MACOSX_DEPLOYMENT_TARGET": MAC_RUNTIME_MINIMUM_OS,
+        "CFLAGS": f"-O2 {flags}",
+        "CXXFLAGS": f"-O2 -std=c++17 {flags}",
+        "CPPFLAGS": f'-I"{prefix / "include"}"',
+        "LDFLAGS": f'{flags} -L"{prefix / "lib"}"',
+        "PKG_CONFIG_PATH": str(prefix / "lib/pkgconfig"),
+        "PKG_CONFIG_LIBDIR": str(prefix / "lib/pkgconfig"),
+        "PATH": str(prefix / "bin") + os.pathsep + base["PATH"],
+    }
+
+
+def build_private_icu(builder: Path, environment: dict[str, str]) -> Path:
+    """Build verified ICU source for the release minimum, never the host's bottle."""
+    archive = builder / "icu-sources.tgz"
+    with urllib.request.urlopen(MAC_ICU_SOURCE_URL, timeout=120) as response:
+        with archive.open("xb") as output:
+            shutil.copyfileobj(response, output)
+    if digest_file(archive) != MAC_ICU_SOURCE_SHA256:
+        raise ValueError("Pinned ICU source digest differs")
+    source = builder / "icu-source"
+    source.mkdir()
+    with tarfile.open(archive, "r:gz") as packed:
+        packed.extractall(source, filter="data")
+    prefix = builder / "icu-prefix"
+    build = builder / "icu-build"
+    build.mkdir()
+    configured = private_icu_environment(prefix, environment)
+    for key, arguments in (
+        ("CC", ["/usr/bin/xcrun", "--find", "clang"]),
+        ("CXX", ["/usr/bin/xcrun", "--find", "clang++"]),
+        ("SDKROOT", ["/usr/bin/xcrun", "--sdk", "macosx", "--show-sdk-path"]),
+    ):
+        configured[key] = run(arguments, cwd=builder, environment=environment).strip()
+    run(
+        [
+            str(source / "icu/source/runConfigureICU"),
+            "macOS",
+            f"--prefix={prefix}",
+            "--disable-tests",
+            "--disable-samples",
+            "--enable-shared",
+            "--disable-static",
+            "--enable-rpath",
+        ],
+        cwd=build,
+        environment=configured,
+    )
+    run(["/usr/bin/make", f"-j{MAC_ICU_BUILD_JOBS}"], cwd=build, environment=configured)
+    run(["/usr/bin/make", "install"], cwd=build, environment=configured)
+    # Keep absolute install names for delocate to discover private dependencies.
+    # A build-prefix rpath is unnecessary for those names and cannot ship.
+    for library in sorted((prefix / "lib").glob("*.dylib")):
+        if library.is_symlink():
+            continue
+        commands = run(
+            ["/usr/bin/otool", "-l", str(library)], cwd=build, environment=configured
+        )
+        if str(prefix / "lib") in _rpaths(commands):
+            run(
+                ["/usr/bin/install_name_tool", "-delete_rpath", str(prefix / "lib"), str(library)],
+                cwd=build,
+                environment=configured,
+            )
+    audit_native_dependencies(prefix, configured, python_relative="lib/libicuuc.dylib")
+    return prefix
+
+
+def build_icu_wheel(
+    builder: Path, tools: Path, environment: dict[str, str], icu_pin: str, wheels: Path
+) -> Path:
+    """Use the same pinned ICU/PyICU/delocate path for quick and complete proofs."""
+    prefix = build_private_icu(builder, environment)
+    configured = private_icu_environment(prefix, environment)
+    for key, arguments in (
+        ("CC", ["/usr/bin/xcrun", "--find", "clang"]),
+        ("CXX", ["/usr/bin/xcrun", "--find", "clang++"]),
+        ("SDKROOT", ["/usr/bin/xcrun", "--sdk", "macosx", "--show-sdk-path"]),
+    ):
+        configured[key] = run(arguments, cwd=builder, environment=environment).strip()
+    raw = builder / "icu-wheels"
+    raw.mkdir()
+    run(
+        [
+            str(tools / "bin/python"),
+            "-m",
+            "pip",
+            "wheel",
+            "--no-deps",
+            "--no-cache-dir",
+            "--no-binary=PyICU",
+            "--no-build-isolation",
+            "--wheel-dir",
+            str(raw),
+            icu_pin,
+        ],
+        cwd=builder,
+        environment=configured,
+    )
+    for wheel in raw.glob("*.whl"):
+        run(
+            [
+                str(tools / "bin/delocate-wheel"),
+                "--require-archs",
+                "arm64",
+                "-w",
+                str(wheels),
+                str(wheel),
+            ],
+            cwd=builder,
+            environment=configured,
+        )
+    return prefix
+
+
+def prove_icu_only(
+    builder: Path,
+    runtime: Path,
+    tools: Path,
+    environment: dict[str, str],
+    icu_pin: str,
+    output: Path,
+    revision: str,
+    run_id: int,
+    started: float,
+) -> None:
+    wheels = builder / "wheels"
+    wheels.mkdir()
+    prefix = build_icu_wheel(builder, tools, environment, icu_pin, wheels)
+    python = runtime / "python/bin/python3"
+    run(
+        [
+            str(python),
+            "-m",
+            "pip",
+            "install",
+            "--no-index",
+            "--no-deps",
+            "--no-compile",
+            "--find-links",
+            str(wheels),
+            icu_pin,
+        ],
+        cwd=builder,
+        environment=environment,
+    )
+    relocated = builder / "relocated ICU runtime with spaces"
+    runtime.rename(relocated)
+    prefix.rename(builder / "unavailable-icu-prefix")
+    proof = json.loads(
+        run(
+            [
+                str(relocated / "python/bin/python3"),
+                "-I",
+                "-B",
+                "-c",
+                "import icu,json,sys; from pathlib import Path; "
+                "Path(icu.__file__).resolve().relative_to(Path(sys.argv[1]).resolve()); "
+                "assert icu.ICU_VERSION == sys.argv[2]; "
+                "formatter=icu.SimpleDateFormat('yyyy',icu.Locale('en_US')); "
+                "formatter.setTimeZone(icu.TimeZone.createTimeZone('UTC')); "
+                "assert formatter.format(0.0)=='1970'; "
+                "print(json.dumps({'icu_version':icu.ICU_VERSION,'pyicu_version':icu.VERSION,"
+                "'relocation':True,'formatter':True}))",
+                str(relocated),
+                MAC_ICU_VERSION,
+            ],
+            cwd=builder,
+            environment=environment,
+        )
+    )
+    native = audit_native_dependencies(relocated, environment)
+    (output / "icu-proof.json").write_text(
+        json.dumps(
+            {
+                "passed": True,
+                "application_revision": revision,
+                "publication_run_id": run_id,
+                "icu_source_sha256": MAC_ICU_SOURCE_SHA256,
+                "minimum_os": MAC_RUNTIME_MINIMUM_OS,
+                "native": native,
+                "proof": proof,
+                "duration_seconds": time.monotonic() - started,
+            },
+            sort_keys=True,
+        )
+        + "\n"
+    )
+
+
+def _rpaths(text: str) -> list[str]:
     return re.findall(r"cmd LC_RPATH\s+cmdsize \d+\s+path (.*?) \(offset \d+\)", text)
+
+
+def minimum_macos_versions(text: str) -> list[str]:
+    """Read deployment minima, not the SDK version used by the build host."""
+    versions = re.findall(
+        r"cmd LC_BUILD_VERSION\s+cmdsize \d+\s+platform \S+\s+minos ([0-9.]+)", text
+    ) + re.findall(r"cmd LC_VERSION_MIN_MACOSX\s+cmdsize \d+\s+version ([0-9.]+)", text)
+    if not versions:
+        raise ValueError("Mac native binary lacks minimum macOS metadata")
+
+    def components(value: str) -> tuple[int, ...]:
+        return tuple((list(map(int, value.split("."))) + [0, 0, 0])[:3])
+
+    if any(components(value) > components(MAC_RUNTIME_MINIMUM_OS) for value in versions):
+        raise ValueError(
+            f"Mac native binary requires newer than macOS {MAC_RUNTIME_MINIMUM_OS}: {versions}"
+        )
+    return versions
 
 
 def _resolve_loader_path(value: str, binary: Path, executable: Path) -> Path | None:
@@ -153,11 +372,16 @@ def _resolve_loader_path(value: str, binary: Path, executable: Path) -> Path | N
     return None
 
 
-def audit_native_dependencies(root: Path, environment: dict[str, str]) -> list[dict[str, object]]:
+def audit_native_dependencies(
+    root: Path, environment: dict[str, str], *, python_relative: str = "python/bin/python3"
+) -> list[dict[str, object]]:
     """Reject any non-system dependency outside the extracted archive."""
     root = root.resolve()
-    executable = root / "python/bin/python3"
-    executable_rpaths = _rpaths(executable, root=root, environment=environment)
+    executable = root / python_relative
+    executable_commands = run(
+        ["/usr/bin/otool", "-l", str(executable)], cwd=root, environment=environment
+    )
+    executable_rpaths = _rpaths(executable_commands)
     records: list[dict[str, object]] = []
     for path in sorted(root.rglob("*")):
         if path.is_symlink():
@@ -174,7 +398,13 @@ def audit_native_dependencies(root: Path, environment: dict[str, str]) -> list[d
         )
         if "arm64" not in architectures.split():
             raise ValueError(f"Mac runtime contains a native binary without arm64: {path}")
-        own_rpaths = _rpaths(path, root=root, environment=environment)
+        commands = (
+            executable_commands
+            if path.resolve() == executable.resolve()
+            else run(["/usr/bin/otool", "-l", str(path)], cwd=root, environment=environment)
+        )
+        minimum_versions = minimum_macos_versions(commands)
+        own_rpaths = _rpaths(commands)
         search = []
         for value, owner in (
             *((value, path) for value in own_rpaths),
@@ -214,6 +444,7 @@ def audit_native_dependencies(root: Path, environment: dict[str, str]) -> list[d
                 "architectures": architectures.split(),
                 "libraries": dependencies,
                 "rpaths": own_rpaths,
+                "minimum_macos": minimum_versions,
             }
         )
     if not records:
@@ -260,7 +491,7 @@ def prove_archive(archive: Path, work: Path, *, revision: str) -> dict[str, obje
     state.mkdir()
     node = shutil.which("node")
     if node is None:
-        raise ValueError("Native proof requires the external Node 22 prerequisite")
+        raise ValueError("Native proof requires the external Node 22 or newer prerequisite")
     environment = {
         "PATH": f"{extracted / 'python/bin'}:{Path(node).parent}:/usr/bin:/bin:/usr/sbin:/sbin",
         "HOME": str(state),
@@ -307,7 +538,8 @@ def prove_archive(archive: Path, work: Path, *, revision: str) -> dict[str, obje
         run([node, "--check", str(entry)], cwd=state, environment=environment)
     codex_version = run(
         [node, str(backend_root / "@openai/codex/bin/codex.js"), "--version"],
-        cwd=state, environment=environment,
+        cwd=state,
+        environment=environment,
     ).strip()
     claude = backend_root / "@anthropic-ai/claude-code/bin/claude.exe"
     claude_version = run([str(claude), "--version"], cwd=state, environment=environment).strip()
@@ -331,7 +563,9 @@ def prove_archive(archive: Path, work: Path, *, revision: str) -> dict[str, obje
     }
 
 
-def build(source: Path, output: Path, revision: str, run_id: int) -> None:
+def build(
+    source: Path, output: Path, revision: str, run_id: int, *, icu_proof_only: bool = False
+) -> None:
     if sys.platform != "darwin" or platform.machine() != "arm64":
         raise ValueError("Mac publication requires a native darwin arm64 builder")
     if re.fullmatch(r"[0-9a-f]{40}", revision) is None or run_id < 1:
@@ -401,9 +635,15 @@ def build(source: Path, output: Path, revision: str, run_id: int) -> None:
             cwd=builder,
             environment=environment,
         )
+        requirements = runtime_requirements(source)
+        icu_pin = next(value for value in requirements if value.lower().startswith("pyicu=="))
+        if icu_proof_only:
+            prove_icu_only(
+                builder, runtime, tools, environment, icu_pin, output, revision, run_id, started
+            )
+            return
         wheels = builder / "wheels"
         wheels.mkdir()
-        requirements = runtime_requirements(source)
         regular = [value for value in requirements if not value.lower().startswith("pyicu==")]
         run(
             [
@@ -423,39 +663,18 @@ def build(source: Path, output: Path, revision: str, run_id: int) -> None:
             cwd=builder,
             environment=environment,
         )
-        icu = run(["brew", "--prefix", "icu4c"], cwd=builder, environment=environment).strip()
-        icu_environment = {**environment, "PKG_CONFIG_PATH": str(Path(icu) / "lib/pkgconfig")}
-        icu_wheels = builder / "icu-wheels"
-        icu_wheels.mkdir()
-        icu_pin = next(value for value in requirements if value.lower().startswith("pyicu=="))
+        build_icu_wheel(builder, tools, environment, icu_pin, wheels)
+        # Keep setuptools output outside the clean publication checkout.
+        package_archive = builder / "planner-source.tar"
         run(
-            [
-                tool_python,
-                "-m",
-                "pip",
-                "wheel",
-                "--no-deps",
-                "--no-build-isolation",
-                "--wheel-dir",
-                str(icu_wheels),
-                icu_pin,
-            ],
+            ["git", "-C", str(source), "archive", "--format=tar",
+             "--output", str(package_archive), revision],
             cwd=builder,
-            environment=icu_environment,
+            environment=environment,
         )
-        for wheel in icu_wheels.glob("*.whl"):
-            run(
-                [
-                    str(tools / "bin/delocate-wheel"),
-                    "--require-archs",
-                    "arm64",
-                    "-w",
-                    str(wheels),
-                    str(wheel),
-                ],
-                cwd=builder,
-                environment=icu_environment,
-            )
+        package_source = builder / "planner-source"
+        with tarfile.open(package_archive) as packed:
+            packed.extractall(package_source, filter="data")
         run(
             [
                 tool_python,
@@ -466,7 +685,7 @@ def build(source: Path, output: Path, revision: str, run_id: int) -> None:
                 "--no-build-isolation",
                 "--wheel-dir",
                 str(wheels),
-                str(source),
+                str(package_source),
             ],
             cwd=builder,
             environment=environment,
@@ -556,8 +775,15 @@ def main() -> None:
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--revision", required=True)
     parser.add_argument("--run-id", type=int, required=True)
+    parser.add_argument("--icu-proof-only", action="store_true")
     args = parser.parse_args()
-    build(args.source.resolve(), args.output.resolve(), args.revision, args.run_id)
+    build(
+        args.source.resolve(),
+        args.output.resolve(),
+        args.revision,
+        args.run_id,
+        icu_proof_only=args.icu_proof_only,
+    )
 
 
 if __name__ == "__main__":

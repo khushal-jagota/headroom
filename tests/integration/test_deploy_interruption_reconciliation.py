@@ -68,6 +68,13 @@ def test_boot_import_uses_admission_exact_claim_and_publishes_no_runtime_turn(
         )
     conn.execute("UPDATE tickets SET manager_kind='manager',manager_id='m'")
     conn.execute("INSERT INTO conversation_runtime_epoch VALUES (1,'old-epoch')")
+    # These synthetic sources never launch a child. Keep that positive fact
+    # explicit so this fixture tests exact capture admission, not legacy uncertainty.
+    from planner.conversation.child_custody import write_pending, write_retired
+
+    for identity in ("current", "stale_claim", "stale_link"):
+        write_pending(conn, identity, "fixture-never-launched")
+        write_retired(conn, identity, "fixture-never-launched")
     conn.commit()
     conn.close()
     write_manifest(
@@ -183,6 +190,12 @@ def _interrupted_server(
             "('interrupted',1,'interrupted-occurrence','old-epoch')"
         )
         conn.execute("INSERT INTO conversation_runtime_epoch VALUES (1,'old-epoch')")
+        # This synthetic source never launched a process. Keep that positive
+        # evidence explicit so the test exercises delivery, not uncertain custody.
+        from planner.conversation.child_custody import write_pending, write_retired
+
+        write_pending(conn, "interrupted", "fixture-never-launched")
+        write_retired(conn, "interrupted", "fixture-never-launched")
         if ticket_owned:
             conn.execute(
                 "INSERT INTO projects(id,name,folder_path,created_at,updated_at) "

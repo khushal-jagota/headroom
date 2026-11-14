@@ -102,6 +102,9 @@ def run(browser, urls):
     def respond(route):
         parts = urlsplit(route.request.url)
         path = parts.path
+        if path == "/api/machines":
+            route.fulfill(json=fixture["MACHINE_CATALOG"])
+            return
         if card_fixture.get("preview_details"):
             preview_launch = {"backend_key": "codex", "model": "gpt-6.1-sol", "reasoning_effort": "medium"}
             if path == "/api/artifact-catalog/manager/preview_manager":
@@ -212,6 +215,7 @@ def run(browser, urls):
                 route.fulfill(status=503, json={"error": {"code": "fixture", "message": "Rail selection proof only"}})
                 return
             inner = {
+                "/api/machines": fixture["MACHINE_CATALOG"],
                 "/api/goals": {"goals": card_fixture.get("goals", []), "status_date": time.strftime("%Y-%m-%d"), "next_refresh_at": int(time.time()) + 86400},
                 "/api/worker-types?supported=true": {"worker_types": manifests},
                 "/api/worker-types": {"worker_types": manifests},
@@ -1585,6 +1589,7 @@ def verify_conversation_overlay(browser, url):
             return
         key = parse_qs(parts.query).get("key", [path])[0] if path == "/api/resource-body" else path
         values = {
+            "/api/machines": fixture["MACHINE_CATALOG"],
             "/api/goals": {"goals": [], "status_date": time.strftime("%Y-%m-%d"), "next_refresh_at": int(time.time()) + 86400},
             "/api/workers/chief-of-staff/settings": {"employee_id": "chief", "label": "Chief", "recap": "The document keeps its full height beneath the conversation.", "skill": None, "launch_defaults": {"employee_backend": "codex", "employee_launch_model": None, "employee_launch_reasoning_effort": None}},
             "/api/chief/conversation/start-values": {"backend_key": "codex", "model": None, "reasoning_effort": None},
@@ -2060,6 +2065,7 @@ def verify_owner_updates(browser, url):
             return
         key = parse_qs(parts.query).get("key", [path])[0] if path == "/api/resource-body" else path
         values = {
+            "/api/machines": navigation["MACHINE_CATALOG"],
             "/api/goals": {"goals": [], "status_date": time.strftime("%Y-%m-%d"), "next_refresh_at": int(time.time()) + 86400},
             "/api/workers/chief-of-staff/settings": {"employee_id": "chief", "label": "Chief", "recap": "Owner updates", "skill": None, "launch_defaults": {"employee_backend": "codex", "employee_launch_model": None, "employee_launch_reasoning_effort": None}},
             "/api/chief/conversation/start-values": {"backend_key": "codex", "model": None, "reasoning_effort": None},
@@ -2125,11 +2131,14 @@ def verify_owner_updates(browser, url):
         expect(page.locator("[data-mac-status]")).to_have_count(0)
 
         backend.activity = "busy"
+        backend.detail = "Update now stops this work: Release proof, Inbox cleanup."
         signal()
         action.click()
         expect(dialog).to_be_visible()
         expect(dialog).to_contain_text("A new version is ready for Panels and the Mac. Panels restarts, then you refresh to finish.")
-        expect(dialog).to_contain_text("Work is running. Updating now interrupts it.")
+        expect(dialog).to_contain_text("Update now stops this work: Release proof, Inbox cleanup.")
+        expect(dialog).to_contain_text("Release proof")
+        expect(dialog).to_contain_text("Inbox cleanup")
         assert len(posts) == 0
         page.keyboard.press("Escape")
         expect(action).to_be_focused()
@@ -2142,6 +2151,13 @@ def verify_owner_updates(browser, url):
         capture("waiting")
         action.click()
         expect(dialog).to_contain_text("Panels updates as soon as running work finishes.")
+        backend.detail = "Work still waits for a safe point after five minutes. Leave the update pending, cancel it, or choose Update now. Work before the update: Release proof, Inbox cleanup."
+        signal()
+        expect(dialog).to_contain_text("Work still waits for a safe point after five minutes.")
+        expect(dialog).to_contain_text("Release proof")
+        page.screenshot(path=str(evidence / "overdue-detail-dialog.png"))
+        expect(dialog.get_by_role("button", name="Close", exact=True)).to_be_visible()
+        expect(dialog.get_by_role("button", name="Update now", exact=True)).to_be_visible()
         dialog.get_by_role("button", name="Cancel update", exact=True).click()
         expect(card).to_contain_text("Update available")
         assert posts[-1]["path"] == "/api/updates/attempts/attempt-1/cancel"
@@ -2482,10 +2498,14 @@ def verify_recap_pointer_floor(browser, page, url, fixture, respond, evidence):
     set_lines(3)
     panel_settled()
     before = panel.bounding_box()["height"]
-    keyboard_request()
-    refresh()
-    expect(text).to_have_count(0)
-    sample_change('keyboard-no-pointer', lambda: None)
+    def clear_by_keyboard():
+        keyboard_request()
+        refresh()
+        expect(text).to_have_count(0)
+
+    # Arm frame capture before the request. Response/refresh roundtrips can consume
+    # the transition on a loaded host, even though the production motion is correct.
+    sample_change('keyboard-no-pointer', clear_by_keyboard)
     after = panel.bounding_box()["height"]
     assert after < before - 20
     assert any(after + 1 < frame["height"] < before - 1 for frame in proof["samples"][-1]["frames"]), proof["samples"][-1]
@@ -2842,8 +2862,18 @@ def verify_selection_washes(page, url, fixture, evidence):
 
     def hover_at(row_selector, host_selector, where):
         page.mouse.move(*where(page.locator(row_selector).bounding_box()))
-        return page.evaluate("""async ([row, host]) => {
-          await new Promise(requestAnimationFrame); await new Promise(requestAnimationFrame);
+        # ResizeObserver and the rail projection can commit after two frames.
+        # Wait for the actual pointer state and wash geometry that this proof needs.
+        page.wait_for_function("""([row,host])=>{
+          const node=document.querySelector(row),wash=document.querySelector(host+' > .rail-wash--hover:not(.rail-wash--leaving)');
+          if(!node||!wash)return false;
+          const hovered=node.matches(':hover');
+          if(wash.hidden!==!hovered)return false;
+          if(!hovered)return true;
+          const a=node.getBoundingClientRect(),b=wash.getBoundingClientRect();
+          return ['x','y','width','height'].every(key=>Math.abs(a[key]-b[key])<1.6);
+        }""", arg=[row_selector, host_selector])
+        return page.evaluate("""([row, host]) => {
           const node=document.querySelector(row), wash=document.querySelector(host+' > .rail-wash--hover:not(.rail-wash--leaving)');
           const box=n=>{const r=n.getBoundingClientRect();return [r.x,r.y,r.width,r.height];};
           return {hover:node.matches(':hover'), hidden:wash.hidden, row:box(node), wash:box(wash)};

@@ -194,26 +194,49 @@ def test_a_manager_wake_crosses_the_claude_adapter_with_its_sender_label(
 
 
 def test_a_claude_model_change_rebinds_the_child_and_preserves_the_conversation(
-    tmp_path: Path,
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A same-provider model change must cross Claude's fresh-child boundary."""
     from claude_agent_sdk import ResultMessage
 
     from planner.conversation.backends.claude_agent_sdk import (
+        ClaudeAgentSdkBackendChild,
         ClaudeAgentSdkBackendChildFactory,
         ClaudeAgentSdkChildLaunch,
     )
+    from planner.conversation.child_custody import host_boot_identity
     from planner.conversation.contracts import (
         ConversationBackendKey,
         ConversationStartRequest,
         PromptDeliveryStarted,
+        ResolvedConversationStart,
     )
     from planner.conversation.live_tail import ConversationLiveTail
+    from planner.conversation.local_child_contracts import LocalChildIdentity
     from planner.conversation.message_files import ConversationMessageFiles
     from planner.conversation.storage import ConversationStore
     from planner.conversation.system import SqliteProcessConversationSystem
     from planner.core.db import connect, create_schema
 
+    original_start = ClaudeAgentSdkBackendChild.start
+
+    async def start_scripted_child(
+        child: ClaudeAgentSdkBackendChild,
+        resolved_start: ResolvedConversationStart,
+        *,
+        vendor_session_cursor: str | None,
+    ) -> None:
+        await original_start(
+            child, resolved_start, vendor_session_cursor=vendor_session_cursor
+        )
+        # The scripted client has no process. Never identify pytest as its child.
+        host = host_boot_identity()
+        assert host is not None
+        await child._sink.record_local_child_custody(  # type: ignore[attr-defined]
+            LocalChildIdentity(pid=2_147_483_647, birth="test-child", boot=host.boot)
+        )
+
+    monkeypatch.setattr(ClaudeAgentSdkBackendChild, "start", start_scripted_child)
     db_path = str(tmp_path / "claude-model-change.db")
     conn = connect(db_path)
     create_schema(conn)
@@ -477,6 +500,8 @@ def test_claudes_own_command_reply_is_reported_only_when_nothing_else_says_it(
         (CLINotFoundError("Claude executable is absent"), SESSION_ID, BackendSpawnFailed),
         (BackendCliIncompatible("Update Claude to at least 2.1.219"),
          SESSION_ID, BackendSpawnFailed),
+        (BackendSpawnFailed("Cannot save the Claude process identity: disk full"),
+         SESSION_ID, BackendSpawnFailed),
         (RuntimeError("Not logged in. Run /login."), None, BackendSpawnFailed),
         (RuntimeError("Requested session is unavailable"), SESSION_ID, SessionLoadFailed),
     ],
@@ -571,10 +596,11 @@ def test_prequery_connect_failure_cannot_skip_retained_transport_exit_proof(
 
         monkeypatch.setattr(SubprocessCLITransport, "connect", partial_connect)
         monkeypatch.setattr(SubprocessCLITransport, "close", sdk_close)
-        with pytest.raises(RuntimeError, match="post-spawn pre-query failure"):
+        with pytest.raises(RuntimeError, match="termination remains unconfirmed"):
             await observed.connect()
         assert observed._client._query is None
-        assert transport._process is cast(Process, process)
+        assert closes == 1  # Startup attempts cleanup but cannot prove native exit.
+        assert transport._cleanup_process is cast(Process, process)
         with pytest.raises(RuntimeError, match="termination remains unconfirmed"):
             await observed.disconnect()
         # The SDK now lost its handle. Its no-op disconnect still cannot establish
@@ -583,11 +609,11 @@ def test_prequery_connect_failure_cannot_skip_retained_transport_exit_proof(
         assert transport._cleanup_process is cast(Process, process)
         with pytest.raises(RuntimeError, match="termination remains unconfirmed"):
             await observed.disconnect()
-        assert closes == 2
+        assert closes == 3
         process.returncode = 0
         await observed.disconnect()
         await observed.disconnect()
-        assert closes == 4
+        assert closes == 5
         assert transport._cleanup_process is cast(Process, process)
 
     _run(exercise)
@@ -649,6 +675,51 @@ def test_observed_admission_survives_subsequent_query_failure(
             assert sink.endings[0]["ending"] is ConversationTurnEnding.failed
         finally:
             await child.stop()
+    _run(exercise)
+
+
+def test_transport_records_identity_before_sdk_protocol_initialization(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The observed client's reporter reaches the SDK's pre-initialization transport seam."""
+    import threading
+
+    from planner.conversation.local_child_contracts import LocalChildIdentity
+
+    identity = LocalChildIdentity(123, "birth", "boot")
+    stages = []
+    loop_thread = threading.get_ident()
+
+    def inspect(pid):  # type: ignore[no-untyped-def]
+        assert threading.get_ident() != loop_thread
+        return identity
+    monkeypatch.setattr(
+        "planner.conversation.backends.claude_agent_sdk.ensure_cli_compatible", AsyncMock()
+    )
+    monkeypatch.setattr(
+        "planner.conversation.backends.claude_agent_sdk.process_identity", inspect
+    )
+
+    async def native_connect(transport):  # type: ignore[no-untyped-def]
+        stages.append("spawn")
+        transport._process = SimpleNamespace(pid=123, returncode=0)
+    monkeypatch.setattr(SubprocessCLITransport, "connect", native_connect)
+
+    async def exercise() -> None:
+        transport = _ClaudeCleanupTransport("", ClaudeAgentOptions(
+            cli_path="/scripted/claude", cwd=str(tmp_path),
+        ))
+        client = _ObservedClaudeSdkClient(
+            ClaudeAgentOptions(), _ClaudeProtocolTransport(transport)
+        )
+        async def record(value):  # type: ignore[no-untyped-def]
+            assert value == identity
+            stages.append("custody")
+        client.set_custody_reporter(record)
+        await transport.connect()
+        stages.append("initialize")
+        assert stages == ["spawn", "custody", "initialize"]
+
     _run(exercise)
 
 

@@ -33,11 +33,11 @@
   let currentWorker = $derived(worker);
   const preview = conversationPreview(() => ({ visible, target: recapTarget,
     conversationId: currentWorker?.conversation_id ?? conversationId,
-    locale: currentWorker?.locale }));
+    locale: currentWorker?.locale, machineId: currentWorker?.machine_id }));
   const elapsed = elapsedTurnTime(() => preview.startedAtUnixMilliseconds);
   let activity = $derived(preview.activity === "Working" && elapsed.seconds !== null
     ? `Working · ${formatDuration(elapsed.seconds)}` : preview.activity);
-  const health=createQuery(() => ({...queries.executorHealth(),enabled:worker?.locale === "macos"}));
+  const health=createQuery(() => ({...queries.executorHealth(worker?.machine_id),enabled:worker?.locale === "macos"}));
   let unknownMac = $derived(worker?.locale === "macos" && (health.isError || !macActivityKnown(health.data)));
   let macHealth = $derived(health.isError ? undefined : health.data);
   let stageSentence = $derived(unknownMac ? (worker ? macTicketActivityLabel(macHealth, worker) : null) ?? macPresenceLabel(macHealth) ?? MACHINE_ACTIVITY_UNKNOWN
@@ -161,8 +161,8 @@
     const moved = event.relatedTarget as Node | null;
     if (moved !== null && !element?.contains(moved)) onLeave?.();
   }}>
-  <div class="kicker">{#if currentWorker?.locale}<MachineIdentity locale={currentWorker.locale} />{/if}<span data-preview-model>{preview.modelLabel}</span><span class="activity" data-preview-activity>{activity ?? ""}</span></div>
-  <div class="title"><span class="title-text">{currentWorker?.title ?? title}</span><MachineActivityMark agentHold={currentWorker ?? undefined} locale={currentWorker?.locale} signal={currentWorker?.conversation_signal ?? signal} conversationId={currentWorker?.conversation_id ?? conversationId} /></div>
+  <div class="kicker">{#if currentWorker?.locale}<MachineIdentity machineId={currentWorker.machine_id} locale={currentWorker.locale} showName />{/if}<span data-preview-model>{preview.modelLabel}</span><span class="activity" data-preview-activity>{activity ?? ""}</span></div>
+  <div class="title"><span class="title-text">{currentWorker?.title ?? title}</span><MachineActivityMark machineId={currentWorker?.machine_id} agentHold={currentWorker ?? undefined} locale={currentWorker?.locale} signal={currentWorker?.conversation_signal ?? signal} conversationId={currentWorker?.conversation_id ?? conversationId} /></div>
   <!-- The box stays while there is an ask to hold, so pressing it leaves the recessed
        block where it is and the budget above keeps measuring. -->
   {#if recapText || recapTarget}

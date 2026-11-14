@@ -1,6 +1,0 @@
-[Unit]
-Description=Panels background work
-
-[Slice]
-CPUAccounting=yes
-CPUWeight=10

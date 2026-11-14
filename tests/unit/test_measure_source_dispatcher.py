@@ -2,6 +2,7 @@
 
 import threading
 import time
+from datetime import datetime, timedelta
 from pathlib import Path
 from sqlite3 import Connection
 
@@ -106,3 +107,44 @@ def test_shared_clock_source_slot_creates_no_ticket_or_model_work(
     assert not runtime.started.is_set()
     assert not tmp_db.execute("SELECT 1 FROM manager_wakes").fetchone()
     assert config.credential_key_path == str(Path(path).parent / "credential-secrets" / "key")
+
+
+def test_catchup_admits_and_executes_only_latest_occurrence_after_gap(
+    tmp_db: Connection, fake_clock: FakeClock,
+) -> None:
+    local_due = datetime.fromtimestamp(NOW).astimezone().replace(second=0, microsecond=0)
+    source, _ = configured_source(
+        tmp_db, now=NOW - 4 * 86400, local_time=local_due.strftime("%H:%M")
+    )
+    old = run_actions.admit_scheduled_run(
+        tmp_db, source.id, local_now=local_due - timedelta(days=2), now=NOW - 2 * 86400
+    )
+    superseded = run_actions.admit_scheduled_run(
+        tmp_db, source.id, local_now=local_due - timedelta(days=1), now=NOW - 86400
+    )
+    fake_clock.set(local_due + timedelta(minutes=30))
+    path = str(tmp_db.execute("PRAGMA database_list").fetchone()[2])
+    config = load_config(path=None, env={"PLAN_TEST_MODE": "1", "PLAN_DB_PATH": path})
+    runtime = HeldRuntime()
+    participant = SourceScheduleParticipant(config, fake_clock, runtime)
+    for _ in range(2):
+        participant.poll(tmp_db, local_now=fake_clock.now(), now=fake_clock.now_unix())
+    rows = tmp_db.execute(
+        "SELECT id,schedule_date,schedule_time FROM measure_source_runs WHERE source_id=? "
+        "ORDER BY created_at", (source.id,),
+    ).fetchall()
+    assert len(rows) == 3
+    latest = rows[-1]
+    assert (latest["schedule_date"], latest["schedule_time"]) == (
+        local_due.date().isoformat(), local_due.strftime("%H:%M")
+    )
+    participant.start()
+    try:
+        assert runtime.started.wait(3)
+        assert runtime.run_ids == [latest["id"]]
+        assert data.read_run(tmp_db, old.id).status is RunStatus.interrupted
+        assert data.read_run(tmp_db, superseded.id).status is RunStatus.interrupted
+        assert not tmp_db.execute("SELECT 1 FROM measure_source_failure_episodes").fetchone()
+        assert not tmp_db.execute("SELECT 1 FROM manager_wakes").fetchone()
+    finally:
+        participant.stop(deadline=time.monotonic() + 5)

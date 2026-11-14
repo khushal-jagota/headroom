@@ -20,12 +20,15 @@ from uuid import uuid4
 
 from planner.tickets import data as tickets_data
 from planner.tickets import locale_configuration
-from planner.tickets.contracts import TicketLocale
 
 WORKER_STEP_MESSAGE_PREFIX: Final = "worker_step_message_"
 MEMORY_NOTICE_MESSAGE_PREFIX: Final = "worker_step_memory_notice_"
 # Both ids begin with this, so one comparison asks "has Panels spoken since the boundary".
 ANSWERING_SENDER_MESSAGE_PREFIX: Final = "worker_step_"
+
+
+def worker_step_message_id_for_claim(ticket_id: str, claim_revision: int) -> str:
+    return f"{WORKER_STEP_MESSAGE_PREFIX}{ticket_id}:{claim_revision}"
 
 
 def new_worker_step_message_id() -> str:
@@ -152,10 +155,10 @@ def _latest_answering_prompt_sequence(conn: sqlite3.Connection, conversation_id:
 def ticket_needs_memory_notice(conn: sqlite3.Connection, ticket_id: str) -> bool:
     """Check the automatic notice rule, without changing the next-wake memory rule."""
     row = conn.execute(
-        "SELECT conversation_id,locale FROM tickets WHERE id=? AND worker_step_claim='out'",
+        "SELECT conversation_id,machine_id FROM tickets WHERE id=? AND worker_step_claim='out'",
         (ticket_id,),
     ).fetchone()
-    if row is None or not locale_configuration.can_execute_locale(conn, TicketLocale(row[1])):
+    if row is None or not locale_configuration.can_execute_machine(conn, str(row[1])):
         return False
     conversation_id = row[0]
     if not _working_turn_compaction_is_unanswered(conn, conversation_id):

@@ -27,7 +27,7 @@ A notification is a phone or desktop push for a kind of attention Khushal opted 
 
 ## How it works
 
-The writer records the flag and the edge in the same transaction as the change that caused them. A background pass later turns edges into deliveries, so several commits stay distinct even when one pass sends them. Each device gets its own delivery, retried with backoff. An expired subscription disables that device.
+The writer records the flag and the edge in the same transaction as the change that caused them. A background pass later turns edges into deliveries, so several commits stay distinct even when one pass sends them. Each device gets its own delivery, retried with backoff. An expired subscription disables that device. Before each send, Headroom checks that the attention is still current and fresh. Stale deliveries expire without clearing the attention that they describe.
 
 Backlog suppresses Ticket approval, assignment, and pending-answer alerts, including queued delivery. Resume restores eligibility for the current obligation. Unread-message and failure alerts still describe real events.
 
@@ -42,7 +42,7 @@ Headroom can be installed from the browser. Pushes need HTTPS outside localhost,
 ## Decisions that shape it
 
 - Only edges notify. A flag that stays true does not keep pushing, and a correction never pushes.
-- Every push passes the one policy door. Sources never call delivery, and delivery never reads source state.
+- Every push passes the one policy door. Sources never call delivery. Delivery checks the retained attention flags.
 - The push payload is privacy-safe. What was said stays in Headroom.
 - Preferences are by class, not by item, so a new Manager needs no setup.
 
@@ -52,7 +52,7 @@ Headroom can be installed from the browser. Pushes need HTTPS outside localhost,
 - `static/service-worker.js`: the service worker.
 - `web/src/routes/NotificationsRoute.svelte`: the settings section.
 
-_Last verified: 2026-11-04._
+_Last verified: 2026-11-11._
 
 
 ## Native iOS push

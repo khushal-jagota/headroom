@@ -27,12 +27,19 @@ from planner.notifications.contracts import (
     PendingAPNsDelivery,
 )
 from planner.stalls import alarms
+from planner.stalls import watchdog as watchdog_module
 from planner.stalls.configuration import CHECKER_HEARTBEAT_STALE_SECONDS
 from planner.stalls.watchdog import WATCHDOG_STATE_FILE_NAME, WatchdogRun, run_watchdog
 
 S = 1000
 NOW_MS = 1_800_000_000_000  # 2027-01-15 08:00 UTC
 ORIGIN = "https://panels.example"
+
+
+@pytest.fixture(autouse=True)
+def linux_watchdog_policy(monkeypatch: pytest.MonkeyPatch) -> None:
+    # The existing alarm/dedup tests prove Linux policy on either test host.
+    monkeypatch.setattr(watchdog_module, "platform", "linux")
 
 
 class _APNs:
@@ -250,3 +257,40 @@ def test_the_chief_message_is_send_message_to_the_chief_within_ten_seconds() -> 
     assert not alarms.message_chief(
         "x", server_url="http://127.0.0.1:8767", transport=httpx.MockTransport(refuse)
     )
+
+
+def test_mac_login_and_sleep_grace_survives_fresh_interval_processes(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Existing Linux cases prove immediate stale alarms, not launchd catch-up.
+    # Each new object represents the separate CLI process for one 30-second job.
+    monkeypatch.setattr(watchdog_module, "platform", "darwin")
+    db_path = _database(tmp_path, heartbeat_at_ms=NOW_MS - 91 * S)
+    state = tmp_path / "state"
+    chief = _Chief(lambda text: True)
+
+    def run(offset: int) -> WatchdogRun:
+        return _Watchdog(db_path, state, chief).run(NOW_MS + offset * S)
+
+    def heartbeat(offset: int) -> None:
+        conn = connect(db_path)
+        try:
+            conn.execute(
+                "UPDATE stall_checker_heartbeat SET checked_at_ms=?", (NOW_MS + offset * S,)
+            )
+        finally:
+            conn.close()
+
+    assert run(0).due == ()  # Missing receipt grants one login interval.
+    assert len(run(30).raised) == 1  # Fresh process cannot renew that grace.
+    heartbeat(60)
+    assert run(60).due == ()
+    assert run(180).due == ()  # Two-minute sleep leaves a stale checker heartbeat.
+    heartbeat(195)  # The checker resumes within its existing 15-second cadence.
+    assert run(210).due == ()
+    assert run(330).due == ()  # Another login gap grants one interval.
+    assert len(run(360).raised) == 1  # A genuinely stopped checker still alarms.
+    assert len(chief.messages) == 2
+    receipt = json.loads((state / WATCHDOG_STATE_FILE_NAME).read_text())
+    assert receipt["observed_at_ms"] == NOW_MS + 360 * S

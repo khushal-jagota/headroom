@@ -6,6 +6,7 @@ callers always acquire mount evidence and account-owned protection roots here.
 
 from __future__ import annotations
 
+import json
 import os
 import pwd
 import re
@@ -296,6 +297,60 @@ def _external_dependency_targets(roots: Sequence[Path]) -> list[Path]:
     return list(targets)
 
 
+def _managed_ticket_worktree(path: Path, roots: Sequence[Path]) -> Path | None:
+    """Recognize the system-owned checkout, never a caller-supplied exemption."""
+    resolved = _resolve(path)
+    for protected in roots:
+        tickets = _resolve(protected) / "data" / "files" / "tickets"
+        try:
+            parts = resolved.relative_to(tickets).parts
+        except ValueError:
+            continue
+        if len(parts) < 2 or parts[1] != "worktree":
+            continue
+        owner = tickets / parts[0]
+        tree = owner / "worktree"
+        marker = owner / ".panels-workspace.json"
+        if any(item.is_symlink() for item in (tickets, owner, tree, marker)):
+            continue
+        try:
+            record = json.loads(marker.read_text())
+            if record["ticket_id"] != owner.name or record["worktree"] != str(tree):
+                continue
+            repository = record["repository"]
+            if repository is not None:
+                # A real linked worktree points to metadata that points back to it.
+                pointer = (tree / ".git").read_text().strip()
+                if not pointer.startswith("gitdir: "):
+                    continue
+                metadata = Path(pointer.removeprefix("gitdir: "))
+                if not metadata.is_absolute():
+                    metadata = tree / metadata
+                metadata = metadata.resolve(strict=True)
+                common = (metadata / "commondir").read_text().strip()
+                repository_git = Path(repository) / ".git"
+                if repository_git.is_file():
+                    repository_pointer = repository_git.read_text().strip()
+                    if not repository_pointer.startswith("gitdir: "):
+                        continue
+                    repository_git = Path(repository_pointer.removeprefix("gitdir: "))
+                    if not repository_git.is_absolute():
+                        repository_git = Path(repository) / repository_git
+                    repository_common = repository_git / "commondir"
+                    if repository_common.exists():
+                        repository_git = repository_git / repository_common.read_text().strip()
+                if (metadata / common).resolve() != repository_git.resolve():
+                    continue
+                if Path((metadata / "gitdir").read_text().strip()).resolve() != tree / ".git":
+                    continue
+            elif (tree / ".git").exists():
+                continue
+        except (OSError, ValueError, KeyError, TypeError):
+            continue
+        return tree
+    return None
+
+
 def _check_paths(
     paths: Sequence[Path],
     roots: Sequence[Path],
@@ -305,6 +360,9 @@ def _check_paths(
     shallow_paths: Sequence[Path] = (),
 ) -> None:
     """Internal fixture seam: callers supply evidence, never a runtime bypass."""
+    managed = {tree for path in paths if (tree := _managed_ticket_worktree(path, roots))}
+    # Keep installed code independently protected even for a managed checkout.
+    roots = [*roots, *(root / "app" for root in roots if (root / "app").exists())]
     dependency_roots = [*_dependency_roots(roots), *_external_dependency_targets(roots)]
     inventory = roots if inventory_roots is None else inventory_roots
     inventory = [*inventory, *dependency_roots]
@@ -319,6 +377,7 @@ def _check_paths(
         mount.point
         for mount in mounts
         if any(mount.point.is_relative_to(root) for root in resolved_roots)
+        and not any(mount.point.is_relative_to(tree) for tree in managed)
     )
     mappings = [(path, *_mapping(path, mounts)) for path in protected_paths]
     mount_points = {mount.point for mount in mounts}
@@ -344,8 +403,11 @@ def _check_paths(
                 # A normal leaf occupies the already inspected parent's storage.
                 # Symlinks, mount points and multiply-linked files need own proof.
                 continue
+            allowed = next((tree for tree in managed if resolved.is_relative_to(tree)), None)
             for root in resolved_roots:
-                if resolved.is_relative_to(root):
+                if resolved.is_relative_to(root) and not (
+                    allowed is not None and allowed.is_relative_to(root) and root != allowed
+                ):
                     _refuse(
                         path,
                         "path ancestry",
@@ -364,6 +426,8 @@ def _check_paths(
                 # Only regular hardlinks require matching deployed file inodes.
                 for inventory_root in inventory:
                     for stored_path, _, stored in _walk(inventory_root, protected=True):
+                        if any(stored_path.is_relative_to(tree) for tree in managed):
+                            continue
                         if stat.S_ISREG(stored.st_mode) and stored.st_nlink > 1:
                             protected_ids[(stored.st_dev, stored.st_ino)] = stored_path
                 inventoried = True
@@ -384,6 +448,12 @@ def _check_paths(
                 if mount.device == protected_mount.device and backing.is_relative_to(
                     protected_backing
                 ):
+                    if allowed is not None and allowed.is_relative_to(protected_path):
+                        allowed_mount, allowed_backing = _mapping(allowed, mounts)
+                        if mount.device == allowed_mount.device and backing.is_relative_to(
+                            allowed_backing
+                        ):
+                            continue
                     _refuse(
                         path,
                         "mount mapping",

@@ -69,6 +69,10 @@ class NotificationLoop:
                 deliveries = data.pending_deliveries(conn, now)
                 sent = 0
                 for delivery in deliveries:
+                    now = self._clock.now_unix()
+                    if not data.delivery_is_current(conn, delivery.edge, now):
+                        data.expire_stale_deliveries(conn, now)
+                        continue
                     if not attention.task_alert_is_current(conn, delivery.edge):
                         continue
                     sent += 1
@@ -89,6 +93,10 @@ class NotificationLoop:
                 native_deliveries = apns_data.pending_deliveries(conn, now)
                 if self._apns is not None and self._apns_origin is not None:
                     for native_delivery in native_deliveries:
+                        now = self._clock.now_unix()
+                        if not data.delivery_is_current(conn, native_delivery.edge, now):
+                            data.expire_stale_deliveries(conn, now, native=True)
+                            continue
                         if not attention.task_alert_is_current(conn, native_delivery.edge):
                             continue
                         sent += 1
@@ -96,6 +104,7 @@ class NotificationLoop:
                             native_delivery, server_url=self._apns_origin, now=now
                         )
                         apns_data.record_result(conn, native_delivery, result_native, now)
+                    return sent
                 return sent
             finally:
                 conn.close()

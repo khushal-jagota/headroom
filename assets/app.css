@@ -5287,3 +5287,13 @@ details:not([open]) > summary > .manager-workspace-chevron {
 
 /* Steps and machine sections use the same sentence case as the other page bands. */
 [data-stage-fold-open] { text-transform:none; letter-spacing:normal; }
+
+/* Quiet identity marks, independent of availability and action colors. */
+[data-machine-color="jade"] { --machine-color:var(--machine-jade); }
+[data-machine-color="orchid"] { --machine-color:var(--machine-orchid); }
+[data-machine-color="sand"] { --machine-color:var(--machine-sand); }
+[data-machine-color="cyan"] { --machine-color:var(--machine-cyan); }
+[data-machine-color="rose"] { --machine-color:var(--machine-rose); }
+[data-machine-color="plum"] { --machine-color:var(--machine-plum); }
+[data-machine-color="lime"] { --machine-color:var(--machine-lime); }
+[data-machine-color="stone"] { --machine-color:var(--machine-stone); }

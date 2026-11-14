@@ -58,7 +58,7 @@ export function parseUtilityPath(
     const section = path[0] || "config";
     if (section !== "config") {
       // These owner settings share the same addresses in the standalone page and pane.
-      if ((section !== "notifications" && section !== "vps" && section !== "backends") || path.length > 1) return null;
+      if ((section !== "notifications" && section !== "vps" && section !== "backends" && section !== "machines") || path.length > 1) return null;
       return { utility, settings: { section, roleKind: "index" } };
     }
     const config = parseConfigSelection(path.slice(1));

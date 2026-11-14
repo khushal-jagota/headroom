@@ -43,8 +43,11 @@ from planner.executor.protocol import (
     MailboxCommand,
     MailboxPollReply,
     ModelListRequest,
+    WorkerCleanupUncertainty,
+    WorkspaceStatesReply,
 )
 from planner.stalls.contracts import StallSource as StallSource
+from planner.ticket_workspaces.contracts import WorkspaceIdentity, WorkspaceState
 
 # The Mac's spool/commands.sqlite3, format COMMAND_JOURNAL_FORMAT_VERSION. Every command
 # is recorded here before it runs, keyed by command_id, so a redelivered or restored
@@ -120,6 +123,8 @@ class ExecutorHealthRead:
     queue_depth: int | None
     oldest_item_age_ms: int | None
     admission_stopped: bool
+    cleanup_uncertainties: tuple[WorkerCleanupUncertainty, ...] = ()
+    legacy_cleanup_notice: str | None = None
 
 
 class MailboxCommandState(StrEnum):
@@ -360,6 +365,16 @@ class MacHttpClient(Protocol):
     """
 
     async def lease(self, request: LeaseRequest) -> LeaseReply | LeaseRefused: ...
+
+    async def workspace_states(self, ticket_ids: tuple[str, ...]) -> WorkspaceStatesReply: ...
+
+    async def register_workspace(
+        self, child: ChildReference, workspace: WorkspaceIdentity
+    ) -> None: ...
+
+    async def retire_workspace(
+        self, state: WorkspaceState, workspace: WorkspaceIdentity, *, replay: bool = False
+    ) -> bool: ...
 
     async def poll_commands(self, after: int, wait_seconds: float) -> MailboxPollReply: ...
 

@@ -31,6 +31,7 @@ export type ListPageFacts = {
 };
 
 export type TicketSummary = WorkAttention & {
+  machine_id?: string;
   locale?: import("./ticketMachines").TicketLocale;
   is_backlogged: boolean;
   waiting_to_closeout: boolean;
@@ -207,6 +208,7 @@ export type TicketFieldApproval = {
 
 export type TicketDetail = {
   /** Missing in an older decoded body means unobserved, never compatible. */
+  machine_id?: string;
   locale?: import("./ticketMachines").TicketLocale;
   conversation_signal?: ConversationSignal;
   is_backlogged?: boolean;
@@ -261,6 +263,7 @@ export type TicketDeletionResponse = {
 };
 
 export type ManagerWorkspaceTicket = WorkAttention & {
+  machine_id?: string;
   locale?: import("./ticketMachines").TicketLocale;
   conversation_signal?: ConversationSignal;
   is_backlogged: boolean;
@@ -341,6 +344,7 @@ export type BoardManager = {
 };
 
 export type BoardCard = WorkAttention & {
+  machine_id?: string;
   locale?: import("./ticketMachines").TicketLocale;
   is_backlogged?: boolean;
   conversation_signal?: ConversationSignal;
@@ -395,6 +399,7 @@ export type NotificationSettingsResponse = {
 
 // One row names one durable unread conversation, independent of settlement.
 export type WorkspaceMessageConversation = {
+  machine_id?: string;
   locale?: import("./ticketMachines").TicketLocale;
   conversationSignal?: Partial<ConversationSignal>;
   kind: "chief" | "manager" | "ticket";

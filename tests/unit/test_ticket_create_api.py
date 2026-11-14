@@ -149,6 +149,7 @@ def test_create_accepts_and_preserves_the_supported_optional_keys(
         "ceiling": "needs_implementation",
         "ceiling_holder": {"kind": "chief", "id": "chief"},
         "locale": "vps",
+        "machine_id": "75a49e78-97de-4e28-8dc5-79646761c46f",
         "employee_backend": "hermes",
         "employee_launch_model": "hermes-model",
         "employee_launch_reasoning_effort": None,

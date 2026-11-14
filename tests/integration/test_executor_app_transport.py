@@ -47,9 +47,11 @@ from planner.core.response_compression import (
     uncompressed_route_patterns,
 )
 from planner.core.trusted_ingress import TrustedIngressConfig, TrustedIngressMiddleware
+from planner.environments.app import AppManifest
 from planner.environments.mac_updates import MacUpdateService
 from planner.environments.update_attempts import FileUpdateAttemptStore
-from planner.execution_configuration import SPOOL_FORMAT_VERSION
+from planner.environments.update_contracts import PublishedMacUpdate, PublishedUpdate, UpdateAttempt
+from planner.execution_configuration import PROTOCOL_VERSION
 from planner.execution_identity import MAC_NEEDS_UPDATE, ChildReference, ExecutorIdentity
 from planner.executor.app_transport import build_executor_router
 from planner.executor.configuration import MAX_ITEM_BATCH_BYTES
@@ -73,12 +75,16 @@ from planner.executor.protocol import (
     MailboxPollReply,
     QueuedEnvelope,
     ReceiptDisposition,
+    WorkspaceRegistrationRequest,
+    WorkspaceRetirementReply,
+    WorkspaceRetirementRequest,
     as_object,
     decode_bounded,
     encode_bounded,
 )
 from planner.executor.update_contracts import MacUpdateCheck
 from planner.executor.vps_transport import VpsExecutor
+from planner.ticket_workspaces.contracts import RETENTION_SECONDS, WorkspaceIdentity, WorkspaceState
 
 EXECUTOR_ID = "test-executor"
 SETTLES = 5.0
@@ -192,7 +198,7 @@ def test_every_executor_route_over_real_https(tmp_path: Path) -> None:
                 only_id = {"X-Panels-Executor-ID": EXECUTOR_ID}
                 work = only_id | {
                     "X-Panels-Executor-Incarnation": identity.executor_incarnation,
-                    "X-Panels-Executor-Protocol": "22",
+                    "X-Panels-Executor-Protocol": str(PROTOCOL_VERSION),
                 }
                 async with proxy.session_factory() as session:
 
@@ -264,17 +270,85 @@ def test_every_executor_route_over_real_https(tmp_path: Path) -> None:
                     assert status == 200 and "Content-Encoding" not in headers
                     assert decode_bounded(body, MacUpdateCheck).target is None
 
-                    # Route 1: an old protocol is refused with its LeaseRefused body.
-                    old = ExecutorIdentity(21, "a" * 40, SPOOL_FORMAT_VERSION, str(uuid4()))
-                    status, body, _ = await call(
-                        "POST", "/api/executor/lease", only_id, encode_bounded(lease_request(old))
+                    # A real persisted update target, shared by lease refusal and recovery.
+                    archive_bytes = b"retained runtime fixture"
+                    archive_sha = hashlib.sha256(archive_bytes).hexdigest()
+                    archive = updates.root / "archives" / (archive_sha + ".tar.gz")
+                    archive.parent.mkdir(parents=True)
+                    archive.write_bytes(archive_bytes)
+                    published = PublishedUpdate(
+                        1, 2, 3, AppManifest("b" * 40, "c" * 64, "d" * 64),
+                        "e" * 64, "video_upload_ledger", "2099-01-01T00:00:00+00:00",
+                        PublishedMacUpdate(4, archive_sha, len(archive_bytes)),
                     )
-                    assert status == 409
-                    lease_refused = decode_bounded(body, LeaseRefused)
-                    assert lease_refused.error["code"] == "executor_version_refused"
-                    assert lease_refused.refusal is not None
-                    assert lease_refused.refusal.reason == MAC_NEEDS_UPDATE
-                    assert lease_refused.refusal.peer_identity == old
+                    updates.attempts.create(UpdateAttempt(
+                        "upgrade", "a" * 40, "b" * 40, "now", True, "installing",
+                        "2026-01-01T00:00:00+00:00", "2026-01-01T00:00:00+00:00",
+                        published, mac_attempt_id="mac_upgrade",
+                    ))
+                    endpoint.presence.update_check = updates.check
+                    target = updates.check().target
+                    assert target is not None
+                    # Old leases reach update refusal before current-body decoding.
+                    # Neither historical LeaseRequest contains cleanup evidence.
+                    for version in (22, 23, 24):
+                        old = ExecutorIdentity(version, "a" * 40, 5, str(uuid4()))
+                        historical_lease = {
+                            "identity": {
+                                "protocol_version": version,
+                                "application_revision": old.application_revision,
+                                "spool_format_version": 5,
+                                "executor_incarnation": old.executor_incarnation,
+                                "connection_generation": 0,
+                            },
+                            "process_id": 4242,
+                            "mac_wall_clock_ms": 1,
+                            "queue_depth": 0,
+                            "oldest_item_age_ms": None,
+                            "waiting_conversations": [],
+                            "waiting_conversations_truncated": False,
+                            "working_turns": [],
+                            "admission_stopped": False,
+                            "going_to_sleep": False,
+                        }
+                        status, body, _ = await call(
+                            "POST", "/api/executor/lease", only_id,
+                            json.dumps(historical_lease).encode(),
+                        )
+                        assert status == 409
+                        lease_refused = decode_bounded(body, LeaseRefused)
+                        assert lease_refused.error["code"] == "executor_version_refused"
+                        assert lease_refused.refusal is not None
+                        assert lease_refused.refusal.reason == MAC_NEEDS_UPDATE
+                        assert lease_refused.refusal.peer_identity == old
+                        assert lease_refused.update is not None
+                        assert lease_refused.update.target == target
+                        assert endpoint.health().presence == "refused"
+                        status, body, _ = await call("GET", "/api/executor/update", only_id)
+                        assert status == 200
+                        assert decode_bounded(body, MacUpdateCheck).target == target
+                        status, body, _ = await call("GET", target.archive_path, only_id)
+                        assert (status, body) == (200, archive_bytes)
+                        status, body, _ = await call(
+                            "POST", "/api/executor/update", only_id,
+                            json.dumps({
+                                "request_id": target.request_id,
+                                "application_revision": target.application_revision,
+                                "phase": "downloading", "detail": None,
+                                "identity": None,
+                            }).encode(),
+                        )
+                        assert status == 200 and json.loads(body) == {"confirmed": False}
+                    # Current leases still need explicit proof, even with an offered update.
+                    missing_cleanup = json.loads(lease_body)
+                    del missing_cleanup["cleanup_uncertainties"]
+                    status, body, _ = await call(
+                        "POST", "/api/executor/lease", only_id,
+                        json.dumps(missing_cleanup).encode(),
+                    )
+                    assert (status, _error_code(body)) == (400, "validation")
+                    assert b"cleanup evidence" in body
+                    updates.attempts.path.unlink()
                     # The current process's lease is accepted and clears the refusal.
                     status, body, _ = await call("POST", "/api/executor/lease", only_id, lease_body)
                     assert status == 200
@@ -282,11 +356,94 @@ def test_every_executor_route_over_real_https(tmp_path: Path) -> None:
                     assert lease_reply.mailbox_high_sequence == 0
                     assert lease_reply.update.target is None
                     assert endpoint.health().presence == "present"
+                    # Reuse this host to prove the destructive grant route requires
+                    # the current executor and returns its exact-generation decision.
+                    ended_at = int(time.time()) - RETENTION_SECONDS - 1
+                    with connect(db_path) as connection:
+                        connection.execute(
+                            "INSERT INTO ticket_workspace_lifecycle"
+                            "(ticket_id,ended_at,deleted) VALUES(?,?,1)",
+                            ("t_01234567", ended_at),
+                        )
+                    local_workspace = WorkspaceIdentity("test-mac", "workspace-one")
+                    # This deleted folder retains its original machine assignment.
+                    retired_child = ChildReference(
+                        identity.executor_incarnation, "retired-child", "retired-c"
+                    )
+                    endpoint.runs.store.register_child(retired_child, "ticket", "t_01234567", 1)
+                    from planner.ticket_workspaces.data import register_workspace
+                    with connect(db_path) as connection:
+                        connection.execute(
+                            "INSERT INTO conversations(conversation_id,backend_key,model,"
+                            "workspace_folder,access,created_at) VALUES "
+                            "('retired-c','codex','scripted','/tmp','full',1)"
+                        )
+                        register_workspace(connection, "t_01234567", "retired-c", local_workspace)
+                    endpoint.runs.store.close_child(retired_child, 2)
+                    retirement = encode_bounded(
+                        WorkspaceRetirementRequest(
+                            WorkspaceState("t_01234567", ended_at, True), local_workspace
+                        )
+                    )
+                    status, body, _ = await call(
+                        "POST",
+                        "/api/executor/workspaces/retire",
+                        work | {"X-Panels-Executor-Incarnation": str(uuid4())},
+                        retirement,
+                    )
+                    assert (status, _error_code(body)) == (409, "executor_incarnation_not_current")
+                    status, body, _ = await call(
+                        "POST", "/api/executor/workspaces/retire", data=retirement
+                    )
+                    assert status == 200
+                    assert decode_bounded(body, WorkspaceRetirementReply).authorized
+                    with connect(db_path) as connection:
+                        connection.execute(
+                            "UPDATE ticket_workspace_lifecycle SET ended_at=NULL,"
+                            "deleted=0 WHERE ticket_id='t_01234567'"
+                        )
+                    # A prior grant proves only an already detached generation. It
+                    # cannot authorize deletion of a reopened current Ticket folder.
+                    status, body, _ = await call(
+                        "POST", "/api/executor/workspaces/retire", data=retirement
+                    )
+                    assert status == 200
+                    assert not decode_bounded(body, WorkspaceRetirementReply).authorized
+                    replay = encode_bounded(
+                        WorkspaceRetirementRequest(
+                            WorkspaceState("t_01234567", ended_at, True),
+                            local_workspace,
+                            replay=True,
+                        )
+                    )
+                    status, body, _ = await call(
+                        "POST", "/api/executor/workspaces/retire", data=replay
+                    )
+                    assert status == 200
+                    assert decode_bounded(body, WorkspaceRetirementReply).authorized
                     await asyncio.to_thread(
                         endpoint.runs.store.register_child, child, "ticket", "ticket-1", 1
                     )
                     proxy_child = endpoint.runs.recover(child)
                     assert proxy_child is not None
+                    with connect(db_path) as connection:
+                        connection.execute(
+                            "INSERT INTO conversations(conversation_id,backend_key,model,"
+                            "workspace_folder,access,created_at) VALUES "
+                            "('c','codex','scripted','/tmp','full',1)"
+                        )
+                    status, _, _ = await call(
+                        "POST",
+                        "/api/executor/workspaces/register",
+                        data=encode_bounded(WorkspaceRegistrationRequest(child, local_workspace)),
+                    )
+                    assert status == 204
+                    with connect(db_path) as connection:
+                        registered = connection.execute(
+                            "SELECT machine_id,workspace_id FROM ticket_workspace_conversations "
+                            "WHERE conversation_id='c'"
+                        ).fetchone()
+                    assert tuple(registered) == ("test-mac", "workspace-one")
 
                     # The work-route fence, from memory, with the error body.
                     for headers, code in (

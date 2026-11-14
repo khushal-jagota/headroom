@@ -17,7 +17,7 @@ from dataclasses import replace
 from datetime import datetime
 from pathlib import Path
 from time import monotonic, sleep
-from typing import cast
+from typing import Any, cast
 
 import pytest
 from tests.support.in_memory_conversation_system import InMemoryConversationSystem
@@ -33,11 +33,15 @@ from planner.conversation.contracts import (
     PromptDeliveryUncertain,
 )
 from planner.conversation.message_content import MessageContent, text_message_content
+from planner.conversation.start_admission import AutomaticStartAdmission
+from planner.conversation.start_admission.contracts import StartRequest
+from planner.core import ticket_blocks
 from planner.core.clock import TestClock
 from planner.core.contracts import Principal, PrincipalKind
 from planner.core.db import connect, create_schema
-from planner.core.errors import PlannerError
+from planner.core.errors import ErrorCode, PlannerError
 from planner.database_modules import attach
+from planner.machines.contracts import HOME_MACHINE_ID, ORIGINAL_MAC_MACHINE_ID
 from planner.runtime import conversation_start, worker_step_readiness
 from planner.runtime.logic.worker_step_prompt import (
     MEMORY_LOSS_NOTICE,
@@ -411,6 +415,50 @@ def test_an_uncertain_send_marks_the_exact_claim_errored_for_supervisor_restart(
     errors = [record for record in caplog.records if record.levelno >= logging.ERROR]
     assert len(errors) == 2
     assert all("delivery was uncertain" in error.getMessage() for error in errors)
+
+
+def test_failed_restart_kill_preserves_claim_link_and_launch_configuration(world: _World) -> None:
+    """Risk: restart mutates a Ticket or starts a replacement after cleanup refusal.
+
+    Existing restart cases prove successful kill and late claim changes, but not a
+    kill failure before the claim/link/configuration transaction. Reuse their host.
+    """
+    conversation_id = "conv-restart-cleanup-refused"
+    ticket_id = world.ready_ticket(conversation_id=conversation_id)
+    world.start_conversation(conversation_id)
+    assert world.start_step(ticket_id).started
+    before = world.ticket(ticket_id)
+    failure = PlannerError(
+        ErrorCode.retry_later,
+        "Recheck Worker cleanup before restart. The old Worker is not proven ended.",
+    )
+
+    world.conversations.kill_failures[conversation_id] = failure
+
+    async def unexpected_start() -> WorkerStepStartResult:
+        raise AssertionError("a failed kill must not start another backend")
+
+    def unexpected_configuration(conn: sqlite3.Connection, now: int) -> None:
+        raise AssertionError("a failed kill must not write launch configuration")
+
+    statements: list[str] = []
+    with closing(world.connect()) as conn, pytest.raises(PlannerError) as raised:
+        conn.set_trace_callback(statements.append)
+        asyncio.run(worker_restart.restart_worker(
+            cast(ConversationSystem, world.conversations),
+            conn,
+            OWNER_PRINCIPAL,
+            ticket_id,
+            start_worker_step=unexpected_start,
+            write_employee_configuration=unexpected_configuration,
+            now=world.clock.now_unix,
+        ))
+    assert raised.value is failure
+    assert not any(statement.lstrip().upper().startswith(_WRITING_STATEMENTS)
+                   for statement in statements)
+    assert world.ticket(ticket_id) == before
+    assert asyncio.run(world.conversations.is_running(conversation_id))
+    assert len(world.conversations.backend_prompt_writes(conversation_id)) == 1
 
 
 def test_restart_keeps_a_worker_completion_that_lands_during_kill(world: _World) -> None:
@@ -1065,6 +1113,156 @@ def test_the_poll_schedules_every_ready_ticket_and_skips_the_rest(world: _World)
         asyncio_loop.close()
 
 
+class _AdmissionConversations(InMemoryConversationSystem):
+    def __init__(self, starts: AutomaticStartAdmission) -> None:
+        super().__init__()
+        self.start_admission = starts
+
+
+def test_burst_dispatch_reaches_admission_order_beyond_the_preparation_cap(
+    world: _World, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Risk: DB order hides the admission head behind four repeatedly refused tasks.
+
+    Existing readiness cases do not combine the real preparation cap and ranked starts.
+    Reuse their SQLite/fake-conversation host; no backend or browser is needed.
+    """
+    from planner.runtime import worker_step_readiness_loop as loop_module
+
+    ticket_ids = [world.ready_ticket(title=f"Burst {number}") for number in range(8)]
+    with closing(world.connect()) as conn:
+        conn.executemany(
+            "UPDATE tickets SET updated_at=? WHERE id=?", enumerate(ticket_ids),
+        )
+    now = [0.0]
+    starts = AutomaticStartAdmission(clock=lambda: now[0])
+    world.conversations = _AdmissionConversations(starts)
+    assert starts.try_start(StartRequest("initial", "supervisor", HOME_MACHINE_ID))
+    # The first database candidate is unseen. Every ranked candidate must precede it.
+    for ticket_id in reversed(ticket_ids[1:]):
+        assert not starts.try_start(
+            StartRequest(f"worker-preparation:{ticket_id}", "worker", HOME_MACHINE_ID)
+        )
+    starts.finish("initial")
+
+    prepare = threading.Event()
+    real_start = start_ready_worker_step
+
+    async def start_after_poll(ticket_id: str, **kwargs: Any) -> WorkerStepStartResult:
+        # Hold tasks until this poll selected its four futures. Fast refusals must
+        # not open more preparation places halfway through the candidate scan.
+        await asyncio.to_thread(prepare.wait)
+        return await real_start(ticket_id, **kwargs)
+
+    monkeypatch.setattr(loop_module, "start_ready_worker_step", start_after_poll)
+    readiness_loop, asyncio_loop, thread = _loop_in_a_thread(world)
+
+    def preparations_ended() -> bool:
+        with readiness_loop._in_flight_lock:
+            return not readiness_loop._in_flight
+
+    started: set[str] = set()
+    try:
+        for second, expected in enumerate([*reversed(ticket_ids[1:]), ticket_ids[0]], 1):
+            now[0] = float(second)
+            prepare.clear()
+            scheduled = readiness_loop.poll_once()
+            assert len(scheduled) <= starts.limit
+            prepare.set()
+            assert _waited_for(preparations_ended)
+            current = {
+                ticket_id for ticket_id in ticket_ids
+                if world.ticket(ticket_id).worker_step_claim is WorkerStepClaim.out
+            }
+            assert current - started == {expected}
+            started = current
+            # The fake conversation has no backend activity callbacks. Settle the
+            # accepted opener here, so the next controlled second can take a place.
+            active = [s for s in starts.snapshots() if s.state == "active"]
+            assert [s.request.identity for s in active] == [
+                f"worker_step_message_{expected}:1"
+            ]
+            starts.finish(active[0].request.identity)
+        assert started == set(ticket_ids)
+    finally:
+        prepare.set()
+        readiness_loop.stop()
+        asyncio_loop.call_soon_threadsafe(asyncio_loop.stop)
+        thread.join(5)
+        asyncio_loop.close()
+
+
+def test_ineligible_admission_heads_do_not_hold_the_next_ready_worker(world: _World) -> None:
+    """Risk: a deferred rank survives the Ticket's loss of readiness and blocks work.
+
+    The deletion race case has no admission state. Exercise candidate exclusions,
+    readiness exclusions, an away destination, and a new busy turn on the same host.
+    """
+    deleted, backlogged, blocked, not_empty, away, busy, survivor = [
+        world.ready_ticket(title=title)
+        for title in ("Deleted", "Backlogged", "Blocked", "Claim out", "Away", "Busy", "Survivor")
+    ]
+    now = [0.0]
+    starts = AutomaticStartAdmission(clock=lambda: now[0])
+    starts.configure_destinations(lambda destination: destination == HOME_MACHINE_ID)
+    world.conversations = _AdmissionConversations(starts)
+    assert starts.try_start(StartRequest("initial", "supervisor", HOME_MACHINE_ID))
+    for ticket_id in (deleted, backlogged, blocked, not_empty, away, busy, survivor):
+        assert not starts.try_start(StartRequest(
+            f"worker-preparation:{ticket_id}", "worker",
+            ORIGINAL_MAC_MACHINE_ID if ticket_id == away else HOME_MACHINE_ID,
+        ))
+    with closing(world.connect()) as conn:
+        tickets_data.delete_ticket(
+            conn, deleted, principal=OWNER_PRINCIPAL, now=0, even_while_running=True,
+        )
+        tickets_data.set_ticket_backlog(
+            conn, backlogged, is_backlogged=True, principal=OWNER_PRINCIPAL, now=0,
+        )
+        # A backlogged Ticket can still block another Ticket.
+        ticket_blocks.add_ticket_block(conn, backlogged, blocked, 0)
+        conn.execute("UPDATE tickets SET worker_step_claim='out' WHERE id=?", (not_empty,))
+        conn.execute(
+            "UPDATE tickets SET locale='macos', machine_id=? WHERE id=?",
+            (ORIGINAL_MAC_MACHINE_ID, away),
+        )
+    # The oldest remaining preparation becomes busy after it received a rank.
+    # Its Ticket is still empty, so the readiness scan alone cannot remove it.
+    with closing(world.connect()) as conn:
+        conn.execute("UPDATE tickets SET conversation_id='owner-busy' WHERE id=?", (busy,))
+    world.start_conversation("owner-busy")
+    asyncio.run(world.conversations.send(
+        "owner-busy", text_message_content("Owner turn"), sender_label="owner",
+    ))
+    starts.configure_destinations(lambda destination: destination == HOME_MACHINE_ID)
+    starts.finish("initial")
+    now[0] = 1.0
+    readiness_loop, asyncio_loop, thread = _loop_in_a_thread(world)
+
+    def preparations_ended() -> bool:
+        with readiness_loop._in_flight_lock:
+            return not readiness_loop._in_flight
+
+    try:
+        # Depending on the two tasks' order, the survivor starts in this poll or
+        # the next one. No clock advance or restart can release a stale busy rank.
+        for _ in range(2):
+            readiness_loop.poll_once()
+            assert _waited_for(preparations_ended)
+            if world.ticket(survivor).worker_step_claim is WorkerStepClaim.out:
+                break
+        assert world.ticket(survivor).worker_step_claim is WorkerStepClaim.out
+        assert world.ticket(busy).worker_step_claim is WorkerStepClaim.none
+        assert {snapshot.request.identity for snapshot in starts.snapshots()} == {
+            f"worker_step_message_{survivor}:1"
+        }
+    finally:
+        readiness_loop.stop()
+        asyncio_loop.call_soon_threadsafe(asyncio_loop.stop)
+        thread.join(5)
+        asyncio_loop.close()
+
+
 def test_a_ticket_deleted_between_the_candidate_select_and_its_read_is_skipped(
     world: _World, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -1130,9 +1328,15 @@ def test_worker_start_runs_only_for_this_machine_locale(world: _World, locale: s
     own_guidance = "Guidance this Ticket copied, which its Worker type no longer holds."
     with world.connect() as conn:
         conn.execute(
-            "UPDATE tickets SET locale=?, workflow_json=json_set(workflow_json, '$.guidance', ?) "
+            "UPDATE tickets SET locale=?, machine_id=?, "
+            "workflow_json=json_set(workflow_json, '$.guidance', ?) "
             "WHERE id=?",
-            (locale, own_guidance, ticket_id),
+            (
+                locale,
+                ORIGINAL_MAC_MACHINE_ID if locale == "macos" else HOME_MACHINE_ID,
+                own_guidance,
+                ticket_id,
+            ),
         )
         conn.commit()
     started = world.start_step(ticket_id)
@@ -1160,7 +1364,8 @@ def test_restart_refuses_a_mac_ticket_while_the_mac_is_away(world: _World) -> No
     world.start_conversation("conv-mac-away")
     assert world.start_step(ticket_id).started is True
     with world.connect() as conn:
-        conn.execute("UPDATE tickets SET locale='macos' WHERE id=?", (ticket_id,))
+        conn.execute("UPDATE tickets SET locale='macos',machine_id=? WHERE id=?",
+                     (ORIGINAL_MAC_MACHINE_ID, ticket_id))
         conn.commit()
     claimed = world.ticket(ticket_id)
 
@@ -1240,7 +1445,7 @@ def test_a_saved_model_the_machine_no_longer_offers_errors_once_with_its_choices
                 r.payload for r in rows if isinstance(r.payload, PromptDeliveryRefusedEventPayload)
             ]
             assert [r.refusal_detail for r in refusals] == [
-                'Model "gpt-6.1-sol" is not offered by codex on the VPS. '
+                'Model "gpt-6.1-sol" is not offered by codex on Home. '
                 "Choose one of: gpt-6-luna, gpt-6-astra."
             ]
             assert not (await start()).started
@@ -1444,6 +1649,239 @@ def test_custom_guidance_reaches_first_payload_but_not_later_stage(
         "CUSTOM KICKOFF GUIDE"
         not in world.conversations.backend_prompt_writes(conversation_id)[1].text
     )
+
+
+def test_silent_remote_starts_leave_home_admission_and_durable_commands_intact(
+    world: _World,
+) -> None:
+    # Existing readiness tests do not join shared admission with retained remote commands.
+    from tests.support.executor_presence import lease_request, mac_identity
+
+    from planner.conversation.start_admission import AutomaticStartAdmission
+    from planner.conversation.start_admission.contracts import StartRequest
+    from planner.execution_identity import ChildReference, TurnToken
+    from planner.executor.protocol import ChildCommand, ChildOperation, WritePrompt
+    from planner.executor.vps_transport import VpsExecutor
+
+    class AdmissionConversations(InMemoryConversationSystem):
+        def __init__(self, starts: AutomaticStartAdmission) -> None:
+            super().__init__()
+            self.start_admission = starts
+
+    async def exercise() -> None:
+        endpoint = VpsExecutor(world.db_path, world.clock)
+        endpoint.presence.returned = None
+        identity = mac_identity()
+        await endpoint.lease(lease_request(identity))
+        now = [0.0]
+        present = [True]
+        starts = AutomaticStartAdmission(clock=lambda: now[0])
+        starts.configure_destinations(
+            lambda destination: destination == HOME_MACHINE_ID or present[0]
+        )
+        world.conversations = AdmissionConversations(starts)
+        remote_ids = []
+        for number in range(3):
+            ticket_id = await asyncio.to_thread(world.ready_ticket, title=f"remote-{number}")
+            remote_ids.append(ticket_id)
+            conversation_id = f"remote-c{number}"
+            with closing(connect(world.db_path)) as conn:
+                conn.execute(
+                    f"UPDATE tickets SET locale='macos',machine_id='{ORIGINAL_MAC_MACHINE_ID}',"
+                    "worker_step_claim='out',"
+                    "worker_step_claim_revision=1,conversation_id=? WHERE id=?",
+                    (conversation_id, ticket_id),
+                )
+            child = ChildReference(identity.executor_incarnation, f"child{number}", conversation_id)
+            endpoint.runs.store.register_child(child, "ticket", ticket_id, 1)
+            token = TurnToken(conversation_id, 1)
+            sender = f"worker_step_message_{ticket_id}:1"
+            assert starts.try_start(StartRequest(sender, "worker", ORIGINAL_MAC_MACHINE_ID))
+            starts.bind((sender,), token)
+            starts.persist_bindings(world.db_path, token)
+            await endpoint.mailbox.put_child_command(
+                ChildCommand(
+                    f"command{number}",
+                    child,
+                    ChildOperation.write_prompt,
+                    token,
+                    WritePrompt(
+                        content=text_message_content("work"),
+                        sender_content=text_message_content("work"),
+                        sender_label="loop",
+                        mode=PromptDeliveryMode.queue,
+                    ),
+                )
+            )
+            now[0] += 1
+        with closing(world.connect()) as conn:
+            commands = [tuple(row) for row in conn.execute("SELECT * FROM executor_commands")]
+        claims = [world.ticket(ticket_id) for ticket_id in remote_ids]
+        present[0] = False
+        home_id = await asyncio.to_thread(world.ready_ticket, title="home")
+        result = await start_ready_worker_step(
+            home_id,
+            connect_database=world.connect,
+            conversation_system=world.conversations,
+            worker_type_registry=configured_worker_type_registry(),
+            now=world.clock.now_unix,
+        )
+        assert result.started
+        with closing(world.connect()) as conn:
+            assert [
+                tuple(row) for row in conn.execute("SELECT * FROM executor_commands")
+            ] == commands
+        assert [world.ticket(ticket_id) for ticket_id in remote_ids] == claims
+        assert {s.request.identity for s in starts.snapshots() if s.state == "deferred"} == {
+            f"worker_step_message_{ticket_id}:1" for ticket_id in remote_ids
+        }
+        await endpoint.close()
+
+    asyncio.run(exercise())
+
+
+def test_start_checks_prompt_and_delivery_keep_all_sql_off_event_loop(world: _World) -> None:
+    from tests.support.sql_threads import sql_must_run_off_event_loop
+
+    ticket_id = world.ready_ticket()
+    world.add_revision_feedback(ticket_id, "Read this before the next step")
+    with sql_must_run_off_event_loop():
+        assert world.start_step(ticket_id).started
+    assert not world.pending_revision_feedback(ticket_id)
+
+
+def test_failed_restart_stays_errored_instead_of_starting_old_settings(world: _World) -> None:
+    """Risk: failed restart auto-starts the previous settings after rollback.
+
+    Reuse the failure case to prove stopped ownership and blocked automatic readiness.
+    """
+    conversation_id = "restart-configuration-failure"
+    ticket_id = world.ready_ticket(conversation_id=conversation_id)
+    world.start_conversation(conversation_id)
+    assert world.start_step(ticket_id).started
+    world.add_revision_feedback(ticket_id, "Preserve this decision through restart failure.")
+    before = world.ticket(ticket_id)
+    failure = RuntimeError("configuration transaction failed")
+
+    def fail_configuration(conn: sqlite3.Connection, now: int) -> None:
+        conn.execute("UPDATE tickets SET employee_backend='claude' WHERE id=?", (ticket_id,))
+        raise failure
+
+    async def unexpected_start() -> WorkerStepStartResult:
+        raise AssertionError("configuration failure must reach the caller")
+
+    with closing(world.connect()) as conn, pytest.raises(RuntimeError) as raised:
+        asyncio.run(worker_restart.restart_worker(
+            world.conversations, conn, OWNER_PRINCIPAL, ticket_id,
+            start_worker_step=unexpected_start,
+            write_employee_configuration=fail_configuration,
+            now=world.clock.now_unix,
+        ))
+    assert raised.value is failure
+    assert world.ticket(ticket_id).conversation_id is None
+    after = world.ticket(ticket_id)
+    assert after.worker_step_claim is WorkerStepClaim.errored
+    assert after.employee_backend == before.employee_backend
+    assert after.employee_launch_model == before.employee_launch_model
+    assert not asyncio.run(world.conversations.is_running(conversation_id))
+    assert not world.start_step(ticket_id).started
+    assert world.ticket(ticket_id).conversation_id is None
+    assert world.pending_revision_feedback(ticket_id)
+
+    async def start_restored() -> WorkerStepStartResult:
+        return await start_ready_worker_step(
+            ticket_id, connect_database=world.connect, conversation_system=world.conversations,
+            worker_type_registry=configured_worker_type_registry(), now=world.clock.now_unix,
+        )
+
+    with closing(world.connect()) as conn:
+        restarted = asyncio.run(worker_restart.restart_worker(
+            world.conversations, conn, OWNER_PRINCIPAL, ticket_id,
+            start_worker_step=start_restored, now=world.clock.now_unix,
+        ))
+    assert restarted["started"] is True
+    assert not world.pending_revision_feedback(ticket_id)
+    fresh = world.ticket(ticket_id).conversation_id
+    assert fresh is not None
+    assert "Preserve this decision through restart failure." in (
+        world.conversations.backend_prompt_writes(fresh)[0].text
+    )
+
+
+@pytest.mark.parametrize("head_admitted", [False, True])
+def test_locked_restart_does_not_keep_the_start_queue_head(
+    world: _World, head_admitted: bool,
+) -> None:
+    """Risk: a retirement wait blocks unrelated starts behind its deferred rank.
+
+    Existing lock coverage proves no old-context send, but not progress for another Ticket.
+    Reuse the real admission queue and SQLite host, with no remote connection.
+    """
+    first = world.ready_ticket(title="Restart waits", conversation_id="retiring-queue-head")
+    second = world.ready_ticket(title="Other ready work")
+    now = [0.0]
+    starts = AutomaticStartAdmission(clock=lambda: now[0])
+    locked = threading.Event()
+    release = threading.Event()
+
+    class PausedRestartConversations(_AdmissionConversations):
+        async def kill(self, conversation_id: str) -> None:
+            locked.set()
+            await asyncio.to_thread(release.wait)
+            await super().kill(conversation_id)
+
+    world.conversations = PausedRestartConversations(starts)
+    world.start_conversation("retiring-queue-head")
+    assert starts.try_start(StartRequest("pace", "supervisor", HOME_MACHINE_ID))
+    for ticket_id in (first, second):
+        assert not starts.try_start(StartRequest(
+            f"worker-preparation:{ticket_id}", "worker", HOME_MACHINE_ID,
+        ))
+    starts.finish("pace")
+    now[0] = 10.0
+    if head_admitted:
+        # A duplicate starter must preserve the permit of an admitted preparation.
+        assert starts.try_start(StartRequest(
+            f"worker-preparation:{first}", "worker", HOME_MACHINE_ID,
+        ))
+        now[0] = 20.0
+
+    readiness_loop, asyncio_loop, thread = _loop_in_a_thread(world)
+
+    async def no_explicit_start() -> WorkerStepStartResult:
+        return WorkerStepStartResult(started=False)
+
+    async def restart() -> dict[str, object]:
+        with closing(world.connect()) as conn:
+            return await worker_restart.restart_worker(
+                world.conversations, conn, OWNER_PRINCIPAL, first,
+                start_worker_step=no_explicit_start, now=world.clock.now_unix,
+            )
+
+    holding = asyncio.run_coroutine_threadsafe(restart(), asyncio_loop)
+    try:
+        assert locked.wait(2)
+        readiness_loop.poll_once()
+        if not head_admitted:
+            assert _waited_for(lambda: not starts.has_requests((f"worker-preparation:{first}",)))
+        # If the later task ran before the head dropped its rank, retry it now.
+        def second_attempt_settled() -> bool:
+            with readiness_loop._in_flight_lock:
+                return second not in readiness_loop._in_flight.values()
+
+        assert _waited_for(second_attempt_settled)
+        readiness_loop.poll_once()
+        assert _waited_for(lambda: world.ticket(second).worker_step_claim is WorkerStepClaim.out)
+        assert not holding.done()
+        assert starts.has_requests((f"worker-preparation:{first}",)) is head_admitted
+        assert world.ticket(first).worker_step_claim is WorkerStepClaim.none
+    finally:
+        release.set()
+        holding.result(timeout=2)
+        readiness_loop.stop()
+        asyncio_loop.call_soon_threadsafe(asyncio_loop.stop)
+        thread.join(5)
+        asyncio_loop.close()
 
 
 def test_busy_decision_stays_queued_and_one_restart_recovers_it(world: _World) -> None:

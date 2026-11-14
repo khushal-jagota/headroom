@@ -70,6 +70,7 @@ class TrackedWait:
     conversation_id: str | None
     detail: str
     started_at_ms: int
+    machine_id: str | None = None
 
     @property
     def finding_key(self) -> str:

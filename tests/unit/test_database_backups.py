@@ -302,6 +302,9 @@ def test_new_snapshot_excludes_artifacts_and_preserves_destination_files(tmp_pat
     _seed_database(source)
     _seed_managed_tree(source.parent, marker="snapshot")
     artifact = Path("files/tickets/t_1/artifacts/ui.html")
+    checkout = source.parent / "files/tickets/t_1/worktree/private.py"
+    checkout.parent.mkdir(parents=True)
+    checkout.write_text("private source")
     snapshot = create_database_backup(source, tmp_path / "backups", "new")
 
     metadata = json.loads((snapshot / "metadata.json").read_text())

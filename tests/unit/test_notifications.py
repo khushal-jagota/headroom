@@ -120,7 +120,7 @@ def test_the_loop_sends_one_edge_to_the_registered_device_and_records_it(
 
     loop = NotificationLoop(
         str(db_path),
-        MutableClock(parse_fake_now("2026-09-20T05:00:00+01:00")),
+        MutableClock(parse_fake_now("1970-01-01T00:00:01+00:00")),
         canonical_origin="https://panels.example",
         adapter=RecordingAdapter(),
     )
@@ -512,7 +512,7 @@ def test_failed_notification_delivery_retains_one_edge_and_retry(tmp_path: Path)
 
     loop = NotificationLoop(
         str(db_path),
-        MutableClock(parse_fake_now("2026-09-20T05:00:00+01:00")),
+        MutableClock(parse_fake_now("1970-01-01T00:00:01+00:00")),
         canonical_origin="https://panels.example",
         adapter=FailedAdapter(),
     )
@@ -531,6 +531,30 @@ def test_failed_notification_delivery_retains_one_edge_and_retry(tmp_path: Path)
             ).fetchone()[0]
             == 1
         )
+
+
+def test_notification_freshness_expires_both_channels_without_clearing_attention(
+    tmp_db: Connection,
+) -> None:
+    from planner.notifications import apns_data
+
+    _subscribe(tmp_db, now=1000)
+    apns_data.register_device(
+        tmp_db, device_token="aabb", bundle_id="app.panels.ios",
+        environment="development", now=1000,
+    )
+    stale = _ticket(tmp_db, 1000)
+    notifications_data.queue_deliveries(tmp_db, 1299)
+    assert len(notifications_data.pending_deliveries(tmp_db, 1299)) == 1
+    assert len(apns_data.pending_deliveries(tmp_db, 1299)) == 1
+    assert notifications_data.pending_deliveries(tmp_db, 1300) == ()
+    assert apns_data.pending_deliveries(tmp_db, 1300) == ()
+    for table in ("notification_deliveries", "notification_apns_deliveries"):
+        assert [row[0] for row in tmp_db.execute(f"SELECT status FROM {table}")] == ["expired"]
+    assert tmp_db.execute(
+        "SELECT active FROM notification_attention_state WHERE subject_id=? "
+        "AND notification_type='awaiting_approval'", (stale.id,),
+    ).fetchone()[0] == 1
 
 
 @pytest.mark.parametrize("imported_state", [False, True])
@@ -632,12 +656,16 @@ def test_delivery_rechecks_a_selected_batch_after_another_send_defers_work(
         second = _ticket(conn, 11)
 
     sent: list[str] = []
+    ticket_by_route = {f"/#/workspace/{ticket.id}": ticket for ticket in (first, second)}
 
-    def defer_second(intent: NotificationIntent) -> None:
+    def defer_other(intent: NotificationIntent) -> None:
+        assert intent.route in ticket_by_route
         sent.append(intent.route)
+        # Transport order does not follow Ticket creation order.
+        other = next(ticket for route, ticket in ticket_by_route.items() if route != intent.route)
         with closing(connect(database)) as conn:
             tickets_data.set_ticket_backlog(
-                conn, second.id, is_backlogged=True, principal=OWNER_PRINCIPAL, now=20,
+                conn, other.id, is_backlogged=True, principal=OWNER_PRINCIPAL, now=20,
             )
 
     class BrowserAdapter:
@@ -645,14 +673,14 @@ def test_delivery_rechecks_a_selected_batch_after_another_send_defers_work(
             self, subscription: PushSubscription, intent: NotificationIntent,
             identity: WebPushIdentity, *, subject: str,
         ) -> WebPushResult:
-            defer_second(intent)
+            defer_other(intent)
             return WebPushResult(delivered=True)
 
     class NativeAdapter:
         def send(
             self, delivery: PendingAPNsDelivery, *, server_url: str, now: int,
         ) -> APNsResult:
-            defer_second(delivery.intent)
+            defer_other(delivery.intent)
             return APNsResult(delivered=True)
 
         def close(self) -> None:
@@ -667,6 +695,6 @@ def test_delivery_rechecks_a_selected_batch_after_another_send_defers_work(
     )
     try:
         assert loop.poll_once() == 1
-        assert sent == [f"/#/workspace/{first.id}"]
+        assert len(sent) == 1
     finally:
         loop.stop()

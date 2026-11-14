@@ -9,7 +9,7 @@ That narrowness is the design. A Worker can run for a long time, a person can ta
 - **The readiness decision.** A read-only check of one Ticket that answers "may a step start now?" or names the reason it may not.
 - **The worker-step claim.** The only control fact a Ticket stores about automatic work: at rest, out, or errored. See [Ticket lifecycle](tickets.md#how-status-is-read).
 - **The opener fact.** On a stage the person shares with the Worker, a record that this entry onto the stage has had its opening turn.
-- **The loop.** A background pass over the Tickets that could start, least recently updated first, that runs readiness, takes the claim, and sends. It skips backlogged Tickets, Tickets at a final Stage, and Tickets whose step is out, failed, or waiting on a proposal before it reads them.
+- **The loop.** A background pass over the Tickets that can start. It offers waiting starts in admission order, then new candidates in database order. It runs readiness, takes the claim, and sends. It skips backlogged Tickets, Tickets at a final Stage, and Tickets whose step is out, failed, or waiting on a proposal before it reads them.
 
 ```
  change signal or timer
@@ -30,7 +30,7 @@ That narrowness is the design. A Worker can run for a long time, a person can ta
 All of these must hold:
 
 - It is not backlogged.
-- It can run here: its locale is this machine, or it is a Mac Ticket and the [Mac executor](executor.md) is present (its lease is fresh). Until then the step shows "Waiting for the Mac".
+- It can run here: its stable destination names the home, or its registered extra destination has a present [executor](executor.md). Away work waits with its machine name.
 - The stage is not terminal and has a field for the Worker to fill.
 - The Ticket's status is empty. That one check keeps out parked proposals, blockers, a claim already out, and errors.
 - On a user-owned stage, this entry onto the stage has not had its opener yet.
@@ -39,6 +39,14 @@ All of these must hold:
 The ceiling is not a readiness question. It decides what a finished proposal does, not whether the Worker may start. Manager settlement does not gate a step either.
 
 One more question goes to the conversation itself: is a turn already running? A busy conversation is left alone this pass, so automation never steers into an unrelated turn.
+
+Automatic starts share the existing gate with Manager wakes and recovery notices. Each destination has its own pacing and pending capacity. The home reserves capacity for Chief and Managers. Extra destinations use their full capacity for Workers. A busy or absent destination cannot consume another destination's permits.
+
+Positive agent activity or definite refusal releases a slot. A wire write or a local queue position alone does not prove acceptance. Messages behind a turn or quarantine hold no start slot. A Ticket that waits for restart retirement gives up its queue priority so other ready Tickets can start. At dequeue, a combined prompt takes one slot. Active turns have no limit from this gate. Explicit restart requests bypass automatic launch pacing.
+
+Preparation follows admission order, so its limit cannot hide the next eligible Worker. A deferred preparation loses its place when its Ticket no longer meets readiness or its conversation becomes busy.
+
+Automatic admission carries the same stable machine ID as the Ticket. A rename never changes a deferred start or claim. An absent executor holds no shared slot. Its pending starts retain their claims and command identities until receipts and ownership evidence settle them. On return, pending starts pass through the gate again. Durable bindings preserve this rule across a home restart. Control commands can pass unfetched deferred work without a new prompt or a change to conversation order.
 
 ## How a step is sent
 
@@ -64,6 +72,8 @@ A running turn or a running background task shows a working mark, and that mark 
 
 ## Decisions that shape it
 
+Database work runs on worker threads, so a database wait does not stop the server. Related start facts share a transaction when no file or process operation separates them. Custody, dispatch, and acceptance retain their separate recovery boundaries. Restart preserves ownership if the old Worker cannot stop. After a proven stop, a configuration failure clears the old link and leaves an errored claim until explicit restart. Automatic work cannot resume with the old settings.
+
 - Start work, then stop watching. Nothing listens for a turn to end.
 - Readiness is computed from the record, never stored as its own state.
 - A send that may have reached the Worker is never repeated automatically.
@@ -77,4 +87,4 @@ A running turn or a running background task shows a working mark, and that mark 
 - `src/planner/tickets/data.py`: the claim writers.
 - `src/planner/runtime/conversation_start.py`: starting the conversation and sending.
 
-_Last verified: 2026-11-04._
+_Last verified: 2026-11-13._

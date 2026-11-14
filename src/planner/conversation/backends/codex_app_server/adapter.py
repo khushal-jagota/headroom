@@ -143,6 +143,7 @@ from planner.conversation.message_files import (
     ConversationMessageFiles,
     MessageFileMissing,
 )
+from planner.core.task_settlement import run_on_worker_thread
 
 LOGGER = logging.getLogger("planner.conversation.backends.codex_app_server")
 
@@ -405,11 +406,15 @@ class CodexAppServerBackendChild:
             overrides=self._launch.environment_overrides,
             identity=self._identity_environment(resolved_start),
         )
+        if dict(self._identity_environment(resolved_start)).get("PLAN_TICKET_ID"):
+            environment["PLAN_CONVERSATION_ID"] = resolved_start.conversation_id
         try:
             await self._client.start(
                 argv=self._launch.argv,
                 environment=environment,
                 working_directory=resolved_start.workspace_folder,
+                supervision_reporter=getattr(self._sink, "record_local_child_supervision", None),
+                custody_reporter=getattr(self._sink, "record_local_child_custody", None),
                 worker_ticket_id=dict(self._identity_environment(resolved_start)).get(
                     "PLAN_TICKET_ID"
                 ),
@@ -530,6 +535,7 @@ class CodexAppServerBackendChild:
             self._reasoning_effort = reasoning_effort
         return BackendPromptAccepted(
             composed_content_delivered=not native_command,
+            agent_acceptance_proven=True,
         )
 
     async def steer(
@@ -1232,9 +1238,9 @@ class CodexAppServerBackendChild:
         await self._complete_agent_messages(turn)
         await self._settle_parked_asks(turn)
         if ending is ConversationTurnEnding.failed:
-            error_summary = self._read_the_login_in(turn, error_summary)
+            error_summary = await self._read_the_login_in(turn, error_summary)
         elif ending is ConversationTurnEnding.completed:
-            self._login_completed_a_turn(turn)
+            await self._login_completed_a_turn(turn)
         await self._sink.report(
             turn.token,
             TurnEnded(
@@ -1249,7 +1255,9 @@ class CodexAppServerBackendChild:
         # left to do: its asks are settled and everything it said has been reported.
         turn.ended.set()
 
-    def _read_the_login_in(self, turn: _TurnInFlight, error_summary: str | None) -> str | None:
+    async def _read_the_login_in(
+        self, turn: _TurnInFlight, error_summary: str | None
+    ) -> str | None:
         """Say what a failed turn establishes about the login, and remember a refusal.
 
         The remembering is the narrow part. A refusal is only ever recorded against the
@@ -1266,11 +1274,15 @@ class CodexAppServerBackendChild:
         )
         if reading is CodexAuthReading.login_is_rejected:
             generation = turn.login_generation_at_start
-            if generation is not None and generation == self._login_generation():
-                self._remembered_login_rejection.remember(generation)
+            if generation is not None:
+                await run_on_worker_thread(self._remember_rejection_for_login, generation)
         return error_summary_for(reading, error_summary)
 
-    def _login_completed_a_turn(self, turn: _TurnInFlight) -> None:
+    def _remember_rejection_for_login(self, generation: CodexLoginGeneration) -> None:
+        if generation == self._login_generation():
+            self._remembered_login_rejection.remember(generation)
+
+    async def _login_completed_a_turn(self, turn: _TurnInFlight) -> None:
         """A turn that finished clears a refusal recorded against its own credential.
 
         Only a turn that finished. An interrupted turn proves nothing about the login —
@@ -1279,7 +1291,11 @@ class CodexAppServerBackendChild:
         actually tested.
         """
         generation = turn.login_generation_at_start
-        if generation is not None and generation == self._login_generation():
+        if generation is not None:
+            await run_on_worker_thread(self._forget_rejection_for_login, generation)
+
+    def _forget_rejection_for_login(self, generation: CodexLoginGeneration) -> None:
+        if generation == self._login_generation():
             self._remembered_login_rejection.forget(generation)
 
     def _login_generation(self) -> CodexLoginGeneration | None:
@@ -1654,10 +1670,9 @@ class CodexAppServerBackendChild:
             turn.token,
             TurnEnded(
                 ending=ConversationTurnEnding.failed,
-                error_summary=self._read_the_login_in(
+                error_summary=await self._read_the_login_in(
                     turn,
-                    self._client.end_reason
-                    or "the codex process ended while the turn was running",
+                    self._client.end_reason or "the codex process ended while the turn was running",
                 ),
                 standard_error_tail=self._client.standard_error_tail(),
             ),

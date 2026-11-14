@@ -23,6 +23,16 @@
 }
 
 :root {
+  /* Machine identity colors stay separate from action and attention. */
+  --machine-jade: #83b7a7;
+  --machine-orchid: #bd99bf;
+  --machine-sand: #b8ad97;
+  --machine-cyan: #6fc9d0;
+  --machine-rose: #d393aa;
+  --machine-plum: #a784d4;
+  --machine-lime: #b9c77c;
+  --machine-stone: #c6c6c6;
+
   /* Surfaces — two general neutral planes and one deliberately recessed plane.
    * Ink remains for knockout marks and the retired Day card. */
   --surface-1: #121212;

@@ -66,6 +66,7 @@ from planner.conversation.backends.contracts import (
     UserInputRequested,
     VendorSessionCursorRebound,
 )
+from planner.conversation.child_custody import host_boot_identity
 from planner.conversation.contracts import (
     AnswerFate,
     ConversationBackendKey,
@@ -86,6 +87,7 @@ from planner.conversation.events import (
     UserInputRequestedEventPayload,
 )
 from planner.conversation.live_tail import MAXIMUM_HELD_TAIL_ITEMS, ConversationLiveTail
+from planner.conversation.local_child_contracts import LocalChildIdentity
 from planner.conversation.message_content import (
     MessageContent,
     MessageImage,
@@ -165,6 +167,12 @@ class _FakeBackendChild:
         del resolved_start
         if self._backend.session_load_fails:
             raise SessionLoadFailed(self._backend.conversation_id)
+        # This fake has no OS process. Never use pytest's PID as its custody identity.
+        host = host_boot_identity()
+        assert host is not None
+        await self._sink.record_local_child_custody(  # type: ignore[attr-defined]
+            LocalChildIdentity(pid=2_147_483_647, birth="test-child", boot=host.boot)
+        )
         self._backend.sink = self._sink
         if vendor_session_cursor is None:
             await self._sink.report(

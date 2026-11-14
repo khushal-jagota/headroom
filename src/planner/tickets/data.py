@@ -29,6 +29,7 @@ from planner.core.contracts import (
 )
 from planner.core.errors import ErrorCode, PlannerError
 from planner.core.ids import ID_PREFIXES, new_id
+from planner.machines.data import resolve_destination
 from planner.manager_wakes import data as manager_wakes_data
 from planner.notifications.attention import capture_ticket_attention
 from planner.tickets import decision_messages, derivation
@@ -60,7 +61,7 @@ from planner.tickets.logic import (
     review_transfer,
 )
 from planner.tickets.logic.decisions import Decision
-from planner.tickets.logic.locale import resolve_ticket_locale
+from planner.tickets.proposal_contention import begin_proposal
 from planner.worker_settings.contracts import ManagedWorkerLaunchDefaults
 from planner.worker_settings.service import read_worker_launch_defaults_for_ticket_creation
 from planner.worker_types.configuration import (
@@ -138,7 +139,7 @@ def _validate_review_holder(
 
 
 @contextmanager
-def _txn(conn: sqlite3.Connection) -> Iterator[None]:
+def _txn(conn: sqlite3.Connection, *, proposal: bool = False) -> Iterator[None]:
     if conn.in_transaction:
         conn.execute("SAVEPOINT ticket_write")
         try:
@@ -150,7 +151,10 @@ def _txn(conn: sqlite3.Connection) -> Iterator[None]:
         else:
             conn.execute("RELEASE ticket_write")
         return
-    conn.execute("BEGIN IMMEDIATE")
+    if proposal:
+        begin_proposal(conn)
+    else:
+        conn.execute("BEGIN IMMEDIATE")
     try:
         yield
     except BaseException:
@@ -263,6 +267,7 @@ def resolve_ticket_draft_context(
     *,
     worker_type: str | None,
     locale: TicketLocale | str | None = None,
+    machine_id: str | None = None,
     employee_backend: str | None = None,
     employee_launch_model: str | None = None,
     employee_launch_reasoning_effort: str | None = None,
@@ -290,9 +295,9 @@ def resolve_ticket_draft_context(
     )
     assert launch_configuration.employee_launch_model is not None
     backend_key = require_conversation_backend_key(launch_configuration.employee_backend)
-    resolved_locale = resolve_ticket_locale(locale)
+    destination, resolved_locale = resolve_destination(conn, machine_id, locale)
     require_usable_model(
-        conn, backend_key, launch_configuration.employee_launch_model, resolved_locale
+        conn, backend_key, launch_configuration.employee_launch_model, destination
     )
     if manager_id is not None:
         item = conn.execute(
@@ -308,7 +313,9 @@ def resolve_ticket_draft_context(
         blocked_by_ticket_ids=blocked_by_ticket_ids,
     )
 
-    return ResolvedTicketCreationContext(resolved_locale, launch_configuration, project_id)
+    return ResolvedTicketCreationContext(
+        resolved_locale, destination, launch_configuration, project_id
+    )
 
 
 def resolve_ticket_creation_context(
@@ -318,6 +325,7 @@ def resolve_ticket_creation_context(
     title_max_chars: int,
     worker_type: str | None,
     locale: TicketLocale | str | None = None,
+    machine_id: str | None = None,
     employee_backend: str | None = None,
     employee_launch_model: str | None = None,
     employee_launch_reasoning_effort: str | None = None,
@@ -335,6 +343,7 @@ def resolve_ticket_creation_context(
         conn,
         worker_type=worker_type,
         locale=locale,
+        machine_id=machine_id,
         employee_backend=employee_backend,
         employee_launch_model=employee_launch_model,
         employee_launch_reasoning_effort=employee_launch_reasoning_effort,
@@ -363,6 +372,7 @@ def _row_to_ticket(
     return Ticket(
         field_approvals=fields_codec.approvals_from_json(row["field_approvals"], values),
         locale=TicketLocale(row["locale"]),
+        machine_id=str(row["machine_id"]),
         is_backlogged=bool(row["is_backlogged"]),
         id=row["id"],
         title=row["title"],
@@ -435,6 +445,7 @@ _TICKET_STORED_COLUMNS = (
     "manager_kind",
     "is_backlogged",
     "locale",
+    "machine_id",
 )
 _TICKET_STORED_SELECT = ", ".join(f"tickets.{column}" for column in _TICKET_STORED_COLUMNS)
 # Integrity is separate from the canonical Ticket, but changes its usability and display.
@@ -962,7 +973,7 @@ def write_employee_configuration(
     with _txn(conn):
         registered_backend = require_conversation_backend_key(employee_backend)
         ticket = _load_ticket_for_write(conn, ticket_id)
-        require_usable_model(conn, registered_backend, employee_launch_model, ticket.locale)
+        require_usable_model(conn, registered_backend, employee_launch_model, ticket.machine_id)
         current = employee_launch_configuration(ticket)
         candidate = EmployeeLaunchConfiguration(
             employee_backend=registered_backend,
@@ -1025,6 +1036,7 @@ def create_ticket(
     worker_type: str | None,
     workflow: TicketWorkflowDefinition | None = None,
     locale: TicketLocale | str | None = None,
+    machine_id: str | None = None,
     employee_backend: str | None = None,
     employee_launch_model: str | None = None,
     employee_launch_reasoning_effort: str | None = None,
@@ -1076,6 +1088,7 @@ def create_ticket(
             reasoning_effort_is_set=reasoning_effort_is_set,
             model_source_is_historical=model_source_is_historical,
             locale=locale,
+            machine_id=machine_id,
             project_id=project_id,
             deadline=deadline,
             manager_id=manager_id,
@@ -1125,9 +1138,9 @@ def create_ticket(
             "recap, ceiling, ceiling_holder, "
             "conversation_id, field_values, field_approvals, pending_proposal, "
             "pending_proposal_revision, "
-            "created_at, updated_at, locale) "
+            "created_at, updated_at, locale, machine_id) "
             "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', ?, ?, NULL, "
-            "?, ?, ?, ?, ?, ?, ?)",
+            "?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 ticket_id,
                 title,
@@ -1157,6 +1170,7 @@ def create_ticket(
                 now,
                 now,
                 creation_context.locale.value,
+                creation_context.machine_id,
             ),
         )
         wake_target = _proposal_wake_target(conn, initial_proposal_route)
@@ -1301,7 +1315,31 @@ def claim_ticket_for_worker_step(
                 (ticket_id, ticket.stage, now),
             )
         _write_worker_step_claim(conn, ticket_id, WorkerStepClaim.out, now)
-        return _load_ticket_for_write(conn, ticket_id)
+        claimed = _load_ticket_for_write(conn, ticket_id)
+        from planner.runtime.worker_memory import worker_step_message_id_for_claim
+
+        sender_message_id = worker_step_message_id_for_claim(
+            ticket_id, claimed.worker_step_claim_revision
+        )
+        conn.execute(
+            "INSERT INTO worker_step_dispatch_intents VALUES (?,?,?,'prepared')",
+            (ticket_id, claimed.worker_step_claim_revision, sender_message_id),
+        )
+        return claimed
+
+
+def mark_worker_step_dispatch_started(
+    conn: sqlite3.Connection,
+    ticket_id: str,
+    claim_revision: int,
+) -> None:
+    """Commit uncertainty before any prompt dispatch can cross the conversation boundary."""
+    with _txn(conn):
+        conn.execute(
+            "UPDATE worker_step_dispatch_intents SET state='dispatch_started' "
+            "WHERE ticket_id=? AND claim_revision=? AND state='prepared'",
+            (ticket_id, claim_revision),
+        )
 
 
 def forget_user_stage_opener(
@@ -1440,7 +1478,7 @@ def file_current_proposal(
             "only the Ticket's own Worker can file its proposal",
             {"ticket_id": ticket_id},
         )
-    with _txn(conn):
+    with _txn(conn, proposal=True):
         ticket, worker_type_definition = _load_ticket_and_worker_type_definition_for_write(
             conn, ticket_id
         )

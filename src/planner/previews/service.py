@@ -16,10 +16,11 @@ from pathlib import Path
 from typing import TypeVar
 
 from planner.core.db import connect
+from planner.platform_runtime.selection import get_platform_adapter
 from planner.previews import config, data
 from planner.previews.contracts import PreviewError, PreviewRecord
-from planner.previews.logic.eligibility import require_eligible, require_port, require_vps
-from planner.previews.process import LinuxProcessInspector, validate_worktree
+from planner.previews.logic.eligibility import require_eligible, require_home, require_port
+from planner.previews.process import validate_worktree
 
 T = TypeVar("T")
 
@@ -30,7 +31,7 @@ class PreviewService:
         self.public_origin = public_origin.rstrip("/")
         self.panels_port = panels_port
         self.server_epoch = secrets.token_hex(16)
-        self.inspector = LinuxProcessInspector()
+        self.inspector = get_platform_adapter().preview_inspector()
         self._executor = ThreadPoolExecutor(
             max_workers=max(1, config.INSPECTION_WORKERS - 1),
             thread_name_prefix="preview-inspection",
@@ -175,7 +176,7 @@ class PreviewService:
                 raise PreviewError("Another preview registration is being inspected.", 503)
             try:
                 with self._connection() as conn:
-                    require_vps(data.eligibility(conn, ticket_id))
+                    require_home(data.eligibility(conn, ticket_id))
                     current = data.get(conn, ticket_id)
                     if current is None or current.state != "prepared":
                         raise PreviewError("Prepare a new preview address before registration.")
@@ -193,7 +194,7 @@ class PreviewService:
     async def show(self, ticket_id: str) -> PreviewRecord | None:
         def operation() -> PreviewRecord | None:
             with self._connection() as conn:
-                require_vps(data.eligibility(conn, ticket_id))
+                require_home(data.eligibility(conn, ticket_id))
                 record = data.get(conn, ticket_id)
                 if record is not None and record.state != "ended":
                     try:
@@ -211,7 +212,7 @@ class PreviewService:
     async def stop(self, ticket_id: str) -> PreviewRecord | None:
         def operation() -> PreviewRecord | None:
             with self._connection() as conn:
-                require_vps(data.eligibility(conn, ticket_id))
+                require_home(data.eligibility(conn, ticket_id))
                 record = data.get(conn, ticket_id)
                 if record:
                     data.end(conn, record.generation, "The preview was stopped.")

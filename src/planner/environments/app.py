@@ -17,11 +17,12 @@ from re import fullmatch
 from planner.environments.runtime_contracts import (
     RUNTIME_CONTRACT_PATH,
     RUNTIME_INVENTORY_PATH,
-    AnyRuntimeContract,
     NodeRuntimeContract,
     parse_optional_runtime_contract,
     runtime_bytes_digest,
 )
+from planner.platform_runtime.contracts import RuntimeRequirements
+from planner.platform_runtime.targets import RuntimeTarget, require_runtime_target
 
 APP_FORMAT = "panels-app-v1"
 FULL_SHA_PATTERN = r"[0-9a-f]{40}"
@@ -37,7 +38,7 @@ class AppManifest:
     app_sha: str
     source_digest: str
     artifact_digest: str
-    runtime_contract: AnyRuntimeContract | None = None
+    runtime_contract: RuntimeRequirements | None = None
 
     def as_dict(self) -> dict[str, object]:
         return {
@@ -61,6 +62,7 @@ def validate_app_manifest(
     expected_sha: str | None = None,
     require_runtime: bool = False,
     verify_artifact_digest: bool = True,
+    expected_target: RuntimeTarget | None = None,
 ) -> AppManifest:
     """Validate one app's manifest; skip the whole-tree digest only when a checksum covers it."""
     manifest_input = path.expanduser()
@@ -70,6 +72,23 @@ def validate_app_manifest(
     if not manifest_path.is_file():
         raise AppValidationError(f"app manifest is missing: {manifest_path}")
     app_root = manifest_path.parent
+    marker = app_root / "mac-runtime.json"
+    if marker.exists():
+        target_value = json.loads(marker.read_text())
+        if expected_target is None:
+            if target_value.get("role") == "executor":
+                raise AppValidationError("an executor artifact cannot replace a home")
+        else:
+            require_runtime_target(
+                RuntimeTarget(
+                    target_value.get("platform"),
+                    target_value.get("architecture"),
+                    target_value.get("role"),
+                ),
+                expected_target,
+            )
+    elif expected_target is not None:
+        raise AppValidationError("executor artifact lacks its target manifest")
     if (app_root / ".git").exists():
         raise AppValidationError("app root must not contain Git metadata")
     try:
@@ -88,9 +107,10 @@ def validate_app_manifest(
         raise AppValidationError("app manifest SHA does not match expected SHA")
     if not isinstance(source_digest, str) or fullmatch(HEX_DIGEST_PATTERN, source_digest) is None:
         raise AppValidationError("app manifest has an invalid source digest")
-    if not isinstance(artifact_digest, str) or fullmatch(
-        HEX_DIGEST_PATTERN, artifact_digest
-    ) is None:
+    if (
+        not isinstance(artifact_digest, str)
+        or fullmatch(HEX_DIGEST_PATTERN, artifact_digest) is None
+    ):
         raise AppValidationError("app manifest has an invalid artifact digest")
     artifact_matches = not verify_artifact_digest or artifact_digest == digest_app_artifact(
         app_root
@@ -200,7 +220,7 @@ NODE_RUNTIME_FILES = (
 )
 
 
-def _validate_runtime_tree(root: Path, contract: AnyRuntimeContract | None) -> None:
+def _validate_runtime_tree(root: Path, contract: RuntimeRequirements | None) -> None:
     """Check structure only. Shared admission checks the host before execution.
 
     A version 2 Node release has no private Python. Every other release keeps it.
@@ -259,9 +279,10 @@ def build_exported_app(
         runtime_contract = None
         if install_dependencies:
             _install_app_dependencies(staging)
-            from planner.environments.runtime_packaging import complete_private_runtime
+            from planner.platform_runtime.selection import select_home_runtime
+            from planner.platform_runtime.targets import LINUX_HOME
 
-            runtime_contract = complete_private_runtime(staging)
+            runtime_contract = select_home_runtime(LINUX_HOME).complete_private_runtime(staging)
         _write_app_entrypoints(staging, app_sha=requested_sha)
         manifest = AppManifest(
             requested_sha,
@@ -310,9 +331,17 @@ def _install_app_dependencies(app_root: Path) -> None:
         subprocess.run(["npm", "ci", "--prefix", str(app_root / "web")], check=True)
     if (app_root / "agent_backends/package.json").is_file():
         subprocess.run(
-            ["npm", "install", "--prefix", str(app_root / "agent_backends"),
-             "--package-lock=false", "--save=false", "@anthropic-ai/claude-code@latest",
-             "@openai/codex@latest"], check=True,
+            [
+                "npm",
+                "install",
+                "--prefix",
+                str(app_root / "agent_backends"),
+                "--package-lock=false",
+                "--save=false",
+                "@anthropic-ai/claude-code@latest",
+                "@openai/codex@latest",
+            ],
+            check=True,
         )
     if (app_root / "web" / "package.json").is_file():
         subprocess.run(["npm", "run", "build", "--prefix", str(app_root / "web")], check=True)
@@ -328,7 +357,8 @@ def _write_app_entrypoints(app_root: Path, *, app_sha: str) -> None:
         "set -eu\n"
         'root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd -P)\n'
         f'export PLAN_APP_ROOT="$root" PLAN_APP_SHA="{app_sha}"\n'
-        'exec "$root/.venv/bin/python" -I -m planner "$@"\n',
+        'export PYTHONDONTWRITEBYTECODE=1\n'
+        'exec "$root/.venv/bin/python" -I -B -m planner "$@"\n',
         encoding="utf-8",
     )
     cli.chmod(0o755)
@@ -337,7 +367,7 @@ def _write_app_entrypoints(app_root: Path, *, app_sha: str) -> None:
         "#!/bin/sh\n"
         "set -eu\n"
         'root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)\n'
-        'exec "$root/.venv/bin/python" -m planner.environments.app_launcher "$root" "$@"\n',
+        'exec "$root/.venv/bin/python" -B -m planner.environments.app_launcher "$root" "$@"\n',
         encoding="utf-8",
     )
     launcher.chmod(0o755)

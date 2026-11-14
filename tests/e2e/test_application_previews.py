@@ -335,7 +335,7 @@ def test_real_vite_applications_share_only_their_generation(
             page.get_by_text("Navigate", exact=True).click()
             assert page.url == record["url"] + "next"
             page.goto(record["url"] + "redirect", timeout=15000)
-            assert page.url == record["url"] + "next"
+            assert page.url == record["url"] + "next", page.content()
             page.evaluate("async base=>{await fetch(base+'cookie');}", record["base_path"])
             assert (
                 page.evaluate(

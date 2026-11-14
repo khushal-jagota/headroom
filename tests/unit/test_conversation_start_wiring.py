@@ -41,6 +41,8 @@ from planner.conversation.message_content import MessageContent, text_message_co
 from planner.conversation.workspace_admission import WorkspaceAdmission
 from planner.core.contracts import Principal, PrincipalKind
 from planner.core.errors import PlannerError
+from planner.machines.contracts import ORIGINAL_MAC_MACHINE_ID
+from planner.machines.executor_credentials import register_machine
 from planner.projects.data import create_project, update_project
 from planner.runtime.conversation_start import (
     new_conversation_id,
@@ -56,6 +58,7 @@ from planner.runtime.logic.conversation_start_resolution import (
 )
 from planner.tickets.contracts import Ticket
 from planner.tickets.data import create_ticket, read_ticket
+from planner.worker_supervision.contracts import CleanupResult
 from planner.worker_types.store import read_definition, write_definition
 
 _WORKSPACE = Path("/tmp/panels-workspace")
@@ -113,6 +116,15 @@ class _LinkWatchingConversationSystem:
 
     def workspace_activity(self) -> Literal["idle", "busy", "unknown"]:
         return self._system.workspace_activity()
+
+    async def prepare_update(self, mode: Literal["idle", "now"]) -> bool:
+        return await self._system.prepare_update(mode)
+
+    def update_waiting_work(self) -> tuple[str, ...]:
+        return self._system.update_waiting_work()
+
+    def cancel_update(self) -> bool:
+        return self._system.cancel_update()
 
     async def run_with_workspace_admission(
         self,
@@ -208,6 +220,9 @@ class _LinkWatchingConversationSystem:
 
     async def discard_held_prompt(self, conversation_id: str, held_prompt_id: str) -> bool:
         return await self._system.discard_held_prompt(conversation_id, held_prompt_id)
+
+    async def recheck_worker_cleanup(self, ticket_id: str) -> CleanupResult:
+        return CleanupResult(True, "No retained Worker processes")
 
     async def kill(self, conversation_id: str) -> None:
         await self._system.kill(conversation_id)
@@ -430,7 +445,9 @@ def test_an_existing_conversation_keeps_its_workspace_after_the_project_folder_c
             (conversation_id,),
         ).fetchone()
         assert stored_workspace is not None
-        assert Path(str(stored_workspace["workspace_folder"])) == original_folder.resolve()
+        expected = worker_resolve(tmp_db, read_ticket(tmp_db, ticket.id)).workspace_folder
+        assert Path(str(stored_workspace["workspace_folder"])) == expected
+        assert expected.name == "worktree"
 
     asyncio.run(exercise())
 
@@ -454,26 +471,56 @@ def test_worker_resolve_preserves_disabled_history_but_rejects_new_disabled_over
     assert read_ticket(tmp_db, ticket.id) == ticket
 
 
-def test_mac_project_ticket_starts_in_its_mac_workspace_project_folder(
-    tmp_db: Connection, tmp_path: Path, ticket: Ticket
+def test_registered_linux_project_ticket_starts_in_its_executor_workspace_project_folder(
+    tmp_db: Connection, tmp_path: Path, ticket: Ticket,
 ) -> None:
+    from uuid import uuid4
+
+    from planner.execution_configuration import PROTOCOL_VERSION, SPOOL_FORMAT_VERSION
+    from planner.execution_identity import ExecutorIdentity
+    from planner.executor.protocol import LeaseRequest
+    from planner.executor.vps_presence_store import accept_lease_in_transaction
     from planner.tickets.api import _conversation_start_values_json
+
+    destination = register_machine(tmp_db, "Linux server", "linux").machine_id
+    identity = ExecutorIdentity(PROTOCOL_VERSION, "test", SPOOL_FORMAT_VERSION, str(uuid4()))
+    with tmp_db:
+        accept_lease_in_transaction(
+            tmp_db, LeaseRequest(identity, 123, 1000, 0, None, (), False, (), False),
+            1000, destination,
+        )
 
     server_checkout = tmp_path / "vps-checkout"
     server_checkout.mkdir()
-    project = create_project(tmp_db, name="Mac project", folder_path=server_checkout, now=1)
+    project = create_project(tmp_db, name="Linux project", folder_path=server_checkout, now=1)
     tmp_db.execute(
-        "UPDATE tickets SET project_id = ?, locale = 'macos' WHERE id = ?",
-        (project.id, ticket.id),
+        "UPDATE tickets SET project_id = ?, locale = 'macos', machine_id = ? WHERE id = ?",
+        (project.id, destination, ticket.id),
     )
     ticket = read_ticket(tmp_db, ticket.id)
     values = worker_resolve(tmp_db, ticket)
-    # The server's Project path stays on the server. The Mac gets its own Project folder.
+    # The home checkout stays at home. Each executor resolves its own Project folder.
     assert values.workspace_folder == Path("/projects") / project.id
     assert values.workspace_path_policy is WorkspacePathPolicy.executor_default
     assert _conversation_start_values_json(values)["workspace_folder"] is None
     system = InMemoryConversationSystem()
-    conversation_id = asyncio.run(_started(system, tmp_db, ticket, values, now=3))
+    watching = _LinkWatchingConversationSystem(system, tmp_db, ticket.id)
+    delivered = asyncio.run(send_to_ticket_conversation(
+        watching, tmp_db, ticket.id, text_message_content("Start the Worker"),
+        conversation_id=None, sender_label="loop", now=3,
+    ))
+    assert isinstance(delivered.fate, PromptDeliveryStarted)
+    conversation_id = delivered.conversation_id
+    assert conversation_id is not None
+    assert len(watching.start_requests) == 1
+    request = watching.start_requests[0]
+    assert request.workspace_folder == Path("/projects") / project.id
+    assert request.workspace_path_policy is WorkspacePathPolicy.executor_default
+    assert request.role_materials is not None
+    identity_environment = dict(request.role_materials.identity_environment_variables)
+    assert identity_environment["PLAN_TICKET_ID"] == ticket.id
+    assert f"Its fixed destination is {destination}." in request.role_materials.role_text
+    assert read_ticket(tmp_db, ticket.id).machine_id == destination
     row = tmp_db.execute(
         "SELECT workspace_folder, workspace_path_policy FROM conversations "
         "WHERE conversation_id = ?",
@@ -535,7 +582,10 @@ def test_unconfigured_mac_uses_executor_workspace_without_replacing_explicit_cho
     from planner.tickets.api import _conversation_start_values_json
     from planner.tickets.contracts import TicketLocale
 
-    tmp_db.execute("UPDATE tickets SET locale='macos' WHERE id=?", (ticket.id,))
+    tmp_db.execute(
+        "UPDATE tickets SET locale='macos', machine_id=? WHERE id=?",
+        (ORIGINAL_MAC_MACHINE_ID, ticket.id),
+    )
     mac = read_ticket(tmp_db, ticket.id)
     values = worker_resolve(tmp_db, mac)
     assert values.workspace_path_policy is WorkspacePathPolicy.executor_default
@@ -629,3 +679,27 @@ def test_deleted_specialist_keeps_saved_guide_on_start_restart_and_continue(
             previous_id = current_id
 
     asyncio.run(exercise())
+
+
+def test_workspace_registration_failure_rolls_back_ticket_link_and_record(
+    tmp_db: Connection, ticket: Ticket, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from planner.ticket_workspaces import data as workspace_data
+    from planner.ticket_workspaces.contracts import WorkspaceIdentity
+
+    original = workspace_data.register_workspace
+
+    def fail_after_registration(
+        conn: Connection, ticket_id: str, conversation_id: str, identity: WorkspaceIdentity,
+    ) -> None:
+        original(conn, ticket_id, conversation_id, identity)
+        raise RuntimeError("registration failed")
+
+    monkeypatch.setattr(workspace_data, "register_workspace", fail_after_registration)
+    system = InMemoryConversationSystem()
+    with pytest.raises(RuntimeError, match="registration failed"):
+        asyncio.run(_started(system, tmp_db, ticket, _values(ticket.id), now=2))
+    assert read_ticket(tmp_db, ticket.id) == ticket
+    assert _history(tmp_db, ticket.id) == []
+    assert tmp_db.execute("SELECT 1 FROM conversations").fetchone() is None
+    assert tmp_db.execute("SELECT 1 FROM ticket_workspace_conversations").fetchone() is None

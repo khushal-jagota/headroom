@@ -476,7 +476,9 @@ def run(browser, urls):
             path = path.removesuffix("/workspace")
         if path.startswith("tickets?"):
             path = "tickets/" + parse_qs(path.split("?", 1)[1])["id"][0]
-        if path == "updates":
+        if path == "machines":
+            result = fixture["MACHINE_CATALOG"]
+        elif path == "updates":
             result = {
                 "state": "up_to_date", "allowed_actions": [], "activity": "unknown",
                 "available": None, "attempt": None, "app_sha": "fixture", "detail": None,
@@ -963,7 +965,7 @@ def run(browser, urls):
         absent=False,
     )
     expect(page.locator("[data-project-fact]")).to_have_text("One")
-    expect(page.locator("[data-ticket-identity]")).to_have_text("One · Coding")
+    expect(page.locator("[data-ticket-identity]")).to_have_text("VPS One · Coding")
     expect(page.locator(".ticket-title [contenteditable]")).to_have_text("Review ticket")
     expect(page.locator("[data-ticket-backlog-action]")).to_have_text("Backlog ticket")
     page.locator("[data-ticket-backlog-action]").click()
@@ -1008,7 +1010,7 @@ def run(browser, urls):
     runtime_working = True
     drive("window.__batch()")
     expect(page.locator(".ticket-title [contenteditable]")).to_have_text("Canonical masthead")
-    expect(page.locator("[data-ticket-identity]")).to_have_text("Current Project · Personal")
+    expect(page.locator("[data-ticket-identity]")).to_have_text("VPS Current Project · Personal")
     expect(page.locator(".ticket-title [data-conversation-id]")).to_have_attribute(
         "data-conversation-id", "masthead-current"
     )
@@ -1117,7 +1119,7 @@ def run(browser, urls):
         "data-section-stage", "needs_success_condition"
     )
     expect(page.locator("[data-approval-block] [contenteditable]")).to_have_text("A result")
-    expect(page.locator("[data-ticket-identity]")).to_have_text("One · Coding")
+    expect(page.locator("[data-ticket-identity]")).to_have_text("VPS One · Coding")
     expect(page.locator("[data-parent-link]")).to_have_count(0)
     assert (
         page.locator(
@@ -1387,6 +1389,14 @@ def run(browser, urls):
     assert page.locator('[data-field="consequences"] [contenteditable]').count() == 0
     personal_outcome.fill("Completed by user")
     personal_outcome.press("Tab")
+    expect(page.locator('[data-ticket-section="t_personal"]')).to_have_attribute(
+        "data-section-stage", "needs_consequences"
+    )
+    # Completion moves the value into lazy history. Open it before checking the saved body.
+    page.locator("[data-stage-fold]").evaluate("node => { node.open = true; }")
+    page.locator('[data-stage-fold] [data-field="outcome"]').evaluate(
+        "node => { node.open = true; }"
+    )
     page.wait_for_function("document.body.textContent.includes('Completed by user')")
     assert writes[-1] == {"personal_outcome": {"body": "Completed by user"}}
     page.evaluate("window.__showTicket('t_kickoff')")

@@ -120,19 +120,29 @@ def test_all_agent_resolvers_keep_explicit_and_project_precedence(
         assert manager_resolve(tmp_db, manager).workspace_folder == (
             files / "sprint-items" / manager.id
         )
-        assert worker_resolve(tmp_db, ticket).workspace_folder == configured
+        assert (
+            worker_resolve(tmp_db, ticket).workspace_folder
+            == files / "tickets" / ticket.id / "worktree"
+        )
         assert agent_resolve(tmp_db, workspace_folder=explicit).workspace_folder == explicit
         assert (
             manager_resolve(tmp_db, manager, workspace_folder=explicit).workspace_folder == explicit
         )
         tmp_db.execute("UPDATE tickets SET project_id=? WHERE id=?", (project.id, ticket.id))
         ticket = read_ticket(tmp_db, ticket.id)
-        assert worker_resolve(tmp_db, ticket).workspace_folder == project_folder
         assert (
-            worker_resolve(tmp_db, ticket, workspace_folder=explicit).workspace_folder == explicit
+            worker_resolve(tmp_db, ticket).workspace_folder
+            == files / "tickets" / ticket.id / "worktree"
+        )
+        assert (
+            worker_resolve(tmp_db, ticket, workspace_folder=explicit).workspace_folder
+            == files / "tickets" / ticket.id / "worktree"
         )
         project_folder.rmdir()
-        assert worker_resolve(tmp_db, ticket).workspace_folder == configured
+        assert (
+            worker_resolve(tmp_db, ticket).workspace_folder
+            == files / "tickets" / ticket.id / "worktree"
+        )
 
 
 def test_unconfigured_workspace_preserves_both_existing_fallbacks(
@@ -169,6 +179,7 @@ def test_lifespans_isolate_databases_and_reject_duplicate_database_aliases(
         if index == 0:
             env["PLAN_WORKSPACE_ROOT"] = str(configured)
         config = load_config(str(state / "absent.yaml"), env=env)
+
         def conn_factory(path: Path = path) -> Connection:
             return connect(str(path))
 

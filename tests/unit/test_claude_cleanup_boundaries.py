@@ -15,6 +15,7 @@ from typing import cast
 import pytest
 from claude_agent_sdk import ClaudeAgentOptions, ResultMessage
 from tests.support.conversation_claude_agent_sdk_bench import _ScriptedClaudeSdkClient
+from tests.support.executor_catalog import SingleMachineCatalog
 from tests.support.executor_presence import mac_identity
 from tests.support.executor_turns import MacRemoteChildFactory
 from tests.unit.test_executor_native_runtime import (
@@ -39,6 +40,7 @@ from planner.conversation.message_files import ConversationMessageFiles
 from planner.conversation.storage import ConversationStore
 from planner.conversation.system import SqliteProcessConversationSystem
 from planner.core.contracts import OWNER_PRINCIPAL
+from planner.core.errors import PlannerError
 from planner.execution_identity import ChildReference
 from planner.executor.configuration import ExecutorPaths
 from planner.executor.mac_outbox import MacOutbox
@@ -152,7 +154,7 @@ def test_claude_stop_result_controls_canonical_retirement(
             backend_child_factories=dict.fromkeys(ConversationBackendKey, children),
             message_files=ConversationMessageFiles(remote.db_path),
         )
-        system.configure_machine_catalog(remote.catalog)
+        system.configure_machine_catalog(SingleMachineCatalog(remote.catalog))
         remote.bind_conversations(system)
         native: ClaudeAgentSdkBackendChild | None = None
         original_disconnect = None
@@ -187,7 +189,11 @@ def test_claude_stop_result_controls_canonical_retirement(
             original_disconnect = client.disconnect
             if fails:
                 monkeypatch.setattr(client, "disconnect", disconnect_failure)
-            await system.kill("c_cleanup")
+            if fails:
+                with pytest.raises(PlannerError, match="Recheck Worker cleanup"):
+                    await system.kill("c_cleanup")
+            else:
+                await system.kill("c_cleanup")
             assert client.interrupts == 1
             assert state.retirement_task is not None
             assert await state.retirement_task is (not fails)

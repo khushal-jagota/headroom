@@ -27,7 +27,7 @@ A source runs its script as an ordinary child process in the application's Pytho
 
 The script emits dated values through runtime helpers. Printed output creates nothing. Headroom checks only that numbers are finite, dates valid, and outputs owned by the source. Meaning belongs to the script: signs, units, and whether a period is finished.
 
-A source runs daily at a server-local time, or when someone requests it. A test run returns candidates without changing anything. A collection run overwrites each date it supplies, including corrections to past dates, and keeps all other dates.
+A source runs daily at a server-local time, or when someone requests it. After downtime, Headroom catches up only the latest fresh occurrence for each source. Older missed occurrences stay skipped. A test run returns candidates without changing anything. A collection run overwrites each date it supplies, including corrections to past dates, and keeps all other dates.
 
 A failed collection keeps the prior values and notifies the responsible agent. The agent can fix the script and rerun, or ask the owner for information or a new key. Only a successful collection clears it.
 
@@ -53,4 +53,4 @@ There is no measures screen. Values appear on goal pages, and manual controls si
 - `src/planner/measure_sources/`: sources, the script runtime, scheduling, failure notices.
 - `src/planner/datasets/` and `src/planner/credentials/`.
 
-_Last verified: 2026-11-04._
+_Last verified: 2026-11-11._

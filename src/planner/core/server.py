@@ -55,7 +55,9 @@ from planner.core.response_compression import (
     answers_uncompressed,
     uncompressed_route_patterns,
 )
+from planner.core.runtime_connections import reuse_connections
 from planner.core.sse import change_stream
+from planner.core.task_settlement import run_on_worker_thread
 from planner.core.testmode import build_test_router
 from planner.core.trusted_ingress import TrustedIngressMiddleware, trusted_ingress_config
 from planner.core.unidentified_agent_calls import UnidentifiedAgentCallsMiddleware
@@ -64,7 +66,6 @@ from planner.credentials.api import router as credentials_router
 from planner.credentials.requests.api import router as credential_requests_router
 from planner.datasets.api import router as datasets_router
 from planner.environments import ticket_scratch
-from planner.environments.hermes_home import provision_planner_home_skills, resolve_planner_home
 from planner.environments.logic.update_experience import deployment_status
 from planner.environments.mac_updates import MacUpdateService
 from planner.environments.update_admission_middleware import UpdateAdmissionMiddleware
@@ -74,6 +75,7 @@ from planner.environments.update_attempts import (
     attempt_path,
     import_legacy_request,
 )
+from planner.environments.update_barrier import UpdateBarrier
 from planner.environments.update_configuration import DEPLOYMENT_SUCCESS_DISPLAY_SECONDS
 from planner.environments.update_install import own_service_unit
 from planner.environments.update_provider import GitHubUpdateProvider
@@ -89,6 +91,8 @@ from planner.files.catalog.api import router as artifact_catalog_router
 from planner.goals.api import router as goals_router
 from planner.ideas.api import router as ideas_router
 from planner.ios_compatibility.middleware import IOSBuildGateMiddleware
+from planner.machines.api import router as machines_router
+from planner.machines.contracts import HOME_MACHINE_ID, ORIGINAL_MAC_MACHINE_ID
 from planner.managers.api import router as managers_router
 from planner.measure_sources.api import router as measure_sources_router
 from planner.measure_sources.participants import SlotParticipantFactory
@@ -108,7 +112,7 @@ from planner.projects.api import router as projects_router
 from planner.resource_versions.api import router as resource_versions_router
 from planner.runtime.workspaces import register_workspace_root
 from planner.server_lifecycle.runtime import application_runtime
-from planner.skill_sources import provision_native_backend_skills, provision_workspace_skills
+from planner.skill_sources import provision_account_skills, provision_workspace_skills
 from planner.stalls import checker as stalls_checker
 from planner.stalls.contracts import StallChecker, StallCheckerFactory
 from planner.stalls.registry import WAITS
@@ -230,15 +234,18 @@ def create_app(
 
         recovery_task: asyncio.Task[None] | None = None
         attempt_observer: asyncio.Task[None] | None = None
+        work_release_task: asyncio.Task[None] | None = None
         video_cleanup_task: asyncio.Task[None] | None = None
         ticket_scratch_task: asyncio.Task[None] | None = None
         view_rebuild_task: asyncio.Task[None] | None = None
         loops: Any = None
         metrics: MetricsRuntime | None = None
         executor_endpoint = None
+        executor_registry = None
         stall_checker: StallChecker | None = None
 
         async def shutdown_dependents() -> None:
+            app.state.updates.stop()
             app.state.conversation = None
             deadline = _monotonic() + float(SHUTDOWN_GRACE_SECONDS)
             failures: list[BaseException] = []
@@ -274,8 +281,10 @@ def create_app(
                 await attempt(_stop_runtime_with_deadline(loops, deadline))
             if stall_checker is not None:
                 await attempt(stall_checker.close())
-            if executor_endpoint is not None:
-                await attempt(executor_endpoint.close())
+            if executor_registry is not None:
+                await attempt(executor_registry.close())
+            if work_release_task is not None:
+                await attempt(cancel_task(work_release_task))
             if attempt_observer is not None:
                 await attempt(cancel_task(attempt_observer))
             if failures:
@@ -291,29 +300,35 @@ def create_app(
             if backend_child_factories_for_test is not None
             else production_backend_child_factories(
                 panels_server_url=f"http://{HOST}:{config.port}",
+                worker_process_root=(
+                    Path(config.db_path).expanduser().resolve().parent / "worker-processes"
+                ),
                 remembered_codex_login_rejection=remembered_codex_login_rejection,
             )
         )
-        if config.executor_id is not None:
-            from planner.executor.routing import LocaleBackendChildFactory
-            from planner.executor.vps_transport import VpsExecutor
+        from planner.executor.registry import VpsExecutorRegistry
+        from planner.executor.routing import LocaleBackendChildFactory
 
-            executor_endpoint = VpsExecutor(
-                config.db_path,
-                clock,
-                application_revision=config.app_sha or "unknown",
-            )
-            backend_factories = {
-                key: LocaleBackendChildFactory(config.db_path, local, executor_endpoint.runs)
-                for key, local in backend_factories.items()
-            }
-        app.state.executor_endpoint = executor_endpoint
-        with register_workspace_root(config.db_path, config.workspace_root):
+        executor_registry = VpsExecutorRegistry(
+            config.db_path, clock, original_enabled=config.executor_id is not None,
+            application_revision=config.app_sha or "unknown",
+        )
+        backend_factories = {
+            key: LocaleBackendChildFactory(config.db_path, local, executor_registry)
+            for key, local in backend_factories.items()
+        }
+        app.state.executor_registry = executor_registry
+        app.state.executor_endpoint = None
+        with (
+            reuse_connections(config.db_path),
+            register_workspace_root(config.db_path, config.workspace_root),
+        ):
             from planner.tickets.integrity import TicketIntegrityError
 
             ticket_integrity_faults: list[TicketIntegrityError] = []
 
             def audit_startup_tickets(connection: sqlite3.Connection) -> None:
+                executor_registry.load(connection)
                 ticket_integrity_faults.extend(
                     tickets_data.audit_ticket_registry_integrity(connection, startup=True)
                 )
@@ -329,38 +344,76 @@ def create_app(
                 defer_view_cleanup=True,
                 startup_audit=audit_startup_tickets,
             ) as conversation:
+                app.state.updates.bind_owner(asyncio.get_running_loop())
+
+                def recover_orphaned_cut() -> None:
+                    barrier = app.state.update_barrier
+                    if not barrier.frozen:
+                        return
+                    generation = barrier.generation
+                    interrupted = update_attempts.read()
+                    identity = "" if interrupted is None else interrupted.attempt_id
+                    if app.state.updates.owns_preparation(identity):
+                        return
+                    with barrier.installer_guard(identity) as active:
+                        if active:
+                            app.state.updates.installer_observed(identity)
+                            return
+                        if app.state.updates.owns_preparation(identity):
+                            return
+                        released = app.state.updates.recover_orphaned_attempt(identity, generation)
+                        if released is not None:
+                            barrier.remove(released)
+
+                async def recover_orphaned_barrier() -> None:
+                    await asyncio.to_thread(recover_orphaned_cut)
+
+                await recover_orphaned_barrier()
+                startup_frozen = app.state.update_barrier.frozen
+                if startup_frozen:
+                    conversation.system.workspace_admission.claim(
+                        lambda: None, idle=lambda: True, require_idle=False
+                    )
                 # Mac runs survive a VPS restart: their rows, assignments and commands
                 # are all in the database, and the conversation core adopts them.
-                if executor_endpoint is not None:
-                    executor_endpoint.configure(
-                        conversation.system, app, update_check=app.state.mac_updates.check
-                    )
-                    await executor_endpoint.start()
-                conversation.system.configure_machine_catalog(
-                    None if executor_endpoint is None else executor_endpoint.catalog
+                executor_registry.configure(
+                    conversation.system, app, update_check=app.state.mac_updates.check_for,
                 )
+                executor_endpoint = executor_registry.get(ORIGINAL_MAC_MACHINE_ID)
+                app.state.executor_endpoint = executor_endpoint
+                conversation.system.start_admission.configure_destinations(
+                    lambda destination: destination == HOME_MACHINE_ID
+                    or executor_registry.is_present(destination)
+                )
+                conversation.system.configure_machine_catalog(executor_registry)
                 app.state.conversation_system = (
                     conversation.system
                     if conversation_system_for_test is None
                     else conversation_system_for_test
                 )
+                app.state.conversation = conversation
 
                 async def release_normal_work() -> None:
                     nonlocal recovery_task, video_cleanup_task, ticket_scratch_task
                     nonlocal view_rebuild_task
                     nonlocal loops, metrics, stall_checker
+                    await executor_registry.start()
                     conversation.live_tail.views.cleanup_stale_epochs()
                     database_parent = Path(config.db_path).resolve().parent
                     if config.workspace_root is not None:
-                        provision_workspace_skills(config.workspace_root, database_parent)
-                    if installed_app:
-                        # An installed release links its skills into the agent homes itself,
-                        # so an update needs no separate provisioning step.
-                        provision_planner_home_skills(
-                            resolve_planner_home(), configured_database_parent=database_parent
+                        await run_on_worker_thread(
+                            provision_workspace_skills, config.workspace_root, database_parent
                         )
-                        provision_native_backend_skills(Path.home() / ".codex", database_parent)
-                        provision_native_backend_skills(Path.home() / ".claude", database_parent)
+                    account_skills_enabled = (
+                        installed_app
+                        if config.provision_account_skills is None
+                        else config.provision_account_skills
+                    )
+                    if account_skills_enabled:
+                        if warning := await run_on_worker_thread(
+                            provision_account_skills, database_parent
+                        ):
+                            logging.getLogger(__name__).warning("%s", warning)
                     from planner.conversation.deploy_interruptions.coordinator import (
                         run_automatic_recovery,
                     )
@@ -395,13 +448,12 @@ def create_app(
                             conversation.system.workspace_admission,
                         )
                     )
-                    app.state.conversation = conversation
                     await asyncio.to_thread(video_uploads.recover_and_cleanup)
                     video_cleanup_task = asyncio.create_task(_clean_video_uploads())
                     scratch_layout = ticket_scratch.layout_for(
                         config.ticket_scratch_root, config.ticket_scratch_database, config.db_path
                     )
-                    if scratch_layout is not None and not config.test_mode:
+                    if not config.test_mode:
                         ticket_scratch_task = asyncio.create_task(
                             _clean_ticket_scratch(scratch_layout)
                         )
@@ -428,15 +480,18 @@ def create_app(
                             participants_factory=slot_participants_for_test,
                         )
 
-                    from planner.environments.vps_metrics.collectors import LinuxCollector
                     from planner.environments.vps_metrics.data import Store
+                    from planner.platform_runtime.selection import get_platform_adapter
 
                     metrics_config = load_metrics_config()
                     metrics_path = store_path(config.db_path)
                     metrics = MetricsRuntime(
                         metrics_path,
                         Store(metrics_path, metrics_config),
-                        None if config.test_mode else LinuxCollector(metrics_config),
+                        (
+                            None if config.test_mode
+                            else get_platform_adapter().metrics_collector(metrics_config)
+                        ),
                         metrics_config,
                     )
                     app.state.vps_metrics = metrics
@@ -447,7 +502,7 @@ def create_app(
                         else stalls_checker.StallChecker
                     )
                     if stall_checker_factory is not None:
-                        endpoint = executor_endpoint
+                        endpoint = executor_registry
                         stall_checker = stall_checker_factory(
                             config.db_path,
                             WAITS,
@@ -463,11 +518,85 @@ def create_app(
                     app.state.updates.start(asyncio.get_running_loop())
                     change_signal.emit()
 
-                await release_normal_work()
+                normal_work_released = False
+                normal_work_task: asyncio.Task[None] | None = None
+
+                async def release_after_trial() -> None:
+                    nonlocal normal_work_released, work_release_task, normal_work_task
+                    try:
+                        observed = update_attempts.read()
+                        identity = "" if observed is None else observed.attempt_id
+                        was_frozen = app.state.update_barrier.frozen
+                        app.state.update_barrier.refresh()
+                        if app.state.update_barrier.frozen:
+                            await recover_orphaned_barrier()
+                        if app.state.update_barrier.frozen:
+                            return
+                        if was_frozen or (startup_frozen and not normal_work_released):
+                            app.state.updates.reopen_trial_work(identity)
+                        if normal_work_released:
+                            return
+                        # Producer startup can leave partial resources after a failure.
+                        # Keep it one-shot while earlier orphan dispatch remains retryable.
+                        if normal_work_task is not None:
+                            return
+                        normal_work_task = asyncio.create_task(release_normal_work())
+                        await normal_work_task
+                        normal_work_released = True
+                    except Exception:
+                        logging.getLogger(__name__).exception(
+                            "Normal work could not resume after the update trial"
+                        )
+                    finally:
+                        work_release_task = None
+
+                next_trial_probe = 0.0
+                last_trial_probe: object = None
+
+                def trial_probe() -> object:
+                    nonlocal next_trial_probe, last_trial_probe
+                    barrier = app.state.update_barrier
+                    if not barrier.frozen:
+                        next_trial_probe = 0.0
+                        last_trial_probe = None
+                        return None
+                    now = _monotonic()
+                    if now < next_trial_probe:
+                        return last_trial_probe
+                    next_trial_probe = now + 2
+                    attempt = update_attempts.read()
+                    identity = "" if attempt is None else attempt.attempt_id
+                    local = app.state.updates.owns_preparation(identity)
+                    active = False if local else barrier.installer_active(identity)
+                    if active:
+                        app.state.updates.installer_observed(identity)
+                    # A failed orphan dispatch changes no file or lock state. The
+                    # existing bounded probe must still give its next sample a wake.
+                    last_trial_probe = (identity, None if attempt is None else attempt.state,
+                                        local, active, now if not local and not active else None)
+                    return last_trial_probe
+
+                def attempt_changed() -> None:
+                    nonlocal work_release_task
+                    change_signal.emit()
+                    # One recovery runs at a time. Its finally releases this slot so
+                    # the next bounded probe can retry a failed owner dispatch.
+                    if work_release_task is None:
+                        work_release_task = asyncio.create_task(release_after_trial())
+
+                if not startup_frozen:
+                    await release_normal_work()
+                    normal_work_released = True
                 # The installer writes the attempt record from outside this process.
                 attempt_observer = asyncio.create_task(
-                    observe_path_changes(update_attempts.path, change_signal.emit)
+                    observe_path_changes(
+                        update_attempts.path, attempt_changed,
+                        additional_paths=(app.state.update_barrier.path,),
+                        additional_probe=trial_probe,
+                    )
                 )
+                if startup_frozen:
+                    attempt_changed()
                 await preview_runtime.start()
                 yield
 
@@ -482,18 +611,34 @@ def create_app(
                     if admitted:
                         await asyncio.to_thread(video_uploads.recover_and_cleanup)
 
-    async def _clean_ticket_scratch(layout: ticket_scratch.ScratchLayout) -> None:
-        already_kept: set[str] = set()
+    async def _clean_ticket_scratch(layout: ticket_scratch.ScratchLayout | None) -> None:
+        from planner.conversation.system import SqliteProcessConversationSystem
+        from planner.ticket_workspaces.cleanup import clean_for_database
+        from planner.ticket_workspaces.contracts import WorkspaceIdentity
+
         logger = logging.getLogger(__name__)
+        loop = asyncio.get_running_loop()
+
+        def retire_local_children(
+            ticket_id: str, identity: WorkspaceIdentity, operation: Callable[[], Path | str]
+        ) -> Path | str:
+            system = cast(SqliteProcessConversationSystem | None, app.state.conversation_system)
+            if system is None:
+                return "Conversation runtime is unavailable"
+            future = asyncio.run_coroutine_threadsafe(
+                system.retire_local_workspace(ticket_id, identity, operation), loop
+            )
+            return future.result()
+
         while True:
             await asyncio.sleep(ticket_scratch.CLEANUP_INTERVAL_SECONDS)
             try:
                 result = await asyncio.to_thread(
-                    ticket_scratch.clean_finished_ticket_scratch,
-                    layout,
+                    clean_for_database,
                     config.db_path,
                     clock.now_unix(),
-                    already_kept,
+                    extra_roots=layout.folders if layout is not None else (),
+                    retire_local_children=retire_local_children,
                 )
             except Exception:
                 logger.exception("Ticket scratch cleanup failed")
@@ -526,6 +671,8 @@ def create_app(
     uncompressed_patterns: list[re.Pattern[str]] = []
     executor_router = build_executor_router()
     app.include_router(executor_router)
+    from planner.machines.credential_api import router as machine_credential_router
+    app.include_router(machine_credential_router, prefix="/api")
     uncompressed_patterns.extend(uncompressed_route_patterns(executor_router.routes))
     app.state.executor_id = config.executor_id
     app.state.config = config
@@ -545,16 +692,42 @@ def create_app(
     # Only an installed release under <current_root>/app installs its own updates.
     installed_app = bool(config.app_sha) and _REPO_ROOT == current_root / "app"
     # The installer restarts the unit this server runs in, and nothing else.
-    service_unit = own_service_unit() if installed_app else None
+    from planner.platform_runtime.selection import get_platform_adapter
+
+    update_unavailable_reason = get_platform_adapter().update_unavailable_reason
+    service_unit = (
+        own_service_unit() if installed_app and update_unavailable_reason is None else None
+    )
     update_attempts = FileUpdateAttemptStore(attempt_path(data_directory))
+    app.state.update_barrier = UpdateBarrier(data_directory / "update-barrier.json")
     import_legacy_request(update_attempts, data_directory, config.app_sha)
     update_provider = GitHubUpdateProvider.configured() if service_unit is not None else None
+    def executor_update_platform(machine_id: str) -> str:
+        from planner.machines.executor_credentials import executor_platform
+
+        connection = conn_factory()
+        try:
+            return executor_platform(connection, machine_id)
+        finally:
+            connection.close()
+
+    def linux_executor_registered() -> bool:
+        connection = conn_factory()
+        try:
+            return connection.execute(
+                "SELECT 1 FROM machine_executor_credentials WHERE platform='linux' LIMIT 1"
+            ).fetchone() is not None
+        finally:
+            connection.close()
+
     app.state.mac_updates = MacUpdateService(
         data_directory / "mac-updates",
         update_attempts,
         update_provider,
         config.app_sha,
         ready_release=lambda: app.state.updates.ready_release(),
+        platform_for=executor_update_platform,
+        linux_registered=linux_executor_registered,
     )
     app.state.updates = UpdateService(
         update_provider,
@@ -567,6 +740,8 @@ def create_app(
         current_app_sha=config.app_sha,
         health_url=f"http://{HOST}:{config.port}/api/health",
         service_unit=service_unit or "",
+        unavailable_reason=update_unavailable_reason,
+        update_barrier=app.state.update_barrier,
         prepare_mac_update=app.state.mac_updates.prepare,
         mac_phase=app.state.mac_updates.phase,
         mac_reported_at=app.state.mac_updates.reported_at,
@@ -601,6 +776,7 @@ def create_app(
     for domain_router in (
         updates_router,
         tickets_router,
+        machines_router,
         ticket_workspace_router,
         resource_versions_router,
         artifact_catalog_router,
@@ -645,11 +821,21 @@ def create_app(
         }
 
     @app.get("/api/executor/health")
-    async def executor_health() -> dict[str, object]:
-        endpoint = getattr(app.state, "executor_endpoint", None)
+    async def executor_health(machine_id: str | None = None) -> dict[str, object]:
+        destination = machine_id or ORIGINAL_MAC_MACHINE_ID
+        registry = getattr(app.state, "executor_registry", None)
+        endpoint = None if registry is None else registry.get(destination)
         if endpoint is None:
+            if destination not in (HOME_MACHINE_ID, ORIGINAL_MAC_MACHINE_ID):
+                raise PlannerError(ErrorCode.not_found, "Unknown executor destination")
             return {"mode": "local", "connection_state": "disconnected"}
-        return _with_native_build_1_fields({"mode": "remote", **endpoint.health_payload()})
+        payload = {"mode": "remote", **endpoint.health_payload()}
+        if destination == ORIGINAL_MAC_MACHINE_ID:
+            return _with_native_build_1_fields(payload)
+        return {
+            **payload,
+            "connection_state": "ready" if payload.get("presence") == "present" else "disconnected",
+        }
 
     @app.get("/api/health")
     async def health(expected_sha: str | None = None) -> JSONResponse:

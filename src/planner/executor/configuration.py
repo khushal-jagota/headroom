@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import re
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Final
@@ -11,6 +12,8 @@ from urllib.parse import urlsplit
 
 # Wire and file limits.
 MAX_ENVELOPE_BYTES: Final = 1024 * 1024
+MAX_WORKSPACE_STATE_IDS: Final = 64
+MAX_WORKSPACE_STATES_BYTES: Final = 16 * 1024
 MAX_TOOL_DETAIL_CHARACTERS: Final = 64 * 1024
 FILE_MODIFIED_WINDOW_NS: Final = 2_000_000_000
 FILE_CHUNK_BYTES: Final = 256 * 1024
@@ -33,6 +36,7 @@ LAUNCH_AGENT_RESTART_THROTTLE_SECONDS: Final = 10
 # request; "timeout" values bound the Mac client's whole request.
 # Presence: a lease every 10 s, judged by the VPS clock; away after 60 s without one.
 LEASE_INTERVAL_SECONDS: Final = 10.0
+CLEANUP_RECHECK_TIMEOUT_SECONDS: Final = 30.0
 LEASE_TIMEOUT_SECONDS: Final = 10.0
 LEASE_SERVER_LIMIT_SECONDS: Final = 5.0
 MAC_AWAY_AFTER_SECONDS: Final = 60.0
@@ -71,6 +75,7 @@ STEER_DELIVERY_LIMIT_SECONDS: Final = 10.0
 MODEL_LIST_LIMIT_SECONDS: Final = 35.0
 # Item batches: one conversation's items, at most 32 and 4 MiB of body. The VPS's one
 # budget for a whole batch is core.config.MAC_ITEM_RETRY_LATER_SECONDS (20 s).
+MAX_OUTBOX_SENDERS: Final = 4
 MAX_ITEM_BATCH_ITEMS: Final = 32
 # One SQLite write transaction publishes at most this many of an item's uploaded files
 # into the served tree, so other writers get turns during a large artifact set.
@@ -125,6 +130,9 @@ EXECUTOR_ITEMS_PATH: Final = "/api/executor/conversations/{conversation_id}/item
 EXECUTOR_UPLOAD_PATH: Final = "/api/executor/uploads/{sha256}"
 EXECUTOR_COMMAND_FILE_PATH: Final = "/api/executor/commands/{command_id}/files/{stored_file_id}"
 EXECUTOR_READS_PATH: Final = "/api/executor/reads"
+EXECUTOR_WORKSPACE_STATES_PATH: Final = "/api/executor/workspaces/states"
+EXECUTOR_WORKSPACE_RETIREMENT_PATH: Final = "/api/executor/workspaces/retire"
+EXECUTOR_WORKSPACE_REGISTRATION_PATH: Final = "/api/executor/workspaces/register"
 EXECUTOR_LIVE_PATH: Final = "/api/executor/conversations/{conversation_id}/live"
 
 # Agent environment and transport identity.
@@ -133,6 +141,9 @@ EXECUTOR_CHILD_ID_ENV: Final = "PLAN_EXECUTOR_CHILD_ID"
 EXECUTOR_CAPABILITY_ENV: Final = "PLAN_EXECUTOR_CAPABILITY"
 NATIVE_SKILLS_DIR_ENV: Final = "PLAN_NATIVE_SKILLS_DIR"
 EXECUTOR_ID_HEADER: Final = "X-Panels-Executor-ID"
+EXECUTOR_PLATFORM_HEADER: Final = "X-Panels-Executor-Platform"
+EXECUTOR_CREDENTIAL_HEADER: Final = "X-Panels-Executor-Credential"
+EXECUTOR_CREDENTIAL_PATH: Final = "/api/executor/credential"
 EXECUTOR_INCARNATION_HEADER: Final = "X-Panels-Executor-Incarnation"
 EXECUTOR_PROTOCOL_HEADER: Final = "X-Panels-Executor-Protocol"
 # Route 5: base64url of the JSON FileUploadRequest. Route 6: the served bytes' digest.
@@ -186,14 +197,19 @@ class ExecutorPaths:
         return self.run / EXECUTOR_IPC_NAME
 
 
+def default_executor_root() -> Path:
+    if sys.platform == "linux":
+        return (
+            Path(os.environ.get("XDG_DATA_HOME", str(Path.home() / ".local/share")))
+            / "panels/executor"
+        )
+    return Path.home() / "Library/Application Support/Panels/executor"
+
+
 def executor_paths() -> ExecutorPaths:
     """Resolve paths without creating, reading, or migrating the spool."""
     configured = os.environ.get(EXECUTOR_ROOT_ENV, "").strip()
-    root = (
-        Path(configured).expanduser()
-        if configured
-        else (Path.home() / "Library" / "Application Support" / "Panels" / "executor")
-    )
+    root = Path(configured).expanduser() if configured else default_executor_root()
     return ExecutorPaths(root=root.resolve())
 
 

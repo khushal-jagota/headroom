@@ -3,16 +3,17 @@
 from __future__ import annotations
 
 import asyncio
-import contextlib
 import hashlib
 import logging
 import secrets
+import subprocess
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field, replace
 from functools import partial
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal, Protocol, cast
 from uuid import uuid4
+from weakref import WeakValueDictionary
 
 from planner.conversation.backends.contracts import (
     BackendChild,
@@ -45,6 +46,7 @@ from planner.conversation.events import ConversationTurnEnding
 from planner.conversation.message_content import MessageFile, prefix_message_content_text
 from planner.conversation.message_files import ConversationMessageFiles
 from planner.conversation.production_backends import production_backend_child_factories
+from planner.core.task_settlement import run_on_worker_thread
 from planner.execution_identity import (
     AskKind,
     AskReference,
@@ -81,9 +83,11 @@ from planner.executor.protocol import (
     MailboxCommand,
     QueuedEnvelope,
     Quiescence,
+    RecheckCleanup,
     StartRun,
     Steer,
     StopRun,
+    WorkerCleanupUncertainty,
     WorkingTurn,
     WritePrompt,
     encode_backend_event,
@@ -91,6 +95,16 @@ from planner.executor.protocol import (
     type_adapter,
 )
 from planner.executor.skills import install_native_skill_snapshot, native_skill_home
+from planner.ticket_workspaces.contracts import WorkspaceIdentity, WorkspaceState
+from planner.ticket_workspaces.filesystem import (
+    cleanup_local_workspaces,
+    prepare_workspace,
+    workspace_identity,
+)
+from planner.ticket_workspaces.filesystem import (
+    retire_workspace as detach_workspace,
+)
+from planner.worker_supervision.config import RECORD_ROOT_ENV
 from planner.workspace_localization import localize_workspace, require_safe_relative_workspace
 
 if TYPE_CHECKING:
@@ -109,10 +123,6 @@ class MacLiveEvents(Protocol):
     """Lossy live delivery; sending never waits on the VPS."""
 
     def send(self, event: BackendEvent) -> None: ...
-
-
-class MacAgentProcesses(Protocol):
-    def record_children(self) -> None: ...
 
 
 class _CommandAdmissionRefused(Exception):
@@ -246,6 +256,7 @@ class RunningChild:
     launch_input: StartRun
     localized_start: ResolvedConversationStart
     backend_key: ConversationBackendKey
+    workspace: WorkspaceIdentity | None = None
     active_turn: TurnToken | None = None
     asks: dict[str, AskReference] = field(default_factory=dict)
     background_task_ids: set[str] = field(default_factory=set)
@@ -290,7 +301,12 @@ class MacRunner:
         journal: CommandJournalApi | None = None,
         files: MacFilesApi | None = None,
         live: MacLiveEvents | None = None,
-        agent_processes: MacAgentProcesses | None = None,
+        retire_workspace: Callable[[WorkspaceState, WorkspaceIdentity], Awaitable[bool]]
+        | None = None,
+        retirement_is_committed: Callable[[WorkspaceState, WorkspaceIdentity], Awaitable[bool]]
+        | None = None,
+        register_workspace: Callable[[ChildReference, WorkspaceIdentity], Awaitable[None]]
+        | None = None,
     ) -> None:
         self.workspace_home = workspace_home or Path.home()
         self.paths = paths
@@ -299,22 +315,67 @@ class MacRunner:
         self.journal = journal
         self.files = files
         self.live = live
-        self.agent_processes = agent_processes
+        self._retire_workspace = retire_workspace
+        self._retirement_is_committed = retirement_is_committed
+        self._register_workspace = register_workspace
         self.factory = factory or self._factory(panels_server_url)
         self.message_files = message_files
         self._children: dict[str, RunningChild] = {}
+        self._workspace_lock = asyncio.Lock()
+        self._ticket_start_locks: WeakValueDictionary[str, asyncio.Lock] = WeakValueDictionary()
         self._withdrawn_commands: set[str] = set()
         self._commands: dict[str, _CommandRecord] = {}
+        self.cleanup_uncertainties: tuple[WorkerCleanupUncertainty, ...] = ()
+        self.legacy_cleanup_notice: str | None = None
         self.admission_stopped = False
         self.planned_update_replay = False
         self._planned_replay_finished = asyncio.Event()
         self._planned_replay_finished.set()
+        self._started_children: set[str] = set()
         self._retired_children: set[str] = set()
         self._retiring_children: set[str] = set()
         self._source_tasks: dict[ChildReference, set[asyncio.Task[object]]] = {}
         self._failed_source_work: set[ChildReference] = set()
         # Children whose start ended refused or uncertain, with the reason shown for it.
         self._start_failed: dict[str, str] = {}
+
+    @property
+    def admission_stopped(self) -> bool:
+        return self._admission_stopped
+
+    @admission_stopped.setter
+    def admission_stopped(self, stopped: bool) -> None:
+        self._admission_stopped = stopped
+
+    async def refresh_worker_cleanup(
+        self, *, ticket_id: str | None = None, revoke_pending: bool = False,
+    ) -> None:
+        from planner.executor.cleanup_reconciliation import snapshot_cleanup
+
+        snapshot = await asyncio.to_thread(
+            snapshot_cleanup, self.paths, current_incarnation=self.incarnation,
+            ticket_id=ticket_id, revoke_pending=revoke_pending,
+            healthy_sources=frozenset(
+                child.reference for child in self._children.values()
+                if child.reference.child_id in self._started_children
+                and child.reference.child_id not in self._retiring_children
+            ),
+            preparing_sources=frozenset(
+                record.command.child for record in self._commands.values()
+                if record.command.operation is ChildOperation.start
+                and record.outcome is None
+                and record.task is not None and not record.task.done()
+                and record.command.child.child_id not in self._retiring_children
+            ),
+        )
+        self.cleanup_uncertainties = (
+            snapshot.uncertainties if ticket_id is None else (
+                *(item for item in self.cleanup_uncertainties if item.ticket_id != ticket_id),
+                *snapshot.uncertainties,
+            )
+        )
+        if ticket_id is None:
+            self.legacy_cleanup_notice = snapshot.notice
 
     def authenticate(self, child_id: str | None, capability: str | None) -> RunningChild:
         child = self._children.get(child_id or "")
@@ -465,6 +526,15 @@ class MacRunner:
                 )
         except (OSError, ValueError) as error:
             raise BackendSpawnFailed(f"Mac workspace unavailable: {error}") from error
+        ticket_id = safe_component(identity["PLAN_TICKET_ID"])
+        artifact_root = self.paths.artifacts / ticket_id
+        managed = identity.get("PLAN_TICKET_WORKSPACE_MANAGED") == "1"
+        try:
+            artifact_root.mkdir(parents=True, exist_ok=True)
+            if managed:
+                workspace = prepare_workspace(artifact_root, workspace, ticket_id)
+        except (OSError, ValueError, RuntimeError, subprocess.TimeoutExpired) as error:
+            raise BackendSpawnFailed(f"Mac Ticket worktree unavailable: {error}") from error
         original = resolved.role_materials
         # Native adapters merge role identity after launch settings. Remove the VPS
         # account paths and rebind transport facts here, at that final precedence.
@@ -481,14 +551,30 @@ class MacRunner:
             NATIVE_SKILLS_DIR_ENV,
         ):
             identity.pop(key, None)
-        artifact_root = self.paths.artifacts / safe_component(identity["PLAN_TICKET_ID"])
-        artifact_root.mkdir(parents=True, exist_ok=True)
         identity[EXECUTOR_CHILD_ID_ENV] = reference.child_id
         identity[EXECUTOR_CAPABILITY_ENV] = capability
         identity[EXECUTOR_ROOT_ENV] = str(self.paths.root)
         identity["PLAN_TICKET_FILES_DIR"] = str(artifact_root)
+        identity[RECORD_ROOT_ENV] = str(self.paths.run / "worker-processes")
+        identity["PLAN_EXECUTOR_SOURCE_INCARNATION"] = reference.executor_incarnation
         identity[NATIVE_SKILLS_DIR_ENV] = str(skill_generation / "skills")
         role_text = original.role_text if original else ""
+        if managed:
+            role_text += (
+                "\n\nPanels owns this Ticket workspace. "
+                f"Use the supplied worktree at {workspace}. "
+                "Do not create or remove worktrees. Keep scratch and dependencies inside it. "
+                f"Write reviewable artifacts and evidence under {artifact_root / 'artifacts'}. "
+                "Follow repository setup instructions. Workers commit, push, open PRs, and merge. "
+                "Panels removes the complete Ticket folder seven days after the Ticket ends, "
+                "unless unpublished or uncommitted work prevents safe removal."
+            )
+        else:
+            role_text += (
+                f"\n\nThis existing conversation keeps its original workspace at {workspace}. "
+                "Continue the work there, including any unpublished changes. "
+                f"Write reviewable output under {artifact_root / 'artifacts'}."
+            )
         return replace(
             resolved,
             workspace_folder=workspace,
@@ -569,6 +655,23 @@ class MacRunner:
             await asyncio.wait(tuple(tasks))
 
     async def _start_run(self, command: ChildCommand, args: StartRun) -> JsonObject:
+        materials = args.resolved_start.role_materials
+        ticket_id = None if materials is None else dict(
+            materials.identity_environment_variables
+        ).get("PLAN_TICKET_ID")
+        if not ticket_id:
+            raise BackendSpawnFailed("Mac runs require a Ticket identity")
+        lock = self._ticket_start_locks.get(ticket_id)
+        if lock is None:
+            lock = asyncio.Lock()
+            self._ticket_start_locks[ticket_id] = lock
+        async with lock:
+            # Serialize only this Ticket before any slow native inspection. The
+            # physical workspace mutex stays available to every other Ticket.
+            await self.refresh_worker_cleanup(ticket_id=ticket_id)
+            return await self._start_run_admitted(command, args)
+
+    async def _start_run_admitted(self, command: ChildCommand, args: StartRun) -> JsonObject:
         if command.child.child_id in self._children:
             raise BackendSpawnFailed("child identity already has a native start")
         if self.admission_stopped:
@@ -595,26 +698,58 @@ class MacRunner:
             )
         except Exception as error:
             raise BackendSpawnFailed(f"Canonical skill bootstrap failed: {error}") from error
-        resolved = self._localize_start(
-            resolved, command.child, capability, args.workspace_home_relative, identity, generation
-        )
-        native = self.factory(resolved)(
-            resolved_start=resolved,
-            event_sink=NativeEventSink(self, command.child),
-            message_files=self.message_files,
-        )
-        child = RunningChild(
-            command.child,
-            capability,
-            native,
-            ticket_id=ticket_id,
-            launch_input=args,
-            localized_start=resolved,
-            model=resolved.model,
-            reasoning_effort=resolved.reasoning_effort,
-            backend_key=resolved.backend_key,
-        )
-        self._children[command.child.child_id] = child
+        async with self._workspace_lock:
+            self._check_start_admission(command, ticket_id)
+            if any(item.ticket_id == ticket_id for item in self.cleanup_uncertainties):
+                raise BackendSpawnFailed("Previous Worker cleanup is not proven for this Ticket")
+            resolved = await run_on_worker_thread(
+                self._localize_start,
+                resolved,
+                command.child,
+                capability,
+                args.workspace_home_relative,
+                identity,
+                generation,
+            )
+            self._check_start_admission(command, ticket_id)
+            local_workspace = (
+                workspace_identity(self.paths.artifacts / ticket_id)
+                if identity.get("PLAN_TICKET_WORKSPACE_MANAGED") == "1"
+                else None
+            )
+        # Registration does not hold the filesystem lock or delay another Ticket's
+        # start. The final check below reestablishes ownership before child insertion.
+        if local_workspace is not None and self._register_workspace is not None:
+            try:
+                await self._register_workspace(command.child, local_workspace)
+            except Exception as error:
+                raise BackendSpawnFailed(f"Mac workspace registration failed: {error}") from error
+        async with self._workspace_lock:
+            self._check_start_admission(command, ticket_id)
+            if (
+                local_workspace is not None
+                and workspace_identity(self.paths.artifacts / ticket_id) != local_workspace
+            ):
+                raise BackendSpawnFailed("Ticket workspace changed before native start")
+            native = self.factory(resolved)(
+                resolved_start=resolved,
+                event_sink=NativeEventSink(self, command.child),
+                message_files=self.message_files,
+            )
+            child = RunningChild(
+                command.child,
+                capability,
+                native,
+                ticket_id=ticket_id,
+                launch_input=args,
+                localized_start=resolved,
+                workspace=local_workspace,
+                model=resolved.model,
+                reasoning_effort=resolved.reasoning_effort,
+                backend_key=resolved.backend_key,
+            )
+            self._children[command.child.child_id] = child
+
         try:
             async with child.lock:
                 self._check_child_admission(child)
@@ -624,21 +759,153 @@ class MacRunner:
                     vendor_session_cursor=args.vendor_session_cursor,
                 )
         except BaseException:
-            # A failed start leaves no child to address: its prompts are refused (R1, R2).
+            # Keep exact custody until stop proves cleanup. A failed stop leaves the
+            # same-Ticket fence and an address for a later explicit retirement.
+            self._retiring_children.add(command.child.child_id)
+            await native.stop()
+            self._retiring_children.discard(command.child.child_id)
             if self._children.get(command.child.child_id) is child:
                 del self._children[command.child.child_id]
-            with contextlib.suppress(Exception):
-                await native.stop()
             raise
-        finally:
-            if self.agent_processes is not None:
-                try:
-                    await asyncio.to_thread(self.agent_processes.record_children)
-                except Exception as error:  # Priority is best effort; the start stands.
-                    logging.getLogger(__name__).warning(
-                        "agent processes were not recorded error=%s", type(error).__name__
-                    )
+        self._started_children.add(command.child.child_id)
         return {}
+
+    def _check_start_admission(self, command: ChildCommand, ticket_id: str) -> None:
+        """The caller holds the workspace lock through insertion after this check."""
+        if self.admission_stopped:
+            raise _CommandAdmissionRefused("executor is quiescing")
+        if command.command_id in self._withdrawn_commands:
+            raise _CommandAdmissionRefused("command withdrawn before provider invocation")
+        if command.child.child_id in self._retiring_children or (
+            command.child.child_id in self._retired_children
+        ):
+            raise BackendSpawnFailed("source child identity was retired")
+        if command.child.child_id in self._children:
+            raise BackendSpawnFailed("child identity already has a native start")
+        if any(existing.ticket_id == ticket_id for existing in self._children.values()):
+            raise BackendSpawnFailed("Ticket already has a retained source child")
+
+    async def cleanup_workspaces(self, states: tuple[WorkspaceState, ...], now: int) -> None:
+        """Use a fresh canonical lease only; local admission cannot race removal."""
+        if self._retire_workspace is None:
+            return
+        loop = asyncio.get_running_loop()
+        retire_workspace = self._retire_workspace
+
+        async def authorize_locked(
+            state: WorkspaceState, workspace: WorkspaceIdentity, *, replay: bool = False
+        ) -> bool:
+            children = [
+                child
+                for child in self._children.values()
+                if child.ticket_id == state.ticket_id and child.workspace == workspace
+            ]
+            if any(self._workspace_child_busy(child) for child in children):
+                return False
+            authorize = self._retirement_is_committed if replay else retire_workspace
+            if authorize is None or not await authorize(state, workspace):
+                return False
+            if any(self._workspace_child_busy(child) for child in children):
+                return False
+            for child in children:
+                if not await self._retire_workspace_child(child):
+                    return False
+            return True
+
+        async def replay_authorization(state: WorkspaceState, workspace: WorkspaceIdentity) -> bool:
+            async with self._workspace_lock:
+                return await authorize_locked(state, workspace, replay=True)
+
+        async def retire_current(
+            path: Path, state: WorkspaceState, workspace: WorkspaceIdentity
+        ) -> Path | str:
+            async with self._workspace_lock:
+                if workspace_identity(path) != workspace:
+                    return "workspace ownership changed"
+                if not await authorize_locked(state, workspace):
+                    return "retirement authorization refused"
+                # Keep admission closed through the atomic detach. Slow inventory,
+                # Git verification, backlink repair, and deletion run outside it.
+                return await run_on_worker_thread(
+                    detach_workspace,
+                    path,
+                    state,
+                    identity=workspace,
+                    retired_root=self.paths.artifacts.parent / ".ticket-retired",
+                )
+
+        def committed(state: WorkspaceState, workspace: WorkspaceIdentity) -> bool:
+            future = asyncio.run_coroutine_threadsafe(replay_authorization(state, workspace), loop)
+            try:
+                return future.result(timeout=30)
+            except TimeoutError:
+                future.cancel()
+                raise
+
+        def retire(path: Path, state: WorkspaceState, workspace: WorkspaceIdentity) -> Path | str:
+            future = asyncio.run_coroutine_threadsafe(retire_current(path, state, workspace), loop)
+            try:
+                return future.result(timeout=30)
+            except TimeoutError:
+                future.cancel()
+                raise
+
+        result = await run_on_worker_thread(
+            cleanup_local_workspaces,
+            self.paths.artifacts,
+            {state.ticket_id: state for state in states},
+            now,
+            extra_roots=(self.workspace_home / "panels-session-evidence",),
+            retire=retire,
+            retirement_is_committed=committed,
+            active_ticket_ids=frozenset(
+                child.ticket_id
+                for child in self._children.values()
+                if self._workspace_child_busy(child)
+            ),
+        )
+        for entry in result.skipped:
+            logging.getLogger(__name__).warning(
+                "Ticket workspace retained path=%s reason=%s", entry["path"], entry["reason"]
+            )
+
+    def _workspace_child_busy(self, child: RunningChild) -> bool:
+        return bool(
+            child.active_turn is not None
+            or child.background_task_ids
+            or child.open_tool_calls
+            or self._source_tasks.get(child.reference)
+            or child.reference in self._failed_source_work
+            or any(
+                record.command.child == child.reference
+                and (record.outcome is None or (record.outputs and not record.outputs_published))
+                for record in self._commands.values()
+            )
+        )
+
+    async def _retire_workspace_child(self, child: RunningChild) -> bool:
+        # Use the normal exact-child stop and durable FIFO proof, as prepare_update
+        # does. An idle retained session must not keep an ended workspace forever.
+        command = ChildCommand(
+            f"workspace_stop_{child.reference.child_id}",
+            child.reference,
+            ChildOperation.stop,
+            None,
+            StopRun(),
+        )
+        record = _CommandRecord(command, journaled=False)
+        self._commands[command.command_id] = record
+        outcome = await self._stop_exact_child(command)
+        record.outcome = outcome
+        record.outputs = owed_outputs(command, outcome)
+        try:
+            await self._settle(record)
+        except BaseException:
+            # The stopped child still owns output. Retain its workspace until that
+            # publication can settle rather than drop the last local evidence.
+            self._children.setdefault(child.reference.child_id, child)
+            raise
+        return outcome.disposition is CommandDisposition.succeeded
 
     def _check_child_admission(self, child: RunningChild) -> None:
         if child.reference.child_id in self._retiring_children:
@@ -679,6 +946,7 @@ class MacRunner:
         return {
             "kind": "prompt_accepted",
             "composed_content_delivered": result.composed_content_delivered,
+            "agent_acceptance_proven": result.agent_acceptance_proven,
         }
 
     async def _steer(self, child: RunningChild, command: ChildCommand, args: Steer) -> JsonObject:
@@ -813,6 +1081,32 @@ class MacRunner:
     async def _dispatch(self, command: ChildCommand) -> CommandOutcome:
         if command.child.executor_incarnation != self.incarnation:
             return _outcome(command, CommandDisposition.refused, {"reason": "incarnation_gone"})
+        if isinstance(command.arguments, RecheckCleanup):
+            from planner.executor.cleanup_reconciliation import snapshot_cleanup
+
+            recheck_args = command.arguments
+            snapshot = await asyncio.to_thread(
+                snapshot_cleanup, self.paths, current_incarnation=self.incarnation,
+                ticket_id=recheck_args.ticket_id,
+            )
+            self.cleanup_uncertainties = (
+                *(item for item in self.cleanup_uncertainties
+                  if item.ticket_id != recheck_args.ticket_id),
+                *snapshot.uncertainties,
+            )
+            if snapshot.sources.get(recheck_args.source) != recheck_args.ticket_id:
+                return _outcome(command, CommandDisposition.uncertain, {
+                    "complete": False, "reason": "Exact Worker cleanup source is unavailable",
+                })
+            remaining = next((item for item in snapshot.uncertainties
+                if item.ticket_id == recheck_args.ticket_id
+                and item.conversation_id == recheck_args.source.conversation_id), None)
+            return _outcome(command, CommandDisposition.succeeded, {
+                "complete": remaining is None,
+                "reason": (
+                    "Recorded Worker cleanup is complete" if remaining is None else remaining.reason
+                ),
+            })
         if command.operation is ChildOperation.stop:
             return await self._stop_exact_child(command)
         if command.child.child_id in self._retiring_children:

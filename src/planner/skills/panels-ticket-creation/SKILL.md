@@ -60,6 +60,18 @@ membership. Workers continue through normal rules without Today. Do not use sett
 as a replacement activation gate, and do not create the retired planning Worker types
 or replacement recurring reviews.
 
+## Execution destination
+
+Read `panels machine list` before you choose a destination. Use its stable identity as
+`machine_id` in the create object, or use `ticket create --machine-id ID`.
+If you omit the destination, the Ticket uses the home. The destination stays fixed
+after creation. A machine rename never moves work. Work for an away machine waits there.
+The Chief and Managers stay on the home.
+
+The legacy `locale` values `vps` and `macos` identify only the original home and Mac.
+Use machine identity for new Tickets. Do not infer identity from the machine name,
+operating system, executor process, or physical workspace identity.
+
 ## Timing and dependencies
 
 A real calendar constraint belongs in the deadline. A genuine prerequisite belongs in

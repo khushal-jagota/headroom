@@ -6,6 +6,7 @@ import pytest
 
 from planner.conversation.backend_state import (
     disabled_models,
+    model_refusal,
     save_machine_model_list,
     write_model_enablement,
 )
@@ -134,13 +135,16 @@ def test_claude_short_names_and_long_context_forms_count_as_offered(tmp_db: Conn
     ):
         assert _create(tmp_db, "claude", accepted) == accepted
     for refused in ("claude-opus-5-6", "haiku", "claude-opus-5-5[2m]"):
-        with pytest.raises(PlannerError, match="not offered by claude on the VPS"):
+        with pytest.raises(PlannerError, match="not offered by claude on Home"):
             _create(tmp_db, "claude", refused)
 
 
 def test_a_complete_list_retires_switch_offs_no_machine_still_offers(tmp_db: Connection) -> None:
     # Risk: switch-off rows for retired models pile up in the catalog, or a row is
     # deleted while a machine without a list would still run that model.
+    from planner.machines.executor_credentials import register_machine
+
+    second_mac = register_machine(tmp_db, "Second Mac").machine_id
     for model in ("gpt-5.5", "gpt-5.6-sol", "gpt-6-sol"):
         write_model_enablement(tmp_db, Backend.codex, model, False)
     save_machine_model_list(tmp_db, TicketLocale.vps, _model_list(Backend.codex, "gpt-6-sol"))
@@ -148,4 +152,20 @@ def test_a_complete_list_retires_switch_offs_no_machine_still_offers(tmp_db: Con
 
     save_machine_model_list(tmp_db, TicketLocale.macos, _model_list(Backend.codex, "gpt-5.6-sol"))
 
+    # A third named machine has no list, so its choices still need every disable.
+    assert disabled_models(tmp_db, Backend.codex) == {"gpt-5.5", "gpt-5.6-sol", "gpt-6-sol"}
+    save_machine_model_list(
+        tmp_db, second_mac, _model_list(Backend.codex, "gpt-5.5", "second-only")
+    )
+    assert disabled_models(tmp_db, Backend.codex) == {"gpt-5.5", "gpt-5.6-sol", "gpt-6-sol"}
+    # Its catalog cannot overwrite the original Mac catalog or home catalog.
+    assert model_refusal(tmp_db, Backend.codex, "second-only", second_mac) is None
+    assert "Second Mac" in (model_refusal(tmp_db, Backend.codex, "absent", second_mac) or "")
+    assert "not offered" in (
+        model_refusal(tmp_db, Backend.codex, "second-only", TicketLocale.macos) or ""
+    )
+    assert "not offered" in (
+        model_refusal(tmp_db, Backend.codex, "second-only", TicketLocale.vps) or ""
+    )
+    save_machine_model_list(tmp_db, second_mac, _model_list(Backend.codex, "second-only"))
     assert disabled_models(tmp_db, Backend.codex) == {"gpt-5.6-sol", "gpt-6-sol"}

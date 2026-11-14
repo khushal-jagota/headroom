@@ -10,11 +10,12 @@ import pytest
 from claude_agent_sdk import ClaudeAgentOptions
 from claude_agent_sdk._internal.transport.subprocess_cli import SubprocessCLITransport
 
+from planner.conversation import worker_scratch
 from planner.conversation.backends import claude_model_catalog
 from planner.conversation.backends.claude_agent_sdk import _ClaudeCleanupTransport
 from planner.conversation.backends.cli_compatibility import BackendCliIncompatible
-from planner.conversation.tool_shell_kill_priority import TOOL_SHELL_STARTUP
-from planner.conversation.worker_unit import WorkerUnit
+from planner.worker_supervision import WorkerSupervisor
+from planner.worker_supervision.contracts import CleanupResult
 
 
 @pytest.fixture(autouse=True)
@@ -31,7 +32,7 @@ def test_incompatible_cli_refuses_before_native_launch(
     refused = AsyncMock(side_effect=BackendCliIncompatible("Update Claude to at least 2.1.219"))
     native = AsyncMock()
     unit = AsyncMock()
-    monkeypatch.setattr(WorkerUnit, "create", unit)
+    monkeypatch.setattr(WorkerSupervisor, "create", unit)
     if entrypoint == "conversation":
         monkeypatch.setattr(
             "planner.conversation.backends.claude_agent_sdk.ensure_cli_compatible", refused
@@ -57,17 +58,20 @@ def test_incompatible_cli_refuses_before_native_launch(
 def test_worker_launch_preserves_sdk_arguments_and_keeps_unit_across_messages(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(sys, "platform", "linux")
+    monkeypatch.setattr(worker_scratch, "_scratch_root", lambda: tmp_path / "runs")
+    monkeypatch.setenv("BASH_ENV", str(tmp_path / "user-bash-env"))
 
     async def exercise() -> None:
         unit = AsyncMock()
-        unit.environment = {"TMPDIR": str(tmp_path / "disk")}
+        unit.environment = {}
+        unit.stop.return_value = CleanupResult(True, "")
         unit.argv = lambda command: ("contained", *command)
         create = AsyncMock(return_value=unit)
-        monkeypatch.setattr(WorkerUnit, "create", create)
+        monkeypatch.setattr(WorkerSupervisor, "create", create)
         options = ClaudeAgentOptions(
             cli_path="/claude", cwd=str(tmp_path), model="model",
-            env={"PLAN_TICKET_ID": "ticket", "AUTH_VALUE": "secret"},
+            env={"PLAN_TICKET_ID": "ticket",
+                 "AUTH_VALUE": "secret"},
         )
         transport = _ClaudeCleanupTransport("", options)
         original_command = SubprocessCLITransport._build_command(transport)
@@ -88,22 +92,29 @@ def test_worker_launch_preserves_sdk_arguments_and_keeps_unit_across_messages(
         assert environment["AUTH_VALUE"] == "secret"
         assert environment["PWD"] == str(tmp_path)
         assert environment["CLAUDE_CODE_ENTRYPOINT"] == "sdk-py"
-        assert environment["BASH_ENV"] == str(TOOL_SHELL_STARTUP)
+        assert environment["BASH_ENV"] == str(tmp_path / "user-bash-env")
         assert workspace == tmp_path
-        assert options.env["TMPDIR"] == str(tmp_path / "disk")
+        scratch = Path(options.env["TMPDIR"])
+        assert scratch.parent == tmp_path / "runs"
+        assert scratch.is_dir()
+        process = AsyncMock()
+        process.returncode = 0
+        transport._process = process
         assert len([item async for item in transport._read_messages_impl()]) == 2
+        assert not scratch.exists()
         unit.stop.assert_awaited_once()
         await transport.close()
         assert unit.stop.await_count == 2
+        assert not scratch.exists()
 
     asyncio.run(exercise())
 
 
-def test_nonworker_does_not_inherit_parent_containment(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_nonworker_does_not_inherit_parent_supervision(monkeypatch: pytest.MonkeyPatch) -> None:
     async def exercise() -> None:
         monkeypatch.setenv("PLAN_TICKET_ID", "parent-worker")
         create = AsyncMock()
-        monkeypatch.setattr(WorkerUnit, "create", create)
+        monkeypatch.setattr(WorkerSupervisor, "create", create)
         monkeypatch.setattr(SubprocessCLITransport, "connect", AsyncMock())
         transport = _ClaudeCleanupTransport("", ClaudeAgentOptions(cli_path="/claude"))
         await transport.connect()
@@ -112,19 +123,109 @@ def test_nonworker_does_not_inherit_parent_containment(monkeypatch: pytest.Monke
     asyncio.run(exercise())
 
 
-def test_partial_worker_start_failure_stops_unit(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_failed_worker_start_closes_partial_sdk_process_before_scratch(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
     async def exercise() -> None:
-        unit = AsyncMock()
-        unit.environment = {}
-        monkeypatch.setattr(WorkerUnit, "create", AsyncMock(return_value=unit))
-        monkeypatch.setattr(
-            SubprocessCLITransport, "connect", AsyncMock(side_effect=RuntimeError("startup failed"))
-        )
+        monkeypatch.setattr(WorkerSupervisor, "create", AsyncMock(return_value=None))
+        monkeypatch.setattr(worker_scratch, "_scratch_root", lambda: tmp_path / "runs")
+        process = AsyncMock()
+        process.returncode = None
+        scratch: Path | None = None
+
+        async def connect(self: SubprocessCLITransport) -> None:
+            nonlocal scratch
+            scratch = Path(self._options.env["TMPDIR"])
+            self._process = process
+            raise RuntimeError("startup failed")
+
+        async def close(self: SubprocessCLITransport) -> None:
+            assert scratch is not None and scratch.exists()
+            assert process.returncode is None
+            process.returncode = 0
+            self._process = None
+
+        monkeypatch.setattr(SubprocessCLITransport, "connect", connect)
+        monkeypatch.setattr(SubprocessCLITransport, "close", close)
         transport = _ClaudeCleanupTransport(
-            "", ClaudeAgentOptions(cli_path="/claude", env={"PLAN_TICKET_ID": "ticket"})
+            "", ClaudeAgentOptions(cli_path="/claude", env={
+                "PLAN_TICKET_ID": "ticket",
+            })
         )
         with pytest.raises(RuntimeError, match="startup failed"):
             await transport.connect()
-        unit.stop.assert_awaited_once()
+        assert process.returncode == 0
+        assert scratch is not None and not scratch.exists()
+
+    asyncio.run(exercise())
+
+
+def test_owned_worker_callback_kills_a_child_that_ignores_term(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The SDK's longer grace sequence cannot consume the shared stop deadline."""
+    import anyio
+    from anyio.streams.text import TextSendStream
+
+    monkeypatch.setattr(
+        "planner.conversation.backends.claude_agent_sdk.NATIVE_PHASE_SECONDS", 0.05
+    )
+    monkeypatch.setattr(SubprocessCLITransport, "close", AsyncMock())
+
+    async def exercise() -> None:
+        process = await anyio.open_process([
+            sys.executable, "-c",
+            "import signal,time; signal.signal(signal.SIGTERM,signal.SIG_IGN); "
+            "print('ready',flush=True); time.sleep(60)",
+        ])
+        try:
+            assert process.stdout is not None
+            await asyncio.wait_for(process.stdout.receive(), 2)
+            transport = _ClaudeCleanupTransport("", ClaudeAgentOptions(
+                cli_path=sys.executable, cwd=str(tmp_path),
+            ))
+            transport._process = process
+            assert process.stdin is not None
+            transport._stdin_stream = TextSendStream(process.stdin)
+            await asyncio.wait_for(transport._stop_native_process(), 1)
+            assert process.returncode == -9
+            assert transport._cleanup_process is process
+        finally:
+            if process.returncode is None:
+                process.kill()
+                await asyncio.wait_for(process.wait(), 2)
+            await process.aclose()
+
+    asyncio.run(exercise())
+
+
+def test_sdk_wrapped_spawn_refusal_does_not_leave_worker_custody_pending(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The SDK wraps an OS refusal, but no child exists to fence the next start."""
+    from claude_agent_sdk import CLIConnectionError
+
+    from planner.worker_supervision import records
+
+    root = tmp_path / "records"
+    monkeypatch.setattr(worker_scratch, "_scratch_root", lambda: tmp_path / "scratch")
+    monkeypatch.setattr(
+        "claude_agent_sdk._internal.transport.subprocess_cli.anyio.open_process",
+        AsyncMock(side_effect=PermissionError("OS spawn refused")),
+    )
+
+    async def exercise() -> None:
+        environment = {"PLAN_TICKET_ID": "ticket", "PLAN_WORKER_PROCESS_ROOT": str(root)}
+        transport = _ClaudeCleanupTransport("", ClaudeAgentOptions(
+            cli_path=sys.executable, cwd=str(tmp_path), env=environment,
+        ))
+        with pytest.raises(CLIConnectionError, match="OS spawn refused"):
+            await transport.connect()
+        journal, = root.glob("*.json")
+        assert records.read(journal)["state"] == "complete"
+        assert not list((tmp_path / "scratch").glob("ticket-*"))
+        retry = await WorkerSupervisor.create(environment, tmp_path)
+        assert retry is not None
+        await retry.cancel_unspawned()
 
     asyncio.run(exercise())

@@ -10,7 +10,7 @@ A Ticket is one piece of work small enough to hand to a single AI Worker. It is 
 - **An assignment** to Chief or one ordinary Manager. This is who the work sits under.
 - **A conversation**, the Worker's only input. Workers send ordinary messages to an explicit recipient, separate from the ceiling holder. See [Conversations](conversations.md).
 - **A launch setup**: backend, model, and reasoning, copied from a selected preset or explicitly chosen for custom work, and fixed once the conversation exists.
-- **A locale**: the VPS or Khushal's Mac, chosen at creation.
+- **A machine**: a fixed execution destination, chosen at creation.
 - **Blockers**, other Tickets that must be Done before this one may start a step.
 - **A recap**, the Worker's short status for a person, and **artifacts**, the plans, documents, images, and prototypes the work produced.
 
@@ -31,6 +31,8 @@ Worker files a proposal for the current stage
                        └─ send back: stage stays, optional guidance
                           goes out with the Worker's next step
 ```
+
+A proposal waits briefly for a busy database before it changes the record. If that wait expires, the sender receives a retryable refusal. Headroom never repeats a proposal commit after an uncertain result.
 
 Only the Ticket's own Worker files proposals. Khushal, Chief, and Managers decide them, and never write them. The proposal resolver is the only writer that makes stage text canonical and moves a stage. Every approval moves exactly one stage and names how far the Worker may go next, so the ceiling is chosen again at each gate.
 
@@ -56,7 +58,11 @@ A Ticket stores one control fact, the worker-step claim: at rest, out, or errore
 
 The navigation index stores each Ticket's derived status with its other facts, in the same transaction as each write. Ticket and Manager list reads take status from there instead of deriving it again for every Ticket. See [Live screens](live-updates.md).
 
-An errored claim stops automatic progress. Restarting the Worker is the explicit repair. A restart kills the Ticket's conversation, unlinks it, gives back any claim, and starts a fresh step. It asks for no proof that the old Worker is dead: a kill reaches every conversation it can, and one it cannot reach is not running. Two cases refuse. A user-owned Stage refuses, because a restart there would end the user's discussion and start nothing. A Mac Ticket refuses while the Mac is away, because the kill cannot reach it. A revision also restarts in a fresh conversation. Its undelivered decision notes carry over.
+An errored claim stops automatic progress. Restart the Worker for explicit repair. A restart first kills the Ticket's conversation. After a successful kill, it unlinks the conversation, gives back any claim, and starts a fresh step. The claim does not determine whether a restart can proceed. A revision also starts in a fresh conversation. Its undelivered decision notes carry over.
+
+If new launch settings fail after the old Worker ends, restart clears its old link and marks the claim errored when the database permits cleanup. The settings error remains visible. The Ticket stays stopped until an explicit restart, so old launch settings cannot start another Worker automatically.
+
+If cleanup cannot establish that the old Worker ended, restart refuses before the claim, conversation link, or launch settings change. Use Recheck Worker cleanup before another restart. A user-owned Stage refuses, because a restart there would end the user's discussion and start nothing. A Mac Ticket refuses while the Mac is away, because the kill cannot reach it.
 
 ## Backlog and delete
 
@@ -68,7 +74,9 @@ Delete removes the Ticket's record and leaves its files. It is available from th
 
 ## Where the Worker runs
 
-The locale is chosen at creation and does not change. A VPS Ticket's agent runs on the VPS. A Mac Ticket's agent runs on the Mac, and starts only while the Mac is present (its lease is fresh). Either way the VPS keeps the record and decides when to start. See [Mac execution](executor.md).
+The machine destination is chosen at creation and never changes. It defaults to the home. Settings → Machines edits its name, icon, and color. These display edits never move work. The home runs its Workers directly. Registered extra destinations pull their own work and wait while they are away. Chief and Managers stay on the home.
+
+The browser and CLI use `machine_id`. Legacy `locale` requests remain compatible: `vps` names only the original home, and `macos` names only the original Mac. Requests that supply both must agree. The operator registers extra destinations without an enrollment screen. See [Extra machines](executor.md).
 
 ## Where it shows up
 

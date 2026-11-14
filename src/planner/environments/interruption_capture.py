@@ -67,7 +67,8 @@ def capture_stopped_database(db_path: Path, deployment_id: str, capture_id: str)
 
 
 def read_unresolved_turns(
-    conn: sqlite3.Connection, *, conversation_ids: tuple[str, ...] | None = None
+    conn: sqlite3.Connection, *, conversation_ids: tuple[str, ...] | None = None,
+    include_custody_unavailable: bool = False,
 ) -> tuple[CapturedTurn, ...]:
     """Turns still intent or running, outside unresolved Mac runs, optionally for some
     conversations only."""
@@ -91,9 +92,28 @@ def read_unresolved_turns(
         if conversation_ids is None
         else f"AND conversation_id IN ({','.join('?' for _ in conversation_ids)}) "
     )
+    eligible = "status IN ('intent','running')"
+    if include_custody_unavailable:
+        eligible += (
+            " OR (status='unavailable' AND EXISTS(SELECT 1 FROM conversation_child_custody c "
+            "JOIN conversation_turn_occurrences o ON o.conversation_id=c.conversation_id "
+            "AND o.occurrence_id=c.occurrence_id AND o.runtime_epoch=c.runtime_epoch "
+            "WHERE c.conversation_id=conversation_lifecycle_facts.conversation_id "
+            "AND o.turn_number=conversation_lifecycle_facts.turn_number) "
+            "AND EXISTS(SELECT 1 FROM conversation_lifecycle_facts prompt "
+            "WHERE prompt.conversation_id=conversation_lifecycle_facts.conversation_id "
+            "AND prompt.turn_number=conversation_lifecycle_facts.turn_number "
+            "AND prompt.kind='attempt' AND prompt.operation='prompt' "
+            "AND prompt.status IN ('started','unknown')) "
+            "AND NOT EXISTS(SELECT 1 FROM conversation_lifecycle_facts cancelled "
+            "WHERE cancelled.conversation_id=conversation_lifecycle_facts.conversation_id "
+            "AND cancelled.turn_number=conversation_lifecycle_facts.turn_number "
+            "AND cancelled.kind='attempt' AND cancelled.operation='cancel' "
+            "AND cancelled.status='accepted'))"
+        )
     facts = conn.execute(
         "SELECT conversation_id,turn_number,status FROM conversation_lifecycle_facts "
-        "WHERE kind='turn' AND status IN ('intent','running') "
+        "WHERE kind='turn' AND (" + eligible + ") "
         + only
         + "ORDER BY conversation_id,turn_number",
         conversation_ids or (),

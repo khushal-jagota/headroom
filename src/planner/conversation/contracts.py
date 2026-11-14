@@ -30,6 +30,7 @@ from typing import Final, Literal, Protocol, TypedDict
 from planner.conversation.message_content import MessageContent
 from planner.conversation.workspace_admission import WorkspaceAdmission
 from planner.core.contracts import ErrorCode, PlannerError, Principal
+from planner.worker_supervision.contracts import CleanupResult
 
 type ConversationMessageContent = MessageContent | Callable[[str], Awaitable[MessageContent]]
 
@@ -707,7 +708,19 @@ class ConversationSystem(Protocol):
         ...
 
     def workspace_activity(self) -> Literal["idle", "busy", "unknown"]:
-        """Return complete workspace activity without admitting new work."""
+        """Read complete activity from a worker thread without admitting new work."""
+        ...
+
+    async def prepare_update(self, mode: Literal["idle", "now"]) -> bool:
+        """Pause starts, settle local output, then close writes before a snapshot."""
+        ...
+
+    def update_waiting_work(self) -> tuple[str, ...]:
+        """Name active local and extra-machine work for update controls."""
+        ...
+
+    def cancel_update(self) -> bool:
+        """Reopen admission and invalidate this attempt's authority to snapshot."""
         ...
 
     async def run_with_workspace_admission(
@@ -717,6 +730,10 @@ class ConversationSystem(Protocol):
         require_idle: bool,
     ) -> bool:
         """Atomically recheck activity, claim adoption, and close start/send admission."""
+        ...
+
+    async def recheck_worker_cleanup(self, ticket_id: str) -> CleanupResult:
+        """Inspect a Ticket's retained source without a new Worker start."""
         ...
 
     async def start_conversation(self, request: ConversationStartRequest) -> None:
@@ -869,14 +886,16 @@ class ConversationSystem(Protocol):
         turn's interruption is recorded as an event, and so is the discard of each held
         message, because text a caller handed over must never disappear without a trace.
 
-        There is nothing to return. If the conversation is idle with nothing held, or
-        the id names no conversation, nothing happens.
+        There is nothing to return. If the conversation is idle with nothing held and
+        no retained source, or the id names no conversation, nothing happens.
 
         An initial remote delivery is also cancellable while its start or prompt lacks
         an outcome. Shutdown suppresses a provably untransmitted prompt; possible
-        transmission retains uncertain delivery. The local operation can finish before
-        native termination is confirmed. The original child remains quarantined until
-        its ordinary stop succeeds; no later prompt runs beside uncertain native work.
+        transmission retains uncertain delivery. Success requires proof that the old
+        child ended or never started. If cleanup remains uncertain, kill raises
+        retry_later and asks for a Worker cleanup recheck. Callers retain the old
+        ownership and conversation link after refusal. The original child stays
+        quarantined until its ordinary stop succeeds. No later prompt runs beside it.
         Cancellation does not undo effects that an accepted operation already produced.
         """
         ...

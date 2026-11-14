@@ -18,13 +18,15 @@ from planner.conversation.backends.contracts import (
     AgentMessageDelta,
     BackendEventSink,
     ModelThinkingHappened,
+    ToolCallFinished,
 )
 from planner.conversation.contracts import (
     ConversationBackendKey,
+    ConversationRoleMaterials,
     ConversationStartRequest,
     ResolvedConversationStart,
 )
-from planner.conversation.events import AgentMessageDeltaFrame, ModelThinkingFrame
+from planner.conversation.events import AgentMessageDeltaFrame, ModelThinkingFrame, ToolCallStatus
 from planner.conversation.lifecycle_storage import (
     ConversationRuntimeAlreadyOwned,
     acquire_runtime_ownership,
@@ -348,3 +350,422 @@ def test_retained_sink_cannot_publish_after_shutdown_starts(
             subscription.close()
 
     asyncio.run(asyncio.wait_for(exercise(), 15))
+
+
+def test_local_workspace_retirement_fences_only_its_ticket(tmp_path: Path) -> None:
+    """A quiet cached child must stop while the exact folder still excludes starts."""
+    from planner.ticket_workspaces.contracts import WorkspaceIdentity
+    from planner.ticket_workspaces.data import register_workspace
+
+    db_path = tmp_path / "planner.db"
+    _create_database(db_path)
+
+    async def exercise() -> None:
+        harness = _Harness(db_path)
+        identity = WorkspaceIdentity("physical-host", "physical-folder")
+        await _start(harness, "c")
+        with closing_connection(connect(str(db_path))) as conn:
+            # The owning Ticket clock normally supplies this row.
+            conn.execute(
+                "INSERT INTO ticket_workspace_lifecycle(ticket_id,ended_at,deleted) "
+                "VALUES('t_retirement',0,1)"
+            )
+            register_workspace(conn, "t_retirement", "c", identity)
+            conn.commit()
+        await harness.system.send("c", text_message_content("work"), sender_label="owner")
+        await harness.complete_turn("c")
+        backend = harness.backend("c")
+        backend.stop_has_begun = asyncio.Event()
+        backend.stops_wait_for_release = asyncio.Event()
+        detached = False
+
+        def detach() -> Path:
+            nonlocal detached
+            assert backend.stops == 1
+            assert harness.system.workspace_admission.closed
+            detached = True
+            return tmp_path / "retired"
+
+        task = asyncio.create_task(
+            harness.system.retire_local_workspace("t_retirement", identity, detach)
+        )
+        try:
+            await asyncio.wait_for(backend.stop_has_begun.wait(), 5)
+            with pytest.raises(RuntimeError, match="admission is closed"):
+                await _start(
+                    harness,
+                    "replacement",
+                    role_materials=ConversationRoleMaterials(
+                        "worker", (("PLAN_TICKET_ID", "t_retirement"),)
+                    ),
+                )
+            await _start(harness, "unrelated")
+            await harness.system.send(
+                "unrelated", text_message_content("other work"), sender_label="owner"
+            )
+            assert harness.backend("unrelated").live_turn_token is not None
+            # An update can close admission during cleanup. Cleanup cannot reopen it.
+            assert harness.system.workspace_admission.claim(
+                lambda: None, idle=lambda: True, require_idle=False
+            )
+            assert not detached
+            backend.stops_wait_for_release.set()
+            assert await task == tmp_path / "retired"
+            assert detached
+            assert harness.system.workspace_admission.closed
+        finally:
+            backend.stops_wait_for_release.set()
+            await task
+            await harness.system.shutdown()
+
+    asyncio.run(exercise())
+
+
+def test_recheck_retires_idle_custody_after_parent_crash_without_a_turn(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A quiet recorded child must not require a surviving foreground turn to retire."""
+    from tests.support.principals import OWNER_PRINCIPAL
+
+    from planner.ticket_workspaces.contracts import WorkspaceIdentity
+    from planner.ticket_workspaces.data import register_workspace
+    from planner.tickets.data import create_ticket
+
+    db_path = tmp_path / "planner.db"
+    _create_database(db_path)
+
+    async def exercise() -> None:
+        harness = _Harness(db_path)
+        await _start(harness, "idle_child")
+        await harness.system.send("idle_child", text_message_content("work"), sender_label="owner")
+        await harness.complete_turn("idle_child")
+        with closing_connection(connect(str(db_path))) as conn:
+            ticket = create_ticket(
+                conn, title="Ended Worker cleanup", principal=OWNER_PRINCIPAL,
+                now=1, title_max_chars=200, worker_type="coding",
+            )
+            conn.execute(
+                "UPDATE tickets SET conversation_id=?,stage='done' WHERE id=?",
+                ("idle_child", ticket.id),
+            )
+            register_workspace(conn, ticket.id, "idle_child", WorkspaceIdentity("host", "folder"))
+            conn.commit()
+            assert conn.execute(
+                "SELECT state FROM conversation_child_custody WHERE conversation_id='idle_child'"
+            ).fetchone()[0] == "started"
+        # A crashed parent loses its in-memory adapter, while the exact source row
+        # survives. The fake child names an impossible PID, so fresh absence is real.
+        state = await harness.system._conversation_state("idle_child")
+        assert state is not None
+        state.child = None
+        assert (await harness.system.recheck_worker_cleanup(ticket.id)).complete
+        with closing_connection(connect(str(db_path))) as conn:
+            assert conn.execute(
+                "SELECT state FROM conversation_child_custody WHERE conversation_id='idle_child'"
+            ).fetchone()[0] == "retired"
+        assert harness.backend("idle_child").stops == 0
+        await harness.system.kill("idle_child")
+
+        # The same explicit action must settle a crashed unknown turn as well as
+        # idle custody, after fresh proof. It must never signal or start work.
+        from planner.conversation import child_custody
+
+        with closing_connection(connect(str(db_path))) as conn:
+            conn.execute(
+                "UPDATE conversation_child_custody SET state='started' "
+                "WHERE conversation_id='idle_child'"
+            )
+            conn.execute(
+                "UPDATE conversation_lifecycle_facts SET status='unknown' "
+                "WHERE conversation_id='idle_child' AND kind='turn'"
+            )
+            conn.commit()
+        harness.store.blocked_local_conversations.add("idle_child")
+        gone = False
+        monkeypatch.setattr(child_custody, "retirement_row_proven", lambda row: gone)
+
+        def cannot_signal(*args: object) -> bool:
+            raise AssertionError("An observational recheck attempted a signal")
+
+        monkeypatch.setattr(child_custody, "stop_recorded_child", cannot_signal)
+        assert not (await harness.system.recheck_worker_cleanup(ticket.id)).complete
+        assert "idle_child" in harness.store.blocked_local_conversations
+        gone = True
+        assert (await harness.system.recheck_worker_cleanup(ticket.id)).complete
+        assert "idle_child" not in harness.store.blocked_local_conversations
+        assert harness.backend("idle_child").session_starts == 1
+        await harness.system.shutdown()
+
+    asyncio.run(exercise())
+
+
+def test_update_barrier_drains_admitted_turn_without_new_starts(tmp_path: Path) -> None:
+    """A busy update closes admission before its wait and preserves the admitted result."""
+    db_path = tmp_path / "planner.db"
+    _create_database(db_path)
+
+    async def exercise() -> None:
+        harness = _Harness(db_path)
+        try:
+            await _start(harness, "unused")
+            await _start(harness, "c")
+            await harness.system.send("c", text_message_content("work"), sender_label="owner")
+            assert harness.system.update_waiting_work() == ("hermes conversation",)
+            assert not await harness.system.prepare_update("idle")
+            assert harness.system.workspace_admission.starts_closed
+            assert not harness.system.workspace_admission.closed
+            with pytest.raises(RuntimeError, match="admission is closed"):
+                await _start(harness, "new")
+            backend = harness.backend("c")
+            assert backend.sink is not None
+            await backend.sink.report(
+                backend.live_turn_token,
+                ToolCallFinished(
+                    tool_call_id="finish",
+                    tool_call_status=ToolCallStatus.completed,
+                    detail="saved result",
+                ),
+            )
+            await harness.complete_turn("c")
+            assert await harness.system.prepare_update("idle")
+            assert harness.backend("c").stops == 1
+            assert any("saved result" in str(event.payload) for event in await harness.events("c"))
+            assert harness.system.cancel_update()
+            await _start(harness, "after")
+        finally:
+            await harness.system.shutdown()
+
+    asyncio.run(asyncio.wait_for(exercise(), 10))
+
+
+def test_update_now_keeps_final_stop_callback_before_snapshot(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Native stop can publish a last result. Ending first would silently discard it."""
+    db_path = tmp_path / "planner.db"
+    _create_database(db_path)
+    original_stop = _FakeBackendChild.stop
+
+    async def stop_with_output(child: _FakeBackendChild) -> None:
+        token = child._backend.live_turn_token
+        if token is not None:
+            await child._sink.report(
+                token,
+                ToolCallFinished(
+                    tool_call_id="finish",
+                    tool_call_status=ToolCallStatus.completed,
+                    detail="final stop result",
+                ),
+            )
+        await original_stop(child)
+
+    monkeypatch.setattr(_FakeBackendChild, "stop", stop_with_output)
+
+    async def exercise() -> None:
+        harness = _Harness(db_path)
+        try:
+            await _start(harness, "c")
+            await harness.system.send("c", text_message_content("work"), sender_label="owner")
+            owner = asyncio.get_running_loop()
+            check = harness.system._state_has_update_work
+
+            def owner_check(state: Any) -> bool:
+                assert asyncio.get_running_loop() is owner
+                return check(state)
+
+            monkeypatch.setattr(harness.system, "_state_has_update_work", owner_check)
+            assert await asyncio.to_thread(harness.system.update_waiting_work) == (
+                "hermes conversation",
+            )
+            read_started = threading.Event()
+            read_release = threading.Event()
+            original_read = harness.store.read_live_background_task_ids
+
+            def blocked_read() -> dict[str, tuple[str, ...]]:
+                with pytest.raises(RuntimeError, match="no running event loop"):
+                    asyncio.get_running_loop()
+                read_started.set()
+                if not read_release.wait(2):
+                    raise RuntimeError("The event loop did not run during the SQLite read")
+                return original_read()
+
+            monkeypatch.setattr(harness.store, "read_live_background_task_ids", blocked_read)
+            update = asyncio.create_task(harness.system.prepare_update("now"))
+            try:
+                assert await asyncio.to_thread(read_started.wait, 1)
+                # This coroutine runs while the actual store read remains blocked.
+                read_release.set()
+                assert await update
+            finally:
+                read_release.set()
+            events = await harness.events("c")
+            assert any("final stop result" in str(event.payload) for event in events)
+            assert harness.backend("c").live_children == 0
+        finally:
+            await harness.system.shutdown()
+
+    asyncio.run(asyncio.wait_for(exercise(), 10))
+
+
+@pytest.mark.parametrize("failure", ["native_stop", "result_commit"])
+def test_update_refuses_uncertain_stop_or_failed_result_commit(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    failure: str,
+) -> None:
+    """A drained queue and a stop request cannot prove that required output was saved."""
+    db_path = tmp_path / "planner.db"
+    _create_database(db_path)
+
+    async def exercise() -> None:
+        harness = _Harness(db_path)
+        try:
+            await _start(harness, "c")
+            await harness.system.send("c", text_message_content("work"), sender_label="owner")
+            if failure == "native_stop":
+                harness.backend("c").stop_raises_something_unnamed = True
+            else:
+
+                async def fail_commit(*args: Any, **kwargs: Any) -> None:
+                    raise RuntimeError("result write failed")
+
+                monkeypatch.setattr(harness.system, "take_backend_event", fail_commit)
+                backend = harness.backend("c")
+                assert backend.sink is not None
+                await backend.sink.report(
+                    backend.live_turn_token,
+                    ToolCallFinished(
+                        tool_call_id="finish",
+                        tool_call_status=ToolCallStatus.completed,
+                        detail="unsaved result",
+                    ),
+                )
+                await harness.settle()
+            with pytest.raises(RuntimeError):
+                await harness.system.prepare_update("now")
+            assert harness.system.workspace_admission.starts_closed
+            assert harness.system.cancel_update()
+            assert not harness.system.workspace_admission.closed
+            assert not harness.system.workspace_admission.starts_closed
+            harness.backend("c").stop_raises_something_unnamed = False
+            assert await harness.system.prepare_update("now")
+        finally:
+            harness.backend("c").stop_raises_something_unnamed = False
+            await harness.system.shutdown()
+
+    asyncio.run(asyncio.wait_for(exercise(), 10))
+
+
+def test_cancel_during_native_stop_preserves_new_messages(tmp_path: Path) -> None:
+    """Cancel reopens starts before cleanup ends without discarding the new prompt."""
+    db_path = tmp_path / "planner.db"
+    _create_database(db_path)
+
+    async def exercise() -> None:
+        harness = _Harness(db_path)
+        update: asyncio.Task[bool] | None = None
+        backend = harness.backend("c")
+        try:
+            await _start(harness, "c")
+            await harness.system.send("c", text_message_content("old"), sender_label="owner")
+            backend.stop_has_begun = asyncio.Event()
+            backend.stops_wait_for_release = asyncio.Event()
+            update = asyncio.create_task(harness.system.prepare_update("now"))
+            await asyncio.wait_for(backend.stop_has_begun.wait(), 2)
+            assert harness.system.cancel_update()
+            assert not harness.system.workspace_admission.starts_closed
+            await _start(harness, "unrelated")
+            await harness.system.send("c", text_message_content("new"), sender_label="owner")
+            backend.stops_wait_for_release.set()
+            assert not await update
+            await harness.settle()
+            assert backend.written_texts() == ("old", "new")
+            assert not harness.system.workspace_admission.closed
+        finally:
+            if backend.stops_wait_for_release is not None:
+                backend.stops_wait_for_release.set()
+            if update is not None:
+                await update
+            await harness.system.shutdown()
+
+    asyncio.run(asyncio.wait_for(exercise(), 10))
+
+
+def test_refused_kill_recheck_keeps_held_work_until_an_ordinary_send(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from tests.support.principals import OWNER_PRINCIPAL
+
+    from planner.conversation.contracts import PromptDeliveryQueued
+    from planner.core.errors import PlannerError
+    from planner.ticket_workspaces.contracts import WorkspaceIdentity
+    from planner.ticket_workspaces.data import register_workspace
+    from planner.tickets.data import create_ticket
+
+    db_path = tmp_path / "planner.db"
+    _create_database(db_path)
+
+    async def exercise() -> None:
+        harness = _Harness(db_path)
+        try:
+            await _start(harness, "old")
+            await harness.system.send("old", text_message_content("old work"), sender_label="Owner")
+            await harness.complete_turn("old")
+            with closing_connection(connect(str(db_path))) as conn:
+                ticket = create_ticket(
+                    conn, title="Recheck without restart", principal=OWNER_PRINCIPAL,
+                    now=1, title_max_chars=200, worker_type="coding",
+                )
+                conn.execute("UPDATE tickets SET conversation_id='old' WHERE id=?", (ticket.id,))
+                register_workspace(conn, ticket.id, "old", WorkspaceIdentity("host", "folder"))
+                conn.commit()
+            backend = harness.backend("old")
+            # A prior admission deferral must not survive kill disposition and later
+            # wake the message that arrives behind the failed stop.
+            with monkeypatch.context() as admission:
+                admission.setattr(
+                    harness.system.start_admission, "begin_queued", lambda ids: False,
+                )
+                await harness.system.send(
+                    "old", text_message_content("discarded work"), sender_label="Owner",
+                )
+                await harness.settle()
+            assert "old" in harness.system._deferred_start_conversations
+            deferred_retry = harness.system._deferred_start_drain
+            assert deferred_retry is not None
+            backend.stop_raises_something_unnamed = True
+            kill_owned = harness.system._kill_owned
+
+            async def arrive_during_refused_stop(state: Any) -> None:
+                await kill_owned(state)
+                fate = await harness.system.send(
+                    "old", text_message_content("held work"), sender_label="Owner",
+                )
+                assert isinstance(fate, PromptDeliveryQueued)
+
+            monkeypatch.setattr(harness.system, "_kill_owned", arrive_during_refused_stop)
+            with pytest.raises(PlannerError, match="not proven ended"):
+                await harness.system.kill("old")
+            backend.stop_raises_something_unnamed = False
+            assert (await harness.system.recheck_worker_cleanup(ticket.id)).complete
+            harness.clock.advance(2)
+            await asyncio.wait_for(deferred_retry, 3)
+            await harness.settle()
+            assert "old" not in harness.system._deferred_start_conversations
+            assert backend.session_starts == 1
+            assert backend.written_texts() == ("old work",)
+            held = await harness.system.held_prompts("old")
+            assert held is not None and len(held) == 1
+            await harness.system.send("old", text_message_content("new work"), sender_label="Owner")
+            await harness.settle()
+            assert backend.session_starts == 2
+            assert len(backend.written_texts()) == 2
+            resumed = backend.sender_written_texts()[-1]
+            assert resumed.index("held work") < resumed.index("new work")
+            assert await harness.system.held_prompts("old") == ()
+        finally:
+            harness.backend("old").stop_raises_something_unnamed = False
+            await harness.system.shutdown()
+
+    asyncio.run(exercise())

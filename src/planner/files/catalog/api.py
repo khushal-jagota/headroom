@@ -32,12 +32,15 @@ from planner.files.catalog_contracts import (
     ArtifactOwnerKind,
 )
 from planner.files.contracts import ArtifactEntry
+from planner.files.lifecycle import database_path
 from planner.files.logic.listing import fold_directory
 from planner.files.logic.paths import (
+    PRIVATE_TICKET_NAMES,
     _validate_relative_path,
     _validate_safe_id,
     goal_files_root,
     manager_files_root,
+    private_ticket_path,
     ticket_files_root,
 )
 from planner.resource_versions.data import source_revision
@@ -102,7 +105,12 @@ def _inventory(root: Path, prefix: str) -> Inventory:
             directories[directory] = rows
 
         entries = (
-            () if any(path.is_symlink() for path in (root, *root.parents)) else fold_directory(root)
+            ()
+            if any(path.is_symlink() for path in (root, *root.parents))
+            else fold_directory(
+                root,
+                excluded_names=PRIVATE_TICKET_NAMES if "/files/tickets/" in prefix else frozenset(),
+            )
         )
         visit(entries, "")
         encoded = json.dumps(directories, ensure_ascii=False, sort_keys=True).encode()
@@ -132,7 +140,16 @@ def _linked(
     )
     ranks = {field: index for index, field in enumerate(fields)}
     conn.create_function("artifact_field_rank", 1, lambda field: ranks.get(field, len(ranks)))
-    conn.create_function("artifact_visible", 1, lambda target: int(target not in seen))
+    def visible(target: str) -> int:
+        parts = unquote(urlsplit(target).path).split("/", 4)
+        private = (
+            len(parts) == 5
+            and parts[2] == "tickets"
+            and private_ticket_path(ticket_files_root(database_path(conn)) / parts[3], parts[4])
+        )
+        return int(target not in seen and not private)
+
+    conn.create_function("artifact_visible", 1, visible)
     conn.create_function("artifact_known_field", 1, lambda field: int(field in ranks))
     conn.create_function("artifact_stem_key", 1, lambda stem: str(stem).lower())
     conn.create_function(

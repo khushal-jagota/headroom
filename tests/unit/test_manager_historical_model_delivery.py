@@ -250,13 +250,14 @@ def test_cold_invalid_manager_wake_refuses_durably_then_repairs_without_blocking
 
         def outcomes() -> dict[str, str]:
             with closing(connect(str(db_path))) as conn:
-                reconcile_batch_outcomes(conn, now=5)
+                reconcile_batch_outcomes(conn, now=fake_clock.now_unix())
                 return dict(conn.execute("SELECT target_id,status FROM manager_wake_batches"))
 
         try:
             assert len(wake_loop.poll_once()) == 2
             deadline = time.monotonic() + 5
             while time.monotonic() < deadline:
+                wake_loop.poll_once()
                 statuses = outcomes()
                 if (
                     statuses.get(invalid["id"]) == "refused"
@@ -299,6 +300,7 @@ def test_cold_invalid_manager_wake_refuses_durably_then_repairs_without_blocking
             assert wake_loop.poll_once()
             deadline = time.monotonic() + 5
             while time.monotonic() < deadline:
+                wake_loop.poll_once()
                 if outcomes().get(invalid["id"]) == "delivered":
                     break
                 time.sleep(0.01)

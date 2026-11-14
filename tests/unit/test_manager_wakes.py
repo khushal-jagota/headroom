@@ -6,13 +6,16 @@ import asyncio
 import json
 import threading
 import time
+from collections.abc import Iterator
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import contextmanager
 from pathlib import Path
 from sqlite3 import Connection
 from typing import Any
 
 import pytest
 
+from planner.conversation import storage as conversation_storage
 from planner.conversation.contracts import (
     ConversationBackendKey,
     ConversationStartRequest,
@@ -44,6 +47,7 @@ from planner.core.clock import TestClock as FakeClock
 from planner.core.contracts import CHIEF_PRINCIPAL, OWNER_PRINCIPAL, Principal, PrincipalKind
 from planner.core.db import connect
 from planner.core.errors import ErrorCode, PlannerError
+from planner.core.runtime_connections import runtime_connection
 from planner.manager_wakes import data as wake_data
 from planner.manager_wakes.contracts import WakeBatchStatus, WakeSourceKind
 from planner.manager_wakes.runtime import (
@@ -219,22 +223,24 @@ def test_failure_notices_use_the_chief_and_ticket_conversation_doors(
     database_path = Path(str(tmp_db.execute("PRAGMA database_list").fetchone()[2]))
     system = _DurableStartedConversationSystem(database_path)
 
-    assert asyncio.run(
-        deliver_batch(
-            batch,
-            connect_database=lambda: connect(str(database_path)),
-            conversation_system=system,  # type: ignore[arg-type]
-            process_token="process",
-            now=lambda: 50,
+    from tests.support.sql_threads import sql_must_run_off_event_loop
+
+    with sql_must_run_off_event_loop():
+        delivered = asyncio.run(
+            deliver_batch(
+                batch,
+                connect_database=lambda: connect(str(database_path)),
+                conversation_system=system,  # type: ignore[arg-type]
+                process_token="process",
+                now=lambda: 50,
+            )
         )
-    )
+    assert delivered
     assert system.started is not None
     prompts = tmp_db.execute(
         "SELECT payload FROM conversation_events WHERE kind='prompt'"
     ).fetchall()
     assert any("provider unavailable" in str(row["payload"]) for row in prompts)
-
-
 
 
 def test_ticket_reset_between_resolution_and_link_lock_uses_the_new_door(
@@ -1086,15 +1092,18 @@ def test_delivery_uses_the_supervisor_boundary_and_closes_on_its_prompt(
     database_path = Path(str(tmp_db.execute("PRAGMA database_list").fetchone()[2]))
     system = _DurableStartedConversationSystem(database_path)
 
-    delivered = asyncio.run(
-        deliver_batch(
-            batch,
-            connect_database=lambda: connect(str(database_path)),
-            conversation_system=system,  # type: ignore[arg-type]
-            process_token="process",
-            now=lambda: 50,
+    from tests.support.sql_threads import sql_must_run_off_event_loop
+
+    with sql_must_run_off_event_loop():
+        delivered = asyncio.run(
+            deliver_batch(
+                batch,
+                connect_database=lambda: connect(str(database_path)),
+                conversation_system=system,  # type: ignore[arg-type]
+                process_token="process",
+                now=lambda: 50,
+            )
         )
-    )
 
     assert delivered is True
     assert system.started is not None
@@ -1516,16 +1525,20 @@ def test_notice_admission_serializes_with_canonical_resolution(
         sender_message_id=batch.sender_message_id,
     )
     acquired, attempted, release = threading.Event(), threading.Event(), threading.Event()
-    original_connect = store._connect
+    original_connection = runtime_connection
     original_commit = store._commit_rows
 
-    def admission_connect() -> Connection:
-        conn = original_connect()
-        if winner == "resolution":
-            conn.set_trace_callback(
-                lambda sql: attempted.set() if sql == "BEGIN IMMEDIATE" else None
-            )
-        return conn
+    @contextmanager
+    def admission_connection(*args: Any, **kwargs: Any) -> Iterator[Connection]:
+        with original_connection(*args, **kwargs) as conn:
+            if winner == "resolution":
+                conn.set_trace_callback(
+                    lambda sql: attempted.set() if sql == "BEGIN IMMEDIATE" else None
+                )
+            try:
+                yield conn
+            finally:
+                conn.set_trace_callback(None)
 
     def admission_commit(*args: Any, **kwargs: Any) -> None:
         if winner == "admission":
@@ -1533,7 +1546,7 @@ def test_notice_admission_serializes_with_canonical_resolution(
             assert release.wait(5), "resolution did not attempt its transaction"
         original_commit(*args, **kwargs)
 
-    monkeypatch.setattr(store, "_connect", admission_connect)
+    monkeypatch.setattr(conversation_storage, "runtime_connection", admission_connection)
     monkeypatch.setattr(store, "_commit_rows", admission_commit)
 
     def resolve() -> None:

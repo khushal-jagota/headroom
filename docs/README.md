@@ -38,7 +38,7 @@ The word list lives in [`CONTEXT.md`](../CONTEXT.md), the engineering rules in [
 
 - [Conversations](conversations.md) — the only path into an agent, its notebook, and honest send fates.
 - [Credentials](credentials.md) — named API keys that scripts use without a secret reaching an agent.
-- [Mac execution](executor.md) — Tickets whose agents run on the Mac while the VPS keeps the record.
+- [Extra machines](executor.md) — Mac and Linux executors run Workers while the home keeps the record.
 - [The command line](cli.md) — how people and Workers act through `panels`.
 
 ## Operating a host

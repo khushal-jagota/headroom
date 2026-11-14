@@ -25,6 +25,7 @@ from tests.support.conversation_test_loop import conversation_test_loop, run_con
 
 import planner.conversation.storage as conversation_storage
 import planner.conversation.system as conversation_system
+from planner.conversation.backend_event_contracts import child_stops_outside_lock
 from planner.conversation.backends.contracts import (
     AgentMessageCompleted,
     BackendChildFactory,
@@ -53,6 +54,7 @@ from planner.conversation.backends.contracts import (
     UserInputRequested,
     VendorSessionCursorRebound,
 )
+from planner.conversation.child_custody import host_boot_identity
 from planner.conversation.contracts import (
     AnswerFate,
     ComposerCatalogEntry,
@@ -93,6 +95,7 @@ from planner.conversation.live_tail import (
     ConversationLiveTail,
     ConversationTailSubscription,
 )
+from planner.conversation.local_child_contracts import LocalChildIdentity
 from planner.conversation.message_content import (
     MessageContent,
     message_content_text,
@@ -114,6 +117,7 @@ from planner.core.contracts import (
     PrincipalKind,
 )
 from planner.core.db import connect, create_schema
+from planner.machines.contracts import HOME_MACHINE_ID
 from planner.runtime.worker_memory import new_memory_notice_message_id
 from planner.worker_types.store import read_definition, workflow_from_preset, workflow_to_json
 
@@ -233,6 +237,14 @@ class _FakeBackendChild:
     ) -> None:
         if self._backend.session_load_fails:
             raise SessionLoadFailed(self._backend.conversation_id)
+        if not child_stops_outside_lock(self):
+            # Remote subclasses retain remote custody instead of local process evidence.
+            # This impossible PID must never name pytest.
+            host = host_boot_identity()
+            assert host is not None
+            await self._sink.record_local_child_custody(  # type: ignore[attr-defined]
+                LocalChildIdentity(pid=2_147_483_647, birth="test-child", boot=host.boot)
+            )
         self._backend.session_starts += 1
         self._backend.live_children += 1
         self._backend.most_live_children_at_once = max(
@@ -1725,8 +1737,11 @@ def test_after_a_restart_nothing_is_running_and_the_next_message_resumes(
 # --- killing a conversation's activity ----------------------------------------------------
 
 
+@pytest.mark.parametrize("mode", [
+    PromptDeliveryMode.queue, PromptDeliveryMode.send_now, PromptDeliveryMode.steer,
+])
 def test_a_message_sent_while_a_kill_is_running_is_not_swallowed_by_it(
-    harness: _Harness,
+    harness: _Harness, mode: PromptDeliveryMode,
 ) -> None:
     """A kill holds the conversation still, so a send either loses its message to the
     kill or starts a turn — never waits behind a queue nothing will ever drain."""
@@ -1745,7 +1760,7 @@ def test_a_message_sent_while_a_kill_is_running_is_not_swallowed_by_it(
             harness.system.send(
                 "c",
                 text_message_content("sent during the kill"),
-                sender_label="owner",
+                sender_label="owner", mode=mode,
             )
         )
         for _ in range(_SCHEDULING_TURNS_TO_LET_THE_QUEUE_CATCH_UP):
@@ -3243,6 +3258,7 @@ def test_chief_to_manager_transfer_dispatches_only_current_work_through_both_doo
 ) -> None:
     from datetime import UTC, datetime
 
+    from planner.conversation.start_admission import AutomaticStartAdmission
     from planner.core.clock import TestClock
     from planner.manager_wakes import data as wake_data
     from planner.manager_wakes.contracts import WakeBatch
@@ -3250,6 +3266,9 @@ def test_chief_to_manager_transfer_dispatches_only_current_work_through_both_doo
     from planner.managers import data as managers_data
     from planner.tickets import data as tickets_data
     from planner.tickets.contracts import TITLE_MAX_CHARS
+
+    admission_now = [0.0]
+    harness.system.start_admission = AutomaticStartAdmission(clock=lambda: admission_now[0])
 
     async def exercise() -> None:
         conn = connect(str(harness.db_path))
@@ -3344,6 +3363,7 @@ def test_chief_to_manager_transfer_dispatches_only_current_work_through_both_doo
             conn.close()
         release.set()
         assert not await old_delivery
+        admission_now[0] += 1.0  # A new automatic start needs the next pacing opportunity.
         assert await deliver(current_batch)
         assert len(harness.backends) == 2
         all_writes = [write for backend in harness.backends.values() for write in backend.writes]
@@ -3896,5 +3916,353 @@ def test_a_background_task_lost_with_its_session_is_told_to_the_agent(
         assert facts["c"].has_live_background_task is False
         if how == "server_restarted":
             await system.shutdown()
+
+    _run(exercise)
+
+
+def test_automatic_queue_releases_slots_and_coalesces_one_dispatch_permit(
+    harness: _Harness, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Risk: held supervisor messages consume slots or priority before they can run.
+
+    Existing delivery fates do not prove admission retirement or coalesced permits.
+    Reuse the real queue, SQLite store, and existing fake backend without another host.
+    """
+    from planner.conversation.start_admission import AutomaticStartAdmission
+    from planner.conversation.start_admission.contracts import StartRequest
+
+    async def exercise() -> None:
+        now = [0.0]
+        gate = AutomaticStartAdmission(clock=lambda: now[0])
+        harness.system.start_admission = gate
+        monkeypatch.setattr(conversation_system, "backend_supports_steer", lambda _key: True)
+        await _start(harness, "supervisor")
+        await _start(harness, "worker")
+        await harness.system.send(
+            "supervisor", text_message_content("incumbent"), sender_label="owner"
+        )
+        identities = tuple(f"supervisor-auto-{i}" for i in range(4))
+        for identity in identities:
+            assert gate.try_start(StartRequest(identity, "supervisor", HOME_MACHINE_ID))
+            fate = await harness.system.send(
+                "supervisor",
+                text_message_content(identity),
+                sender_label="Panels",
+                sender_message_id=identity,
+            )
+            assert isinstance(fate, PromptDeliveryQueued)
+            now[0] += 1.0
+        assert {snapshot.state for snapshot in gate.snapshots()} == {"queued"}
+        assert all(snapshot.permit_identity is None for snapshot in gate.snapshots())
+        assert gate.try_start(StartRequest("home-worker", "worker", HOME_MACHINE_ID))
+        assert isinstance(
+            await harness.system.send(
+                "worker",
+                text_message_content("home work"),
+                sender_label="Panels",
+                sender_message_id="home-worker",
+            ),
+            PromptDeliveryStarted,
+        )
+
+        await harness.agent_message("worker", text_message_content("Worker accepted its prompt"))
+        held = await harness.system.held_prompts("supervisor")
+        assert await harness.system.discard_held_prompt("supervisor", held[0].held_prompt_id)
+        assert isinstance(
+            await harness.system.promote_held_prompt(
+                "supervisor", held[1].held_prompt_id, HeldPromptPromotionMode.steer
+            ),
+            PromptDeliveryInjected,
+        )
+        assert {snapshot.request.identity for snapshot in gate.snapshots()} == set(identities[2:])
+        # The next head is eligible now, but cannot reuse the Worker's pacing instant.
+        await harness.complete_turn("supervisor")
+        assert len(harness.backend("supervisor").writes) == 2  # incumbent and accepted steer
+        now[0] += 1.0
+        backend = harness.backend("supervisor")
+        backend.write_has_begun = asyncio.Event()
+        backend.writes_wait_for_release = asyncio.Event()
+        drain = asyncio.create_task(
+            harness.system._drain_held_prompts(harness.system._conversations["supervisor"])
+        )
+        try:
+            await asyncio.wait_for(backend.write_has_begun.wait(), 2)
+            snapshots = gate.snapshots()
+            assert {snapshot.request.identity for snapshot in snapshots} == set(identities[2:])
+            assert {snapshot.state for snapshot in snapshots} == {"active"}
+            assert len({snapshot.permit_identity for snapshot in snapshots}) == 1
+            assert snapshots[0].permit_identity is not None
+            assert len({snapshot.turn for snapshot in snapshots}) == 1
+            backend.writes_wait_for_release.set()
+            await drain
+        finally:
+            backend.writes_wait_for_release.set()
+            await asyncio.gather(drain, return_exceptions=True)
+        await harness.agent_message("supervisor", text_message_content("Notice accepted"))
+        assert gate.snapshots() == ()
+        assert backend.sender_message_counts[-1] == 2
+        assert all(identity in backend.writes[-1].text for identity in identities[2:])
+        assert await harness.system.held_prompts("supervisor") == ()
+
+        # A supervisor held while Kill proves the old source is also ineligible.
+        # Otherwise its rank can block an unrelated Worker despite free capacity.
+        stopped, release_kill = asyncio.Event(), asyncio.Event()
+        kill_owned = harness.system._kill_owned
+
+        async def pause_after_stop(state):  # type: ignore[no-untyped-def]
+            await kill_owned(state)
+            stopped.set()
+            await release_kill.wait()
+
+        monkeypatch.setattr(harness.system, "_kill_owned", pause_after_stop)
+        killing = asyncio.create_task(harness.system.kill("supervisor"))
+        try:
+            await asyncio.wait_for(stopped.wait(), 2)
+            now[0] += 1.0
+            identity = "supervisor-during-kill"
+            assert gate.try_start(StartRequest(identity, "supervisor", HOME_MACHINE_ID))
+            assert isinstance(await harness.system.send(
+                "supervisor", text_message_content(identity), sender_label="Panels",
+                sender_message_id=identity,
+            ), PromptDeliveryQueued)
+            now[0] += 1.0
+            worker = "worker-during-kill"
+            assert gate.try_start(StartRequest(worker, "worker", HOME_MACHINE_ID))
+            gate.finish(worker)
+            now[0] += 1.0
+        finally:
+            release_kill.set()
+            await killing
+        assert backend.sender_written_texts()[-1] == identity
+
+    _run(exercise)
+
+
+def test_queued_automatic_cancel_after_bind_before_wire_releases_slot_and_priority(
+    harness: _Harness, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Risk: no-wire cancellation leaks a bound slot or eligible supervisor priority.
+
+    Existing uncertain-wire cases require retention, so they cannot prove this cleanup.
+    Use the existing queue/backend host and inject cancellation at the awaited store call.
+    """
+    from planner.conversation.start_admission import AutomaticStartAdmission
+    from planner.conversation.start_admission.contracts import StartRequest
+
+    async def exercise() -> None:
+        now = [0.0]
+        gate = AutomaticStartAdmission(clock=lambda: now[0])
+        harness.system.start_admission = gate
+        await _start(harness, "supervisor")
+        await _start(harness, "worker")
+        _link_test_ticket_to_conversation(harness.db_path, "worker", ticket_id="t_admission")
+        await harness.system.send(
+            "supervisor", text_message_content("incumbent"), sender_label="owner"
+        )
+        assert gate.try_start(StartRequest("cancel-before-wire", "supervisor", HOME_MACHINE_ID))
+        assert isinstance(
+            await harness.system.send(
+                "supervisor",
+                text_message_content("owed notice"),
+                sender_label="Panels",
+                sender_message_id="cancel-before-wire",
+            ),
+            PromptDeliveryQueued,
+        )
+        # This test owns dequeue dispatch, independently of refunded queue-only credit.
+        original_drain = harness.system._drain_held_prompts
+
+        async def hold_drain(_state: Any) -> None:
+            return None
+
+        monkeypatch.setattr(harness.system, "_drain_held_prompts", hold_drain)
+        await harness.complete_turn("supervisor")
+        monkeypatch.setattr(harness.system, "_drain_held_prompts", original_drain)
+        conn = connect(str(harness.db_path))
+        try:
+            claim_before = tuple(
+                conn.execute(
+                    "SELECT worker_step_claim,worker_step_claim_revision FROM tickets WHERE id=?",
+                    ("t_admission",),
+                ).fetchone()
+            )
+        finally:
+            conn.close()
+        original_bind = harness.store.bind_interruption_delivery
+        reached = False
+
+        async def cancel_after_bind(*args: Any, **kwargs: Any) -> Any:
+            nonlocal reached
+            reached = True
+            conn = connect(str(harness.db_path))
+            try:
+                assert (
+                    conn.execute(
+                        "SELECT COUNT(*) FROM automatic_start_bindings WHERE identity=?",
+                        ("cancel-before-wire",),
+                    ).fetchone()[0]
+                    == 1
+                )
+            finally:
+                conn.close()
+            raise asyncio.CancelledError()
+
+        monkeypatch.setattr(harness.store, "bind_interruption_delivery", cancel_after_bind)
+        now[0] += 1.0
+        state = harness.system._conversations["supervisor"]
+        with pytest.raises(asyncio.CancelledError):
+            await harness.system._drain_held_prompts(state)
+        monkeypatch.setattr(harness.store, "bind_interruption_delivery", original_bind)
+        assert reached
+        assert harness.backend("supervisor").written_texts() == ("incumbent",)
+        assert not state.child_is_quarantined
+        snapshots = gate.snapshots()
+        assert len(snapshots) == 1
+        assert snapshots[0].request.identity == "cancel-before-wire"
+        assert snapshots[0].state == "queued"
+        assert snapshots[0].permit_identity is None
+        assert snapshots[0].turn is None
+        assert [
+            message_content_text(item.content)
+            for item in await harness.system.held_prompts("supervisor")
+        ] == ["owed notice"]
+        conn = connect(str(harness.db_path))
+        try:
+            assert conn.execute("SELECT COUNT(*) FROM automatic_start_bindings").fetchone()[0] == 0
+            assert (
+                tuple(
+                    conn.execute(
+                        "SELECT worker_step_claim,worker_step_claim_revision "
+                        "FROM tickets WHERE id=?",
+                        ("t_admission",),
+                    ).fetchone()
+                )
+                == claim_before
+            )
+        finally:
+            conn.close()
+        now[0] += 1.0
+        assert gate.try_start(StartRequest("worker-after-cancel", "worker", HOME_MACHINE_ID))
+        assert isinstance(
+            await harness.system.send(
+                "worker",
+                text_message_content("home work"),
+                sender_label="Panels",
+                sender_message_id="worker-after-cancel",
+            ),
+            PromptDeliveryStarted,
+        )
+        assert harness.backend("worker").written_texts() == ("home work",)
+
+    _run(exercise)
+
+
+def test_oldest_eligible_held_worker_precedes_new_readiness_starts(
+    harness: _Harness, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Risk: new readiness starts continually consume the held Worker's next instant.
+
+    Existing queue coverage proves slot release, but does not compete at this boundary.
+    The existing core host proves rank acquisition before its retry scanner runs.
+    """
+    from planner.conversation.start_admission import AutomaticStartAdmission
+    from planner.conversation.start_admission.contracts import StartRequest
+
+    async def exercise() -> None:
+        now = [0.0]
+        gate = AutomaticStartAdmission(clock=lambda: now[0])
+        harness.system.start_admission = gate
+        monkeypatch.setattr(harness.system, "_defer_start_drain", lambda _state: None)
+        await _start(harness, "old")
+        await _start(harness, "blocker")
+        await harness.system.send("old", text_message_content("incumbent"), sender_label="owner")
+        assert gate.try_start(StartRequest("old-head", "worker", HOME_MACHINE_ID))
+        assert isinstance(
+            await harness.system.send(
+                "old",
+                text_message_content("old work"),
+                sender_label="Panels",
+                sender_message_id="old-head",
+            ),
+            PromptDeliveryQueued,
+        )
+        assert gate.try_start(StartRequest("blocker", "worker", HOME_MACHINE_ID))
+        await harness.system.send(
+            "blocker",
+            text_message_content("use this instant"),
+            sender_label="Panels",
+            sender_message_id="blocker",
+        )
+        await harness.complete_turn("old")
+        state = harness.system._conversations["old"]
+        for instant in (0.25, 0.75):
+            now[0] = instant
+            await harness.system._drain_held_prompts(state)
+            assert len(harness.backend("old").writes) == 1
+        now[0] = 1.0
+        # The old head owns its rank already, even before another retry visits it.
+        assert not gate.try_start(StartRequest("new-readiness", "worker", HOME_MACHINE_ID))
+        await harness.system._drain_held_prompts(state)
+        assert [write.text for write in harness.backend("old").writes] == [
+            "incumbent",
+            "old work",
+        ]
+        await harness.agent_message("old", text_message_content("accepted"))
+        now[0] = 2.0
+        assert gate.try_start(StartRequest("new-readiness", "worker", HOME_MACHINE_ID))
+        gate.finish("new-readiness")
+
+    _run(exercise)
+
+
+def test_start_and_end_never_execute_sql_on_the_event_loop(harness: _Harness) -> None:
+    """Existing fates do not prove SQL thread placement through a real shared store."""
+    from tests.support.sql_threads import sql_must_run_off_event_loop
+
+    from planner.conversation.start_admission.contracts import StartRequest
+
+    async def exercise() -> None:
+        await _start(harness)
+        assert harness.system.start_admission.try_start(
+            StartRequest("worker-thread-proof", "worker", HOME_MACHINE_ID)
+        )
+        assert isinstance(await harness.system.send(
+            "c", text_message_content("work"), sender_label="Panels",
+            sender_message_id="worker-thread-proof",
+        ), PromptDeliveryStarted)
+        await harness.agent_message("c", text_message_content("accepted"))
+        await harness._end_turn("c", ConversationTurnEnding.completed)
+
+    with sql_must_run_off_event_loop():
+        _run(exercise)
+
+
+def test_refused_kill_rechecks_messages_after_its_fence_clears(
+    harness: _Harness, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Risk: refusal skips the sole queue drain. Existing kill race covers success only.
+
+    Reuse the real conversation harness and fail after the old child stops.
+    """
+    original = harness.system._kill_owned
+    failure = RuntimeError("cleanup refused after stop")
+
+    async def refuse_after_stop(state: Any) -> None:
+        await original(state)
+        fate = await harness.system.send(
+            "c", text_message_content("arrived during stop"), sender_label="Owner",
+        )
+        assert isinstance(fate, PromptDeliveryQueued)
+        raise failure
+
+    async def exercise() -> None:
+        await _start(harness, "c")
+        await harness.system.send("c", text_message_content("old"), sender_label="Owner")
+        monkeypatch.setattr(harness.system, "_kill_owned", refuse_after_stop)
+        with pytest.raises(RuntimeError) as raised:
+            await harness.system.kill("c")
+        assert raised.value is failure
+        await harness.settle()
+        assert harness.backend("c").written_texts() == ("old", "arrived during stop")
 
     _run(exercise)

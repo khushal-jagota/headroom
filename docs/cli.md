@@ -12,6 +12,7 @@ Manager commands accept `panels manager` and `--manager`. The old Sprint Item an
 
 - **Ordinary roots**, shown in help, for people and supervising agents:
   - `send-message` addresses Khushal, the Chief, a Ticket's Worker, or a Manager through the [conversation](conversations.md) door. Every message requires an explicit recipient.
+  - `machine list` reads named destinations and availability. Owner commands register extra machines and replace their credentials.
   - `project`, `ticket`, and `manager` read and edit the catalog, Tickets, and Managers, including backlog and resume, assignment, accepting or revising a parked proposal, restarting a stalled Worker, and settling a Manager.
   - `page` reads and edits Manager and Chief documents. `goal` edits [goal](goals.md) pages. `measure`, `dataset`, and `measure-source` maintain [project measures](measures.md). `credential` lists and requests [credentials](credentials.md). `attention` reads [historical attention](attention.md).
   - `executor`, `environment`, and `preview` serve the operator: the [Mac executor](executor.md), [environments](environments.md), and [previews](previews.md).
@@ -22,6 +23,8 @@ Manager commands accept `panels manager` and `--manager`. The old Sprint Item an
 ## How reads and writes work
 
 A `show` returns a short header and a list of parts, and the caller names the parts to expand. Lists come in pages and say what they left out. Backlog and resume need no record fingerprint. `ticket delete` needs no confirmation flag, but a running Ticket still needs `--force`. `ticket create --input-json FILE` sends one object to the same create route as the browser, which validates the whole Ticket before one write. A new Ticket starts from a preset or custom stages. Custom stages carry their result fields, ownership, and instructions together.
+
+`ticket create --machine-id ID` chooses the machine from `machine list`. The JSON object also accepts `machine_id`. Omission selects the home. The destination stays fixed after creation, including when a machine changes its name. Away work waits for that machine. Legacy `--locale vps` and `--locale macos` remain aliases for the original home and Mac. If both forms arrive, the server rejects disagreement.
 
 `ticket list --active` selects unfinished Tickets outside backlog. The default list remains an inventory that includes deferred Tickets. Manager rollups exclude deferred children, while a Manager workspace keeps the complete child inventory and its backlog marks.
 

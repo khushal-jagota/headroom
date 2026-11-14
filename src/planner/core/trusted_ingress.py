@@ -38,6 +38,7 @@ _EXECUTOR_SINGLETON_HEADERS: Final = frozenset(
         EXECUTOR_ID_HEADER,
         "x-panels-executor-incarnation",
         "x-panels-executor-protocol",
+        "x-panels-executor-credential",
     }
 )
 _SINGLETON_SECURITY_HEADERS: Final = frozenset({TAILSCALE_USER_LOGIN_HEADER, ORIGIN_HEADER})
@@ -172,13 +173,9 @@ def _without_header(scope: dict[str, Any], header_name: str) -> dict[str, Any]:
     return copied
 
 
-def require_executor_ingress(scope: Mapping[str, Any], executor_id: str | None) -> str:
-    """Admit the configured logical executor under the existing trusted owner identity.
-
-    This is routing authority for the owner's permitted devices, not hardware
-    attestation. Missing hosted identity cannot inherit ordinary internal access.
-    """
-    if not executor_id or not scope.get(TRUSTED_LOGIN_SCOPE_KEY):
+def executor_ingress_claim(scope: Mapping[str, Any]) -> str:
+    """Read a caller ID after the trusted ingress check. Credentials bind its authority."""
+    if not scope.get(TRUSTED_LOGIN_SCOPE_KEY):
         raise ValueError("trusted executor ingress is required")
     headers: dict[str, str] = {}
     for raw_name, raw_value in scope.get("headers", ()):
@@ -189,9 +186,18 @@ def require_executor_ingress(scope: Mapping[str, Any], executor_id: str | None) 
             headers[name] = raw_value.decode("latin1")
     if ORIGIN_HEADER in headers:
         raise ValueError("browser origin is not allowed on executor routes")
-    if headers.get(EXECUTOR_ID_HEADER) != executor_id:
+    claimed_id = headers.get(EXECUTOR_ID_HEADER)
+    if not claimed_id or len(claimed_id) > 128:
+        raise ValueError("executor identity is required")
+    return claimed_id
+
+
+def require_executor_ingress(scope: Mapping[str, Any], executor_id: str | None) -> str:
+    """The original configured executor's pre-handover ingress check."""
+    claimed_id = executor_ingress_claim(scope)
+    if not executor_id or claimed_id != executor_id:
         raise ValueError("executor identity does not match configuration")
-    return executor_id
+    return claimed_id
 
 
 def require_preview_ingress(scope: dict[str, Any], config: TrustedIngressConfig) -> None:
