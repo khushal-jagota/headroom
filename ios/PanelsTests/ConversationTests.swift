@@ -645,6 +645,65 @@ import XCTest
         XCTAssertEqual(query?.first { $0.name == "transcript" }?.value, "false")
     }
 
+    func testOwnerReplacementClearsOldDisplayAndKeepsUnsentWorkAndRecordedDestination() async throws {
+        for owner in [ConversationOwner.chief, .manager("manager"), .ticket("worker")] {
+            let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+            defer { try? FileManager.default.removeItem(at: directory) }
+            let store = LocalStore(url: directory.appendingPathComponent("replacement.store"))
+            let api = APIClient(baseURL: URL(string: "https://replacement-\(UUID().uuidString).invalid")!)
+            let server = LocalStore.server(api.baseURL)
+            let message = ConversationSend(conversationId: "old", content: [.init(text: "Already recorded")],
+                senderMessageId: "original", sentAtUnixMilliseconds: 123)
+            try store.outgoing.enqueue(PendingWork(id: "original", created: .now, kind: .message, owner: owner, message: message), server: server)
+            let model = ConversationModel(outgoingStore: store)
+            model.selectConversation("old")
+            model.restore(owner: owner, api: api, recoverConversationID: false)
+            model.draft = "Keep these unsent words"
+            model.attachments = [.init(piece: "file", data: "dGVzdA==", mediaType: "text/plain", fileName: "draft.txt")]
+            let attachments = model.attachments
+            let service = ConversationStub(fate: "started")
+            await service.setSnapshot(Self.snapshot([Self.item("old-reply", kind: "agent_message", text: "Old conversation")]))
+            await model.refresh(using: service, transcript: true)
+            XCTAssertEqual(model.latestLine, "Old conversation")
+            XCTAssertTrue(model.outgoing.contains { $0.id == "original" })
+
+            // A cleared server link is a known destination change, not permission to
+            // infer the current conversation from an earlier outgoing message.
+            model.selectConversation(nil)
+            model.restore(owner: owner, api: api, recoverConversationID: false)
+            XCTAssertNil(model.conversationID)
+            XCTAssertTrue(model.rows.isEmpty)
+            XCTAssertNil(model.status)
+            XCTAssertTrue(model.heldPrompts.isEmpty)
+            XCTAssertFalse(model.hasUnread)
+            model.syncOutbox()
+            XCTAssertNil(model.conversationID)
+
+            model.selectConversation("new")
+            XCTAssertTrue(model.rows.isEmpty)
+            XCTAssertEqual(model.draft, "Keep these unsent words")
+            XCTAssertEqual(model.attachments, attachments)
+            XCTAssertEqual(try store.outgoing.work(server: server, id: "original")?.message?.conversationId, "old")
+            XCTAssertEqual(try store.outgoing.work(server: server, id: "original")?.message?.content.first?.text, "Already recorded")
+            XCTAssertFalse(model.outgoing.contains { $0.id == "original" })
+        }
+    }
+
+    func testReplacementRejectsLateResponseEvenAfterReturnToOriginalID() async throws {
+        let model = ConversationModel(); model.selectConversation("old")
+        let service = ConversationStub(fate: "started")
+        await service.holdNextSnapshot()
+        let oldRead = Task { await model.refresh(using: service, transcript: true) }
+        while !(await service.snapshotHeld) { await Task.yield() }
+        model.selectConversation(nil)
+        model.selectConversation("new")
+        model.selectConversation("old")
+        await service.releaseSnapshot()
+        await oldRead.value
+        XCTAssertTrue(model.rows.isEmpty, "A response from the replaced reader cannot enter the new display")
+        XCTAssertNil(model.status)
+    }
+
     func testReaderGenerationRejectsAnOldResponseAfterReturningToSameLens() async throws {
         let model = ConversationModel(); model.conversationID = "conv_1"
         let service = ConversationStub(fate: "started")

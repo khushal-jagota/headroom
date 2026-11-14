@@ -46,6 +46,27 @@ final class NavigationViewTests: XCTestCase {
         XCTAssertEqual(refusal(NavigationViewFrames.apply(promoted, reset)), .reset("overflow"))
     }
 
+    @MainActor func testCurrentOwnerReferencesDistinguishUnknownFromClearedAndReplacement() async throws {
+        let base = URL(string: "https://owner-references-\(UUID().uuidString).invalid")!
+        let unknown = AppStore(baseURL: base)
+        let owners = [ConversationOwner.chief, .manager("item"), .ticket("source-ticket")]
+        for owner in owners { XCTAssertNil(unknown.currentConversationID(owner)) }
+        for expected in ["old", nil, "new"] as [String?] {
+            var manager = sourceManager
+            manager["value"] = (sourceManager["value"] as! [String: Any]).merging(["conversation_id": expected as Any? ?? NSNull()]) { $1 }
+            let value = try snapshot([chiefRecord(expected), manager,
+                sourceTicket(["conversation_id": expected as Any? ?? NSNull()]), project("project", "Project")])
+            let encoder = JSONEncoder(); encoder.keyEncodingStrategy = .convertToSnakeCase
+            try await LocalStore.shared.cacheResponse(server: LocalStore.server(base),
+                id: base.absoluteString + "/api/navigation/view/snapshot#latest", data: encoder.encode(value))
+            let restored = AppStore(baseURL: base)
+            for owner in owners {
+                let current = try XCTUnwrap(restored.currentConversationID(owner), "The view carries this owner even when its link clears")
+                XCTAssertEqual(current, expected)
+            }
+        }
+    }
+
     // MARK: Ticket and manager facts (presentation.ts)
 
     func testTicketFactsMatchDesktopDerivation() throws {

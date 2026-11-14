@@ -12,12 +12,14 @@ import UniformTypeIdentifiers
     private var persistenceOwner: ConversationOwner?
     private var restoring = false
     private var customDraftID: String?
+    private var recoversConversationIDFromOutbox = true
     private var draftKey: String { customDraftID ?? "conversation:" + (persistenceOwner?.path ?? "") }
     private func saveDraft() {
         guard !restoring, let api = persistenceAPI else { return }
         LocalStore.shared.saveDraft(draft, server: LocalStore.server(api.baseURL), id: draftKey)
     }
-    func restore(owner: ConversationOwner, api: APIClient, draftID: String? = nil, savedWork: [PendingWork]? = nil) {
+    func restore(owner: ConversationOwner, api: APIClient, draftID: String? = nil, savedWork: [PendingWork]? = nil, recoverConversationID: Bool = true) {
+        recoversConversationIDFromOutbox = recoverConversationID
         guard persistenceAPI?.baseURL != api.baseURL || persistenceOwner != owner || customDraftID != draftID else { syncOutbox(savedWork: savedWork); return }
         outgoing = []; retryAliases = [:]; supersededIDs = []
         persistenceAPI = api; persistenceOwner = owner; customDraftID = draftID; restoring = true
@@ -44,7 +46,28 @@ import UniformTypeIdentifiers
         }
         syncOutbox(savedWork: savedWork)
     }
-    private var readerGeneration = 0
+    /// Change the displayed destination without changing the owner's unsent work
+    /// or the destinations of messages already recorded in the outbox.
+    func selectConversation(_ id: String?) {
+        recoversConversationIDFromOutbox = false
+        guard conversationID != id else { return }
+        saveDisplay(force: true)
+        conversationID = id
+        items = []; expandedBodies = [:]; status = nil; older = nil
+        loadedConversationID = nil; loadedLens = nil; pageProjectionVersion = nil
+        visibleRows = []; rowOrder = []; liveRow = nil; liveReference = nil; liveTurnKey = nil
+        liveConversationID = nil; displayByteSizes = [:]; lastDisplaySave = .distantPast
+        replaceHistoryOnSnapshot = false; hasNewerHistory = false
+        readThroughSequence = 0; readPositionConversationID = nil; hasUnread = false
+        heldPrompts = []; error = nil; loadingOlder = false
+        outgoing = []; recoveries = [:]; retryAliases = [:]; supersededIDs = []
+        pinnedMessageIDs = []; outgoingText = [:]; outgoingAttachments = [:]
+        backendKey = nil; selectedModel = nil; reasoningEffort = nil
+        runningModel = nil; runningEffort = nil
+        syncOutbox()
+    }
+
+    private(set) var readerGeneration = 0
     private var tailGeneration = 0
     private var historyGeneration = 0
     private var oversizedBodyKey: String?
@@ -200,7 +223,7 @@ import UniformTypeIdentifiers
             return
         }
         let server = LocalStore.server(api.baseURL)
-        if conversationID == nil { conversationID = try? outgoingStore.outgoing.latestConversationID(server: server, owner: owner) }
+        if recoversConversationIDFromOutbox, conversationID == nil { conversationID = try? outgoingStore.outgoing.latestConversationID(server: server, owner: owner) }
         let selected = (try? outgoingStore.outgoing.conversationSummaries(server: server, owner: owner, conversationID: conversationID)) ?? []
         let previous = Dictionary(outgoing.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
         recoveries = [:]
@@ -792,13 +815,17 @@ import UniformTypeIdentifiers
         defer { sending = false }
         var message = ConversationSend(conversationId: conversationID, content: (text.isEmpty ? [] : [.init(text: text)]) + (outgoingAttachments[id] ?? []), senderMessageId: id, sentAtUnixMilliseconds: Int64(Date().timeIntervalSince1970 * 1000))
         configureIntent(&message)
+        let generation = readerGeneration
         do {
             let result = try await service.sendConversation(owner, message: message)
+            guard generation == readerGeneration else { return false }
             if let newID = result.conversationId { conversationID = newID }
             return applyDelivery(result, id: id)
         } catch let error as URLError where [.notConnectedToInternet, .cannotConnectToHost, .cannotFindHost].contains(error.code) {
+            guard generation == readerGeneration else { return false }
             setNote(id, "Offline · waiting to retry", retryable: true)
         } catch {
+            guard generation == readerGeneration else { return false }
             // Timeout or a lost response does not prove the server rejected it.
             setNote(id, "Delivery uncertain · do not resend")
         }
