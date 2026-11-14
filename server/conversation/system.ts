@@ -21,7 +21,6 @@ import {
 import type { BackendEventSink, BackendEventValue, TurnToken } from './backends/contracts.ts';
 import type { BackendChild, ChildReference } from './backends/contracts.ts';
 import type { WireValue } from '../executor/contracts.ts';
-import { ValueError } from '../core/value_error.ts';
 import {
   ConversationBackendKey,
   AnswerFate,
@@ -1046,11 +1045,11 @@ export class SqliteProcessConversationSystem implements DeliveryServices, Conver
       options.conversation_id !== undefined &&
       options.conversation_id !== token.conversation_id
     )
-      throw new ValueError('event conversation conflicts with turn');
+      throw new TypeError('event conversation conflicts with turn');
     const id = token?.conversation_id ?? options.conversation_id;
-    if (id === undefined) throw new ValueError('a session event must name its conversation');
+    if (id === undefined) throw new TypeError('a session event must name its conversation');
     const state = this.conversation_state(id);
-    if (state === null) throw new ValueError('event names an unknown conversation');
+    if (state === null) throw new TypeError('event names an unknown conversation');
     return own_settlement(
       state,
       take_backend_event_with_receipt(this, state, token, event, options),
