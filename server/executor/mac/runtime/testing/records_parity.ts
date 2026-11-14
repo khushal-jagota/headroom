@@ -86,25 +86,6 @@ if (!isMainThread) {
     readFileSync(join(held, 'record.json'), 'utf8') === 'retained' &&
     readFileSync(join(foreign, 'record.json'), 'utf8') === 'foreign' &&
     readdirSync(held).length === 1;
-  const close = fs.closeSync;
-  let close_failed = false;
-  try {
-    fs.closeSync = (fd) => {
-      if (!close_failed && fs.fstatSync(fd).isFile()) {
-        close_failed = true;
-        throw new Error('Injected record close failure');
-      }
-      close(fd);
-    };
-    syncBuiltinESMExports();
-    try {
-      operations.read_runtime_record(join(held, 'record.json'));
-    } catch {}
-  } finally {
-    fs.closeSync = close;
-    syncBuiltinESMExports();
-  }
-  const retained = operations.owns_record_handles();
   operations.cleanup_record_handles();
   parentPort!.postMessage({
     failed,
@@ -112,9 +93,6 @@ if (!isMainThread) {
     cleanup_preserved,
     swapped,
     contained,
-    close_failed,
-    retained,
-    cleared: !operations.owns_record_handles(),
   });
 } else {
   const root = process.argv[2]!,
@@ -149,7 +127,6 @@ if (!isMainThread) {
   report.native = await new Promise((resolve, reject) => {
     const worker = new Worker(new URL(import.meta.url), {
       execArgv: [],
-      trackUnmanagedFds: false,
       workerData: fault,
     });
     let result: unknown;

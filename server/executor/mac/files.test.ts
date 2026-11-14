@@ -22,6 +22,7 @@ import { afterEach, describe, expect, test } from 'vitest';
 import { FilesService, file_version } from './files.ts';
 import { ServerLifecycleError } from '../../lifecycle/contracts.ts';
 import {
+  close_native_descriptor,
   directory_open_flags,
   flock_descriptor,
   open_relative,
@@ -138,7 +139,7 @@ describe('retained executor file capabilities', () => {
       ]);
       expect(stats.mtimeNs).toBeGreaterThan(BigInt(Number.MAX_SAFE_INTEGER));
     } finally {
-      closeSync(descriptor);
+      close_native_descriptor(descriptor);
       closeSync(parent);
     }
     const [sha, count] = await service.file_digest(source);

@@ -1,10 +1,11 @@
 /** Runtime record byte work stays in the retained FilesService thread. */
 import { randomUUID } from 'node:crypto';
-import { closeSync, constants, fstatSync, readFileSync, writeSync } from 'node:fs';
+import { constants, fstatSync, readFileSync, writeSync } from 'node:fs';
 import { basename, dirname } from 'node:path';
 import { isMainThread } from 'node:worker_threads';
 import { close_retained } from '../retained_cleanup.ts';
 import {
+  close_native_descriptor,
   open_directory_descriptor,
   open_relative,
   rename_relative,
@@ -21,14 +22,14 @@ function retain(fd: number): number {
   return fd;
 }
 function close(fd: number): void {
-  closeSync(fd);
+  close_native_descriptor(fd);
   handles.delete(fd);
 }
 export function owns_record_handles(): boolean {
   return handles.size !== 0;
 }
 export function cleanup_record_handles(): void {
-  const failure = close_retained(handles, closeSync);
+  const failure = close_retained(handles, close_native_descriptor);
   if (failure !== undefined) throw failure;
 }
 /** Preserve the primary failure alongside every close failure. */
