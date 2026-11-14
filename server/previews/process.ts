@@ -1,5 +1,5 @@
 /** Linux evidence proves a readable owner, not authorship or hidden socket holders. */
-import { execFile } from 'node:child_process';
+import { ChildProcesses } from '../lifecycle/owned_processes.ts';
 import { readFile, readdir, readlink, realpath, stat, opendir } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { path_is_within } from '../core/path_containment.ts';
@@ -243,7 +243,7 @@ export class LinuxProcessInspector {
 
 function git(args: string[], deadline: number): Promise<{ success: boolean; stdout: string }> {
   return new Promise((fulfill, reject) => {
-    execFile(
+    new ChildProcesses().execFile(
       'git',
       args,
       { timeout: Math.max(1, Math.ceil(deadline - performance.now())), encoding: 'utf8' },
@@ -252,7 +252,7 @@ function git(args: string[], deadline: number): Promise<{ success: boolean; stdo
           reject(error);
           return;
         }
-        fulfill({ success: error === null, stdout });
+        fulfill({ success: error === null, stdout: stdout.toString() });
       },
     );
   });

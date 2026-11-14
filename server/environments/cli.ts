@@ -191,7 +191,7 @@ export async function environment_backup_current(
         await deps.write_warning(output);
       }
     }
-    // Backup's domain RuntimeErrors are distinct from unexpected validator errors.
+    // Backup failures do not become manifest warnings.
     try {
       const source = deps.admit_path(deps.expand_path(args.source_db)),
         backup = deps.admit_path(deps.expand_path(args.backup_dir));

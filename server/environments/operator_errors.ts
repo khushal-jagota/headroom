@@ -13,10 +13,5 @@ export function domain_error(
   if (os_error(error)) return true;
   if (error instanceof AppManifestValidationFailure)
     return options.runtime !== false || error.category !== 'runtime';
-  return (
-    error instanceof TypeError ||
-    error.name === 'ValueError' ||
-    (options.runtime !== false && error.name === 'RuntimeError') ||
-    (options.plain !== false && error.constructor === Error)
-  );
+  return error instanceof TypeError || (options.plain !== false && error.constructor === Error);
 }

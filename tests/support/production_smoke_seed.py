@@ -69,7 +69,8 @@ def main() -> None:
                 if response.status_code != call["status"]:
                     raise RuntimeError(
                         f"{call['method']} {call['path']}: "
-                        f"{response.status_code}: {response.text[:1000]}"
+                        f"{response.status_code}: {response.text[:1000]}\n"
+                        f"Seed server log:\n{host.log_path.read_text()[-6000:]}"
                     )
                 if step.get("capture"):
                     capture_values(response.json(), step, captures)

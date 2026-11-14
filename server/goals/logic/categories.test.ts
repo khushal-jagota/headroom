@@ -521,16 +521,16 @@ test('binding validation rejects ambiguous geometry without kind algebra', () =>
     'checklist item deadline must be an ISO calendar date or null',
   );
   expect(() => prepare_document(checklist_page('0001-01-01'), () => 'unused')).not.toThrow();
-  for (const date of [
-    '2026-02-30',
-    '2026-13-01',
-    '0000-01-01',
-    '20261029',
-    '2026-W44-4',
-    'invalid',
+  for (const [date, message] of [
+    ['2026-02-30', 'day is out of range for month'],
+    ['2026-13-01', 'month must be in 1..12'],
+    ['0000-01-01', 'year 0 is out of range'],
+    ['20261029', 'reference dates must be ISO calendar dates'],
+    ['2026-W44-4', 'reference dates must be ISO calendar dates'],
+    ['invalid', "Invalid isoformat string: 'invalid'"],
   ]) {
     expect(() => validate_chart({ ...dataset_chart(), reference: [{ date, value: 1 }] })).toThrow(
-      'reference dates must be ISO calendar dates',
+      message,
     );
   }
   const ratio = dataset_chart({ metric: { numerator: 'n', denominator: 'd' } });

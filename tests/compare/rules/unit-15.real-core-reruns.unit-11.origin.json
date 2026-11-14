@@ -3,6 +3,7 @@
     "attention_history_metadata.started_at": "Schema initialization reads real wall time."
   },
   "response_tokens": {
+    "body.revision": "Artifact catalog revisions are opaque inventory tokens. Entries, links, paging fields and revision string types remain strict.",
     "body.record_sha256": "Ticket record digest includes its stored JSON representation, so compare changes.",
     "body.body.record_sha256": "The resource body includes the opaque Ticket digest. Compare its changes, as for direct workspace reads."
   },

@@ -33,8 +33,7 @@ import {
   LifecycleStatus as S,
 } from '../record/lifecycle.ts';
 import type { JsonObject } from '../../executor/wire.generated.ts';
-import { admit_remote_turn } from './remote_turn.ts';
-import { ValueError } from '../../core/value_error.ts';
+import { RemoteTurnRejected, admit_remote_turn } from './remote_turn.ts';
 import type { SqliteProcessConversationSystem } from '../system.ts';
 import { ConversationState, own_settlement, same_turn, set_phase } from './state.ts';
 import { background_tasks_ended_with_child } from './maintenance.ts';
@@ -50,16 +49,18 @@ export function retained_factory(factory: BackendChildFactory): RetainedBackendC
 type AdoptedRun = Omit<RetainedBackendRun, 'turn'> & { readonly turn: TurnToken };
 function admitted_runs(factory: BackendChildFactory): readonly AdoptedRun[] {
   return (retained_factory(factory)?.retained_runs() ?? []).flatMap((run) => {
+    let turn: TurnToken;
     try {
-      return [{ ...run, turn: admit_remote_turn(run.turn) }];
+      turn = admit_remote_turn(run.turn);
     } catch (error) {
-      if (!(error instanceof ValueError)) throw error;
+      if (!(error instanceof RemoteTurnRejected)) throw error;
       console.error(
         `Refusing retained run: conversation=${run.reference.conversation_id} child=${run.reference.child_id}`,
         error,
       );
       return [];
     }
+    return [{ ...run, turn }];
   });
 }
 export function retained_open_runs(
@@ -179,7 +180,7 @@ export async function take_answer_application(
   retry_later_at?: number,
 ): Promise<AcceptedRecordEvent<JsonObject>> {
   const state = host.conversation_state(turn.conversation_id);
-  if (state === null) throw new ValueError('answer application names unknown conversation');
+  if (state === null) throw new TypeError('answer application names unknown conversation');
   return own_settlement(
     state,
     (async () => {
@@ -205,7 +206,7 @@ export async function take_answer_application(
                 attempt.provider_identity !== provider_id ||
                 attempt.operation !== `${kind}_answer`
               )
-                throw new ValueError('answer application lacks an accepted original answer');
+                throw new TypeError('answer application lacks an accepted original answer');
               const rows = host.options.store.read_answer_events_in_transaction(
                 tx,
                 turn.conversation_id,
@@ -232,7 +233,7 @@ export async function take_answer_application(
                 choice instanceof PermissionAnsweredEventPayload ||
                 choice instanceof UserInputAnsweredEventPayload
               ))
-                throw new ValueError('answer application lacks its saved choice');
+                throw new TypeError('answer application lacks its saved choice');
               const request_id =
                 choice instanceof PermissionAnsweredEventPayload
                   ? choice.ask_id
@@ -286,10 +287,10 @@ export function schedule_child_retirement(
   wait_for_reservation = true,
 ): Promise<boolean> {
   const reference = state.retained_child_reference;
-  if (reference === null) throw new ValueError('Retirement lacks retained identity');
+  if (reference === null) throw new TypeError('Retirement lacks retained identity');
   if (state.retirement_task !== null) {
     if (state.retiring_child !== child)
-      throw new ValueError('Pending retirement belongs to another child');
+      throw new TypeError('Pending retirement belongs to another child');
     return state.retirement_task;
   }
   state.child_is_quarantined = true;
@@ -356,7 +357,7 @@ export function schedule_child_retirement(
 }
 function recovery(host: SqliteProcessConversationSystem) {
   if (host.options.remote_recovery === undefined)
-    throw new ValueError('Remote interruption recovery is not bound');
+    throw new TypeError('Remote interruption recovery is not bound');
   return host.options.remote_recovery;
 }
 async function confirm_termination(
@@ -374,7 +375,7 @@ async function confirm_termination(
       !same_reference(retained.reference, reference) ||
       (replaced_by === undefined && !retained.retirement_confirmed)
     )
-      throw new ValueError('Remote child termination was not committed');
+      throw new TypeError('Remote child termination was not committed');
     if (replaced_by !== undefined) await recovery(host).retire_replaced(reference, replaced_by);
     if (state.running_turn !== null)
       await host.end_turn(state, state.running_turn, 'interrupted', null);
@@ -574,14 +575,14 @@ export async function stop_interrupted_remote_child(
   child: BackendChild,
 ): Promise<void> {
   const state = host.conversation_state(reference.conversation_id);
-  if (state === null) throw new ValueError('remote inventory names an unknown conversation');
+  if (state === null) throw new TypeError('remote inventory names an unknown conversation');
   await state.lock.run(() => {
     if (
       !same_reference(state.retained_child_reference, reference) ||
       !state.child_is_quarantined ||
       state.last_ended_turn_token === null
     )
-      throw new ValueError('remote inventory lacks an exact interrupted child');
+      throw new TypeError('remote inventory lacks an exact interrupted child');
     if (state.retirement_task !== null) {
       if (
         !same_reference(
@@ -590,11 +591,11 @@ export async function stop_interrupted_remote_child(
           reference,
         )
       )
-        throw new ValueError('Pending retirement belongs to another child');
+        throw new TypeError('Pending retirement belongs to another child');
       return;
     }
     if (!child.stop_outside_lock)
-      throw new ValueError('Retained child must allow callbacks during stop');
+      throw new TypeError('Retained child must allow callbacks during stop');
     state.child = child;
     schedule_child_retirement(host, state, child);
   });
