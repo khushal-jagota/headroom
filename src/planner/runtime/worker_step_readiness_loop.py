@@ -454,10 +454,11 @@ async def _admitted_tell_a_worker_it_lost_its_memory(
                 # normal end of a race, not a failure.
                 return False
             if worker_memory.an_answer_is_already_waiting(
-                await conversation_system.held_prompts(conversation_id)
+                await conversation_system.sender_message_ids_awaiting_outcome(conversation_id)
             ):
-                # A notice sent while the worker was busy is still queued, and a queued
-                # message writes no row to find. Every poll would send another one.
+                # A notice sent while the worker was busy is still queued, or has just left
+                # the queue, and neither has a row to find yet. Every poll would send
+                # another one.
                 return False
             try:
                 # Admission or the boundary may change while held prompts are read.

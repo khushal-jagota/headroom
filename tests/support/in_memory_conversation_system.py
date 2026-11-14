@@ -561,6 +561,15 @@ class InMemoryConversationSystem:
             for held in state.held_prompts
         )
 
+    async def sender_message_ids_awaiting_outcome(self, conversation_id: str) -> frozenset[str]:
+        # Delivery here is synchronous, so only a held message is ever still on its way.
+        state = self._conversations.get(conversation_id)
+        if state is None:
+            return frozenset()
+        return frozenset(
+            held.sender_message_id for held in state.held_prompts if held.sender_message_id
+        )
+
     async def promote_held_prompt(
         self,
         conversation_id: str,

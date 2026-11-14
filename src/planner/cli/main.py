@@ -1118,6 +1118,7 @@ def ticket_delete(ticket_id: str | None, force: bool, as_json: bool) -> None:
 
 
 @ticket.command("list")
+@click.option("--active", is_flag=True, help="Only unfinished, non-backlogged Tickets.")
 @click.option(
     "--backlogged/--not-backlogged",
     "is_backlogged",
@@ -1155,6 +1156,7 @@ def ticket_delete(ticket_id: str | None, force: bool, as_json: bool) -> None:
 @bounded_options
 @json_option
 def ticket_list(
+    active: bool,
     is_backlogged: bool | None,
     worker_type: tuple[str, ...],
     stage: tuple[str, ...],
@@ -1173,6 +1175,7 @@ def ticket_list(
     params = _drop_none(
         {
             "is_backlogged": is_backlogged,
+            "active": active or None,
             "worker_type": list(worker_type) or None,
             "stage": list(stage) or None,
             "exclude_stage": list(exclude_stage) or None,
@@ -2006,73 +2009,6 @@ def worker_propose(
     _submit_ticket_proposal(ticket_id, body_file, recap, recap_file, as_json)
 
 
-def _request_ticket_help(
-    ticket_id: str | None,
-    owner: bool,
-    chief: bool,
-    recipient_ticket_id: str | None,
-    recipient_manager_id: str | None,
-    as_json: bool,
-) -> None:
-    tid = resolve_ticket_id(ticket_id, as_json)
-    selected = sum(
-        int(value)
-        for value in (
-            owner,
-            chief,
-            recipient_ticket_id is not None,
-            recipient_manager_id is not None,
-        )
-    )
-    if selected > 1:
-        http.fail_validation("request-help accepts at most one recipient", as_json)
-    recipient = None
-    if owner:
-        recipient = {"kind": "owner", "id": "owner"}
-    elif chief:
-        recipient = {"kind": "chief", "id": "chief"}
-    elif recipient_ticket_id is not None:
-        recipient = {"kind": "ticket", "id": recipient_ticket_id}
-    elif recipient_manager_id is not None:
-        recipient = {"kind": "manager", "id": recipient_manager_id}
-    message = read_worker_stdin_body(as_json, "help message")
-    body: dict[str, Any] = {"message": message}
-    if recipient is not None:
-        body["recipient"] = recipient
-    data = http.send("POST", f"/api/tickets/{tid}/request-help", as_json=as_json, json_body=body)
-    http.emit(data, as_json, f"help message {data['fate']}")
-
-
-@worker.command("request-help")
-@click.argument("ticket_id", required=False, envvar=_TICKET_ID_ENV)
-@click.option("--owner", is_flag=True, help="Ask Khushal for help.")
-@click.option("--chief", is_flag=True, help="Ask the Chief of Staff for help.")
-@click.option("--ticket", "recipient_ticket_id", default=None, help="Ask another Ticket worker.")
-@click.option(
-    "--manager",
-    "recipient_manager_id",
-    default=None,
-    help="Ask a Manager.",
-)
-@json_option
-def worker_request_help(
-    ticket_id: str | None,
-    owner: bool,
-    chief: bool,
-    recipient_ticket_id: str | None,
-    recipient_manager_id: str | None,
-    as_json: bool,
-) -> None:
-    _request_ticket_help(
-        ticket_id,
-        owner,
-        chief,
-        recipient_ticket_id,
-        recipient_manager_id,
-        as_json,
-    )
-
-
 @worker.command("recap")
 @click.argument("ticket_id", required=False, envvar=_TICKET_ID_ENV)
 @click.option("--body-file", default=None, help="Removed: pipe recap text on stdin instead.")
@@ -2133,37 +2069,6 @@ def ticket_proposal(
     )
 
 
-@ticket.command("request-help")
-@click.argument("ticket_id", required=False)
-@click.option("--owner", is_flag=True, help="Ask Khushal for help.")
-@click.option("--chief", is_flag=True, help="Ask the Chief of Staff for help.")
-@click.option("--ticket", "recipient_ticket_id", default=None, help="Ask another Worker.")
-@click.option(
-    "--manager",
-    "recipient_manager_id",
-    default=None,
-    help="Ask a Manager.",
-)
-@json_option
-def ticket_request_help(
-    ticket_id: str | None,
-    owner: bool,
-    chief: bool,
-    recipient_ticket_id: str | None,
-    recipient_manager_id: str | None,
-    as_json: bool,
-) -> None:
-    """Record that this Ticket needs help and send the stdin message to one recipient."""
-    _request_ticket_help(
-        ticket_id,
-        owner,
-        chief,
-        recipient_ticket_id,
-        recipient_manager_id,
-        as_json,
-    )
-
-
 _PUBLIC_COMMAND_HELP = {
     ("send-message",): (
         "Send one message to one existing Panels conversation.\n\n"
@@ -2206,10 +2111,6 @@ _PUBLIC_COMMAND_HELP = {
     ): "Restart one dead Worker through the existing recovery route.",
     ("ticket", "block"): "Add one blocking Ticket relationship.",
     ("ticket", "unblock"): "Remove one blocking Ticket relationship.",
-    (
-        "ticket",
-        "request-help",
-    ): "Record and send one Ticket help request from standard input.",
     ("manager", "create"): "Create one Manager.",
     ("manager", "list"): (
         "List Managers as bounded summaries with the settled boolean. "

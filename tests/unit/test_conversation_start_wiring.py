@@ -207,6 +207,9 @@ class _LinkWatchingConversationSystem:
     async def held_prompts(self, conversation_id: str) -> tuple[HeldPrompt, ...]:
         return await self._system.held_prompts(conversation_id)
 
+    async def sender_message_ids_awaiting_outcome(self, conversation_id: str) -> frozenset[str]:
+        return await self._system.sender_message_ids_awaiting_outcome(conversation_id)
+
     async def promote_held_prompt(
         self,
         conversation_id: str,

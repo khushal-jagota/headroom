@@ -168,6 +168,21 @@ def test_manager_commands_reject_old_names(monkeypatch: pytest.MonkeyPatch) -> N
     assert targets == [{"kind": "manager", "id": "si_same"}]
 
 
+def test_send_message_requires_one_explicit_recipient(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A Worker cannot fall back to its ceiling holder when the recipient is absent."""
+    def unexpected_send(*args: Any, **kwargs: Any) -> dict[str, Any]:
+        pytest.fail("Recipient validation must precede HTTP delivery")
+
+    monkeypatch.setattr(http, "send", unexpected_send)
+    runner = CliRunner()
+    for recipients in ([], ["--owner", "--chief"]):
+        result = runner.invoke(
+            cli_main.main, ["send-message", *recipients, "--message", "Please decide."]
+        )
+        assert result.exit_code != 0
+        assert "requires exactly one of --owner, --chief, --ticket, or --manager" in result.output
+
+
 @pytest.mark.parametrize("prefix", [("manager",)])
 def test_manager_state_survives_cli_reads_and_filters(
     monkeypatch: pytest.MonkeyPatch, prefix: tuple[str, ...]
@@ -339,3 +354,29 @@ def test_recap_request_commands_use_the_shared_door(
     assert result.exit_code == 0, result.output
     assert json.loads(result.output) == {"fate": "queued"}
     assert calls == [("POST", "/api/recap-requests", {"target": {"kind": kind, "id": "example"}})]
+
+
+def test_ticket_list_active_reaches_api_without_changing_inventory_default(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[dict[str, Any]] = []
+
+    def send(method: str, path: str, **kwargs: Any) -> dict[str, Any]:
+        assert method == "GET" and path == "/api/tickets"
+        calls.append(kwargs["params"])
+        return {
+            "tickets": [],
+            "page": {
+                "match_count": 0, "return_count": 0, "limit": 30, "offset": 0,
+                "omitted_before": 0, "omitted_after": 0, "complete": True,
+                "next_offset": None,
+            },
+        }
+
+    monkeypatch.setattr(http, "send", send)
+    runner = CliRunner()
+    for options in ([], ["--active"]):
+        result = runner.invoke(cli_main.main, ["ticket", "list", *options, "--json"])
+        assert result.exit_code == 0, result.output
+    assert "active" not in calls[0]
+    assert calls[1]["active"] is True

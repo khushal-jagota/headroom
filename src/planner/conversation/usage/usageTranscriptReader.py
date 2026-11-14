@@ -7,6 +7,7 @@ Node streams become synchronous byte streams, called outside the event loop.
 from __future__ import annotations
 
 import os
+from copy import deepcopy
 from pathlib import Path
 from typing import Any, BinaryIO
 
@@ -106,7 +107,7 @@ def readTranscriptRecords(
             and guardMatches(handle, resumeFrom)
         ):
             if resumeFrom["codexState"] is not None:
-                codexState = dict(resumeFrom["codexState"])
+                codexState = deepcopy(resumeFrom["codexState"])
             start = resumeFrom["resumeOffset"]
             resumed = True
 
@@ -161,7 +162,7 @@ def readTranscriptRecords(
         if pendingChunks:
             pending = pendingChunks[0] if len(pendingChunks) == 1 else b"".join(pendingChunks)
             if pending:
-                parseLine(toLineString(pending), dict(codexState), tailRecords, True)
+                parseLine(toLineString(pending), deepcopy(codexState), tailRecords, True)
         guardLength = min(GUARD_LENGTH, resumeOffset)
         guardHash = 0
         if guardLength > 0:

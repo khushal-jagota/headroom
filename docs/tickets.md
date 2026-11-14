@@ -8,7 +8,7 @@ A Ticket is one piece of work small enough to hand to a single AI Worker. It is 
 - **Stage text.** Each stage before Done has one blank. Filling it, and having that fill settle, moves the Ticket one stage forward. Brief holds the intake: the original ask, its boundaries, and advice that should stay readable beside the later stages.
 - **A ceiling and a holder.** The ceiling is the stage at which the Worker's proposals start waiting for a person. The holder is who that person is.
 - **An assignment** to Chief or one ordinary Manager. This is who the work sits under.
-- **A conversation**, the Worker's only input. See [Conversations](conversations.md).
+- **A conversation**, the Worker's only input. Workers send ordinary messages to an explicit recipient, separate from the ceiling holder. See [Conversations](conversations.md).
 - **A launch setup**: backend, model, and reasoning, copied from a selected preset or explicitly chosen for custom work, and fixed once the conversation exists.
 - **A machine**: a fixed execution destination, chosen at creation.
 - **Blockers**, other Tickets that must be Done before this one may start a step.
@@ -66,7 +66,7 @@ If cleanup cannot establish that the old Worker ended, restart refuses before th
 
 ## Backlog and delete
 
-Backlog pauses the next automatic Worker step. The stage, any parked proposal, the conversation, and the artifacts stay. Messages and approvals still work, and a turn already running keeps running. Resume clears the pause and nothing else.
+Backlog pauses the next automatic Worker step. The stage, any parked proposal, the conversation, and the artifacts stay. Messages and approvals still work, and a turn already running keeps running. Resume clears the pause and restores eligibility under the ordinary checks. Deferred children do not contribute to a Manager's active-work rollup. Their direct records retain the proposal and conversation facts.
 
 Tickets come from Khushal, Chief, or Managers. Tickets cannot be created on a timer. Daily schedules for measure sources remain separate.
 
@@ -95,4 +95,4 @@ The Ticket page is the inspector: the stage ladder, the current gate with its pr
 - `src/planner/tickets/logic/`: the stage machine, proposal routing, and the resolver (`machine.py`, `proposal_routing.py`, `resolution.py`).
 - `web/src/routes/TicketRoute.svelte` and `web/src/components/WorkerProposalCard.svelte`: the Ticket page and its gate.
 
-_Last verified: 2026-11-13._
+_Last verified: 2026-11-14._

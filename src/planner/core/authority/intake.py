@@ -123,11 +123,6 @@ def admit_command(
             return
         if route.endswith('/propose'):
             return  # The proposal writer retains its self identity check.
-        if route.endswith('/request-help'):
-            authority.require_self(conn, principal, authority.ticket(ticket_id))
-            if body.get('recipient') is not None:
-                admit_message(conn, principal, _principal(body['recipient']))
-            return
         target = authority.ticket(ticket_id)
         own = method == 'PATCH' and not (set(body) & (TICKET_FIELDS_ONLY_FROM_ABOVE | {'project'}))
         if method == 'PATCH' and set(body) & {'manager', 'manager_id'}:

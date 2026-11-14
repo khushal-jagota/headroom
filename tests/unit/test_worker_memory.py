@@ -20,12 +20,18 @@ def conn(tmp_path: Path) -> sqlite3.Connection:
     return connection
 
 
-def _make_conversation(conn: sqlite3.Connection, conversation_id: str, *, compacted: int) -> None:
+def _make_conversation(
+    conn: sqlite3.Connection,
+    conversation_id: str,
+    *,
+    compacted: int,
+    inside_a_working_turn: bool = True,
+) -> None:
     conn.execute(
         "INSERT INTO conversations (conversation_id, backend_key, workspace_folder, access, "
-        "created_at, automatically_compacted_through_sequence) VALUES (?, 'claude', '/tmp', "
-        "'full', 0, ?)",
-        (conversation_id, compacted),
+        "created_at, automatically_compacted_through_sequence, "
+        "working_turn_compacted_through_sequence) VALUES (?, 'claude', '/tmp', 'full', 0, ?, ?)",
+        (conversation_id, compacted, compacted if inside_a_working_turn else 0),
     )
 
     if compacted:
@@ -99,8 +105,8 @@ def test_only_an_uncertain_notice_suppresses_the_scan_until_the_next_boundary(
     assert worker_memory.conversation_holds_an_unanswered_memory_loss(conn, "c1")
 
     conn.execute(
-        "UPDATE conversations SET automatically_compacted_through_sequence=12 "
-        "WHERE conversation_id='c1'"
+        "UPDATE conversations SET automatically_compacted_through_sequence=12, "
+        "working_turn_compacted_through_sequence=12 WHERE conversation_id='c1'"
     )
     conn.execute("INSERT INTO conversation_events VALUES ('c1',13,'context_compacted','{}',0)")
     assert worker_memory.ticket_ids_holding_an_unanswered_memory_loss(conn) == ("worker",)
@@ -117,5 +123,17 @@ def test_a_backlogged_ticket_is_not_woken_but_still_owes_its_memory_loss_note(
 
     # Backlog keeps the claim out, so the claim alone must not permit the notice.
     conn.execute("UPDATE tickets SET is_backlogged=1 WHERE id='worker'")
+    assert worker_memory.ticket_ids_holding_an_unanswered_memory_loss(conn) == ()
+    assert worker_memory.conversation_holds_an_unanswered_memory_loss(conn, "c1")
+
+
+def test_panels_idle_compact_sends_no_mid_step_notice_but_the_next_wake_still_owes_it(
+    conn: sqlite3.Connection,
+) -> None:
+    _make_conversation(conn, "c1", compacted=7, inside_a_working_turn=False)
+    _add_prompt(conn, "c1", sequence=3, sender_message_id="worker_step_message_first")
+    _add_ticket(conn, "worker", claim="out", conversation_id="c1")
+
+    # The Worker sat idle, so nothing tells it to continue a step it was not doing.
     assert worker_memory.ticket_ids_holding_an_unanswered_memory_loss(conn) == ()
     assert worker_memory.conversation_holds_an_unanswered_memory_loss(conn, "c1")

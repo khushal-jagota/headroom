@@ -462,7 +462,10 @@ def test_darwin_home_startup_polls_an_external_waiting_update(
         deadline = monotonic() + 10
         while monotonic() < deadline:
             attempt = harness.store.read()
-            if attempt is not None and attempt.state in {"installing", "failed"}:
+            if attempt is not None and (
+                (identity_valid and launched.is_set() and attempt.backup is not None)
+                or (not identity_valid and attempt.state == "failed")
+            ):
                 break
             threading.Event().wait(0.01)
         assert attempt is not None and "work_paused" in attempt.steps, updater.status()

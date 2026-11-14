@@ -1306,6 +1306,7 @@ class ConversationStore:
         *,
         agent_activity: bool = False,
         automatic_compaction_confirmed: bool = False,
+        working_turn_compaction_confirmed: bool = False,
         automatic_compaction_result: AutomaticCompactionResult | None = None,
         create_failure_notice: bool = False,
         owner_read_through_sequence: int | None = None,
@@ -1320,6 +1321,7 @@ class ConversationStore:
             payloads,
             agent_activity=agent_activity,
             automatic_compaction_confirmed=automatic_compaction_confirmed,
+            working_turn_compaction_confirmed=working_turn_compaction_confirmed,
             automatic_compaction_result=automatic_compaction_result,
             create_failure_notice=create_failure_notice,
             owner_read_through_sequence=owner_read_through_sequence,
@@ -1501,6 +1503,7 @@ class ConversationStore:
         *,
         agent_activity: bool,
         automatic_compaction_confirmed: bool,
+        working_turn_compaction_confirmed: bool = False,
         automatic_compaction_result: AutomaticCompactionResult | None,
         create_failure_notice: bool = False,
         lifecycle: tuple[LifecycleFact, ...] = (),
@@ -1511,6 +1514,7 @@ class ConversationStore:
             payloads,
             agent_activity=agent_activity,
             automatic_compaction_confirmed=automatic_compaction_confirmed,
+            working_turn_compaction_confirmed=working_turn_compaction_confirmed,
             automatic_compaction_result=automatic_compaction_result,
             create_failure_notice=create_failure_notice,
             lifecycle=lifecycle,
@@ -2015,6 +2019,7 @@ class ConversationStore:
         *,
         agent_activity: bool,
         automatic_compaction_confirmed: bool,
+        working_turn_compaction_confirmed: bool,
         automatic_compaction_result: AutomaticCompactionResult | None,
         create_failure_notice: bool,
         owner_read_through_sequence: int | None,
@@ -2032,6 +2037,7 @@ class ConversationStore:
                     payloads,
                     agent_activity=agent_activity,
                     automatic_compaction_confirmed=automatic_compaction_confirmed,
+                    working_turn_compaction_confirmed=working_turn_compaction_confirmed,
                     automatic_compaction_result=automatic_compaction_result,
                     create_failure_notice=create_failure_notice,
                     owner_read_through_sequence=owner_read_through_sequence,
@@ -2497,6 +2503,7 @@ class ConversationStore:
         *,
         agent_activity: bool = False,
         automatic_compaction_confirmed: bool = False,
+        working_turn_compaction_confirmed: bool = False,
         automatic_compaction_result: AutomaticCompactionResult | None = None,
         create_failure_notice: bool = False,
         owner_read_through_sequence: int | None = None,
@@ -2539,6 +2546,15 @@ class ConversationStore:
                 "WHERE conversation_id=?",
                 (conversation_id,),
             )
+            if working_turn_compaction_confirmed:
+                # Panels' own idle /compact interrupts no step, so only this boundary
+                # owes a Worker the mid-step memory-loss notice.
+                conn.execute(
+                    "UPDATE conversations SET "
+                    "working_turn_compacted_through_sequence=latest_agent_activity_sequence "
+                    "WHERE conversation_id=?",
+                    (conversation_id,),
+                )
         elif automatic_compaction_result is AutomaticCompactionResult.not_compacted:
             conn.execute(
                 "UPDATE conversations SET "

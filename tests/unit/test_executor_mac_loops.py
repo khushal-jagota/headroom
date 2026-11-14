@@ -481,7 +481,9 @@ def test_each_child_runs_in_order_and_no_child_or_the_poll_waits_on_another(
                 # went on from the recorded cursor.
                 assert calls.count("a:prompt") == 0 and "b:prompt" in calls
                 await until(lambda: 4 in stub.polls)
-                assert f"start_{a.child_id}" not in stub.results
+                assert f"start_{a.child_id}" not in stub.results, stub.results.get(
+                    f"start_{a.child_id}"
+                )
                 held.set()
                 await until(lambda: f"prompt_{a.child_id}" in stub.results)
                 a_calls = [call for call in calls if call.startswith("a:")]

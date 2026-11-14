@@ -271,6 +271,15 @@ class UsageService:
                 priceOverrides=createOverrideRateTable(settings.get("usagePriceOverrides", {})),
             )
         )
+        # Reserve covered identities across every file before aggregation. A
+        # copied compaction can precede its parent in directory iteration order.
+        coveredCompactions = {
+            record["dedupeKey"]
+            for source in scannedDirs
+            for file in source["files"] or []
+            for record in file["records"]
+            if record.get("compactionCovered")
+        }
         sources = []
         livePaths: set[str] = set()
         walkedRoots = []
@@ -305,6 +314,8 @@ class UsageService:
                     continue
                 scannedFiles += 1
                 for record in file["records"]:
+                    if record["dedupeKey"] in coveredCompactions:
+                        continue
                     if aggregator.add(record) and record["sessionId"]:
                         sessionIds.add(record["sessionId"])
             sources.append(

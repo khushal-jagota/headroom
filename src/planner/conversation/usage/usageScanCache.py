@@ -11,7 +11,7 @@ from typing import Any
 from .usageTranscriptReader import GUARD_LENGTH
 from .usageTranscripts import finiteNumber
 
-USAGE_SCAN_CACHE_VERSION = 3
+USAGE_SCAN_CACHE_VERSION = 5
 ScanCache = dict[str, dict[str, Any]]
 CachedFile = dict[str, Any]
 INVALID = object()
@@ -44,6 +44,8 @@ def encodeScanCache(cache: ScanCache) -> dict[str, Any]:
             totals["reasoningTokens"],
             record["dedupeKey"],
             record["reportedCostUsd"],
+            record.get("cacheCreation1hTokens", 0),
+            {key: record[key] for key in ("serviceTier", "compactionCovered") if key in record},
         ]
 
     files: dict[str, Any] = {}
@@ -81,6 +83,69 @@ def decodeCodexState(value: Any) -> Any:
         or not finiteNumber(value.get("forkCopyAnchorMs"))
     ):
         return INVALID
+    if (
+        "serviceTier" not in value
+        or "cumulativeUsage" not in value
+        or not isinstance(value.get("compactions"), dict)
+        or not isinstance(value.get("compactionMarkers"), dict)
+        or not isinstance(value.get("completedCompactions"), list)
+    ):
+        return INVALID
+
+    def counters(item: Any) -> bool:
+        return isinstance(item, dict) and all(
+            isinstance(k, str) and safeInteger(v) and v >= 0 for k, v in item.items()
+        )
+
+    if (value["serviceTier"] is not None and not isinstance(value["serviceTier"], str)) or (
+        value["cumulativeUsage"] is not None and not counters(value["cumulativeUsage"])
+    ):
+        return INVALID
+    if not all(isinstance(item, str) for item in value["completedCompactions"]):
+        return INVALID
+    for identifier, snapshots in value["compactionMarkers"].items():
+        if not isinstance(identifier, str) or not isinstance(snapshots, list):
+            return INVALID
+        for snapshot in snapshots:
+            if (
+                not isinstance(snapshot, dict)
+                or not counters(snapshot.get("current"))
+                or not counters(snapshot.get("last"))
+                or "previous" not in snapshot
+                or (snapshot["previous"] is not None and not counters(snapshot["previous"]))
+            ):
+                return INVALID
+    for identifier, candidate in value["compactions"].items():
+        if not isinstance(identifier, str) or not isinstance(candidate, dict):
+            return INVALID
+        record = candidate.get("record")
+        if (
+            not counters(candidate.get("usage"))
+            or not counters(candidate.get("cumulative"))
+            or not isinstance(candidate.get("covered"), bool)
+            or not isinstance(record, dict)
+        ):
+            return INVALID
+        if (
+            record.get("provider") != "codex"
+            or not isinstance(record.get("model"), str)
+            or not isinstance(record.get("sessionId"), str)
+            or not finiteNumber(record.get("timestampMs"))
+            or not isinstance(record.get("dedupeKey"), str)
+            or not counters(record.get("totals"))
+            or not all(
+                key in record["totals"]
+                for key in (
+                    "uncachedInputTokens",
+                    "cachedInputTokens",
+                    "cacheCreationTokens",
+                    "outputTokens",
+                    "reasoningTokens",
+                )
+            )
+            or "reportedCostUsd" not in record
+        ):
+            return INVALID
     return {
         key: value[key]
         for key in (
@@ -90,6 +155,11 @@ def decodeCodexState(value: Any) -> Any:
             "sawSessionMeta",
             "suppressingForkCopies",
             "forkCopyAnchorMs",
+            "serviceTier",
+            "compactions",
+            "compactionMarkers",
+            "completedCompactions",
+            "cumulativeUsage",
         )
     }
 
@@ -126,7 +196,7 @@ def decodeScanCache(document: Any) -> ScanCache:
     def decodeRecords(rows: list[Any], provider: str) -> list[dict[str, Any]] | None:
         records = []
         for row in rows:
-            if not isinstance(row, list) or len(row) < 10:
+            if not isinstance(row, list) or len(row) < 11:
                 return None
             (
                 timestampMs,
@@ -139,19 +209,44 @@ def decodeScanCache(document: Any) -> ScanCache:
                 reasoning,
                 dedupeKey,
                 reportedCostUsd,
-            ) = row[:10]
+                cacheCreation1hTokens,
+            ) = row[:11]
             model = tableValue(models, modelIndex)
             if (
-                not finiteNumber(timestampMs)
+                not safeInteger(cacheCreation1hTokens)
+                or cacheCreation1hTokens < 0
+                or not finiteNumber(timestampMs)
                 or model is None
                 or not all(
                     finiteNumber(value)
                     for value in (uncached, cached, cacheCreation, output, reasoning)
                 )
+                or cacheCreation1hTokens > cacheCreation
+            ):
+                return None
+            metadata = row[11] if len(row) > 11 else {}
+            if (
+                not isinstance(metadata, dict)
+                or any(key not in ("serviceTier", "compactionCovered") for key in metadata)
+                or (
+                    "serviceTier" in metadata
+                    and metadata["serviceTier"] is not None
+                    and not isinstance(metadata["serviceTier"], str)
+                )
+                or (
+                    "compactionCovered" in metadata
+                    and not isinstance(metadata["compactionCovered"], bool)
+                )
             ):
                 return None
             records.append(
                 dict(
+                    **(
+                        {"cacheCreation1hTokens": cacheCreation1hTokens}
+                        if cacheCreation1hTokens
+                        else {}
+                    ),
+                    **metadata,
                     provider=provider,
                     timestampMs=timestampMs,
                     model=model,

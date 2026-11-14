@@ -10,7 +10,7 @@ from time import monotonic
 from planner.conversation.workspace_admission import WorkspaceAdmission
 from planner.core.clock import Clock
 from planner.core.db import connect
-from planner.notifications import apns_data, data
+from planner.notifications import apns_data, attention, data
 from planner.notifications.apns import APNsAdapter, TokenAPNsAdapter, canonical_server_origin
 from planner.notifications.contracts import APNsConfig
 from planner.notifications.web_push import StandardsWebPushAdapter, WebPushAdapter
@@ -73,6 +73,8 @@ class NotificationLoop:
                     if not data.delivery_is_current(conn, delivery.edge, now):
                         data.expire_stale_deliveries(conn, now)
                         continue
+                    if not attention.task_alert_is_current(conn, delivery.edge):
+                        continue
                     sent += 1
                     result = self._adapter.send(
                         delivery.subscription,
@@ -94,6 +96,8 @@ class NotificationLoop:
                         now = self._clock.now_unix()
                         if not data.delivery_is_current(conn, native_delivery.edge, now):
                             data.expire_stale_deliveries(conn, now, native=True)
+                            continue
+                        if not attention.task_alert_is_current(conn, native_delivery.edge):
                             continue
                         sent += 1
                         result_native = self._apns.send(

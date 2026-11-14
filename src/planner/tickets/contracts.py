@@ -71,6 +71,7 @@ class TicketListFilters:
     ticket_statuses: tuple[TicketStatus, ...] = ()
     excluded_ticket_statuses: tuple[TicketStatus, ...] = ()
     include_terminal: bool = False
+    active: bool = False
     search: str | None = None
     is_backlogged: bool | None = None
     worker_types: tuple[str, ...] = ()
