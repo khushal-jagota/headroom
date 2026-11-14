@@ -129,7 +129,9 @@ class NodePeer:
                 assert self.process.stdin is not None
                 self.process.stdin.close()
                 await asyncio.wait_for(self.process.wait(), 25)
-            assert self.process.returncode == 0, self.log.read_text()
+            log = self.log.read_text()
+            assert self.process.returncode == 0, log
+            assert "closed but not opened in unmanaged mode" not in log, log
             return self.final
         finally:
             if self.process.returncode is None:

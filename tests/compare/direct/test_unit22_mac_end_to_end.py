@@ -37,8 +37,6 @@ from planner.executor import ipc_client
 from planner.executor.configuration import ITEM_BATCH_TIMEOUT_SECONDS
 from planner.executor.protocol import ChildOperation, IpcOperation, type_adapter
 
-pytestmark = pytest.mark.usefixtures("executor_transport_home")
-
 
 def test_early_prompt_event_and_idle_publications_do_not_wait_for_retry_timer(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
