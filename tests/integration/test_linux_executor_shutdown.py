@@ -11,6 +11,7 @@ import json
 import signal
 import time
 from pathlib import Path
+from typing import cast
 
 from tests.support.executor_https import serve_executor_app
 from tests.support.executor_sleep_cycles import (
@@ -27,8 +28,9 @@ from planner.platform_runtime.linux.worker_processes import LinuxWorkerProcesses
 
 def test_linux_executor_term_stops_active_supervised_worker(tmp_path: Path) -> None:
     class OneWorker(SleepCycles):
-        conversations = ("ca",)
-        roles = ("stream",)
+        # The fixture intentionally selects one worker from the inferred three-worker tuple.
+        conversations = cast(tuple[str, str, str], ("ca",))
+        roles = cast(tuple[str, str, str], ("stream",))
 
     async def exercise() -> None:
         harness = OneWorker(

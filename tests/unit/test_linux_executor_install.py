@@ -3,6 +3,7 @@
 from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
+from typing import TypedDict
 
 import pytest
 
@@ -177,7 +178,14 @@ def test_failed_first_install_removes_own_files_and_allows_retry(
             raise OSError("unit publication failed")
         return replace_path(path, target)
 
-    arguments = dict(
+    class InstallArguments(TypedDict):
+        archive: Path
+        archive_sha256: str
+        archive_size: int
+        credential_file: Path
+        unit_directory: Path
+
+    arguments: InstallArguments = dict(
         archive=tmp_path / "archive.tar.gz",
         archive_sha256="a" * 64,
         archive_size=123,
