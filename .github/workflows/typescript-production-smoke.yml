@@ -1,6 +1,7 @@
 name: TypeScript production smoke
 
 on:
+  workflow_dispatch:
   push:
     branches: [feature/typescript-backend]
 
