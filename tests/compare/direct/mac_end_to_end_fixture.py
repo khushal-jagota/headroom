@@ -384,6 +384,8 @@ async def boot(
     root: Path, *, early_event: bool = False, claude_cleanup: bool = False
 ) -> AsyncIterator[Harness]:
     homes = create_synthetic_homes(root)
+    for key in ("CODEX_HOME", "CLAUDE_CONFIG_DIR", "PLAN_HERMES_HOME"):
+        (Path(homes[key]) / "skills").mkdir()
     database = root / "vps.sqlite"
     with contextlib.closing(connect(str(database))) as connection:
         create_schema(connection)
