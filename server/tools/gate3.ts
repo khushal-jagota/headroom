@@ -166,11 +166,27 @@ conn.commit()
 audit_ticket_registry_integrity(conn, startup=True)
 if conn.execute('SELECT count(*) FROM tickets WHERE integrity_error_reason IS NOT NULL').fetchone()[0]:
     raise RuntimeError('Copied Ticket integrity audit failed; no server started')
-samples = [r[0] for r in conn.execute('SELECT conversation_id FROM conversations ORDER BY created_at DESC LIMIT 3')]
+histories = []
+for row in conn.execute("SELECT conversation_id,count(*) AS events FROM conversation_events GROUP BY conversation_id ORDER BY events DESC,conversation_id LIMIT 20"):
+    conversation_id, count = row
+    histories.append({'id': conversation_id, 'events': count})
+tickets = [dict(row) for row in conn.execute("SELECT id,stage FROM (SELECT id,stage,row_number() OVER (PARTITION BY stage ORDER BY updated_at DESC,id) AS position FROM tickets) WHERE position<=10 ORDER BY stage,id")]
+corpus = {'conversations': histories, 'tickets': tickets,
+          'stages': dict(conn.execute('SELECT stage,count(*) FROM tickets GROUP BY stage ORDER BY stage')),
+          'projects': [r[0] for r in conn.execute('SELECT id FROM projects ORDER BY id')],
+          'managers': [r[0] for r in conn.execute('SELECT id FROM managers ORDER BY id')],
+          'goals': [r[0] for r in conn.execute('SELECT id FROM goals ORDER BY id')]}
 conn.close()
-print(json.dumps({'removed': removed, 'conversations': samples}))
+print(json.dumps({'removed': removed, 'corpus': corpus}))
 `;
-let conversations: string[] = [];
+let corpus!: {
+  conversations: { id: string; events: number }[];
+  tickets: { id: string; stage: string }[];
+  stages: Record<string, number>;
+  projects: string[];
+  managers: string[];
+  goals: string[];
+};
 for (const item of instances) {
   const prepared = await execute(python, ['-c', prepare, copied, item.env.PLAN_DB_PATH], {
     cwd: app,
@@ -178,7 +194,7 @@ for (const item of instances) {
     timeout: 180_000,
     maxBuffer: 1024 * 1024,
   });
-  conversations = (JSON.parse(prepared.stdout) as { conversations: string[] }).conversations;
+  corpus = (JSON.parse(prepared.stdout) as { corpus: typeof corpus }).corpus;
   await writeFile(join(evidence, item.name + '-sanitization.json'), prepared.stdout, {
     mode: 0o600,
   });
@@ -260,8 +276,13 @@ async function stop(item: Instance) {
   }
   await item.log?.close();
 }
-const results: { request: string; matched: boolean; status?: number[]; differences?: string[] }[] =
-  [];
+const results: {
+  category: string;
+  request: string;
+  matched: boolean;
+  status?: number[];
+  differences?: string[];
+}[] = [];
 function differences(a: unknown, b: unknown, path = ''): string[] {
   if (isDeepStrictEqual(a, b)) return [];
   if (
@@ -285,7 +306,7 @@ function differences(a: unknown, b: unknown, path = ''): string[] {
   }
   return [path || '/'];
 }
-async function compare(path: string): Promise<unknown> {
+async function compare(path: string, category = 'overview'): Promise<unknown> {
   const replies = [];
   for (const item of instances) {
     const response = await fetch(item.base + path, { signal: AbortSignal.timeout(30_000) });
@@ -309,17 +330,13 @@ async function compare(path: string): Promise<unknown> {
     replies[1].json &&
     isDeepStrictEqual(replies[0], replies[1]);
   results.push({
+    category,
     request: path,
     matched,
     status: replies.map((value) => value.status),
     differences: differences(replies[0], replies[1]),
   });
   return replies[0].body;
-}
-function entries(body: unknown, key: string): Record<string, unknown>[] {
-  if (typeof body !== 'object' || body === null || !(key in body)) return [];
-  const list = (body as Record<string, unknown>)[key];
-  return Array.isArray(list) ? list.filter((value) => value && typeof value === 'object') : [];
 }
 let completed = false;
 try {
@@ -332,27 +349,39 @@ try {
     '/api/review',
   ])
     await compare(path);
-  for (const goal of entries(await compare('/api/goals'), 'goals').slice(0, 2))
-    await compare('/api/goals/' + encodeURIComponent(String(goal.id)));
-  for (const conversation of conversations) {
-    const path = '/api/conversation/conversations/' + encodeURIComponent(conversation);
-    await compare(path);
-    await compare(path + '/events?limit=30');
+  for (const project of corpus.projects) {
+    const id = encodeURIComponent(project);
+    await compare(`/api/projects?detail=full&id=${id}`, 'projects');
+    await compare(
+      `/api/tickets?detail=summary&include_terminal=true&project_id=${id}&limit=20&offset=0`,
+      'projects',
+    );
   }
-  const tickets = entries(
-    await compare('/api/tickets?detail=summary&limit=20&offset=0'),
-    'tickets',
-  );
-  for (const ticket of tickets.slice(0, 3)) {
-    const id = encodeURIComponent(String(ticket.id));
-    await compare(`/api/tickets?detail=full&id=${id}`);
-    await compare(`/api/tickets/${id}/workspace`);
+  await compare('/api/goals', 'goals');
+  for (const goal of corpus.goals) await compare('/api/goals/' + encodeURIComponent(goal), 'goals');
+  for (const conversation of corpus.conversations) {
+    const path = '/api/conversation/conversations/' + encodeURIComponent(conversation.id);
+    await compare(path, 'conversations');
+    await compare(path + '/events?after=0&limit=100', 'conversations');
+    await compare(path + '/events?limit=100', 'conversations');
   }
-  const managers = entries(await compare('/api/managers?detail=full'), 'managers');
-  for (const manager of managers.slice(0, 2)) {
-    const id = encodeURIComponent(String(manager.id));
-    await compare(`/api/managers/${id}/workspace-content`);
-    await compare(`/api/managers/${id}/workspace`);
+  await compare('/api/tickets?detail=summary&limit=20&offset=0', 'tickets');
+  for (const stage of Object.keys(corpus.stages))
+    await compare(
+      `/api/tickets?detail=summary&include_terminal=true&stage=${encodeURIComponent(stage)}&limit=20&offset=0`,
+      'tickets',
+    );
+  for (const ticket of corpus.tickets) {
+    const id = encodeURIComponent(ticket.id);
+    await compare(`/api/tickets?detail=full&id=${id}`, 'tickets');
+    await compare(`/api/tickets/${id}/workspace`, 'tickets');
+  }
+  await compare('/api/managers?detail=full', 'managers');
+  for (const manager of corpus.managers) {
+    const id = encodeURIComponent(manager);
+    await compare(`/api/managers/${id}/workspace-content`, 'managers');
+    await compare(`/api/managers/${id}/workspace`, 'managers');
+    await compare(`/api/managers/${id}/page`, 'managers');
   }
   const commands = [
     ['ticket', 'list', '--json'],
@@ -360,7 +389,13 @@ try {
     ['goal', 'list', '--json'],
     ['project', 'list', '--json'],
   ];
-  if (tickets[0]) commands.push(['ticket', 'show', String(tickets[0].id), '--json']);
+  for (const stage of Object.keys(corpus.stages)) {
+    const ticket = corpus.tickets.find((ticket) => ticket.stage === stage)!;
+    commands.push(['ticket', 'show', ticket.id, '--json']);
+  }
+  if (corpus.projects[0]) commands.push(['project', 'show', corpus.projects[0], '--json']);
+  if (corpus.managers[0]) commands.push(['manager', 'show', corpus.managers[0], '--json']);
+  if (corpus.goals[0]) commands.push(['goal', 'show', corpus.goals[0], '--json']);
   for (const args of commands) {
     const outputs: { code: number | string; body: unknown; json: boolean }[] = [];
     for (const item of instances) {
@@ -400,6 +435,7 @@ try {
       );
     }
     results.push({
+      category: 'cli',
       request: 'panels ' + args.join(' '),
       matched:
         outputs.every((value) => value.code === 0 && value.json) &&
@@ -420,6 +456,34 @@ try {
         snapshot_sha256,
         completed,
         shutdown_failures,
+        corpus: {
+          projects: corpus.projects.length,
+          managers: corpus.managers.length,
+          goals: corpus.goals.length,
+          ticket_stages: Object.fromEntries(
+            Object.keys(corpus.stages).map((stage) => [
+              stage,
+              {
+                available: corpus.stages[stage],
+                selected: corpus.tickets.filter((ticket) => ticket.stage === stage).length,
+              },
+            ]),
+          ),
+          conversations: corpus.conversations.length,
+          conversation_event_counts: corpus.conversations.map(
+            (conversation) => conversation.events,
+          ),
+          reads_by_category: Object.fromEntries(
+            [...new Set(results.map((result) => result.category))].map((category) => [
+              category,
+              results.filter((result) => result.category === category).length,
+            ]),
+          ),
+          insufficient:
+            results.length < 200 ||
+            corpus.conversations.length < 20 ||
+            corpus.conversations.some((conversation) => conversation.events < 200),
+        },
         files_coverage: 'Nightly omits artifact files; no live files are read.',
         mode: 'test mode: read contracts only, not production boot',
         results,
@@ -435,4 +499,13 @@ const mismatches = results.filter((result) => !result.matched).length;
 console.log(
   `${results.length} read comparisons, ${mismatches} differences. Private evidence: ${evidence}`,
 );
-if (mismatches) process.exitCode = 1;
+if (
+  results.length < 200 ||
+  corpus.conversations.length < 20 ||
+  corpus.conversations.some((conversation) => conversation.events < 200)
+) {
+  console.log(
+    'Insufficient corpus: need 200 distinct reads and 20 histories with at least 200 events.',
+  );
+  process.exitCode = 2;
+} else if (mismatches) process.exitCode = 1;
