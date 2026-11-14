@@ -60,7 +60,7 @@ from planner.core.errors import ErrorCode, PlannerError
 from planner.core.task_settlement import run_on_worker_thread
 from planner.files.lifecycle import database_path
 from planner.files.logic.paths import chief_files_root, manager_files_root, ticket_files_root
-from planner.machines.contracts import HOME_MACHINE_ID, ORIGINAL_MAC_MACHINE_ID
+from planner.machines.contracts import HOME_MACHINE_ID
 from planner.machines.data import read_machine
 from planner.projects import data as projects_data
 from planner.runtime.logic.conversation_start_resolution import (
@@ -239,10 +239,9 @@ def worker_resolve(
 def _worker_workspace(
     conn: sqlite3.Connection, ticket: Ticket, explicit: Path | None
 ) -> tuple[Path, WorkspacePathPolicy]:
-    if ticket.machine_id not in {HOME_MACHINE_ID, ORIGINAL_MAC_MACHINE_ID}:
-        raise PlannerError(ErrorCode.validation, "Ticket destination has no execution route")
-    if ticket.machine_id == ORIGINAL_MAC_MACHINE_ID:
-        # The executor resolves its own repository and Ticket root on the Mac.
+    read_machine(conn, ticket.machine_id)
+    if ticket.machine_id != HOME_MACHINE_ID:
+        # Each executor resolves its own repository and Ticket root.
         return workspace_for_project(conn, TicketLocale.macos, ticket.project_id, explicit=explicit)
     return (
         ticket_files_root(database_path(conn)) / ticket.id / "worktree",
