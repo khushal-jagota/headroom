@@ -4,8 +4,6 @@ import { join } from 'node:path';
 import { Readable } from 'node:stream';
 import { createHash } from 'node:crypto';
 import { GitHubUpdateProvider } from '../provider.ts';
-import { canonical_json } from '../codec.ts';
-import { numeric_value } from '../../../core/http/numeric_json.ts';
 interface Reply {
   status?: number;
   json?: unknown;
@@ -37,7 +35,7 @@ export async function probe_update_provider(request: Request) {
     const started = performance.now();
     let aborted = false,
       production_timeout = 0;
-    const inactivity_ms = numeric_value(item.inactivity_ms);
+    const inactivity_ms = item.inactivity_ms;
     if (inactivity_ms !== undefined) {
       // Scale only the production 60s network deadline in this isolated RPC.
       globalThis.setTimeout = ((...[handler, delay, ...args]: Parameters<typeof setTimeout>) => {
@@ -90,7 +88,7 @@ export async function probe_update_provider(request: Request) {
                 await new Promise<void>((resolve) => {
                   release = resolve;
                   if (next < reply.chunks!.length)
-                    timer = original_timeout(resolve, numeric_value(reply.chunk_ms) ?? 0);
+                    timer = original_timeout(resolve, reply.chunk_ms ?? 0);
                 });
                 if (!options?.signal?.aborted)
                   controller.enqueue(Buffer.from(reply.chunks![next++]!));
@@ -99,7 +97,7 @@ export async function probe_update_provider(request: Request) {
             },
             { highWaterMark: 0 },
           );
-          return new Response(body, { status: numeric_value(reply.status) ?? 200 });
+          return new Response(body, { status: reply.status ?? 200 });
         }
         const file = reply.file === undefined ? null : createReadStream(reply.file);
         if (file !== null) {
@@ -114,9 +112,9 @@ export async function probe_update_provider(request: Request) {
               },
             })
           : file === null
-            ? canonical_json(reply.json ?? null)
+            ? JSON.stringify(reply.json ?? null)
             : Readable.toWeb(file);
-        return new Response(body as BodyInit, { status: numeric_value(reply.status) ?? 200 });
+        return new Response(body as BodyInit, { status: reply.status ?? 200 });
       },
     });
     try {

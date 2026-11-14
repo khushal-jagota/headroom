@@ -8,7 +8,7 @@ import { ChangeSignal } from '../../../core/changes/index.ts';
 import { WorkspaceAdmission } from '../../../conversation/workspace_admission.ts';
 import type { ConversationSystem } from '../../../conversation/contracts.ts';
 import { FileUpdateAttemptStore } from '../attempts.ts';
-import { parse_release, attempt_to_dict, parse_attempt_json, canonical_json } from '../codec.ts';
+import { parse_release, attempt_to_dict } from '../codec.ts';
 import { instant } from '../logic/experience.ts';
 import { UpdateService, staged_app_path, installed_update_root } from '../service.ts';
 import { configured_worker_runtime_definitions } from '../../../worker_types/configuration.ts';
@@ -583,13 +583,10 @@ export async function probe_continuations(request: ServiceProbeRequest) {
     const waiting = timer.service.install(timer.release.manifest.app_sha, 'idle', {
       confirm_activity: false,
     });
-    const raw = parse_attempt_json(readFileSync(timer.attempts.path, 'utf8')) as Record<
-      string,
-      unknown
-    >;
+    const raw = JSON.parse(readFileSync(timer.attempts.path, 'utf8')) as Record<string, unknown>;
     raw.state = 'failed';
     raw.detail = 'external installer';
-    writeFileSync(timer.attempts.path, canonical_json(raw));
+    writeFileSync(timer.attempts.path, JSON.stringify(raw));
     let external_seen = false;
     const unsubscribe = timer.changes.subscribe(() => {
       if (timer.service.status().attempt?.detail === 'external installer') external_seen = true;

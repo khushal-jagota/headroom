@@ -12,7 +12,8 @@ Implementation differences that the Manager accepted as implementation details:
 
 Updates keep one attempt file outside SQLite and backups. OS `flock` protects compare-and-swap.
 Python emits notifications inside the lock. TS emits after unlock to permit synchronous subscriber re-entry without deadlock.
-Atomic replacement preserves unknown fields and numeric representations. A 50 ms Python lock hold blocks Node's event loop for 57.4 ms.
+Atomic replacement preserves unknown fields as native JSON values. GitHub IDs use safe integer numbers.
+A 50 ms Python lock hold blocks Node's event loop for 57.4 ms.
 Strict UTF-8 reads retain Python's unreadable-record behavior, including invalid bytes and BOM input.
 
 The provider keeps Python's current publication contract. It checks the repository, workflow, branch, event, conclusion,

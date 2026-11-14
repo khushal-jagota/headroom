@@ -34,7 +34,10 @@ from planner.server_lifecycle.contracts import (
     ServerRestartConnectionError,
     ServerRestartProtocolError,
 )
-from planner.server_lifecycle.control import request_server_restart
+from planner.server_lifecycle.control import (
+    decode_server_control_request,
+    request_server_restart,
+)
 
 ROOT = Path(__file__).resolve().parents[3]
 MODULE = ROOT / "server/lifecycle"
@@ -326,6 +329,9 @@ def test_unit21_owned_supervisor_control_and_stop_protocol(
             finally:
                 os.close(descriptor)
         fallback_host_seconds = time.monotonic() - fallback_host_started
+        native_version_request = b'{"version":1.0,"operation":"restart"}\n'
+        with pytest.raises(ServerRestartProtocolError):
+            decode_server_control_request(native_version_request)
         root = base / "foreground"
         with _supervisor(root, env, node, managed=False) as (process, ready):
             ready(1)
@@ -336,7 +342,8 @@ def test_unit21_owned_supervisor_control_and_stop_protocol(
                 assert contender.wait(timeout=10) == 1
             assert (root / "control.sock").stat().st_ino == socket_inode
             (root / "hold").write_text("hold\n")
-            assert _control(root / "control.sock", dict(version=1, operation="restart")) == dict(
+            # Accepted native numeric semantics reuse this existing restart.
+            assert _control(root / "control.sock", native_version_request) == dict(
                 version=1, status="accepted"
             )
             _wait(
@@ -489,7 +496,7 @@ def test_unit21_owned_supervisor_control_and_stop_protocol(
                 )
                 assert _control(root / "control.sock", {**intent, "capability": "0" * 64}) is None
                 assert (
-                    _control(root / "control.sock", b'{"version":1.0,"operation":"restart"}\n')
+                    _control(root / "control.sock", b'{"version":1.5,"operation":"restart"}\n')
                     is None
                 )
                 assert _control(root / "control.sock", b"x" * 4097 + b"\n") is None
@@ -592,6 +599,17 @@ def test_unit21_owned_supervisor_control_and_stop_protocol(
                         "python": missing_source,
                         "typescript": missing_result,
                         "comparison_rule": "Keep error class, socket path and native ENOENT cause.",
+                    },
+                    "control_numeric_tokens": {
+                        "request": native_version_request.decode(),
+                        "python": "ServerRestartProtocolError",
+                        "typescript": {"version": 1, "status": "accepted"},
+                        "comparison_rule": (
+                            "Manager accepted native JSON numbers for local lifecycle control. "
+                            "Version 1.0 equals version 1. Version 1.5 remains incompatible."
+                        ),
+                        "additional_hosts": 0,
+                        "additional_processes": 0,
                     },
                     "real_supervisor_fallback": {
                         "stop_seconds": fallback_elapsed,

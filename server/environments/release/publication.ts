@@ -17,7 +17,6 @@ import { validate_app_manifest } from './identity.ts';
 import { validate_app_sha } from './logic/manifest.ts';
 import { read_migration_graph, migration_frontier } from './migrations.ts';
 import { inventory_package_licenses } from './package_licenses.ts';
-import { canonical_json } from '../updates/codec.ts';
 import { replace_existing_json } from '../updates/attempts.ts';
 import { SUPPORTED_UPDATE_SCHEMA_FLOOR } from '../updates/configuration.ts';
 import {
@@ -113,7 +112,7 @@ export async function build_linux_publication(
     await phase('validate_sealed', () => validate(sealed));
     const inventory = await phase('licenses', () => inventory_package_licenses(sealed));
     // Capture the exact shared-writer encoding before candidate code can run.
-    const inventory_bytes = Buffer.from(canonical_json(inventory) + '\n');
+    const inventory_bytes = Buffer.from(JSON.stringify(inventory) + '\n');
     const native_bytes = await phase('runtime_inventory', () =>
       readFile(join(sealed, RUNTIME_INVENTORY_PATH)),
     );

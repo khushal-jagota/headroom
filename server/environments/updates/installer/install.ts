@@ -8,7 +8,7 @@ import {
   statSync,
 } from 'node:fs';
 import { join } from 'node:path';
-import { is_object, parse_attempt_json } from '../codec.ts';
+import { is_object } from '../codec.ts';
 import { assert_installer_path, PREVIOUS_APP_PREFIX, STAGED_APP_PREFIX } from './configuration.ts';
 import { error_detail } from './commands.ts';
 import { InstallationRecord } from './record.ts';
@@ -44,7 +44,7 @@ function installed_sha(app: string): unknown {
   assert_installer_path(app);
   assert_installer_path(join(app, 'manifest.json'));
   try {
-    const value = parse_attempt_json(
+    const value = JSON.parse(
       new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(
         readFileSync(join(app, 'manifest.json')),
       ),

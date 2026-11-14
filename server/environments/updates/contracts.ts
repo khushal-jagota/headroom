@@ -1,7 +1,6 @@
 /** Persisted and in-process update contracts. */
 import type { ConversationSystem } from '../../conversation/contracts.ts';
 import type { Database } from '../../core/database/contracts.ts';
-import type { NumericJSON } from '../../core/http/numeric_json.ts';
 
 export type UpdateMode = 'now' | 'idle';
 export type UpdateActivity = 'idle' | 'busy' | 'unknown';
@@ -44,14 +43,14 @@ export interface AppManifest {
   runtime_contract: RuntimeContract | null;
 }
 export interface PublishedMacUpdate {
-  artifact_id: NumericJSON<number>;
+  artifact_id: number;
   archive_sha256: string;
-  archive_size: NumericJSON<number>;
+  archive_size: number;
 }
 export interface PublishedUpdate {
-  publication_run_id: NumericJSON<number>;
-  artifact_id: NumericJSON<number>;
-  proof_artifact_id: NumericJSON<number>;
+  publication_run_id: number;
+  artifact_id: number;
+  proof_artifact_id: number;
   manifest: AppManifest;
   archive_sha256: string;
   schema_floor: string;
@@ -109,11 +108,7 @@ export interface UpdateExperienceOptions {
 }
 export interface UpdateProvider {
   available(): Promise<PublishedUpdate | null>;
-  download_artifact(
-    artifact_id: NumericJSON<number>,
-    destination: string,
-    signal?: AbortSignal,
-  ): Promise<void>;
+  download_artifact(artifact_id: number, destination: string, signal?: AbortSignal): Promise<void>;
 }
 /** Required adapters; callers cannot silently replace an unavailable operation. */
 export interface ReleaseStaging {

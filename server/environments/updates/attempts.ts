@@ -18,16 +18,7 @@ import { flock } from '../../core/locks/flock.ts';
 import { getSystemErrorName } from 'node:util';
 import type { UpdateAttempt, UpdateAttemptState } from './contracts.ts';
 import { ATTEMPT_FILE_NAME } from './configuration.ts';
-import {
-  attempt_to_dict,
-  canonical_json,
-  is_object,
-  merged,
-  parse_attempt,
-  parse_attempt_json,
-  parse_release,
-} from './codec.ts';
-import { JsonNumber } from '../../core/http/numeric_json.ts';
+import { attempt_to_dict, is_object, merged, parse_attempt, parse_release } from './codec.ts';
 
 export const SETTLED_ATTEMPT_STATES: ReadonlySet<UpdateAttemptState> = new Set(['done', 'failed']);
 export class UpdateConflict extends Error {}
@@ -77,7 +68,7 @@ function read_record_json(path: string): unknown {
   const text = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(
     readFileSync(path),
   );
-  return parse_attempt_json(text);
+  return JSON.parse(text);
 }
 export function atomic_write_json(path: string, payload: Record<string, unknown>): void {
   const parent = dirname(path);
@@ -94,7 +85,7 @@ export function atomic_write_json(path: string, payload: Record<string, unknown>
 /** Atomically replace the record in its existing parent directory. */
 export function replace_existing_json(path: string, payload: Record<string, unknown>): void {
   const parent = dirname(path);
-  const encoded = Buffer.from(canonical_json(payload) + '\n');
+  const encoded = Buffer.from(JSON.stringify(payload) + '\n');
   const temporary = join(parent, `.${basename(path)}.${randomUUID()}.tmp`);
   let descriptor: number | undefined;
   try {
@@ -221,18 +212,6 @@ export class FileUpdateAttemptStore {
       }
       const now = this.now(),
         created = payload.created_at;
-      const has_created =
-        created instanceof JsonNumber
-          ? created.value !== 0
-          : Array.isArray(created)
-            ? created.length !== 0
-            : is_object(created)
-              ? Object.keys(created).length !== 0
-              : created !== undefined &&
-                created !== null &&
-                created !== false &&
-                created !== 0 &&
-                created !== '';
       const attempt = parse_attempt({
         attempt_id: payload.request_id,
         from_sha,
@@ -240,7 +219,7 @@ export class FileUpdateAttemptStore {
         mode: payload.mode === 'now' || payload.mode === 'idle' ? payload.mode : 'now',
         confirm_activity: payload.confirm_activity,
         state: 'done',
-        created_at: has_created ? created : now,
+        created_at: created || now,
         updated_at: now,
         release: payload.release,
         steps: { done: now },

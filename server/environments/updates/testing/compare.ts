@@ -11,7 +11,6 @@ export {
   probe_node_frontier,
 } from './service.ts';
 export { probe_update_provider } from './provider.ts';
-import { numeric_value } from '../../../core/http/numeric_json.ts';
 import type {
   ContendedStoreRequest,
   StoreProbeAnswer,
@@ -102,12 +101,12 @@ export function probe_experience(cases: import('./contracts.ts').ExperienceCase[
       return {
         resolve: resolve(attempt, available, item.app_sha, {
           ...item,
-          mac_report_seconds: numeric_value(item.mac_report_seconds)!,
+          mac_report_seconds: item.mac_report_seconds,
         }),
         settle: settled === null ? null : attempt_to_dict(settled),
         deployment: deployment_status(attempt, item.app_sha, {
           ...item,
-          success_seconds: numeric_value(item.success_seconds)!,
+          success_seconds: item.success_seconds,
         }),
       };
     } catch (error) {

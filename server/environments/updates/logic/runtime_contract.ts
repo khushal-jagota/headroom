@@ -1,7 +1,7 @@
 /** Closed Python/Node release metadata validation, not a runtime admission probe. */
+import { isDeepStrictEqual as equal } from 'node:util';
 import { is_record as object } from '../../../core/records.ts';
 import type { RuntimeContract, RuntimePlatform } from '../contracts.ts';
-import { numeric_value, numeric_kind } from '../../../core/http/numeric_json.ts';
 export const SUPPORTED_PLATFORMS: readonly RuntimePlatform[] = [
   { distribution: 'debian', version: '13', minimum_glibc: '2.41' },
   { distribution: 'ubuntu', version: '24.04', minimum_glibc: '2.39' },
@@ -42,27 +42,10 @@ function fail(message: string): never {
 function fullmatch(pattern: RegExp, value: string): boolean {
   return pattern.exec(value)?.[0] === value;
 }
-function equal(a: unknown, b: unknown): boolean {
-  if (Array.isArray(a) || Array.isArray(b))
-    return (
-      Array.isArray(a) &&
-      Array.isArray(b) &&
-      a.length === b.length &&
-      a.every((value, index) => equal(value, b[index]))
-    );
-  if (object(a) || object(b))
-    return (
-      object(a) &&
-      object(b) &&
-      equal(Object.keys(a).sort(), Object.keys(b).sort()) &&
-      Object.keys(a).every((key) => equal(a[key], b[key]))
-    );
-  return a === b;
-}
 export function parse_optional_runtime_contract(value: unknown): RuntimeContract | null {
   if (value === null || value === undefined) return null;
   if (!object(value)) fail('runtime contract must be an object');
-  const node = numeric_kind(value.version) === 'integer' && numeric_value(value.version) === 2;
+  const node = value.version === 2;
   const required = [
     'version',
     'system',
@@ -79,7 +62,7 @@ export function parse_optional_runtime_contract(value: unknown): RuntimeContract
     fail('runtime contract has missing or unknown fields');
   if (!equal(value.platforms, SUPPORTED_PLATFORMS)) fail('unsupported runtime platform boundary');
   for (const key of ['version', 'node_major'])
-    if (numeric_kind(value[key]) !== 'integer') fail(`runtime ${key} must be an integer`);
+    if (!Number.isInteger(value[key])) fail(`runtime ${key} must be an integer`);
   for (const key of [
     'system',
     'architecture',
@@ -93,11 +76,10 @@ export function parse_optional_runtime_contract(value: unknown): RuntimeContract
       !(value[key] as unknown[]).every((item) => typeof item === 'string')
     )
       fail(`runtime ${key} must be a list of strings`);
-  if (numeric_value(value.version) !== 1 && !node)
-    fail('unsupported runtime contract version; republish the app');
+  if (value.version !== 1 && !node) fail('unsupported runtime contract version; republish the app');
   if (value.system !== 'linux' || value.architecture !== 'x86_64')
     fail('unsupported runtime operating system or architecture');
-  if (numeric_value(value.node_major) !== 22) fail('runtime requires host Node major 22');
+  if (value.node_major !== 22) fail('runtime requires host Node major 22');
   if (node && value.minimum_node_version !== MINIMUM_NODE_VERSION)
     fail(`runtime requires minimum Node ${MINIMUM_NODE_VERSION}`);
   if (!node && !fullmatch(/^3\.12\.\p{Decimal_Number}+$/u, value.python_version as string))
@@ -117,8 +99,8 @@ export function parse_optional_runtime_contract(value: unknown): RuntimeContract
     fail('invalid required CPU features');
   return {
     ...value,
-    version: numeric_value(value.version),
-    node_major: numeric_value(value.node_major),
+    version: value.version,
+    node_major: value.node_major,
     platforms: SUPPORTED_PLATFORMS.map((platform) => ({ ...platform })),
   } as unknown as RuntimeContract;
 }
