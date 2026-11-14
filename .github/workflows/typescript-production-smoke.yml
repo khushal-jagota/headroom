@@ -51,7 +51,7 @@ jobs:
             npm_config_cache="$RUNNER_TEMP/typescript-production-smoke/bootstrap/home/.npm" \
             PLAN_CONFIG_PATH="$RUNNER_TEMP/typescript-production-smoke/bootstrap/config.yaml" \
             PLAN_DB_PATH="$RUNNER_TEMP/typescript-production-smoke/bootstrap/data/bootstrap.db" \
-            PLAN_APP_ROOT="$GITHUB_WORKSPACE" \
+            PLAN_APP_ROOT="$RUNNER_TEMP/typescript-production-smoke/bootstrap/app" \
             PLAN_WORKSPACE_ROOT="$RUNNER_TEMP/typescript-production-smoke/bootstrap/workspace" \
             PLAN_LOGS_DIR="$RUNNER_TEMP/typescript-production-smoke/bootstrap/logs" \
             PLAN_BACKUP_DIR="$RUNNER_TEMP/typescript-production-smoke/bootstrap/backups" \
@@ -64,7 +64,7 @@ jobs:
             bash --noprofile --norc -euo pipefail <<'SMOKE'
           umask 077
           mkdir -p "$HOME"/{.codex,.claude,.hermes,.cache,.npm} \
-            "$SMOKE_PARENT/bootstrap"/{config,data,state,run,workspace,logs,backups}
+            "$SMOKE_PARENT/bootstrap"/{app,config,data,state,run,workspace,logs,backups}
           exec > >(tee "$SMOKE_PARENT/job.log") 2>&1
           printf '{}\n' > "$PLAN_CONFIG_PATH"
           sudo apt-get update
