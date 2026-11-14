@@ -1,4 +1,8 @@
 {
+  "response_counts": {
+    "body.page_character_count": "Manager page counts measure native JSON spelling. Preserve integer type and empty versus positive state; compare page values strictly.",
+    "body.managers.*.page_character_count": "Manager page counts measure native JSON spelling. Preserve integer type and empty versus positive state; compare page values strictly."
+  },
   "ignore": {
     "attention_history_metadata.started_at": "Schema initialization reads real wall time.",
     "conversation_events.created_at": "Event storage reads real wall time, independent of the test clock.",

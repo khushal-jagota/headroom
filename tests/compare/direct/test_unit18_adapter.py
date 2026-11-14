@@ -619,7 +619,7 @@ def comparison(result: dict[str, Any], language: str) -> dict[str, Any]:
                 assert "toolUseID" not in response
             row = {**row, "response": response}
         native_observations.append(row)
-    return cast(
+    compared = cast(
         dict[str, Any],
         normalize(
             {
@@ -630,6 +630,29 @@ def comparison(result: dict[str, Any], language: str) -> dict[str, Any]:
             }
         ),
     )
+    if language == "python":
+        # The existing plain result emits input_tokens:5.0; native JSON counts it as 5.
+        first = next(
+            row for row in compared["checkpoints"][0]["rows"]["conversation_events"]
+            if row["kind"] == "token_usage"
+        )
+        assert "input_tokens" not in first["payload"]
+        for checkpoint in compared["checkpoints"]:
+            for row in checkpoint["rows"]["conversation_events"]:
+                if (row["conversation_id"], row["sequence"]) == (
+                    first["conversation_id"], first["sequence"],
+                ):
+                    row["payload"]["input_tokens"] = 5
+            for row in checkpoint["rows"]["conversation_view_rows"]:
+                if (row["conversation_id"], row["sequence"]) == (
+                    first["conversation_id"], first["sequence"],
+                ) and row["rest_summary"] is not None:
+                    summary = json.loads(row["rest_summary"])
+                    summary["body"]["value"]["input_tokens"] = 5
+                    row["rest_summary"] = json.dumps(
+                        summary, sort_keys=True, ensure_ascii=False, separators=(",", ":"),
+                    )
+    return compared
 
 
 def observed_native_patterns(result: dict[str, Any]) -> dict[str, Any]:
@@ -1132,6 +1155,7 @@ def test_unit18_adapter_real_core_parity(tmp_path: Path, request: pytest.Fixture
             "control identities map by conversation, turn, and operation."
         ),
         "tool_detail_rule": "Compare JSON tool input fields, not Python formatting.",
+        "usage_rule": "The existing plain result input_tokens:5.0 counts as native integer 5.",
         "not_proven": [
             "real provider turn or resume",
             "systemd containment (part 1 owns policy/byte proof)",
@@ -1234,8 +1258,12 @@ def test_unit18_adapter_real_core_parity(tmp_path: Path, request: pytest.Fixture
             if row["kind"] == "token_usage"
         )
         counted = json.loads(plain_usage["payload"])
-        # The core omits absent counts from the stored event payload.
-        assert "input_tokens" not in counted and counted["output_tokens"] == 5
+        # Python omits a float count; native JSON reads the existing 5.0 token as 5.
+        assert counted["output_tokens"] == 5
+        if result is python:
+            assert "input_tokens" not in counted
+        else:
+            assert counted["input_tokens"] == 5
         crash_checkpoint = next(
             item for item in result["checkpoints"] if item["name"] == "process-exit7"
         )

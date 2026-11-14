@@ -1,7 +1,7 @@
 """Execute equivalent stored Python/JavaScript scripts through real child runtimes.
 
 The writer comparison supplies RunResult directly. This case proves actual script
-execution reaches the same retained rows, run receipt, health, and numeric bytes.
+execution reaches the same retained values, run receipt, health, and exact integers.
 Reuse source/dataset fixtures and SQLite copies. No HTTP host or provider is added.
 """
 
@@ -68,6 +68,7 @@ NORMALIZATIONS = {
     "active_script.text / measure_sources.active_script": "Programs use different languages.",
     "script SHA fields": "SHA identifies the language-specific source.",
     "metrics.elapsed_milliseconds / script_cpu_milliseconds": "Actual CPU and elapsed time vary.",
+    "dataset_rows.dimensions / field_values": "Compare JSON values without storage spelling.",
 }
 
 
@@ -91,6 +92,9 @@ def normalized(snapshot: dict[str, Any]) -> dict[str, Any]:
         retained_metrics = json.loads(row["metrics"])
         metrics(retained_metrics)
         row["metrics"] = retained_metrics
+    for row in result["tables"]["dataset_rows"]:
+        for field in ("dimensions", "field_values"):
+            row[field] = json.loads(row[field])
     return result
 
 

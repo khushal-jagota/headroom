@@ -578,8 +578,9 @@ def test_unit12_populated_holder_pages(
         ],
         indent=2,
     )
-    assert retained[0] == retained[1]
-    assert "50.0" in retained[0]["manager"]
+    decoded = [{key: json.loads(value) for key, value in pages.items()} for pages in retained]
+    assert decoded[0] == decoded[1]
+    assert any(block.get("column_widths") == [50, 50] for block in decoded[0]["manager"]["blocks"])
     observed = report["captures"]
     assert observed["held_goals"]["goals"][0]["id"] == ids["goal"]
     for label in ("manager_readings", "chief_readings", "goal_corrected"):

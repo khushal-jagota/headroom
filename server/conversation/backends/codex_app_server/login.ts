@@ -4,11 +4,6 @@ import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import {
-  numeric_kind,
-  numeric_value,
-  parse_numeric_json,
-} from '../../../core/http/numeric_json.ts';
 import type {
   CodexLoginGeneration,
   CodexLoginRejectionMemory,
@@ -96,9 +91,7 @@ function token_claims(token: unknown): Record<string, unknown> | null {
   if (parts.length !== 3) return null;
   try {
     const bytes = Buffer.from(parts[1], 'base64url');
-    const decoded: unknown = parse_numeric_json(
-      new TextDecoder('utf-8', { fatal: true }).decode(bytes),
-    );
+    const decoded: unknown = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(bytes));
     return object(decoded) ? decoded : null;
   } catch {
     return null;
@@ -108,15 +101,8 @@ function token_claims(token: unknown): Record<string, unknown> | null {
 function token_expiry(token: unknown): Date | null {
   const claims = token_claims(token);
   if (claims === null) return null;
-  // Python bool is an int. A lexical floating-point token, including 1.0, is not.
-  const value = claims.exp;
-  const seconds =
-    typeof value === 'boolean'
-      ? Number(value)
-      : numeric_kind(value) === 'integer'
-        ? numeric_value(value)
-        : undefined;
-  if (seconds === undefined) return null;
+  const seconds = claims.exp;
+  if (typeof seconds !== 'number' || !Number.isFinite(seconds)) return null;
   const result = new Date(seconds * 1000);
   return Number.isFinite(result.getTime()) &&
     result.getUTCFullYear() >= 1 &&

@@ -55,9 +55,11 @@ test('saved-login reads preserve missing, unreadable, expiry, and refreshed gene
   expect(login.access_token_has_expired({ now: new Date('2023-11-14T22:13:20.000Z') })).toBe(true);
   expect(login.access_token_has_expired({ now: new Date('2023-11-14T22:13:19.999Z') })).toBe(false);
   document(home, { tokens: { access_token: token('{"exp":1700000000.0}') } });
-  expect(read_stored_codex_login(home).access_token_expires_at).toBeNull();
+  expect(read_stored_codex_login(home).access_token_expires_at).toEqual(
+    new Date('2023-11-14T22:13:20.000Z'),
+  );
   document(home, { tokens: { access_token: token('{"exp":true}') } });
-  expect(read_stored_codex_login(home).access_token_expires_at).toEqual(new Date(1000));
+  expect(read_stored_codex_login(home).access_token_expires_at).toBeNull();
   writeFileSync(join(home, 'auth.json'), Buffer.from([0x7b, 0x22, 0xff, 0x22, 0x3a, 0x31, 0x7d]));
   expect(read_stored_codex_login(home).readable).toBe(false);
 });

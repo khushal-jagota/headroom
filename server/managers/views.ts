@@ -3,7 +3,7 @@ import type { ReadSql } from '../core/database/contracts.ts';
 import { PlannerError } from '../core/contracts.ts';
 import type { Manager } from './contracts.ts';
 import { read_manager } from './data.ts';
-import { python_json } from './pages.ts';
+import { page_json } from './pages.ts';
 import {
   has_manager_document_dependencies,
   manager_document_dependencies,
@@ -23,7 +23,7 @@ export function manager_json(item: Manager): Record<string, unknown> {
     recap: item.recap,
     recap_updated_at: item.recap_updated_at,
     page_revision: item.page_revision,
-    page_character_count: item.page === null ? 0 : Array.from(python_json(item.page)).length,
+    page_character_count: item.page === null ? 0 : Array.from(page_json(item.page)).length,
     project_id: item.project_id,
     project: item.project_name,
     manager: {

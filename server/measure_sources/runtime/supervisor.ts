@@ -6,13 +6,9 @@ import { mkdtemp, writeFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import {
-  parse_numeric_json,
-  stringify_python_json,
-  numeric_value,
-  JsonNumber,
-} from '../../core/http/numeric_json.ts';
+import { numeric_value } from '../../core/http/numeric_json.ts';
 import type { NumericJSON } from '../../core/http/numeric_json.ts';
+import { stringify_runtime_json } from './json.ts';
 import { calendar_date } from '../../measures/logic/dates.ts';
 import { validate_coverage } from '../../measures/logic/coverage.ts';
 import { float_number } from '../../measures/logic/formulas.ts';
@@ -22,12 +18,7 @@ import type { CredentialResolver } from '../../credentials/contracts.ts';
 import type { CandidateObservation, RunAdmission, RunResult, RunFailure } from '../contracts.ts';
 import { failure } from '../contracts.ts';
 function plain(value: unknown): Record<string, unknown> {
-  if (
-    value === null ||
-    typeof value !== 'object' ||
-    Array.isArray(value) ||
-    value instanceof JsonNumber
-  )
+  if (value === null || typeof value !== 'object' || Array.isArray(value))
     throw new Error('protocol');
   return value as Record<string, unknown>;
 }
@@ -170,9 +161,7 @@ export class Runtime {
         };
         let pending = Buffer.alloc(0);
         const reply = (id: unknown, value: unknown, problem: RunFailure | null = null) =>
-          channel.write(
-            stringify_python_json({ id, value, failure: problem }, { compact: true }) + '\n',
-          );
+          channel.write(stringify_runtime_json({ id, value, failure: problem }) + '\n');
         channel.on('data', (chunk: Buffer) => {
           count(chunk.length, false);
           if (settled) return;
@@ -182,7 +171,8 @@ export class Runtime {
             const line = pending.subarray(0, boundary).toString('utf8');
             pending = pending.subarray(boundary + 1);
             try {
-              const raw = plain(parse_numeric_json(line));
+              // Candidate validation below projects readings and datasets to finite doubles.
+              const raw = plain(JSON.parse(line));
               if (raw.op === 'done') {
                 for (const [key, wire] of [
                   ['request_count', 'request_count'],
@@ -339,20 +329,17 @@ export class Runtime {
         );
       });
       channel.write(
-        stringify_python_json(
-          {
-            script_url: pathToFileURL(script).href,
-            context: {
-              run_id: admission.run.id,
-              frozen_at: admission.run.frozen_at,
-              required_outputs: admission.run.required_outputs,
-              dataset_outputs: admission.run.dataset_outputs,
-              history: admission.run.history,
-            },
-            limits: admission.limits,
+        stringify_runtime_json({
+          script_url: pathToFileURL(script).href,
+          context: {
+            run_id: admission.run.id,
+            frozen_at: admission.run.frozen_at,
+            required_outputs: admission.run.required_outputs,
+            dataset_outputs: admission.run.dataset_outputs,
+            history: admission.run.history,
           },
-          { compact: true },
-        ) + '\n',
+          limits: admission.limits,
+        }) + '\n',
       );
       if (stopped) finish(failure('interrupted'));
       resultFailure = await complete;

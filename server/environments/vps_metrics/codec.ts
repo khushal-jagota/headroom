@@ -1,6 +1,11 @@
 import { inflateSync } from 'node:zlib';
 import { deflate } from 'pako';
-import { JsonNumber, numeric_value, parse_numeric_json } from '../../core/http/numeric_json.ts';
+import {
+  JsonNumber,
+  numeric_value,
+  parse_numeric_json,
+  stringify_numeric_json,
+} from '../../core/http/numeric_json.ts';
 import type { MetricNumber } from './contracts.ts';
 import { MetricsValueError } from './contracts.ts';
 export function number(value: MetricNumber): number {
@@ -25,7 +30,7 @@ function finite(value: unknown): void {
 }
 export function encode(value: unknown): string {
   finite(value);
-  return JSON.stringify(value);
+  return stringify_numeric_json(value);
 }
 export function decode<T>(value: string): T {
   return parse_numeric_json(value) as T;

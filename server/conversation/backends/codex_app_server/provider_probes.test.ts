@@ -37,7 +37,6 @@ test('usage cancellation covers a blocked handshake and waits for owned cleanup'
       throw stopFailure;
     }),
     request: vi.fn(async () => ({})),
-    request_raw: vi.fn(async () => '{"must":"not reach usage"}'),
     async notify() {
       entered.resolve();
       await notify.promise;
@@ -69,7 +68,8 @@ test('usage cancellation covers a blocked handshake and waits for owned cleanup'
     expect(settled).toBe(false);
     notify.resolve();
     await canceled;
-    expect(client.request_raw).not.toHaveBeenCalled();
+    expect(client.request).toHaveBeenCalledTimes(1);
+    expect(client.request).toHaveBeenCalledWith('initialize', expect.anything(), expect.anything());
   } finally {
     notify.resolve();
     cleanup.resolve();

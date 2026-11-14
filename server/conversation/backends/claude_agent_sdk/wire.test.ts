@@ -76,7 +76,7 @@ it('frames stderr chunks, right-trims, ignores blanks and isolates callback fail
   expect(lines).toEqual([' first', '🦊', 'tail']);
 });
 
-it('retains lexical result usage kinds without changing tool inputs or forwarded bytes', async () => {
+it('parses native usage numbers without changing tool inputs or forwarded bytes', async () => {
   const observed: Record<string, unknown>[] = [];
   const forwarded: Buffer[] = [];
   const stream = new ObservedStdout((frame) => observed.push(frame));
@@ -91,7 +91,7 @@ it('retains lexical result usage kinds without changing tool inputs or forwarded
   expect(observed[0]).toEqual({
     type: 'result',
     uuid: 'counts',
-    usage: { input_tokens: null, output_tokens: 5, cache_read_input_tokens: null },
+    usage: { input_tokens: 5, output_tokens: 5, cache_read_input_tokens: 5 },
     total_cost_usd: 5,
     tool_metadata: { input_tokens: 5 },
   });

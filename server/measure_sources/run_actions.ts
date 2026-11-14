@@ -137,7 +137,7 @@ function fail(
 ): void {
   sql.run('UPDATE measure_source_runs SET status=?,failure=?,finished_at=? WHERE id=?', [
     status,
-    encode_record(f, false),
+    encode_record(f),
     now,
     run.id,
   ]);
@@ -235,7 +235,7 @@ export function complete_run(
     );
   }
   sql.run('UPDATE measure_source_runs SET metrics=? WHERE id=?', [
-    encode_record(result.metrics, false),
+    encode_record(result.metrics),
     run.id,
   ]);
   return data.read_run_detail(sql, id);

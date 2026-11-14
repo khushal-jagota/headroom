@@ -1,5 +1,5 @@
 import type { FastifyInstance, FastifyRequest } from 'fastify';
-import { JsonNumber, parse_numeric_json } from './numeric_json.ts';
+import { JsonNumber, parse_numeric_json, stringify_numeric_json } from './numeric_json.ts';
 import { MAX_PYTHON_JSONDICT_DEPTH } from './configuration.ts';
 import { ResponseDepthError } from './errors.ts';
 /** Pydantic's dict[str, Any] response serializer admits descendants through depth 255. */
@@ -17,12 +17,7 @@ export function stringify_numeric_response(
       for (const child of Object.values(value)) pending.push({ value: child, depth: depth + 1 });
     }
   }
-  // Unsafe whole-valued floats must not claim to be exact integer tokens.
-  return JSON.stringify(payload, (_key, value: unknown) =>
-    typeof value === 'number' && Number.isInteger(value) && !Number.isSafeInteger(value)
-      ? (JSON as unknown as { rawJSON(text: string): unknown }).rawJSON(value.toExponential())
-      : value,
-  );
+  return stringify_numeric_json(payload);
 }
 /** Area-scoped intake retains numeric token kinds before validation and fingerprints. */
 export function install_numeric_json_parser(

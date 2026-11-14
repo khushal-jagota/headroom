@@ -8,6 +8,9 @@ The owner accepts native diagnostics, CLI human text and help layout, and HTTP J
 HTTP shapes, names, types, and statuses remain unchanged. CLI commands, options, JSON fields and types, and exit codes remain unchanged.
 Executor wire behavior and exact integers required by the wire or database remain protected.
 Comparisons check fields, values, and exit codes instead of Python presentation bytes.
+Document storage uses native compact JSON. Page character counts preserve empty versus positive state, while page values remain strict.
+Whole provider values such as `5.0` pass native integer checks. JWT expiration claims accept finite numbers and reject booleans.
+Goal date validation retains its approved HTTP wording.
 
 ## Staging merge 12: decision notes and recap freshness
 
@@ -418,7 +421,7 @@ Python allocates a fresh `update_stop_` identity on each preparation attempt.
 The caller supplies the real update request ID. A retry cannot publish a second `child_stopped` entry for the same request and child.
 
 The Manager also requires lossless native projection of `sender_message_count`.
-TypeScript raises `ValueError` for counts outside JavaScript's safe integer range before native invocation. Python's integer count has no corresponding bound.
+TypeScript rejects counts outside JavaScript's safe integer range before native invocation. Python's integer count has no corresponding bound.
 
 ### Exact Mac stop after a failed command join
 

@@ -1,19 +1,15 @@
 import { is_record as object } from '../../../core/records.ts';
 import type { BackendUsageWindow, BackendUsageWindowKind } from '../contracts.ts';
 import { parse_iso_datetime } from '../../../core/clock.ts';
-import {
-  numeric_kind,
-  numeric_value,
-  parse_numeric_json,
-} from '../../../core/http/numeric_json.ts';
 export function percentage(value: unknown): number | null {
-  const number = numeric_value(value);
-  return number !== undefined && number >= 0 && number <= 100 ? number : null;
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0 && value <= 100
+    ? value
+    : null;
 }
 export function parse_datetime(value: unknown): Date | null {
   let parsed: Date;
-  const number = numeric_value(value);
-  if (number !== undefined) parsed = new Date(Math.round(number * 1_000_000) / 1000);
+  if (typeof value === 'number' && Number.isFinite(value))
+    parsed = new Date(Math.round(value * 1_000_000) / 1000);
   else if (
     typeof value === 'string' &&
     value &&
@@ -33,14 +29,13 @@ export function parse_datetime(value: unknown): Date | null {
     : null;
 }
 export function window_kind(minutes: unknown): BackendUsageWindowKind | null {
-  const number = numeric_value(minutes);
-  return number === 300 ? 'five_hour' : number === 10080 ? 'seven_day' : null;
+  return minutes === 300 ? 'five_hour' : minutes === 10080 ? 'seven_day' : null;
 }
 /** Validate the complete app-server answer before selecting understood windows. */
 export function parse_codex_windows(text: string): readonly BackendUsageWindow[] | null {
   let body: unknown;
   try {
-    body = parse_numeric_json(text);
+    body = JSON.parse(text);
   } catch {
     return null;
   }
@@ -66,9 +61,18 @@ function valid_bucket(value: unknown): value is Record<string, unknown> {
   for (const key of ['primary', 'secondary']) {
     const window = value[key];
     if (window === undefined || window === null) continue;
-    if (!object(window) || numeric_kind(window.usedPercent) !== 'integer') return false;
+    if (
+      !object(window) ||
+      typeof window.usedPercent !== 'number' ||
+      !Number.isInteger(window.usedPercent)
+    )
+      return false;
     for (const field of ['windowDurationMins', 'resetsAt'])
-      if (window[field] != null && numeric_kind(window[field]) !== 'integer') return false;
+      if (
+        window[field] != null &&
+        (typeof window[field] !== 'number' || !Number.isInteger(window[field]))
+      )
+        return false;
   }
   return true;
 }

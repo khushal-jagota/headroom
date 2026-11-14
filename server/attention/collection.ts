@@ -2,7 +2,6 @@
 import { isAbsolute } from 'node:path';
 import { createReadAccess } from '../core/database/index.ts';
 import { calendar_date, local_date } from '../measures/logic/dates.ts';
-import { stringify_python_json } from '../core/http/numeric_json.ts';
 import { read_summary } from './actions.ts';
 import { summary_request } from './contracts.ts';
 import { TIMEZONE } from './configuration.ts';
@@ -108,10 +107,7 @@ export async function collect_daily(
             destination_id: group.id,
             project_id: group.project_id ?? '',
             manager_id: group.manager_id ?? '',
-            attribution_basis: stringify_python_json(group.attribution_basis, {
-              compact: true,
-              ensure_ascii: true,
-            }),
+            attribution_basis: JSON.stringify(group.attribution_basis),
             coverage_status: observation.coverage_status,
           },
           values: { value: observation.value },

@@ -1,7 +1,7 @@
 import { PlannerError } from '../core/contracts.ts';
 import type { ReadSql, TransactionSql } from '../core/database/contracts.ts';
 import { newId } from '../core/ids.ts';
-import { numeric_kind, numeric_value, stringify_python_json } from '../core/http/numeric_json.ts';
+import { numeric_kind, numeric_value, stringify_numeric_json } from '../core/http/numeric_json.ts';
 import type { Measure, MeasureDate } from './contracts.ts';
 import { measure_json } from './serialization.ts';
 import {
@@ -66,7 +66,7 @@ export function create_measure(
       m.timezone,
       m.period,
       m.source_id,
-      m.formula === null ? null : stringify_python_json(m.formula, { ensure_ascii: true }),
+      m.formula === null ? null : stringify_numeric_json(m.formula),
       1,
       now,
       now,
@@ -108,7 +108,7 @@ export function update_measure(
       m.kind,
       m.timezone,
       m.period,
-      m.formula === null ? null : stringify_python_json(m.formula, { ensure_ascii: true }),
+      m.formula === null ? null : stringify_numeric_json(m.formula),
       m.definition_revision,
       now,
       id,
