@@ -4,7 +4,6 @@ import fs from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { onlineBackup, verifyDatabaseIntegrity } from '../../core/database/index.ts';
 import { parseIsoDatetime } from '../../core/clock.ts';
-import { stringify_python_json } from '../../core/http/numeric_json.ts';
 import type {
   ManagedRootName,
   ManagedFilesManifest,
@@ -73,9 +72,7 @@ async function capture_managed_files(
     await copy_managed_tree(roots[name], target);
     manifest[name] = await relative_manifest(target);
   }
-  const bytes = Buffer.from(
-    stringify_python_json(manifest, { sort_keys: true, ensure_ascii: true, indent: 2 }) + '\n',
-  );
+  const bytes = Buffer.from(JSON.stringify(manifest, null, 2) + '\n');
   await fs.writeFile(join(destination, 'manifest.json'), bytes);
   return {
     roots: Object.keys(manifest).sort(),
@@ -109,10 +106,8 @@ export async function create_database_backup(
       throw new Error('managed file capture failed verification');
     await fs.writeFile(
       join(temporary, 'metadata.json'),
-      stringify_python_json(
-        { ...metadata, ...(managed ? { managed_files: managed } : {}) },
-        { sort_keys: true, ensure_ascii: true, indent: 2 },
-      ) + '\n',
+      JSON.stringify({ ...metadata, ...(managed ? { managed_files: managed } : {}) }, null, 2) +
+        '\n',
     );
     const timestamp = new Date()
       .toISOString()

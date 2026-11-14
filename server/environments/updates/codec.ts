@@ -10,7 +10,6 @@ import {
   is_json_record as is_object,
   JsonNumber,
   parse_numeric_json,
-  stringify_python_json,
 } from '../../core/http/numeric_json.ts';
 
 export { is_json_record as is_object } from '../../core/http/numeric_json.ts';
@@ -124,5 +123,5 @@ export function merged(previous: unknown, current: unknown): unknown {
   };
 }
 export function canonical_json(value: unknown): string {
-  return stringify_python_json(value, { sort_keys: true, compact: true, ensure_ascii: true });
+  return JSON.stringify(value);
 }

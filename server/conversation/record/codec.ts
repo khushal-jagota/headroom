@@ -107,7 +107,7 @@ function record(value: unknown): ObjectValue {
 }
 
 /** Decodes the public metadata snapshot only. Secret storage and request rules belong to credentials. */
-function credentialSnapshot(value: unknown): CredentialRequestRowBody {
+export function credentialSnapshot(value: unknown): CredentialRequestRowBody {
   try {
     const row = record(value);
     const nullable = <T>(key: string, decode: (value: unknown) => T): T | null => {

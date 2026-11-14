@@ -1,6 +1,5 @@
 /** Offline declarations: generated from fresh Python during migration. */
-import { parse_numeric_json } from '../../core/http/numeric_json.ts';
-export const CREATE = parse_numeric_json(`{
+export const CREATE = JSON.parse(`{
   "schema": {
     "$defs": {
       "BinaryExpression": {

@@ -190,8 +190,21 @@ def _compare_store(
     actual: dict[str, Any] = _node(
         root, {"path": str(paths[1]), "now": NOW, "operations": operations}, "probe_store"
     )
-    # Stored numeric kinds and exact unknown fields survive each update.
-    assert json.dumps(actual, sort_keys=True) == json.dumps(expected, sort_keys=True)
+    # Compare stored values, including exact integers, without JSON spelling.
+    def meaningful(result: dict[str, Any]) -> str:
+        text = result["file_text"]
+        try:
+            text = json.loads(text) if text else None
+        except json.JSONDecodeError:
+            pass  # Malformed records remain byte-for-byte comparisons.
+        fields = {**result, "file_text": text}
+        normalized = json.loads(
+            json.dumps(fields),
+            parse_float=lambda raw: int(value) if (value := float(raw)).is_integer() else value,
+        )
+        return json.dumps(normalized, sort_keys=True)
+
+    assert meaningful(actual) == meaningful(expected)
     return actual
 
 

@@ -2,18 +2,9 @@
 import { is_record as object } from '../../../core/records.ts';
 import { isIP } from 'node:net';
 import { invalid, text } from '../../logic/validation.ts';
-import {
-  numeric_kind,
-  numeric_value,
-  stringify_python_json,
-} from '../../../core/http/numeric_json.ts';
-import { conversation_event_payload_from_canonical_json } from '../../../conversation/record/codec.ts';
-import { CredentialRequestEventPayload } from '../../../conversation/events.ts';
-import type {
-  CreateCredentialRequestBody,
-  CredentialRequestRowBody,
-  RequestReplacement,
-} from '../contracts.ts';
+import { numeric_kind, numeric_value } from '../../../core/http/numeric_json.ts';
+export { credentialSnapshot as decode_snapshot } from '../../../conversation/record/codec.ts';
+import type { CreateCredentialRequestBody, RequestReplacement } from '../contracts.ts';
 function exact_keys(value: Record<string, unknown>, keys: readonly string[]): boolean {
   return Object.keys(value).sort().join(',') === [...keys].sort().join(',');
 }
@@ -60,18 +51,6 @@ function require_https_url(value: string): void {
   } else hostname = hostport.split(':', 1)[0]!;
   if (scheme?.[1]?.toLowerCase() !== 'https' || !hostname || userinfo.replace(':', ''))
     throw invalid('credential help links require an HTTPS URL');
-}
-export function decode_snapshot(value: unknown): CredentialRequestRowBody {
-  try {
-    const payload = conversation_event_payload_from_canonical_json(
-      'credential_request',
-      stringify_python_json({ request: value }),
-    );
-    if (!(payload instanceof CredentialRequestEventPayload)) throw new Error('snapshot');
-    return payload.request;
-  } catch {
-    throw new Error('invalid credential request snapshot');
-  }
 }
 export function validate_request(value: unknown): CreateCredentialRequestBody {
   if (

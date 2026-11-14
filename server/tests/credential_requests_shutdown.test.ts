@@ -12,7 +12,7 @@ import {
 import { Deferred } from '../conversation/runtime/state.ts';
 import { CredentialRequestOperations } from '../credentials/requests/service.ts';
 import { createCredentialRequestRoutes } from '../credentials/requests/routes.ts';
-import { validate_request } from '../credentials/requests/logic/validation.ts';
+import { decode_snapshot, validate_request } from '../credentials/requests/logic/validation.ts';
 import { setup } from './conversation_core_fixture.ts';
 import { create } from './ticket_fixture.ts';
 
@@ -26,6 +26,19 @@ const metadata = (request_id: string) => ({
   help: null,
   help_url: null,
   replacement: null,
+});
+
+test('snapshot validation rejects a nonfinite nullable member without JSON coercion', () => {
+  const snapshot = {
+    ...metadata('synthetic'),
+    kind: 'credential_request',
+    state: 'pending',
+    credential: null,
+    delivery: null,
+  };
+  expect(() => decode_snapshot({ ...snapshot, replacement: Infinity })).toThrow(
+    'invalid credential request snapshot',
+  );
 });
 
 // Ordinary HTTP comparisons cannot seal the shared write scope at a pending dispatch.

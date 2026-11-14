@@ -1,7 +1,6 @@
 /** Durable decorations of backend cards share the existing database write door. */
 import type { Database, ReadSql, TransactionSql } from '../core/database/contracts.ts';
 import { PlannerError } from '../core/contracts.ts';
-import { stringify_python_json } from '../core/http/numeric_json.ts';
 import type { TicketLocale } from '../tickets/contracts.ts';
 import { as_object } from '../executor/protocol.ts';
 import { recognize_variant } from './model_resolution/logic/variants.ts';
@@ -139,7 +138,7 @@ export function save_machine_model_list(
     'INSERT INTO machine_backend_snapshots VALUES (?,?,?) ' +
       'ON CONFLICT(machine_id,backend_key) DO UPDATE SET snapshot_json=excluded.snapshot_json ' +
       'WHERE snapshot_json != excluded.snapshot_json',
-    [machine, snapshot.backend_key, stringify_python_json(as_object(snapshot, 'BackendSnapshot'))],
+    [machine, snapshot.backend_key, JSON.stringify(as_object(snapshot, 'BackendSnapshot'))],
   );
   if (!snapshot.models_complete) return;
   const offered = new Set<string>();
