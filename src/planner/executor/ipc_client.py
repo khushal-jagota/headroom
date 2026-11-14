@@ -51,9 +51,6 @@ def cli_mutation(method: str, path: str, body: Any) -> tuple[str, JsonObject]:
         return "ticket.edit", {"ticket_id": patch[1], "body": body}
     if method == "POST" and path == "/api/messages/send":
         return "message.send", {"body": body}
-    help_match = re.fullmatch(r"/api/tickets/([^/]+)/request-help", path)
-    if method == "POST" and help_match:
-        return "ticket.request_help", {"ticket_id": help_match[1], "body": body}
     raise ValueError(f"This executor does not support {method} {path}")
 
 
