@@ -15,7 +15,6 @@ import { installCompatibility } from './core/http/compatibility.ts';
 import { registerCoreRoutes } from './core/routes.ts';
 import type { Changes } from './core/routes.ts';
 import { registerArea } from './core/authority/register.ts';
-import { integer_value, normalize_integer } from './executor/integers.ts';
 import { create_executor_routes } from './executor/app_transport.ts';
 import type { VpsExecutor } from './executor/vps_transport.ts';
 import type { Area } from './core/authority/register.ts';
@@ -79,13 +78,7 @@ export async function createApp(config: Config, services: AppServices): Promise<
             ? null
             : {
                 ...identity,
-                connection_generation: normalize_integer(
-                  integer_value(identity.connection_generation) > (present ? 1n : 0n)
-                    ? integer_value(identity.connection_generation)
-                    : present
-                      ? 1n
-                      : 0n,
-                ),
+                connection_generation: Math.max(identity.connection_generation, present ? 1 : 0),
               },
         connection_state: present ? 'ready' : 'disconnected',
       }),

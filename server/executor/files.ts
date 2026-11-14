@@ -1,3 +1,4 @@
+import { counter } from './logic/counters.ts';
 /** Linux procfs capabilities: async byte work, retained parents and bounded publication. */
 import { constants, lstatSync, renameSync } from 'node:fs';
 import { link, lstat, mkdir, open, rename, unlink } from 'node:fs/promises';
@@ -5,7 +6,7 @@ import type { FileHandle } from 'node:fs/promises';
 import { basename, dirname, isAbsolute, join } from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
 import { is_shutdown_business_cancellation } from '../conversation/shutdown.ts';
-import { ValueError, integer_value } from './protocol.ts';
+import { ExecutorValidationError } from './protocol.ts';
 import { FILE_CHUNK_BYTES } from './configuration.ts';
 import { version, same_version } from './mac/file_metadata.ts';
 import type { FileVersion } from './mac/file_metadata.ts';
@@ -64,16 +65,16 @@ async function with_cleanup<T>(
 }
 function require_linux(): void {
   if (process.platform !== 'linux')
-    throw new ValueError('Executor file intake requires Linux procfs descriptors');
+    throw new ExecutorValidationError('Executor file intake requires Linux procfs descriptors');
 }
 function component(leaf: string): string {
   if (!leaf || leaf === '.' || leaf === '..' || /[/\\\0]/.test(leaf))
-    throw new ValueError('unsafe directory component');
+    throw new ExecutorValidationError('unsafe directory component');
   return leaf;
 }
 function at(parent: DirectoryHandle, leaf: string): string {
   require_linux();
-  if (parent.fd < 0) throw new ValueError('directory descriptor is closed');
+  if (parent.fd < 0) throw new ExecutorValidationError('directory descriptor is closed');
   return `/proc/self/fd/${parent.fd}/${component(leaf)}`;
 }
 /** Refuse before intake. This checks the actual capability namespace, without a fallback. */
@@ -87,7 +88,7 @@ export async function assert_file_support(): Promise<void> {
         view = await open(`/proc/self/fd/${root.fd}/.`, constants.O_RDONLY | constants.O_DIRECTORY);
       } catch (error) {
         throw Object.assign(
-          new ValueError('Executor file intake requires Linux procfs descriptors'),
+          new ExecutorValidationError('Executor file intake requires Linux procfs descriptors'),
           { cause: error },
         );
       }
@@ -100,7 +101,7 @@ export async function assert_file_support(): Promise<void> {
             original.ino !== observed.ino ||
             !observed.isDirectory()
           )
-            throw new ValueError('procfs does not retain directory descriptors');
+            throw new ExecutorValidationError('procfs does not retain directory descriptors');
         },
         () => view.close(),
       );
@@ -109,7 +110,8 @@ export async function assert_file_support(): Promise<void> {
   );
 }
 export function safe_component(value: string): string {
-  if (!value || /[^A-Za-z0-9_-]/.test(value)) throw new ValueError('unsafe executor identifier');
+  if (!value || /[^A-Za-z0-9_-]/.test(value))
+    throw new ExecutorValidationError('unsafe executor identifier');
   return value;
 }
 async function is_symlink(path: string): Promise<boolean> {
@@ -117,7 +119,8 @@ async function is_symlink(path: string): Promise<boolean> {
     return (await lstat(path)).isSymbolicLink();
   } catch (error) {
     if (has_code(error, 'ENOENT') || has_code(error, 'ENOTDIR')) return false;
-    if (has_code(error, 'ELOOP')) throw new ValueError('artifact path contains symlink');
+    if (has_code(error, 'ELOOP'))
+      throw new ExecutorValidationError('artifact path contains symlink');
     throw error;
   }
 }
@@ -130,14 +133,15 @@ export async function contained_path(root: string, relative_path: string): Promi
     /%(25|2e|2f|5c)/i.test(relative_path) ||
     relative_path.split('/').some((part) => ['', '.', '..'].includes(part))
   )
-    throw new ValueError('unsafe relative artifact path');
+    throw new ExecutorValidationError('unsafe relative artifact path');
   if (relative_path.includes('\0') || root.includes('\0'))
-    throw new ValueError('lstat: embedded null character in path');
-  if (await is_symlink(root)) throw new ValueError('artifact root is symlink');
+    throw new ExecutorValidationError('lstat: embedded null character in path');
+  if (await is_symlink(root)) throw new ExecutorValidationError('artifact root is symlink');
   let current = root;
   for (const part of relative_path.split('/')) {
     current = join(current, part);
-    if (await is_symlink(current)) throw new ValueError('artifact path contains symlink');
+    if (await is_symlink(current))
+      throw new ExecutorValidationError('artifact path contains symlink');
   }
   return current;
 }
@@ -211,7 +215,8 @@ export async function regular_descriptor(source: string | HeldFileLocation): Pro
         constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK,
       );
       try {
-        if (!(await handle.stat()).isFile()) throw new ValueError('artifact is not regular file');
+        if (!(await handle.stat()).isFile())
+          throw new ExecutorValidationError('artifact is not regular file');
         incoming = handle;
         return handle;
       } catch (error) {
@@ -246,36 +251,36 @@ export function create_file_at(target: HeldFileLocation): Promise<FileHandle> {
 export async function descriptor_hash(
   incoming: FileHandle,
   options: FileOperationOptions = {},
-): Promise<readonly [string, bigint]> {
+): Promise<readonly [string, number]> {
   const hash = createHash('sha256');
   const buffer = Buffer.allocUnsafe(FILE_CHUNK_BYTES);
-  let count = 0n;
+  let count = 0;
   for (;;) {
     check_aborted(options.signal);
     const { bytesRead } = await incoming.read(buffer, 0, buffer.length, count);
     check_aborted(options.signal);
     if (bytesRead === 0) return [hash.digest('hex'), count];
     hash.update(buffer.subarray(0, bytesRead));
-    count += BigInt(bytesRead);
+    count = counter(count + bytesRead);
   }
 }
 /** Outgoing is a newly created inode at offset zero. Writes consume each block before reuse. */
 export async function copy_hashed(
   incoming: FileHandle,
   outgoing: FileHandle,
-  options: FileOperationOptions & { byte_limit?: bigint } = {},
-): Promise<readonly [string, bigint]> {
+  options: FileOperationOptions & { byte_limit?: number } = {},
+): Promise<readonly [string, number]> {
   const hash = createHash('sha256');
   const buffer = Buffer.allocUnsafe(FILE_CHUNK_BYTES);
-  let count = 0n;
+  let count = 0;
   for (;;) {
     check_aborted(options.signal);
     const { bytesRead } = await incoming.read(buffer, 0, buffer.length, count);
     check_aborted(options.signal);
     if (bytesRead === 0) return [hash.digest('hex'), count];
-    count += BigInt(bytesRead);
+    count = counter(count + bytesRead);
     if (options.byte_limit !== undefined && count > options.byte_limit)
-      throw new ValueError('file exceeds manifest length');
+      throw new ExecutorValidationError('file exceeds manifest length');
     hash.update(buffer.subarray(0, bytesRead));
     let offset = 0;
     while (offset < bytesRead) {
@@ -304,13 +309,13 @@ export async function copy_verified(
         created = true;
         await with_cleanup(
           async () => {
-            const length = integer_value(manifest.byte_count);
+            const length = manifest.byte_count;
             const [digest, count] = await copy_hashed(incoming, outgoing, {
               ...options,
               byte_limit: length,
             });
             if (count !== length || digest !== manifest.sha256)
-              throw new ValueError('incomplete or corrupt file');
+              throw new ExecutorValidationError('incomplete or corrupt file');
             await outgoing.sync();
           },
           () => outgoing.close(),
@@ -356,7 +361,7 @@ export async function install_verified(
 export async function file_digest(
   source: string | HeldFileLocation,
   options: FileOperationOptions = {},
-): Promise<readonly [string, bigint]> {
+): Promise<readonly [string, number]> {
   const incoming = await regular_descriptor(source);
   return await with_cleanup(
     () => descriptor_hash(incoming, options),
@@ -379,7 +384,7 @@ export async function verified_version(
           if (
             !same_version(before, after) ||
             digest !== manifest.sha256 ||
-            count !== integer_value(manifest.byte_count)
+            count !== manifest.byte_count
           )
             return null;
           return same_version(file_version_at(location.parent, location.leaf), after)

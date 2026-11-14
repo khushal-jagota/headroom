@@ -3,7 +3,7 @@ import { createHash } from 'node:crypto';
 import { join } from 'node:path';
 import { OutboxStore } from '../storage/outbox.ts';
 import { MacOutboxSender } from '../transport/outbox.ts';
-import { decode_json, encode_bounded } from '../../protocol.ts';
+import { decode_json, decode_value, encode_bounded } from '../../protocol.ts';
 
 export async function deliver(input: { root: string; replies: Record<string, (string | null)[]> }) {
   const options = { deadline: performance.now() / 1000 + 10 };
@@ -25,7 +25,13 @@ export async function deliver(input: { root: string; replies: Record<string, (st
         );
         const reply = input.replies[id]!.shift();
         if (reply == null) throw new Error('offline');
-        return decode_json(reply, 'ItemBatchReply');
+        const response = decode_json(reply, 'ItemBatchReply');
+        // A server can emit the same manifest with a different property order.
+        if (response.stop?.missing_files)
+          response.stop.missing_files = response.stop.missing_files.map((manifest) =>
+            decode_value(Object.fromEntries(Object.entries(manifest).reverse()), 'FileManifest'),
+          );
+        return response;
       },
     },
     files: {
@@ -39,7 +45,7 @@ export async function deliver(input: { root: string; replies: Record<string, (st
     notify_confirmed(receipt) {
       const row = store.lookup(receipt.submission_id);
       confirmed.push([receipt.submission_id, row === null || row.receipt_json !== null]);
-      if (store.pending_count() === 0n) finish();
+      if (store.pending_count() === 0) finish();
     },
     warn() {},
     on_failure() {},

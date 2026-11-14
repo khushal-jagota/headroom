@@ -122,7 +122,6 @@ export async function build_mac_package(options: MacPackageOptions) {
       return (
         !parts.some((part) => excluded.has(part)) &&
         !name.endsWith('.test.ts') &&
-        name !== 'executor/wire.schema.json' &&
         name !== 'test_host.ts'
       );
     },

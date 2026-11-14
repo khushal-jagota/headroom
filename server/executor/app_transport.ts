@@ -10,9 +10,7 @@ import { sendFile } from '../core/http/static.ts';
 import { trusted_ingress_login } from '../core/http/middleware.ts';
 import { is_os_error } from '../core/system_errors.ts';
 import { integer_text, decimal_digit } from '../core/python_integer.ts';
-import { normalize_integer } from './integers.ts';
 import { strip_unicode_space } from '../core/whitespace.ts';
-import { JsonNumber } from '../core/http/numeric_json.ts';
 import {
   admit_unidentified_call,
   websocket_refusal,
@@ -21,7 +19,12 @@ import type { Endpoint } from '../core/unidentified_agent_calls/contracts.ts';
 import { UpdateConflict } from '../environments/updates/attempts.ts';
 import type { MacUpdateServiceContract } from '../environments/updates/mac/contracts.ts';
 import { VpsExecutor } from './vps_transport.ts';
-import { decode_bounded, decode_json, encode_bounded, ValueError } from './protocol.ts';
+import {
+  decode_bounded,
+  decode_json,
+  encode_bounded,
+  ExecutorValidationError,
+} from './protocol.ts';
 import type { WireInput, WireRootName, WireTypes } from './protocol.ts';
 import type { InputFile } from './contracts.ts';
 import {
@@ -59,15 +62,16 @@ export function require_executor_ingress(
   executor_id: string | null,
   trusted_login: string | null,
 ): void {
-  if (!executor_id || !trusted_login) throw new ValueError('trusted executor ingress is required');
+  if (!executor_id || !trusted_login)
+    throw new ExecutorValidationError('trusted executor ingress is required');
   const headers = header_map(raw);
   for (const [name, values] of headers)
     if (SINGLETON.has(name) && values.length !== 1)
-      throw new ValueError('duplicate executor security header is not allowed');
+      throw new ExecutorValidationError('duplicate executor security header is not allowed');
   if (headers.has('origin'))
-    throw new ValueError('browser origin is not allowed on executor routes');
+    throw new ExecutorValidationError('browser origin is not allowed on executor routes');
   if (headers.get(EXECUTOR_ID)?.[0] !== executor_id)
-    throw new ValueError('executor identity does not match configuration');
+    throw new ExecutorValidationError('executor identity does not match configuration');
 }
 class BodyTooLarge extends PlannerError {
   constructor() {
@@ -123,7 +127,7 @@ function decode<K extends WireRootName>(bytes: Uint8Array, root: K, limit: numbe
   try {
     return decode_bounded(bytes, root, { limit });
   } catch (error) {
-    if (!(error instanceof ValueError)) throw error;
+    if (!(error instanceof ExecutorValidationError)) throw error;
     throw new PlannerError('validation', `malformed executor request: ${error.message}`);
   }
 }
@@ -155,9 +159,9 @@ function poll_parameters(request: FastifyRequest): {
   else if (text === '' || !/[0-9]/.test(text) || !grammar.test(text))
     throw new PlannerError('validation', 'invalid poll parameters');
   else wait = Number(numeric);
-  if (cursor === null || after.replace(/[^\p{Decimal_Number}]/gu, '').length > 4300)
+  if (cursor === null || !Number.isSafeInteger(Number(cursor)))
     throw new PlannerError('validation', 'invalid poll parameters');
-  return { after: normalize_integer(cursor), wait };
+  return { after: Number(cursor), wait };
 }
 async function send_chunk(response: ServerResponse, chunk: Uint8Array | null): Promise<void> {
   await new Promise<void>((resolve, reject) => {
@@ -194,9 +198,7 @@ async function input_response(reply: FastifyReply, file: InputFile): Promise<voi
   try {
     response.writeHead(200, {
       'content-type': 'application/octet-stream',
-      'content-length': String(
-        file.byte_count instanceof JsonNumber ? file.byte_count.integer : file.byte_count,
-      ),
+      'content-length': String(file.byte_count),
       'x-panels-file-sha256': file.sha256,
     });
     for await (const chunk of file.chunks)
@@ -210,7 +212,11 @@ async function input_response(reply: FastifyReply, file: InputFile): Promise<voi
   }
 }
 function update_failure(error: unknown): never {
-  if (error instanceof UpdateConflict || error instanceof ValueError || is_os_error(error))
+  if (
+    error instanceof UpdateConflict ||
+    error instanceof ExecutorValidationError ||
+    is_os_error(error)
+  )
     throw new HttpError(409, (error as Error).message);
   throw error;
 }
@@ -229,7 +235,7 @@ export function create_executor_routes(services: ExecutorHttpServices): FastifyP
       try {
         ingress(request);
       } catch (error) {
-        if (!(error instanceof ValueError)) throw error;
+        if (!(error instanceof ExecutorValidationError)) throw error;
         throw new PlannerError('agent_forbidden', error.message);
       }
       if (!(services.endpoint instanceof VpsExecutor))
@@ -250,7 +256,7 @@ export function create_executor_routes(services: ExecutorHttpServices): FastifyP
       try {
         ingress(request);
       } catch (error) {
-        if (!(error instanceof ValueError)) throw error;
+        if (!(error instanceof ExecutorValidationError)) throw error;
         throw new HttpError(403, error.message);
       }
       services.endpoint?.record_contact();
@@ -350,10 +356,7 @@ export function create_executor_routes(services: ExecutorHttpServices): FastifyP
           MAX_ENVELOPE_BYTES,
         );
         const length = request.headers['content-length'];
-        const count =
-          typeof length === 'string' && /^[0-9]+$/.test(length)
-            ? normalize_integer(BigInt(length))
-            : null;
+        const count = typeof length === 'string' && /^[0-9]+$/.test(length) ? Number(length) : null;
         try {
           await endpoint.upload(identity, sha256, upload, count, source(request));
         } catch (error) {
@@ -441,7 +444,7 @@ export function create_executor_routes(services: ExecutorHttpServices): FastifyP
         throw error;
       }
       try {
-        const report = decode_json(bytes, 'MacUpdateReport', { strict: true });
+        const report = decode_json(bytes, 'MacUpdateReport');
         // This read and report call share one uninterrupted synchronous continuation.
         updates.report(report, services.endpoint?.health() ?? null);
         return reply.send({ confirmed: report.phase === 'current' });

@@ -1,6 +1,5 @@
 /** One generated-codec projection of durable spool rows for IPC and HTTP senders. */
 import { decode_json, decode_value } from '../../protocol.ts';
-import { normalize_integer } from '../../integers.ts';
 import type { AcceptanceReceipt, QueuedEnvelope } from '../../wire.generated.ts';
 import type { ItemRow } from './contracts.ts';
 
@@ -10,7 +9,7 @@ export function row_envelope(sender_id: string, row: ItemRow): QueuedEnvelope {
     {
       sender_id,
       conversation_id: row.conversation_id,
-      sequence: normalize_integer(row.sequence),
+      sequence: row.sequence,
       submission_id: row.submission_id,
       kind: row.kind,
       payload: value.payload,

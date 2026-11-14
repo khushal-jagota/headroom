@@ -266,7 +266,7 @@ function closeCapability(close: () => void): DatabaseCloseHandle & { readonly cl
 function createConfiguredReadAccess(
   path: string,
   options: { busyTimeoutMs?: number },
-  durable?: { foreignKeys: boolean },
+  durable?: { foreignKeys: boolean; safeIntegers?: boolean },
   adopt?: (cleanup: DatabaseCloseHandle) => void,
 ): ReadAccess {
   path = assert_test_database_path(path);
@@ -309,7 +309,13 @@ function createConfiguredReadAccess(
       reading = true;
       try {
         connection.exec('BEGIN');
-        const result = scope(connection, false, work, false, durable !== undefined);
+        const result = scope(
+          connection,
+          false,
+          work,
+          false,
+          durable?.safeIntegers ?? durable !== undefined,
+        );
         connection.exec('COMMIT');
         return result;
       } catch (error) {
@@ -577,7 +583,7 @@ export function createDurableSidecarDatabase(
     );
     const owned = createOwnedDatabase<TransactionSql>(writer, reader, {
       busyTimeoutMs: BUSY_TIMEOUT_MS,
-      safeIntegers: true,
+      safeIntegers: options.safeIntegers ?? true,
     });
     if (!existed) {
       owned.database.write((tx) => {

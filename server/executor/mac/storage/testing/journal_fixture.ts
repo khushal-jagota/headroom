@@ -2,7 +2,6 @@
 import { readFileSync, writeFileSync } from 'node:fs';
 import { isMainThread } from 'node:worker_threads';
 import { register_test_root } from '../../../../core/test_paths.ts';
-import { stringify_python_json } from '../../../../core/http/numeric_json.ts';
 import { decode_json } from '../../../protocol.ts';
 import type { JournalOutputPolicy } from '../journal_contracts.ts';
 
@@ -14,7 +13,11 @@ interface Fixture {
 const owned_root = new URL(import.meta.url).searchParams.get('owned_root');
 if (!isMainThread && owned_root) register_test_root(owned_root);
 const signature = (value: unknown) =>
-  stringify_python_json(value, { sort_keys: true, compact: true });
+  JSON.stringify(value, (_key, item) =>
+    item !== null && typeof item === 'object' && !Array.isArray(item)
+      ? Object.fromEntries(Object.entries(item).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)))
+      : item,
+  );
 let table: Map<string, boolean> | undefined;
 function records() {
   if (table) return table;

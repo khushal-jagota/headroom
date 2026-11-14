@@ -124,11 +124,7 @@ export class MacRetirement implements MacRetirementContract {
               !record.settled,
           ))
     )
-      failures.push(
-        Object.assign(new Error('required source publication failed'), {
-          name: 'RuntimeError',
-        }),
-      );
+      failures.push(new Error('required source publication failed'));
     if (failures.length) {
       const error =
         failures.length === 1

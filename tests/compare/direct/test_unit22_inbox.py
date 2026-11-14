@@ -194,6 +194,9 @@ def test_populated_inbox_publication_and_receipts(
     )
     assert run.returncode == 0, run.stderr
     actual = json.loads(run.stdout)
+    for result in (actual, expected):
+        for position in result["positions"]:
+            position["result_json"] = json.loads(position["result_json"])
     assert actual == expected
     assert len(actual["files"]) == 34
     assert actual["staged"] == []

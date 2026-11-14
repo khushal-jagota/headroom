@@ -15,7 +15,7 @@ test('a committed append wakes an idle sender', async () => {
       sender_id: 'sender',
       pending_events: events,
       pending: () => [...rows],
-      pending_conversations: () => (rows.length ? [['conversation', 1n]] : []),
+      pending_conversations: () => (rows.length ? [['conversation', 1]] : []),
       async acknowledge(_, _sender, _body, _accepted, _invalidated, done) {
         rows.length = 0;
         done();
@@ -49,7 +49,7 @@ test('a committed append wakes an idle sender', async () => {
   sender.start();
   await setImmediate();
   const item: ItemRow = {
-    sequence: 1n,
+    sequence: 1,
     submission_id: 'item',
     conversation_id: 'conversation',
     child_id: 'child',
@@ -60,7 +60,7 @@ test('a committed append wakes an idle sender', async () => {
   rows.push(item);
   events.emit('pending');
   await confirmed;
-  rows.push({ ...item, sequence: 2n, submission_id: 'retry' });
+  rows.push({ ...item, sequence: 2, submission_id: 'retry' });
   events.emit('pending');
   await backoff;
   await setImmediate();

@@ -3,13 +3,13 @@ import type { ChildReference } from '../conversation/backends/contracts.ts';
 import type { Database, ReadSql } from '../core/database/contracts.ts';
 import { import_captured_turns } from '../conversation/deploy_interruptions/data.ts';
 import { read_unresolved_turns } from '../conversation/deploy_interruptions/capture.ts';
-import { decode_json, KeyError } from './protocol.ts';
+import { decode_json, ExecutorValidationError } from './protocol.ts';
 import { inspect } from 'node:util';
 import { close_child_in_transaction } from './data/runs.ts';
 const source_string = (value: unknown): string =>
   typeof value === 'string' ? value : inspect(value);
 function field(record: Record<string, unknown>, key: string): unknown {
-  if (!Object.hasOwn(record, key)) throw new KeyError(key);
+  if (!Object.hasOwn(record, key)) throw new ExecutorValidationError(key);
   return record[key];
 }
 function answers_the_agent_may_not_have(

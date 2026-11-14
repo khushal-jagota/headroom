@@ -31,7 +31,7 @@ import { CommandSettlementReason } from './contracts.ts';
 import type { WireValue } from './contracts.ts';
 import { ExecutorStore } from './data/runs.ts';
 import { steer_never_arrived } from './data/mailbox.ts';
-import { integer_value, ValueError } from './protocol.ts';
+import { ExecutorValidationError } from './protocol.ts';
 import {
   STEER_DELIVERY_LIMIT_SECONDS,
   DRAIN_RETRY_INITIAL_SECONDS,
@@ -349,7 +349,7 @@ export class MacRuns {
         const command = row?.command.child_command;
         if (command == null) continue;
         if (!same_reference(command.child, child))
-          throw new ValueError('initial command belongs to another child');
+          throw new ExecutorValidationError('initial command belongs to another child');
         const outcome = row?.result?.child_outcome;
         if (
           command.operation === 'write_prompt' &&
@@ -428,7 +428,7 @@ export class MacRuns {
         command.operation !== 'stop' ||
         !same_reference(command.child, outcome.child)
       )
-        throw new ValueError('child_stopped conflicts with its command');
+        throw new ExecutorValidationError('child_stopped conflicts with its command');
       if (
         this.store.child_assignment(outcome.child) === null &&
         !this.store.has_closed_child_assignment(outcome.child)
@@ -436,7 +436,7 @@ export class MacRuns {
         this.authority(outcome.child);
     } else this.authority(outcome.child);
     if (outcome.disposition !== 'succeeded')
-      throw new ValueError('child_stopped requires successful exact-child stop');
+      throw new ExecutorValidationError('child_stopped requires successful exact-child stop');
   }
   accept_stop_receipt(
     outcome: WireValue<'CommandOutcome'>,
@@ -519,7 +519,7 @@ export class MacRuns {
           close_mac_interruption_of_turn(
             tx,
             child.conversation_id,
-            integer_value(turn_number),
+            turn_number,
             Math.floor(now_ms() / 1000),
             'Its message was written again to a fresh agent.',
           ),

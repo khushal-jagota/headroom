@@ -1,6 +1,7 @@
 /** Mac-owned runtime settings. Protocol types remain with the shared wire owner. */
 import { isIP } from 'node:net';
 import fs from 'node:fs';
+import { ExecutorValidationError } from '../protocol_errors.ts';
 import { dirname, isAbsolute, join } from 'node:path';
 import { path_is_within } from '../../core/path_containment.ts';
 import { homedir } from 'node:os';
@@ -125,8 +126,8 @@ export class ExecutorPaths {
     return executor_socket_path(this.root);
   }
 }
-function value_error(message: string): never {
-  throw Object.assign(new Error(message), { name: 'ValueError' });
+function refuse_configuration(message: string): never {
+  throw new ExecutorValidationError(message);
 }
 function inode(path: string): readonly [bigint, bigint] | null {
   try {
@@ -139,7 +140,7 @@ function inode(path: string): readonly [bigint, bigint] | null {
 }
 export function executor_paths(environment: NodeJS.ProcessEnv = process.env): ExecutorPaths {
   const home = environment.HOME ?? homedir();
-  if (!home || !isAbsolute(home)) value_error('executor HOME must be an absolute path');
+  if (!home || !isAbsolute(home)) refuse_configuration('executor HOME must be an absolute path');
   const configured = strip(environment[EXECUTOR_ROOT_ENV] ?? '');
   const root = configured
     ? expand_executor_path(configured, environment)
@@ -147,7 +148,7 @@ export function executor_paths(environment: NodeJS.ProcessEnv = process.env): Ex
   const resolved = resolve_path_sync(root);
   const legacy = resolve_path_sync(python_executor_root(home));
   if (path_is_within(legacy, resolved))
-    value_error('TypeScript executor root must be separate from the Python executor root');
+    refuse_configuration('TypeScript executor root must be separate from the Python executor root');
   const legacy_inode = inode(legacy);
   if (legacy_inode !== null) {
     // Native case-insensitive aliases need not change spelling during symlink resolution.
@@ -155,7 +156,9 @@ export function executor_paths(environment: NodeJS.ProcessEnv = process.env): Ex
     for (let path = resolved; ; path = dirname(path)) {
       const actual = inode(path);
       if (actual !== null && actual[0] === legacy_inode[0] && actual[1] === legacy_inode[1])
-        value_error('TypeScript executor root must be separate from the Python executor root');
+        refuse_configuration(
+          'TypeScript executor root must be separate from the Python executor root',
+        );
       if (path === dirname(path)) break;
     }
   }
@@ -165,24 +168,24 @@ export function executor_paths(environment: NodeJS.ProcessEnv = process.env): Ex
 /** Preserve urlsplit's origin validation without WHATWG URL normalization. */
 export function validate_server_url(value: string): string {
   if (/[\u0000-\u0020\u0085\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000]/u.test(value))
-    value_error('executor server URL contains whitespace or control characters');
+    refuse_configuration('executor server URL contains whitespace or control characters');
   const parsed =
     /^(?:([A-Za-z][A-Za-z0-9+.-]*):)?(?:\/\/([^/?#]*))?([^?#]*)(?:\?([^#]*))?(?:#(.*))?$/u.exec(
       value,
     );
   const authority = parsed?.[2] ?? '';
   const host_port = authority.slice(authority.lastIndexOf('@') + 1);
-  if (authority.includes('[') !== authority.includes(']')) value_error('Invalid IPv6 URL');
+  if (authority.includes('[') !== authority.includes(']')) refuse_configuration('Invalid IPv6 URL');
   let host: string;
   let port_text: string;
   if (authority.includes('[')) {
-    if (!host_port.startsWith('[')) value_error('Invalid IPv6 URL');
+    if (!host_port.startsWith('[')) refuse_configuration('Invalid IPv6 URL');
     const end = host_port.indexOf(']');
     host = host_port.slice(1, end);
     const suffix = host_port.slice(end + 1);
-    if (suffix && !suffix.startsWith(':')) value_error('Invalid IPv6 URL');
+    if (suffix && !suffix.startsWith(':')) refuse_configuration('Invalid IPv6 URL');
     if (host.startsWith('v')) {
-      if (!/^v[0-9A-Fa-f]+\..+$/u.test(host)) value_error('IPvFuture address is invalid');
+      if (!/^v[0-9A-Fa-f]+\..+$/u.test(host)) refuse_configuration('IPvFuture address is invalid');
     } else {
       const scope = host.indexOf('%');
       const family = isIP(host.split('%', 1)[0]!);
@@ -191,8 +194,8 @@ export function validate_server_url(value: string): string {
         (scope >= 0 &&
           (family !== 6 || !host.slice(scope + 1) || host.slice(scope + 1).includes('%')))
       )
-        value_error(`'${host}' does not appear to be an IPv4 or IPv6 address`);
-      if (family === 4) value_error('An IPv4 address cannot be in brackets');
+        refuse_configuration(`'${host}' does not appear to be an IPv4 or IPv6 address`);
+      if (family === 4) refuse_configuration('An IPv4 address cannot be in brackets');
     }
     port_text = suffix.slice(1);
   } else {
@@ -202,9 +205,11 @@ export function validate_server_url(value: string): string {
   }
   const normalized = authority.replace(/[@:#?]/gu, '').normalize('NFKC');
   if (normalized !== authority.replace(/[@:#?]/gu, '') && /[/?#@:]/u.test(normalized))
-    value_error(`netloc '${authority}' contains invalid characters under NFKC normalization`);
+    refuse_configuration(
+      `netloc '${authority}' contains invalid characters under NFKC normalization`,
+    );
   if (port_text && (!/^[0-9]+$/u.test(port_text) || Number(port_text) > 65535))
-    value_error('executor server URL has invalid port');
+    refuse_configuration('executor server URL has invalid port');
   if (
     !parsed ||
     (parsed[1] ?? '').toLowerCase() !== 'https' ||
@@ -215,7 +220,7 @@ export function validate_server_url(value: string): string {
     parsed[5] ||
     (port_text && Number(port_text) < 1)
   )
-    value_error('executor server URL must be an HTTPS origin');
+    refuse_configuration('executor server URL must be an HTTPS origin');
   return value.replace(/\/+$/u, '');
 }
 export function validate_executor_launch(
@@ -224,6 +229,6 @@ export function validate_executor_launch(
   server_url: string,
 ): void {
   if (!/^[A-Za-z0-9_.:-]{1,128}(?![\s\S])/u.test(executor_id) || !strip(application_revision))
-    value_error('invalid explicit executor HTTPS launch configuration');
+    refuse_configuration('invalid explicit executor HTTPS launch configuration');
   validate_server_url(server_url);
 }

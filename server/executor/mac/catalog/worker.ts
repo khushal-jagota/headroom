@@ -1,9 +1,6 @@
 /** Retain canonical bodies off main; each persistence retry opens a fresh bounded reader. */
 import { parentPort } from 'node:worker_threads';
 import { as_object, encode_value } from '../../protocol.ts';
-import { stringify_pydantic_json } from '../../../core/http/numeric_json.ts';
-import type { BackendSnapshot } from '../../../conversation/snapshot/contracts.ts';
-import { unpack } from '../storage/journal_worker_contracts.ts';
 import { FILE_CHUNK_BYTES } from '../configuration.ts';
 import type { CatalogAction, CatalogWorkerRequest, CatalogWorkerReply } from './contracts.ts';
 if (!parentPort) throw new Error('Mac catalog encoder requires its owner port.');
@@ -13,10 +10,10 @@ const port = parentPort,
 let sequence = 0;
 function execute(action: CatalogAction): unknown {
   if (action.operation === 'encode') {
-    const snapshot = unpack(action.snapshot) as BackendSnapshot | null;
+    const snapshot = action.snapshot;
     const model_list = snapshot === null ? null : as_object(snapshot, 'BackendSnapshot');
     const bytes = Buffer.from(
-      stringify_pydantic_json(
+      JSON.stringify(
         encode_value(
           { command_id: action.command_id, child_outcome: null, model_list },
           'CommandResult',

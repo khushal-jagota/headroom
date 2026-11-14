@@ -98,7 +98,7 @@ def test_unit22_mac_files_and_configuration(tmp_path: Path, request: pytest.Fixt
         try:
             return {"value": action(*args)}
         except ValueError as error:
-            return {"error": {"name": type(error).__name__, "message": str(error)}}
+            return {"error": {"kind": "validation", "message": str(error)}}
 
     def relative_path(value: str) -> str:
         return str(contained_path(root, value))[len(str(root)) :]
@@ -207,7 +207,7 @@ def test_unit22_mac_files_and_configuration(tmp_path: Path, request: pytest.Fixt
     assert actual.pop("refused_roots") == [
         {
             "error": {
-                "name": "ValueError",
+                "kind": "validation",
                 "message": (
                     "TypeScript executor root must be separate from the Python executor root"
                 ),
@@ -216,7 +216,7 @@ def test_unit22_mac_files_and_configuration(tmp_path: Path, request: pytest.Fixt
     ] * len(refused_roots)
     assert (
         actual.pop("refused_homes")
-        == [{"error": {"name": "ValueError", "message": "executor HOME must be an absolute path"}}]
+        == [{"error": {"kind": "validation", "message": "executor HOME must be an absolute path"}}]
         * 2
     )
     settings = actual.pop("settings")

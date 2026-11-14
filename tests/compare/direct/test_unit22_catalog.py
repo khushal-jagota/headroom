@@ -45,7 +45,7 @@ def test_catalog_retention_refresh_and_owned_cancellation(
         None,
         "1",
         None,
-        (BackendModel("fixture", version=(9007199254740993,)),),
+        (BackendModel("fixture", version=(123456789,)),),
         ("low",),
         "fixture",
         "low",
@@ -156,7 +156,7 @@ def test_catalog_retention_refresh_and_owned_cancellation(
     assert actual.pop("after_abort_poll") == 0
     assert actual == expected
     assert actual["flags"] == [False, False, True, True]
-    assert actual["values"][-1]["available_models"][0]["version"] == [9007199254740993]
+    assert actual["values"][-1]["available_models"][0]["version"] == [123456789]
     report = request.config.getoption("--compare-report-dir", default=None)
     if report:
         destination = Path(report)

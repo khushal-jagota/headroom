@@ -10,6 +10,7 @@ export const MAC_REQUIRED_FILES = [
   'server/executor/mac/entrypoint.ts',
   'server/cli/main.ts',
   'server/executor/wire.generated.ts',
+  'server/executor/wire.schema.json',
   'server/core/database/application_schema.json',
   'server/skills/cli_commands.json',
   'server/conversation/tool_shell_startup.bash',

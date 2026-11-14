@@ -1,11 +1,9 @@
 /** Shared synthetic native setup and real-store custody for the Mac direct proofs. */
 import { mkdirSync } from 'node:fs';
 import assert from 'node:assert/strict';
-import { stringify_pydantic_json } from '../../../core/http/numeric_json.ts';
 import type { StopOptions } from '../../../lifecycle/contracts.ts';
 import type { ConversationMessageFiles } from '../../../conversation/message_files.ts';
 import { decode_json, encode_value } from '../../protocol.ts';
-import { normalize_integer } from '../../integers.ts';
 import type { MailboxCommand, QueuedEnvelope } from '../../wire.generated.ts';
 import type { MacNativeChildrenOptions } from '../runner/contracts.ts';
 import { OutboxStore } from '../storage/outbox.ts';
@@ -82,7 +80,7 @@ export async function close_fixture_owners(
 
 export async function open_fixture_stores(
   spool_root: string,
-  now_ms: bigint,
+  now_ms: number,
   on_failure: (error: Error) => void,
   options: StopOptions,
 ): Promise<FixtureStores> {
@@ -92,7 +90,7 @@ export async function open_fixture_stores(
       spool_root,
       {
         monotonic: () => 100,
-        now_ns: () => now_ms * 1_000_000n,
+        now_ns: () => BigInt(now_ms) * 1_000_000n,
       },
       options,
       on_failure,
@@ -133,9 +131,9 @@ export async function record_commands(
   commands: readonly MailboxCommand[],
 ): Promise<void> {
   const cursor = await journal.record_poll_reply(
-    stringify_pydantic_json(encode_value({ commands }, 'MailboxPollReply')),
+    JSON.stringify(encode_value({ commands }, 'MailboxPollReply')),
     'inc',
-    0n,
+    0,
   );
   try {
     for await (const row of cursor) await read_canonical_body(row.command);
@@ -152,9 +150,9 @@ export function pending_envelopes(store: OutboxStore): QueuedEnvelope[] {
     const stored = decode_json(row.payload_json, 'JsonObject');
     const random_event = row.kind === 'backend_event' && /^[a-f0-9]{32}$/.test(row.submission_id);
     return decode_json(
-      stringify_pydantic_json({
+      JSON.stringify({
         sender_id: '<sender>',
-        sequence: normalize_integer(row.sequence),
+        sequence: row.sequence,
         conversation_id: row.conversation_id,
         submission_id: random_event ? 'event_' + index : row.submission_id,
         kind: row.kind,

@@ -1,3 +1,4 @@
+import { counter } from '../../../executor/logic/counters.ts';
 /** Pinned Mac bytes and reports survive publication expiry and later VPS failures. */
 import { createHash } from 'node:crypto';
 import { closeSync, constants, fsyncSync, openSync, readFileSync, statSync } from 'node:fs';
@@ -365,7 +366,7 @@ export class MacUpdateService implements MacUpdateServiceContract {
       mode: attempt.mode,
       activate: attempt.state === 'done' && attempt.to_sha === this.current_app_sha,
       archive_sha256: mac.archive_sha256,
-      archive_size: mac.archive_size,
+      archive_size: counter(numeric_value(mac.archive_size)),
       archive_path: `/api/executor/update/${request_id}/archive`,
     };
   }
@@ -390,7 +391,7 @@ export class MacUpdateService implements MacUpdateServiceContract {
           ? {
               application_revision: release.manifest.app_sha,
               archive_sha256: mac.archive_sha256,
-              archive_size: mac.archive_size,
+              archive_size: counter(numeric_value(mac.archive_size)),
               archive_path: `/api/executor/update/prefetch/${mac.archive_sha256}`,
             }
           : null,

@@ -1,6 +1,6 @@
 /** Frozen local SQLite rows. No executor wire or manifest type belongs in this layer. */
 export interface ItemRow {
-  sequence: bigint;
+  sequence: number;
   submission_id: string;
   conversation_id: string;
   child_id: string;
@@ -9,15 +9,15 @@ export interface ItemRow {
   receipt_json: Buffer | null;
 }
 export interface ItemFileRow {
-  sequence: bigint;
+  sequence: number;
   relative_path: string;
   sha256: string;
-  byte_count: bigint;
+  byte_count: number;
 }
 export interface TicketFileRow {
   ticket_id: string;
   relative_path: string;
-  byte_count: bigint;
+  byte_count: number;
   modified_ns: bigint;
   sha256: string;
 }

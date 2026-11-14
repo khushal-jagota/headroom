@@ -13,15 +13,15 @@ Read-only format refusal occurs before directory or lock creation.
 The file worker creates and flushes directories. The database's main thread then walks retained no-follow parents and acquires the nonblocking spool lock.
 Only that database owner can release its lease. File-worker loss cannot release it.
 The shared sidecar keeps all writable connections inside the database module.
-Local SQL sequences, lengths, and timestamps use BigInt.
+Sequences, lengths, and counters use safe number values. Private filesystem timestamps retain bigint stat precision.
 Startup loads only sequence columns. Pending reads return at most 32 rows, optionally for one conversation.
 The waiting-conversation read returns at most 65 ordered rows, so the host can expose 64 and detect truncation.
 
 `append(columns, payload, files, updates, validate)` writes the item and index in one transaction.
 Payload and receipt buffers retain their exact bytes.
 For byte admission, storage reads the valid local `{payload,files}` wrapper and projects an `ItemSubmission` through the shared generated types.
-The shared Pydantic JSON formatter retains numeric kinds, exact integers, UTF-8 text, and compact float spelling.
-It refuses unpaired surrogates. This size-only projection does not validate complete wire shapes or reproduce all Pydantic input coercions.
+Native `JSON.stringify` measures the projected message size.
+The required host validator owns complete schema and admission checks.
 Serialization occurs outside the writer. The allocated sequence width completes the 1 MiB check inside the transaction, even with a no-op validator.
 The required synchronous validator still performs the host's complete wire validation before commit.
 A repeated submission ID returns the held row. The host checks this before capture for Python's duplicate-add fast path.

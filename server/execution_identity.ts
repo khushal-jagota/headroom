@@ -4,22 +4,19 @@ import {
   PROTOCOL_VERSION,
   SPOOL_FORMAT_VERSION,
 } from './execution_configuration.ts';
-import { ValueError } from './core/value_error.ts';
-import { JsonNumber } from './core/http/numeric_json.ts';
+import { ExecutorValidationError } from './executor/protocol_errors.ts';
 import { strip } from './core/whitespace.ts';
 import { assigned_after_unicode_15 } from './core/python_repr_unicode.ts';
-import { integer as hexadecimal_integer } from './core/unidentified_agent_calls/logic.ts';
-import { integer_value, normalize_integer } from './executor/integers.ts';
-import type { ExecutorIdentity as WireIdentity, WireInteger } from './executor/wire.generated.ts';
+import type { ExecutorIdentity as WireIdentity } from './executor/wire.generated.ts';
 
 export interface ExecutorIdentity {
-  protocol_version: WireInteger;
+  protocol_version: number;
   application_revision: string;
-  spool_format_version: WireInteger;
+  spool_format_version: number;
   executor_incarnation: string;
-  connection_generation: WireInteger;
+  connection_generation: number;
 }
-export class ProtocolRefused extends ValueError {
+export class ProtocolRefused extends ExecutorValidationError {
   constructor(message: string) {
     super(message);
     this.name = 'ProtocolRefused';
@@ -27,10 +24,8 @@ export class ProtocolRefused extends ValueError {
 }
 export const MAC_NEEDS_UPDATE = 'Mac needs update';
 export const MAC_VERSION_INCOMPATIBLE = 'Mac version is incompatible';
-function is_integer(value: unknown): value is WireInteger {
-  return value instanceof JsonNumber
-    ? value.kind === 'integer'
-    : typeof value === 'number' && Number.isInteger(value) && !Object.is(value, -0);
+function is_integer(value: unknown): value is number {
+  return typeof value === 'number' && Number.isSafeInteger(value);
 }
 export function supports_executor_versions(
   protocol_version: unknown,
@@ -39,21 +34,20 @@ export function supports_executor_versions(
   return (
     is_integer(protocol_version) &&
     is_integer(spool_format_version) &&
-    BigInt(MIN_SUPPORTED_PROTOCOL_VERSION) <= integer_value(protocol_version) &&
-    integer_value(protocol_version) <= BigInt(PROTOCOL_VERSION) &&
-    integer_value(spool_format_version) === BigInt(SPOOL_FORMAT_VERSION)
+    MIN_SUPPORTED_PROTOCOL_VERSION <= protocol_version &&
+    protocol_version <= PROTOCOL_VERSION &&
+    spool_format_version === SPOOL_FORMAT_VERSION
   );
 }
 export function refusal_reason_for_versions(
-  protocol_version: WireInteger,
-  spool_format_version: WireInteger,
+  protocol_version: number,
+  spool_format_version: number,
 ): string {
-  return integer_value(protocol_version) < BigInt(PROTOCOL_VERSION) ||
-    integer_value(spool_format_version) < BigInt(SPOOL_FORMAT_VERSION)
+  return protocol_version < PROTOCOL_VERSION || spool_format_version < SPOOL_FORMAT_VERSION
     ? MAC_NEEDS_UPDATE
     : MAC_VERSION_INCOMPATIBLE;
 }
-/** Python UUID first rewrites its text, then checks length and parses a hexadecimal integer. */
+/** Preserve the existing identity text forms without numeric conversion. */
 function valid_uuid(text: string): boolean {
   let hex = text.replaceAll('urn:', '').replaceAll('uuid:', '');
   let start = 0,
@@ -70,12 +64,10 @@ function valid_uuid(text: string): boolean {
       return String((digit.codePointAt(0)! - first) % 10);
     })
     .replace(/^(\+?0[xX])_/, '$1');
-  try {
-    const value = hexadecimal_integer(hex, 16);
-    return value >= 0n && value < 1n << 128n;
-  } catch {
-    return false;
-  }
+  const parsed = /^[+-]?(?:0[xX])?([0-9a-fA-F](?:_?[0-9a-fA-F])*)$/.exec(hex);
+  if (parsed === null) return false;
+  const digits = parsed[1]!.replaceAll('_', '');
+  return digits.length <= 32 && (!hex.startsWith('-') || /^0+$/.test(digits));
 }
 export function validate_identity(
   identity: WireIdentity,
@@ -107,7 +99,6 @@ export function parse_identity(
     payload === null ||
     typeof payload !== 'object' ||
     Array.isArray(payload) ||
-    payload instanceof JsonNumber ||
     ![Object.prototype, null].includes(Object.getPrototypeOf(payload)) ||
     ![
       'protocol_version',
@@ -125,11 +116,11 @@ export function parse_identity(
     if (typeof raw[key] !== 'string')
       throw new ProtocolRefused('identity text field has wrong type');
   const identity: ExecutorIdentity = {
-    protocol_version: normalize_integer(raw.protocol_version as WireInteger),
+    protocol_version: raw.protocol_version as number,
     application_revision: raw.application_revision as string,
-    spool_format_version: normalize_integer(raw.spool_format_version as WireInteger),
+    spool_format_version: raw.spool_format_version as number,
     executor_incarnation: raw.executor_incarnation as string,
-    connection_generation: normalize_integer((raw.connection_generation ?? 0) as WireInteger),
+    connection_generation: (raw.connection_generation ?? 0) as number,
   };
   validate_identity(identity, options);
   return identity;

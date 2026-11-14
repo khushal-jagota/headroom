@@ -1,6 +1,5 @@
 /** Native work belongs to the runner. These queues own ordering and durable retries. */
 import { constants } from 'node:os';
-import { stringify_pydantic_json } from '../../../core/http/numeric_json.ts';
 import * as protocol from '../../protocol.ts';
 import type { CommandResult, MailboxCommand } from '../../wire.generated.ts';
 import type { StopOptions } from '../../../lifecycle/contracts.ts';
@@ -179,7 +178,7 @@ export class MacCommandQueues {
       };
       const fallback =
         snapshot === undefined
-          ? Buffer.from(stringify_pydantic_json(protocol.encode_value(empty, 'CommandResult')))
+          ? Buffer.from(JSON.stringify(protocol.encode_value(empty, 'CommandResult')))
           : undefined;
       let delay = OUTBOX_RETRY_INITIAL_SECONDS;
       // The complete task was admitted before the catalog call. Its first result

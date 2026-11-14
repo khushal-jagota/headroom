@@ -5,7 +5,6 @@ import type {
   ChildReference,
   CommandOutcome,
   QueuedEnvelope,
-  WireInteger,
 } from '../../wire.generated.ts';
 import type { AsyncCommandJournal, CanonicalReader } from '../storage/journal_contracts.ts';
 import type { MacNativeChildrenContract } from './contracts.ts';
@@ -64,7 +63,7 @@ export interface MacCommandDependencies {
     work: MacCommandWork,
     invoking: () => void,
   ) => Promise<CommandOutcome>;
-  now_ms(): WireInteger;
+  now_ms(): number;
 }
 export interface MacCommandServiceContract extends MacCommandWork {
   run(command: ChildCommand): Promise<CommandOutcome>;

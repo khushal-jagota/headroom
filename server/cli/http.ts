@@ -11,7 +11,7 @@ import { rates_proxy_for } from '../conversation/usage/proxy.ts';
 import { parse_numeric_json } from '../core/http/numeric_json.ts';
 import type { CommandResult, Invocation } from './contracts.ts';
 import { CliFailure, human_error } from './errors.ts';
-import { is_value_error } from '../core/value_error.ts';
+import { ExecutorValidationError } from '../executor/protocol_errors.ts';
 import { executor_client_settings } from '../core/config.ts';
 import type { IpcResponse } from '../executor/wire.generated.ts';
 
@@ -424,7 +424,7 @@ export async function executor_request(
   try {
     response = await request(operation, payload, inv.environment);
   } catch (error) {
-    if (is_value_error(error)) fail_validation(inv, error.message);
+    if (error instanceof ExecutorValidationError) fail_validation(inv, error.message);
     return fail_connection(inv, error);
   }
   return executor_response(inv, response);
@@ -442,7 +442,7 @@ async function executor_send(
   try {
     translated = cli_mutation(method.toUpperCase(), path, options.json_body ?? null);
   } catch (error) {
-    if (is_value_error(error)) fail_validation(inv, error.message);
+    if (error instanceof ExecutorValidationError) fail_validation(inv, error.message);
     throw error;
   }
   return executor_request(inv, 'write', { operation: translated[0], arguments: translated[1] });

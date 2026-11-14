@@ -7,16 +7,16 @@ import { GatewayOutbox } from '../ipc/outbox.ts';
 import { OutboxStore } from '../storage/outbox.ts';
 import { ExecutorPaths } from '../configuration.ts';
 import { as_object, decode_value, encode_bounded } from '../../protocol.ts';
-import { parse_numeric_json } from '../../../core/http/numeric_json.ts';
 import { request as socket_request } from '../ipc_client.ts';
 import { ExecutorHttpError } from '../transport/errors.ts';
 import type { MacRunningChild } from '../runner/contracts.ts';
+import { MacPermissionDenied } from '../runner/contracts.ts';
 import type { GatewayOptions } from '../ipc/contracts.ts';
 import type { IpcOperation, IpcRequest, IpcResponse, JsonObject } from '../../wire.generated.ts';
 import { Deferred } from '../../../conversation/runtime/state.ts';
 import { ShutdownDeadlineExceeded } from '../../../lifecycle/contracts.ts';
 const root = process.argv[2];
-const input: any = parse_numeric_json(readFileSync(join(root, 'input.json'), 'utf8'));
+const input: any = JSON.parse(readFileSync(join(root, 'input.json'), 'utf8'));
 const started = performance.now();
 const shutdown_options = () => ({ deadline: performance.now() / 1000 + 5 });
 const faults: Error[] = [];
@@ -53,9 +53,7 @@ const options: GatewayOptions = {
     },
     authenticate(id, capability) {
       if (capability !== 'capability' || !['child', 'other'].includes(id ?? ''))
-        throw Object.assign(new Error('unknown executor child capability'), {
-          name: 'PermissionError',
-        });
+        throw new MacPermissionDenied('unknown executor child capability');
       return id === 'child' ? child : other;
     },
     source_work<T>(_reference: unknown, work: () => Promise<T>) {
@@ -240,7 +238,7 @@ try {
   assert.equal(joined, false);
   source_gate.resolve();
   await actual;
-  assert.equal(store.pending_count(), 1n);
+  assert.equal(store.pending_count(), 1);
   assert.throws(() => retained.handle(make('late', 'health', {})));
   if (faults.length) throw new AggregateError(faults);
   process.stdout.write(

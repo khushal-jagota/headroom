@@ -12,7 +12,7 @@ import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { Worker } from 'node:worker_threads';
 import { afterEach, expect, test, vi } from 'vitest';
-import { ValidationError, ValueError } from '../../protocol.ts';
+import { ExecutorValidationError } from '../../protocol.ts';
 import { createReadAccess } from '../../../core/database/index.ts';
 import { observe_shutdown } from '../../../conversation/shutdown.ts';
 import { ServerLifecycleError, ShutdownDeadlineExceeded } from '../../../lifecycle/contracts.ts';
@@ -174,7 +174,7 @@ if (!isMainThread) {
   const dependencies: TestJournalDependencies = {
     protocol_module: url,
     outputs_module: url,
-    now_ms: () => 1n,
+    now_ms: () => 1,
     on_failure: (error) => {
       journal_fault(error);
       stop_host();
@@ -274,14 +274,13 @@ test('shutdown drains one admitted multi-chunk finish and retains the lock acros
   const f = await fixture();
   const journal = await open_test_command_journal(f.owner, 'inc', f.dependencies, deadline());
   const malformed = await journal
-    .record_poll_reply(Buffer.from('{"commands":null}'), 'inc', 0n)
+    .record_poll_reply(Buffer.from('{"commands":null}'), 'inc', 0)
     .then(
       () => null,
       (error) => error,
     );
-  expect(malformed).toBeInstanceOf(ValidationError);
-  expect(malformed).toBeInstanceOf(ValueError);
-  const fresh = await journal.record_poll_reply(Buffer.from(reply), 'inc', 0n);
+  expect(malformed).toBeInstanceOf(ExecutorValidationError);
+  const fresh = await journal.record_poll_reply(Buffer.from(reply), 'inc', 0);
   const item = await fresh[Symbol.asyncIterator]().next();
   const delivery = item.value!.command[Symbol.asyncIterator]();
   expect(Buffer.from((await delivery.next()).value!)).toEqual(Buffer.from(command));
@@ -329,7 +328,7 @@ test('shutdown drains one admitted multi-chunk finish and retains the lock acros
 test('an observed resource fault rolls back a blocked journal transaction before actual worker exit releases native resources', async () => {
   const f = await fixture(),
     journal = await open_test_command_journal(f.owner, 'inc', f.dependencies, deadline());
-  const cursor = await journal.record_poll_reply(Buffer.from(reply), 'inc', 0n);
+  const cursor = await journal.record_poll_reply(Buffer.from(reply), 'inc', 0);
   const iterator = cursor[Symbol.asyncIterator](),
     item = await iterator.next();
   expect(item.done).toBe(false);
@@ -344,7 +343,7 @@ test('an observed resource fault rolls back a blocked journal transaction before
   expect(await read(snapshot_item.value!.result)).toHaveLength(0);
   writeFileSync(f.fail_close, 'hold');
   writeFileSync(f.block_policy, 'hold');
-  const updating = journal.record_poll_reply(Buffer.from(repeated), 'inc', 1n);
+  const updating = journal.record_poll_reply(Buffer.from(repeated), 'inc', 1);
   void updating.catch(() => {});
   try {
     await vi.waitFor(() => expect(existsSync(f.policy_entered)).toBe(true));
@@ -412,7 +411,7 @@ test('an observed resource fault rolls back a blocked journal transaction before
 test('truncated committed fresh delivery faults the host and joins actual cleanup', async () => {
   const f = await fixture();
   const journal = await open_test_command_journal(f.owner, 'inc', f.dependencies, deadline());
-  const cursor = await journal.record_poll_reply(Buffer.from(reply), 'inc', 0n);
+  const cursor = await journal.record_poll_reply(Buffer.from(reply), 'inc', 0);
   const item = await cursor[Symbol.asyncIterator]().next();
   expect(item.done).toBe(false);
   writeFileSync(f.fail_close, 'hold');

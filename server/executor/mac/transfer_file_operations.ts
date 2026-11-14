@@ -1,3 +1,4 @@
+import { counter } from '../logic/counters.ts';
 /** Bounded transfer bytes, hashes and full flush stay in the existing owned file worker. */
 import { constants, fstatSync, readSync, writeSync } from 'node:fs';
 import { createHash } from 'node:crypto';
@@ -22,7 +23,7 @@ interface Transfer {
   discard: boolean;
   readonly mode: 'read' | 'write';
   readonly digest: ReturnType<typeof createHash>;
-  count: bigint;
+  count: number;
   finished: boolean;
 }
 const transfers = new Map<number, Transfer>();
@@ -46,7 +47,7 @@ export function open_transfer(path: string, mode: Transfer['mode']): number {
     discard: false,
     mode,
     digest: createHash('sha256'),
-    count: 0n,
+    count: 0,
     finished: false,
   };
   const handle = ++sequence;
@@ -81,7 +82,7 @@ export function read_transfer(handle: number, limit: number): Uint8Array {
   const count = readSync(descriptor(value), buffer, 0, buffer.length, null);
   const bytes = buffer.subarray(0, count);
   value.digest.update(bytes);
-  value.count += BigInt(count);
+  value.count = counter(value.count + count);
   return bytes;
 }
 export function write_transfer(handle: number, bytes: Uint8Array): void {
@@ -95,9 +96,9 @@ export function write_transfer(handle: number, bytes: Uint8Array): void {
     offset += count;
   }
   value.digest.update(bytes);
-  value.count += BigInt(bytes.length);
+  value.count = counter(value.count + bytes.length);
 }
-export function finish_transfer(handle: number, sha256: string, byte_count: bigint): void {
+export function finish_transfer(handle: number, sha256: string, byte_count: number): void {
   const value = transfer(handle);
   if (value.finished) throw new Error('Executor transfer already finished.');
   value.finished = true;

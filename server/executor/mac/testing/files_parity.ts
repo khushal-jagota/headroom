@@ -1,5 +1,6 @@
 /** Fresh Python comparison companion. This module starts no service or connection. */
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
+import { ExecutorValidationError } from '../../protocol.ts';
 import { join } from 'node:path';
 import { FilesService, contained_path, file_version, safe_component } from '../files.ts';
 import { executor_paths, validate_server_url } from '../configuration.ts';
@@ -8,8 +9,8 @@ function result(action: () => unknown): unknown {
   try {
     return { value: action() };
   } catch (error) {
-    if (!(error instanceof Error)) throw error;
-    return { error: { name: error.name, message: error.message } };
+    if (!(error instanceof ExecutorValidationError)) throw error;
+    return { error: { kind: 'validation', message: error.message } };
   }
 }
 export async function files_parity(input: {

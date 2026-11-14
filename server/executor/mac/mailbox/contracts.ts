@@ -35,7 +35,7 @@ export interface MailboxCatalog {
 }
 export interface MailboxClient {
   /** Own the actual request until settlement and enforce the poll response body cap. */
-  poll_commands(after: bigint, hold_seconds: number, signal: AbortSignal): Promise<Uint8Array>;
+  poll_commands(after: number, hold_seconds: number, signal: AbortSignal): Promise<Uint8Array>;
   /** Refuse an oversized first report using byte_count. Never truncate it. */
   report_outcomes(body: CanonicalReader, signal: AbortSignal): Promise<CommandOutcomeReply>;
 }

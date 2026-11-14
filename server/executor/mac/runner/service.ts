@@ -1,12 +1,15 @@
 /** Command identity survives failed durable steps. Actual work ends independently of dedupe. */
 import { same_reference } from '../../child_reference.ts';
-import { stringify_pydantic_json } from '../../../core/http/numeric_json.ts';
 import {
   BackendSpawnFailed,
   PromptWriteRefused,
 } from '../../../conversation/backends/contracts.ts';
-import { decode_json, decode_value, encode_value, ValueError } from '../../protocol.ts';
-import { class_name } from '../../protocol_errors.ts';
+import {
+  decode_json,
+  decode_value,
+  encode_value,
+  ExecutorValidationError,
+} from '../../protocol.ts';
 import type { ChildCommand, ChildReference, CommandOutcome } from '../../wire.generated.ts';
 import { read_canonical_body } from '../mailbox/poll.ts';
 import type { CanonicalReader } from '../storage/journal_contracts.ts';
@@ -98,7 +101,9 @@ export class MacCommandService implements MacCommandServiceContract {
     const command = decode_value(input, 'ChildCommand');
     let record = this.commands.get(command.command_id);
     if (record && (!record.journaled || !same_wire(record.command, command, 'ChildCommand')))
-      return Promise.reject(new ValueError('command id reused with different content'));
+      return Promise.reject(
+        new ExecutorValidationError('command id reused with different content'),
+      );
     if (!record) {
       record = new Record(command, true);
       this.commands.set(command.command_id, record);
@@ -113,7 +118,7 @@ export class MacCommandService implements MacCommandServiceContract {
     const command = decode_value(input, 'ChildCommand');
     const result = decode_value(value, 'CommandOutcome');
     if (command.command_id !== result.command_id || !same_reference(command.child, result.child))
-      return Promise.reject(new ValueError('outcome conflicts with command'));
+      return Promise.reject(new ExecutorValidationError('outcome conflicts with command'));
     let record = this.commands.get(command.command_id);
     if (
       record &&
@@ -122,7 +127,9 @@ export class MacCommandService implements MacCommandServiceContract {
         record.outcome === null ||
         !same_wire(record.outcome, result, 'CommandOutcome'))
     )
-      return Promise.reject(new ValueError('command id reused with different content'));
+      return Promise.reject(
+        new ExecutorValidationError('command id reused with different content'),
+      );
     if (!record) {
       record = new Record(command, false);
       record.outcome = result;
@@ -157,10 +164,7 @@ export class MacCommandService implements MacCommandServiceContract {
       args.kind === 'write_prompt' || args.kind === 'steer'
         ? [...args.content, ...(args.sender_content ?? [])]
         : [];
-    if (
-      command.operation !== 'stop' &&
-      content.some((piece) => class_name(piece) === 'MessageFile')
-    ) {
+    if (command.operation !== 'stop' && content.some((piece) => 'byte_count' in piece)) {
       const preparation = new AbortController();
       record.preparation = preparation;
       try {
@@ -216,7 +220,7 @@ export class MacCommandService implements MacCommandServiceContract {
         if (record.journaled && !record.journal_finished) {
           await this.dependencies.journal.finish(
             record.command.command_id,
-            stringify_pydantic_json(
+            JSON.stringify(
               encode_value(
                 {
                   command_id: record.command.command_id,

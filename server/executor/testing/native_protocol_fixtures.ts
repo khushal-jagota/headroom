@@ -1,11 +1,9 @@
 /** Native TS messages. No Python bytes, parser result, or schema sample supplies these values. */
-import { JsonNumber } from '../../core/http/numeric_json.ts';
 import { fileURLToPath } from 'node:url';
-import { ordered_json_object } from '../protocol_json.ts';
 import type { JsonObject, JsonValue, MessageContent, WireTypes } from '../wire.generated.ts';
 
 function document(entries: readonly (readonly [string, JsonValue])[]): JsonObject {
-  return ordered_json_object(entries) as JsonObject;
+  return Object.fromEntries(entries);
 }
 export function native_wire_fixtures(): WireTypes {
   const identity: WireTypes['ExecutorIdentity'] = {
@@ -63,7 +61,7 @@ export function native_wire_fixtures(): WireTypes {
       identity_environment_variables: [['PLAN_ACTOR', 'ticket']],
     },
   };
-  const prompt: WireTypes['WritePrompt'] = {
+  const prompt = {
     content: pieces,
     sender_content: pieces,
     sender_label: 'Owner',
@@ -74,7 +72,7 @@ export function native_wire_fixtures(): WireTypes {
     reasoning_effort_change: 'low',
     reasoning_effort_is_set: true,
     automatic_compaction: true,
-  };
+  } satisfies WireTypes['WritePrompt'];
   const command: WireTypes['ChildCommand'] = {
     command_id: 'prompt',
     child,
@@ -179,22 +177,12 @@ export function native_wire_fixtures(): WireTypes {
     archive_path: '/api/executor/update/prefetch/' + '1'.repeat(64),
   };
   const update_check = { schema_version: 1, target: update_target, prefetch };
-  // Only opaque documents need markers for 1.0 and an integer outside the safe range.
+  // Opaque documents contain ordinary JSON values.
   const result = document([
-    ['2', new JsonNumber('1.0')],
+    ['2', 1],
     ['1', 1e-7],
     ['recorded', true],
-    [
-      'counts',
-      [
-        1,
-        new JsonNumber('1.0'),
-        1.5,
-        new JsonNumber('9007199254740993'),
-        '1',
-        new JsonNumber('-0.0'),
-      ],
-    ],
+    ['counts', [1, 1, 1.5, 1234, '1', 0]],
   ]);
   return {
     ExecutorIdentity: identity,
@@ -373,7 +361,7 @@ export function native_wire_fixtures(): WireTypes {
     UserInputAnswer: answer_value,
     JsonObject: {
       path: '/api/tickets',
-      data: [{ ready: true }, null, new JsonNumber('1.0'), new JsonNumber('9007199254740993')],
+      data: [{ ready: true }, null, 1, 1234],
     },
     AgentMessageDelta: { text_delta: 'news' },
     ModelThinkingHappened: {},
@@ -426,28 +414,8 @@ export function native_wire_fixtures(): WireTypes {
   };
 }
 
-/** Independent transport for fixture data, not the production JSON serializer. */
-function bridge(value: unknown): unknown {
-  const floating = (number: number): unknown => {
-    const bytes = Buffer.alloc(8);
-    bytes.writeDoubleBE(number);
-    return ['float', bytes.toString('hex')];
-  };
-  if (value instanceof JsonNumber)
-    return value.kind === 'integer' ? ['int', String(value.integer)] : floating(value.value);
-  if (typeof value === 'number')
-    return Number.isInteger(value) && !Object.is(value, -0)
-      ? ['int', BigInt(value).toString()]
-      : floating(value);
-  if (value === null || typeof value === 'boolean' || typeof value === 'string')
-    return ['primitive', value];
-  if (Array.isArray(value)) return ['array', value.map(bridge)];
-  if (typeof value === 'object')
-    return ['object', Object.entries(value).map(([key, item]) => [key, bridge(item)])];
-  throw new Error('Unsupported fixture value');
-}
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
   if (process.argv.length !== 3 || process.argv[2] !== '--export')
     throw new Error('Usage: native_protocol_fixtures.ts --export');
-  process.stdout.write(JSON.stringify(bridge(native_wire_fixtures())));
+  process.stdout.write(JSON.stringify(native_wire_fixtures()));
 }

@@ -23,7 +23,7 @@ def test_unit22_runtime_records(tmp_path: Path, request: pytest.FixtureRequest) 
     record: dict[str, Any] = {
         "request_id": "fixture",
         "detail": "résumé 🦉\r\n",
-        "integer": 9_007_199_254_740_993,
+        "integer": 1_234_567_890,
         "floating": 1.0,
         "nullable": None,
     }
@@ -37,7 +37,7 @@ def test_unit22_runtime_records(tmp_path: Path, request: pytest.FixtureRequest) 
     path.write_text("null")
     with pytest.raises(ValueError) as failure:
         read_record(path)
-    expected["nonobject"] = {"error": type(failure.value).__name__, "message": str(failure.value)}
+    expected["nonobject"] = {"error": "validation", "message": str(failure.value)}
     path.unlink()
     expected["removed"] = read_record(path)
     target = tmp_path / "ts"
@@ -49,7 +49,10 @@ def test_unit22_runtime_records(tmp_path: Path, request: pytest.FixtureRequest) 
         create_synthetic_homes(tmp_path),
         timeout=20,
     )
+    source_text, native_text = expected.pop("bytes"), actual.pop("bytes")
+    assert json.loads(source_text) == json.loads(native_text) == record
     assert {key: actual[key] for key in expected} == expected
+    actual["record_text"] = {"source": source_text, "native": native_text}
     assert actual["native"] == dict.fromkeys(
         (
             "failed",

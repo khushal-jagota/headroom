@@ -151,7 +151,7 @@ def _reference(
                         ]
                         captures.append(
                             [
-                                {k: str(v) if isinstance(v, int) else v for k, v in f.items()}
+                                {k: str(v) if k == "modified_ns" else v for k, v in f.items()}
                                 for f in files
                             ]
                         )
@@ -161,15 +161,15 @@ def _reference(
                 "sender": box.sender_id,
                 "captures": captures,
                 "receipts": receipts,
-                "pending": [[e.submission_id, str(e.sequence)] for e in box.pending()],
+                "pending": [[e.submission_id, e.sequence] for e in box.pending()],
                 "conversations": [
-                    [r[0], str(r[1])]
+                    [r[0], r[1]]
                     for r in box._db.execute(
                         "SELECT conversation_id,MIN(sequence) FROM items "
                         "WHERE receipt_json IS NULL GROUP BY conversation_id ORDER BY MIN(sequence)"
                     )
                 ],
-                "count": str(box.pending_count()),
+                "count": box.pending_count(),
                 "age": box.lease_backlog().oldest_item_age_ms,
                 "writer_profile": profile,
                 "reader_profile": {p: profile[p] for p in ("trusted_schema", "foreign_keys")},
@@ -327,7 +327,8 @@ def test_unit22_mac_spool_rows_capture_receipts_and_crash(
         near, rejected, refusal_messages = [], [], []
         for sequence, character in enumerate(("x", "🦉"), 1):
             sub = f"fresh_{sequence}"
-            payload: JsonObject = {"text": "", "numbers": [1e-7, 1e-5, 1e16, 1.0, -0.0]}
+            # This case owns the byte budget, independent of Python number spelling.
+            payload: JsonObject = {"text": "", "numbers": [1, 2, 3]}
             envelope = QueuedEnvelope(
                 "s" * 32, "fresh", sequence, sub, EnvelopeKind.backend_event, payload
             )

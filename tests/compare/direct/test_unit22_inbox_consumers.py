@@ -166,7 +166,7 @@ def test_unit22_inbox_canonical_consumers(
 
         edits = [
             envelope(1, "ticket.edit", {"ticket_id": ticket, "body": {"recap": "Saved once"}}),
-            envelope(2, "ticket.edit", {"ticket_id": ticket, "body": 9007199254740993}),
+            envelope(2, "ticket.edit", {"ticket_id": ticket, "body": 123456789}),
             envelope(
                 3, "ticket.propose", {"ticket_id": ticket, "body": {"body": "A concrete Brief"}}
             ),

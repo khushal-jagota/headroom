@@ -24,9 +24,8 @@ import { InboxStore } from './data/inbox.ts';
 import { FileStaging, VpsFiles } from './vps_files.ts';
 import { VpsCatalogRelay } from './catalog_relay.ts';
 import { observe_promise } from '../core/promise_observer.ts';
-import { as_object, decode_event_arguments, integer_value } from './protocol.ts';
-import { parse_executor_json } from './protocol_json.ts';
-import { JsonNumber, stringify_python_json } from '../core/http/numeric_json.ts';
+import { as_object, decode_event_arguments } from './protocol.ts';
+
 import {
   COMMAND_POLL_HOLD_SECONDS,
   LEASE_SERVER_LIMIT_SECONDS,
@@ -189,10 +188,7 @@ export class VpsExecutor {
     options: { signal?: AbortSignal } = {},
   ): Promise<WireValue<'MailboxPollReply'>> {
     this.admit();
-    if (
-      integer_value(after) < 0n ||
-      !(wait_seconds >= 0 && wait_seconds <= COMMAND_POLL_HOLD_SECONDS)
-    )
+    if (after < 0 || !(wait_seconds >= 0 && wait_seconds <= COMMAND_POLL_HOLD_SECONDS))
       throw new PlannerError('validation', 'invalid poll cursor or wait');
     return this.mailbox.poll(identity, after, wait_seconds, options);
   }
@@ -259,8 +255,8 @@ export class VpsExecutor {
               ? element
               : typeof element === 'boolean'
                 ? String(element).toLowerCase()
-                : typeof element === 'number' || element instanceof JsonNumber
-                  ? stringify_python_json(element)
+                : typeof element === 'number'
+                  ? JSON.stringify(element)
                   : JSON.stringify(element),
         );
     }
@@ -282,11 +278,8 @@ export class VpsExecutor {
     }
     const response = answer.value;
     try {
-      const value = parse_executor_json(response.rawPayload);
-      return value !== null &&
-        typeof value === 'object' &&
-        !Array.isArray(value) &&
-        !(value instanceof JsonNumber)
+      const value = JSON.parse(response.rawPayload.toString('utf8'));
+      return value !== null && typeof value === 'object' && !Array.isArray(value)
         ? (value as WireValue<'JsonObject'>)
         : { data: value };
     } catch {

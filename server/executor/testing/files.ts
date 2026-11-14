@@ -22,7 +22,6 @@ import { fileURLToPath } from 'node:url';
 import type { Database } from '../../core/database/contracts.ts';
 import { createDatabase } from '../../core/database/index.ts';
 import { PlannerError } from '../../core/contracts.ts';
-import { stringify_python_json } from '../../core/http/numeric_json.ts';
 import { ConversationMessageFiles } from '../../conversation/record/message_files.ts';
 import type { Principal } from '../../core/contracts.ts';
 import type { HeldFileLocation, VpsFileInbox } from '../contracts.ts';
@@ -30,8 +29,7 @@ import type { WireTypes } from '../wire.generated.ts';
 import { SqliteCommandMailbox } from '../vps_mailbox.ts';
 import { FileStaging, VpsFiles } from '../vps_files.ts';
 import * as files from '../files.ts';
-import { ValueError, integer_value, parse_identity } from '../protocol.ts';
-import { parse_executor_json } from '../protocol_json.ts';
+import { ExecutorValidationError, parse_identity, decode_value } from '../protocol.ts';
 import { FILE_CHUNK_BYTES, FILE_TRANSFER_STALL_SECONDS } from '../configuration.ts';
 import { is_shutdown_business_cancellation } from '../../conversation/shutdown.ts';
 
@@ -107,7 +105,8 @@ async function rejected(work: () => Promise<unknown>, message?: string): Promise
     await work();
     return false;
   } catch (error) {
-    if (message && (!(error instanceof ValueError) || error.message !== message)) throw error;
+    if (message && (!(error instanceof ExecutorValidationError) || error.message !== message))
+      throw error;
     return true;
   }
 }
@@ -149,7 +148,7 @@ async function safety(root: string, manifest: WireTypes['FileManifest']): Promis
       const [sha, count] = await files.descriptor_hash(read);
       const next = Buffer.alloc(1);
       await read.read(next, 0, 1, null);
-      if (sha !== manifest.sha256 || count !== 12n || next.toString() !== 'e')
+      if (sha !== manifest.sha256 || count !== 12 || next.toString() !== 'e')
         throw new Error('hash consumed the implicit offset');
     } finally {
       await read.close();
@@ -283,6 +282,14 @@ async function main(raw: Spec): Promise<void> {
       service.staging === join(spec.root, 'executor-uploads') &&
       staging.staging === service.staging;
     result.constants = [FILE_CHUNK_BYTES, FILE_TRANSFER_STALL_SECONDS];
+    const reordered_manifest = decode_value(
+      Object.fromEntries(Object.entries(spec.manifest).reverse()),
+      'FileManifest',
+    );
+    if (
+      (await staging.staged_file(spec.manifest)) !== (await staging.staged_file(reordered_manifest))
+    )
+      throw new Error('Manifest property order changed its staged filename');
     result.staging_keys = [
       basename(await staging.staged_file(spec.manifest)),
       basename(await staging.staged_file(spec.big)),
@@ -456,7 +463,7 @@ async function main(raw: Spec): Promise<void> {
       }
       result.large = { sha256: digest.digest('hex'), count, max_chunk, max_read, max_write };
       if (
-        count !== Number(integer_value(held.byte_count)) ||
+        count !== held.byte_count ||
         max_chunk > FILE_CHUNK_BYTES ||
         max_read > FILE_CHUNK_BYTES ||
         max_write > FILE_CHUNK_BYTES
@@ -588,7 +595,7 @@ async function main(raw: Spec): Promise<void> {
         if (!is_shutdown_business_cancellation(error)) throw error;
       });
     }
-    process.stdout.write(stringify_python_json(result, { compact: true }));
+    process.stdout.write(JSON.stringify(result));
   } finally {
     media.abort();
     await service.stop({ deadline: performance.now() / 1000 + 5 }).catch(() => {});
@@ -597,4 +604,4 @@ async function main(raw: Spec): Promise<void> {
   }
 }
 if (process.argv[1] === fileURLToPath(import.meta.url))
-  await main(parse_executor_json(readFileSync(0)) as unknown as Spec);
+  await main(JSON.parse(readFileSync(0, 'utf8')) as unknown as Spec);

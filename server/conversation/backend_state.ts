@@ -2,7 +2,7 @@
 import type { Database, ReadSql, TransactionSql } from '../core/database/contracts.ts';
 import { PlannerError } from '../core/contracts.ts';
 import type { TicketLocale } from '../tickets/contracts.ts';
-import { as_object } from '../executor/protocol.ts';
+import { snapshot_for_wire } from '../executor/backend_snapshot.ts';
 import { recognize_variant } from './model_resolution/logic/variants.ts';
 import type { ConversationBackendKey } from './contracts.ts';
 import type { BackendSnapshot } from './snapshot/contracts.ts';
@@ -138,7 +138,7 @@ export function save_machine_model_list(
     'INSERT INTO machine_backend_snapshots VALUES (?,?,?) ' +
       'ON CONFLICT(machine_id,backend_key) DO UPDATE SET snapshot_json=excluded.snapshot_json ' +
       'WHERE snapshot_json != excluded.snapshot_json',
-    [machine, snapshot.backend_key, JSON.stringify(as_object(snapshot, 'BackendSnapshot'))],
+    [machine, snapshot.backend_key, JSON.stringify(snapshot_for_wire(snapshot))],
   );
   if (!snapshot.models_complete) return;
   const offered = new Set<string>();

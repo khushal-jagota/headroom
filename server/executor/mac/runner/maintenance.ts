@@ -5,7 +5,6 @@ import {
   observe_conversation_operation,
 } from '../../../runtime/abort.ts';
 import { ServerLifecycleError } from '../../../lifecycle/contracts.ts';
-import { normalize_integer } from '../../integers.ts';
 import type { ChildCommand, Quiescence, WorkingTurn } from '../../wire.generated.ts';
 import type { MacRunningChild } from './contracts.ts';
 import type {
@@ -140,14 +139,14 @@ export class MacMaintenance implements MacMaintenanceContract, MacMaintenanceOpe
         stopped =
           this.dependencies.native_children.retained_children().length === 0 &&
           !this.busy(counts) &&
-          counts.unsent === 0n;
+          counts.unsent === 0;
       }
       return {
         admission_stopped: true,
-        active_turn_count: normalize_integer(counts.active),
-        pending_callback_count: normalize_integer(counts.callbacks),
-        uncertain_operation_count: normalize_integer(counts.unresolved),
-        unsent_entry_count: normalize_integer(counts.unsent),
+        active_turn_count: counts.active,
+        pending_callback_count: counts.callbacks,
+        uncertain_operation_count: counts.unresolved,
+        unsent_entry_count: counts.unsent,
         idle_children_stopped: stopped,
       };
     });
@@ -238,9 +237,7 @@ export class MacMaintenance implements MacMaintenanceContract, MacMaintenanceOpe
       this.dependencies.sources.failed() ||
       commands.records().some((record) => record.outcome !== null && !record.settled)
     )
-      throw Object.assign(new Error('update cannot abandon required local output'), {
-        name: 'RuntimeError',
-      });
+      throw new Error('update cannot abandon required local output');
     let pending = this.update_commands.get(request_id);
     if (!pending) this.update_commands.set(request_id, (pending = []));
     for (const child of children) {

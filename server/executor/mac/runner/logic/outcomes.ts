@@ -1,8 +1,6 @@
 /** Command consequences are deterministic across live settlement and journal replay. */
 import { createHash } from 'node:crypto';
-import { stringify_python_json } from '../../../../core/http/numeric_json.ts';
-import { python_truth } from '../../../../core/python_truth.ts';
-import { is_json_object } from '../../../protocol_json.ts';
+import { is_record as is_json_object } from '../../../../core/records.ts';
 import {
   BackendPromptRejected,
   BackendSpawnFailed,
@@ -12,7 +10,7 @@ import {
   TurnEnded,
 } from '../../../../conversation/backends/contracts.ts';
 import { as_object, decode_value, encode_backend_event, encode_value } from '../../../protocol.ts';
-import { python_repr } from '../../../protocol_errors.ts';
+import { inspect, isDeepStrictEqual } from 'node:util';
 import type { WireInput } from '../../../protocol.ts';
 import type {
   ChildCommand,
@@ -37,15 +35,13 @@ const refusals = [
   [PromptWriteRefused, 'PromptWriteRefused'],
 ] as const;
 
-/** The codec supplies defaults and exact integer normalization before structural comparison. */
+/** Compare decoded native values, independently of JSON property order. */
 export function same_wire<K extends WireRootName>(
   left: WireInput<K>,
   right: WireInput<K>,
   root: K,
 ): boolean {
-  const canonical = (value: WireInput<K>) =>
-    stringify_python_json(encode_value(value, root), { sort_keys: true, compact: true });
-  return canonical(left) === canonical(right);
+  return isDeepStrictEqual(encode_value(left, root), encode_value(right, root));
 }
 export function bounded_detail(value: string): string {
   let end = 0;
@@ -61,7 +57,7 @@ export function error_message(error: unknown): string {
     ? error.message
     : typeof error === 'string'
       ? error
-      : python_repr(error);
+      : inspect(error);
 }
 export function outcome(
   command: ChildCommand,
@@ -84,8 +80,8 @@ export function error_outcome(command: ChildCommand, error: unknown): CommandOut
   });
 }
 export function outcome_detail(value: CommandOutcome, fallback: string): string {
-  const detail = [value.result.error_message, value.result.reason, fallback].find(python_truth);
-  return typeof detail === 'string' ? detail : python_repr(detail);
+  const detail = [value.result.error_message, value.result.reason, fallback].find(Boolean);
+  return typeof detail === 'string' ? detail : inspect(detail);
 }
 function digest(value: string): string {
   return createHash('sha256').update(value).digest('hex');

@@ -7,7 +7,7 @@ export interface JournalOutputPolicy {
 }
 export interface JournalDependencies {
   outputs_module: URL;
-  now_ms(): bigint;
+  now_ms(): number;
   /** The host must initiate shutdown. This notification occurs once per service fault. */
   on_failure(error: Error): void;
 }
@@ -62,17 +62,17 @@ export type JournalReportFeedback = readonly string[] | null | 'cancelled';
 export interface AsyncCommandJournal extends OutboxCleanup {
   assert_healthy(): void;
   delivery_failure(message: string, cause?: unknown): Error;
-  poll_cursor(): Promise<bigint>;
-  lower_poll_cursor(high: bigint, cursor_at_lease: bigint): Promise<boolean>;
+  poll_cursor(): Promise<number>;
+  lower_poll_cursor(high: number, cursor_at_lease: number): Promise<boolean>;
   record_poll_reply(
     bytes: Uint8Array | string,
     incarnation: string,
-    polled_after: bigint,
+    polled_after: number,
   ): Promise<FreshCommandCursor>;
   record_decoded_poll_reply(
     bytes: Uint8Array | string,
     incarnation: string,
-    polled_after: bigint,
+    polled_after: number,
   ): Promise<DecodedCommandCursor>;
   result_of(command_id: string): Promise<CanonicalReader | null>;
   finish(command_id: string, result: Uint8Array | string, outputs_owed: boolean): Promise<void>;

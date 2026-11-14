@@ -13,7 +13,7 @@ import type {
   MacNativeChildrenOptions,
   MacRunningChild,
 } from './contracts.ts';
-import { MacChildAdmissionRefused } from './contracts.ts';
+import { MacChildAdmissionRefused, MacPermissionDenied } from './contracts.ts';
 import { remember_model_catalog_failure } from '../../../conversation/backends/catalog_cleanup.ts';
 interface Entry {
   reference: ChildReference;
@@ -65,9 +65,7 @@ export class MacNativeChildren implements MacNativeChildrenContract {
       supplied.length !== expected.length ||
       !timingSafeEqual(supplied, expected)
     )
-      throw Object.assign(new Error('unknown executor child capability'), {
-        name: 'PermissionError',
-      });
+      throw new MacPermissionDenied('unknown executor child capability');
     return child;
   }
   start(
