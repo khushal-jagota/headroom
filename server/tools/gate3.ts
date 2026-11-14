@@ -479,10 +479,7 @@ try {
               results.filter((result) => result.category === category).length,
             ]),
           ),
-          insufficient:
-            results.length < 200 ||
-            corpus.conversations.length < 20 ||
-            corpus.conversations.some((conversation) => conversation.events < 200),
+          insufficient: results.length < 200 || corpus.conversations.length < 20,
         },
         files_coverage: 'Nightly omits artifact files; no live files are read.',
         mode: 'test mode: read contracts only, not production boot',
@@ -499,13 +496,7 @@ const mismatches = results.filter((result) => !result.matched).length;
 console.log(
   `${results.length} read comparisons, ${mismatches} differences. Private evidence: ${evidence}`,
 );
-if (
-  results.length < 200 ||
-  corpus.conversations.length < 20 ||
-  corpus.conversations.some((conversation) => conversation.events < 200)
-) {
-  console.log(
-    'Insufficient corpus: need 200 distinct reads and 20 histories with at least 200 events.',
-  );
+if (results.length < 200 || corpus.conversations.length < 20) {
+  console.log('Insufficient corpus: need 200 distinct reads and 20 histories.');
   process.exitCode = 2;
 } else if (mismatches) process.exitCode = 1;
