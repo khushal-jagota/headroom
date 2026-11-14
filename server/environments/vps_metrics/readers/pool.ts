@@ -1,4 +1,8 @@
-import { fork } from 'node:child_process';
+import {
+  ChildProcesses,
+  child_lifetime,
+  signal_child,
+} from '../../../lifecycle/owned_processes.ts';
 import type { ChildProcess, ForkOptions } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import type { Duplex } from 'node:stream';
@@ -34,6 +38,7 @@ type ReaderProcessFactory = (entry: URL, options: ForkOptions) => ChildProcess;
 
 /** Queue deadlines start on admission, after the pool's cold-start READY boundary. */
 export class MetricsReaders {
+  private readonly children = new ChildProcesses();
   private readers = new Set<Reader>();
   private queue: Pending[] = [];
   private closing = false;
@@ -46,14 +51,11 @@ export class MetricsReaders {
   private readonly spawn_reader: ReaderProcessFactory;
   readonly path: string;
   readonly config: MetricsConfig;
-  constructor(
-    path: string,
-    config: MetricsConfig,
-    spawn_reader: ReaderProcessFactory = (entry, options) => fork(entry, [], options),
-  ) {
+  constructor(path: string, config: MetricsConfig, spawn_reader?: ReaderProcessFactory) {
     this.path = path;
     this.config = config;
-    this.spawn_reader = spawn_reader;
+    this.spawn_reader =
+      spawn_reader ?? ((entry, options) => this.children.fork(entry, [], options));
   }
   start(): Promise<void> {
     if (this.closing) return Promise.reject(unavailable());
@@ -81,15 +83,12 @@ export class MetricsReaders {
     });
     child.stderr?.on('data', (chunk: Buffer) => console.error(chunk.toString()));
     const liveness = child.stdio[4] as Duplex;
-    let resolve_reaped!: () => void;
     const reader: Reader = {
       child,
       incarnation,
       liveness,
       ready: false,
-      reaped: new Promise<void>((resolve) => {
-        resolve_reaped = resolve;
-      }),
+      reaped: child_lifetime(child).closed,
     };
     this.readers.add(reader);
     return new Promise<void>((resolve, reject) => {
@@ -98,7 +97,6 @@ export class MetricsReaders {
         void this.retire(reader);
       });
       child.once('close', () => {
-        resolve_reaped();
         liveness.destroy();
         this.readers.delete(reader);
         if (!admitted) reject(unavailable());
@@ -155,10 +153,10 @@ export class MetricsReaders {
   private async replace(): Promise<void> {
     const remaining = this.retry_after - process.hrtime.bigint();
     if (remaining > 0n) {
-      await new Promise<void>((resolve) => {
-        this.retry_wake = resolve;
-        this.retry_timer = setTimeout(resolve, Math.ceil(Number(remaining) / 1e6));
-      });
+      const { promise, resolve } = Promise.withResolvers<void>();
+      this.retry_wake = resolve;
+      this.retry_timer = setTimeout(resolve, Math.ceil(Number(remaining) / 1e6));
+      await promise;
       this.retry_timer = undefined;
       this.retry_wake = undefined;
     }
@@ -181,7 +179,7 @@ export class MetricsReaders {
     if (reader.retiring) return reader.retiring;
     reader.ready = false;
     reader.retiring = (async () => {
-      reader.child.kill('SIGKILL');
+      signal_child(reader.child, 'SIGKILL', false);
       await reader.reaped;
       if (reader.active) this.settle(reader.active, undefined, expired());
       reader.active = undefined;
@@ -254,10 +252,12 @@ export class MetricsReaders {
   }
   async close(): Promise<void> {
     this.closing = true;
+    this.children.seal();
     this.started = false;
     this.fail_queue();
     if (this.retry_timer) clearTimeout(this.retry_timer);
     this.retry_wake?.();
     await Promise.all([...[...this.readers].map((reader) => this.retire(reader)), this.replacing]);
+    await this.children.settled();
   }
 }

@@ -1,5 +1,5 @@
 /** One stable supervisor, one replaceable application, ownership through actual reaping. */
-import { spawn } from 'node:child_process';
+import { ChildProcesses, signal_child } from './owned_processes.ts';
 import { writeSync } from 'node:fs';
 import type { ChildProcess } from 'node:child_process';
 import { acquire_server_lifecycle_lease } from './lease.ts';
@@ -16,16 +16,16 @@ import {
   monotonic_seconds,
 } from './configuration.ts';
 import { stop_intent_is_current } from './logic/shutdown.ts';
-import { observe_shutdown } from './deadline.ts';
+import { observe_shutdown } from '../conversation/shutdown.ts';
 import { ServerLifecycleError } from './contracts.ts';
 import type { StopIntent, SupervisorOptions } from './contracts.ts';
 
 interface OwnedApplication {
   readonly process: ChildProcess;
   readonly closed: Promise<0 | 1>;
-  exited: boolean;
 }
 export async function run_server_supervisor(options: SupervisorOptions): Promise<0 | 1> {
+  const children = new ChildProcesses();
   const mode = options.mode;
   let lease: ReturnType<typeof acquire_server_lifecycle_lease>;
   try {
@@ -49,10 +49,7 @@ export async function run_server_supervisor(options: SupervisorOptions): Promise
     stopping = false,
     finished = false;
   let intent: StopIntent | null = null;
-  let complete!: (result: 0 | 1) => void;
-  const result = new Promise<0 | 1>((resolve) => {
-    complete = resolve;
-  });
+  const { promise: result, resolve: complete } = Promise.withResolvers<0 | 1>();
   const finish = (code: 0 | 1) => {
     if (!finished) {
       finished = true;
@@ -73,7 +70,12 @@ export async function run_server_supervisor(options: SupervisorOptions): Promise
       return signal_failed ? 1 : code;
     });
     stopping_child = flight;
-    void observe_shutdown(owned.closed, { deadline }, 'supervisor application').catch(() => {
+    void observe_shutdown(
+      owned.closed,
+      { deadline },
+      'Shutdown deadline expired; ownership retained: supervisor application',
+      ['supervisor application'],
+    ).catch(() => {
       try {
         writeSync(
           2,
@@ -83,16 +85,7 @@ export async function run_server_supervisor(options: SupervisorOptions): Promise
         /* Log failure cannot prevent the terminal fallback. */
       }
       try {
-        const current = owned.process;
-        if (
-          !owned.exited &&
-          current.pid !== undefined &&
-          current.exitCode === null &&
-          current.signalCode === null
-        ) {
-          if (process.platform === 'win32') current.kill('SIGKILL');
-          else process.kill(-current.pid, 'SIGKILL');
-        }
+        signal_child(owned.process, 'SIGKILL');
       } catch (error) {
         try {
           writeSync(2, `Panels application force was not confirmed: ${String(error)}\n`);
@@ -104,16 +97,14 @@ export async function run_server_supervisor(options: SupervisorOptions): Promise
         process.exit(1);
       }
     });
-    if (!owned.exited && owned.process.exitCode === null && owned.process.signalCode === null) {
+    try {
+      signal_child(owned.process, 'SIGTERM', false);
+    } catch (error) {
+      signal_failed = true;
       try {
-        owned.process.kill('SIGTERM');
-      } catch (error) {
-        signal_failed = true;
-        try {
-          console.error(`Panels application stop signal failed: ${String(error)}`);
-        } catch {
-          /* The original observer and actual close still own this child. */
-        }
+        console.error(`Panels application stop signal failed: ${String(error)}`);
+      } catch {
+        /* The original observer and actual close still own this child. */
       }
     }
     return flight;
@@ -156,7 +147,7 @@ export async function run_server_supervisor(options: SupervisorOptions): Promise
     environment.PLAN_SERVER_CONTROL_SOCKET = options.control_socket_path;
     const listener = options.application.listener;
     if (listener) environment.PLAN_SERVER_LISTENER_FD = '3';
-    const process_child = spawn(
+    const process_child = children.spawn(
       options.application.node_executable,
       [options.application.entrypoint],
       {
@@ -168,24 +159,13 @@ export async function run_server_supervisor(options: SupervisorOptions): Promise
           : ['ignore', 'inherit', 'inherit'],
       },
     );
-    let reaped!: (result: 0 | 1) => void;
+    const { promise: closed, resolve: reaped } = Promise.withResolvers<0 | 1>();
     const owned: OwnedApplication = {
       process: process_child,
-      exited: false,
-      closed: new Promise((resolve) => {
-        reaped = resolve;
-      }),
+      closed,
     };
     child = owned;
-    process_child.once('exit', () => {
-      owned.exited = true;
-    });
-    process_child.once('error', () => {
-      if (process_child.pid === undefined) owned.exited = true;
-      /* close below remains the actual owned cleanup boundary. */
-    });
     process_child.once('close', (code, signal) => {
-      owned.exited = true;
       reaped(code === 0 && signal === null ? 0 : 1);
       if (child === owned && !stopping_child && !stopping) finish(1);
     });
@@ -250,6 +230,8 @@ export async function run_server_supervisor(options: SupervisorOptions): Promise
     try {
       await stop_child();
       await restart_flight;
+      children.seal();
+      await children.settled();
       try {
         await control?.close();
       } finally {
