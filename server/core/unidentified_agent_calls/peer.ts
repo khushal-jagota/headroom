@@ -2,7 +2,7 @@
 import { opendir, readFile, readlink, stat } from 'node:fs/promises';
 import { endianness } from 'node:os';
 import { join } from 'node:path';
-import { testModeFromEnvironment } from '../config.ts';
+import { testModeFromEnvironment, worker_unit_prefix } from '../config.ts';
 import { is_os_error } from '../system_errors.ts';
 import { InvalidPeerEvidence } from './contracts.ts';
 import type { Endpoint, PeerLookupContext, PeerLookupResult, ProcReader } from './contracts.ts';
@@ -56,6 +56,7 @@ export async function resolve_loopback_peer(
 ): Promise<PeerLookupResult> {
   if (context === undefined && testModeFromEnvironment())
     return { is_owner: false, skipped_unreadable_processes: 0 };
+  const installation = context === undefined;
   context ??= default_context();
   let skipped = 0;
   const result = (is_owner: boolean): PeerLookupResult => ({
@@ -64,6 +65,20 @@ export async function resolve_loopback_peer(
   });
   const { files, proc_root, current_uid, little_endian } = context;
   try {
+    const installation_units: string[] = [];
+    if (installation) {
+      const prefix = worker_unit_prefix();
+      installation_units.push(
+        prefix === 'panels-worker-' ? 'panels-workers.slice' : `${prefix}workers.slice`,
+      );
+      // The server's own service contains its Chief and Manager children. A
+      // shell or the shared user manager is not an installation service.
+      for (const line of splitlines(await files.readText(join(proc_root, 'self/cgroup')))) {
+        const leaf = line.split('/').at(-1);
+        if (leaf?.startsWith('panels-') && leaf.endsWith('.service')) installation_units.push(leaf);
+      }
+    }
+    const is_agent = (cgroup: string): boolean => agent_cgroup(cgroup, installation_units);
     if (
       client === null ||
       server === null ||
@@ -110,7 +125,7 @@ export async function resolve_loopback_peer(
       } catch (error) {
         if (disappeared(error)) continue;
         if (!is_os_error(error)) throw error;
-        if (agent_cgroup(await files.readText(join(path, 'cgroup')))) return result(false);
+        if (is_agent(await files.readText(join(path, 'cgroup')))) return result(false);
         skipped++;
         continue;
       }
@@ -124,14 +139,14 @@ export async function resolve_loopback_peer(
         } catch (error) {
           if (disappeared(error)) continue;
           if (!is_os_error(error)) throw error;
-          if (agent_cgroup(await files.readText(join(path, 'cgroup')))) return result(false);
+          if (is_agent(await files.readText(join(path, 'cgroup')))) return result(false);
           skipped++;
           complete = false;
           break;
         }
         if (link !== target) continue;
         const cgroup = await files.readText(join(path, 'cgroup'));
-        if ((await files.readlink(fd)) !== target || agent_cgroup(cgroup)) return result(false);
+        if ((await files.readlink(fd)) !== target || is_agent(cgroup)) return result(false);
         process_holders++;
       }
       if (complete) holders += process_holders;
