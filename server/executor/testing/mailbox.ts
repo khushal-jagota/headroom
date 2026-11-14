@@ -5,7 +5,7 @@ import type { Database, SqlValue } from '../../core/database/contracts.ts';
 import { createDatabase, createReadAccess } from '../../core/database/index.ts';
 import { JsonNumber, numeric_value, stringify_python_json } from '../../core/http/numeric_json.ts';
 import { SqliteCommandMailbox } from '../vps_mailbox.ts';
-import { encode_value, encode_bounded } from '../protocol.ts';
+import { encode_value, encode_bounded, ValidationError } from '../protocol.ts';
 import { parse_executor_json } from '../protocol_json.ts';
 import { is_shutdown_business_cancellation } from '../../conversation/shutdown.ts';
 import type { StallSource } from '../../stalls/contracts.ts';
@@ -39,7 +39,14 @@ type Action = {
   nested?: WireTypes['LeaseRequest'];
 };
 type Outcome =
-  { ok: true; value: unknown } | { ok: false; type: string; message: string; errors?: Outcome[] };
+  | { ok: true; value: unknown }
+  | {
+      ok: false;
+      type: string;
+      message: string;
+      errors?: Outcome[];
+      issues?: { type: string; loc: readonly (string | number)[] }[];
+    };
 type Held = { promise: Promise<Outcome>; done: boolean };
 let database: Database,
   mailbox: SqliteCommandMailbox,
@@ -241,6 +248,9 @@ function failure(error: unknown): Outcome {
     ok: false,
     type: error.name,
     message: error.message,
+    ...(error instanceof ValidationError
+      ? { issues: error.issues.map(({ type, loc }) => ({ type, loc })) }
+      : {}),
     ...(error instanceof AggregateError ? { errors: error.errors.map(failure) } : {}),
   };
 }

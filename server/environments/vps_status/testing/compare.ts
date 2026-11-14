@@ -49,12 +49,15 @@ async function answer(work: () => unknown): Promise<unknown> {
   try {
     return { result: await work(), error: null };
   } catch (error) {
+    if (
+      error instanceof Error &&
+      'code' in error &&
+      error.code === 'ERR_ENCODING_INVALID_ENCODED_DATA'
+    )
+      return { result: null, error: 'decode' };
     if (error instanceof TypeError) return { result: null, error: error.message };
     if (!(error instanceof Error) || !('code' in error)) throw error;
-    return {
-      result: null,
-      error: error.code === 'ERR_ENCODING_INVALID_ENCODED_DATA' ? 'decode' : 'io',
-    };
+    return { result: null, error: 'io' };
   }
 }
 async function tree(root: string): Promise<Record<string, unknown>> {
