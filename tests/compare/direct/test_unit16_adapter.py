@@ -437,6 +437,24 @@ def compared(result: dict[str, Any]) -> dict[str, Any]:
             "parent_environment_unchanged": result["parent_environment_unchanged"],
         }
     )
+    for checkpoint in value["checkpoints"]:
+        if checkpoint["name"] != "missing-interpreter":
+            continue
+        for row in checkpoint["rows"]["conversation_events"]:
+            if row["kind"] == "prompt_delivery_refused":
+                payload = row["payload"]
+                assert payload["refusal_reason"] == "backend_did_not_start"
+                assert isinstance(payload["refusal_detail"], str)
+                assert "missing-hermes-python" in payload["refusal_detail"]
+                payload["refusal_detail"] = "<missing interpreter>"
+        for row in checkpoint["rows"]["conversation_view_rows"]:
+            if row["row_kind"] == "prompt_refused":
+                summary = json.loads(row["rest_summary"])
+                assert summary["refusal_reason"] == "backend_did_not_start"
+                excerpt = summary["refusal_detail_excerpt"]
+                assert isinstance(excerpt, str) and excerpt
+                summary["refusal_detail_excerpt"] = "<missing interpreter>"
+                row["rest_summary"] = json.dumps(summary, sort_keys=True)
     files: dict[str, str] = {}
 
     def walk(item: Any, key: str = "") -> Any:
@@ -526,6 +544,7 @@ def test_unit16_adapter_real_core_parity(tmp_path: Path, request: pytest.Fixture
             "SDK request IDs by scenario request order",
             "known core control UUIDs through existing Unit18 normalization",
             "random received stored-file IDs only, with exact file hashes and sizes",
+            "missing-interpreter refusal detail and its projected excerpt use native diagnostics",
             "backend callbacks grouped by type, preserving per-type order/count/turn/payload. "
             "Raw cross-type callback order stays diagnostic and is not parity-proven. "
             "Persisted core events, live frames, and ACP requests retain exact order.",

@@ -301,6 +301,15 @@ def test_unit22_mac_adapters(
     observed["open"] = ["mac-workspace-nondirectory-traversal (Mac Ticket)"]
     (target / "expected.json").write_text(json.dumps(expected, indent=2))
     (target / "observed.json").write_text(json.dumps(observed, indent=2))
+    python_missing = expected["errors"][-1]
+    native_missing = observed["parity"]["errors"][-1]
+    assert python_missing == (
+        "Mac workspace unavailable: [Errno 2] No such file or directory: '<root>/missing'"
+    )
+    assert native_missing == (
+        "Mac workspace unavailable: ENOENT: no such file or directory, lstat '<root>/missing'"
+    )
+    expected["errors"][-1] = native_missing
     assert observed["parity"] == expected
     assert observed["lifecycle"] and all(observed["lifecycle"].values())
     report_direct(
@@ -309,4 +318,10 @@ def test_unit22_mac_adapters(
         observed,
         started,
         "Mac composition and retained-child custody; no network or provider process",
+        accepted_difference={
+            "case": "missing workspace error wording",
+            "python": python_missing,
+            "typescript": native_missing,
+            "reason": "Native human error wording is not a CLI or executor wire contract",
+        },
     )
