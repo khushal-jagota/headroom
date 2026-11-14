@@ -2,6 +2,7 @@
 
 from pathlib import Path
 
+import pytest
 from tests.compare.runner import Normalizer
 
 
@@ -68,6 +69,27 @@ def test_scoped_rule_does_not_cross_payload_boundaries(tmp_path: Path) -> None:
     first = {"body": {"tickets": [{"field_values": {"record_sha256": "first"}}]}}
     second = {"body": {"tickets": [{"field_values": {"record_sha256": "second"}}]}}
     assert normalizer.normalize(first) != normalizer.normalize(second)
+    route = "GET /api/navigation/view/snapshot?view=invalid"
+    diagnostics = Normalizer({"response_text": {route + ".body.detail": "native text"}}, tmp_path)
+    source, native = {"body": {"detail": "Python text"}}, {"body": {"detail": "Node text"}}
+    assert diagnostics.normalize(source, route) == diagnostics.normalize(native, route)
+    assert diagnostics.normalize(source, "other") != diagnostics.normalize(native, "other")
+    assert diagnostics.normalize(source, route) != diagnostics.normalize({"body": {}}, route)
+    with pytest.raises(AssertionError):
+        diagnostics.normalize({"body": {"detail": 1}}, route)
+
+
+def test_stored_json_counts_keep_presence_type_and_empty_state(tmp_path: Path) -> None:
+    normalizer = Normalizer(
+        {"response_counts": {"body.page_character_count": "native JSON"}}, tmp_path
+    )
+    expected = normalizer.normalize({"body": {"page_character_count": 351}})
+    assert expected == normalizer.normalize({"body": {"page_character_count": 347}})
+    assert expected != normalizer.normalize({"body": {"page_character_count": 0}})
+    assert expected != normalizer.normalize({"body": {}})
+    assert normalizer.normalize({"byte_count": 351}) != normalizer.normalize({"byte_count": 347})
+    with pytest.raises(AssertionError):
+        normalizer.normalize({"body": {"page_character_count": True}})
 
 
 def test_known_parent_rows_ignore_physical_insertion_order(tmp_path: Path) -> None:

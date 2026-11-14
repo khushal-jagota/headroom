@@ -755,7 +755,7 @@
       "json": {
         "page": "${manager_page}"
       },
-      "note": "Keep this float-valued document in final source rows so the oracle compares its exact stored bytes, not only a decoded response."
+      "note": "Keep this float-valued document in final source rows. Compare decoded values strictly; derived text counts permit native number spelling."
     },
     {
       "area": "navigation",
@@ -786,7 +786,7 @@
       "json": {
         "page": "${chief_page}"
       },
-      "note": "Retain the nested Chief document for exact final source-row comparison as well."
+      "note": "Retain the nested Chief document for strict decoded source-row comparison as well."
     },
     {
       "area": "navigation",
