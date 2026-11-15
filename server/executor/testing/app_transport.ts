@@ -1,5 +1,7 @@
 /** One owned HTTP host under the existing synthetic TLS proxy; no native backend. */
-import { readFileSync, writeFileSync, readdirSync, readlinkSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync, readdirSync, readlinkSync } from 'node:fs';
+import crypto from 'node:crypto';
+import { syncBuiltinESMExports } from 'node:module';
 import { createInterface } from 'node:readline';
 import { request as http_request } from 'node:http';
 import { setTimeout as pause } from 'node:timers/promises';
@@ -15,6 +17,7 @@ import { VpsExecutorRegistry } from '../registry.ts';
 import { ORIGINAL_MAC_MACHINE_ID } from '../../execution_identity.ts';
 import { as_object } from '../protocol.ts';
 import { continue_core } from './transport_core.ts';
+import { routes as machine_routes } from '../../machines/routes.ts';
 
 const spec = JSON.parse(readFileSync(process.argv[2]!, 'utf8')) as {
   path: string;
@@ -27,6 +30,7 @@ const spec = JSON.parse(readFileSync(process.argv[2]!, 'utf8')) as {
   auth_mode?: boolean;
 };
 Date.now = () => 1_760_000_000_000;
+const enrolled_machine = '77777777-7777-4777-8777-777777777777';
 const database = createDatabase(spec.path);
 const config = loadConfig(undefined, {
   PLAN_DB_PATH: spec.path,
@@ -118,7 +122,69 @@ function credential_rows() {
   );
 }
 registry.bind_updates(service_for(ORIGINAL_MAC_MACHINE_ID));
-const app = await createApp(config, { database, executor: registry });
+const enrollment: Record<string, unknown>[] = [];
+const enrollment_responses: Record<string, boolean>[] = [];
+const original_ensure = registry.ensure.bind(registry);
+registry.ensure = async (machine_id) => {
+  if (!spec.auth_mode || machine_id !== enrolled_machine) return original_ensure(machine_id);
+  const fresh = createDatabase(spec.path);
+  let committed: Record<string, unknown> | undefined;
+  try {
+    committed = fresh.read((sql) =>
+      sql.get<Record<string, unknown>>(
+        'SELECT m.name,m.icon,m.color,m.is_home,c.* FROM machines m ' +
+          'JOIN machine_executor_credentials c USING(machine_id) WHERE machine_id=?',
+        [machine_id],
+      ),
+    );
+  } finally {
+    fresh.close();
+  }
+  if (!committed) throw new Error('Registry admission preceded the registration commit');
+  const evidence: Record<string, unknown> = {
+    machine_id,
+    committed,
+    owner_before: registry.get(machine_id) !== null,
+  };
+  enrollment.push(evidence);
+  writeFileSync(spec.path + '.ensure-started.json', JSON.stringify(evidence));
+  while (!existsSync(spec.path + '.ensure-release')) await pause(1);
+  const owner = await original_ensure(machine_id);
+  evidence.owner_after = registry.get(machine_id) === owner;
+  return owner;
+};
+const app = await createApp(config, {
+  database,
+  executor: registry,
+  ...(spec.auth_mode ? { areas: [{ prefix: '/api', routes: machine_routes }] } : {}),
+});
+if (spec.auth_mode) {
+  const random_uuid = crypto.randomUUID,
+    random_bytes = crypto.randomBytes;
+  app.addHook('onRequest', async (request) => {
+    if (request.method !== 'POST' || request.url !== '/api/machines') return;
+    crypto.randomUUID = () => enrolled_machine;
+    crypto.randomBytes = ((size: number) => {
+      if (size !== 32) throw new Error('Unexpected credential byte request');
+      return Buffer.alloc(32, 0x63);
+    }) as typeof crypto.randomBytes;
+    syncBuiltinESMExports();
+  });
+  app.addHook('onResponse', async (request) => {
+    if (request.method !== 'POST' || request.url !== '/api/machines') return;
+    crypto.randomUUID = random_uuid;
+    crypto.randomBytes = random_bytes;
+    syncBuiltinESMExports();
+  });
+  app.addHook('onSend', async (request, _reply, payload) => {
+    if (request.method === 'POST' && request.url === '/api/machines')
+      enrollment_responses.push({
+        released: existsSync(spec.path + '.ensure-release'),
+        owner_published: registry.get(enrolled_machine) !== null,
+      });
+    return payload;
+  });
+}
 // The source raw-transport fixture uses this same recording allowlisted read.
 app.get('/api/tickets', async (request) => ({
   actor: request.headers['x-plan-actor'] ?? null,
@@ -189,7 +255,15 @@ for await (const command of createInterface({ input: process.stdin })) {
     await registry.stop({ deadline: performance.now() / 1000 + 5 });
     await registry.settled();
     await app.close();
-    writeFileSync(spec.state, JSON.stringify({ reports, credentials: credential_rows() }));
+    writeFileSync(
+      spec.state,
+      JSON.stringify({
+        reports,
+        credentials: credential_rows(),
+        enrollment,
+        enrollment_responses,
+      }),
+    );
     database.close();
     break;
   }
