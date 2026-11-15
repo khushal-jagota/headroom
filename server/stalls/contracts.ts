@@ -22,6 +22,7 @@ export const PAUSED_WHILE_MAC_AWAY: ReadonlySet<TrackedWaitKind> = new Set([
   'mac_cancel_retirement',
 ]);
 export interface TrackedWait {
+  readonly machine_id?: string | null;
   readonly kind: TrackedWaitKind;
   readonly wait_key: string;
   readonly conversation_id: string | null;

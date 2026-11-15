@@ -53,7 +53,7 @@ export function refusal_reason_for_versions(
     ? MAC_NEEDS_UPDATE
     : MAC_VERSION_INCOMPATIBLE;
 }
-function valid_uuid(text: string): boolean {
+export function valid_uuid(text: string): boolean {
   let hex = text.replaceAll('urn:', '').replaceAll('uuid:', '');
   let start = 0,
     end = hex.length;
