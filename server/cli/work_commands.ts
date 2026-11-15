@@ -137,6 +137,8 @@ async function ticket_record(
     'title',
     'worker_type',
     'locale',
+    'machine_id',
+    'machine_name',
     'employee_backend',
     'employee_launch_model',
     'employee_launch_reasoning_effort',
@@ -237,30 +239,6 @@ async function submit_proposal(
   const body = await worker_stdin_body(inv, 'proposal body');
   const data = await send(inv, 'POST', `/api/tickets/${tid}/propose`, { json_body: { body } });
   return emit(data, inv.values.as_json, `proposed on ${scalar(data.id)}`);
-}
-async function request_help(inv: Invocation): Promise<CommandResult> {
-  const v = inv.values;
-  const tid = ticket_id(inv, v.ticket_id);
-  const selected =
-    Number(!!v.owner) +
-    Number(!!v.chief) +
-    Number(v.recipient_ticket_id != null) +
-    Number(v.recipient_manager_id != null);
-  if (selected > 1) fail_validation(inv, 'request-help accepts at most one recipient');
-  const recipient = v.owner
-    ? { kind: 'owner', id: 'owner' }
-    : v.chief
-      ? { kind: 'chief', id: 'chief' }
-      : v.recipient_ticket_id != null
-        ? { kind: 'ticket', id: v.recipient_ticket_id }
-        : v.recipient_manager_id != null
-          ? { kind: 'manager', id: v.recipient_manager_id }
-          : null;
-  const message = await worker_stdin_body(inv, 'help message');
-  const body: Body = { message };
-  if (recipient !== null) body.recipient = recipient;
-  const data = await send(inv, 'POST', `/api/tickets/${tid}/request-help`, { json_body: body });
-  return emit(data, v.as_json, `help message ${scalar(data.fate)}`);
 }
 async function proposal(inv: Invocation): Promise<CommandResult> {
   const v = inv.values;
@@ -738,9 +716,6 @@ export async function run_work_command(inv: Invocation): Promise<CommandResult> 
     }
     case 'ticket proposal':
       return proposal(inv);
-    case 'ticket request-help':
-    case 'worker request-help':
-      return request_help(inv);
     case 'ticket assign': {
       if (!!v.chief === (v.item_id != null))
         fail_validation(inv, 'use exactly one of --chief or --manager');
