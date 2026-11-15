@@ -33,7 +33,7 @@ function parse_lease(text: string | null): WireValue<'LeaseRequest'> | null {
 }
 export function read_presence(
   sql: ReadSql,
-  machine_id = ORIGINAL_MAC_MACHINE_ID,
+  machine_id: string = ORIGINAL_MAC_MACHINE_ID,
 ): PresenceRecord | null {
   const row = sql.get<{
     executor_incarnation: string | null;
@@ -74,11 +74,14 @@ export function not_current(executor_incarnation: string): PlannerError {
     { executor_incarnation },
   );
 }
-export function current_incarnation(sql: ReadSql): string | null {
+export function current_incarnation(
+  sql: ReadSql,
+  machine_id: string = ORIGINAL_MAC_MACHINE_ID,
+): string | null {
   return (
     sql.get<{ executor_incarnation: string | null }>(
       'SELECT executor_incarnation FROM mac_executor_presence WHERE machine_id=?',
-      [ORIGINAL_MAC_MACHINE_ID],
+      [machine_id],
     )?.executor_incarnation ?? null
   );
 }
@@ -86,8 +89,10 @@ export function current_incarnation(sql: ReadSql): string | null {
 export function require_current_incarnation_in_transaction(
   sql: ReadSql,
   executor_incarnation: string,
+  machine_id: string = ORIGINAL_MAC_MACHINE_ID,
 ): void {
-  if (current_incarnation(sql) !== executor_incarnation) throw not_current(executor_incarnation);
+  if (current_incarnation(sql, machine_id) !== executor_incarnation)
+    throw not_current(executor_incarnation);
 }
 
 /** Caller admits versions and samples now_ms inside its writer. Settle replaced commands in this same transaction. */
@@ -95,25 +100,27 @@ export function accept_lease_in_transaction(
   tx: TransactionSql,
   request: WireValue<'LeaseRequest'>,
   now_ms: number,
+  machine_id: string = ORIGINAL_MAC_MACHINE_ID,
 ): AcceptedLease {
   request = decode_value(request, 'LeaseRequest');
   const incarnation = request.identity.executor_incarnation;
-  const seen = tx.get<{ replaced_at_ms: number | null }>(
-    'SELECT replaced_at_ms FROM executor_incarnations WHERE executor_incarnation=?',
+  const seen = tx.get<{ replaced_at_ms: number | null; machine_id: string }>(
+    'SELECT replaced_at_ms,machine_id FROM executor_incarnations WHERE executor_incarnation=?',
     [incarnation],
   );
-  if (seen !== undefined && seen.replaced_at_ms !== null) throw not_current(incarnation);
-  const previous = read_presence(tx);
+  if (seen !== undefined && (seen.replaced_at_ms !== null || seen.machine_id !== machine_id))
+    throw not_current(incarnation);
+  const previous = read_presence(tx, machine_id);
   const replaced = previous?.executor_incarnation ?? null;
   const new_incarnation = replaced !== incarnation;
   if (new_incarnation) {
     tx.run(
-      'UPDATE executor_incarnations SET replaced_at_ms=? WHERE replaced_at_ms IS NULL AND executor_incarnation<>?',
-      [now_ms, incarnation],
+      'UPDATE executor_incarnations SET replaced_at_ms=? WHERE machine_id=? AND replaced_at_ms IS NULL AND executor_incarnation<>?',
+      [now_ms, machine_id, incarnation],
     );
     tx.run(
-      'INSERT INTO executor_incarnations(executor_incarnation,first_leased_at_ms,replaced_at_ms) VALUES (?,?,NULL) ON CONFLICT(executor_incarnation) DO NOTHING',
-      [incarnation, now_ms],
+      'INSERT INTO executor_incarnations(executor_incarnation,first_leased_at_ms,replaced_at_ms,machine_id) VALUES (?,?,NULL,?) ON CONFLICT(executor_incarnation) DO NOTHING',
+      [incarnation, now_ms, machine_id],
     );
   }
   const current: PresenceRecord = {
@@ -135,7 +142,7 @@ export function accept_lease_in_transaction(
     'INSERT INTO mac_executor_presence(machine_id,executor_incarnation,identity_json,last_contact_at_ms,last_lease_at_ms,continuous_since_ms,going_to_sleep_at_ms,lease_json,refusal_json) VALUES (?,?,?,?,?,?,?,?,?) ' +
       'ON CONFLICT(machine_id) DO UPDATE SET executor_incarnation=excluded.executor_incarnation,identity_json=excluded.identity_json,last_contact_at_ms=excluded.last_contact_at_ms,last_lease_at_ms=excluded.last_lease_at_ms,continuous_since_ms=excluded.continuous_since_ms,going_to_sleep_at_ms=excluded.going_to_sleep_at_ms,lease_json=excluded.lease_json,refusal_json=excluded.refusal_json',
     [
-      ORIGINAL_MAC_MACHINE_ID,
+      machine_id,
       incarnation,
       JSON.stringify(as_object(current.identity!, 'ExecutorIdentity')),
       current.last_contact_at_ms,
@@ -167,9 +174,13 @@ export function same_identity(
   );
 }
 /** Version refusal precedes the current-incarnation fence. True means this commit announces a change. */
-export function record_refusal(tx: TransactionSql, value: ExecutorRefusal): boolean {
+export function record_refusal(
+  tx: TransactionSql,
+  value: ExecutorRefusal,
+  machine_id: string = ORIGINAL_MAC_MACHINE_ID,
+): boolean {
   value = refusal(decode_value(value, 'ExecutorRefusal'));
-  const stored = read_presence(tx)?.refusal ?? null;
+  const stored = read_presence(tx, machine_id)?.refusal ?? null;
   if (
     stored !== null &&
     stored.reason === value.reason &&
@@ -178,18 +189,32 @@ export function record_refusal(tx: TransactionSql, value: ExecutorRefusal): bool
     return false;
   tx.run(
     'INSERT INTO mac_executor_presence(machine_id,last_contact_at_ms,refusal_json) VALUES (?,?,?) ON CONFLICT(machine_id) DO UPDATE SET last_contact_at_ms=MAX(COALESCE(last_contact_at_ms,0),excluded.last_contact_at_ms),refusal_json=excluded.refusal_json',
-    [
-      ORIGINAL_MAC_MACHINE_ID,
-      value.refused_at_ms,
-      JSON.stringify(as_object(value, 'ExecutorRefusal')),
-    ],
+    [machine_id, value.refused_at_ms, JSON.stringify(as_object(value, 'ExecutorRefusal'))],
   );
   return true;
 }
 /** Contact-only commits remain silent. No lease or incarnation authority is required. */
-export function record_contact(tx: TransactionSql, at_ms: number): void {
+export function record_contact(
+  tx: TransactionSql,
+  at_ms: number,
+  machine_id: string = ORIGINAL_MAC_MACHINE_ID,
+): void {
   tx.run(
     'INSERT INTO mac_executor_presence(machine_id,last_contact_at_ms) VALUES (?,?) ON CONFLICT(machine_id) DO UPDATE SET last_contact_at_ms=MAX(COALESCE(last_contact_at_ms,0),excluded.last_contact_at_ms)',
-    [ORIGINAL_MAC_MACHINE_ID, at_ms],
+    [machine_id, at_ms],
   );
+}
+
+/** An old incarnation can replay only within its original machine. */
+export function require_incarnation_owner(
+  sql: ReadSql,
+  incarnation: string,
+  machine_id: string = ORIGINAL_MAC_MACHINE_ID,
+): void {
+  const row = sql.get<{ machine_id: string }>(
+    'SELECT machine_id FROM executor_incarnations WHERE executor_incarnation=?',
+    [incarnation],
+  );
+  if (row === undefined || row.machine_id !== machine_id)
+    throw new PlannerError('agent_forbidden', 'executor reference belongs to another machine');
 }
