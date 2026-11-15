@@ -479,3 +479,24 @@ test('Cancel retains late retirement and does not authorize its old snapshot', a
   ]);
   await f.core.shutdown({ deadline: performance.now() / 1000 + SHUTDOWN_GRACE_SECONDS });
 });
+
+// A timed-out observer leaves actual retirement owned without authorizing its old write cut.
+test('an aborted update observation cannot close writes after its retirement settles', async () => {
+  const f = setup();
+  await f.start();
+  await f.send();
+  const child = await f.child;
+  await child.configure('stop', { barrier: 'expired-update-stop' });
+  const observation = new AbortController();
+  const expired = f.core.prepare_update('now', observation.signal);
+  await child.wait_for_barrier('expired-update-stop');
+  observation.abort();
+  await child.release('expired-update-stop');
+  expect(await expired).toBe(false);
+  expect(f.core.workspace_admission.starts_closed).toBe(true);
+  expect(f.core.workspace_admission.closed).toBe(false);
+  expect(await f.core.prepare_update('now')).toBe(true);
+  expect(f.core.workspace_admission.closed).toBe(true);
+  f.core.cancel_update();
+  await f.core.shutdown({ deadline: performance.now() / 1000 + SHUTDOWN_GRACE_SECONDS });
+});

@@ -1609,7 +1609,7 @@ export class SqliteProcessConversationSystem implements DeliveryServices, Conver
       ),
     ];
   }
-  async prepare_update(mode: 'idle' | 'now'): Promise<boolean> {
+  async prepare_update(mode: 'idle' | 'now', signal?: AbortSignal): Promise<boolean> {
     this.require_runtime_ownership();
     if (!this.update_admission_owned) {
       if (!this.workspace_admission.close_starts())
@@ -1670,7 +1670,7 @@ export class SqliteProcessConversationSystem implements DeliveryServices, Conver
       void this.update_retirement.catch(() => {});
     }
     await this.update_retirement;
-    if (this.update_generation !== generation) return false;
+    if (signal?.aborted || this.update_generation !== generation) return false;
     if (this.workspace_admission.closed) return true;
     return this.workspace_admission.claim(() => {}, {
       idle: () => local.every((state) => !this.state_has_update_work(state)),

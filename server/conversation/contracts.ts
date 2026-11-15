@@ -321,7 +321,7 @@ export interface RecordMessageToOwnerOptions {
 export interface ConversationSystem {
   readonly workspace_admission: WorkspaceAdmission;
   workspace_activity(): 'idle' | 'busy' | 'unknown';
-  prepare_update(mode: 'idle' | 'now'): Promise<boolean>;
+  prepare_update(mode: 'idle' | 'now', signal?: AbortSignal): Promise<boolean>;
   update_waiting_work(): readonly string[];
   cancel_update(): boolean;
   run_with_workspace_admission(

@@ -197,7 +197,7 @@ export class InMemoryConversationSystem implements ConversationSystem {
       return 'busy';
     return 'idle';
   }
-  async prepare_update(mode: 'idle' | 'now'): Promise<boolean> {
+  async prepare_update(mode: 'idle' | 'now', signal?: AbortSignal): Promise<boolean> {
     if (this.update_generation === null) {
       if (!this.workspace_admission.close_starts())
         throw new Error('Another operation owns workspace admission.');
@@ -215,7 +215,7 @@ export class InMemoryConversationSystem implements ConversationSystem {
         await this.kill(identity);
       }
     }
-    if (this.update_generation !== generation) return false;
+    if (signal?.aborted || this.update_generation !== generation) return false;
     return (
       this.workspace_admission.closed ||
       this.workspace_admission.claim(() => {}, {

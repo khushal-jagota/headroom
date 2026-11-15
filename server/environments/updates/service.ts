@@ -585,10 +585,11 @@ export class UpdateService {
     }
     this.paused_attempt_id = this.preparation_attempt_id = attempt_id;
     this.waiting_for_work = true;
+    const preparation = new AbortController();
     try {
       // Enter synchronously: Cancel must not race a separately queued admission close.
       const prepared = await this.observe_work(
-        system.prepare_update(attempt.confirm_activity ? attempt.mode : 'idle'),
+        system.prepare_update(attempt.confirm_activity ? attempt.mode : 'idle', preparation.signal),
         this.remaining_drain(attempt),
       );
       if (!active() || !this.owns_attempt(attempt_id, 'waiting')) return;
@@ -608,6 +609,9 @@ export class UpdateService {
         detail: `Work could not reach a safe point: ${error instanceof Error ? error.message : String(error)}. The update remains paused.`,
       }));
       return;
+    } finally {
+      // End this invocation's claim permission, while actual retirement remains owned.
+      preparation.abort();
     }
     try {
       this.options.runtime.assert_database_owned();
