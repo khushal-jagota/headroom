@@ -386,3 +386,57 @@ def test_scratch_runtime_waits_and_fences_held_pass_at_deadline(
     assert set(actual["timer_values"]) == {scratch_source.CLEANUP_INTERVAL_SECONDS * 1000}
     assert actual["owned_git_reaped"] and actual["entry_preserved"]
     _report(request, "unit-21-scratch-runtime.json", started, actual)
+
+
+def test_repository_selection_matches_python_on_populated_project_children(
+    tmp_path: Path, request: pytest.FixtureRequest
+) -> None:
+    # Gap: scratch cleanup proofs never select a Project repository. Reuse their
+    # populated local Git fixture to prove selection and inspection refusals.
+    started = time.perf_counter()
+    layout = _layout(tmp_path)
+    repository = _guard(tmp_path, layout.repository)
+    (repository / "README.md").write_text("populated repository selection proof\n")
+    _git(repository, "add", "README.md")
+    _git(repository, "commit", "-qm", "populate selection fixture")
+    unique = _guard(tmp_path, tmp_path / "unique")
+    unique.mkdir()
+    _git(unique, "clone", "-q", str(repository), "headroom")
+    malformed = _guard(tmp_path, tmp_path / "malformed")
+    (malformed / "headroom").mkdir(parents=True)
+    (malformed / "headroom/.git").write_text("invalid Git metadata\n")
+    multiple = _guard(tmp_path, tmp_path / "multiple")
+    multiple.mkdir()
+    _git(multiple, "clone", "-q", str(repository), "headroom")
+    (multiple / "other/.git").mkdir(parents=True)
+    empty = _guard(tmp_path, tmp_path / "empty")
+    empty.mkdir()
+    paths = {
+        "unique": unique,
+        "malformed": malformed,
+        "multiple": multiple,
+        "direct": repository,
+        "conventional": repository.parent,
+        "empty": empty,
+    }
+    expected: dict[str, Any] = {}
+    for name, path in paths.items():
+        try:
+            selected = workspaces.repository_root(_guard(tmp_path, path))
+            expected[name] = {"repository": str(selected) if selected else None}
+        except RuntimeError as error:
+            expected[name] = {"error": str(error)}
+    expected["null"] = {"repository": None}
+    assert expected["unique"] == {"repository": str(unique / "headroom")}
+    assert expected["malformed"] == {
+        "error": f"Cannot inspect Project repository: {malformed / 'headroom'}"
+    }
+    assert "error" in expected["multiple"]
+    assert (unique / "headroom/README.md").read_text() == "populated repository selection proof\n"
+    actual = _node(
+        tmp_path,
+        "probe_repository_selection",
+        {"root": str(tmp_path), "paths": {name: str(path) for name, path in paths.items()}},
+    )
+    assert actual == expected
+    _report(request, "unit21-repository-selection.json", started, actual)
