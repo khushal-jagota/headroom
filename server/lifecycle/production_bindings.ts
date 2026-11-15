@@ -193,15 +193,18 @@ export function create_production_backend_bindings(): ProductionBackendBindings 
       create_claude_backend_child_factory(current(context).claude, {
         child_processes: context.child_processes,
         one_shot_children: context.one_shot_children,
+        worker_supervision: context.worker_supervision,
       }),
     codex: (context) =>
       create_codex_backend_child_factory(current(context).codex, {
         child_processes: context.child_processes,
+        worker_supervision: context.worker_supervision,
         remembered_login_rejection: context.codex_login_rejection,
       }),
     hermes: (context) =>
       create_hermes_backend_child_factory(current(context).hermes, {
         child_processes: context.child_processes,
+        worker_supervision: context.worker_supervision,
       }),
     http: (context) => {
       const selected = current(context);

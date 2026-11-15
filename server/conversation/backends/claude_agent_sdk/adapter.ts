@@ -1,5 +1,6 @@
 /** One selected Claude CLI child, persistent session, and backend event stream. */
 import { randomUUID } from 'node:crypto';
+import { observe_shutdown } from '../../shutdown.ts';
 import { observe_promise } from '../../../core/promise_observer.ts';
 import type { Options, SDKUserMessage } from '@anthropic-ai/claude-agent-sdk';
 import * as B from '../contracts.ts';
@@ -22,7 +23,13 @@ import {
 import type { MessageContent } from '../../message_content.ts';
 import type { ConversationMessageFiles } from '../../message_files.ts';
 import { BackendCliIncompatible } from '../cli_compatibility.ts';
-import type { OwnedChildProcesses, OwnedOneShotChildren } from '../../../lifecycle/contracts.ts';
+import type {
+  OwnedChildProcesses,
+  OwnedOneShotChildren,
+  StopOptions,
+} from '../../../lifecycle/contracts.ts';
+import type { WorkerSupervisionRuntime } from '../../../worker_supervision/runtime.ts';
+import type { LocalChildIdentity } from '../../local_child_contracts.ts';
 import { claude_sdk_client } from './query.ts';
 import type {
   ClaudeSdkClient,
@@ -52,6 +59,7 @@ export interface ClaudeAgentSdkChildLaunch {
 interface ChildOptions {
   child_processes: OwnedChildProcesses;
   one_shot_children: OwnedOneShotChildren;
+  worker_supervision: WorkerSupervisionRuntime;
   launch: ClaudeAgentSdkChildLaunch;
   resolved_start: ResolvedConversationStart;
   event_sink: B.BackendEventSink;
@@ -82,6 +90,7 @@ export class ClaudeAgentSdkBackendChild implements B.BackendChild {
   private readonly client_factory: ClaudeSdkClientFactory;
   private readonly child_processes: OwnedChildProcesses;
   private readonly one_shot_children: OwnedOneShotChildren;
+  private readonly worker_supervision: WorkerSupervisionRuntime;
   private client: ClaudeSdkClient | null = null;
   private session_id: string | null = null;
   private resume_confirmed = false;
@@ -90,6 +99,8 @@ export class ClaudeAgentSdkBackendChild implements B.BackendChild {
   private turn: TurnInFlight | null = null;
   private last_ended_turn: TurnInFlight | null = null;
   private reader: Promise<void> | null = null;
+  private stopping: Promise<void> | null = null;
+  private readonly client_settlements = new Set<Promise<void>>();
   private reader_cancel: AbortController | null = null;
   private wire_broken = false;
   private readonly standard_error: string[] = [];
@@ -99,6 +110,7 @@ export class ClaudeAgentSdkBackendChild implements B.BackendChild {
   constructor(options: ChildOptions) {
     this.child_processes = options.child_processes;
     this.one_shot_children = options.one_shot_children;
+    this.worker_supervision = options.worker_supervision;
     this.launch = options.launch;
     this.resolved_start = options.resolved_start;
     this.sink = options.event_sink;
@@ -113,6 +125,7 @@ export class ClaudeAgentSdkBackendChild implements B.BackendChild {
   ): Promise<void> {
     if (this.client !== null || this.reader !== null)
       throw new B.BackendSpawnFailed('the previous Claude child still owns cleanup handles');
+    this.stopping = null;
     if (resolved_start.workspace_path_policy === WorkspacePathPolicy.executor_default)
       throw new B.BackendSpawnFailed('executor workspace requires native resolution');
     this.resolved_start = resolved_start;
@@ -165,6 +178,8 @@ export class ClaudeAgentSdkBackendChild implements B.BackendChild {
     return {
       child_processes: this.child_processes,
       one_shot_children: this.one_shot_children,
+      worker_supervision: this.worker_supervision,
+      custody_sink: this.sink,
       cwd: start.workspace_folder,
       pathToClaudeCodeExecutable: this.launch.claude_executable,
       systemPrompt: { type: 'preset', preset: 'claude_code' },
@@ -438,10 +453,30 @@ export class ClaudeAgentSdkBackendChild implements B.BackendChild {
   async withdraw_delivery(): Promise<boolean> {
     return true;
   }
-  async detach(): Promise<void> {
-    await this.stop();
+  detach(options?: StopOptions): Promise<void> {
+    return this.stop(options);
   }
-  async stop(): Promise<void> {
+  async local_child_identity(): Promise<LocalChildIdentity | null> {
+    return (await this.client?.local_child_identity?.()) ?? null;
+  }
+  async settled(): Promise<void> {
+    await this.stopping?.catch(() => {});
+    await this.client?.settled?.();
+    while (this.client_settlements.size) await Promise.allSettled([...this.client_settlements]);
+  }
+  stop(options?: StopOptions): Promise<void> {
+    if (this.stopping === null) {
+      const task = this.stop_owned(options);
+      this.stopping = task;
+      void task.catch(() => {
+        if (this.stopping === task) this.stopping = null;
+      });
+    }
+    return options === undefined
+      ? this.stopping
+      : observe_shutdown(this.stopping, options, 'Claude child cleanup remains unconfirmed');
+  }
+  private async stop_owned(options?: StopOptions): Promise<void> {
     this.wire_broken = true;
     this.events.forget_background_tasks();
     const turn = this.turn;
@@ -468,7 +503,10 @@ export class ClaudeAgentSdkBackendChild implements B.BackendChild {
     }
     const client = this.client;
     if (client) {
-      await client.disconnect();
+      await client.disconnect(options);
+      const settled = client.settled?.() ?? Promise.resolve();
+      this.client_settlements.add(settled);
+      void settled.finally(() => this.client_settlements.delete(settled)).catch(() => {});
       this.client = null;
     }
   }
@@ -660,6 +698,7 @@ export function create_claude_backend_child_factory(
   options: {
     child_processes: OwnedChildProcesses;
     one_shot_children: OwnedOneShotChildren;
+    worker_supervision: WorkerSupervisionRuntime;
     client_factory?: ClaudeSdkClientFactory;
   },
 ): B.BackendChildFactory {

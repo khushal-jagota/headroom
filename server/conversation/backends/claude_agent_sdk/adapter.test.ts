@@ -1,3 +1,4 @@
+import type { WorkerSupervisionRuntime } from '../../../worker_supervision/runtime.ts';
 /** A terminal reader failure must not prevent cleanup of its exact injected client. */
 import { OneShotChildren } from '../../../lifecycle/one_shot_children.ts';
 import { ChildProcesses } from '../../../lifecycle/owned_processes.ts';
@@ -12,7 +13,8 @@ it('clears a failed reader and disconnects once across repeated stop calls', asy
   const next = new Pending<IteratorResult<ClaudeSdkMessage>>();
   const failedReport = new Pending<void>();
   const failure = Object.assign(new Error('database is locked'), { code: 'SQLITE_BUSY' });
-  const disconnect = vi.fn(async () => {});
+  const disconnect = vi.fn(async (_options?: { deadline: number }) => {});
+  const native_settled = new Pending<void>();
   const client: ClaudeSdkClient = {
     connect: async () => {},
     get_server_info: async () => null,
@@ -26,6 +28,7 @@ it('clears a failed reader and disconnects once across repeated stop calls', asy
     wait_for_user_message_settlement: async () => {},
     interrupt_and_cancel_queued: async () => [new Set(), new Set()],
     disconnect,
+    settled: () => native_settled.promise,
   };
   const start = new ResolvedConversationStart({
     conversation_id: 'failed-reader',
@@ -40,6 +43,7 @@ it('clears a failed reader and disconnects once across repeated stop calls', asy
   const child_processes = new ChildProcesses();
   const child = new ClaudeAgentSdkBackendChild({
     child_processes,
+    worker_supervision: {} as WorkerSupervisionRuntime,
     one_shot_children: new OneShotChildren(child_processes),
     launch: { claude_executable: '/synthetic/claude' },
     resolved_start: start,
@@ -66,14 +70,23 @@ it('clears a failed reader and disconnects once across repeated stop calls', asy
     await child.start(start, { vendor_session_cursor: null });
     next.resolve({ value: undefined, done: true });
     await failedReport.promise;
-    await child.stop();
+    const options = { deadline: performance.now() / 1000 + 2 };
+    await child.detach(options);
     await child.stop();
     expect(disconnect).toHaveBeenCalledTimes(1);
+    expect(disconnect).toHaveBeenCalledWith(options);
+    let actually_settled = false;
+    const joined = child.settled().then(() => { actually_settled = true; });
+    await Promise.resolve();
+    expect(actually_settled).toBe(false);
+    native_settled.resolve();
+    await joined;
     expect(logged).toHaveBeenCalledExactlyOnceWith(
       'conversation failed-reader: Claude message reader failed during cleanup',
       failure,
     );
   } finally {
+    native_settled.resolve();
     logged.mockRestore();
   }
 });

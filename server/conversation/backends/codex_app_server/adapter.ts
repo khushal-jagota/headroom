@@ -1,6 +1,8 @@
 /** Codex behind the fixed backend seam: one child, one thread, one native turn. */
 import { isDeepStrictEqual } from 'node:util';
-import type { OwnedChildProcesses } from '../../../lifecycle/contracts.ts';
+import type { StopOptions, OwnedChildProcesses } from '../../../lifecycle/contracts.ts';
+import type { WorkerSupervisionRuntime } from '../../../worker_supervision/runtime.ts';
+import type { LocalChildIdentity } from '../../local_child_contracts.ts';
 import { JsonNumber } from '../../../core/http/numeric_json.ts';
 import * as B from '../contracts.ts';
 import type {
@@ -54,6 +56,7 @@ import {
   ASK_WITHDRAWAL_TIMEOUT_SECONDS,
 } from './adapter_configuration.ts';
 import { TurnInFlight, same_turn } from './turn.ts';
+import { observe_shutdown } from '../../shutdown.ts';
 import { observe_promise } from '../../../core/promise_observer.ts';
 import {
   plan_entries,
@@ -100,7 +103,7 @@ export type CodexClient = Pick<
   | 'standard_error_bytes_so_far'
   | 'standard_error_since'
   | 'settle_standard_error'
->;
+> & { local_child_identity?: () => Promise<LocalChildIdentity | null>; settled?: () => Promise<void> };
 type ClientFactory = (
   options: ConstructorParameters<typeof CodexAppServerClient>[0],
 ) => CodexClient;
@@ -112,6 +115,7 @@ interface ChildOptions {
   message_files: ConversationMessageFiles;
   remembered_login_rejection?: CodexLoginRejectionMemory;
   client_factory?: ClientFactory;
+  worker_supervision?: WorkerSupervisionRuntime;
 }
 interface PromptOptions {
   sender_label: string;
@@ -161,6 +165,7 @@ export class CodexAppServerBackendChild implements B.BackendChild {
   private catalog: CatalogSnapshot = EMPTY_CATALOG_SNAPSHOT;
   private published_catalog: readonly ComposerCatalogEntry[] | null = null;
   private catalog_publish: Promise<void> = Promise.resolve();
+  private readonly stop_operations = new Set<Promise<void>>();
   private readonly coordinator: CatalogCoordinator;
   constructor(options: ChildOptions) {
     if (options.resolved_start.model === 'sol')
@@ -180,6 +185,7 @@ export class CodexAppServerBackendChild implements B.BackendChild {
     this.reasoning_effort = options.resolved_start.reasoning_effort;
     this.client = (options.client_factory ?? ((config) => new CodexAppServerClient(config)))({
       child_processes: options.child_processes,
+      worker_supervision: options.worker_supervision,
       description: options.resolved_start.conversation_id,
       handler: {
         on_notification: (method, notification) =>
@@ -220,6 +226,9 @@ export class CodexAppServerBackendChild implements B.BackendChild {
       publish: () => this.publish_catalog(),
     });
   }
+  async local_child_identity(): Promise<LocalChildIdentity | null> {
+    return this.client.local_child_identity?.() ?? null;
+  }
   async start(
     resolved_start: ResolvedConversationStart,
     options: { vendor_session_cursor: string | null },
@@ -240,6 +249,8 @@ export class CodexAppServerBackendChild implements B.BackendChild {
         environment,
         working_directory: resolved_start.workspace_folder,
         worker_ticket_id: new Map(identity).get('PLAN_TICKET_ID'),
+        supervision_reporter: this.sink.record_local_child_supervision?.bind(this.sink),
+        custody_reporter: this.sink.record_local_child_custody?.bind(this.sink),
       });
     } catch (error) {
       if (error instanceof CodexChildWouldNotStart) throw new B.BackendSpawnFailed(text(error));
@@ -542,10 +553,20 @@ export class CodexAppServerBackendChild implements B.BackendChild {
   async withdraw_delivery(): Promise<boolean> {
     return true;
   }
-  async detach(): Promise<void> {
-    await this.stop();
+  detach(options?: StopOptions): Promise<void> {
+    return this.stop(options);
   }
-  async stop(): Promise<void> {
+  stop(options?: StopOptions): Promise<void> {
+    const task = this.stop_owned(options);
+    this.stop_operations.add(task);
+    void task.finally(() => this.stop_operations.delete(task)).catch(() => {});
+    return options ? observe_shutdown(task, options, 'Codex adapter stop exceeded its deadline') : task;
+  }
+  async settled(): Promise<void> {
+    while (this.stop_operations.size) await Promise.allSettled([...this.stop_operations]);
+    await this.client.settled?.();
+  }
+  private async stop_owned(options?: StopOptions): Promise<void> {
     try {
       await this.coordinator.close();
       const turn = this.turn;
@@ -553,7 +574,7 @@ export class CodexAppServerBackendChild implements B.BackendChild {
       if (turn !== null)
         await observe_promise(this.settle_asks(turn), ASK_WITHDRAWAL_TIMEOUT_SECONDS * 1000);
     } finally {
-      await this.client.stop();
+      await this.client.stop(options);
     }
   }
   private async publish_catalog(): Promise<void> {
@@ -1172,6 +1193,7 @@ export function create_codex_backend_child_factory(
   options: {
     child_processes: OwnedChildProcesses;
     remembered_login_rejection: CodexLoginRejectionMemory;
+    worker_supervision: WorkerSupervisionRuntime;
     client_factory?: ClientFactory;
   },
 ): B.BackendChildFactory {
@@ -1182,6 +1204,7 @@ export function create_codex_backend_child_factory(
       launch,
       child_processes: options.child_processes,
       remembered_login_rejection,
+      worker_supervision: options.worker_supervision,
       client_factory: options.client_factory,
     });
 }

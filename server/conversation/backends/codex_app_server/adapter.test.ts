@@ -229,3 +229,15 @@ test('shutdown reaches child cleanup when a parked ask withdrawal stalls', async
     vi.useRealTimers();
   }
 });
+
+
+// The client owns native cleanup, so detach must preserve the core's absolute budget.
+test('detach forwards the existing stop deadline to its client', async () => {
+  const state = await setup();
+  const stop = vi.spyOn(state.client, 'stop');
+  const options = { deadline: performance.now() / 1000 + 1 };
+  try {
+    await state.child.detach(options);
+    expect(stop).toHaveBeenCalledWith(options);
+  } finally { await state.child.stop(); }
+});

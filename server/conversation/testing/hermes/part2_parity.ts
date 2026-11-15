@@ -1,3 +1,5 @@
+import { OneShotChildren } from '../../../lifecycle/one_shot_children.ts';
+import { create_worker_supervision_runtime } from '../../../worker_supervision/composition.ts';
 /** The real TS adapter and core, with one local scripted ACP peer. */
 import { ChildProcesses } from '../../../lifecycle/owned_processes.ts';
 import { SHUTDOWN_GRACE_SECONDS } from '../../../lifecycle/configuration.ts';
@@ -91,6 +93,8 @@ export async function run_part2_parity(spec: Spec): Promise<unknown> {
   const backendEvents: unknown[] = [];
   const kept: unknown[] = [];
   const child_processes = new ChildProcesses();
+  const one_shot_children = new OneShotChildren(child_processes);
+  const worker_supervision = create_worker_supervision_runtime({ one_shot_children });
   const base = create_hermes_backend_child_factory(
     {
       argv: [process.execPath, spec.executable],
@@ -100,14 +104,14 @@ export async function run_part2_parity(spec: Spec): Promise<unknown> {
         ['UNIT16_CONTROL', spec.control],
       ],
     },
-    { child_processes },
+    { child_processes, worker_supervision },
   );
   const missing = create_hermes_backend_child_factory(
     {
       argv: [spec.workspace + '/missing-hermes-python'],
       environment_overrides: [],
     },
-    { child_processes },
+    { child_processes, worker_supervision },
   );
   const factory: BackendChildFactory = (options) =>
     (options.resolved_start.conversation_id === 'unit16-missing-interpreter' ? missing : base)({
@@ -291,6 +295,12 @@ export async function run_part2_parity(spec: Spec): Promise<unknown> {
     }
   } finally {
     await core.shutdown({ deadline: performance.now() / 1000 + SHUTDOWN_GRACE_SECONDS });
+    await core.settled();
+    child_processes.seal();
+    await child_processes.settled();
+    await worker_supervision.close();
+    one_shot_children.seal();
+    await one_shot_children.settled();
     database.close();
   }
   return {
