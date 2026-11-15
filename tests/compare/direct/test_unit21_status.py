@@ -66,6 +66,8 @@ def _tree(root: Path) -> dict[str, Any]:
             result[key] = {"link": os.readlink(path)}
         elif path.is_dir():
             result[key] = {"directory": True}
+        elif not path.stat().st_mode & 0o444:
+            result[key] = {"bytes": path.stat().st_size}
         else:
             result[key] = {"sha256": hashlib.sha256(path.read_bytes()).hexdigest()}
     return result
@@ -144,6 +146,8 @@ def _python(case: dict[str, Any]) -> Any:
                     path.symlink_to(mutation["target"], target_is_directory=True)
                 elif mutation["kind"] == "remove":
                     shutil.rmtree(path)
+                elif mutation["kind"] == "chmod":
+                    path.chmod(mutation["mode"])
                 else:
                     path.write_text(mutation.get("text", ""))
             return {
@@ -333,6 +337,7 @@ def test_unit21_cleanup_rechecks_changed_targets(
         },
         {"kind": "touch", "path": str(root / "backups/.backup-freshened"), "time": EPOCH},
         {"kind": "write", "path": str(root / "logs/blocked.log.1"), "text": "retained"},
+        {"kind": "chmod", "path": str(root / "logs/rotate.log"), "mode": 0o200},
         {
             "kind": "write",
             "path": str(root / "backups/snapshot-0/database.sqlite"),

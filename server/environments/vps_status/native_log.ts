@@ -25,7 +25,7 @@ export function truncate_native_log(candidate: CleanupCandidate, policy: VpsStat
     current = open_relative(
       directory,
       basename(candidate.path),
-      constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK,
+      constants.O_WRONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK,
     );
     const observed = fstatSync(current, { bigint: true });
     if (
