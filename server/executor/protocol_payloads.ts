@@ -62,10 +62,6 @@ export interface CliArgumentPayloads {
   'ticket.block': { ticket_id: string; blocker_id: string; body: Wire.JsonObject };
   'ticket.unblock': { ticket_id: string; blocker_id: string; body: Wire.JsonObject };
   'message.send': { body: { target: Principal; message: string; mode?: Wire.PromptDeliveryMode } };
-  'ticket.request_help': {
-    ticket_id: string;
-    body: { message: string; recipient?: Principal | null };
-  };
 }
 export type ModelListPayload = Wire.BackendSnapshot;
 const envelope_roots = {
