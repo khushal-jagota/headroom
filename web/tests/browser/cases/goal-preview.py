@@ -3207,13 +3207,14 @@ def checklist_deadline_controls(browser, url):
                     "Date edit after external change",
                 )
                 expect(date_control(panel).get_by_role("alert")).to_have_count(0)
+                accepted_revision = fixture.goals["checklist"]["revision"]
                 native.fill("2026-11-07")
                 native.press("Enter")
                 wait_fixture(
                     lambda: accepted_item().get("deadline") == "2026-11-07",
                     "New explicit edit",
                 )
-                assert "expected_revision" not in fixture.writes[-1][1]
+                assert fixture.writes[-1][1]["expected_revision"] == accepted_revision
                 assert accepted_item("review")["detail"] == "Accepted neighboring context"
                 expect(date_control(panel).get_by_role("alert")).to_have_count(0)
                 if output:
