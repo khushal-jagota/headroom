@@ -10,10 +10,12 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import re
 import sqlite3
 import subprocess
 import time
 from collections.abc import Callable
+from contextlib import closing
 from pathlib import Path
 from typing import Any, cast
 from unittest.mock import patch
@@ -40,12 +42,12 @@ from planner.conversation.storage import ConversationStore
 from planner.conversation.system import SqliteProcessConversationSystem
 from planner.core.db import connect, create_schema
 from planner.runtime.conversation_start import reset_ticket_conversation
+from planner.runtime.logic.worker_step_prompt import MEMORY_LOSS_NOTICE, compose_worker_step_prompt
 from planner.runtime.worker_memory import (
     MEMORY_NOTICE_MESSAGE_PREFIX,
     conversation_holds_an_unanswered_memory_loss,
     ticket_needs_memory_notice,
 )
-from planner.runtime.logic.worker_step_prompt import compose_worker_step_prompt
 from planner.tickets import data as tickets_data
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -59,6 +61,31 @@ CASES = (
     "queued_backlog",
     "replaced",
 )
+
+
+def comparison(value: dict[str, Any]) -> tuple[dict[str, Any], dict[str, str]]:
+    """Manager-approved per-run bijection for exact generated notice IDs only."""
+    aliases: dict[str, str] = {}
+
+    def walk(item: Any, field: str = "") -> Any:
+        if isinstance(item, dict):
+            return {key: walk(child, key) for key, child in item.items()}
+        if isinstance(item, list):
+            return [walk(child, field) for child in item]
+        if (
+            isinstance(item, str)
+            and field in {"sender_message_id", "awaiting", "lookup_id"}
+            and re.fullmatch(MEMORY_NOTICE_MESSAGE_PREFIX + r"[0-9a-f]{32}", item)
+        ):
+            if field == "lookup_id":
+                assert item in aliases, "A notice lookup must name a recorded notice"
+                return aliases[item]
+            return aliases.setdefault(
+                item, MEMORY_NOTICE_MESSAGE_PREFIX + f"notice-{len(aliases) + 1}"
+            )
+        return item
+
+    return walk(normalize(value)), aliases
 
 
 async def python_case(path: Path, case: str) -> dict[str, Any]:
@@ -100,6 +127,11 @@ async def python_case(path: Path, case: str) -> dict[str, Any]:
 
     async def finish() -> None:
         await registry.current[identity].finish()
+        await core.wait_until_quiescent()
+
+    async def compact() -> None:
+        await registry.current[identity].emit(ContextCompacted())
+        await registry.current[identity].flush_events()
         await core.wait_until_quiescent()
 
     async def sweep() -> None:
@@ -152,9 +184,7 @@ async def python_case(path: Path, case: str) -> dict[str, Any]:
             await finish()
             now += 50 * 60
             await sweep()
-            await registry.current[identity].emit(ContextCompacted())
-            await registry.current[identity].flush_events()
-            await core.wait_until_quiescent()
+            await compact()
             await finish()
             await capture("compact-debt")
             _backlog_ticket(path)
@@ -168,9 +198,7 @@ async def python_case(path: Path, case: str) -> dict[str, Any]:
             stale = await send("Your context was compacted", notice=True)
             await capture("idle-notice-is-stale", [stale])
             await send("work that compacts", wake=True)
-            await registry.current[identity].emit(ContextCompacted())
-            await registry.current[identity].flush_events()
-            await core.wait_until_quiescent()
+            await compact()
             await finish()
             fate = await send("Your context was compacted", notice=True)
             await registry.current[identity].emit(
@@ -200,9 +228,7 @@ async def python_case(path: Path, case: str) -> dict[str, Any]:
             finally:
                 conn.close()
             await send("work that compacts", wake=True)
-            await registry.current[identity].emit(ContextCompacted())
-            await registry.current[identity].flush_events()
-            await core.wait_until_quiescent()
+            await compact()
             await finish()
             first = await send("Your context was compacted", notice=True)
             await capture("notice-started", [first])
@@ -229,48 +255,81 @@ async def python_case(path: Path, case: str) -> dict[str, Any]:
             await sweep()
             await capture("joined-work-is-due")
             if case == "held_batch":
+
                 async def queue_wake(revision: int) -> tuple[str, str, dict[str, Any]]:
                     sender_id = f"worker_step_message_t_worker:{revision}"
-                    conn = connect(str(path))
-                    try:
+                    with closing(connect(str(path))) as conn:
                         with conn:
-                            conn.execute("INSERT INTO worker_step_dispatch_intents VALUES ('t_worker',?,?, 'dispatch_started')", (revision, sender_id))
+                            conn.execute(
+                                "INSERT INTO worker_step_dispatch_intents "
+                                "VALUES ('t_worker',?,?, 'dispatch_started')",
+                                (revision, sender_id),
+                            )
                         ticket = tickets_data.read_ticket(conn, "t_worker")
-                        text = compose_worker_step_prompt(ticket, worker_type_definition=ticket.workflow).model_text
-                    finally:
-                        conn.close()
-                    fate = await core.send(identity, text_message_content(text), sender_label="Panels", sender_message_id=sender_id)
+                        text = compose_worker_step_prompt(
+                            ticket, worker_type_definition=ticket.workflow
+                        ).model_text
+                    fate = await core.send(
+                        identity,
+                        text_message_content(text),
+                        sender_label="Panels",
+                        sender_message_id=sender_id,
+                    )
                     return sender_id, text, delivery_fate_json(fate)
 
                 stale = await send("Your context was compacted", notice=True)
                 wake_id, wake_text, wake_fate = await queue_wake(0)
-                await send("dispatch companion")
+                await queue_wake(1)
                 first_child = registry.current[identity]
-                await registry.configure(identity, "write_prompt", {"barrier": "memory-rebind", "error": {"name": "NeedsRebind", "message": "fresh child"}})
-                await first_child.emit(ContextCompacted())
-                await first_child.flush_events()
+                await registry.configure(
+                    identity,
+                    "write_prompt",
+                    {
+                        "barrier": "memory-rebind",
+                        "error": {"name": "NeedsRebind", "message": "fresh child"},
+                    },
+                )
+                await compact()
                 finishing = asyncio.create_task(finish())
                 await first_child.wait_for_barrier("memory-rebind")
-                conn = connect(str(path))
-                try:
-                    with conn:
-                        conn.execute("UPDATE conversations SET automatically_compacted_through_sequence=0 WHERE conversation_id=?", (identity,))
-                finally:
-                    conn.close()
+                with closing(connect(str(path))) as conn, conn:
+                    conn.execute(
+                        "UPDATE conversations SET automatically_compacted_through_sequence=0 "
+                        "WHERE conversation_id=?",
+                        (identity,),
+                    )
                 await first_child.release("memory-rebind")
                 await finishing
                 await capture("wake-rebind-recomputed", [stale, wake_fate])
                 checkpoints[-1]["wake"] = {"sender_message_id": wake_id, "text": wake_text}
+                checkpoints[-1]["awaiting"] = sorted(
+                    await core.sender_message_ids_awaiting_outcome(identity)
+                )
                 stale = await send("Your context was compacted", notice=True)
-                wake_id, wake_text, wake_fate = await queue_wake(1)
-                await registry.configure(identity, "write_prompt", {"error": {"name": "RuntimeError", "message": "acknowledgement lost after possible emission"}})
-                await registry.current[identity].emit(ContextCompacted())
-                await registry.current[identity].flush_events()
+                wake_id, wake_text, wake_fate = await queue_wake(2)
+                await registry.configure(
+                    identity,
+                    "write_prompt",
+                    {
+                        "error": {
+                            "name": "Error",
+                            "message": "acknowledgement lost after possible emission",
+                        }
+                    },
+                )
+                await compact()
                 await finish()
-                replay = await core.send(identity, text_message_content(wake_text), sender_label="Panels", sender_message_id=wake_id)
+                replay = await core.send(
+                    identity,
+                    text_message_content(wake_text),
+                    sender_label="Panels",
+                    sender_message_id=wake_id,
+                )
                 await capture("wake-note-uncertain", [stale, wake_fate, delivery_fate_json(replay)])
                 checkpoints[-1]["wake"] = {"sender_message_id": wake_id, "text": wake_text}
-                checkpoints[-1]["awaiting"] = sorted(await core.sender_message_ids_awaiting_outcome(identity))
+                checkpoints[-1]["awaiting"] = sorted(
+                    await core.sender_message_ids_awaiting_outcome(identity)
+                )
         else:
             await send("real work")
             if case == "queued_backlog":
@@ -359,6 +418,46 @@ def positive(result: dict[str, Any]) -> None:
             assert discards(points["real-work-joined"])[-1] == (
                 "Your context was compacted",
                 "worker_memory_notice_no_longer_needed",
+            )
+            rebound, uncertain = points["wake-rebind-recomputed"], points["wake-note-uncertain"]
+            # Read actual write inputs, including the refused attempt before rebind.
+            writes = [
+                call
+                for child in rebound["native"]
+                for call in child["calls"]
+                if call["command"] == "write_prompt"
+            ]
+
+            def joined_text(call: dict[str, Any]) -> str:
+                return "".join(piece["text"] for piece in call["arguments"]["sender_content"])
+
+            assert joined_text(writes[-2]).count(MEMORY_LOSS_NOTICE) == 1
+            assert MEMORY_LOSS_NOTICE not in joined_text(writes[-1])
+            assert rebound["awaiting"] == []
+            for point, kind in ((rebound, "prompt"), (uncertain, "prompt_delivery_uncertain")):
+                rows = [
+                    row["payload"]
+                    for row in point["rows"]["conversation_events"]
+                    if row["kind"] == kind
+                ]
+                wake = next(
+                    row
+                    for row in rows
+                    if row.get("sender_message_id") == point["wake"]["sender_message_id"]
+                )
+                assert wake["text"] == point["wake"]["text"]
+                assert MEMORY_LOSS_NOTICE not in wake["text"]
+            unknown = [
+                row["payload"]
+                for row in uncertain["rows"]["conversation_events"]
+                if row["kind"] == "prompt_delivery_uncertain"
+            ]
+            assert len(unknown) == 2
+            assert sum(MEMORY_LOSS_NOTICE in row["text"] for row in unknown) == 1
+            assert uncertain["awaiting"] == [uncertain["wake"]["sender_message_id"]]
+            assert (
+                discards(uncertain)[-2:]
+                == [("Your context was compacted", "worker_memory_notice_included_in_step")] * 2
             )
         else:
             assert points["real-work-joined"]["fates"][0]["fate"] == (
@@ -451,8 +550,17 @@ def test_unit15b_maintenance_matches_fresh_python(
         )
         assert completed.returncode == 0, completed.stderr
         typescript = cast(dict[str, Any], json.loads(completed.stdout))
-        expected, actual = normalize(python), normalize(typescript)
-        reports.append({"case": case, "python": expected, "typescript": actual})
+        expected, python_ids = comparison(python)
+        actual, typescript_ids = comparison(typescript)
+        reports.append(
+            {
+                "case": case,
+                "python": expected,
+                "typescript": actual,
+                "raw": {"python": python, "typescript": typescript},
+                "notice_identity_aliases": {"python": python_ids, "typescript": typescript_ids},
+            }
+        )
         destination = Path(request.config.getoption("--compare-report-dir") or tmp_path)
         destination.mkdir(parents=True, exist_ok=True)
         (destination / "unit-15b.maintenance.json").write_text(

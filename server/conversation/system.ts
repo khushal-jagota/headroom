@@ -794,7 +794,12 @@ export class SqliteProcessConversationSystem implements DeliveryServices, Conver
         ),
       );
       const attempted = reservation.prompt_write_attempted ? reservation.messages : batch;
-      if (error instanceof PromptWriteFailed || (reservation.prompt_write_attempted && !is_shutdown_business_cancellation(error))) {
+      // Python records ordinary post-write errors as possible emission, while
+      // business cancellation keeps its existing path.
+      if (
+        error instanceof PromptWriteFailed ||
+        (reservation.prompt_write_attempted && !is_shutdown_business_cancellation(error))
+      ) {
         if (queued && !reservation.prompt_write_attempted)
           await this.settle_automatic_ids(
             state,
