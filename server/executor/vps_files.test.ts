@@ -110,6 +110,10 @@ function world() {
       identity.executor_incarnation,
     ]);
     tx.run(
+      'INSERT INTO executor_incarnations(executor_incarnation,machine_id,first_leased_at_ms) VALUES (?,?,?)',
+      [identity.executor_incarnation, ORIGINAL_MAC_MACHINE_ID, 1760000000000],
+    );
+    tx.run(
       "INSERT INTO mac_runs(conversation_id,executor_incarnation,child_id,principal_kind,principal_id,turn_number,delivery_uncertain,stop_state) VALUES (?,?,?,'ticket','ticket-1',1,0,'open')",
       ['c', identity.executor_incarnation, 'child'],
     );

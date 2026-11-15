@@ -1897,6 +1897,7 @@ async def _machine_phases(paired: Any, paths: list[Path], errors: list[Any]) -> 
         value = wire.encode_value(replace(
             lease_request(mac_identity(incarnation)), mac_wall_clock_ms=NOW
         ))
+        assert isinstance(value, dict)
         return {**value, **changes}
 
     first = await call("put", _command("scope-a1", "start"))
