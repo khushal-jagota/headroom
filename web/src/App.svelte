@@ -21,7 +21,7 @@
 
   import { parseShellDestination, type ShellDestination } from "./lib/shellDestination";
   import { SHELL_DESTINATIONS } from "./lib/shellDestinations";
-  import { railFocus, setRailFocus } from "./lib/railFocus.svelte";
+  import { keyTogglesRailFocus, railFocus, setRailFocus } from "./lib/railFocus.svelte";
   // VPS lives in Settings (owner): the dock and the More sheet no longer list it; #/vps still opens it.
   const DOCK_DESTINATIONS = SHELL_DESTINATIONS.filter(destination => destination.key !== "vps");
   import DestinationIcon from "./components/DestinationIcon.svelte";
@@ -110,6 +110,11 @@
   }
 
   function onWindowKeydown(event: KeyboardEvent): void {
+    if (keyTogglesRailFocus(event)) {
+      event.preventDefault();
+      setRailFocus(!railFocus.on);
+      return;
+    }
     if (event.key === "Escape" && moreOpen) {
       closeMore();
       moreButtonElement?.focus();
@@ -199,7 +204,7 @@
       {/each}
     </nav>
     <!-- Focus (owner): the sidebar shows only what needs you while it is on. -->
-    <button type="button" class="focus-switch" role="switch" aria-checked={railFocus.on} aria-label="Focus" onclick={() => setRailFocus(!railFocus.on)}>
+    <button type="button" class="focus-switch" role="switch" aria-checked={railFocus.on} aria-label="Focus" aria-keyshortcuts="Shift+F" title="Focus (Shift+F)" onclick={() => setRailFocus(!railFocus.on)}>
       <span class="focus-switch-track" aria-hidden="true"><span class="focus-switch-knob"></span></span>
       <span class="utility-label">Focus</span>
     </button>
