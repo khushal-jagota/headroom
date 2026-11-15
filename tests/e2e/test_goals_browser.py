@@ -578,7 +578,7 @@ def test_goal_page_persistence_external_refresh_and_owned_conversation(
     assert overview_saved.value.ok
     overview_body = overview_saved.value.request.post_data_json
     assert isinstance(overview_body, dict)
-    assert "expected_revision" not in overview_body
+    assert overview_body["expected_revision"] == overview_revision
     overview_accepted = api.get(server, path)
     assert overview_accepted["revision"] == overview_revision + 1
     assert overview_accepted["page"]["blocks"][0]["items"][1]["state"] == "done"
@@ -677,6 +677,7 @@ def test_goal_page_persistence_external_refresh_and_owned_conversation(
     assert titled.value.ok, titled.value.text()
     assert titled.value.request.post_data_json == {
         "title": "Owner title",
+        "expected_revision": before_title["revision"],
     }
     accepted_title = api.get(server, path)
     assert accepted_title["title"] == "Owner title"
@@ -695,7 +696,7 @@ def test_goal_page_persistence_external_refresh_and_owned_conversation(
         return row
 
     # An external revision reaches the mounted page without replacing a focused
-    # draft. The later title-only save wins and preserves the remotely edited page.
+    # draft. A stale save refuses the captured revision before a fresh edit succeeds.
     title_editor.fill("Unaccepted local title", timeout=WAIT_MS)
     page.locator("[data-goal-page]").evaluate(
         "node => node.dataset.nativeEditProof = 'retained'"
@@ -744,11 +745,29 @@ def test_goal_page_persistence_external_refresh_and_owned_conversation(
         timeout=WAIT_MS,
     ) as local_title:
         title_editor.press("Enter", timeout=WAIT_MS)
-    assert local_title.value.status == 200, local_title.value.text()
+    assert local_title.value.status == 409, local_title.value.text()
     assert local_title.value.request.post_data_json == {
         "title": "Unaccepted local title",
+        "expected_revision": current["revision"],
     }
     error = page.locator("[data-goal-page] .goal-heading .error-line")
+    expect(error).to_be_visible(timeout=WAIT_MS)
+    expect(title_editor).to_have_text("Unaccepted local title", timeout=WAIT_MS)
+    assert api.get(server, path) == remote.json()
+    title_editor.press("Escape", timeout=WAIT_MS)
+    expect(title_editor).to_have_text("Chief title", timeout=WAIT_MS)
+    expect(error).to_have_count(0, timeout=WAIT_MS)
+    title_editor.fill("Unaccepted local title", timeout=WAIT_MS)
+    with page.expect_response(
+        lambda reply: reply.url.endswith(path) and reply.request.method == "PATCH",
+        timeout=WAIT_MS,
+    ) as fresh_title:
+        title_editor.press("Enter", timeout=WAIT_MS)
+    assert fresh_title.value.status == 200, fresh_title.value.text()
+    assert fresh_title.value.request.post_data_json == {
+        "title": "Unaccepted local title",
+        "expected_revision": remote.json()["revision"],
+    }
     expect(error).to_have_count(0, timeout=WAIT_MS)
     expect(title_editor).to_have_text("Unaccepted local title", timeout=WAIT_MS)
     accepted_local = api.get(server, path)
