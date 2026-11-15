@@ -72,6 +72,7 @@ export interface UploadSource extends AsyncIterable<Uint8Array> {
   destroy(error?: Error): void;
 }
 export interface VpsFileInbox {
+  readonly upload_staging_root: string;
   authorize_upload(upload: WireTypes['FileUploadRequest']): void | Promise<void>;
   store_upload(
     upload: WireTypes['FileUploadRequest'],

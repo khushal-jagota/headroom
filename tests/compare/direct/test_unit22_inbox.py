@@ -20,7 +20,7 @@ from typing import Any
 
 import pytest
 from tests.compare.direct.test_unit22_files import IDENTITY, ROOT
-from tests.support.executor_presence import make_current
+from tests.support.executor_presence import lease_request, make_current
 from tests.support.synthetic_homes import create_synthetic_homes, synthetic_home_environment
 
 from planner.core.contracts import PlannerError
@@ -28,6 +28,8 @@ from planner.core.db import connect, create_schema
 from planner.execution_identity import ChildReference
 from planner.executor import protocol as wire
 from planner.executor.vps_inbox import InboxStore, MissingFiles
+from planner.executor.vps_presence_store import accept_lease_in_transaction
+from planner.machines.contracts import ORIGINAL_MAC_MACHINE_ID
 
 
 @pytest.mark.xfail(
@@ -55,6 +57,9 @@ def test_populated_inbox_publication_and_receipts(
         for index in range(34)
     ]
     child = ChildReference(IDENTITY.executor_incarnation, "child", "conversation")
+    other_machine = "44444444-4444-4444-8444-444444444444"
+    other_identity = replace(IDENTITY, executor_incarnation="55555555-5555-4555-8555-555555555555")
+    other_child = ChildReference(other_identity.executor_incarnation, "other", "other-conversation")
     envelope = wire.QueuedEnvelope(
         sender_id="sender",
         conversation_id="conversation",
@@ -80,6 +85,13 @@ def test_populated_inbox_publication_and_receipts(
                     1,
                 ),
             )
+            sql.execute("INSERT INTO machines VALUES (?,'Other','laptop','blue',0)", (other_machine,))
+            accept_lease_in_transaction(
+                sql, replace(lease_request(other_identity), mac_wall_clock_ms=100), 100, other_machine
+            )
+            sql.execute("INSERT INTO executor_child_assignments VALUES(?,?,?,?,?,?,NULL)",
+                        (other_child.executor_incarnation, other_child.child_id,
+                         other_child.conversation_id, "ticket", "ticket", 1))
             sql.commit()
         store = InboxStore(str(path))
         for index, manifest in enumerate(manifests):
@@ -150,6 +162,43 @@ def test_populated_inbox_publication_and_receipts(
             )
         except MissingFiles as error:
             results.append({"missing": [wire.encode_value(item) for item in error.manifests]})
+        own_other = replace(envelope, sender_id="sender-b", sequence=1, submission_id="other",
+                            conversation_id=other_child.conversation_id,
+                            payload={"child": wire.encode_value(other_child)}, file_dependencies=())
+        owner_cases = [
+            (ORIGINAL_MAC_MACHINE_ID, other_identity, envelope, False),
+            (ORIGINAL_MAC_MACHINE_ID, IDENTITY, replace(envelope, payload={"child":
+                wire.encode_value(replace(child, executor_incarnation=other_identity.executor_incarnation))}), False),
+            (ORIGINAL_MAC_MACHINE_ID, IDENTITY, replace(envelope, payload={"child":
+                wire.encode_value(replace(child, conversation_id="another"))}), False),
+            (other_machine, other_identity, replace(envelope, payload={"child":
+                wire.encode_value(replace(other_child, conversation_id=envelope.conversation_id))}), False),
+            (other_machine, other_identity, own_other, True),
+            (other_machine, other_identity, own_other, False),
+        ]
+        for machine, sender, item, write in owner_cases:
+            owner = InboxStore(str(path), machine_id=machine)
+            with closing(connect(str(path))) as sql:
+                before = [tuple(row) for row in sql.execute("SELECT * FROM mac_inbox_positions")]
+            try:
+                result = owner.accept(item, (lambda _sql, _item: {"machine": machine})
+                                      if write else no_replay, 107, identity=sender, check_files=False)
+                results.append(wire.encode_value(result))
+            except PlannerError as error:
+                results.append(error.to_payload())
+            if not write:
+                with closing(connect(str(path))) as sql:
+                    assert [tuple(row) for row in sql.execute("SELECT * FROM mac_inbox_positions")] == before
+        forbidden = replace(manifests[0], relative_path="forbidden.txt")
+        staged = store._staged_file(forbidden)
+        staged.write_bytes(b"payload-0")
+        try:
+            store.publish_file_dependencies(replace(envelope, sequence=4, file_dependencies=(forbidden,)),
+                                            other_identity)
+        except PlannerError as error:
+            results.append(error.to_payload())
+        assert staged.read_bytes() == b"payload-0" and not store.file_target(forbidden).exists()
+        staged.unlink()
         with closing(connect(str(path))) as sql:
             expected = {
                 "results": results,
@@ -157,7 +206,7 @@ def test_populated_inbox_publication_and_receipts(
                     dict(row)
                     for row in sql.execute(
                         "SELECT sender_id,conversation_id,sequence,submission_id,disposition,"
-                        "result_json FROM mac_inbox_positions ORDER BY sender_id,conversation_id"
+                        "result_json,machine_id FROM mac_inbox_positions ORDER BY sender_id,conversation_id"
                     )
                 ],
                 "assignments": [
@@ -189,6 +238,11 @@ def test_populated_inbox_publication_and_receipts(
                 "identity": wire.encode_value(IDENTITY),
                 "envelope": wire.encode_value(envelope),
                 "missing": wire.encode_value(missing),
+                "forbidden": wire.encode_value(forbidden),
+                "other_identity": wire.encode_value(other_identity),
+                "owner_cases": [{"machine": machine, "identity": wire.encode_value(sender),
+                                 "envelope": wire.encode_value(item), "write": write}
+                                for machine, sender, item, write in owner_cases],
             }
         ),
         cwd=ROOT,

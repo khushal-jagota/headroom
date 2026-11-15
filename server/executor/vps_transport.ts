@@ -5,7 +5,7 @@ import type { Clock } from '../core/clock.ts';
 import type { Database } from '../core/database/contracts.ts';
 import type { ChangeSignal } from '../core/changes/index.ts';
 import { legacyActor, PlannerError } from '../core/contracts.ts';
-import type { ExecutorIdentity } from '../execution_identity.ts';
+import { ORIGINAL_MAC_MACHINE_ID, type ExecutorIdentity } from '../execution_identity.ts';
 import { ConversationMessageFiles } from '../conversation/record/message_files.ts';
 import type { SqliteProcessConversationSystem } from '../conversation/system.ts';
 import type { BackendEventValue } from '../conversation/backends/contracts.ts';
@@ -26,6 +26,10 @@ import { FileStaging, VpsFiles } from './vps_files.ts';
 import { VpsCatalogRelay } from './catalog_relay.ts';
 import { observe_promise } from '../core/promise_observer.ts';
 import { as_object, decode_event_arguments } from './protocol.ts';
+import {
+  require_current_incarnation_in_transaction,
+  require_incarnation_owner,
+} from './vps_presence_store.ts';
 
 import {
   COMMAND_POLL_HOLD_SECONDS,
@@ -57,9 +61,12 @@ export interface VpsExecutorOptions {
   readonly changes: ChangeSignal;
   readonly media_signal: AbortSignal;
   readonly application_revision?: string;
+  readonly machine_id?: string;
 }
 /** The supplied database and every child-process owner belong to the server invocation. */
 export class VpsExecutor {
+  readonly machine_id: string;
+  private readonly database: Database;
   readonly db_path: string;
   readonly application_revision: string;
   readonly mailbox: SqliteCommandMailbox;
@@ -82,15 +89,18 @@ export class VpsExecutor {
     this.reject_settlement = reject;
   });
   constructor(database: Database, clock: Clock, options: VpsExecutorOptions) {
+    this.database = database;
+    this.machine_id = options.machine_id ?? ORIGINAL_MAC_MACHINE_ID;
     this.db_path = options.db_path;
     this.application_revision = options.application_revision ?? 'unknown';
-    this.mailbox = new SqliteCommandMailbox(database);
+    this.mailbox = new SqliteCommandMailbox(database, { machine_id: this.machine_id });
     this.presence = new MacPresenceService(database, this.mailbox, {
       changes: options.changes,
+      machine_id: this.machine_id,
       application_revision: this.application_revision,
     });
     this.runs = new MacRuns(database, this.presence, this.mailbox);
-    const staging = new FileStaging(options.db_path);
+    const staging = new FileStaging(options.db_path, this.machine_id);
     this.inbox = new MacInbox(new InboxStore(database, staging), clock, this.runs);
     this.catalog = new VpsCatalogRelay(database, this.runs, this.presence, this.mailbox);
     this.message_files = new ConversationMessageFiles(options.db_path);
@@ -259,10 +269,14 @@ export class VpsExecutor {
     return this.files.input_file(identity, command_id, stored_file_id);
   }
   async read(
-    _identity: ExecutorIdentity,
+    identity: ExecutorIdentity,
     read: WireValue<'LiveReadRequest'>,
   ): Promise<WireValue<'JsonObject'>> {
     this.admit();
+    this.database.read((sql) => {
+      require_current_incarnation_in_transaction(sql, identity.executor_incarnation, this.machine_id);
+      require_incarnation_owner(sql, read.child.executor_incarnation, this.machine_id);
+    });
     if (!READABLE_PATHS.some((prefix) => read.path.startsWith(prefix)))
       throw new PlannerError('validation', 'unsupported executor read');
     const principal = this.runs.authority(read.child);

@@ -48,6 +48,7 @@ export function file_fixture(database: Database, path: string) {
     return { kind: row.principal_kind, id: row.principal_id };
   };
   const inbox: VpsFileInbox = {
+    upload_staging_root: staging.staging,
     runs: { authority },
     async authorize_upload(upload) {
       const principal = authority(upload.child);
@@ -214,6 +215,8 @@ async function safety(root: string, manifest: WireTypes['FileManifest']): Promis
   return result;
 }
 type Spec = {
+  scope_only?: boolean;
+  other_machine: string;
   device: string;
   paths: [string, string, string][];
   root: string;
@@ -234,6 +237,11 @@ type Spec = {
   }[];
 };
 async function main(raw: Spec): Promise<void> {
+  if (raw.scope_only) {
+    const original = new FileStaging(raw.path), other = new FileStaging(raw.path, raw.other_machine);
+    process.stdout.write(JSON.stringify(await Promise.all([original, other].map((staging) => staging.staged_file(raw.manifest)))));
+    return;
+  }
   const spec = { ...raw, identity: parse_identity(raw.identity) };
   const database = createDatabase(spec.path),
     fixture = file_fixture(database, spec.path);

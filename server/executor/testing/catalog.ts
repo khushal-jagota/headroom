@@ -8,13 +8,39 @@ import { SqliteCommandMailbox } from '../vps_mailbox.ts';
 import { MacPresenceService } from '../vps_presence.ts';
 import { as_object, decode_value, parse_identity } from '../protocol.ts';
 import type { WireTypes } from '../wire.generated.ts';
+import { ORIGINAL_MAC_MACHINE_ID } from '../../execution_identity.ts';
 const spec = JSON.parse(readFileSync(0, 'utf8')) as unknown as {
+  scope_only?: boolean;
+  other_machine: string;
   path: string;
   now: number;
   identity: WireTypes['ExecutorIdentity'];
   lease: WireTypes['LeaseRequest'];
   snapshots: WireTypes['BackendSnapshot'][];
 };
+if (spec.scope_only) {
+  const database = createDatabase(spec.path);
+  const values = [];
+  for (const [index, machine_id] of [ORIGINAL_MAC_MACHINE_ID, spec.other_machine].entries()) {
+    const mailbox = new SqliteCommandMailbox(database, { machine_id });
+    const presence = new MacPresenceService(database, mailbox, { machine_id, changes: new ChangeSignal() });
+    const relay = new VpsCatalogRelay(database, { owns_conversation: () => false }, presence, mailbox);
+    try {
+      values.push(relay.retained('codex'));
+      const keeper = relay as unknown as { keep(key: 'codex', value: WireTypes['BackendSnapshot']): unknown };
+      keeper.keep('codex', spec.snapshots[index]!);
+      values.push(relay.retained('codex'));
+    } finally {
+      await relay.stop({ deadline: performance.now() / 1000 + 2 });
+      await presence.stop({ deadline: performance.now() / 1000 + 2 });
+      await mailbox.stop({ deadline: performance.now() / 1000 + 2 });
+    }
+  }
+  const rows = database.read((sql) => sql.all<{ snapshot_json: string }>('SELECT * FROM machine_backend_snapshots ORDER BY machine_id,backend_key'))
+    .map((row) => ({ ...row, snapshot_json: JSON.parse(row.snapshot_json) }));
+  database.close();
+  process.stdout.write(JSON.stringify({ values, rows }));
+} else {
 const now = spec.now;
 const database = createDatabase(spec.path),
   mailbox = new SqliteCommandMailbox(database, { clock: () => now });
@@ -121,3 +147,4 @@ try {
   database.close();
 }
 process.stdout.write(JSON.stringify(output));
+}

@@ -6,7 +6,7 @@ import { path_is_within } from '../core/path_containment.ts';
 import { PlannerError } from '../core/contracts.ts';
 import { resolve_path_sync } from '../core/path_resolution.ts';
 import { PRIVATE_TICKET_NAMES } from '../files/logic/paths.ts';
-import type { ExecutorIdentity } from '../execution_identity.ts';
+import { ORIGINAL_MAC_MACHINE_ID, type ExecutorIdentity } from '../execution_identity.ts';
 import type { ConversationMessageFiles } from '../conversation/message_files.ts';
 import { MessageFileMissing } from '../conversation/record/message_files.ts';
 import { is_shutdown_business_cancellation, observe_shutdown } from '../conversation/shutdown.ts';
@@ -67,12 +67,16 @@ function deferred<T>() {
 
 /** Stateless physical staging, supplied to the inbox before the transfer owner is built. */
 export class FileStaging {
+  readonly machine_id: string;
   readonly staging: string;
   private readonly tickets: string;
 
-  constructor(db_path: string) {
+  constructor(db_path: string, machine_id = ORIGINAL_MAC_MACHINE_ID) {
+    this.machine_id = machine_id;
     const root = dirname(resolve_path_sync(db_path));
-    this.staging = join(root, 'executor-uploads');
+    this.staging = machine_id === ORIGINAL_MAC_MACHINE_ID
+      ? join(root, 'executor-uploads')
+      : join(root, 'executor-uploads', safe_component(machine_id));
     this.tickets = join(root, 'files', 'tickets');
   }
   async file_target(manifest: WireValue<'FileManifest'>): Promise<string> {
@@ -139,7 +143,7 @@ export class VpsFiles {
     message_files: ConversationMessageFiles,
     options: VpsFilesOptions,
   ) {
-    this.staging = join(dirname(resolve_path_sync(db_path)), 'executor-uploads');
+    this.staging = inbox.upload_staging_root;
     this.inbox = inbox;
     this.mailbox = mailbox;
     this.message_files = message_files;

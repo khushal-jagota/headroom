@@ -56,7 +56,7 @@ from planner.conversation.logic.retained_turn import adopted_running_turn
 from planner.conversation.message_content import text_message_content
 from planner.core.authctx import RequestContext
 from planner.core.clock import TestClock as FixedClock
-from planner.core.contracts import Principal, PrincipalKind
+from planner.core.contracts import PlannerError, Principal, PrincipalKind
 from planner.core.db import connect, create_schema
 from planner.execution_identity import ChildReference
 from planner.executor import protocol as wire
@@ -65,6 +65,8 @@ from planner.executor.skills import read_canonical_skill_snapshot
 from planner.executor.vps_mailbox import SqliteCommandMailbox
 from planner.executor.vps_presence import MacPresenceService
 from planner.executor.vps_runs import MacRuns
+from planner.executor.vps_presence_store import accept_lease_in_transaction
+from planner.machines.contracts import ORIGINAL_MAC_MACHINE_ID
 from planner.tickets.api import write_create_ticket
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -80,6 +82,18 @@ NOW = 1760000000000
 )
 def test_retained_runs_rebuild_drain_and_rewrite(
     tmp_path: Path, request: pytest.FixtureRequest
+) -> None:
+    _runs_exchange(tmp_path, request)
+
+
+def test_machine_run_custody_and_retained_recovery(
+    tmp_path: Path, request: pytest.FixtureRequest
+) -> None:
+    _runs_exchange(tmp_path, request, machine_scope=True)
+
+
+def _runs_exchange(
+    tmp_path: Path, request: pytest.FixtureRequest, *, machine_scope: bool = False
 ) -> None:
     began = time.perf_counter()
     homes = create_synthetic_homes(tmp_path)
@@ -183,8 +197,26 @@ def test_retained_runs_rebuild_drain_and_rewrite(
         conn.commit()
     with synthetic_home_environment(homes):
         make_current(str(path), old, NOW)
+    if machine_scope:
+        other = "66666666-6666-4666-8666-666666666666"
+        with closing(connect(str(path))) as conn:
+            conn.execute(
+                "INSERT INTO machines(machine_id,name,icon,color,is_home) VALUES (?,'Other','server','cyan',0)",
+                (other,),
+            )
+            accept_lease_in_transaction(conn, lease_request(fresh), NOW, other)
+            conn.commit()
     with sqlite3.connect(path) as source, sqlite3.connect(candidate) as destination:
         source.backup(destination)
+    if machine_scope:
+        _machine_runs_exchange(
+            path, candidate, homes, remote_ticket,
+            [ORIGINAL_MAC_MACHINE_ID, other],
+            [children[0], replace(children[1], executor_incarnation=fresh.executor_incarnation)],
+            lease_request(replace(fresh, executor_incarnation="33333333-3333-4333-8333-333333333333")),
+            request, began,
+        )
+        return
 
     def command(child: ChildReference, name: str, operation: str) -> Any:
         arguments: Any = (
@@ -570,3 +602,102 @@ def test_retained_runs_rebuild_drain_and_rewrite(
                 indent=2,
             )
         )
+
+
+def _machine_runs_exchange(
+    path: Path, candidate: Path, homes: dict[str, str], ticket: str,
+    machines: list[str], children: list[ChildReference], replacement: wire.LeaseRequest,
+    request: pytest.FixtureRequest, began: float,
+) -> None:
+    def rows() -> dict[str, Any]:
+        with closing(connect(str(path))) as conn:
+            return {
+                key: [dict(row) for row in conn.execute(query)]
+                for key, query in {
+                    "runs": "SELECT * FROM mac_runs ORDER BY conversation_id",
+                    "assignments": "SELECT * FROM executor_child_assignments ORDER BY executor_incarnation,child_id",
+                    "commands": "SELECT * FROM executor_commands ORDER BY command_sequence",
+                }.items()
+            }
+
+    async def reference() -> dict[str, Any]:
+        mailboxes = [SqliteCommandMailbox(str(path), machine_id=machine, clock=lambda: NOW) for machine in machines]
+        presences = [MacPresenceService(str(path), mailbox, machine_id=machine, clock=lambda: NOW)
+                     for machine, mailbox in zip(machines, mailboxes, strict=True)]
+        owners = [MacRuns(str(path), presence, mailbox) for presence, mailbox in zip(presences, mailboxes, strict=True)]
+
+        def snapshot() -> list[dict[str, Any]]:
+            with closing(connect(str(path))) as conn:
+                return [dict(machine_id=owner.machine_id, retained=owner.retained_runs(),
+                             unresolved=owner.store.unresolved_runs_of_replaced_incarnations(),
+                             owns=[owner.owns_conversation(child.conversation_id) for child in children],
+                             stalls=owner.stall_source().tracked_waits(conn, NOW)) for owner in owners]
+
+        def attempt(work: Any) -> str | None:
+            try:
+                work()
+                return None
+            except Exception as error:
+                return error.code.value if isinstance(error, PlannerError) else type(error).__name__
+
+        try:
+            for owner, child in zip(owners, children, strict=True):
+                owner.store.register_child(child, "ticket", ticket, NOW)
+            before, original = snapshot(), rows()
+            refused = []
+            for index, owner in enumerate(owners):
+                foreign = children[1 - index]
+                refused.append([
+                    attempt(lambda: owner.recover(foreign)),
+                    attempt(lambda: owner.authority(foreign)),
+                    attempt(lambda: owner.store.has_closed_child_assignment(foreign)),
+                    attempt(lambda: owner.store.register_child(foreign, "ticket", ticket, NOW)),
+                ])
+            unchanged = rows() == original
+            recovered = []
+            for owner, child in zip(owners, children, strict=True):
+                adopted = owner.recover(child)
+                assert adopted is not None
+                recovered.append(adopted.initial_history_complete)
+            with closing(connect(str(path))) as conn:
+                accept_lease_in_transaction(conn, replacement, NOW + 1, machines[1])
+                conn.commit()
+            replaced = snapshot()
+            retained = owners[1].recover(children[1])
+            assert retained is not None
+            owners[0].store.close_child(children[1], NOW + 2)
+            return dict(before=before, refused=refused, unchanged=unchanged, recovered=recovered,
+                        replaced=replaced, retained_recovery=retained.initial_history_complete,
+                        closed=owners[1].store.has_closed_child_assignment(children[1]),
+                        closed_recovery=owners[1].recover(children[1]) is None, rows=rows())
+        finally:
+            for owner in owners:
+                await owner.close()
+            for presence in presences:
+                await presence.close()
+            for mailbox in mailboxes:
+                await mailbox.close()
+
+    with synthetic_home_environment(homes):
+        expected = wire.encode_value(asyncio.run(reference()))
+    run = subprocess.run(
+        ["node", str(ROOT / "server/executor/testing/runs.ts")], cwd=ROOT,
+        input=json.dumps(dict(mode="machines", path=str(candidate), now=NOW, ticket=ticket,
+                             machines=machines, children=[wire.as_object(child) for child in children],
+                             replacement=wire.as_object(replacement))),
+        env={**homes, "PATH": os.environ.get("PATH", "/usr/bin:/bin"), "TMPDIR": str(path.parent),
+             "PLAN_TEST_MODE": "1", "PLAN_SERVER_URL": "http://127.0.0.1:1"},
+        capture_output=True, text=True, timeout=15, check=False,
+    )
+    assert run.returncode == 0, run.stderr
+    actual = json.loads(run.stdout)
+    assert actual == expected
+    assert actual["unchanged"] and actual["recovered"] == [False, False]
+    assert actual["refused"] == [["agent_forbidden"] * 3 + ["BackendSpawnFailed"]] * 2
+    assert actual["replaced"][0]["unresolved"] == []
+    assert actual["replaced"][1]["unresolved"] == [wire.as_object(children[1])]
+    report = request.config.getoption("--compare-report-dir", default=None)
+    if report:
+        target = Path(report) / "unit22-machine-runs.json"
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(json.dumps(dict(seconds=time.perf_counter() - began, expected=expected, actual=actual), indent=2))
