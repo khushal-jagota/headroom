@@ -1,5 +1,6 @@
 import { turn_is_maintenance } from './runtime/state.ts';
 import { observe_shutdown } from '../conversation/shutdown.ts';
+import { observe_promise } from '../core/promise_observer.ts';
 import { is_shutdown_business_cancellation } from './shutdown.ts';
 /** Local process core. Registered as ConversationSystem after the turn-control slice lands. */
 import { randomUUID } from 'node:crypto';
@@ -1669,7 +1670,9 @@ export class SqliteProcessConversationSystem implements DeliveryServices, Conver
       })();
       void this.update_retirement.catch(() => {});
     }
-    await this.update_retirement;
+    if (signal) {
+      if (!(await observe_promise(this.update_retirement, signal)).completed) return false;
+    } else await this.update_retirement;
     if (signal?.aborted || this.update_generation !== generation) return false;
     if (this.workspace_admission.closed) return true;
     return this.workspace_admission.claim(() => {}, {
@@ -1820,7 +1823,11 @@ export class SqliteProcessConversationSystem implements DeliveryServices, Conver
     void (async () => {
       const [cleanup, business] = await Promise.all([
         Promise.allSettled([detaching, janitor, ...this.native_settlements]),
-        Promise.allSettled([...pumps, ...states.flatMap((state) => [...state.settlement_tasks])]),
+        Promise.allSettled([
+          ...pumps,
+          ...(this.update_retirement ? [this.update_retirement] : []),
+          ...states.flatMap((state) => [...state.settlement_tasks]),
+        ]),
       ]);
       // Cancelling our own business observer is expected. A failed native detach,
       // janitor or store cleanup is never excused by its error name.

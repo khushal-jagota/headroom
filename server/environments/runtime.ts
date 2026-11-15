@@ -141,8 +141,9 @@ export async function createEnvironmentRuntime(
         if (released !== null) update_barrier.remove(released);
       });
     },
-    reopen_update_work() {
-      updates.reopen_trial_work(attempts.read()?.attempt_id ?? '');
+    update_attempt_id: () => attempts.read()?.attempt_id ?? '',
+    reopen_update_work(attempt_id) {
+      updates.reopen_trial_work(attempt_id);
     },
     areas: [
       { prefix: '/api', routes: create_update_routes(updates, mac.reads) },

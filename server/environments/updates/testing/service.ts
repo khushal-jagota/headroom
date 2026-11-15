@@ -3,6 +3,7 @@ import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { setTimeout as pause } from 'node:timers/promises';
 import { createDatabase } from '../../../core/database/index.ts';
+import { observe_promise } from '../../../core/promise_observer.ts';
 import { register_test_root } from '../../../core/test_paths.ts';
 import { ChangeSignal } from '../../../core/changes/index.ts';
 import { UpdateBarrier } from '../../update_barrier.ts';
@@ -77,7 +78,7 @@ function harness(request: ServiceProbeRequest, hooks: Hooks = {}) {
   const system = {
     workspace_admission: barrier,
     workspace_activity: () => (barrier.closed ? 'unknown' : activity),
-    prepare_update: async (mode: 'idle' | 'now') => {
+    prepare_update: async (mode: 'idle' | 'now', _signal?: AbortSignal) => {
       barrier.close_starts();
       if (barrier.active || (mode === 'idle' && activity !== 'idle')) return false;
       return barrier.closed || barrier.claim(() => {}, { idle: () => true, require_idle: true });
@@ -637,6 +638,56 @@ export async function probe_continuations(request: ServiceProbeRequest) {
   } finally {
     await timer.close();
   }
+  // A timed-out observer owns no retirement or accepted save after its wait ends.
+  const stopped_waits: Record<string, unknown> = {};
+  for (const phase of ['preparation', 'save'] as const) {
+    const root = join(request.root, `timed-out-${phase}`);
+    mkdirSync(root, { recursive: true });
+    const durable = new UpdateBarrier(join(root, 'update-barrier.json'));
+    const host = harness({ ...request, root }, { update_barrier: durable });
+    const retirement = deferred();
+    let original_pending = true;
+    void retirement.promise.then(() => {
+      original_pending = false;
+    });
+    const save = phase === 'save' ? durable.operation() : null;
+    if (phase === 'preparation') {
+      host.system.prepare_update = async (_mode, signal) => {
+        host.barrier.close_starts();
+        const observed = await observe_promise(retirement.promise, signal!);
+        return observed.completed;
+      };
+    }
+    host.service.schedule_advance = () => {};
+    try {
+      host.service.start();
+      await host.service.prefetch();
+      const attempt = host.service.install(host.release.manifest.app_sha, 'now', {
+        confirm_activity: true,
+      });
+      host.attempts.change(attempt.attempt_id, new Set(['waiting']), (current) => ({
+        ...current,
+        deadline_at: new Date(
+          Number(instant(request.now).epochMicroseconds) / 1000 + 20,
+        ).toISOString(),
+      }));
+      await host.service.advance();
+      await host.service.stop({ deadline: performance.now() / 1000 + 0.1 });
+      await host.service.settled();
+      stopped_waits[phase] = {
+        updates_settled: true,
+        original_pending: phase === 'save' ? !durable.drained : original_pending,
+        starts_closed: host.barrier.starts_closed,
+        state: host.attempts.read()?.state,
+        launches: host.counts.launch,
+      };
+    } finally {
+      retirement.release();
+      save?.release();
+      await host.close();
+    }
+  }
+  result.stopped_waits = stopped_waits;
   return result;
 }
 
@@ -799,9 +850,9 @@ export async function probe_preparation(request: ServiceProbeRequest) {
     }
     snapshot();
     host.service.cancel(second.attempt_id);
-    save.release();
     await advance;
     snapshot();
+    save.release();
 
     const third = host.service.install(host.release.manifest.app_sha, 'idle', {
       confirm_activity: false,

@@ -1,5 +1,8 @@
 /** Current-Python comparison companion. No listener, child process, or provider. */
 import { createDatabase } from '../../../core/database/index.ts';
+import { InMemoryConversationSystem } from '../../in_memory_conversation_system.ts';
+import { PromptDeliveryStarted } from '../../contracts.ts';
+import { recover_conversations } from '../coordinator.ts';
 import {
   reconcile,
   select_recoveries,
@@ -107,4 +110,55 @@ export function run(spec: Spec) {
       database.close();
     }
   });
+}
+
+/** Refusal during closure must not consume the source evidence for the next admitted pass. */
+export async function run_recovery_closure(spec: {
+  path: string;
+  manifest: unknown;
+  canceled_first?: boolean;
+}) {
+  const database = createDatabase(spec.path);
+  try {
+    database.write((tx) => reconcile(tx, [manifest_from_dict(spec.manifest)], 100));
+    const system = new InMemoryConversationSystem();
+    let offers = 0;
+    const offered_with_admission: boolean[] = [];
+    const offered_ids: string[] = [];
+    system.is_running = async () => false;
+    system.send = async (conversation_id) => {
+      offers++;
+      offered_ids.push(conversation_id);
+      offered_with_admission.push(system.workspace_admission.active);
+      if (spec.canceled_first) {
+        if (offers === 1) throw new DOMException('one recovery canceled', 'AbortError');
+        return new PromptDeliveryStarted();
+      }
+      system.workspace_admission.close_starts();
+      throw new Error('Workspace admission is closed for an owner update.');
+    };
+    await recover_conversations(system, database, { startup: true });
+    const snapshot = () => ({
+      offers,
+      offered_with_admission,
+      offered_ids,
+      active: system.workspace_admission.active,
+      starts_closed: system.workspace_admission.starts_closed,
+      pending: Object.fromEntries(database.read(select_recoveries)),
+      rows: database.read((sql) =>
+        sql.all('SELECT * FROM deploy_interruptions ORDER BY interruption_id'),
+      ),
+      deliveries: database.read((sql) =>
+        sql.all('SELECT * FROM deploy_interruption_deliveries ORDER BY interruption_id'),
+      ),
+      claims: database.read((sql) =>
+        sql.all('SELECT id,worker_step_claim,worker_step_claim_revision FROM tickets ORDER BY id'),
+      ),
+    });
+    const after_refusal = snapshot();
+    if (!spec.canceled_first) await recover_conversations(system, database, { startup: true });
+    return { after_refusal, after_denied_pass: snapshot() };
+  } finally {
+    database.close();
+  }
 }

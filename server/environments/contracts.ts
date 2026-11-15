@@ -11,7 +11,8 @@ export interface EnvironmentRuntime {
   readonly update_barrier?: UpdateBarrier;
   /** Startup and bounded retry probe; holds the installer lock during orphan recovery. */
   recover_update_barrier?(): void;
-  reopen_update_work?(): void;
+  update_attempt_id?(): string;
+  reopen_update_work?(attempt_id: string): void;
   readonly areas: readonly Area[];
   readonly resourceProviders: readonly ResourceProvider[];
   before_worker_readiness_poll(): boolean;

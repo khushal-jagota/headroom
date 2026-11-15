@@ -1,4 +1,9 @@
 /** Startup recovery uses the same send door and immutable sender identities as ordinary work. */
+import { setTimeout as pause } from 'node:timers/promises';
+import {
+  DEPLOY_RECOVERY_FIRST_RETRY_SECONDS,
+  DEPLOY_RECOVERY_MAX_RETRY_SECONDS,
+} from '../runtime/configuration.ts';
 import type { Database } from '../../core/database/contracts.ts';
 import type { ConversationSystem, DeploymentRecoveryReference } from '../contracts.ts';
 import { PromptDeliveryMode } from '../contracts.ts';
@@ -36,36 +41,50 @@ export async function recover_conversations(
   } finally {
     selection?.release();
   }
-  // This scope owns actual recovery attempts, never a later retry delay.
-  const pass = admission?.operation({ starts: true });
-  try {
-    if (pass && !pass.admitted) return;
-    for (const [conversation_id, references] of selected) {
-      if (
-        options.conversation_ids !== undefined &&
-        !options.conversation_ids.includes(conversation_id)
-      )
-        continue;
-      if (execution_refusal(database, conversation_id) !== null) continue;
-      if (await system.is_running(conversation_id)) continue;
-      try {
-        await system.send(conversation_id, text_message_content(RECOVERY_PROMPT), {
-          sender_label: 'Panels deployment recovery',
-          mode: options.mode ?? PromptDeliveryMode.queue,
-          sender_message_id: recovery_message_identity(
-            references.map((ref) => ref.interruption_id),
-          ),
-          record_refusal: true,
-          recovery_references: references,
-        });
-      } catch (error) {
-        if (error instanceof DOMException && error.name === 'AbortError') throw error;
-        if (options.startup && system.workspace_admission.starts_closed) return;
-        console.error(`Automatic recovery failed for conversation ${conversation_id}`, error);
-      }
+  let pending = [...selected.keys()].filter(
+    (id) => options.conversation_ids === undefined || options.conversation_ids.includes(id),
+  );
+  let delay = DEPLOY_RECOVERY_FIRST_RETRY_SECONDS;
+  async function resume(conversation_id: string): Promise<boolean> {
+    if (execution_refusal(database, conversation_id) !== null) return true;
+    if (await system.is_running(conversation_id)) return true;
+    const references = selected.get(conversation_id)!;
+    // P3 supplies paced try_start here. Keep its request ownership out of P5.
+    try {
+      await system.send(conversation_id, text_message_content(RECOVERY_PROMPT), {
+        sender_label: 'Panels deployment recovery',
+        mode: options.mode ?? PromptDeliveryMode.queue,
+        sender_message_id: recovery_message_identity(references.map((ref) => ref.interruption_id)),
+        record_refusal: true,
+        recovery_references: references,
+      });
+    } catch (error) {
+      if (error instanceof DOMException && error.name === 'AbortError') throw error;
+      if (options.startup && system.workspace_admission.starts_closed) return false;
+      console.error(`Automatic recovery failed for conversation ${conversation_id}`, error);
     }
-  } finally {
-    pass?.release();
+    return true;
+  }
+  while (pending.length) {
+    // Only a pass owns admission. A denied pass leaves canonical recovery rows untouched.
+    const pass = admission?.operation({ starts: true });
+    try {
+      if (pass && !pass.admitted) return;
+      const remaining: string[] = [];
+      for (const conversation_id of pending) {
+        // A canceled conversation cannot cancel another conversation's recovery.
+        const [result] = await Promise.allSettled([resume(conversation_id)]);
+        if (result.status === 'fulfilled' && result.value === false)
+          remaining.push(conversation_id);
+      }
+      pending = remaining;
+    } finally {
+      pass?.release();
+    }
+    if (pending.length) {
+      await pause(delay * 1000);
+      delay = Math.min(delay * 2, DEPLOY_RECOVERY_MAX_RETRY_SECONDS);
+    }
   }
 }
 export async function record_unknown_recovery_deliveries(

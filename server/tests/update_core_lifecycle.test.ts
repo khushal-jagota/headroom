@@ -13,6 +13,8 @@ import {
 import { tmpdir } from 'node:os';
 import { join, relative } from 'node:path';
 import { fixture, fixture_path } from './ticket_fixture.ts';
+import * as integrity_notices from '../tickets/integrity_notice.ts';
+import { FileUpdateAttemptStore } from '../environments/updates/attempts.ts';
 import { startServer } from '../core/start.ts';
 import type { TestCompositionContext } from '../core/start.ts';
 import type { Database } from '../core/database/contracts.ts';
@@ -646,3 +648,99 @@ test('a retained installer keeps startup health-only and orphan recovery retries
     await owned.close();
   }
 }, 15000);
+
+test('admitted startup notices finish and a stale observer cannot reopen a replacement attempt', async () => {
+  // The existing host proves frozen startup. This case closes start admission
+  // between admitted notices and swaps the observed attempt within recovery.
+  const notices = vi
+    .spyOn(integrity_notices, 'notify_chief')
+    .mockImplementation(async (_db, core) => {
+      core.workspace_admission.close_starts();
+    });
+  const lost_work = vi.spyOn(
+    SqliteProcessConversationSystem.prototype,
+    'tell_agents_of_background_tasks_lost_at_restart',
+  );
+  const owned = await owned_server();
+  try {
+    await vi.waitFor(() => expect(lost_work).toHaveBeenCalledOnce());
+    expect(notices).toHaveBeenCalledOnce();
+    const attempts = new FileUpdateAttemptStore(
+      join(owned.root, 'data/update-attempt.json'),
+      () => {},
+    );
+    const record = {
+      attempt_id: 'observed-A',
+      from_sha: 'a'.repeat(40),
+      to_sha: 'b'.repeat(40),
+      mode: 'idle' as const,
+      confirm_activity: false,
+      state: 'done' as const,
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+      release: release(),
+      detail: null,
+      deadline_at: null,
+      backup: null,
+      steps: {},
+      mac_attempt_id: null,
+      extra: {},
+    };
+    attempts.create(record);
+    const barrier = owned.environment.update_barrier!;
+    const original_reopen = owned.environment.reopen_update_work!.bind(owned.environment);
+    const reopens = vi.fn(original_reopen);
+    owned.environment.reopen_update_work = reopens;
+    let swapped = false;
+    owned.environment.recover_update_barrier = () => {
+      barrier.release();
+      attempts.remove(record.attempt_id, new Set(['done']));
+      attempts.create({ ...record, attempt_id: 'replacement-B' });
+      owned.context.core!.workspace_admission.close_starts();
+      swapped = true;
+    };
+    barrier.freeze(record.attempt_id);
+    await vi.waitFor(() => expect(swapped).toBe(true), { timeout: 3500 });
+    expect(reopens).toHaveBeenCalledExactlyOnceWith(record.attempt_id);
+    expect(owned.context.core!.workspace_admission.starts_closed).toBe(true);
+    await new Promise((resolve) => setTimeout(resolve, 550));
+    expect(reopens).toHaveBeenCalledOnce();
+    expect(owned.context.core!.workspace_admission.starts_closed).toBe(true);
+  } finally {
+    await owned.close();
+  }
+}, 10000);
+
+test('a partial normal startup failure is one-shot while the update observer stays active', async () => {
+  let installer_lock: number | undefined;
+  const failed_start = vi.fn(async () => {
+    throw new Error('scripted partial startup failure');
+  });
+  const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
+  const owned = await owned_server(undefined, {
+    before_start(root) {
+      new UpdateBarrier(join(root, 'data/update-barrier.json')).freeze('orphan');
+      installer_lock = openSync(join(root, 'data/update-installer.lock'), 'a+');
+      expect(flock(installer_lock, 'try-exclusive')).toBe(0);
+    },
+    configure_environment(environment) {
+      environment.start = failed_start;
+    },
+  });
+  try {
+    closeSync(installer_lock!);
+    installer_lock = undefined;
+    await vi.waitFor(() => expect(failed_start).toHaveBeenCalledOnce(), { timeout: 3500 });
+    const failures = () =>
+      errors.mock.calls.filter(([message]) =>
+        String(message).includes('Normal work could not resume after the update trial'),
+      );
+    await vi.waitFor(() => expect(failures()).toHaveLength(1));
+    await new Promise((resolve) => setTimeout(resolve, 800));
+    expect(failed_start).toHaveBeenCalledOnce();
+    expect(failures()).toHaveLength(1);
+  } finally {
+    if (installer_lock !== undefined) closeSync(installer_lock);
+    await owned.close();
+  }
+}, 10000);

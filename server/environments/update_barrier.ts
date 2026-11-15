@@ -1,5 +1,6 @@
 /** Durable final-save admission, outside the database and its rollback snapshots. */
 import { randomUUID } from 'node:crypto';
+import { addAbortListener } from 'node:events';
 import {
   closeSync,
   existsSync,
@@ -154,9 +155,16 @@ export class UpdateBarrier {
     release();
     return result;
   }
-  drain(): Promise<void> {
-    if (this.drained) return Promise.resolve();
-    return new Promise((resolve) => this.waiters.add(resolve));
+  drain(signal?: AbortSignal): Promise<void> {
+    if (this.drained || signal?.aborted) return Promise.resolve();
+    const { promise, resolve } = Promise.withResolvers<void>();
+    const finished = () => {
+      this.waiters.delete(finished);
+      resolve();
+    };
+    this.waiters.add(finished);
+    const subscription = signal === undefined ? undefined : addAbortListener(signal, finished);
+    return promise.finally(() => subscription?.[Symbol.dispose]());
   }
 }
 

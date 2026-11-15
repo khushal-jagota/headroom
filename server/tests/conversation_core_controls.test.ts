@@ -491,8 +491,9 @@ test('an aborted update observation cannot close writes after its retirement set
   const expired = f.core.prepare_update('now', observation.signal);
   await child.wait_for_barrier('expired-update-stop');
   observation.abort();
-  await child.release('expired-update-stop');
   expect(await expired).toBe(false);
+  expect(f.core.workspace_admission.closed).toBe(false);
+  await child.release('expired-update-stop');
   expect(f.core.workspace_admission.starts_closed).toBe(true);
   expect(f.core.workspace_admission.closed).toBe(false);
   expect(await f.core.prepare_update('now')).toBe(true);

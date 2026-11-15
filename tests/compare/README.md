@@ -81,6 +81,14 @@ This exact case reopens after the last of those packages lands. Its comparison r
 | [`test_unit_19_recovery.py::test_unit19_startup_manifest_and_lost_task_prompts`](direct/test_unit_19_recovery.py) | expected-open P3 (#916): lost-task notices now carry an admission sender_message_id |
 | [`test_worker_runtime_parity.py::test_worker_runtime_parity`](direct/test_worker_runtime_parity.py) | expected-open P3 (#916): port named-machine Worker readiness and protocol-24 claims |
 
+P3 also owns the still-open durable custody boundary in update preparation:
+Python's `blocked_local_conversations` gates idle preparation after unresolved restart custody,
+`local_child_retirement_proven` skips children already proven retired, and
+`_confirm_local_child_stopped` retires the admission source and persists the custody generation.
+The current TypeScript update proof covers native stop and final-output drainage only.
+It cannot claim those P3 source-row effects until the shared custody owner merges.
+The existing `unit-15.queue` source-row difference above retains this expected-open boundary.
+
 ### P4 — Ticket workspace lifecycle
 
 | Retained case | Staging change |

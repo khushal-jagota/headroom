@@ -445,7 +445,6 @@ export class ServerServices {
             context.clock,
             integrity_issues,
           );
-          if (core.workspace_admission.starts_closed) return;
           await core.tell_agents_of_background_tasks_lost_at_restart();
         },
         { starts: true },
@@ -518,26 +517,24 @@ export class ServerServices {
     this.assert_startup_open();
     if (!startup_frozen) await release_normal_work();
     let next_probe = 0;
-    let resume_pending = startup_frozen;
     this.normal_work_timer = setInterval(() => {
       if (this.lifetime.isClosing() || this.normal_work_release) return;
       // External installer writes have no application change signal. Probe retained
       // ownership again even when the attempt and marker files do not change.
       const now = performance.now();
-      if (this.update_barrier.frozen) resume_pending = true;
-      this.update_barrier.refresh();
       if (this.update_barrier.frozen && now < next_probe) return;
       next_probe = now + 2000;
       this.normal_work_release = Promise.resolve()
         .then(async () => {
+          const attempt_id = environments?.update_attempt_id?.() ?? '';
+          const was_frozen = this.update_barrier.frozen;
           this.update_barrier.refresh();
           if (this.update_barrier.frozen) environments?.recover_update_barrier?.();
           if (this.update_barrier.frozen || this.lifetime.isClosing()) return;
-          if (resume_pending) {
-            environments?.reopen_update_work?.();
-            resume_pending = false;
-          }
-          if (!normal_started) await release_normal_work();
+          if (was_frozen) environments?.reopen_update_work?.(attempt_id);
+          // Producer startup is one-shot, including a rejected partial start. Orphan
+          // recovery remains retryable, but cannot repeatedly await that rejection.
+          if (!normal_started && normal_starting === undefined) await release_normal_work();
         })
         .catch((error: unknown) => {
           console.error('Normal work could not resume after the update trial', error);

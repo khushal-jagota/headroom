@@ -140,6 +140,7 @@ export class UpdateService {
   private advance_requested = false;
   private unsubscribe_work: (() => void) | null = null;
   private preparation_generation = 0;
+  private update_wait: AbortController | null = null;
   private preparation_attempt_id: string | null = null;
   private installer_starting: { attempt_id: string; until: number } | null = null;
   constructor(options: UpdateServiceOptions) {
@@ -365,14 +366,16 @@ export class UpdateService {
           Number(instant(attempt.deadline_at).epochMicroseconds) / 1000 - this.now() * 1000,
         );
   }
-  private async observe_work<T>(promise: Promise<T>, timeout: number) {
-    const actual = promise.then(
-      () => {},
-      () => {},
-    );
-    this.work.add(actual);
-    void actual.finally(() => this.work.delete(actual));
-    return observe_promise(promise, timeout);
+  private async observe_wait<T>(operation: (signal: AbortSignal) => Promise<T>, timeout: number) {
+    const controller = new AbortController();
+    this.update_wait = controller;
+    try {
+      return await observe_promise(operation(controller.signal), timeout);
+    } finally {
+      // End this waiter, not the retirement or save that its original owner retains.
+      controller.abort();
+      if (this.update_wait === controller) this.update_wait = null;
+    }
   }
   private deadline(): string {
     return timestamp(this.now() + UPDATE_INSTALL_DEADLINE_SECONDS);
@@ -416,6 +419,7 @@ export class UpdateService {
     this.options.runtime.assert_database_owned();
     this.attempts.remove(attempt_id, states('waiting', 'preparing'));
     this.preparation_generation++;
+    this.update_wait?.abort();
     this.options.runtime.conversation()?.cancel_update();
     this.paused_attempt_id = null;
     this.release_barrier();
@@ -490,6 +494,7 @@ export class UpdateService {
     const deadline = options.deadline;
     this.running = false;
     this.incarnation++;
+    this.update_wait?.abort();
     this.waiting_for_work = false;
     this.advance_requested = false;
     this.unsubscribe_work?.();
@@ -585,11 +590,10 @@ export class UpdateService {
     }
     this.paused_attempt_id = this.preparation_attempt_id = attempt_id;
     this.waiting_for_work = true;
-    const preparation = new AbortController();
     try {
       // Enter synchronously: Cancel must not race a separately queued admission close.
-      const prepared = await this.observe_work(
-        system.prepare_update(attempt.confirm_activity ? attempt.mode : 'idle', preparation.signal),
+      const prepared = await this.observe_wait(
+        (signal) => system.prepare_update(attempt.confirm_activity ? attempt.mode : 'idle', signal),
         this.remaining_drain(attempt),
       );
       if (!active() || !this.owns_attempt(attempt_id, 'waiting')) return;
@@ -609,9 +613,6 @@ export class UpdateService {
         detail: `Work could not reach a safe point: ${error instanceof Error ? error.message : String(error)}. The update remains paused.`,
       }));
       return;
-    } finally {
-      // End this invocation's claim permission, while actual retirement remains owned.
-      preparation.abort();
     }
     try {
       this.options.runtime.assert_database_owned();
@@ -657,7 +658,10 @@ export class UpdateService {
         const barrier_generation = barrier.close();
         barrier.persist(attempt_id, barrier_generation);
         if (!active() || !this.owns_attempt(attempt_id, 'preparing')) return;
-        const drained = await this.observe_work(barrier.drain(), this.remaining_drain(attempt));
+        const drained = await this.observe_wait(
+          (signal) => barrier.drain(signal),
+          this.remaining_drain(attempt),
+        );
         if (!active() || !this.owns_attempt(attempt_id, 'preparing')) return;
         if (!drained.completed) {
           this.attempts.change(attempt_id, states('preparing'), (current) => ({

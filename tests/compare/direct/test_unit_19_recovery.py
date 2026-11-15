@@ -7,13 +7,15 @@ The separate real-core comparison must still prove actual prompt delivery.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import sqlite3
 import subprocess
 import time
 from contextlib import closing
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -39,33 +41,7 @@ from planner.core.db import connect, create_schema
 ROOT = Path(__file__).resolve().parents[3]
 
 
-def test_unit19_recovery_receipts(
-    tmp_path: Path, request: pytest.FixtureRequest
-) -> None:
-    started = time.perf_counter()
-    manifest = CaptureManifest(
-        "deploy",
-        "capture",
-        99,
-        "captured",
-        None,
-        (
-            CapturedTurn(
-                "c",
-                1,
-                None,
-                "old-epoch",
-                "running",
-                "Synthetic work",
-                "ticket",
-                "t",
-                7,
-                "out",
-            ),
-        ),
-    )
-    homes = create_synthetic_homes(tmp_path)
-    seed = tmp_path / "seed.sqlite"
+def _seed_recovery(seed: Path, homes: Any) -> None:
     with synthetic_home_environment(homes), closing(connect(str(seed))) as conn:
         create_schema(conn)
         conn.execute(
@@ -87,12 +63,42 @@ def test_unit19_recovery_receipts(
             (preset_workflow_json(conn),),
         )
         conn.commit()
+
+
+def _recovery_manifest() -> CaptureManifest:
+    return CaptureManifest(
+        "deploy",
+        "capture",
+        99,
+        "captured",
+        None,
+        (
+            CapturedTurn(
+                "c",
+                1,
+                None,
+                "old-epoch",
+                "running",
+                "Synthetic work",
+                "ticket",
+                "t",
+                7,
+                "out",
+            ),
+        ),
+    )
+
+
+def test_unit19_recovery_receipts(tmp_path: Path, request: pytest.FixtureRequest) -> None:
+    started = time.perf_counter()
+    manifest = _recovery_manifest()
+    homes = create_synthetic_homes(tmp_path)
+    seed = tmp_path / "seed.sqlite"
+    _seed_recovery(seed, homes)
     expected = []
     cases = []
     for status in ("started", "refused", "suppressed", "unknown", "restart"):
-        paths = [
-            tmp_path / f"{status}-{side}.sqlite" for side in ("python", "typescript")
-        ]
+        paths = [tmp_path / f"{status}-{side}.sqlite" for side in ("python", "typescript")]
         for path in paths:
             with (
                 closing(sqlite3.connect(seed)) as source,
@@ -131,8 +137,7 @@ def test_unit19_recovery_receipts(
             expected.append(
                 {
                     "selected": {
-                        key: [asdict(ref) for ref in refs]
-                        for key, refs in selected.items()
+                        key: [asdict(ref) for ref in refs] for key, refs in selected.items()
                     },
                     "notice": notice,
                     "accounts": data.read_summary(conn),
@@ -176,10 +181,7 @@ def test_unit19_recovery_receipts(
                     "import(pathToFileURL(process.argv[2]).href); "
                     "process.stdout.write(JSON.stringify(run(JSON.parse(readFileSync(process.argv[1],'utf8')))));",
                     str(spec),
-                    str(
-                        ROOT
-                        / "server/conversation/deploy_interruptions/testing/direct.ts"
-                    ),
+                    str(ROOT / "server/conversation/deploy_interruptions/testing/direct.ts"),
                 ],
                 cwd=ROOT,
                 text=True,
@@ -197,9 +199,7 @@ def test_unit19_recovery_receipts(
     if destination:
         path = Path(destination)
         path.mkdir(parents=True, exist_ok=True)
-        (path / "unit19-recovery-receipts.json").write_text(
-            json.dumps(report, indent=2) + "\n"
-        )
+        (path / "unit19-recovery-receipts.json").write_text(json.dumps(report, indent=2) + "\n")
     assert actual == expected
 
 
@@ -292,9 +292,7 @@ def test_unit19_startup_manifest_and_lost_task_prompts(
                 for identity in ("recover", "background"):
                     deadline = time.monotonic() + 10
                     while True:
-                        response = client.get(
-                            server.base + f"/api/test/signals/{identity}/inspect"
-                        )
+                        response = client.get(server.base + f"/api/test/signals/{identity}/inspect")
                         assert response.status_code == 200, response.text
                         body = response.json()
                         children = body["backend"]["children"]
@@ -303,14 +301,11 @@ def test_unit19_startup_manifest_and_lost_task_prompts(
                             break
                         assert time.monotonic() < deadline, body
                         time.sleep(0.05)
-            with closing(
-                sqlite3.connect(f"file:{server.db_path}?mode=ro", uri=True)
-            ) as conn:
+            with closing(sqlite3.connect(f"file:{server.db_path}?mode=ro", uri=True)) as conn:
                 conn.row_factory = sqlite3.Row
                 tables = {
                     table: [
-                        dict(row)
-                        for row in conn.execute(f"SELECT * FROM {table} ORDER BY rowid")
+                        dict(row) for row in conn.execute(f"SELECT * FROM {table} ORDER BY rowid")
                     ]
                     for table in (
                         "deploy_interruption_accounts",
@@ -334,10 +329,7 @@ def test_unit19_startup_manifest_and_lost_task_prompts(
                 observations.append({"wire": wire, "tables": tables, "events": events})
         finally:
             _stop_server(server)
-    assert (
-        "Panels deployment interruption context"
-        in observations[0]["wire"]["recover"][0]
-    )
+    assert "Panels deployment interruption context" in observations[0]["wire"]["recover"][0]
     assert "Synthetic background work" in observations[0]["wire"]["background"][0]
     report = {
         "kind": "direct-connected",
@@ -351,7 +343,189 @@ def test_unit19_startup_manifest_and_lost_task_prompts(
     if destination:
         path = Path(destination)
         path.mkdir(parents=True, exist_ok=True)
-        (path / "unit19-startup-recovery.json").write_text(
-            json.dumps(report, indent=2) + "\n"
-        )
+        (path / "unit19-startup-recovery.json").write_text(json.dumps(report, indent=2) + "\n")
     assert observations[0] == observations[1]
+
+
+@pytest.mark.parametrize("canceled_first", [False, True], ids=["closure", "canceled-first"])
+def test_unit19_recovery_refused_during_update_keeps_pending_rows(
+    tmp_path: Path,
+    request: pytest.FixtureRequest,
+    canceled_first: bool,
+) -> None:
+    """The pending loop releases admission and keeps populated durable recovery evidence."""
+    from planner.conversation.deploy_interruptions.coordinator import recover_conversations
+    from planner.conversation.workspace_admission import WorkspaceAdmission
+
+    started = time.perf_counter()
+    homes = create_synthetic_homes(tmp_path)
+    paths = [tmp_path / f"closure-{side}.sqlite" for side in ("python", "typescript")]
+    _seed_recovery(paths[0], homes)
+    if canceled_first:
+        with closing(sqlite3.connect(paths[0])) as conn:
+            conn.execute(
+                "INSERT INTO conversations(conversation_id,backend_key,workspace_folder,access,"
+                "created_at) VALUES ('c2','codex','/synthetic','full',0)"
+            )
+            conn.execute(
+                "INSERT INTO conversation_lifecycle_facts VALUES "
+                "('c2','turn','1',1,'turn','running',NULL)"
+            )
+            conn.execute(
+                "INSERT INTO tickets(id,title,worker_type,employee_backend,stage,ceiling,"
+                "field_values,created_at,updated_at,conversation_id,worker_step_claim,"
+                "worker_step_claim_revision,workflow_json) SELECT 't2','Other work',worker_type,"
+                "employee_backend,stage,ceiling,field_values,created_at,updated_at,'c2',"
+                "worker_step_claim,worker_step_claim_revision,workflow_json "
+                "FROM tickets WHERE id='t'"
+            )
+            conn.commit()
+    with closing(sqlite3.connect(paths[0])) as source, closing(sqlite3.connect(paths[1])) as target:
+        source.backup(target)
+    manifest = _recovery_manifest()
+    if canceled_first:
+        manifest = replace(
+            manifest,
+            turns=(
+                *manifest.turns,
+                replace(
+                    manifest.turns[0],
+                    conversation_id="c2",
+                    owner_id="t2",
+                    display_name="Other work",
+                ),
+            ),
+        )
+
+    async def reference() -> dict[str, Any]:
+        admission = WorkspaceAdmission()
+        offers = 0
+        offered_with_admission = []
+        offered_ids = []
+        with closing(connect(str(paths[0]))) as conn:
+            data.reconcile(conn, (manifest,), 100)
+            conn.commit()
+
+            async def select() -> Any:
+                return data.select_recoveries(conn)
+
+            async def is_running(_identity: str) -> bool:
+                return False
+
+            async def send(conversation_id: str, *_args: Any, **_options: Any) -> None:
+                nonlocal offers
+                offers += 1
+                offered_ids.append(conversation_id)
+                offered_with_admission.append(admission.active)
+                if canceled_first:
+                    if offers == 1:
+                        raise asyncio.CancelledError("one recovery canceled")
+                    return
+                admission.close_starts()
+                raise RuntimeError("Workspace admission is closed for an owner update.")
+
+            system = SimpleNamespace(
+                workspace_admission=admission, is_running=is_running, send=send
+            )
+            store: Any = SimpleNamespace(select_deployment_recoveries=select)
+
+            def snapshot() -> dict[str, Any]:
+                return {
+                    "offers": offers,
+                    "offered_with_admission": offered_with_admission,
+                    "offered_ids": offered_ids,
+                    "active": admission.active,
+                    "starts_closed": admission.starts_closed,
+                    "pending": {
+                        key: [asdict(ref) for ref in refs]
+                        for key, refs in data.select_recoveries(conn).items()
+                    },
+                    "rows": [
+                        dict(row)
+                        for row in conn.execute(
+                            "SELECT * FROM deploy_interruptions ORDER BY interruption_id"
+                        )
+                    ],
+                    "deliveries": [
+                        dict(row)
+                        for row in conn.execute(
+                            "SELECT * FROM deploy_interruption_deliveries ORDER BY interruption_id"
+                        )
+                    ],
+                    "claims": [
+                        dict(row)
+                        for row in conn.execute(
+                            "SELECT id,worker_step_claim,worker_step_claim_revision "
+                            "FROM tickets ORDER BY id"
+                        )
+                    ],
+                }
+
+            await recover_conversations(system, store, startup=True)
+            after_refusal = snapshot()
+            if not canceled_first:
+                await recover_conversations(system, store, startup=True)
+            return {"after_refusal": after_refusal, "after_denied_pass": snapshot()}
+
+    with synthetic_home_environment(homes):
+        expected = asyncio.run(reference())
+        spec = tmp_path / "closure.json"
+        spec.write_text(
+            json.dumps(
+                {
+                    "path": str(paths[1]),
+                    "manifest": asdict(manifest),
+                    "canceled_first": canceled_first,
+                }
+            )
+        )
+        actual = json.loads(
+            subprocess.check_output(
+                [
+                    "node",
+                    "--input-type=module",
+                    "-e",
+                    "import{readFileSync}from'node:fs';import{pathToFileURL}from'node:url';"
+                    "const{run_recovery_closure}=await import(pathToFileURL(process.argv[2]).href);"
+                    "process.stdout.write(JSON.stringify(await run_recovery_closure("
+                    "JSON.parse(readFileSync(process.argv[1],'utf8')))));",
+                    str(spec),
+                    str(ROOT / "server/conversation/deploy_interruptions/testing/direct.ts"),
+                ],
+                cwd=ROOT,
+                text=True,
+            )
+        )
+    assert expected["after_refusal"]["offers"] == (2 if canceled_first else 1)
+    assert expected["after_refusal"]["offered_with_admission"] == (
+        [True, True] if canceled_first else [True]
+    )
+    assert expected["after_refusal"]["active"] is False
+    if canceled_first:
+        assert set(expected["after_refusal"]["offered_ids"]) == {"c", "c2"}
+    assert len(expected["after_denied_pass"]["pending"]["c"]) == 1
+    assert len(expected["after_denied_pass"]["rows"]) == (2 if canceled_first else 1)
+    assert expected["after_denied_pass"]["deliveries"] == []
+    report = {
+        "kind": "direct",
+        "case": "unit19-recovery-canceled-first"
+        if canceled_first
+        else "unit19-recovery-update-closure",
+        "equal": actual == expected,
+        "python": expected,
+        "typescript": actual,
+        "seconds": time.perf_counter() - started,
+    }
+    destination = request.config.getoption("--compare-report-dir")
+    if destination:
+        output = Path(destination)
+        output.mkdir(parents=True, exist_ok=True)
+        (
+            output
+            / (
+                "unit19-recovery-canceled-first.json"
+                if canceled_first
+                else "unit19-recovery-update-closure.json"
+            )
+        ).write_text(json.dumps(report, indent=2) + "\n")
+    assert actual == expected

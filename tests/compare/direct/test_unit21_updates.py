@@ -1018,7 +1018,7 @@ def test_service_continuations_fence_stop_and_observe_external_attempts(
         "backup": 1,
         "prepare": 0,
         "launch": 0,
-        "state": "preparing",
+        "state": "installing",
         "closed": True,
         "poll": False,
         "unchanged_after_ownership": True,
@@ -1044,6 +1044,12 @@ def test_service_continuations_fence_stop_and_observe_external_attempts(
         "holds_worker_pass": True,
         "state": "installing",
         "launches": 1,
+    }
+    assert actual["stopped_waits"] == {
+        phase: {
+            "updates_settled": True, "original_pending": True, "starts_closed": True,
+            "state": "waiting", "launches": 0,
+        } for phase in ("preparation", "save")
     }
     _report(
         request,
