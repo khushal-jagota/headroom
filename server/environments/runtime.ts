@@ -85,7 +85,7 @@ export async function createEnvironmentRuntime(
             prune_ticket_scratch,
             retire_local_children: (ticket_id, identity, operation) => {
               const system = context.conversationSystem;
-              return system === undefined
+              return system?.retire_local_workspace === undefined
                 ? { reason: 'Conversation runtime is unavailable' }
                 : system.retire_local_workspace(ticket_id, identity, operation);
             },
