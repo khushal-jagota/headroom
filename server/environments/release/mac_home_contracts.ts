@@ -17,6 +17,17 @@ export interface MacHomeBuildResult {
   readonly inventory_sha256: string;
   readonly node_version: string;
 }
+/** Published build evidence is written only after sealed admission and foreground boot. */
+export interface MacHomePublicationBuild extends MacHomeBuildResult {
+  readonly version: 1;
+  readonly build_run: {
+    readonly source_sha: string;
+    readonly run_id: string | null;
+    readonly run_attempt: string | null;
+  };
+  readonly admission: { readonly filename: 'admission.json'; readonly sha256: string };
+  readonly boot: { readonly filename: 'boot-proof.json'; readonly sha256: string };
+}
 export interface DarwinHomeMachO {
   readonly path: string;
   readonly sha256: string;

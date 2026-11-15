@@ -15,7 +15,7 @@ import { assert_release_execution } from './process.ts';
 import { complete_mac_home_runtime } from './mac_home_native.ts';
 import { write_installer_file_manifest } from './installer_bundle.ts';
 import { APP_FORMAT, APP_ARCHIVE_NAME } from './configuration.ts';
-import { MAC_HOME_PUBLICATION_METADATA, MAC_HOME_REQUIRED_FILES } from './mac_home_configuration.ts';
+import { MAC_HOME_REQUIRED_FILES } from './mac_home_configuration.ts';
 import { read_migration_graph, migration_frontier } from './migrations.ts';
 import { resolved_path, expand_path } from '../paths.ts';
 import { is_record } from '../../core/records.ts';
@@ -107,7 +107,6 @@ export async function build_mac_home(
     await remove_owned_tree(exported);
     const archive = join(output, APP_ARCHIVE_NAME), archive_sha256 = await create_app_archive(app, archive, MAC_HOME);
     const result: MacHomeBuildResult = { manifest, archive, archive_sha256, archive_size: (await lstat(archive)).size, inventory_sha256: contract.inventory_sha256, node_version: version };
-    await writeFile(join(output, MAC_HOME_PUBLICATION_METADATA), JSON.stringify(result, null, 2) + '\n', { flag: 'wx', mode: 0o600 });
     assert_release_execution(execution);
     return result;
   } catch (error) {
