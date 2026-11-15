@@ -9,6 +9,14 @@ export interface MacHomeBuildOptions {
   readonly agent_backends_root: string;
   readonly web_dist: string;
 }
+/** Filesystem composition accepts an already exported source tree and prepared inputs. */
+export interface MacHomePayloadOptions {
+  readonly exported_source: string;
+  readonly app: string;
+  readonly production_node_modules: string;
+  readonly agent_backends_root: string;
+  readonly web_dist: string;
+}
 export interface MacHomeBuildResult {
   readonly manifest: AppManifest;
   readonly archive: string;
