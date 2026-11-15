@@ -29,7 +29,17 @@ export function parse_release(payload: Record<string, unknown>): PublishedUpdate
   if (!is_object(manifest)) throw new Error('publication manifest must be an object');
   const mac = payload.mac ?? null;
   if (mac !== null && !is_object(mac)) throw new Error('Mac publication must be an object');
+  const linux = payload.linux_executor ?? null;
+  if (linux !== null && !is_object(linux)) throw new Error('Linux publication must be an object');
   return {
+    linux_executor:
+      linux === null
+        ? null
+        : {
+            artifact_id: required(linux, 'artifact_id') as number,
+            archive_sha256: required(linux, 'archive_sha256') as string,
+            archive_size: required(linux, 'archive_size') as number,
+          },
     publication_run_id: integer(required(payload, 'publication_run_id')),
     artifact_id: integer(required(payload, 'artifact_id')),
     proof_artifact_id: integer(required(payload, 'proof_artifact_id')),

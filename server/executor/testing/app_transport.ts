@@ -51,6 +51,9 @@ endpoint.runs.conversations = {
 };
 const reports: unknown[] = [];
 endpoint.bind_updates({
+  for_machine() {
+    return this;
+  },
   prepare: unexpected,
   status: () => null,
   phase: () => null,

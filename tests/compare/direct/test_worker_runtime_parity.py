@@ -859,3 +859,63 @@ def test_automatic_start_core_steer_receipts(tmp_path: Path) -> None:
         ]
         assert len(expected["checkpoints"][-1]["receipts"]) == 2
     print(f"core steer receipt parity: {time.monotonic() - began:.3f}s")
+
+
+def test_worker_journal_exact_python_roundtrip(tmp_path: Path) -> None:
+    """Stored journal bytes must match fresh Python, including exact kernel integers.
+
+    This uses one Node evaluator and private synthetic files. It grants no process
+    or cgroup authority and starts no server or provider.
+    """
+    from tests.compare.direct.test_unit18_adapter import environment
+
+    from planner.worker_supervision import records
+
+    began = time.monotonic()
+    directory = tmp_path / "journals"
+    directory.mkdir(mode=0o700)
+    path = directory / ("a" * 32 + ".json")
+    owner = dict(pid=17, birth="100:200", parent=1, group=17, session=17, zombie=False)
+    root = dict(pid=42, birth="300:400", parent=17, group=42, session=42, zombie=False)
+    record = dict(
+        version=1,
+        ticket_id="synthetic-ticket",
+        host="synthetic-host",
+        boot="synthetic-boot",
+        owner=owner,
+        root=root,
+        processes=[root],
+        state="running",
+        launch_phase="running",
+        isolated=True,
+        cgroup_joined=True,
+        cgroup=dict(
+            path=str(tmp_path / "synthetic-cgroup"),
+            inode=2**64 - 1,
+            root_device=2**53 + 1,
+            root_inode=2**63 + 1,
+        ),
+        reason="Review café — 日本語 🚀",
+    )
+    records.write(path, record)
+    expected = path.read_bytes()
+    assert expected == (json.dumps(record, sort_keys=True, ensure_ascii=True) + "\n").encode()
+    node_root = tmp_path / "node"
+    node_root.mkdir()
+    completed = subprocess.run(
+        [
+            "node", "--input-type=module", "-e",
+            "import {read,write} from './server/worker_supervision/records.ts';"
+            "const path=process.argv[1]; const record=await read(path);"
+            "if(!['inode','root_device','root_inode'].every("
+            "key=>typeof record.cgroup[key]==='bigint'))"
+            "throw new Error('Cgroup identity lost exact integer type');"
+            "await write(path,record);",
+            str(path),
+        ],
+        cwd=ROOT, env=environment(node_root), text=True, capture_output=True, timeout=30,
+    )
+    assert completed.returncode == 0, completed.stderr
+    assert path.read_bytes() == expected
+    assert records.read(path) == record
+    print(f"exact journal Python roundtrip: {time.monotonic() - began:.3f}s")

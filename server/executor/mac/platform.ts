@@ -10,6 +10,7 @@ import koffi from 'koffi';
 import { BackendCommands } from '../../conversation/snapshot/commands.ts';
 import { backend_io_is_test } from '../../conversation/snapshot/environment.ts';
 import type { OwnedOneShotChildren } from '../../lifecycle/contracts.ts';
+import { monotonic_seconds } from '../../lifecycle/configuration.ts';
 import { MAC_AGENT_PROCESS_PROBE_TIMEOUT_SECONDS } from '../configuration.ts';
 import { shell_quote } from '../../conversation/worker_unit/logic.ts';
 import { flock } from '../../core/locks/flock.ts';
@@ -584,4 +585,94 @@ int main(int argc, char **argv) {
       },
     },
   };
+}
+
+/** Worker custody uses libproc births with microsecond precision, independently of legacy probes. */
+export interface DarwinWorkerProcessInfo {
+  readonly pid: number;
+  readonly birth: string;
+  readonly parent: number;
+  readonly group: number;
+  readonly zombie: boolean;
+}
+let worker_process_library: ReturnType<typeof koffi.load> | undefined;
+const worker_process_functions = new Map<
+  string,
+  ReturnType<ReturnType<typeof koffi.load>['func']>
+>();
+function worker_process_native(signature: string) {
+  if (process.platform !== 'darwin' || !['x64', 'arm64'].includes(process.arch))
+    throw new Error('Worker process inspection requires the Darwin LP64 ABI');
+  let callable = worker_process_functions.get(signature);
+  if (!callable) {
+    worker_process_library ??= koffi.load('/usr/lib/libproc.dylib');
+    callable = worker_process_library.func(signature);
+    worker_process_functions.set(signature, callable);
+  }
+  return callable;
+}
+export function darwin_worker_process_info(pid: number): DarwinWorkerProcessInfo | null {
+  // XNU proc_bsdinfo LP64 layout. Birth fields are uint64 and must never pass through Number.
+  const info = Buffer.alloc(136);
+  koffi.errno(0);
+  const length = worker_process_native(
+    'int proc_pidinfo(int pid, int flavor, uint64_t arg, void *buffer, int buffersize)',
+  )(pid, 3, 0, info, info.length);
+  if (length !== info.length) {
+    const errno = koffi.errno();
+    if (errno === os_constants.errno.ESRCH) return null;
+    throw Object.assign(new Error('Mac process identity is unreadable'), {
+      code: errno > 0 ? getSystemErrorName(-errno) : 'EIO',
+    });
+  }
+  return {
+    pid,
+    birth: `${info.readBigUInt64LE(120)}:${info.readBigUInt64LE(128)}`,
+    parent: info.readUInt32LE(16),
+    group: info.readUInt32LE(100),
+    zombie: info.readUInt32LE(4) === 5,
+  };
+}
+export function darwin_worker_process_snapshot(
+  deadline: number,
+  clock: () => number = monotonic_seconds,
+): ReadonlyMap<number, import('../../worker_supervision/contracts.ts').WorkerProcess> {
+  const list = worker_process_native(
+    'int proc_listpids(uint32_t type, uint32_t typeinfo, void *buffer, int buffersize)',
+  );
+  const count = list(4, process.getuid!(), null, 0);
+  if (count <= 0) throw new Error('Mac process inventory is unavailable');
+  const pids = Buffer.alloc((Math.floor(count / 4) + 1024) * 4);
+  const size = list(4, process.getuid!(), pids, pids.length);
+  if (size <= 0 || size >= pids.length) throw new Error('Mac process inventory is incomplete');
+  const result = new Map<number, import('../../worker_supervision/contracts.ts').WorkerProcess>();
+  for (let offset = 0; offset < Math.floor(size / 4) * 4; offset += 4) {
+    if (clock() >= deadline) throw new Error('Worker inspection deadline expired');
+    const pid = pids.readInt32LE(offset);
+    if (pid <= 0) continue;
+    const info = darwin_worker_process_info(pid);
+    if (info === null) continue;
+    try {
+      const session = checked('getsid', () => native('int getsid(int pid)')(pid));
+      result.set(pid, { ...info, session });
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ESRCH') throw error;
+    }
+  }
+  return result;
+}
+export function darwin_worker_process_exists(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ESRCH') return false;
+    throw error;
+  }
+}
+export function darwin_prepare_worker_session(): void {
+  const session = checked('getsid', () => native('int getsid(int pid)')(0));
+  const group = checked('getpgrp', () => native('int getpgrp(void)')());
+  if (session !== process.pid || group !== process.pid)
+    checked('setsid', () => native('int setsid(void)')());
 }
