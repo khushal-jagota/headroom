@@ -230,7 +230,6 @@ test('shutdown reaches child cleanup when a parked ask withdrawal stalls', async
   }
 });
 
-
 // The client owns native cleanup, so detach must preserve the core's absolute budget.
 test('detach forwards the existing stop deadline to its client', async () => {
   const state = await setup();
@@ -239,5 +238,7 @@ test('detach forwards the existing stop deadline to its client', async () => {
   try {
     await state.child.detach(options);
     expect(stop).toHaveBeenCalledWith(options);
-  } finally { await state.child.stop(); }
+  } finally {
+    await state.child.stop();
+  }
 });
