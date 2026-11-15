@@ -233,10 +233,11 @@ final class ReviewFinalPageTests: XCTestCase {
         // Existence alone admitted an infinite/zero frame in the earlier review run.
         let ready = NSPredicate { _, _ in
             MainActor.assumeIsolated {
-                guard stage.exists, stage.isHittable else { return false }
+                guard stage.exists else { return false }
                 let frame = stage.frame
-                return frame.minX.isFinite && frame.minY.isFinite && frame.width.isFinite && frame.height.isFinite
-                    && frame.width > 0 && frame.height > 0
+                guard frame.minX.isFinite && frame.minY.isFinite && frame.width.isFinite && frame.height.isFinite,
+                      frame.width > 0 && frame.height > 0 else { return false }
+                return stage.isHittable
             }
         }
         return XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: ready, object: nil)], timeout: 5) == .completed
