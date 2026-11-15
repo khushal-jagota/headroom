@@ -118,7 +118,7 @@ def test_resumes_matching_after_serialized_checkpoint_without_provisional_state_
     record = resumed["records"][0]
     assert record.get("compactionCovered", False) is covered
     assert record["totals"]["outputTokens"] == (0 if covered else 20)
-    assert "private" not in json.dumps(restored)
+    assert "private" not in json.dumps(restored[str(path)])
 
 
 @pytest.mark.parametrize("covered_first", [False, True])
