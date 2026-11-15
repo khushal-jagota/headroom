@@ -14,6 +14,7 @@ import {
 } from './ticket_fixture.ts';
 import * as data from '../tickets/data/index.ts';
 import * as decisions from '../tickets/decision_messages.ts';
+import { conversation_holds_an_unanswered_memory_loss } from '../runtime/worker_memory.ts';
 import { restart_worker } from '../tickets/worker_restart.ts';
 import { OWNER } from '../core/contracts.ts';
 import { configured_worker_type_registry } from '../worker_types/configuration.ts';
@@ -465,6 +466,15 @@ test('an unanswered compaction sends one queued notice and an uncertain notice p
     );
   });
   const loop = new WorkerStepReadinessLoop(options);
+  // Idle compaction carries memory on the next wake but never sends a continuation.
+  expect(db.read((sql) => conversation_holds_an_unanswered_memory_loss(sql, id))).toBe(true);
+  expect(loop.tell_every_worker_that_lost_its_memory()).toEqual([]);
+  db.write((tx) =>
+    tx.run(
+      'UPDATE conversations SET working_turn_compacted_through_sequence=2 WHERE conversation_id=?',
+      [id],
+    ),
+  );
   expect(loop.tell_every_worker_that_lost_its_memory()).toEqual([ticket.id]);
   await loop.drain();
   expect(await system.held_prompts(id)).toHaveLength(1);
