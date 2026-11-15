@@ -95,6 +95,14 @@ async function ensure_child(
     state.retained_child_reference = retained.reference;
     state.delivery_uncertain = false;
     state.child = child;
+    await host.persist(state, () =>
+      host.start_admission.bind_child(
+        host.options.store.start_admission_database,
+        reservation.token,
+        retained.reference,
+      ),
+    );
+    host.start_admission.bind_source(reservation.token, child);
   }
   state.preparing_child = child;
   try {
@@ -208,6 +216,12 @@ export async function deliver_prompt(
           state.record.latest_sequence,
         ),
       );
+      await host.settle_automatic_ids(
+        state,
+        batch.flatMap((message, index) =>
+          decisions[index].suppression_reason !== null ? [message.sender_message_id] : [],
+        ),
+      );
       return decisions;
     });
   if (
@@ -265,6 +279,7 @@ export async function deliver_prompt(
   if (interruption_notice !== null)
     wire_content = prefix_message_content_text(wire_content, interruption_notice, '\n\n');
   const write = async (target: BackendChild) => {
+    host.start_admission.bind_source(reservation.token, target);
     const accepted = await host.native_operation(() =>
       target.write_prompt(reservation.token, wire_content, {
         sender_label: survivors[0].sender_label,
@@ -278,6 +293,8 @@ export async function deliver_prompt(
       }),
     );
     reservation.prompt_accepted = true;
+    if (accepted.agent_acceptance_proven && state.child === target)
+      await host.accept_automatic_start(state, reservation.token);
     return result({
       messages: survivors,
       automatic_notice,

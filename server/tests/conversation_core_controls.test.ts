@@ -9,6 +9,7 @@ import {
   PromptDeliveryInjected,
   PromptDeliveryQueued,
   PromptDeliveryStarted,
+  PromptDeliveryRefused,
 } from '../conversation/contracts.ts';
 import { TurnEnded } from '../conversation/backends/contracts.ts';
 import { text_message_content } from '../conversation/message_content.ts';
@@ -87,6 +88,22 @@ test('two promotions of one held id have one winner', async () => {
         (row) => row.payload.kind === 'prompt' && row.payload.sender_message_id === 'promoted',
       ),
   ).toHaveLength(1);
+  const child = await f.child;
+  for (const refused of [false, true]) {
+    const id = refused ? 'refused-promotion' : 'accepted-promotion';
+    f.core.start_admission.try_start(await f.core.automatic_start_request(id, 'core'));
+    expect(await f.send('promote steer', id)).toBeInstanceOf(PromptDeliveryQueued);
+    const held = (await f.core.held_prompts('core'))[0];
+    await child.configure('steer', {
+      result: refused
+        ? { fate: 'refused', refusal_reason: 'backend_cannot_steer' }
+        : { fate: 'accepted' },
+    });
+    expect(await f.core.promote_held_prompt('core', held.held_prompt_id, 'steer')).toBeInstanceOf(
+      refused ? PromptDeliveryRefused : PromptDeliveryInjected,
+    );
+    expect(f.core.start_admission.has_requests([id])).toBe(false);
+  }
   await f.core.shutdown({ deadline: performance.now() / 1000 + SHUTDOWN_GRACE_SECONDS });
 });
 
@@ -240,7 +257,11 @@ for (const replacement of ['backend ending', 'send_now'] as const) {
       },
     });
     await f.start();
+    expect(
+      f.core.start_admission.try_start(await f.core.automatic_start_request('sender', 'core')),
+    ).toBe(true);
     await f.send();
+    expect(f.core.start_admission.snapshots()).toHaveLength(1);
     const child = await f.child;
     const original = f.store.append_events.bind(f.store);
     vi.spyOn(f.store, 'append_events').mockImplementation((...args) => {
@@ -259,6 +280,7 @@ for (const replacement of ['backend ending', 'send_now'] as const) {
       mode: 'steer',
     });
     await retrying.promise;
+    expect(f.core.start_admission.snapshots()).toEqual([]);
     let replaced: Promise<unknown>;
     if (replacement === 'backend ending')
       replaced = child.emit(new TurnEnded({ ending: 'completed' }));
@@ -271,6 +293,7 @@ for (const replacement of ['backend ending', 'send_now'] as const) {
     expect(f.store.read_events_after('core', 0).map((row) => row.kind)).toEqual(['prompt']);
     available = true;
     expect(await steering).toBeInstanceOf(PromptDeliveryInjected);
+    expect(f.core.start_admission.snapshots()).toEqual([]);
     await replaced;
     await child.flush_events();
     await f.core.wait_until_quiescent();
@@ -404,4 +427,50 @@ test('shutdown retains an active BUSY save and cancels generic backoff', async (
     conversation_id: 'core',
   });
   expect(f.store.read_events_after('core', 0)).toEqual([]);
+});
+
+// A deferred replacement must preserve its incumbent before either destructive control.
+// The same existing scripted child proves eventual queue drain after admission opens.
+test('unadmitted send_now and promotion preserve the running turn then drain once', async () => {
+  let now = 0;
+  const f = setup({ core: { monotonic_now: () => now } });
+  try {
+    await f.start();
+    await f.send();
+    const child = await f.child;
+    const running = f.core.runtime_turn('core');
+    expect(
+      f.core.start_admission.try_start(await f.core.automatic_start_request('other-start', 'core')),
+    ).toBe(true);
+    expect(
+      f.core.start_admission.try_start(await f.core.automatic_start_request('later', 'core')),
+    ).toBe(false);
+    expect(
+      await f.core.send('core', text_message_content('later'), {
+        sender_label: 'loop',
+        sender_message_id: 'later',
+        mode: 'send_now',
+      }),
+    ).toBeInstanceOf(PromptDeliveryQueued);
+    const held = (await f.core.held_prompts('core'))[0];
+    expect(
+      await f.core.promote_held_prompt('core', held.held_prompt_id, 'send_now'),
+    ).toBeInstanceOf(PromptDeliveryQueued);
+    expect(f.core.runtime_turn('core')).toBe(running);
+    expect(f.core.conversations.get('core')!.phase).toBe('running');
+    expect(
+      (await child.inspect()).calls.filter((call) => call.command === 'cancel_running_turn'),
+    ).toEqual([]);
+    now = 1;
+    f.core.start_admission.finish('other-start');
+    await child.finish();
+    await f.core.wait_until_quiescent();
+    expect((await child.inspect()).delivered_text.at(-1)).toBe('later');
+    expect(
+      (await child.inspect()).calls.filter((call) => call.command === 'write_prompt'),
+    ).toHaveLength(2);
+    expect(await f.core.held_prompts('core')).toEqual([]);
+  } finally {
+    await f.core.shutdown({ deadline: performance.now() / 1000 + SHUTDOWN_GRACE_SECONDS });
+  }
 });

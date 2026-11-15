@@ -120,6 +120,7 @@ export async function discard_held_prompt(
       }),
     );
     host.note_written(state, rows);
+    await host.settle_automatic_ids(state, [message.sender_message_id]);
     return true;
   });
 }
@@ -141,6 +142,7 @@ async function discard_all(
         ]),
       ),
     );
+    await host.settle_automatic_ids(state, [message.sender_message_id]);
   }
 }
 export async function kill(
@@ -201,6 +203,11 @@ export async function send_now(
         state.running_turn?.automatic_compaction
       )
         return host.hold_prompt(state, message);
+      if (!host.start_admission.begin_queued([message.sender_message_id])) {
+        const fate = host.hold_prompt(state, message);
+        host.defer_start_drain(state);
+        return fate;
+      }
       if (state.running_turn) {
         try {
           await cancel_and_end_running_turn(host, state, state.running_turn, lease);
@@ -215,7 +222,11 @@ export async function send_now(
       }
       automatic = await host.automatic_compaction_may_start(state);
       if (automatic) held = host.hold_prompt(state, message);
-      reservation = await host.reserve_turn(state, automatic);
+      reservation = await host.reserve_turn(
+        state,
+        automatic,
+        automatic ? [] : [message.sender_message_id],
+      );
       reservation.mode = automatic ? PromptDeliveryMode.queue : PromptDeliveryMode.send_now;
     } finally {
       lease.release();
@@ -364,6 +375,8 @@ async function record_steer_outcome(
     : refused
       ? refused_row(message, PromptDeliveryMode.steer, outcome.refusal_reason)
       : uncertain_row(message, PromptDeliveryMode.steer);
+  if (accepted && token !== null) await host.accept_automatic_start(state, token);
+  if (accepted || refused) await host.settle_automatic_ids(state, [message.sender_message_id]);
   const rows = await host.persist(state, () =>
     host.options.store.append_events(state.record.conversation_id, [payload], {
       lifecycle: attempt
@@ -420,9 +433,11 @@ export async function steer(
       state.phase === 'idle' &&
       state.held_prompts.length === 0 &&
       state.late_steers.size === 0
-    )
-      reservation = await host.reserve_turn(state);
-    else if (message.content.some((piece) => !(piece instanceof MessageText)))
+    ) {
+      if (host.start_admission.begin_queued([message.sender_message_id]))
+        reservation = await host.reserve_turn(state, false, [message.sender_message_id]);
+      else queued = host.hold_prompt(state, message);
+    } else if (message.content.some((piece) => !(piece instanceof MessageText)))
       queued = host.hold_prompt(state, { ...message, queue_reason: PromptQueueReason.attachment });
     else if (
       message.model_change !== null ||
@@ -515,6 +530,10 @@ export async function promote_held_prompt(
     if (state.child_is_quarantined || state.held_prompts.some((entry) => entry.delivery_uncertain))
       return new PromptDeliveryQueued({ queue_position: index + 1 });
     if (mode === 'send_now') {
+      if (!host.start_admission.begin_queued([message.sender_message_id])) {
+        host.defer_start_drain(state);
+        return new PromptDeliveryQueued({ queue_position: index + 1 });
+      }
       if (state.running_turn?.automatic_compaction)
         return new PromptDeliveryQueued({ queue_position: index + 1 });
       if (state.running_turn) {
@@ -532,7 +551,7 @@ export async function promote_held_prompt(
       begin_held(state, message);
       state.held_prompts.splice(index, 1);
       host.publish_held_prompts_changed(state);
-      reservation = await host.reserve_turn(state);
+      reservation = await host.reserve_turn(state, false, [message.sender_message_id]);
       reservation.mode = PromptDeliveryMode.send_now;
     } else {
       if (

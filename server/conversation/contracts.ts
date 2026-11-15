@@ -1,3 +1,5 @@
+import type { AutomaticStartAdmission } from './start_admission/index.ts';
+import type { StartRequest } from './start_admission/contracts.ts';
 /** The Python conversation boundary, with caller-owned conversation identities. */
 import { homedir } from 'node:os';
 import { join } from 'node:path';
@@ -319,6 +321,8 @@ export interface RecordMessageToOwnerOptions {
   recording_receipt?: NativeMessageOperation | null;
 }
 export interface ConversationSystem {
+  readonly start_admission?: AutomaticStartAdmission;
+  automatic_start_request?(identity: string, conversation_id: string): Promise<StartRequest>;
   readonly workspace_admission: WorkspaceAdmission;
   workspace_activity(): 'idle' | 'busy' | 'unknown';
   run_with_workspace_admission(

@@ -21,6 +21,7 @@ import {
 } from '../conversation/contracts.ts';
 import {
   AgentMessageCompleted,
+  AgentMessageDelta,
   TurnEnded,
   ToolCallStarted,
 } from '../conversation/backends/contracts.ts';
@@ -56,10 +57,17 @@ test('backend news waits for the accepted prompt receipt and prose stays transie
     },
   });
   await f.start();
+  expect(
+    f.core.start_admission.try_start(await f.core.automatic_start_request('sender', 'core')),
+  ).toBe(true);
   const sent = f.send();
   const child = await f.child;
   await child.wait_for_barrier('receipt');
   expect(f.store.read_events_after('core', 0)).toEqual([]);
+  expect(
+    f.database.read((sql) => sql.all('SELECT identity,turn_number FROM automatic_start_bindings')),
+  ).toEqual([{ identity: 'sender', turn_number: 1 }]);
+  expect(f.core.start_admission.snapshots()).toHaveLength(1);
   // Admission remains visible before the prompt receipt reaches durable storage.
   expect(await f.core.sender_message_ids_awaiting_outcome('core')).toEqual(new Set(['sender']));
   expect(await f.core.sender_message_ids_awaiting_outcome('unknown')).toEqual(new Set());
@@ -87,6 +95,8 @@ test('backend news waits for the accepted prompt receipt and prose stays transie
     (await child.inspect()).calls.filter((call) => call.command === 'write_prompt'),
   ).toHaveLength(1);
   expect(await f.core.is_running('core')).toBe(false);
+  expect(f.core.start_admission.snapshots()).toEqual([]);
+  expect(f.database.read((sql) => sql.all('SELECT * FROM automatic_start_bindings'))).toEqual([]);
   // The existing live-state proof also fences absent IDs after Signal revocation.
   // The three Boolean readers must not read/adopt a stored conversation.
   const read = vi.spyOn(f.store, 'read_conversation');
@@ -112,6 +122,9 @@ test('backend news waits for the accepted prompt receipt and prose stays transie
 test('possible emission stays uncertain and a duplicate never writes again', async () => {
   const f = setup({ behavior: { error: { name: 'PromptWriteFailed', message: 'receipt lost' } } });
   await f.start();
+  expect(
+    f.core.start_admission.try_start(await f.core.automatic_start_request('sender', 'core')),
+  ).toBe(true);
   expect(await f.send()).toBeInstanceOf(PromptDeliveryUncertain);
   expect(await f.send()).toBeInstanceOf(PromptDeliveryUncertain);
   const child = await f.child;
@@ -125,6 +138,12 @@ test('possible emission stays uncertain and a duplicate never writes again', asy
     'unknown',
   );
   expect(f.core.workspace_activity()).toBe('busy');
+  expect(f.core.start_admission.snapshots()).toMatchObject([
+    { state: 'uncertain', turn: { conversation_id: 'core', turn_number: 1 } },
+  ]);
+  expect(
+    f.database.read((sql) => sql.all('SELECT identity FROM automatic_start_bindings')),
+  ).toEqual([{ identity: 'sender' }]);
   await f.core.shutdown({ deadline: performance.now() / 1000 + SHUTDOWN_GRACE_SECONDS });
 });
 
@@ -308,4 +327,93 @@ test('dequeued sender identity waits for the receipt instead of crossing the wir
     'prompt',
   ]);
   await f.core.shutdown({ deadline: performance.now() / 1000 + SHUTDOWN_GRACE_SECONDS });
+});
+
+// Earlier receipt tests do not prove that only the exact live sink releases capacity,
+// or that two queued automatic messages share one permit when the core dequeues them.
+test('automatic capacity waits for exact agent activity and queued messages share a permit', async () => {
+  let now = 0;
+  const f = setup({ core: { monotonic_now: () => now } });
+  try {
+    await f.start();
+    const offer = async (id: string) =>
+      f.core.start_admission.try_start(await f.core.automatic_start_request(id, 'core'));
+    expect(await offer('first')).toBe(true);
+    expect(await f.send('first', 'first')).toBeInstanceOf(PromptDeliveryStarted);
+    const child = await f.child;
+    const state = f.core.conversations.get('core')!;
+    expect(f.core.start_admission.snapshots()).toHaveLength(1);
+    await child.emit(new AgentMessageDelta({ text_delta: 'stale' }), {
+      conversation_id: 'core',
+      turn_number: 99,
+    });
+    await child.flush_events();
+    await f.core.wait_until_quiescent();
+    expect(f.core.start_admission.snapshots()).toHaveLength(1);
+    const sink = state.child_event_sink;
+    state.child_event_sink = null;
+    await child.emit(new AgentMessageDelta({ text_delta: 'old sink' }));
+    await child.flush_events();
+    expect(f.core.start_admission.snapshots()).toHaveLength(1);
+    state.child_event_sink = sink;
+    await child.emit(new AgentMessageDelta({ text_delta: 'accepted' }));
+    await child.flush_events();
+    expect(f.core.start_admission.snapshots()).toEqual([]);
+    now = 1;
+    expect(await offer('second')).toBe(true);
+    expect(await f.send('second', 'second')).toBeInstanceOf(PromptDeliveryQueued);
+    expect(await offer('third')).toBe(true);
+    expect(await f.send('third', 'third')).toBeInstanceOf(PromptDeliveryQueued);
+    expect(f.core.start_admission.snapshots().map((entry) => entry.state)).toEqual([
+      'queued',
+      'queued',
+    ]);
+    await child.finish();
+    await f.core.wait_until_quiescent();
+    const admitted = f.core.start_admission.snapshots();
+    expect(admitted).toHaveLength(2);
+    expect(new Set(admitted.map((entry) => entry.permit_identity)).size).toBe(1);
+    expect(admitted.map((entry) => entry.turn?.turn_number)).toEqual([2, 2]);
+    const calls = (await child.inspect()).calls.filter((call) => call.command === 'write_prompt');
+    expect(calls).toHaveLength(2);
+    expect(calls[1].arguments.sender_message_count).toBe(2);
+    await child.emit(new AgentMessageDelta({ text_delta: 'combined accepted' }));
+    await child.flush_events();
+    expect(f.core.start_admission.snapshots()).toEqual([]);
+    expect(f.database.read((sql) => sql.all('SELECT * FROM automatic_start_bindings'))).toEqual([]);
+  } finally {
+    await f.core.shutdown({ deadline: performance.now() / 1000 + SHUTDOWN_GRACE_SECONDS });
+  }
+});
+
+// A pre-wire save departure must release the turn reservation and its unattempted binding.
+// Existing accepted-save retries start after native delivery and cannot prove this boundary.
+test('a failed admission save releases preparation before any provider starts', async () => {
+  let now = 0;
+  const f = setup({ core: { monotonic_now: () => now } });
+  try {
+    await f.start();
+    expect(
+      f.core.start_admission.try_start(await f.core.automatic_start_request('sender', 'core')),
+    ).toBe(true);
+    const failure = new DOMException('admission save observer left', 'AbortError');
+    vi.spyOn(f.core.start_admission, 'persist_bindings').mockImplementationOnce(() => {
+      throw failure;
+    });
+    await expect(f.send()).rejects.toBe(failure);
+    const state = f.core.conversations.get('core')!;
+    expect(state.reserved_turn).toBeNull();
+    expect(state.phase).toBe('idle');
+    expect(f.children).toEqual([]);
+    expect(f.core.start_admission.snapshots()).toEqual([]);
+    expect(f.database.read((sql) => sql.all('SELECT * FROM automatic_start_bindings'))).toEqual([]);
+    now = 1;
+    expect(
+      f.core.start_admission.try_start(await f.core.automatic_start_request('sender', 'core')),
+    ).toBe(true);
+    expect(await f.send()).toBeInstanceOf(PromptDeliveryStarted);
+    expect(f.children).toHaveLength(1);
+  } finally {
+    await f.core.shutdown({ deadline: performance.now() / 1000 + SHUTDOWN_GRACE_SECONDS });
+  }
 });

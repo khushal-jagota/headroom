@@ -91,6 +91,9 @@ test('a refused remote take restores runtime before the global finalizer and pub
   );
   try {
     await f.start();
+    expect(
+      f.core.start_admission.try_start(await f.core.automatic_start_request('sender', 'core')),
+    ).toBe(true);
     await f.send();
     const running = f.core.runtime_turn('core')!;
     const snapshot = () => ({
@@ -133,6 +136,9 @@ test('a refused remote take restores runtime before the global finalizer and pub
     );
     expect(result.taken).toBe(false);
     expect(result.result.disposition).toBe('refused');
+    // Positive current-turn activity proves agent acceptance before record admission.
+    expect(f.core.start_admission.snapshots()).toEqual([]);
+    expect(f.database.read((sql) => sql.all('SELECT * FROM automatic_start_bindings'))).toEqual([]);
     expect(f.core.runtime_turn('core')).toBe(running);
     expect(snapshot()).toEqual(before);
     expect(f.database.read((sql) => sql.all('SELECT * FROM signal_publication_dirty'))).toEqual([]);

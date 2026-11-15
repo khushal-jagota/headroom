@@ -547,3 +547,128 @@ def test_worker_decisions_parity(tmp_path: Path) -> None:
             check_decisions(conn, tmp_path)
         finally:
             conn.close()
+
+
+def test_automatic_start_admission_populated_lifecycle(tmp_path: Path) -> None:
+    """Gap: pure engine tests cannot prove fresh staging admission rows agree.
+
+    Reuse the SQLite schema and synthetic homes. One Node evaluator has no server,
+    adapter, or provider. It replaces the isolated TS restore/remote-retirement case.
+    """
+    from tests.compare.direct.test_unit18_adapter import environment
+
+    from planner.conversation.start_admission import AutomaticStartAdmission
+    from planner.conversation.start_admission.contracts import StartRequest
+    from planner.execution_identity import ChildReference, TurnToken
+    from planner.machines.contracts import HOME_MACHINE_ID
+
+    began = time.monotonic()
+    python_path = tmp_path / "python.sqlite"
+    ts_path = tmp_path / "typescript.sqlite"
+    node_root = tmp_path / "node"
+    node_root.mkdir()
+    with synthetic_home_environment(create_synthetic_homes(tmp_path)):
+        conn = connect(str(python_path))
+        try:
+            create_schema(conn)
+            new_ticket(conn)
+            conn.execute(
+                "INSERT INTO automatic_start_bindings "
+                "(identity,work_class,destination,conversation_id,turn_number) VALUES (?,?,?,?,?)",
+                ("retained", "worker", HOME_MACHINE_ID, "untouched", 99),
+            )
+            conn.commit()
+            with sqlite3.connect(ts_path) as target:
+                conn.backup(target)
+            now = 0
+
+            def make() -> AutomaticStartAdmission:
+                admission = AutomaticStartAdmission(clock=lambda: now)
+                admission.configure_destinations(lambda _: True)
+                return admission
+
+            checkpoints: list[dict[str, Any]] = []
+
+            def capture(admission: AutomaticStartAdmission) -> None:
+                checkpoints.append(
+                    {
+                        "snapshots": sorted(
+                            plain(admission.snapshots()), key=lambda row: row["request"]["identity"]
+                        ),
+                        "rows": [
+                            dict(row)
+                            for row in conn.execute(
+                                "SELECT * FROM automatic_start_bindings ORDER BY identity"
+                            )
+                        ],
+                    }
+                )
+
+            home = TurnToken("admission-home", 1)
+            away = TurnToken("admission-away", 3)
+            child = ChildReference("executor", "current", away.conversation_id)
+            first = make()
+            grants = [
+                first.try_start(StartRequest("h1", "worker", HOME_MACHINE_ID)),
+                first.try_start(StartRequest("h2", "worker", HOME_MACHINE_ID)),
+                first.try_start(StartRequest("away", "worker", ORIGINAL_MAC_MACHINE_ID)),
+            ]
+            now = 1
+            grants.append(first.try_start(StartRequest("h2", "worker", HOME_MACHINE_ID)))
+            now = 2
+            grants.append(first.try_start(StartRequest("h3", "worker", HOME_MACHINE_ID)))
+            now = 3
+            grants.extend(
+                (
+                    first.try_start(StartRequest("h4", "worker", HOME_MACHINE_ID)),
+                    first.try_start(StartRequest("chief", "supervisor", HOME_MACHINE_ID)),
+                )
+            )
+            first.bind(("h1",), home)
+            first.bind(("away",), away)
+            first.persist_bindings(str(python_path), home)
+            first.persist_bindings(str(python_path), away)
+            first.bind_child(str(python_path), away, child)
+            first.persist_bindings(str(python_path), dataclasses.replace(away))
+            capture(first)
+            restored = make()
+            restored.restore_bindings(conn, dataclasses.replace(home))
+            restored.restore_bindings(conn, dataclasses.replace(away))
+            capture(restored)
+            grants.extend(
+                (
+                    restored.allow_dispatch(dataclasses.replace(home)),
+                    restored.allow_dispatch(dataclasses.replace(away)),
+                )
+            )
+            restored.bind_source(dataclasses.replace(away), object())
+            restored.failed_attempt(str(python_path), dataclasses.replace(away))
+            restored.accept(str(python_path), dataclasses.replace(home, turn_number=2))
+            restored.retire_remote(
+                str(python_path), dataclasses.replace(child, child_id="previous")
+            )
+            capture(restored)
+            restored.accept(str(python_path), dataclasses.replace(home))
+            restored.retire_remote(str(python_path), dataclasses.replace(child))
+            capture(restored)
+            expected = {"grants": grants, "checkpoints": checkpoints}
+            actual = json.loads(
+                subprocess.check_output(
+                    [
+                        "node", "--input-type=module", "-e",
+                        "import {pathToFileURL} from 'node:url'; "
+                        "const {run}=await import(pathToFileURL(process.argv[2]).href); "
+                        "process.stdout.write(JSON.stringify(run(process.argv[1])));",
+                        str(ts_path), str(ROOT / "server/conversation/testing/start_admission.ts"),
+                    ],
+                    cwd=ROOT, text=True, env=environment(node_root),
+                )
+            )
+            assert actual == expected
+            assert grants == [True, False, True, True, True, False, True, True, True]
+            assert len(checkpoints[0]["rows"]) == 3
+            assert [row["identity"] for row in checkpoints[-1]["rows"]] == ["retained"]
+            assert checkpoints[2]["snapshots"][0]["state"] == "uncertain"
+        finally:
+            conn.close()
+    print(f"populated admission lifecycle proof: {time.monotonic() - began:.3f}s")
