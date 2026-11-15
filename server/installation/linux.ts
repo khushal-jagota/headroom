@@ -93,6 +93,9 @@ export async function create_linux_home_service(
       attempted.push(name);
       await command(['enable', '--now', name], execution);
     },
+    async finish_cleanup(execution) {
+      await command(['daemon-reload'], execution);
+    },
     async stop(execution, assert_owned) {
       if (!attempted.length) return;
       for (const name of [...names].reverse()) {
