@@ -836,14 +836,20 @@ adapter exists. No native binding is added by this port.
 ## Native first-home installation
 
 The standalone first-home installer accepts sealed Node version-2 home releases.
-It preserves the flat JSON request, including `installer_python` metadata for the existing Mac installation record.
+New requests require no Python interpreter field. A new Mac home writes an explicit version-2 identity with canonical external `installer_node`.
+The Mac updater reads the exact unversioned six-key legacy identity, including its `installer_python` metadata, without a Python probe or execution.
 It does not execute a Python installer or an interpreter probe.
 The service PATH omits `app/.venv/bin`, and the service environment omits Python bytecode settings.
 Linux puts the selected host Node directory before provider directories. Darwin keeps Homebrew ahead of discovered provider directories.
-The populated comparison normalizes only the Python-only PATH entry, the selected Linux Node directory, and the bytecode flag.
+The populated comparison normalizes the Python-only PATH entry, the selected Linux Node directory, and the bytecode flag.
+It compares every shared installation binding and separately checks each identity's exact keys and the external Node path.
 All remaining ordered PATH entries and service environment values compare with fresh Python.
 
 Cleanup uses retained directory descriptors and exclusive creation, rather than recursive deletion through a replaceable pathname.
 Changed root or service file identities retain installation files. A timed-out cleanup observer retains descriptors until actual native work settles.
 This deliberate uncertainty can retain more files than Python cleanup. It never broadens service control or deletion authority.
-Darwin production admission remains unavailable until the shared home-target contract and admission path are merged.
+Darwin home admission uses the shared explicit home target and native Node version-2 proof.
+Darwin updates select only the nested Mac home receipt and artifact, and use launchd for their independent copied installer.
+They retain the existing barrier, attempt writer, exact schema frontier, app swap and restore owners.
+Every Darwin update takes a verified backup before launch. Native job and descendant-birth evidence must prove retirement before replacement.
+An accepted healthy release remains installed when an auxiliary job fails. The terminal record includes that failure.

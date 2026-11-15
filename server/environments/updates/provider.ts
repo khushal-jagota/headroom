@@ -11,6 +11,8 @@ import type { PublishedUpdate, UpdateProvider } from './contracts.ts';
 import { is_object, parse_release } from './codec.ts';
 import { instant } from './logic/experience.ts';
 import { with_zip_member } from './zip.ts';
+import { LINUX_HOME } from '../release/contracts.ts';
+import type { RuntimeTarget } from '../release/contracts.ts';
 
 export const TRUSTED_RELEASE_WORKFLOWS: ReadonlyMap<string, 1 | 2> = new Map([
   ['.github/workflows/deploy.yml', 1],
@@ -40,6 +42,7 @@ function list(value: unknown): Record<string, unknown>[] {
 export interface GitHubUpdateProviderOptions {
   fetch?: typeof fetch;
   temporary_directory?: string;
+  target?: RuntimeTarget;
 }
 export class GitHubUpdateProvider implements UpdateProvider {
   readonly repository: string;
@@ -47,6 +50,7 @@ export class GitHubUpdateProvider implements UpdateProvider {
   private readonly fetch: typeof fetch;
   private readonly temporary_directory: string;
   private publication_cache: PublishedUpdate | null = null;
+  private readonly target: RuntimeTarget;
   constructor(
     repository: string,
     token_file: string | null,
@@ -57,6 +61,7 @@ export class GitHubUpdateProvider implements UpdateProvider {
     this.token_file = token_file;
     this.fetch = options.fetch ?? globalThis.fetch;
     this.temporary_directory = options.temporary_directory ?? tmpdir();
+    this.target = options.target ?? LINUX_HOME;
   }
   private headers(): Record<string, string> {
     const token = this.token_file === null ? '' : readFileSync(this.token_file, 'utf8').trim();
@@ -208,6 +213,7 @@ export class GitHubUpdateProvider implements UpdateProvider {
       contract_version === undefined
     )
       return null;
+    if (this.target.system === 'darwin' && contract_version !== 2) return null;
     const artifacts = await this.json(`actions/runs/${run_id}/artifacts`, {
       per_page: '100',
     });
@@ -217,7 +223,7 @@ export class GitHubUpdateProvider implements UpdateProvider {
         .map((artifact) => [artifact.name, artifact]),
     );
     const proof = by_name.get('panels-publication-proof'),
-      app = by_name.get('panels-app');
+      app = by_name.get(this.target.system === 'darwin' ? 'panels-mac-home' : 'panels-app');
     if (proof === undefined || app === undefined) return null;
     let release = this.publication_cache;
     if (
@@ -242,8 +248,13 @@ export class GitHubUpdateProvider implements UpdateProvider {
           for await (const chunk of stream) chunks.push(Buffer.from(chunk));
           return record(JSON.parse(Buffer.concat(chunks).toString('utf8')));
         });
-        payload.proof_artifact_id = proof.id;
-        release = parse_release(payload);
+        let selected = payload;
+        if (this.target.system === 'darwin') {
+          if (!is_object(payload.mac_home)) return null;
+          selected = { ...payload, ...payload.mac_home, mac: null };
+        }
+        selected.proof_artifact_id = proof.id;
+        release = parse_release(selected);
       } finally {
         await rm(directory, { recursive: true, force: true });
       }
@@ -257,6 +268,9 @@ export class GitHubUpdateProvider implements UpdateProvider {
       throw new Error('Publication identity differs from trusted repository evidence.');
     if (instant(release.expires_at).epochMicroseconds <= BigInt(Date.now()) * 1000n) return null;
     if (release.manifest.runtime_contract === null) return null;
+    if (this.target.system === 'darwin' && (release.manifest.runtime_contract.version !== 2 ||
+      release.manifest.runtime_contract.system !== 'darwin' || release.manifest.runtime_contract.architecture !== 'arm64' ||
+      release.manifest.runtime_contract.role !== 'home')) throw new Error('Publication runtime target differs from this home');
     if (release.manifest.runtime_contract.version !== contract_version)
       throw new Error('This workflow does not publish this runtime contract version.');
     this.publication_cache = release;

@@ -193,12 +193,20 @@ def _python(base: Path, system: str, scenario: str, port: int, monkeypatch: Any)
                 for path in sorted(agents.iterdir())
                 if path.name != "foreign.service"
             }
+    identity = None
+    identity_path = root / "data/mac-home-installation.json"
+    if identity_path.exists():
+        legacy = json.loads(identity_path.read_text())
+        assert set(legacy) == {"uid", "root", "label", "home_plist", "backup_plist", "installer_python"}
+        assert isinstance(legacy["installer_python"], str)
+        identity = {key: legacy[key] for key in ("uid", "root", "label", "home_plist", "backup_plist")}
     result = dict(
         outcome=outcome,
         root_exists=root.exists(),
         config=config,
         application=(root / "app/bin/panels").read_text() if root.exists() else None,
         generated=generated,
+        identity=identity,
         owned_files=sorted(
             path.name for path in agents.iterdir() if not path.name.startswith("foreign.")
         ),
@@ -279,6 +287,8 @@ def test_first_home_installation_parity(tmp_path: Path, monkeypatch: Any, reques
                         "Linux puts its selected host Node directory first. Only that directory "
                         "is normalized from both Linux PATH lists. Remaining ordered entries, "
                         "including Homebrew before custom provider directories, compare exactly."
+                        " Native identity writes exact version-2 fields with canonical external installer_node."
+                        " Python writes its exact legacy six-key identity. Both records compare every common binding."
                     ),
                 ),
                 indent=2,

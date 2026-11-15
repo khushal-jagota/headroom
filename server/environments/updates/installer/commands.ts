@@ -2,6 +2,7 @@ import type { ChildProcess } from 'node:child_process';
 import { constants } from 'node:os';
 import { randomUUID } from 'node:crypto';
 import { join } from 'node:path';
+import { realpathSync } from 'node:fs';
 import { is_os_error } from '../../../core/system_errors.ts';
 import { stop_one_shot_child } from '../../../lifecycle/one_shot_children.ts';
 import { run_release_command } from '../../release/process.ts';
@@ -166,6 +167,8 @@ async function runtime(request: InstallerRequest, value: InstallerPhase): Promis
   }
   assert_phase(value, argv);
   const selected = result.stdout.trim();
+  if (process.platform === 'darwin' && selected !== 'node-v2')
+    throw new AppValidationError('Darwin home updates require a Node version-2 runtime');
   if (!['node-v2', 'python-v1', 'python-legacy-null'].includes(selected))
     throw new AppValidationError('Unsupported installed runtime classification');
   return selected;
@@ -178,10 +181,47 @@ export function create_installer_effects(
   assert_installer_path(request.database, execution.environment);
   assert_installer_path(request.data_directory, execution.environment);
   assert_installer_health_url(request.health_url, execution.environment);
+  const darwin = process.platform === 'darwin';
+  let mac: Promise<import('../darwin/service.ts').DarwinHomeService> | undefined;
+  const home = () => mac ??= import('../darwin/service.ts').then(({ create_darwin_home_io, DarwinHomeService }) => {
+    const service = new DarwinHomeService(request.current_root, request.service_unit, request.node_executable,
+      create_darwin_home_io({ child_processes: execution.child_processes, signal: execution.signal, deadline: null }, execution.environment));
+    if (realpathSync(request.node_executable) !== service.identity.installer_node)
+      throw new AppValidationError('Installer Node differs from the Mac installation identity');
+    return service;
+  });
   return {
+    ...(darwin ? {
+      async validate_service() { await (await home()).validate_running_home(); },
+      async recover_unchanged(sha: string) {
+        const service = await home();
+        if (service.stopped) return false;
+        await service.validate_running_home();
+        if (!await healthy(request.health_url, sha, request.health_timeout_seconds, execution.signal, execution.environment))
+          throw new Error('The unchanged home did not pass health after its stop failed');
+        await service.resume_auxiliaries();
+        return true;
+      },
+      async finish_success() {
+        const service = await home(), errors: string[] = [];
+        try { await service.provision_schedules(); } catch (error) { errors.push(`schedule setup: ${String(error)}`); }
+        try { await service.resume_auxiliaries(); } catch (error) { errors.push(String(error)); }
+        return errors.length ? 'The release passed health, but its auxiliary jobs did not restart: ' + errors.join('; ') : null;
+      },
+      async finish_rollback() {
+        try { await (await home()).resume_auxiliaries(); return null; }
+        catch (error) { return `Its auxiliary jobs did not restart: ${String(error)}`; }
+      },
+    } : {}),
     async service(action) {
       if (installer_test_mode(execution.environment))
         throw new Error('Installer service actions are unavailable in tests');
+      if (darwin) {
+        const service = await home();
+        if (action === 'stop') await service.stop();
+        else await service.start();
+        return;
+      }
       const value = phase(execution, SERVICE_COMMAND_TIMEOUT_SECONDS);
       await run_installer_command(['systemctl', '--user', action, request.service_unit], value, {
         check: true,

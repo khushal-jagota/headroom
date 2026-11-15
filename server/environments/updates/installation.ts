@@ -24,10 +24,12 @@ export function create_installer_operations(inputs: {
   readonly child_processes: OwnedChildProcesses;
   readonly signal: AbortSignal;
   readonly environment: Readonly<NodeJS.ProcessEnv>;
+  readonly darwin_home?: import('./darwin/service.ts').DarwinHomeService;
 }): InstallerOperations {
   const environment = Object.freeze({ ...inputs.environment });
   const prepared = new Map<string, readonly string[]>();
   return {
+    ...(inputs.darwin_home ? { requires_snapshot: true } : {}),
     ...create_migration_status(inputs.child_processes),
     create_backup: create_database_backup,
     prepare(options) {
@@ -44,7 +46,7 @@ export function create_installer_operations(inputs: {
         inputs.application_root,
         {
           ...options,
-          node_executable: inputs.node_executable,
+          node_executable: inputs.darwin_home?.identity.installer_node ?? inputs.node_executable,
           admitted_legacy_null_sha: inputs.admitted_legacy_null_sha,
         },
         inputs.signal,
@@ -64,6 +66,11 @@ export function create_installer_operations(inputs: {
       if (installer_test_mode(environment))
         throw new AppValidationError('Installer service launch is unavailable in tests');
       prepared.delete(attempt_id);
+      if (inputs.darwin_home) {
+        const { launch_darwin_installer } = await import('./darwin/launch.ts');
+        await launch_darwin_installer(inputs.darwin_home, attempt_id, command);
+        return;
+      }
       const deadline = performance.now() / 1000 + INSTALLER_LAUNCH_TIMEOUT_SECONDS;
       await run_release_command(
         installer_transient_command(attempt_id, command, environment),

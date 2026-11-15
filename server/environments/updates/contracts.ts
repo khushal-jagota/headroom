@@ -131,6 +131,7 @@ export interface ReleaseStaging {
   stage(provider: UpdateProvider, release: PublishedUpdate, current_root: string): Promise<string>;
 }
 export interface InstallerOperations {
+  readonly requires_snapshot?: boolean;
   require_exact_schema_frontier(database: string, staged_app: string): void | Promise<void>;
   schema_change_pending(database: string, staged_app: string): boolean | Promise<boolean>;
   create_backup(

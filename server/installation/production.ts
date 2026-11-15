@@ -5,7 +5,9 @@ import { basename } from 'node:path';
 import { extract_app_archive } from '../environments/release/archive.ts';
 import { admit_runtime } from '../environments/release/admission.ts';
 import { run_release_command, assert_release_execution } from '../environments/release/process.ts';
+import { MAC_HOME, LINUX_HOME } from '../environments/release/contracts.ts';
 import type { ReleaseExecution } from '../environments/release/contracts.ts';
+import { require_host_node } from '../environments/release/logic/host.ts';
 import { healthy } from '../environments/updates/installer/health.ts';
 import { installer_test_mode } from '../environments/updates/installer/configuration.ts';
 import { HOME_HEALTH_TIMEOUT_SECONDS } from './configuration.ts';
@@ -62,14 +64,14 @@ export async function production_home_dependencies(
         scope.child_processes,
         undefined,
         scope,
+        system === 'darwin' ? MAC_HOME : LINUX_HOME,
       ),
     async admit(app, manifest, scope) {
       assert_release_execution(scope);
       if (manifest.runtime_contract?.version !== 2)
         throw new Error('First home installation requires a sealed Node version-2 release');
-      if (system === 'darwin')
-        throw new Error('Darwin home release admission is not available in this installer yet');
       await admit_runtime(app, manifest, scope.child_processes);
+      require_host_node(process.version, manifest.runtime_contract);
       assert_release_execution(scope);
     },
     healthy: (port, revision, signal) =>

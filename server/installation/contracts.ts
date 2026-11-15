@@ -6,7 +6,6 @@ export interface HomeInstall {
   readonly root: string;
   readonly service: string;
   readonly port: number;
-  readonly installer_python: string;
   readonly isolated_providers: boolean;
 }
 export interface HomeInstallRequest extends HomeInstall {

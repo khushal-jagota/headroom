@@ -3,6 +3,8 @@ import { lstat } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { ReleaseExecution } from '../environments/release/contracts.ts';
 import { home_service_environment } from './environment.ts';
+import { external_home_node } from '../environments/updates/darwin/identity.ts';
+import { darwin_schedule_jobs } from '../environments/updates/darwin/jobs.ts';
 import {
   HOME_SERVICE_COMMAND_TIMEOUT_SECONDS,
   HOME_SERVICE_OBSERVATION_TIMEOUT_SECONDS,
@@ -59,28 +61,7 @@ export function darwin_home_jobs(
       StartCalendarInterval: { Hour: 2, Minute: 30 },
       ...log_paths('backup'),
     },
-    [label + '.maintenance']: {
-      ...common,
-      Label: label + '.maintenance',
-      ProgramArguments: [...command, 'environment', 'cleanup', '--apply'],
-      StartCalendarInterval: { Hour: 3, Minute: 15 },
-      ...log_paths('maintenance'),
-    },
-    [label + '.stall-watchdog']: {
-      ...common,
-      Label: label + '.stall-watchdog',
-      ProgramArguments: [
-        ...command,
-        'stalls',
-        'watchdog',
-        '--db',
-        join(root, 'data/planner.db'),
-        '--state-dir',
-        join(root, 'data/stall-watchdog'),
-      ],
-      StartInterval: 30,
-      ...log_paths('stall-watchdog'),
-    },
+    ...darwin_schedule_jobs(root, label, command, environment),
   };
 }
 export async function create_darwin_home_service(
@@ -105,12 +86,13 @@ export async function create_darwin_home_service(
     path: join(request.root, 'data/mac-home-installation.json'),
     content:
       JSON.stringify({
+        version: 2,
         uid: host.uid,
         root: request.root,
         label: request.service,
         home_plist: files[0]!.path,
         backup_plist: files[1]!.path,
-        installer_python: request.installer_python,
+        installer_node: external_home_node(request.root, process.execPath),
       }) + '\n',
     mode: 0o600,
   });

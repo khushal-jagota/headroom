@@ -173,7 +173,6 @@ test.skipIf(!admitted)(
           root,
           service: service_name,
           port: await free_port(),
-          installer_python: process.execPath,
           isolated_providers: true,
           archive: join(base, 'mini-app-fixture'),
           archive_sha256: 'b'.repeat(64),
@@ -250,6 +249,9 @@ test.skipIf(!admitted)(
             installed = true;
             record.install_seconds = (performance.now() - started) / 1000;
             if (system === 'darwin') {
+              const identity = JSON.parse(await readFile(join(root, 'data/mac-home-installation.json'), 'utf8'));
+              expect(Object.keys(identity).sort()).toEqual(['version', 'uid', 'root', 'label', 'home_plist', 'backup_plist', 'installer_node'].sort());
+              expect(identity).toMatchObject({ version: 2, root, uid: deps.uid, label: service_name, installer_node: await realpath(process.execPath) });
               const old = await observe(),
                 began = performance.now(),
                 target = `gui/${deps.uid}/${service_name}`;

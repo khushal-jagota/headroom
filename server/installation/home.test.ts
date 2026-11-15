@@ -3,6 +3,7 @@ import { createServer as http_server } from 'node:http';
 import { createServer } from 'node:net';
 import {
   existsSync,
+  linkSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -20,6 +21,8 @@ import { healthy } from '../environments/updates/installer/health.ts';
 import { install_home, check_home_port } from './home.ts';
 import type { HomeInstallDependencies, HomeInstallRequest, HomeServicePlan } from './contracts.ts';
 import { HomeCleanupUnsettled } from './contracts.ts';
+import { write_home_job } from '../environments/updates/darwin/jobs.ts';
+import { create_darwin_home_io } from '../environments/updates/darwin/service.ts';
 
 async function unused_port(): Promise<number> {
   const server = createServer();
@@ -41,7 +44,6 @@ async function fixture() {
     root: join(base, 'new-parent', 'home'),
     service: 'com.panels.test',
     port: await unused_port(),
-    installer_python: '/unused/python',
     isolated_providers: true,
     archive: join(base, 'archive'),
     archive_sha256: 'a'.repeat(64),
@@ -113,6 +115,25 @@ async function fixture() {
     },
   };
 }
+
+test('Mac job conversion refuses pre-existing and late hard links before either file write', async () => {
+  const f = await fixture(), path = join(f.account, 'installer.plist');
+  const job = { Label: 'com.panels.test', ProgramArguments: ['/unused/node'], WorkingDirectory: f.account, EnvironmentVariables: {} };
+  let converted = false;
+  const io = create_darwin_home_io(f.deps.execution, f.deps.environment, {
+    command: async () => { converted = true; linkSync(path, join(f.account, 'late-link')); return { code: 0, stdout: '<plist/>', stderr: '' }; },
+  });
+  try {
+    linkSync(f.foreign, path);
+    await assert.rejects(write_home_job(path, job, io, readFileSync(f.foreign)), /no longer owns/);
+    assert.equal(converted, false);
+    assert.equal(readFileSync(f.foreign, 'utf8'), 'existing account data');
+    rmSync(path);
+    await assert.rejects(write_home_job(path, job, io), /replacement changed/);
+    assert.equal(converted, true);
+    assert.equal(readFileSync(join(f.account, 'late-link'), 'utf8'), JSON.stringify(job) + '\n');
+  } finally { await f.close(); }
+});
 
 test('failed installation uses a fresh cleanup owner after cancellation and preserves linked foreign data', async () => {
   const f = await fixture();

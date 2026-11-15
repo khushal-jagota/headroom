@@ -4,10 +4,12 @@ import {
   mkdirSync,
   readFileSync,
   readdirSync,
+  realpathSync,
   readlinkSync,
   writeFileSync,
 } from 'node:fs';
 import { dirname, join } from 'node:path';
+import { path_is_within } from '../../core/path_containment.ts';
 import { ChildProcesses } from '../../lifecycle/owned_processes.ts';
 import type { AppManifest } from '../../environments/release/contracts.ts';
 import { install_home } from '../home.ts';
@@ -64,7 +66,6 @@ export async function home_install_comparison(
       root,
       service,
       port: value.port,
-      installer_python: process.execPath,
       isolated_providers: value.scenario !== 'configured',
       archive: join(base, 'archive'),
       archive_sha256: 'a'.repeat(64),
@@ -165,6 +166,14 @@ export async function home_install_comparison(
       await owner.settled();
     }
     let generated: unknown = null;
+    let identity: Record<string, unknown> | null = null;
+    if (existsSync(join(root, 'data/mac-home-installation.json'))) {
+      const value = JSON.parse(readFileSync(join(root, 'data/mac-home-installation.json'), 'utf8'));
+      if (JSON.stringify(Object.keys(value).sort()) !== JSON.stringify(['version', 'uid', 'root', 'label', 'home_plist', 'backup_plist', 'installer_node'].sort()) ||
+        value.version !== 2 || typeof value.installer_node !== 'string' || realpathSync(value.installer_node) !== value.installer_node ||
+        path_is_within(root, value.installer_node)) throw new Error('Native home identity does not bind an external Node v2 runtime');
+      identity = Object.fromEntries(['uid', 'root', 'label', 'home_plist', 'backup_plist'].map((key) => [key, value[key]]));
+    }
     if (existsSync(join(root, 'data/config.yaml'))) {
       if (value.system === 'darwin') {
         generated = Object.fromEntries(
@@ -221,6 +230,7 @@ export async function home_install_comparison(
             ? readFileSync(join(root, 'app/bin/panels'), 'utf8')
             : null,
           generated,
+          identity,
           owned_files: readdirSync(agents)
             .filter((name) => !name.startsWith('foreign.'))
             .sort(),

@@ -19,7 +19,6 @@ export function home_install_request(value: unknown): HomeInstallRequest {
     root: text('root'),
     service: text('service'),
     port,
-    installer_python: text('installer_python'),
     isolated_providers: value.isolated_providers,
     archive: text('archive'),
     archive_sha256: text('archive_sha256'),
