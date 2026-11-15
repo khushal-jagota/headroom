@@ -103,7 +103,7 @@ jobs:
           umask 077
           proof_root=$(mktemp -d "$RUNNER_TEMP/enrollment-bootstrap.XXXXXX")
           proof_evidence="$RUNNER_TEMP/linux-enrollment-evidence"
-          mkdir -p "$proof_evidence" "$proof_root"/{home/codex,home/claude,home/hermes,config,cache,data,state,run,tmp,logs,backups,workspace,files,scratch}
+          mkdir -p "$proof_evidence" "$proof_root"/{home/codex,home/claude,home/hermes,config,cache,data,state,run,tmp,logs,backups,workspace,files,scratch,app}
           printf '{}\n' > "$proof_root/config.yaml"
           harness_revision=$(git rev-parse HEAD)
           env -i PATH="$PATH" LANG=C.UTF-8 LC_ALL=C.UTF-8 \
@@ -116,7 +116,7 @@ jobs:
             TMPDIR="$proof_root/tmp" TMP="$proof_root/tmp" TEMP="$proof_root/tmp" \
             npm_config_cache="$proof_root/cache/npm" PIP_CONFIG_FILE=/dev/null \
             PLAN_CONFIG_PATH="$proof_root/config.yaml" PLAN_DB_PATH="$proof_root/data/planner.sqlite" \
-            PLAN_DATA_DIR="$proof_root/data" PLAN_APP_ROOT="$GITHUB_WORKSPACE/product" \
+            PLAN_DATA_DIR="$proof_root/data" PLAN_APP_ROOT="$proof_root/app" \
             PLAN_LOGS_DIR="$proof_root/logs" PLAN_BACKUP_DIR="$proof_root/backups" PLAN_WORKSPACE_ROOT="$proof_root/workspace" \
             PLAN_TICKET_FILES_DIR="$proof_root/files" PLAN_TICKET_SCRATCH_ROOT="$proof_root/scratch" \
             PLAN_TICKET_SCRATCH_DATABASE="$proof_root/data/planner.sqlite" PLAN_CREDENTIAL_KEY_PATH="$proof_root/data/key" \
