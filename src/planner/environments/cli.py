@@ -126,7 +126,8 @@ def cleanup(apply: bool, as_json: bool) -> None:
     )
     now = int(time.time())
     scratch_result = clean_for_database(
-        config.db_path, now, extra_roots=layout.folders if layout else (), apply=apply
+        config.db_path, now, extra_roots=layout.folders if layout else (), apply=apply,
+        measure_size=True,
     )
     manifest_path = ticket_files_root(config.db_path).parent / "ticket-workspaces-cleanup.json"
     payload["ticket_workspaces"] = json.loads(manifest_path.read_text())

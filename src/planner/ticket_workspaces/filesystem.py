@@ -22,6 +22,7 @@ from planner.ticket_workspaces.contracts import (
     WorkspaceIdentity,
     WorkspaceState,
 )
+from planner.ticket_workspaces.processes import process_in_use
 
 _TICKET_ID = re.compile(rf"^({TICKET_ID_PATTERN})(?:-|$)")
 _SKIP_DIRECTORIES = frozenset({".git", ".venv", "node_modules"})
@@ -418,6 +419,30 @@ def workspace_ticket_owners(root: Path) -> tuple[str, ...]:
     return tuple(sorted(owners))
 
 
+def _recorded_checkout_problem(ticket_root: Path) -> str | None:
+    """A recorded Git checkout cannot become a plain folder if its metadata disappears."""
+    marker_path = ticket_root / OWNERSHIP_FILE
+    if not os.path.lexists(marker_path):
+        return None  # Artifact-only and legacy folders can lack a workspace marker.
+    try:
+        if marker_path.is_symlink() or not marker_path.is_file():
+            return "workspace ownership evidence is invalid"
+        marker = json.loads(marker_path.read_text())
+        is_git = marker.get("checkout_kind") == "clone" or marker.get("repository") is not None
+        if not is_git or "worktree" not in marker:
+            return None
+        checkout = ticket_root / WORKTREE_DIRECTORY
+        metadata = checkout / ".git"
+        if checkout.is_symlink() or metadata.is_symlink() or not metadata.exists():
+            return "recorded Git checkout or its metadata is missing or invalid"
+        result = _git(checkout, "rev-parse", "--show-toplevel")
+        if result.returncode or Path(result.stdout.strip()).resolve() != checkout.resolve():
+            return "recorded Git checkout or its metadata is missing or invalid"
+    except (OSError, ValueError, AttributeError, subprocess.TimeoutExpired):
+        return "cannot inspect recorded Git checkout ownership"
+    return None
+
+
 def reason_to_keep(
     root: Path,
     states: Mapping[str, WorkspaceState] | None = None,
@@ -425,6 +450,9 @@ def reason_to_keep(
 ) -> str | None:
     if root.is_symlink() or root.parent.is_symlink():
         return "workspace path is a symlink"
+    recorded_problem = _recorded_checkout_problem(root)
+    if recorded_problem:
+        return recorded_problem
     try:
         checkouts = _checkouts(root)
     except OSError as exc:
@@ -480,21 +508,20 @@ def reason_to_keep(
                         if not linked_path.is_relative_to(root):
                             return f"repository still owns an external worktree: {linked_path}"
             remotes = _git(checkout, "remote")
-            if remotes.returncode or not remotes.stdout.strip():
-                return f"no remote copy can be verified for {checkout}"
-            # Only refs advertised by the actual remotes can prove preservation.
+            if remotes.returncode or "origin" not in remotes.stdout.splitlines():
+                return f"no origin copy can be verified for {checkout}"
+            # Only refs advertised by origin can prove preservation.
             remote_hashes: set[str] = set()
-            for remote in remotes.stdout.splitlines():
-                fetched = _git(checkout, "fetch", "--prune", remote)
-                advertised = _git(checkout, "ls-remote", "--heads", "--tags", remote)
-                if fetched.returncode or advertised.returncode:
-                    return f"remote verification failed for {checkout}"
-                for line in advertised.stdout.splitlines():
-                    commit = line.split()[0]
-                    # Single-branch clones need not have objects from other advertised
-                    # branches. Only commits present locally can prove preservation.
-                    if _git(checkout, "cat-file", "-e", f"{commit}^{{commit}}").returncode == 0:
-                        remote_hashes.add(commit)
+            fetched = _git(checkout, "fetch", "--prune", "origin")
+            advertised = _git(checkout, "ls-remote", "--heads", "--tags", "origin")
+            if fetched.returncode or advertised.returncode:
+                return f"remote verification failed for {checkout}"
+            for line in advertised.stdout.splitlines():
+                commit = line.split()[0]
+                # Single-branch clones need not have objects from other advertised
+                # branches. Only commits present locally can prove preservation.
+                if _git(checkout, "cat-file", "-e", f"{commit}^{{commit}}").returncode == 0:
+                    remote_hashes.add(commit)
             if not remote_hashes:
                 return f"no remote copy can be verified for {checkout}"
             refs = "--all" if (checkout / ".git").is_dir() else "HEAD"
@@ -564,9 +591,10 @@ def cleanup_local_workspaces(
     extra_roots: tuple[Path, ...] = (),
     active_ticket_ids: frozenset[str] = frozenset(),
     apply: bool = True,
+    measure_size: bool = False,
     before_remove: Callable[[Path], str | None] | None = None,
     authorize_retirement: Callable[[WorkspaceState, WorkspaceIdentity], bool] | None = None,
-    retire: Callable[[Path, WorkspaceState, WorkspaceIdentity], Path | str] | None = None,
+    retire: Callable[[Path, WorkspaceState, WorkspaceIdentity, bool], Path | str] | None = None,
     retirement_is_committed: Callable[[WorkspaceState, WorkspaceIdentity], bool] | None = None,
 ) -> CleanupResult:
     """Serialize server and CLI passes without locking unrelated workspace starts."""
@@ -582,6 +610,7 @@ def cleanup_local_workspaces(
             extra_roots=extra_roots,
             active_ticket_ids=active_ticket_ids,
             apply=apply,
+            measure_size=measure_size,
             before_remove=before_remove,
             authorize_retirement=authorize_retirement,
             retire=retire,
@@ -599,9 +628,10 @@ def _cleanup_local_workspaces(
     extra_roots: tuple[Path, ...] = (),
     active_ticket_ids: frozenset[str] = frozenset(),
     apply: bool = True,
+    measure_size: bool = False,
     before_remove: Callable[[Path], str | None] | None = None,
     authorize_retirement: Callable[[WorkspaceState, WorkspaceIdentity], bool] | None = None,
-    retire: Callable[[Path, WorkspaceState, WorkspaceIdentity], Path | str] | None = None,
+    retire: Callable[[Path, WorkspaceState, WorkspaceIdentity, bool], Path | str] | None = None,
     retirement_is_committed: Callable[[WorkspaceState, WorkspaceIdentity], bool] | None = None,
 ) -> CleanupResult:
     """Inventory before removal; unknown ownership and active Tickets always stay."""
@@ -616,7 +646,7 @@ def _cleanup_local_workspaces(
             match = _TICKET_ID.match(child.name)
             candidates.append((child, match.group(1) if match else None))
     manifest = []
-    eligible: list[Path] = []
+    eligible: list[tuple[Path, bool]] = []
     reason: str | None
     for path, ticket_id in candidates:
         state = states.get(ticket_id or "")
@@ -626,10 +656,26 @@ def _cleanup_local_workspaces(
             reason = "Ticket owner or end date is unknown; owner review required"
         elif ticket_id in active_ticket_ids or state.ended_at is None:
             reason = "Ticket is active"
-        elif now < state.ended_at + RETENTION_SECONDS:
-            reason = "seven-day retention period has not ended"
         else:
-            reason = reason_to_keep(path, states, active_ticket_ids)
+            checkout = path / WORKTREE_DIRECTORY
+            checkout_only = now < state.ended_at + RETENTION_SECONDS
+            recorded_problem = _recorded_checkout_problem(path)
+            if recorded_problem:
+                reason = recorded_problem
+            elif checkout_only and not (checkout / ".git").exists():
+                reason = "Ticket artifacts remain for seven days"
+            else:
+                reason = process_in_use(checkout) if checkout.exists() else None
+                if checkout_only and reason is None:
+                    try:
+                        if set(workspace_ticket_owners(checkout)) - {ticket_id}:
+                            reason = "mixed Ticket ownership requires owner review"
+                    except (OSError, subprocess.TimeoutExpired) as exc:
+                        reason = f"cannot inspect workspace ownership: {exc}"
+                if reason is None:
+                    reason = reason_to_keep(
+                        checkout if checkout_only else path, states, active_ticket_ids
+                    )
         manifest.append(
             {
                 "path": str(path),
@@ -638,14 +684,14 @@ def _cleanup_local_workspaces(
                 "eligible_at": state.ended_at + RETENTION_SECONDS
                 if state and state.ended_at is not None
                 else None,
-                "allocated_bytes": _allocated_bytes(path),
+                "allocated_bytes": _allocated_bytes(path) if measure_size else None,
                 "preservation_reason": reason,
             }
         )
         if reason:
             result.skipped.append({"path": str(path), "reason": reason})
         else:
-            eligible.append(path)
+            eligible.append((path, checkout_only))
     tickets_root.parent.mkdir(parents=True, exist_ok=True)
     _write_json(
         tickets_root.parent / "ticket-workspaces-cleanup.json", {"at": now, "folders": manifest}
@@ -658,7 +704,7 @@ def _cleanup_local_workspaces(
     )
     result.removed.extend(retried.removed)
     result.skipped.extend(retried.skipped)
-    for path in eligible:
+    for path, checkout_only in eligible:
         try:
             match = _TICKET_ID.match(path.name)
             assert match is not None
@@ -675,13 +721,14 @@ def _cleanup_local_workspaces(
                 )
                 continue
             target = (
-                retire(path, state, identity)
+                retire(path, state, identity, checkout_only)
                 if retire is not None
                 else retire_workspace(
                     path,
                     state,
                     identity=identity,
                     retired_root=tickets_root.parent / ".ticket-retired",
+                    checkout_only=checkout_only,
                 )
             )
             if isinstance(target, str):
@@ -691,7 +738,9 @@ def _cleanup_local_workspaces(
             if reason:
                 result.skipped.append({"path": str(target), "reason": reason})
             else:
-                result.removed.append(str(path))
+                result.removed.append(
+                    str(path / WORKTREE_DIRECTORY) if checkout_only else str(path)
+                )
         except (OSError, RuntimeError, ValueError, subprocess.TimeoutExpired) as exc:
             result.skipped.append({"path": str(path), "reason": f"cleanup failed: {exc}"})
     return result
@@ -703,15 +752,25 @@ def retire_workspace(
     *,
     retired_root: Path | None = None,
     identity: WorkspaceIdentity | None = None,
+    checkout_only: bool = False,
 ) -> Path | str:
     """Detach this exact physical workspace before any destructive operation.
 
     The caller holds either the server's short write transaction or the executor's
     local start lock after canonical retirement authorization.
     """
-    target = prepare_workspace_retirement(path, state, retired_root=retired_root, identity=identity)
+    target = prepare_workspace_retirement(
+        path, state, retired_root=retired_root, identity=identity, checkout_only=checkout_only
+    )
     if isinstance(target, Path):
-        path.rename(target)
+        try:
+            detach_workspace(path, target, checkout_only=checkout_only)
+        except BaseException:
+            if checkout_only and target.is_dir() and not (target / WORKTREE_DIRECTORY).exists():
+                (target / OWNERSHIP_FILE).unlink(missing_ok=True)
+                target.rmdir()
+            (target.parent / f"{target.name.rsplit('-', 1)[1]}.json").unlink(missing_ok=True)
+            raise
     return target
 
 
@@ -721,6 +780,7 @@ def prepare_workspace_retirement(
     *,
     retired_root: Path | None = None,
     identity: WorkspaceIdentity | None = None,
+    checkout_only: bool = False,
 ) -> Path | str:
     """Prepare the exact retirement record before acquiring the database writer."""
     if path.is_symlink() or path.parent.is_symlink():
@@ -741,6 +801,9 @@ def prepare_workspace_retirement(
 
     scratch_names = snapshot_ticket_scratch(state.ticket_id)
     # Write ahead: a crash after rename still leaves an exact owned target to retry.
+    if checkout_only:
+        target.mkdir()
+        _write_json(target / OWNERSHIP_FILE, json.loads((path / OWNERSHIP_FILE).read_text()))
     _write_json(
         record_path,
         {
@@ -752,14 +815,48 @@ def prepare_workspace_retirement(
             "ended_at": state.ended_at,
             "deleted": state.deleted,
             "scratch_names": scratch_names,
+            "checkout_only": checkout_only,
         },
     )
     return target
 
 
+def detach_workspace(path: Path, target: Path, *, checkout_only: bool) -> None:
+    checkout = path / WORKTREE_DIRECTORY
+    if checkout.exists():
+        reason = process_in_use(checkout)
+        if reason:
+            raise RuntimeError(reason)
+    if not checkout_only:
+        path.rename(target)
+        return
+    (path / WORKTREE_DIRECTORY).rename(target / WORKTREE_DIRECTORY)
+    try:
+        marker_path = path / OWNERSHIP_FILE
+        marker = json.loads(marker_path.read_text())
+        for key in (
+            "worktree",
+            "repository",
+            "branch",
+            "preparing",
+            "initial_commit",
+            "checkout_kind",
+            "temporary",
+        ):
+            marker.pop(key, None)
+        marker["workspace_id"] = uuid4().hex
+        _write_json(marker_path, marker)
+    except BaseException:
+        (target / WORKTREE_DIRECTORY).rename(path / WORKTREE_DIRECTORY)
+        raise
+
+
 def _remove_retired(path: Path) -> str | None:
     """Repair Git's backlink after atomic folder rename, then remove safe work."""
     for checkout in _checkouts(path):
+        reason = process_in_use(checkout)
+        if reason:
+            return reason
         if (checkout / ".git").is_file():
             result = _git(checkout, "worktree", "repair", str(checkout))
             if result.returncode:
@@ -770,6 +867,28 @@ def _remove_retired(path: Path) -> str | None:
     record = json.loads((path.parent / f"{token}.json").read_text())
     if record["target"] != str(path):
         return "retirement target differs from its record"
+    if record.get("checkout_only"):
+        source = Path(record["source"])
+        marker_path = source / OWNERSHIP_FILE
+        if source.is_dir() and not (source / WORKTREE_DIRECTORY).exists():
+            try:
+                identity = read_workspace_identity(source)
+                if identity == WorkspaceIdentity(record["machine_id"], record["workspace_id"]):
+                    marker = json.loads(marker_path.read_text())
+                    for key in (
+                        "worktree",
+                        "repository",
+                        "branch",
+                        "preparing",
+                        "initial_commit",
+                        "checkout_kind",
+                        "temporary",
+                    ):
+                        marker.pop(key, None)
+                    marker["workspace_id"] = uuid4().hex
+                    _write_json(marker_path, marker)
+            except (OSError, ValueError, KeyError):
+                return "cannot recover retained Ticket folder ownership"
     names = record.get("scratch_names", [])
     if not isinstance(names, list) or any(not isinstance(name, str) for name in names):
         return "invalid retirement scratch snapshot"

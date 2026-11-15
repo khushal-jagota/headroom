@@ -21,6 +21,7 @@ from planner.ticket_workspaces.data import (
 )
 from planner.ticket_workspaces.filesystem import (
     cleanup_local_workspaces,
+    detach_workspace,
     prepare_workspace_retirement,
     read_workspace_identity,
 )
@@ -32,6 +33,7 @@ def clean_for_database(
     *,
     extra_roots: tuple[Path, ...] = (),
     apply: bool = True,
+    measure_size: bool = False,
     retire_local_children: WorkspaceRetirementOperation | None = None,
 ) -> CleanupResult:
     with closing(connect(db_path)) as conn:
@@ -58,12 +60,17 @@ def clean_for_database(
     def granted(expected: WorkspaceState, identity: WorkspaceIdentity) -> bool:
         def check() -> Path | str:
             with closing(connect(db_path)) as fresh:
-                return (
-                    Path(".")
-                    if custody_retired(fresh, identity)
-                    and has_committed_retirement(fresh, expected, identity)
-                    else "Local child retirement is not proven"
-                )
+                fresh.execute("BEGIN IMMEDIATE")
+                try:
+                    authorized = custody_retired(fresh, identity) and (
+                        has_committed_retirement(fresh, expected, identity)
+                        or authorize_retirement(fresh, expected, now, identity)
+                    )
+                    fresh.commit()
+                except BaseException:
+                    fresh.rollback()
+                    raise
+                return Path(".") if authorized else "Local child retirement is not proven"
 
         result = (
             retire_local_children(expected.ticket_id, identity, check)
@@ -72,12 +79,15 @@ def clean_for_database(
         )
         return isinstance(result, Path)
 
-    def detach(path: Path, expected: WorkspaceState, identity: WorkspaceIdentity) -> Path | str:
+    def detach(
+        path: Path, expected: WorkspaceState, identity: WorkspaceIdentity, checkout_only: bool
+    ) -> Path | str:
         target = prepare_workspace_retirement(
             path,
             expected,
             identity=identity,
             retired_root=ticket_files_root(db_path).parent / ".ticket-retired",
+            checkout_only=checkout_only,
         )
         if isinstance(target, str):
             return target
@@ -95,22 +105,33 @@ def clean_for_database(
                     if read_workspace_identity(path) != identity:
                         fresh.rollback()
                         return "Physical workspace identity changed"
-                    path.rename(target)
+                    detach_workspace(path, target, checkout_only=checkout_only)
                     detached = True
                     fresh.commit()
                     return target
                 except BaseException:
-                    if detached and target.exists() and not path.exists():
-                        target.rename(path)
+                    if detached and target.exists():
+                        if checkout_only:
+                            (target / "worktree").rename(path / "worktree")
+                            (target / ".panels-workspace.json").replace(
+                                path / ".panels-workspace.json"
+                            )
+                        elif not path.exists():
+                            target.rename(path)
                     fresh.rollback()
                     raise
         finally:
             if not detached:
                 (target.parent / f"{target.name.rsplit('-', 1)[1]}.json").unlink(missing_ok=True)
+                if checkout_only and target.is_dir() and not (target / "worktree").exists():
+                    (target / ".panels-workspace.json").unlink(missing_ok=True)
+                    target.rmdir()
 
-    def retire(path: Path, expected: WorkspaceState, identity: WorkspaceIdentity) -> Path | str:
+    def retire(
+        path: Path, expected: WorkspaceState, identity: WorkspaceIdentity, checkout_only: bool
+    ) -> Path | str:
         def operation() -> Path | str:
-            return detach(path, expected, identity)
+            return detach(path, expected, identity, checkout_only)
 
         return (
             retire_local_children(expected.ticket_id, identity, operation)
@@ -125,6 +146,7 @@ def clean_for_database(
         extra_roots=extra_roots,
         active_ticket_ids=active,
         apply=apply,
+        measure_size=measure_size,
         retire=retire,
         retirement_is_committed=granted,
     )

@@ -33,7 +33,9 @@ def prepare_workspace(folder: Path, repository: Path | None, ticket_id: str) -> 
 
 def test_replacement_repairs_retired_worktree_registration_before_reusing_its_path(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    monkeypatch.setattr(filesystem, "process_in_use", lambda _path: None)
     layout = _layout(tmp_path)
     folder = tmp_path / "files/tickets/t_aaaaaaaa"
     old = prepare_workspace(folder, layout.repository, "t_aaaaaaaa")
@@ -270,8 +272,18 @@ def test_cleanup_of_single_branch_clone_with_unfetched_remote_branch(tmp_path: P
     other = tmp_path / "other"
     subprocess.run(["git", "clone", "-q", origin, str(other)], check=True)
     _git(other, "checkout", "-q", "--orphan", "unrelated")
-    _git(other, "-c", "user.name=Test", "-c", "user.email=test@example.com", "commit",
-         "-q", "--allow-empty", "-m", "unrelated")
+    _git(
+        other,
+        "-c",
+        "user.name=Test",
+        "-c",
+        "user.email=test@example.com",
+        "commit",
+        "-q",
+        "--allow-empty",
+        "-m",
+        "unrelated",
+    )
     _git(other, "push", "-q", "origin", "HEAD:unrelated")
     # The checkout's ordinary fetch is limited to staging. The unrelated advertised
     # object must not make a remotely preserved checkout impossible to retire.

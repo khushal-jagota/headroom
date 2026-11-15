@@ -377,7 +377,11 @@ def test_workspace_cleanup_stops_idle_retained_child_but_preserves_an_active_tur
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Gap: an idle native session survives Ticket end and otherwise defeats expiry."""
+    from planner.ticket_workspaces import filesystem as workspace_filesystem
     from planner.ticket_workspaces.contracts import RETENTION_SECONDS, WorkspaceState
+
+    # This exercises native-child custody; OS process inspection has its own tests.
+    monkeypatch.setattr(workspace_filesystem, "process_in_use", lambda _path: None)
 
     async def run() -> None:
         registry, spool, native, start = native_registry
@@ -1611,8 +1615,12 @@ def test_ticket_inspection_does_not_hold_other_starts_or_workspace_retirement(
     from planner.executor import cleanup_reconciliation
     from planner.executor.cleanup_reconciliation import ExecutorCleanupSnapshot
     from planner.executor.protocol import WorkerCleanupUncertainty
+    from planner.ticket_workspaces import filesystem as workspace_filesystem
     from planner.ticket_workspaces.contracts import RETENTION_SECONDS, WorkspaceState
     from planner.ticket_workspaces.filesystem import prepare_workspace
+
+    # This exercises lock scope, independent of the host's process visibility.
+    monkeypatch.setattr(workspace_filesystem, "process_in_use", lambda _path: None)
 
     async def run() -> None:
         registry, _, native, start = native_registry

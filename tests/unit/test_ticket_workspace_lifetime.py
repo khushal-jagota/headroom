@@ -26,8 +26,229 @@ from planner.tickets.data import create_ticket
 @pytest.fixture(autouse=True)
 def isolated_worker_scratch(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     from planner.conversation import worker_scratch
+    from planner.ticket_workspaces import filesystem
 
     monkeypatch.setattr(worker_scratch, "_scratch_root", lambda: tmp_path / "runs")
+    monkeypatch.setattr(filesystem, "process_in_use", lambda _path: None)
+
+
+@pytest.mark.parametrize("deleted", [False, True])
+def test_ended_checkout_is_removed_before_artifacts(tmp_path: Path, deleted: bool) -> None:
+    layout = _layout(tmp_path)
+    root = tmp_path / "files" / "tickets"
+    folder = root / "t_aaaaaaaa"
+    checkout = prepare_workspace(folder, layout.repository, folder.name)
+    artifact = folder / "artifacts" / "report.md"
+    artifact.write_text("retain")
+    state = {folder.name: WorkspaceState(folder.name, 100, deleted)}
+    cleanup_local_workspaces(root, state, 100)
+    assert not checkout.exists()
+    assert artifact.read_text() == "retain"
+    replacement = prepare_workspace(folder, layout.repository, folder.name)
+    assert replacement.is_dir()
+    cleanup_local_workspaces(root, state, 100 + RETENTION_SECONDS)
+    assert not folder.exists()
+
+
+def test_immediate_cleanup_keeps_dirty_or_in_use_checkout(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from planner.ticket_workspaces import filesystem
+
+    layout = _layout(tmp_path)
+    root = tmp_path / "files" / "tickets"
+    folder = root / "t_aaaaaaaa"
+    checkout = prepare_workspace(folder, layout.repository, folder.name)
+    state = {folder.name: WorkspaceState(folder.name, 100, False)}
+    (checkout / "unfinished").write_text("work")
+    result = cleanup_local_workspaces(root, state, 100)
+    assert checkout.exists() and "uncommitted" in result.skipped[0]["reason"]
+    (checkout / "unfinished").unlink()
+    monkeypatch.setattr(filesystem, "process_in_use", lambda _path: "process is using checkout")
+    result = cleanup_local_workspaces(root, state, 100)
+    assert checkout.exists() and "process is using" in result.skipped[0]["reason"]
+
+
+def test_immediate_cleanup_preserves_nested_other_ticket_checkout(tmp_path: Path) -> None:
+    layout = _layout(tmp_path)
+    root = tmp_path / "files" / "tickets"
+    folder = root / "t_aaaaaaaa"
+    checkout = prepare_workspace(folder, layout.repository, folder.name)
+    nested = checkout / "t_bbbbbbbb"
+    nested.mkdir()
+    _git(nested, "init", "-q")
+    result = cleanup_local_workspaces(
+        root, {folder.name: WorkspaceState(folder.name, 100, False)}, 100
+    )
+    assert nested.exists()
+    assert "mixed Ticket ownership" in result.skipped[0]["reason"]
+
+
+def test_cleanup_does_not_accept_commit_only_on_another_remote(tmp_path: Path) -> None:
+    layout = _layout(tmp_path)
+    root = tmp_path / "files" / "tickets"
+    folder = root / "t_aaaaaaaa"
+    checkout = prepare_workspace(folder, layout.repository, folder.name)
+    _git(checkout, "config", "user.name", "Test")
+    _git(checkout, "config", "user.email", "test@example.com")
+    _git(checkout, "commit", "-q", "--allow-empty", "-m", "not on origin")
+    secondary = tmp_path / "secondary.git"
+    _git(tmp_path, "init", "-q", "--bare", str(secondary))
+    _git(checkout, "remote", "add", "secondary", str(secondary))
+    _git(checkout, "push", "-q", "secondary", "HEAD:refs/heads/saved")
+    result = cleanup_local_workspaces(
+        root, {folder.name: WorkspaceState(folder.name, 100, False)}, 100
+    )
+    assert checkout.exists()
+    assert "unpushed work" in result.skipped[0]["reason"]
+
+
+def test_recorded_checkout_with_missing_git_metadata_is_never_a_plain_folder(
+    tmp_path: Path,
+) -> None:
+    layout = _layout(tmp_path)
+    root = tmp_path / "files" / "tickets"
+    folder = root / "t_aaaaaaaa"
+    checkout = prepare_workspace(folder, layout.repository, folder.name)
+    (checkout / ".git").rename(checkout / ".git-missing")
+    states = {folder.name: WorkspaceState(folder.name, 100, False)}
+    for now in (100, 100 + RETENTION_SECONDS):
+        result = cleanup_local_workspaces(root, states, now)
+        assert checkout.exists()
+        assert "metadata is missing or invalid" in result.skipped[0]["reason"]
+
+    # A recorded plain workspace remains eligible for normal artifact expiry.
+    plain = root / "t_bbbbbbbb"
+    prepare_workspace(plain, None, plain.name)
+    cleanup_local_workspaces(
+        root, {plain.name: WorkspaceState(plain.name, 100, False)}, 100 + RETENTION_SECONDS
+    )
+    assert not plain.exists()
+
+
+def test_home_cleanup_retires_checkout_but_allows_a_new_workspace(
+    tmp_db: Connection, tmp_path: Path
+) -> None:
+    from planner.files.lifecycle import database_path
+    from planner.files.logic.paths import ticket_files_root
+    from planner.ticket_workspaces.cleanup import clean_for_database
+    from planner.ticket_workspaces.data import has_committed_retirement
+
+    layout = _layout(tmp_path)
+    ticket = create_ticket(
+        tmp_db,
+        title="Retire checkout",
+        principal=OWNER_PRINCIPAL,
+        now=1,
+        title_max_chars=200,
+        worker_type="coding",
+    )
+    folder = ticket_files_root(database_path(tmp_db)) / ticket.id
+    checkout = prepare_workspace(folder, layout.repository, ticket.id)
+    previous_identity = workspace_identity(folder)
+    (folder / "artifacts" / "report.md").write_text("retained")
+    tmp_db.execute("UPDATE tickets SET stage='done',updated_at=100 WHERE id=?", (ticket.id,))
+    tmp_db.commit()
+    state = read_workspace_states(tmp_db)[ticket.id]
+    clean_for_database(database_path(tmp_db), 100)
+    assert not checkout.exists()
+    assert (folder / "artifacts" / "report.md").read_text() == "retained"
+    assert has_committed_retirement(tmp_db, state, previous_identity)
+    assert workspace_identity(folder) != previous_identity
+    assert prepare_workspace(folder, layout.repository, ticket.id).exists()
+
+
+def test_retry_recovers_checkout_detached_before_grant_or_marker_update(
+    tmp_db: Connection, tmp_path: Path
+) -> None:
+    from planner.files.lifecycle import database_path
+    from planner.files.logic.paths import ticket_files_root
+    from planner.ticket_workspaces.cleanup import clean_for_database
+    from planner.ticket_workspaces.filesystem import prepare_workspace_retirement
+
+    layout = _layout(tmp_path)
+    ticket = create_ticket(
+        tmp_db,
+        title="Interrupted retirement",
+        principal=OWNER_PRINCIPAL,
+        now=1,
+        title_max_chars=200,
+        worker_type="coding",
+    )
+    root = ticket_files_root(database_path(tmp_db))
+    folder = root / ticket.id
+    checkout = prepare_workspace(folder, layout.repository, ticket.id)
+    previous_identity = workspace_identity(folder)
+    tmp_db.execute("UPDATE tickets SET stage='done',updated_at=100 WHERE id=?", (ticket.id,))
+    tmp_db.commit()
+    state = read_workspace_states(tmp_db)[ticket.id]
+    target = prepare_workspace_retirement(
+        folder,
+        state,
+        identity=previous_identity,
+        retired_root=root.parent / ".ticket-retired",
+        checkout_only=True,
+    )
+    assert isinstance(target, Path)
+    checkout.rename(target / "worktree")  # Crash before marker update and transaction commit.
+    clean_for_database(database_path(tmp_db), 100)
+    assert not target.exists()
+    assert workspace_identity(folder) != previous_identity
+    assert prepare_workspace(folder, layout.repository, ticket.id).exists()
+
+
+def test_mac_cleanup_retires_checkout_without_removing_artifacts(
+    tmp_path: Path,
+    native_registry: tuple[MacRunner, MacOutbox, ScriptedChild, ChildCommand],
+) -> None:
+    import asyncio
+
+    layout = _layout(tmp_path)
+    registry, _, _, _ = native_registry
+    folder = registry.paths.artifacts / "t_aaaaaaaa"
+    checkout = prepare_workspace(folder, layout.repository, folder.name)
+    artifact = folder / "artifacts" / "report.md"
+    artifact.write_text("retain")
+    grants: list[WorkspaceState] = []
+
+    async def grant(state: WorkspaceState, _identity: object) -> bool:
+        grants.append(state)
+        return True
+
+    registry._retire_workspace = grant
+    state = WorkspaceState(folder.name, 100, False)
+    asyncio.run(registry.cleanup_workspaces((state,), 100))
+    assert grants == [state]
+    assert not checkout.exists()
+    assert artifact.read_text() == "retain"
+
+
+def test_mac_late_process_refusal_preserves_checkout_until_next_pass(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    native_registry: tuple[MacRunner, MacOutbox, ScriptedChild, ChildCommand],
+) -> None:
+    import asyncio
+
+    from planner.ticket_workspaces import filesystem
+
+    layout = _layout(tmp_path)
+    registry, _, _, _ = native_registry
+    folder = registry.paths.artifacts / "t_aaaaaaaa"
+    checkout = prepare_workspace(folder, layout.repository, folder.name)
+    observations = iter([None, "process is using checkout"])
+    monkeypatch.setattr(filesystem, "process_in_use", lambda _path: next(observations))
+
+    async def grant(_state: WorkspaceState, _identity: object) -> bool:
+        return True
+
+    registry._retire_workspace = grant
+    state = WorkspaceState(folder.name, 100, False)
+    asyncio.run(registry.cleanup_workspaces((state,), 100))
+    assert checkout.exists()
+    monkeypatch.setattr(filesystem, "process_in_use", lambda _path: None)
+    asyncio.run(registry.cleanup_workspaces((state,), 100))
+    assert not checkout.exists()
 
 
 def test_end_clock_survives_edits_reopen_and_deletion_without_expiring_live_files(
@@ -444,15 +665,25 @@ def test_recorded_child_uncertainty_blocks_local_detach_and_retirement_replay(
     from planner.ticket_workspaces.cleanup import clean_for_database
 
     ticket = create_ticket(
-        tmp_db, title="Retain child custody", principal=OWNER_PRINCIPAL,
-        now=1, title_max_chars=200, worker_type="coding",
+        tmp_db,
+        title="Retain child custody",
+        principal=OWNER_PRINCIPAL,
+        now=1,
+        title_max_chars=200,
+        worker_type="coding",
     )
     folder = ticket_files_root(database_path(tmp_db)) / ticket.id
     prepare_workspace(folder, None, ticket.id)
-    asyncio.run(start_ticket_conversation(
-        InMemoryConversationSystem(), tmp_db, ticket, worker_resolve(tmp_db, ticket),
-        conversation_id="retained_local_child", now=2,
-    ))
+    asyncio.run(
+        start_ticket_conversation(
+            InMemoryConversationSystem(),
+            tmp_db,
+            ticket,
+            worker_resolve(tmp_db, ticket),
+            conversation_id="retained_local_child",
+            now=2,
+        )
+    )
     tmp_db.execute(
         "INSERT INTO conversation_child_custody(conversation_id,generation,state) "
         "VALUES('retained_local_child','partial-start','launch_pending')"
@@ -466,9 +697,11 @@ def test_recorded_child_uncertainty_blocks_local_detach_and_retirement_replay(
     # An earlier detach grant does not erase newly discovered uncertain custody.
     identity = workspace_identity(folder)
     from planner.ticket_workspaces.data import authorize_retirement
+
     state = read_workspace_states(tmp_db)[ticket.id]
     assert authorize_retirement(tmp_db, state, RETENTION_SECONDS + 100, identity)
     from planner.ticket_workspaces.filesystem import retire_workspace
+
     retired = retire_workspace(folder, state, identity=identity)
     assert isinstance(retired, Path)
     tmp_db.commit()
@@ -503,6 +736,7 @@ def test_cleanup_does_not_recreate_a_folder_detached_after_inventory(
         root,
         {folder.name: WorkspaceState(folder.name, 0, False)},
         RETENTION_SECONDS,
+        measure_size=True,
     )
     assert not folder.exists()
     assert detached.exists()
