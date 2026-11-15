@@ -3,7 +3,6 @@ import type { Database } from '../core/database/contracts.ts';
 import { is_os_error } from '../core/system_errors.ts';
 import { inspect } from 'node:util';
 import { ConversationBackendKey } from '../conversation/contracts.ts';
-import { ORIGINAL_MAC_MACHINE_ID } from '../execution_identity.ts';
 import { save_machine_model_list } from '../conversation/backend_state.ts';
 import type { BackendSnapshot, SnapshotOptions } from '../conversation/snapshot/contracts.ts';
 import type { RemoteCatalogSource } from '../conversation/model_resolution/contracts.ts';
@@ -21,7 +20,7 @@ export const MAC_AWAY_DIAGNOSIS = 'The Mac is away.';
 export interface CatalogRunAuthority {
   owns_conversation(conversation_id: string): boolean;
 }
-type Presence = Pick<MacPresenceService, 'current_identity' | 'is_present'>;
+type Presence = Pick<MacPresenceService, 'current_identity' | 'is_present' | 'machine_id'>;
 type Mailbox = Pick<
   SqliteCommandMailbox,
   'put_model_list_request' | 'wait_result' | 'withdraw_waiting'
@@ -44,6 +43,7 @@ function cancelled(): DOMException {
 }
 /** The database, mailbox, and presence service remain owned by the invocation. */
 export class VpsCatalogRelay implements RemoteCatalogSource {
+  readonly machine_id: string;
   private readonly tasks = new Map<ConversationBackendKey, CatalogRead>();
   private readonly operations = new Set<Promise<BackendSnapshot>>();
   private closed = false;
@@ -62,6 +62,7 @@ export class VpsCatalogRelay implements RemoteCatalogSource {
   readonly mailbox: Mailbox;
   constructor(database: Database, runs: CatalogRunAuthority, presence: Presence, mailbox: Mailbox) {
     this.database = database;
+    this.machine_id = presence.machine_id;
     this.runs = runs;
     this.presence = presence;
     this.mailbox = mailbox;
@@ -84,7 +85,7 @@ export class VpsCatalogRelay implements RemoteCatalogSource {
     const row = this.database.read((sql) =>
       sql.get<{ snapshot_json: string }>(
         'SELECT snapshot_json FROM machine_backend_snapshots WHERE machine_id=? AND backend_key=?',
-        [ORIGINAL_MAC_MACHINE_ID, backend_key],
+        [this.machine_id, backend_key],
       ),
     );
     return row ? this.decode(row.snapshot_json) : null;
@@ -265,7 +266,7 @@ export class VpsCatalogRelay implements RemoteCatalogSource {
         default_reasoning_effort: previous.default_reasoning_effort,
         models_complete: true,
       };
-    this.database.write((tx) => save_machine_model_list(tx, ORIGINAL_MAC_MACHINE_ID, snapshot));
+    this.database.write((tx) => save_machine_model_list(tx, this.machine_id, snapshot));
     return snapshot;
   }
   private answer(

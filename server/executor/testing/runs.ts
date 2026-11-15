@@ -22,7 +22,106 @@ import { ConversationStore } from '../../conversation/record/data/store.ts';
 import { ConversationMessageFiles } from '../../conversation/record/message_files.ts';
 import { SqliteProcessConversationSystem } from '../../conversation/system.ts';
 import { adopted_running_turn } from '../../conversation/logic/retained_turn.ts';
+import { accept_lease_in_transaction } from '../vps_presence_store.ts';
+import { isDeepStrictEqual } from 'node:util';
 const spec = JSON.parse(readFileSync(0, 'utf8'));
+if (spec.mode === 'machines') {
+  const db = createDatabase(spec.path);
+  const mailboxes = spec.machines.map(
+    (machine_id: string) => new SqliteCommandMailbox(db, { machine_id, clock: () => spec.now }),
+  ) as SqliteCommandMailbox[];
+  const presences = mailboxes.map(
+    (mailbox, index) =>
+      new MacPresenceService(db, mailbox, {
+        machine_id: spec.machines[index],
+        changes: new ChangeSignal(),
+        clock: () => spec.now,
+      }),
+  );
+  const owners = presences.map((presence, index) => new MacRuns(db, presence, mailboxes[index]!));
+  const references = spec.children as WireTypes['ChildReference'][];
+  const attempt = (work: () => unknown) => {
+    try {
+      work();
+      return null;
+    } catch (error) {
+      return (
+        (error as { code?: string; constructor: { name: string } }).code ??
+        (error as Error).constructor.name
+      );
+    }
+  };
+  const rows = () =>
+    db.read((sql) => ({
+      runs: sql.all('SELECT * FROM mac_runs ORDER BY conversation_id'),
+      assignments: sql.all(
+        'SELECT * FROM executor_child_assignments ORDER BY executor_incarnation,child_id',
+      ),
+      commands: sql.all('SELECT * FROM executor_commands ORDER BY command_sequence'),
+    }));
+  const snapshot = () =>
+    owners.map((owner) => ({
+      machine_id: owner.machine_id,
+      retained: owner.retained_runs(),
+      unresolved: owner.store.unresolved_runs_of_replaced_incarnations(),
+      owns: references.map((child) => owner.owns_conversation(child.conversation_id)),
+      stalls: db.read((sql) => owner.stall_source().tracked_waits(sql, spec.now)),
+    }));
+  let result;
+  try {
+    owners.forEach((owner, index) =>
+      owner.store.register_child(references[index]!, 'ticket', spec.ticket, spec.now),
+    );
+    const before = snapshot(),
+      original = rows();
+    const refused = owners.map((owner, index) => {
+      const foreign = references[1 - index]!;
+      return [
+        attempt(() => owner.recover(foreign)),
+        attempt(() => owner.authority(foreign)),
+        attempt(() => owner.store.has_closed_child_assignment(foreign)),
+        attempt(() => owner.store.register_child(foreign, 'ticket', spec.ticket, spec.now)),
+      ];
+    });
+    const unchanged = isDeepStrictEqual(rows(), original);
+    const recovered = owners.map(
+      (owner, index) => owner.recover(references[index]!)?.initial_history_complete,
+    );
+    db.write((tx) =>
+      accept_lease_in_transaction(
+        tx,
+        decode_value(spec.replacement, 'LeaseRequest'),
+        spec.now + 1,
+        spec.machines[1],
+      ),
+    );
+    const replaced = snapshot();
+    const retained_recovery = owners[1]!.recover(references[1]!)?.initial_history_complete;
+    // This trusted exact-reference participant intentionally remains global, as in Python.
+    owners[0]!.store.close_child(references[1]!, spec.now + 2);
+    result = {
+      before,
+      refused,
+      unchanged,
+      recovered,
+      replaced,
+      retained_recovery,
+      closed: owners[1]!.store.has_closed_child_assignment(references[1]!),
+      closed_recovery: owners[1]!.recover(references[1]!) === null,
+      rows: rows(),
+    };
+  } finally {
+    const stop = { deadline: performance.now() / 1000 + 2 };
+    for (const owner of owners) await owner.stop(stop);
+    for (const presence of presences) await presence.stop(stop);
+    for (const mailbox of mailboxes) await mailbox.stop(stop);
+    db.close();
+  }
+  await new Promise<void>((resolve, reject) =>
+    process.stdout.write(JSON.stringify(result), (error) => (error ? reject(error) : resolve())),
+  );
+  process.exit(0);
+}
 const database = createDatabase(spec.path),
   now = spec.now as number;
 const mailbox = new SqliteCommandMailbox(database, { clock: () => now });
