@@ -485,6 +485,11 @@ conversation ID from the owner and uses the existing owner send door. Context-me
 previews set `showsConversation: false`. Listing, opening, reloading and sharing
 artifacts do not write to the server; sending a message requires an explicit tap.
 
+Artifact links in proposals, messages, and decision notes stay inline with their
+authored labels. Review does not append file previews. A tap opens the existing
+native viewer. Conversation text resolves relative links against the configured
+server and uses the same managed-file route. Artifact catalogs and viewers keep
+their existing presentation.
 
 The three artifact logic tests cover cross-owner URLs and encoding, unsafe file
 paths, and preservation of markdown code blocks. They reuse the existing XCTest
