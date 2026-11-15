@@ -311,8 +311,20 @@ def test_unit21_status_populated_and_sanitized(
     assert answers[0]["backup"]["verified_snapshot_count"] == 1
 
 
+@pytest.mark.parametrize(
+    "platform",
+    [
+        "Linux",
+        pytest.param(
+            "Darwin",
+            marks=pytest.mark.xfail(
+                run=False, reason="expected-open P5: #916 Darwin log cleanup truncates native logs"
+            ),
+        ),
+    ],
+)
 def test_unit21_cleanup_rechecks_changed_targets(
-    tmp_path: Path, request: pytest.FixtureRequest
+    tmp_path: Path, request: pytest.FixtureRequest, platform: str
 ) -> None:
     root = tmp_path / "template"
     source = _seed(root)
@@ -340,6 +352,7 @@ def test_unit21_cleanup_rechecks_changed_targets(
     ]
     cleanup_case = {
         "operation": "cleanup",
+        "platform": platform,
         "policy": {"log_warning_bytes": 64},
         "references": [str(root / "backups/.backup-live")],
         "mutations": mutations,

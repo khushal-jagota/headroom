@@ -23,7 +23,7 @@ ROOT = Path(__file__).resolve().parents[3]
 
 @pytest.mark.xfail(
     run=False,
-    reason="expected-open P2: port lease cleanup after retired agent_processes custody",
+    reason="expected-open P2: #916 port lease cleanup after retired agent_processes custody",
 )
 def test_unit22_mac_leases(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     update = dict(schema_version=1, target=None, prefetch=None)

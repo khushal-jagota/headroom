@@ -138,7 +138,7 @@ def _python(root: Path, calls: list[dict[str, Any]], monkeypatch: pytest.MonkeyP
         pytest.param(
             "scratch",
             marks=pytest.mark.xfail(
-                run=False, reason="expected-open P4: cleanup needs the ticket workspace lifecycle"
+                run=False, reason="expected-open P4: #916 workspaces replace scratch cleanup"
             ),
         ),
     ],

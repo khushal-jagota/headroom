@@ -816,7 +816,7 @@ def _ios_fixture(root: Path) -> dict[str, Any]:
             "host-admission",
             marks=pytest.mark.xfail(
                 run=False,
-                reason="expected-open P5: port Linux host admission Node version policy",
+                reason="expected-open P5: #916 port Linux host admission Node version policy",
             ),
         ),
     ],

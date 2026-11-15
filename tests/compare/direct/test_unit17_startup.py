@@ -141,7 +141,7 @@ def _python(spec: dict[str, Any]) -> dict[str, Any]:
 @pytest.mark.xfail(
     run=False,
     reason=(
-        "expected-open P3: replace the retired WorkerUnit launch fixture with worker supervision"
+        "expected-open P3: #916 replaces WorkerUnit launch with supervision"
     ),
 )
 def test_unit17_startup_environment(tmp_path: Path, request: pytest.FixtureRequest) -> None:

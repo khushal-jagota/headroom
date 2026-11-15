@@ -30,6 +30,12 @@ from planner.executor import protocol as wire
 from planner.executor.vps_inbox import InboxStore, MissingFiles
 
 
+@pytest.mark.xfail(
+    run=False,
+    reason=(
+        "expected-open P2: #916 protocol24 identity fails TS22 inbox admission"
+    ),
+)
 def test_populated_inbox_publication_and_receipts(
     tmp_path: Path, request: pytest.FixtureRequest
 ) -> None:

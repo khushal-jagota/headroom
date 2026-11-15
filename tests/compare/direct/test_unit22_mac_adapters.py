@@ -316,7 +316,7 @@ async def reference(root: Path, patch: pytest.MonkeyPatch) -> dict[str, Any]:
 
 @pytest.mark.xfail(
     run=False,
-    reason="expected-open P2: replace retired agent_processes custody with executor supervision",
+    reason="expected-open P2: #916 replaces agent_processes custody with supervision",
 )
 def test_unit22_mac_adapters(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, request: pytest.FixtureRequest

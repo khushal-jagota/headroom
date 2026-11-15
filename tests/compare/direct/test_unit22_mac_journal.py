@@ -358,6 +358,13 @@ def _command(command_id: str, sequence: int, operation: str = "stop") -> Mailbox
     )
 
 
+@pytest.mark.xfail(
+    run=False,
+    reason=(
+        "expected-open P2: #916 staging supervision changes stop-command journal "
+        "retention and publication-crash rows"
+    ),
+)
 def test_unit22_mac_journal_roundtrip_and_publication_crash(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

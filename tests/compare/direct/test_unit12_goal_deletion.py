@@ -128,7 +128,9 @@ def test_unit12_goal_deletion_transfer_and_files(
                 (goal.id,),
             )
             conn.execute(
-                "INSERT INTO notification_attention_edges VALUES('goal',?,'awaiting_reply',1,1,0)",
+                "INSERT INTO notification_attention_edges"
+                "(subject_kind,subject_id,notification_type,generation,occurred_at,decided) "
+                "VALUES('goal',?,'awaiting_reply',1,1,0)",
                 (goal.id,),
             )
             conn.execute(

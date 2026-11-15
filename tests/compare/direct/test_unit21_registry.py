@@ -219,12 +219,10 @@ def _state(root: Path) -> dict[str, Any]:
         return value
 
     files = {
-        str(path.relative_to(root / "files"))
-        .replace(
+        str(path.relative_to(root / "files")).replace(
             next((identity for identity in ids if identity in str(path)), "IMPOSSIBLE"),
             next((label for identity, label in ids.items() if identity in str(path)), "IMPOSSIBLE"),
-        ): hashlib.sha256(path.read_bytes())
-        .hexdigest()
+        ): hashlib.sha256(path.read_bytes()).hexdigest()
         for path in (root / "files").rglob("*")
         if path.is_file()
     }
@@ -240,7 +238,11 @@ def test_unit21_registry_fixture_and_lifecycle_parity(
     selected_node = shutil.which("node")
     assert selected_node is not None, "selected Node runtime is required"
     homes = create_synthetic_homes(tmp_path)
-    environment = {"PATH": str(Path(selected_node).parent) + os.pathsep + os.defpath, **homes}
+    environment = {
+        "PATH": str(Path(selected_node).parent) + os.pathsep + os.defpath,
+        "TMPDIR": str(Path(tempfile.gettempdir()).resolve()),
+        **homes,
+    }
     for name, relative in {
         "PLAN_DB_PATH": "private.sqlite",
         "PLAN_CONFIG_PATH": "config.json",

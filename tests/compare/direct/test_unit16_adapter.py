@@ -187,6 +187,9 @@ async def python_exercise(spec: dict[str, Any]) -> dict[str, Any]:
         downstream = options["event_sink"]
 
         class Sink:
+            async def record_local_child_custody(self, identity: Any) -> None:
+                await downstream.record_local_child_custody(identity)
+
             async def report(self, turn: Any, event: Any) -> None:
                 value = dataclasses.asdict(event)
                 backend_events.append(

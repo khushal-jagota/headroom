@@ -140,7 +140,7 @@ def _normalize(value: Any, root: Path) -> Any:
 
 
 @pytest.mark.xfail(
-    run=False, reason="expected-open P4: retired scratch rules need the ticket workspace lifecycle"
+    run=False, reason="expected-open P4: #916 workspace lifecycle replaces scratch rules"
 )
 def test_scratch_database_gate_and_ticket_rules_match_python(
     tmp_path: Path,
@@ -363,7 +363,7 @@ def _python_git(layout: scratch_source.ScratchLayout, value: dict[str, Any]) -> 
 
 @pytest.mark.xfail(
     run=False,
-    reason="expected-open P4: retired scratch cleanup needs the ticket workspace lifecycle",
+    reason="expected-open P4: #916 retired scratch cleanup needs the ticket workspace lifecycle",
 )
 def test_scratch_git_work_and_fresh_apply_checks_match_python(
     tmp_path: Path,
@@ -383,7 +383,7 @@ def test_scratch_git_work_and_fresh_apply_checks_match_python(
 
 @pytest.mark.xfail(
     run=False,
-    reason="expected-open P4: retired scratch runtime needs the ticket workspace lifecycle",
+    reason="expected-open P4: #916 retired scratch runtime needs the ticket workspace lifecycle",
 )
 def test_scratch_runtime_waits_and_fences_held_pass_at_deadline(
     tmp_path: Path,
