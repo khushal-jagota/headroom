@@ -1,4 +1,5 @@
 import { HOME_MACHINE_ID } from '../execution_identity.ts';
+import { read_machine } from '../machines/data.ts';
 import { filesRoot } from '../files/logic/paths.ts';
 import { prepare_workspace, workspace_identity } from '../ticket_workspaces/filesystem.ts';
 import type { WorkspaceIdentity } from '../ticket_workspaces/contracts.ts';
@@ -274,6 +275,10 @@ export function worker_resolve(
       '\n\n[Ticket workflow guidance]\n' +
       render_workflow_guide(ticket.workflow) +
       '\n[/Ticket workflow guidance]' +
+      '\n\n[Ticket machine]\n' +
+      `This Ticket runs on ${database.read((sql) => read_machine(sql, ticket.machine_id).name)}. ` +
+      `Its fixed destination is ${ticket.machine_id}. ` +
+      'A rename never changes this destination.\n[/Ticket machine]' +
       (ticket.machine_id === HOME_MACHINE_ID
         ? '\n\n[Panels-owned Ticket workspace]\n' +
           `Panels supplies this worktree: ${values.workspace_folder}. Put reviewable output in ${join(filesRoot(context(database, options).db_path, 'ticket'), ticket.id, 'artifacts')}. ` +
