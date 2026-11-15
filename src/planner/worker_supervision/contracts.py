@@ -24,13 +24,11 @@ class CleanupResult:
     complete: bool
     reason: str
     scope: str = (
-        "Recorded process incarnations and observed session members only. "
-        "Unseen detached descendants and processes that change user before observation "
-        "are outside this proof. Linux signals use pidfds. Adoption of a late Linux "
-        "session member assumes that the entire Worker session did not end before "
-        "the root PID was reused by a new session leader that forked and exited. "
-        "Mac signals use an immediate matching microsecond birth check, with an accepted "
-        "check-to-signal race."
+        "Linux cleanup requires empty delegated cgroup custody for all inherited descendants. "
+        "Legacy or unsupported Linux custody retains a cleanup fence. Processes launched "
+        "through external brokers are outside descendant custody. Mac cleanup covers recorded "
+        "process incarnations and observed session members only, with an immediate matching "
+        "microsecond birth check and an accepted check-to-signal race."
     )
 
 

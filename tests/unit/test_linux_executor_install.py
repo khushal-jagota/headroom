@@ -31,6 +31,7 @@ def test_service_preserves_literal_paths_and_supervisor_shutdown(tmp_path: Path)
     assert "runtime with %% $$ space" in unit
     assert '"PLAN_EXECUTOR_ROOT=' + str(config.data) + '"' in unit
     assert "KillMode=mixed\nTimeoutStopSec=30" in unit
+    assert "Delegate=yes" in unit
     assert "Restart=on-failure" in unit
     assert 'Environment="PLAN_DB_PATH' not in unit
     with pytest.raises(ValueError, match="control characters"):
