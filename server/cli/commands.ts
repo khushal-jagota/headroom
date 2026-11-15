@@ -1268,6 +1268,10 @@ export function create_commands(environment: NodeJS.ProcessEnv = {}): CliCommand
     }),
   ]);
   command('ticket list', 'List Tickets with bounded filters.', [
+    option('active', '--active', boolean, {
+      default: false,
+      description: 'Exclude backlogged and terminal Tickets.',
+    }),
     option('is_backlogged', '--backlogged', boolean, {
       description: 'Filter explicit Ticket deferral.',
     }),
@@ -1314,6 +1318,9 @@ export function create_commands(environment: NodeJS.ProcessEnv = {}): CliCommand
   ]);
   command('ticket proposal', 'Submit, accept, or revise the current Ticket proposal.', [
     argument('proposal_args', '[PROPOSAL_ARGS...]', text, {}),
+    option('expected_proposal_revision', '--expected-proposal-revision <INTEGER>', integer(1), {
+      description: 'The inspected proposal revision. Omission pins the command-time read.',
+    }),
     option('ceiling', '--ceiling <TEXT>', text, {
       description: 'Next ceiling for an accepted proposal.',
     }),
