@@ -1393,3 +1393,138 @@ def test_unit21_release_identity_archive_and_frontier(
             )
             + "\n"
         )
+
+
+def test_unit21_release_target_admission(tmp_path: Path, request: pytest.FixtureRequest) -> None:
+    """Gap: home/executor role refusals must survive archive create and owned extraction."""
+    from tests.compare.direct.unit20_cli import write_report
+
+    from planner.platform_runtime.darwin.runtime_contracts import DarwinRuntimeContract
+    from planner.platform_runtime.targets import LINUX_EXECUTOR, MAC_EXECUTOR, MAC_HOME
+
+    began = time.perf_counter()
+    app = build_app(tmp_path / "app", SHA, "sentinel")
+
+    def outcome(operation: Any) -> str:
+        try:
+            operation()
+            return "accepted"
+        except ValueError as error:
+            return str(error)
+
+    def validate(path: Path, target: Any) -> Any:
+        return validate_app_manifest(path / "manifest.json", expected_target=target)
+
+    expected: list[Any] = [outcome(lambda: validate(app, LINUX_EXECUTOR))]
+    shutil.copytree(app, tmp_path / "markerless")
+    (app / "mac-runtime.json").write_text(
+        json.dumps(dict(platform="linux", architecture="x86_64", role="executor"))
+    )
+    rewrite_artifact_digest(app)
+    expected.append(outcome(lambda: validate(app, MAC_EXECUTOR)))
+    archive = tmp_path / "python-target.tar.gz"
+    digest = create_app_archive(app, archive, expected_target=LINUX_EXECUTOR)
+    expected.append(
+        outcome(lambda: extract_app_archive(archive, tmp_path / "python-refused", digest, SHA))
+    )
+    extract_app_archive(
+        archive, tmp_path / "python-restored", digest, SHA, expected_target=LINUX_EXECUTOR
+    )
+    expected.append((tmp_path / "python-restored/sentinel").read_text())
+    shutil.copytree(app, tmp_path / "home")
+    (tmp_path / "home/mac-runtime.json").write_text(
+        json.dumps(dict(platform="darwin", architecture="arm64", role="home"))
+    )
+    home = tmp_path / "home"
+    document = json.loads((home / "manifest.json").read_text())
+    darwin = DarwinRuntimeContract(
+        "3.12.12", hashlib.sha256((home / "runtime/inventory.json").read_bytes()).hexdigest()
+    ).as_dict()
+    document["runtime_contract"] = darwin
+    (home / "runtime/contract.json").write_text(json.dumps(darwin))
+    (home / "manifest.json").write_text(json.dumps(document))
+    rewrite_artifact_digest(home)
+    expected.append(outcome(lambda: validate(home, MAC_HOME)))
+    home_archive = tmp_path / "python-home.tar.gz"
+    home_digest = create_app_archive(home, home_archive, expected_target=MAC_HOME)
+    restored = extract_app_archive(
+        home_archive, tmp_path / "python-home-restored", home_digest, SHA, expected_target=MAC_HOME
+    )
+    # Python's Darwin contract is v1. Native v2 replaces its interpreter identity explicitly.
+    native = {**darwin, "version": 2, "minimum_node_version": "22.18.0"}
+    native.pop("python_version")
+    expected.extend([(tmp_path / "python-home-restored/sentinel").read_text(), native])
+    assert restored.runtime_contract is not None and restored.runtime_contract.as_dict() == darwin
+    patches: list[dict[str, Any]] = [
+        {"architecture": "x86_64"},
+        {"minimum_os": "14.0"},
+        {"external_libraries": ["/opt/homebrew/lib/"]},
+        {"platforms": []},
+    ]
+    expected.extend(
+        outcome(lambda patch=patch: DarwinRuntimeContract.from_dict({**darwin, **patch}))
+        for patch in patches
+    )
+    (tmp_path / "darwin-cases.json").write_text(json.dumps(patches))
+    code = """
+import {cp,mkdir,readFile,writeFile} from 'node:fs/promises';
+import {dirname,join} from 'node:path';
+import {create_app_archive, extract_app_archive} from './server/environments/release/archive.ts';
+import {digest_app_artifact,validate_app_manifest} from './server/environments/release/identity.ts';
+import {LINUX_EXECUTOR, MAC_EXECUTOR, MAC_HOME} from './server/environments/release/contracts.ts';
+import {NODE_RUNTIME_FILES} from './server/environments/release/configuration.ts';
+import {parse_optional_runtime_contract}
+  from './server/environments/updates/logic/runtime_contract.ts';
+import {ChildProcesses} from './server/lifecycle/owned_processes.ts';
+const root=process.argv[1], app=join(root,'app'), owner=new ChildProcesses();
+const outcome=async f=>{try{await f();return 'accepted';}catch(e){return e.message;}};
+const validate=(path,target)=>validate_app_manifest(join(root,path,'manifest.json'),
+  {expected_target:target});
+try {
+  const result=[await outcome(()=>validate('markerless',LINUX_EXECUTOR)),
+                await outcome(()=>validate('app',MAC_EXECUTOR))];
+  const archive=join(root,'node-target.tar.gz');
+  const digest=await create_app_archive(app,archive,LINUX_EXECUTOR);
+  const sha=(await validate('app',LINUX_EXECUTOR)).app_sha;
+  result.push(await outcome(()=>extract_app_archive(
+    archive,join(root,'node-refused'),digest,sha,owner)));
+  await extract_app_archive(archive,join(root,'node-restored'),digest,sha,owner,
+    undefined,undefined,LINUX_EXECUTOR);
+  result.push(await readFile(join(root,'node-restored/sentinel'),'utf8'));
+  const home=join(root,'node-home');
+  await cp(join(root,'home'),home,{recursive:true});
+  const document=JSON.parse(await readFile(join(home,'manifest.json'),'utf8'));
+  const native={...document.runtime_contract,version:2,minimum_node_version:'22.18.0'};
+  delete native.python_version;
+  document.runtime_contract=native;
+  for(const name of NODE_RUNTIME_FILES){
+    const path=join(home,name);await mkdir(dirname(path),{recursive:true});await writeFile(path,'');
+  }
+  await writeFile(join(home,'runtime/contract.json'),JSON.stringify(native));
+  document.artifact_digest=await digest_app_artifact(home);
+  await writeFile(join(home,'manifest.json'),JSON.stringify(document));
+  result.push(await outcome(()=>validate('node-home',MAC_HOME)));
+  const homeArchive=join(root,'node-home.tar.gz');
+  const homeDigest=await create_app_archive(home,homeArchive,MAC_HOME);
+  const restored=await extract_app_archive(homeArchive,join(root,'node-home-restored'),
+    homeDigest,sha,owner,undefined,undefined,MAC_HOME);
+  result.push(await readFile(join(root,'node-home-restored/sentinel'),'utf8'),
+              restored.runtime_contract);
+  for(const patch of JSON.parse(await readFile(join(root,'darwin-cases.json'),'utf8')))
+    result.push(await outcome(()=>parse_optional_runtime_contract({...native,...patch})));
+  console.log(JSON.stringify(result));
+} finally {owner.seal();await owner.settled();}
+"""
+    actual = json.loads(
+        subprocess.check_output(
+            ["node", "--input-type=module", "-e", code, str(tmp_path)], cwd=ROOT, text=True
+        )
+    )
+    report = dict(
+        python=expected,
+        typescript=actual,
+        equal=actual == expected,
+        seconds=time.perf_counter() - began,
+    )
+    write_report(request, "unit21-release-targets", report)
+    assert actual == expected

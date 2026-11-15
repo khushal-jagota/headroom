@@ -56,6 +56,7 @@ async function verify_host(
   owner: OwnedChildProcesses,
 ): Promise<string> {
   if (
+    contract.system !== 'linux' ||
     process.platform !== contract.system ||
     (process.arch === 'x64' ? 'x86_64' : process.arch) !== contract.architecture
   )

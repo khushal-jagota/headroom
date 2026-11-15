@@ -5,6 +5,8 @@ import type { AppManifest } from '../updates/contracts.ts';
 export type {
   AppManifest,
   NodeRuntimeContract,
+  LinuxNodeRuntimeContract,
+  DarwinNodeRuntimeContract,
   PythonRuntimeContract,
   RuntimeContract,
 } from '../updates/contracts.ts';
@@ -14,10 +16,36 @@ export class AppValidationError extends AppManifestValidationFailure {
     this.name = 'AppValidationError';
   }
 }
+export interface RuntimeTarget {
+  readonly system: 'linux' | 'darwin';
+  readonly architecture: string;
+  readonly role: 'home' | 'executor';
+}
+export const LINUX_HOME: RuntimeTarget = Object.freeze({
+  system: 'linux',
+  architecture: 'x86_64',
+  role: 'home',
+});
+export const LINUX_EXECUTOR: RuntimeTarget = Object.freeze({
+  system: 'linux',
+  architecture: 'x86_64',
+  role: 'executor',
+});
+export const MAC_HOME: RuntimeTarget = Object.freeze({
+  system: 'darwin',
+  architecture: 'arm64',
+  role: 'home',
+});
+export const MAC_EXECUTOR: RuntimeTarget = Object.freeze({
+  system: 'darwin',
+  architecture: 'arm64',
+  role: 'executor',
+});
 export interface AppValidationOptions {
   expected_sha?: string;
   require_runtime?: boolean;
   verify_artifact_digest?: boolean;
+  expected_target?: RuntimeTarget;
 }
 export interface AppBuildOptions {
   readonly requested_sha: string;
@@ -48,6 +76,7 @@ export type ArchiveUnpackRequest = {
       readonly destination: string;
       readonly archive_sha256: string;
       readonly expected_sha: string;
+      readonly expected_target?: RuntimeTarget;
     }
   | { readonly purpose: 'source-export'; readonly destination: string }
   | {

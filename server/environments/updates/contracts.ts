@@ -26,15 +26,29 @@ interface RuntimeBoundary {
 }
 export interface PythonRuntimeContract extends RuntimeBoundary {
   version: 1;
+  system: 'linux';
+  architecture: 'x86_64';
   python_version: string;
 }
-export interface NodeRuntimeContract extends RuntimeBoundary {
+export interface LinuxNodeRuntimeContract extends RuntimeBoundary {
   version: 2;
   system: 'linux';
   architecture: 'x86_64';
   node_major: 22;
   minimum_node_version: '22.18.0';
 }
+export interface DarwinNodeRuntimeContract {
+  version: 2;
+  system: 'darwin';
+  architecture: 'arm64';
+  role: 'home';
+  minimum_os: '15.0';
+  node_major: 22;
+  minimum_node_version: '22.18.0';
+  inventory_sha256: string;
+  external_libraries: string[];
+}
+export type NodeRuntimeContract = LinuxNodeRuntimeContract | DarwinNodeRuntimeContract;
 export type RuntimeContract = PythonRuntimeContract | NodeRuntimeContract;
 export interface AppManifest {
   app_sha: string;
