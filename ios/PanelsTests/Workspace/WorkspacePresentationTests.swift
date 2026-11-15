@@ -46,6 +46,23 @@ final class WorkspacePresentationTests: XCTestCase {
         }
     }
 
+    func testFocusKeepsOnlyUnreadOwnerMessagesInAgentGroupsWithoutChangingFullLists() throws {
+        let quietAgent = try ticket(["id": "quiet", "ticket_status": "agent"])
+        let workingAgent = try ticket(["id": "working", "ticket_status": "agent", "conversation_signal": ["working": true, "message_for_owner": false]])
+        let unreadAgent = try ticket(["id": "unread", "ticket_status": "agent", "conversation_signal": ["working": false, "message_for_owner": true]])
+        let quietApproval = try ticket(["id": "review", "awaiting_agent_approval": true])
+        let unreadApproval = try ticket(["id": "review-unread", "awaiting_agent_approval": true, "conversation_signal": ["working": false, "message_for_owner": true]])
+        let yours = try ticket(["id": "yours", "assigned": true])
+        let full = WorkspaceGrouping.groups([quietAgent, workingAgent, unreadAgent, quietApproval, unreadApproval, yours])
+        let focused = WorkspaceGrouping.focused(full)
+        XCTAssertEqual(focused.map(\.section), [.yours, .agent, .agentApproval])
+        XCTAssertEqual(focused.flatMap(\.tickets).map(\.id), ["yours", "unread", "review-unread"])
+        XCTAssertEqual(full.flatMap(\.tickets).count, 6, "Focus does not remove entries from the full lists")
+        XCTAssertEqual(WorkspaceGrouping.focused(WorkspaceGrouping.groups([quietAgent, quietApproval])).count, 0,
+                       "Groups with no unread owner message disappear")
+        XCTAssertEqual(WorkspaceGrouping.focused(WorkspaceGrouping.groups([yours])).first?.tickets.map(\.id), ["yours"])
+    }
+
     func testSurvivorsKeepPositionAndArrivalsAppendWhenSectionsChange() throws {
         let alpha = try ticket(["id": "a", "title": "Alpha", "assigned": true])
         let beta = try ticket(["id": "b", "title": "Beta", "assigned": true])

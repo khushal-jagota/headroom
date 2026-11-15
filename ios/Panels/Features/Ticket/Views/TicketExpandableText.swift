@@ -44,3 +44,41 @@ struct TicketExpandableText: View {
             .onChange(of: text) { _, _ in expanded = false }
     }
 }
+
+/// Recap disclosure matches the phone design while its context menu stays editable.
+struct TicketRecapText: View {
+    let text: String
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var expanded = false
+    @State private var fullHeight: CGFloat = 0
+    @State private var collapsedHeight: CGFloat = 0
+    private var truncated: Bool { fullHeight > collapsedHeight + 1 }
+    private var rendered: AttributedString {
+        (try? AttributedString(markdown: text, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace))) ?? AttributedString(text)
+    }
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(rendered)
+                .lineLimit(expanded ? nil : 3)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background {
+                    Text(rendered).lineLimit(3).fixedSize(horizontal: false, vertical: true)
+                        .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { collapsedHeight = $0 }.hidden()
+                }
+                .background {
+                    Text(rendered).fixedSize(horizontal: false, vertical: true)
+                        .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { fullHeight = $0 }.hidden()
+                }
+                .textSelection(.enabled)
+            if truncated || expanded {
+                Button(expanded ? "Show less" : "Show more") {
+                    withAnimation(reduceMotion ? nil : PanelsTheme.Motion.disclosure) { expanded.toggle() }
+                }.buttonStyle(.plain).panelsScaledFont(size: PanelsTheme.Web.smallSize)
+                    .foregroundStyle(PanelsTheme.Web.secondary)
+            }
+        }.panelsScaledFont(size: PanelsTheme.Web.bodySize)
+            .lineSpacing(5).foregroundStyle(PanelsTheme.Web.text)
+            .accessibilityIdentifier("ticket-recap")
+            .onChange(of: text) { _, _ in expanded = false }
+    }
+}

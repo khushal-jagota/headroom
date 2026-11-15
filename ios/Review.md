@@ -17,7 +17,16 @@ time. Like desktop, a Ticket is one card on one page: its title and recap once, 
 proposal first, then each of its conversations with its complete unread message run.
 A Chief or Manager conversation is a card of its own. There is no picker between parts.
 The queue and badge come from the navigation view's review window, which the phone
-follows over the view's events stream; desktop builds its queue from the same window. Skip keeps a card out of this visit's queue without
+follows over the view's events stream; desktop builds its queue from the same window.
+The displayed conversations also stay in the stream's scope after their queue rows
+leave. Their canonical addresses and owners decide whether a painted message remains
+eligible. A final approval elsewhere removes a Done Ticket's held card, including
+when an earlier read already emptied its live queue. A read elsewhere alone keeps
+an eligible painted message and its original read boundary. Foreground entry starts
+a fresh snapshot; tab return uses the same current stream. No polling is added.
+Old display snapshots without this context receive a one-time cache miss. Fresh
+server data replaces them; drafts and outgoing work keep their retention rules.
+Skip keeps a card out of this visit's queue without
 changing it on the server. A decision on one part leaves the others on the page;
 the page leaves when every part is handled. When every remaining card was skipped,
 Revisit skipped items brings them back, counted per card. A new proposal or message on the same ticket brings its card back.
@@ -251,3 +260,13 @@ fixture, so it runs alone on a fresh stub with `PANELS_REVIEW_MESSAGES=1`,
 `PANELS_OFFLINE_TEST=ReviewMessagesTests/testStackedTicketCard`. It reuses the
 offline stub, whose `ticket-stacked` owner keeps the proposal on the message's Ticket,
 and it took 22.5 seconds on a task simulator.
+
+External-decision verification reuses the Foundation navigation fixtures. The added
+`NavigationViewTests/testExternalFinalApprovalRemovesHeldCardButReadElsewhereRetainsMessage`
+case exercises the same composition as the screen: an external final approval removes
+a held Ticket card, a read elsewhere retains its eligible message, and an explicit
+null context replaces the previous canonical address. This closes the gap between
+fresh server membership and the painted card, including an owner change after queue
+identities already became empty. The existing scope-budget test also reserves space
+for held conversation IDs and checks that their removal changes the scope. These
+checks use no browser, server, simulator, or live writes.

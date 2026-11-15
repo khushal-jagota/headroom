@@ -39,6 +39,15 @@ enum WorkspaceGrouping {
         return .other
     }
 
+    /// Focus is a Workspace-only presentation of the full, stably ordered groups.
+    static func focused(_ groups: [WorkspaceTicketGroup]) -> [WorkspaceTicketGroup] {
+        groups.compactMap { group in
+            guard group.section == .agent || group.section == .agentApproval else { return group }
+            let unread = group.tickets.filter { $0.conversationSignal?.messageForOwner == true }
+            return unread.isEmpty ? nil : WorkspaceTicketGroup(section: group.section, tickets: unread)
+        }
+    }
+
     static func groups(_ tickets: [TicketSummary], previous: [WorkspaceTicketGroup] = []) -> [WorkspaceTicketGroup] {
         WorkspaceSection.allCases.compactMap { section in
             let fresh = tickets.filter { self.section(for: $0) == section }
