@@ -1,4 +1,5 @@
 import XCTest
+import UserNotifications
 @testable import Panels
 
 final class NotificationTests: XCTestCase {
@@ -46,21 +47,68 @@ final class NotificationTests: XCTestCase {
         XCTAssertNil(NotificationRouting.reply(payload))
     }
 
-    @MainActor func testNotificationReplySaveFailureCannotLeaveDispatchableWork() throws {
+    @MainActor func testReplyWithoutValidDestinationPostsLocalFailureNotification() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let outbox = Outbox(store: LocalStore(url: directory.appendingPathComponent("reply.store")))
+        let selected = URL(string: "https://reply-test.invalid")!
+        var notices: [UNNotificationRequest] = []
+        let controller = NotificationController(replyOutbox: outbox, selectedServer: { selected }, postLocalNotification: { notices.append($0) })
+        let invalid = NotificationRouting.reply(["server_url": selected.absoluteString, "reply": ["conversation_id": "../wrong"]])
+        await controller.receivedReply(invalid, text: "Private reply", notificationID: "invalid-push")
+        assertUnsentNotice(notices, selectedServer: selected)
+        XCTAssertTrue(try outbox.store.outgoing.schedulingSummaries(server: LocalStore.server(selected)).isEmpty)
+        XCTAssertNotNil(controller.routingError)
+    }
+
+    @MainActor func testReplyForAnotherServerPostsLocalFailureNotification() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let outbox = Outbox(store: LocalStore(url: directory.appendingPathComponent("reply.store")))
+        let selected = URL(string: "https://reply-test.invalid")!
+        let reply = NotificationReply(serverURL: URL(string: "https://other-server.invalid")!, conversationID: "c_original", messageID: "source:7", owner: .chief)
+        var notices: [UNNotificationRequest] = []
+        let controller = NotificationController(replyOutbox: outbox, selectedServer: { selected }, postLocalNotification: { notices.append($0) })
+        await controller.receivedReply(reply, text: "Private reply", notificationID: "other-server-push")
+        assertUnsentNotice(notices, selectedServer: selected)
+        XCTAssertTrue(try outbox.store.outgoing.schedulingSummaries(server: LocalStore.server(selected)).isEmpty)
+        XCTAssertTrue(try outbox.store.outgoing.schedulingSummaries(server: LocalStore.server(reply.serverURL)).isEmpty)
+        XCTAssertNotNil(controller.routingError)
+    }
+
+    @MainActor func testNotificationReplySaveFailurePostsLocalFailureWithoutDispatchableWork() async throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: directory) }
         var fail = false
         let store = LocalStore(url: directory.appendingPathComponent("reply.store"), beforeSave: { if fail { throw CocoaError(.fileWriteUnknown) } })
         let outbox = Outbox(store: store)
-        let api = APIClient(baseURL: URL(string: "https://reply-test.invalid")!)
-        let server = LocalStore.server(api.baseURL)
+        let selected = URL(string: "https://reply-test.invalid")!
+        let server = LocalStore.server(selected)
         try store.put(server: server, kind: "draft", id: "composer", data: Data("Unfinished draft".utf8))
-        let reply = NotificationReply(serverURL: api.baseURL, conversationID: "c_original", messageID: "source:7", owner: .chief)
+        let reply = NotificationReply(serverURL: selected, conversationID: "c_original", messageID: "source:7", owner: .chief)
+        var notices: [UNNotificationRequest] = []
+        let controller = NotificationController(replyOutbox: outbox, selectedServer: { selected }, postLocalNotification: { notices.append($0) })
         fail = true
-        XCTAssertThrowsError(try outbox.enqueueNotificationReply(reply, text: "Reply", notificationID: "push", api: api))
+        await controller.receivedReply(reply, text: "Private reply", notificationID: "save-failure-push")
+        assertUnsentNotice(notices, selectedServer: selected)
         XCTAssertTrue(try store.outgoing.schedulingSummaries(server: server).isEmpty)
         XCTAssertEqual(store.draft(server: server, id: "composer"), "Unfinished draft")
         XCTAssertNotNil(store.outgoingError)
+        XCTAssertNotNil(controller.routingError)
+    }
+
+    @MainActor private func assertUnsentNotice(_ requests: [UNNotificationRequest], selectedServer: URL,
+                                              file: StaticString = #filePath, line: UInt = #line) {
+        XCTAssertEqual(requests.count, 1, file: file, line: line)
+        guard let notice = requests.first else { return }
+        XCTAssertEqual(notice.content.title, "Reply not sent", file: file, line: line)
+        XCTAssertEqual(notice.content.body, "Your reply was not sent. Open Panels to reply.", file: file, line: line)
+        XCTAssertNil(notice.trigger, "The failure notice must appear immediately", file: file, line: line)
+        XCTAssertEqual(NotificationRouting.parse(notice.content.userInfo)?.serverURL, selectedServer, file: file, line: line)
+        XCTAssertEqual(NotificationRouting.parse(notice.content.userInfo)?.destination, .review(ticketID: nil), file: file, line: line)
+        XCTAssertFalse(notice.content.body.contains("Private reply"), file: file, line: line)
+        XCTAssertFalse(notice.content.body.contains("fileWriteUnknown"), file: file, line: line)
+        XCTAssertNil(notice.content.userInfo["reply"], file: file, line: line)
     }
 
     func testRegistrationEncodesNativeContractAndSurfacesRejection() async throws {

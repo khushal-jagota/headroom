@@ -612,7 +612,7 @@ def test_approval_edge_keeps_saved_human_stage_and_bounded_ticket_name(tmp_path:
 
 def test_preview_discards_markdown_and_attachment_contents_and_bounds_unicode() -> None:
     """Payload text needs readable words and a character bound, independent of byte width."""
-    from planner.notifications.logic.preview import message_preview
+    from planner.notifications.logic.preview import message_preview, notification_label
 
     markdown = "# Ready\n\n- **First** [link](https://private.example)\n- `second`"
     assert message_preview(markdown) == "Ready First link second"
@@ -620,3 +620,69 @@ def test_preview_discards_markdown_and_attachment_contents_and_bounds_unicode() 
     assert message_preview(image) == "Sent an attachment."
     assert message_preview("\n  ") == "Sent an attachment."
     assert message_preview("界" * 241) == "界" * 239 + "…"
+    for render, budget in ((notification_label, 60), (message_preview, 240)):
+        for grapheme in ("👩‍💻", "🇬🇧", "e\u0301"):
+            # A partial cluster never fills the last codepoint slot.
+            prefix = "a" * (budget - 2)
+            assert render(prefix + grapheme + "tail") == prefix + "…"
+            # A complete cluster that fits keeps its original codepoints.
+            prefix = "a" * (budget - 1 - len(grapheme))
+            complete = render(prefix + grapheme + "xy")
+            assert complete == prefix + grapheme + "…"
+            assert len(complete) == budget
+
+
+def test_context_failure_preserves_message_commit_and_generic_notification(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Optional notification context cannot roll back either source writes or reconciliation."""
+    database = str(tmp_path / "context-failure.db")
+    with closing(connect(database)) as conn:
+        create_schema(conn)
+        ticket = _ticket(conn, 1)
+        _conversation_on_a_ticket(conn, ticket.id)
+        _subscribe(conn)
+
+    private_error = "private message words must not enter logs"
+
+    def fail_context(*_args: object) -> None:
+        raise ValueError(private_error)
+
+    monkeypatch.setattr(attention, "_edge_context_json", fail_context)
+    store = ConversationStore(database, integer_now=lambda: 2)
+    message = MessageToOwnerEventPayload(
+        content=text_message_content("Committed message"),
+        sender=Principal(PrincipalKind.ticket, ticket.id),
+        recipient=OWNER_PRINCIPAL,
+        sender_label=ticket.title,
+    )
+    asyncio.run(store.append_event("c_split", message))
+    with closing(connect(database)) as conn:
+        row = conn.execute("SELECT kind,payload FROM conversation_events").fetchone()
+        assert tuple(row) == (
+            "message_to_owner", conversation_event_payload_to_canonical_json(message),
+        )
+        edge = conn.execute(
+            "SELECT context_json FROM notification_attention_edges "
+            "WHERE subject_id=? AND notification_type='awaiting_reply'", (ticket.id,),
+        ).fetchone()
+        assert edge is not None and edge[0] is None
+        notifications_data.queue_deliveries(conn, 3)
+        message_intent = next(item.intent for item in notifications_data.pending_deliveries(conn, 3)
+                              if item.edge.notification_type == "awaiting_reply")
+        assert (message_intent.title, message_intent.body, message_intent.reply) == (
+            "Panels", "Phone-worthy work has a message for you.", None,
+        )
+        # The maintenance path also enriches edges, independent of runtime capture.
+        conn.execute("DELETE FROM notification_attention_edges WHERE subject_id=?", (ticket.id,))
+        conn.execute("DELETE FROM notification_attention_state WHERE subject_id=?", (ticket.id,))
+        conn.commit()
+        notifications_data.reconcile_attention(conn)
+        reconciled = conn.execute(
+            "SELECT context_json FROM notification_attention_edges "
+            "WHERE subject_id=? AND notification_type='awaiting_reply'", (ticket.id,),
+        ).fetchone()
+        assert reconciled is not None and reconciled[0] is None
+        assert conn.execute("SELECT COUNT(*) FROM conversation_events").fetchone()[0] == 1
+    assert "Notification context unavailable" in caplog.text
+    assert private_error not in caplog.text

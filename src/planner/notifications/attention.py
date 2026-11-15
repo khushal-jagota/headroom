@@ -7,6 +7,7 @@ edges into deliveries, so several commits can safely share one wake-up.
 from __future__ import annotations
 
 import json
+import logging
 import sqlite3
 from dataclasses import asdict, dataclass
 from typing import NamedTuple
@@ -37,6 +38,8 @@ from planner.tickets import derivation
 from planner.tickets.contracts import TicketStatus
 from planner.worker_types.contracts import WorkflowDefinition
 from planner.worker_types.store import workflow_from_row
+
+_LOG = logging.getLogger(__name__)
 
 
 class ConversationAttention(NamedTuple):
@@ -300,6 +303,20 @@ def _edge_context_json(
     return json.dumps(context, ensure_ascii=False, separators=(",", ":"))
 
 
+def _optional_edge_context_json(
+    conn: sqlite3.Connection, subject_kind: str, subject_id: str, notification_type: str
+) -> str | None:
+    """Notification enrichment must not prevent its source write from committing."""
+    try:
+        return _edge_context_json(conn, subject_kind, subject_id, notification_type)
+    except Exception:
+        # Context errors can contain message words. Keep the diagnostic payload-free.
+        _LOG.warning(
+            "Notification context unavailable; queued generic alert (%s)", notification_type,
+        )
+        return None
+
+
 def _record(
     conn: sqlite3.Connection,
     subject_kind: str,
@@ -329,7 +346,7 @@ def _record(
             "occurred_at, context_json) "
             "VALUES (?, ?, ?, ?, ?, ?)",
             (subject_kind, subject_id, notification_type, generation, occurred_at,
-             _edge_context_json(conn, subject_kind, subject_id, notification_type)),
+             _optional_edge_context_json(conn, subject_kind, subject_id, notification_type)),
         )
     conn.execute(
         "INSERT INTO notification_attention_state"
@@ -526,7 +543,7 @@ def reconcile_attention(
                 "occurred_at, context_json) "
                 "VALUES (?, ?, ?, ?, ?, ?)",
                 (*key, generation, occurred_at,
-                 _edge_context_json(conn, subject_kind, subject_id, notification_type)),
+                 _optional_edge_context_json(conn, subject_kind, subject_id, notification_type)),
             )
         conn.execute(
             "INSERT INTO notification_attention_state"

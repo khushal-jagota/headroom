@@ -1,5 +1,8 @@
+import Foundation
 import Observation
+#if canImport(UIKit)
 import UIKit
+#endif
 import UserNotifications
 
 @MainActor @Observable final class NotificationController {
@@ -16,18 +19,39 @@ import UserNotifications
     private var client: APIClient?
     private let registrationEnabled: Bool
     private let environment: String
+    private let replyOutbox: Outbox
+    private let selectedServer: () -> URL
+    private let postLocalNotification: (UNNotificationRequest) async -> Void
 
     init(registrationEnabled: Bool = (Bundle.main.object(forInfoDictionaryKey: "PanelsAPNsRegistrationEnabled") as? String) == "YES",
-         environment: String = Bundle.main.object(forInfoDictionaryKey: "PanelsAPNsEnvironment") as? String ?? "development") {
+         environment: String = Bundle.main.object(forInfoDictionaryKey: "PanelsAPNsEnvironment") as? String ?? "development",
+         replyOutbox: Outbox? = nil,
+         selectedServer: @escaping () -> URL = { AppStore.configuredBaseURL },
+         postLocalNotification: @escaping (UNNotificationRequest) async -> Void = { request in
+             try? await UNUserNotificationCenter.current().add(request)
+         }) {
         self.registrationEnabled = registrationEnabled
         self.environment = environment
+        self.replyOutbox = replyOutbox ?? .shared
+        self.selectedServer = selectedServer
+        self.postLocalNotification = postLocalNotification
+    }
+
+    private var permissionAllowsDelivery: Bool {
+        if authorization == .authorized || authorization == .provisional { return true }
+#if canImport(UIKit)
+        if authorization == .ephemeral { return true }
+#endif
+        return false
     }
 
     func refresh(using client: APIClient) async {
         self.client = client
         authorization = await UNUserNotificationCenter.current().notificationSettings().authorizationStatus
-        if authorization == .authorized || authorization == .provisional || authorization == .ephemeral {
+        if permissionAllowsDelivery {
+#if canImport(UIKit)
             UIApplication.shared.registerForRemoteNotifications()
+#endif
             await registerTokenIfPossible()
         } else if registrationEnabled, !registering, let registeredDevice, let registeredServer {
             // Remove the last successful registration when permission is revoked.
@@ -75,28 +99,41 @@ import UserNotifications
 
     func receivedReply(_ reply: NotificationReply?, text: String, notificationID: String) async {
         guard let reply else {
-            routingError = "This notification cannot receive a reply. Open the conversation in Panels."
+            await reportUnsentReply("This notification cannot receive a reply. Open the conversation in Panels.", notificationID: notificationID)
             return
         }
         // A text response launches the app without requiring a SwiftUI scene.
         // Read the same selected server that an ordinary launch uses.
-        let selected = AppStore.configuredBaseURL
+        let selected = selectedServer()
         let api = client.flatMap { LocalStore.server($0.baseURL) == LocalStore.server(selected) ? $0 : nil }
             ?? APIClient(baseURL: selected)
         do {
-            try Outbox.shared.enqueueNotificationReply(reply, text: text, notificationID: notificationID, api: api)
+            try replyOutbox.enqueueNotificationReply(reply, text: text, notificationID: notificationID, api: api)
         } catch {
-            routingError = "Reply was not sent: \(error.localizedDescription)"
+            await reportUnsentReply("Reply was not sent: \(error.localizedDescription)", notificationID: notificationID)
             return
         }
         // Persist first. iOS grants a short action-handling window, not a
         // repeating background worker. The foreground drainer resumes leftovers.
         await withTaskGroup(of: Void.self) { group in
-            group.addTask { await Outbox.shared.drain(api: api) }
+            group.addTask { await self.replyOutbox.drain(api: api) }
             group.addTask { try? await Task.sleep(for: .seconds(NotificationActions.backgroundAttemptSeconds)) }
             _ = await group.next()
             group.cancelAll()
         }
+    }
+
+    private func reportUnsentReply(_ error: String, notificationID: String) async {
+        routingError = error
+        let content = UNMutableNotificationContent()
+        content.title = "Reply not sent"
+        content.body = "Your reply was not sent. Open Panels to reply."
+        content.sound = .default
+        // A tap opens the selected server's Review. Do not reuse an invalid or
+        // different-server payload, and never place reply text or errors here.
+        content.userInfo = ["server_url": selectedServer().absoluteString, "route": "/#/review"]
+        let request = UNNotificationRequest(identifier: notificationID + ".reply-not-sent", content: content, trigger: nil)
+        await postLocalNotification(request)
     }
 
     func consumeOpen(for serverURL: URL) -> NotificationDestination? {
@@ -115,7 +152,7 @@ import UserNotifications
             return
         }
         guard let deviceToken, let client, !registering,
-              authorization == .authorized || authorization == .provisional || authorization == .ephemeral else { return }
+              permissionAllowsDelivery else { return }
         guard ["development", "production"].contains(environment), let bundleID = Bundle.main.bundleIdentifier else {
             registrationMessage = "Push configuration is incomplete."
             return
@@ -139,6 +176,7 @@ import UserNotifications
     }
 }
 
+#if canImport(UIKit)
 final class PanelsNotificationDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCenterDelegate {
     func application(_ application: UIApplication, didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil) -> Bool {
         let center = UNUserNotificationCenter.current()
@@ -177,3 +215,4 @@ final class PanelsNotificationDelegate: NSObject, UIApplicationDelegate, UNUserN
         }
     }
 }
+#endif

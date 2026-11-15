@@ -56,6 +56,8 @@ device authentication. It needs no notification extension or extra entitlement.
 iOS launches the app in the background for this action, including after termination.
 The delegate reads the selected server without a SwiftUI scene. It refuses a reply
 for another server or a payload without its original conversation and recipient.
+If the app refuses a reply or cannot save it, a local alert says that the reply
+was not sent and asks the user to open Panels.
 
 The app saves the reply through the ordinary durable outbox before it sends or
 completes the action. The notification identity, original message, recipient,
@@ -65,7 +67,8 @@ a replacement conversation. The same transport, receipts, compatibility gate,
 and offline or uncertain-delivery rules apply to replies from a notification.
 The delegate allows at most 15 seconds for its delivery attempt. Remaining work
 resumes through the existing foreground drainer. It does not promise another
-background retry. Finished work expires after 24 hours, uncertain work after seven
+background retry. Known limit: if the 15-second window cancels a POST before dispatch,
+the reply becomes uncertain. The user must retry it by hand. Finished work expires after 24 hours, uncertain work after seven
 days, and pending or failed work has no age limit.
 
 Settings → Notifications exposes switches for the same event preferences as the

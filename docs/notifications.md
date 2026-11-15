@@ -31,7 +31,7 @@ The writer records the flag and the edge in the same transaction as the change t
 
 The flags are separate because the events are separate. Held as one flag, a message and an ask that arrived second would raise no edge and reach nobody. An ask awaits an answer only while its turn is open. When the turn ends, its unanswered asks clear, so the next ask can raise a new edge.
 
-A message push names its sender and shows a short plain-text preview. An approval push names the Ticket and the stage that waits. Both native and browser push use these words. The source write saves this context with its edge, so later messages or stage changes do not replace it. A push also carries a link and one replacement tag per subject. A newer push replaces the older one on the device. The link opens the Ticket, Chief, or Manager it is about.
+A message push names its sender and shows a short plain-text preview. An approval push names the Ticket and the stage that waits. Both native and browser push use these words. Text limits preserve complete visible characters. The source write saves this context with its edge, so later messages or stage changes do not replace it. If context creation fails, the core write still commits and the alert uses generic text. A push also carries a link and one replacement tag per subject. A newer push replaces the older one on the device. The link opens the Ticket, Chief, or Manager it is about.
 
 The browser and iPhone Settings change the same preferences. A failed save keeps the confirmed value and shows an error. A preference change affects future edges and does not replay the past.
 

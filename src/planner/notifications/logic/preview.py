@@ -1,5 +1,6 @@
 """Plain, bounded notification words without Markdown presentation syntax."""
 
+import icu  # type: ignore[import-untyped]
 from markdown_it import MarkdownIt
 
 from planner.notifications.config import (
@@ -10,7 +11,20 @@ from planner.notifications.config import (
 
 def bounded_text(text: str, limit: int) -> str:
     compact = " ".join(text.split())
-    return compact if len(compact) <= limit else compact[:limit - 1].rstrip() + "…"
+    if len(compact) <= limit:
+        return compact
+    # ICU boundaries use UTF-16 offsets. Convert each complete prefix back to
+    # Python text before checking the unchanged codepoint budget.
+    unicode_text = icu.UnicodeString(compact)
+    boundaries = icu.BreakIterator.createCharacterInstance(icu.Locale.getRoot())
+    boundaries.setText(unicode_text)
+    prefix = ""
+    for boundary in boundaries:
+        candidate = str(unicode_text[:boundary])
+        if len(candidate) > limit - 1:
+            break
+        prefix = candidate
+    return prefix.rstrip() + "…"
 
 
 def notification_label(text: str) -> str:
