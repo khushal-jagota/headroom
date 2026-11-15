@@ -20,4 +20,8 @@ The selected runtime's `bin` leads the child PATH. Callers retain the invocation
 `FilesService.read_runtime_revision` and `extract_runtime` accept an optional expected target through the owned files worker.
 Undefined target preserves Darwin's marker and private Node checks. Explicit Linux executor admission instead binds its native Node manifest, payload contract, and inventory under the retained root descriptor.
 Linux requires executable `bin/panels` and the shared executor entrypoint. It does not require `node/bin/node`.
-The shared `admit_runtime` also accepts the target for its manifest recheck. P2 supplies the Linux host Node launch branch.
+The shared `admit_runtime` also accepts the target for its manifest recheck.
+
+On Linux, the supervisor passes `LINUX_EXECUTOR` and uses the admitted host Node for baseline, selected, and restored runtimes. P5's `linux_executor_path` supplies the exact ordered PATH. The shared entrypoint constant supplies the CLI entry file. Executor data stays at the explicit `PLAN_EXECUTOR_ROOT`, while app root and SHA follow the selected runtime. Credentials remain in their private file, outside child arguments and environment values.
+
+A failed Linux trial receives the shared Worker stop budget plus ten seconds before forceful termination. Ordinary supervisor shutdown retains its existing budget and process owner. Darwin retains private selected Node and its PATH behavior. Both platforms receive the selected app SHA explicitly.

@@ -8,7 +8,12 @@ import {
   SUPPORTED_CPU_FEATURES,
   SUPPORTED_PLATFORMS,
 } from '../../../../environments/updates/logic/runtime_contract.ts';
-export function runtime_archive(revision: string, unsafe = false, target?: RuntimeTarget) {
+export function runtime_archive(
+  revision: string,
+  unsafe = false,
+  target?: RuntimeTarget,
+  entrypoint = 'synthetic entrypoint',
+) {
   const manifest = {
     schema_version: 1,
     application_revision: revision,
@@ -55,7 +60,7 @@ export function runtime_archive(revision: string, unsafe = false, target?: Runti
     : [
         { path: 'mac-runtime.json', data: JSON.stringify(manifest) },
         ...executable,
-        { path: 'server/executor/mac/entrypoint.ts', data: 'synthetic entrypoint' },
+        { path: 'server/executor/mac/entrypoint.ts', data: entrypoint },
       ];
   const blocks: Buffer[] = [];
   for (const member of members) {

@@ -61,6 +61,10 @@ Catalog cancellation withdraws its waiting command and completes that cleanup be
 
 ## Shared wire
 
+The shared executor entrypoint also serves Linux. Linux default data paths use P5's `default_linux_executor_root` helper, with explicit `PLAN_EXECUTOR_ROOT` precedence. Relative nonempty XDG paths refuse. The supervisor uses admitted host Node for every Linux runtime and P5's exact PATH and entrypoint helpers. Retained runtime reads use `LINUX_EXECUTOR` target admission. Darwin installation assets keep their Mac paths even when the build host is Linux.
+
+This launch slice preserves ready-marker promotion, failed-trial rollback, and handoff custody. Worker cleanup, lease composition, enrollment, and final protocol activation remain port work.
+
 Both TypeScript peers use `wire.schema.json` as the message contract. The same schemas generate `wire.generated.ts` and supply Ajv validation. The schema now describes Python wire protocol 26, including supervision protocol 24 inside start commands, cleanup evidence, and workspace messages. The spool format is 5 and the command journal format is 1.
 
 This schema preparation does not enable protocol 26 execution. Both runtime identities still advertise protocol 22 through `execution_configuration.ts`. Machine credentials, supervision, and workspace behavior remain port work before protocol 26 activation.

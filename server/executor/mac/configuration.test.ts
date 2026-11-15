@@ -42,3 +42,26 @@ test('physical Python-root aliases refuse through absent tails without folding d
   });
   expect(() => executor_paths({ HOME: home, PLAN_EXECUTOR_ROOT: alias })).toThrow(denied);
 });
+
+test.skipIf(process.platform !== 'linux')(
+  'Linux uses the join data root and refuses relative XDG paths',
+  () => {
+    const home = fs.realpathSync(fs.mkdtempSync(join(tmpdir(), 'linux-root-')));
+    roots.push(home);
+    const fallback = join(home, '.local/share/panels/executor-typescript/data');
+    expect(executor_paths({ HOME: home }).root).toBe(fallback);
+    expect(executor_paths({ HOME: home, XDG_DATA_HOME: '' }).root).toBe(fallback);
+    const xdg = join(home, 'data');
+    expect(executor_paths({ HOME: home, XDG_DATA_HOME: xdg }).root).toBe(
+      join(xdg, 'panels/executor-typescript/data'),
+    );
+    const explicit = join(home, 'private-executor');
+    expect(
+      executor_paths({ HOME: home, XDG_DATA_HOME: xdg, PLAN_EXECUTOR_ROOT: explicit }).root,
+    ).toBe(explicit);
+    expect(() => executor_paths({ HOME: home, XDG_DATA_HOME: 'relative' })).toThrow('absolute');
+    expect(() =>
+      executor_paths({ HOME: home, XDG_DATA_HOME: 'relative', PLAN_EXECUTOR_ROOT: explicit }),
+    ).toThrow('absolute');
+  },
+);
