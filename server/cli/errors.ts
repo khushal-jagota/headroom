@@ -26,7 +26,6 @@ const recovery: Record<string, string> = {
   'manager settle': 'panels manager settle ITEM_ID',
   'ticket edit': 'panels ticket edit TICKET_ID --input-json FILE',
   'ticket proposal': 'panels ticket proposal TICKET_ID ACTION',
-  'ticket request-help': 'panels ticket request-help TICKET_ID < MESSAGE_FILE',
   'ticket complete': 'panels ticket complete TICKET_ID FIELD --value VALUE',
   'manager create': 'panels manager create --title TEXT --project-id PROJECT_ID',
   'manager delete': 'panels manager delete ITEM_ID --yes',
@@ -35,7 +34,6 @@ const recovery: Record<string, string> = {
   'manager set': 'panels manager set ITEM_ID FIELD --value VALUE',
   'manager conversation send': 'panels manager conversation send ITEM_ID --message TEXT',
   'worker propose': 'panels worker propose TICKET_ID < PROPOSAL_FILE',
-  'worker request-help': 'panels worker request-help TICKET_ID < MESSAGE_FILE',
   'worker recap': 'panels worker recap TICKET_ID < RECAP_FILE',
 };
 export function command_path(command: CommandDefinition): string {

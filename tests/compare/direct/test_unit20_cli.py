@@ -285,17 +285,9 @@ def compare_cli_sequence(
     [
         pytest.param(
             "tests.compare.host",
-            marks=pytest.mark.xfail(
-                run=False,
-                reason="expected-open P6: #885 request-help removed from Python, still in TS",
-            ),
         ),
         pytest.param(
             "tests.compare.ts_launcher",
-            marks=pytest.mark.xfail(
-                run=False,
-                reason="expected-open P6: #885 request-help removed from Python, still in TS",
-            ),
         ),
     ],
     ids=["python", "typescript"],

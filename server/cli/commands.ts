@@ -1313,20 +1313,6 @@ export function create_commands(environment: NodeJS.ProcessEnv = {}): CliCommand
       description: 'Print machine-readable JSON. Errors are printed as JSON on stderr.',
     }),
   ]);
-  command('ticket request-help', 'Record and send one Ticket help request from standard input.', [
-    argument('ticket_id', '[TICKET_ID]', text, {}),
-    option('owner', '--owner', boolean, { default: false, description: 'Ask Khushal for help.' }),
-    option('chief', '--chief', boolean, {
-      default: false,
-      description: 'Ask the Chief of Staff for help.',
-    }),
-    option('recipient_ticket_id', '--ticket <TEXT>', text, { description: 'Ask another Worker.' }),
-    option('recipient_manager_id', '--manager <TEXT>', text, { description: 'Ask a Manager.' }),
-    option('as_json', '--json', boolean, {
-      default: false,
-      description: 'Print machine-readable JSON. Errors are printed as JSON on stderr.',
-    }),
-  ]);
   command('ticket request-recap', 'Ask a Ticket below you for a fresh recap.', [
     argument('ticket_id', '<TICKET_ID>', text, {}),
     option('as_json', '--json', boolean, {
@@ -1409,22 +1395,6 @@ export function create_commands(environment: NodeJS.ProcessEnv = {}): CliCommand
     option('body_file', '--body-file <TEXT>', text, {
       description: 'Removed: pipe recap text on stdin instead.',
     }),
-    option('as_json', '--json', boolean, {
-      default: false,
-      description: 'Print machine-readable JSON. Errors are printed as JSON on stderr.',
-    }),
-  ]);
-  command('worker request-help', '', [
-    argument('ticket_id', '[TICKET_ID]', text, { envNames: ['PLAN_TICKET_ID'] }),
-    option('owner', '--owner', boolean, { default: false, description: 'Ask Khushal for help.' }),
-    option('chief', '--chief', boolean, {
-      default: false,
-      description: 'Ask the Chief of Staff for help.',
-    }),
-    option('recipient_ticket_id', '--ticket <TEXT>', text, {
-      description: 'Ask another Ticket worker.',
-    }),
-    option('recipient_manager_id', '--manager <TEXT>', text, { description: 'Ask a Manager.' }),
     option('as_json', '--json', boolean, {
       default: false,
       description: 'Print machine-readable JSON. Errors are printed as JSON on stderr.',
