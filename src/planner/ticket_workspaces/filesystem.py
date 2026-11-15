@@ -26,6 +26,7 @@ from planner.ticket_workspaces.contracts import (
 _TICKET_ID = re.compile(rf"^({TICKET_ID_PATTERN})(?:-|$)")
 _SKIP_DIRECTORIES = frozenset({".git", ".venv", "node_modules"})
 _CHECKOUT_TIMEOUT_SECONDS = 30 * 60
+_PANELS_ORIGIN = "https://github.com/khushal-jagota/panels.git"
 
 
 def _git(repository: Path, *args: str) -> subprocess.CompletedProcess[str]:
@@ -37,9 +38,36 @@ def _git(repository: Path, *args: str) -> subprocess.CompletedProcess[str]:
         text=True,
         capture_output=True,
         check=False,
-        timeout=_CHECKOUT_TIMEOUT_SECONDS if args[:2] == ("worktree", "add") else 60,
+        timeout=_CHECKOUT_TIMEOUT_SECONDS
+        if args[:2] == ("worktree", "add") or args[:1] == ("clone",)
+        else 60,
         env=environment,
     )
+
+
+def _clone_source(repository: Path | None, panels_project: bool) -> tuple[str, str | None]:
+    if panels_project:
+        return _PANELS_ORIGIN, "staging"
+    assert repository is not None
+    remote = _git(repository, "remote", "get-url", "origin")
+    if remote.returncode or not remote.stdout.strip():
+        raise RuntimeError("Cannot find the Project repository's origin remote")
+    source = remote.stdout.strip()
+    # A relative local Git remote is relative to its source checkout, not to the Ticket.
+    if not re.match(r"(?:[a-zA-Z][a-zA-Z0-9+.-]*://|[^/]+:|/)", source):
+        source = str((repository / source).resolve())
+    return source, None
+
+
+def _validate_clone(destination: Path, branch: str | None = None) -> None:
+    if not (destination / ".git").is_dir() or (destination / ".git").is_symlink():
+        raise RuntimeError("Ticket workspace is not its independent Git checkout")
+    actual = _git(destination, "rev-parse", "--show-toplevel")
+    current = _git(destination, "symbolic-ref", "--short", "HEAD")
+    if actual.returncode or Path(actual.stdout.strip()).resolve() != destination:
+        raise RuntimeError("Ticket workspace belongs to another repository or path")
+    if branch is not None and (current.returncode or current.stdout.strip() != branch):
+        raise RuntimeError("Interrupted Ticket checkout branch changed; owner review required")
 
 
 def _write_json(path: Path, value: Any) -> None:
@@ -240,6 +268,8 @@ def prepare_workspace(
     ticket_root: Path,
     repository: Path | None,
     ticket_id: str,
+    *,
+    panels_project: bool = False,
 ) -> Path:
     """Resume the same locally owned checkout, including interrupted preparation."""
     identity = workspace_identity(ticket_root)
@@ -251,69 +281,112 @@ def prepare_workspace(
     marker = json.loads(marker_path.read_text())
     if marker.get("ticket_id") != ticket_id:
         raise RuntimeError("Ticket workspace ownership does not match")
-    selected = repository_root(repository)
+    selected = (
+        repository_root(repository)
+        if not panels_project or ("worktree" in marker and marker.get("checkout_kind") != "clone")
+        else None
+    )
     if "worktree" in marker:
-        if marker["worktree"] != str(destination) or marker.get("repository") != (
-            str(selected) if selected else None
-        ):
-            raise RuntimeError("Ticket workspace repository or path changed; owner review required")
-        if not marker.get("preparing", False):
+        if marker["worktree"] != str(destination):
+            raise RuntimeError("Ticket workspace path changed; owner review required")
+        if marker.get("checkout_kind") == "clone":
+            if not destination.exists() and marker.get("preparing"):
+                temporary = ticket_root / marker.get("temporary", "")
+                if temporary.parent != ticket_root or not temporary.name.startswith(".clone-"):
+                    raise RuntimeError("Interrupted Ticket clone ownership is invalid")
+                _validate_clone(temporary, marker["branch"])
+                _prove_checkout_complete(temporary)
+                temporary.rename(destination)
             if not destination.is_dir():
-                raise RuntimeError("The managed Ticket workspace is missing")
-            if selected is not None:
-                _validate_checkout(selected, destination)
-            return destination
+                raise RuntimeError("The managed Ticket workspace is missing or incomplete")
+            _validate_clone(destination, marker["branch"] if marker.get("preparing") else None)
+            if marker.get("preparing"):
+                _prove_checkout_complete(destination)
+        else:
+            # Legacy linked worktrees remain attached to their original repository.
+            recorded_repository = marker.get("repository")
+            if recorded_repository != (str(selected) if selected else None):
+                raise RuntimeError("Ticket workspace repository changed; owner review required")
+            if not marker.get("preparing", False):
+                if not destination.is_dir():
+                    raise RuntimeError("The managed Ticket workspace is missing")
+                if selected is not None:
+                    _validate_checkout(selected, destination)
+                return destination
+            if selected is None:
+                destination.mkdir(exist_ok=True)
+            elif destination.exists():
+                _validate_checkout(selected, destination, marker["branch"])
+                _prove_checkout_complete(destination)
+            else:
+                _repair_previous_worktree(ticket_root, selected, ticket_id)
+                branch = marker["branch"]
+                existing = _git(
+                    selected, "rev-parse", "--verify", "--quiet", f"refs/heads/{branch}"
+                )
+                if existing.returncode == 0:
+                    if existing.stdout.strip() != marker["initial_commit"]:
+                        raise RuntimeError(
+                            "Interrupted Ticket branch changed; owner review required"
+                        )
+                    result = _git(selected, "worktree", "add", str(destination), branch)
+                elif existing.returncode == 1:
+                    result = _git(
+                        selected,
+                        "worktree",
+                        "add",
+                        "-b",
+                        branch,
+                        str(destination),
+                        marker["initial_commit"],
+                    )
+                else:
+                    raise RuntimeError("Cannot inspect the interrupted Ticket branch")
+                if result.returncode:
+                    raise RuntimeError(f"Cannot prepare Ticket worktree: {result.stderr.strip()}")
+                _validate_checkout(selected, destination, branch)
     else:
         if destination.exists():
             raise RuntimeError("Ticket worktree exists without preparation ownership evidence")
-        branch = f"ticket/{ticket_id}-workspace-{identity.workspace_id[:12]}" if selected else None
-        initial_commit = None
-        if selected:
-            existing = _git(selected, "show-ref", "--verify", "--quiet", f"refs/heads/{branch}")
-            if existing.returncode == 0:
-                raise RuntimeError("Ticket branch exists without preparation ownership evidence")
-            if existing.returncode != 1:
-                raise RuntimeError("Cannot inspect the Ticket branch")
-            head = _git(selected, "rev-parse", "--verify", "HEAD")
-            if head.returncode:
-                raise RuntimeError("Cannot resolve the repository's initial commit")
-            initial_commit = head.stdout.strip()
-        marker.update(
-            repository=str(selected) if selected else None,
-            branch=branch,
-            worktree=str(destination),
-            preparing=True,
-            initial_commit=initial_commit,
-        )
-        _write_json(marker_path, marker)
-    if selected is None:
-        destination.mkdir(exist_ok=True)
-    elif destination.exists():
-        _validate_checkout(selected, destination, marker["branch"])
-        _prove_checkout_complete(destination)
-    else:
-        _repair_previous_worktree(ticket_root, selected, ticket_id)
-        branch = marker["branch"]
-        existing = _git(selected, "rev-parse", "--verify", "--quiet", f"refs/heads/{branch}")
-        if existing.returncode == 0:
-            if existing.stdout.strip() != marker["initial_commit"]:
-                raise RuntimeError("Interrupted Ticket branch changed; owner review required")
-            result = _git(selected, "worktree", "add", str(destination), branch)
-        elif existing.returncode == 1:
-            result = _git(
-                selected,
-                "worktree",
-                "add",
-                "-b",
-                branch,
-                str(destination),
-                marker["initial_commit"],
-            )
+        if panels_project or selected is not None:
+            source, base = _clone_source(selected, panels_project)
+            branch = f"ticket/{ticket_id}-workspace-{identity.workspace_id[:12]}"
+            # Clone into a temporary sibling; an interrupted clone is never exposed as
+            # a usable checkout and cannot be mistaken for user work on retry.
+            temporary = ticket_root / f".clone-{uuid4().hex}"
+            args = ["clone", "--filter=blob:none", "--single-branch", "--no-local"]
+            if base:
+                args.extend(["--branch", base])
+            args.extend(["--", source, str(temporary)])
+            recorded = False
+            try:
+                result = _git(ticket_root, *args)
+                if result.returncode:
+                    raise RuntimeError(
+                        "Cannot clone the Project origin; check remote access and branch"
+                    )
+                switched = _git(temporary, "switch", "-c", branch)
+                if switched.returncode:
+                    raise RuntimeError("Cannot create the Ticket branch")
+                _validate_clone(temporary, branch)
+                marker.update(
+                    repository=str(selected) if selected else None,
+                    branch=branch,
+                    worktree=str(destination),
+                    preparing=True,
+                    checkout_kind="clone",
+                    temporary=temporary.name,
+                )
+                _write_json(marker_path, marker)
+                recorded = True
+                temporary.rename(destination)
+            finally:
+                if not recorded and temporary.exists():
+                    shutil.rmtree(temporary)
         else:
-            raise RuntimeError("Cannot inspect the interrupted Ticket branch")
-        if result.returncode:
-            raise RuntimeError(f"Cannot prepare Ticket worktree: {result.stderr.strip()}")
-        _validate_checkout(selected, destination, branch)
+            marker.update(repository=None, branch=None, worktree=str(destination), preparing=True)
+            _write_json(marker_path, marker)
+            destination.mkdir()
     (ticket_root / "artifacts").mkdir(exist_ok=True)
     marker["preparing"] = False
     _write_json(marker_path, marker)
@@ -336,7 +409,7 @@ def _checkouts(root: Path) -> list[Path]:
 def workspace_ticket_owners(root: Path) -> tuple[str, ...]:
     owners: set[str] = set()
     for checkout in _checkouts(root):
-        for part in checkout.parts:
+        for part in (root.name, *checkout.relative_to(root).parts):
             match = _TICKET_ID.match(part)
             if match:
                 owners.add(match.group(1))
@@ -372,7 +445,7 @@ def reason_to_keep(
                 return f"submodules require owner review before cleanup: {checkout}"
             if states is not None:
                 owners = []
-                for part in checkout.parts:
+                for part in (root.name, *checkout.relative_to(root).parts):
                     match = _TICKET_ID.match(part)
                     if match:
                         owners.append(match.group(1))
@@ -416,7 +489,12 @@ def reason_to_keep(
                 advertised = _git(checkout, "ls-remote", "--heads", "--tags", remote)
                 if fetched.returncode or advertised.returncode:
                     return f"remote verification failed for {checkout}"
-                remote_hashes.update(line.split()[0] for line in advertised.stdout.splitlines())
+                for line in advertised.stdout.splitlines():
+                    commit = line.split()[0]
+                    # Single-branch clones need not have objects from other advertised
+                    # branches. Only commits present locally can prove preservation.
+                    if _git(checkout, "cat-file", "-e", f"{commit}^{{commit}}").returncode == 0:
+                        remote_hashes.add(commit)
             if not remote_hashes:
                 return f"no remote copy can be verified for {checkout}"
             refs = "--all" if (checkout / ".git").is_dir() else "HEAD"

@@ -428,11 +428,14 @@ def test_an_existing_conversation_keeps_its_workspace_after_the_project_folder_c
         )
         tmp_db.execute("UPDATE tickets SET project_id = ? WHERE id = ?", (project.id, ticket.id))
         system = InMemoryConversationSystem()
+        values = worker_resolve(tmp_db, read_ticket(tmp_db, ticket.id))
+        identity = dict(values.role_materials.identity_environment_variables)
+        assert identity["PLAN_TICKET_PROJECT_ID"] == project.id
         conversation_id = await _started(
             system,
             tmp_db,
             read_ticket(tmp_db, ticket.id),
-            worker_resolve(tmp_db, read_ticket(tmp_db, ticket.id)),
+            values,
             now=3,
         )
 
@@ -519,6 +522,7 @@ def test_registered_linux_project_ticket_starts_in_its_executor_workspace_projec
     assert request.role_materials is not None
     identity_environment = dict(request.role_materials.identity_environment_variables)
     assert identity_environment["PLAN_TICKET_ID"] == ticket.id
+    assert identity_environment["PLAN_TICKET_PROJECT_ID"] == project.id
     assert f"Its fixed destination is {destination}." in request.role_materials.role_text
     assert read_ticket(tmp_db, ticket.id).machine_id == destination
     row = tmp_db.execute(

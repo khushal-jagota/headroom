@@ -74,6 +74,32 @@ def test_end_clock_survives_edits_reopen_and_deletion_without_expiring_live_file
     assert (root.parent / "ticket-workspaces-cleanup.json").exists()
 
 
+def test_deleting_active_ticket_retires_workspace_after_retention(tmp_db: Connection) -> None:
+    from planner.files.lifecycle import database_path
+    from planner.files.logic.paths import ticket_files_root
+    from planner.ticket_workspaces.cleanup import clean_for_database
+    from planner.tickets.data import delete_ticket
+
+    ticket = create_ticket(
+        tmp_db,
+        title="Delete workspace",
+        principal=OWNER_PRINCIPAL,
+        now=1,
+        title_max_chars=200,
+        worker_type="coding",
+    )
+    folder = ticket_files_root(database_path(tmp_db)) / ticket.id
+    prepare_workspace(folder, None, ticket.id)
+    delete_ticket(tmp_db, ticket.id, principal=OWNER_PRINCIPAL, now=2)
+    state = read_workspace_states(tmp_db)[ticket.id]
+    assert state.deleted and state.ended_at is not None
+    clean_for_database(database_path(tmp_db), state.ended_at + RETENTION_SECONDS - 1)
+    assert folder.exists()
+    result = clean_for_database(database_path(tmp_db), state.ended_at + RETENTION_SECONDS)
+    assert str(folder) in result.removed
+    assert not folder.exists()
+
+
 def test_cleanup_retains_unpublished_dirty_and_unverifiable_work_then_removes_safe_worktree(
     tmp_path: Path,
 ) -> None:
@@ -82,6 +108,8 @@ def test_cleanup_retains_unpublished_dirty_and_unverifiable_work_then_removes_sa
     folder = root / "t_aaaaaaaa"
     workspace = prepare_workspace(folder, layout.repository, "t_aaaaaaaa")
     assert prepare_workspace(folder, layout.repository, "t_aaaaaaaa") == workspace
+    _git(workspace, "config", "user.name", "Test")
+    _git(workspace, "config", "user.email", "test@example.com")
     _git(workspace, "commit", "-q", "--allow-empty", "-m", "unpublished")
     states = {"t_aaaaaaaa": WorkspaceState("t_aaaaaaaa", 0, False)}
     result = cleanup_local_workspaces(root, states, RETENTION_SECONDS)
@@ -354,6 +382,8 @@ def test_home_mirror_retirement_does_not_displace_unpushed_mac_workspace(
     mac_root = registry.paths.artifacts / ticket.id
     mac_worktree = initial_start.workspace_folder
     mac_identity = workspace_identity(mac_root)
+    _git(mac_worktree, "config", "user.name", "Test")
+    _git(mac_worktree, "config", "user.email", "test@example.com")
     _git(mac_worktree, "commit", "-q", "--allow-empty", "-m", "Mac unpublished work")
     (mac_worktree / "uncommitted.txt").write_text("Mac draft")
     home_root = ticket_files_root(database_path(tmp_db)) / ticket.id

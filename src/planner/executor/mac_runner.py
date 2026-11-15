@@ -538,7 +538,10 @@ class MacRunner:
                     and not workspace_home_relative
                     else workspace
                 )
-                workspace = prepare_workspace(artifact_root, repository, ticket_id)
+                workspace = prepare_workspace(
+                    artifact_root, repository, ticket_id,
+                    panels_project=identity.get("PLAN_TICKET_PROJECT_ID") == "project_panels",
+                )
         except (OSError, ValueError, RuntimeError, subprocess.TimeoutExpired) as error:
             raise BackendSpawnFailed(f"Mac Ticket worktree unavailable: {error}") from error
         original = resolved.role_materials
