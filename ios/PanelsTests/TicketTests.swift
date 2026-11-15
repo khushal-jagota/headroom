@@ -43,23 +43,41 @@ final class TicketTests: XCTestCase {
         XCTAssertEqual(delivery.note, "Delivery uncertain · do not resend")
     }
 
-    func testEditorsAndProposalActionsUseNarrowBodiesAndDisplayedRevision() async throws {
+    func testRetainedEditsUseNarrowBodies() async throws {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.protocolClasses = [TicketStubProtocol.self]
         let session = URLSession(configuration: configuration)
         defer { session.invalidateAndCancel() }
         let client = APIClient(baseURL: URL(string: "https://edit-stub.invalid")!, session: session)
         let ticket = try ticket()
-        let proposal = try XCTUnwrap(ticket.pendingProposal)
-        try await client.renameTicket(ticket.id, title: "Renamed")
         try await client.editTicketRecap(ticket.id, recap: "Updated recap")
-        try await client.editTicketField(ticket.id, field: "brief", body: "Edited brief")
         try await client.completeTicketField(ticket.id, field: "answer", body: "Owner answer")
-        try await client.acceptTicketProposal(ticket, proposal: proposal, ceiling: "done", holder: Principal(kind: "owner", id: "owner"), editedBody: proposal.body)
-        try await client.acceptTicketProposal(ticket, proposal: proposal, ceiling: "done", holder: Principal(kind: "owner", id: "owner"), editedBody: "Edited proposal")
-        try await client.returnTicketProposal(ticket.id, message: "Please revise", expectedProposalRevision: proposal.revision)
         try await client.removeTicketBlocker(ticket.id, blockerID: "t_blocker")
         try await client.setTicketWorkerConfiguration(ticket.id, backend: "codex", model: nil, effort: nil)
+    }
+
+    @MainActor func testTicketNoteRestoresForExactProposalAndFreezesVisibleSnapshot() throws {
+        let ticket = try ticket()
+        let proposal = try XCTUnwrap(ticket.pendingProposal)
+        let manifest = TicketWorkerType(workerType: "product_design", label: "Product design", stages: [], fields: [])
+        let presentation = TicketPresentation(ticket: ticket, manifest: manifest)
+        let api = APIClient(baseURL: URL(string: "https://ticket-note-stub.invalid")!)
+        let server = LocalStore.server(api.baseURL)
+        let draftID = DecisionGuidance.draftIdentity(ticketID: ticket.id, proposal: proposal) + ":guidance"
+        defer { try? LocalStore.shared.remove(server: server, kind: "draft", id: draftID) }
+        let state = TicketDecisionState()
+        state.load(presentation: presentation, proposal: proposal, api: api)
+        state.guidance = "  Keep this note.\n\nWith context.  "
+        let snapshot = state.capture(presentation: presentation, proposal: proposal, api: api)
+        state.guidance = "A newer note"
+        XCTAssertEqual(snapshot.guidance?.text, "  Keep this note.\n\nWith context.  ")
+        XCTAssertEqual(snapshot.guidance?.proposalRevision, proposal.revision)
+        let restored = TicketDecisionState()
+        restored.load(presentation: presentation, proposal: proposal, api: api)
+        XCTAssertEqual(restored.guidance, "A newer note")
+        let other = APIClient(baseURL: URL(string: "https://other-note-stub.invalid")!)
+        XCTAssertFalse(state.matches(presentation: presentation, proposal: proposal, api: other))
+        XCTAssertNil(state.capture(presentation: presentation, proposal: proposal, api: other).guidance)
     }
 
     func testWriteFailureRemainsAnErrorAndRefusedRecapIsNotSuccess() async throws {
@@ -110,26 +128,10 @@ private final class TicketStubProtocol: URLProtocol, @unchecked Sendable {
                 case "/api/tickets/t_02zd37tz":
                     XCTAssertEqual(request.httpMethod, "PATCH")
                     XCTAssertEqual(body.count, 1)
-                    if let title = body["title"] as? String { XCTAssertEqual(title, "Renamed") }
-                    else if let recap = body["recap"] as? String { XCTAssertEqual(recap, "Updated recap") }
-                    else { XCTAssertEqual(body["field_values"] as? [String: String], ["brief": "Edited brief"]) }
+                    XCTAssertEqual(body["recap"] as? String, "Updated recap")
                 case "/api/tickets/t_02zd37tz/complete/answer":
                     XCTAssertEqual(request.httpMethod, "POST")
                     XCTAssertEqual(body as? [String: String], ["body": "Owner answer"])
-                case "/api/tickets/t_02zd37tz/accept/wireframe":
-                    XCTAssertEqual(request.httpMethod, "POST")
-                    XCTAssertEqual(body["expected_proposal_revision"] as? Int, 15)
-                    XCTAssertEqual(body["next_ceiling"] as? String, "done")
-                    XCTAssertEqual(body["next_holder"] as? [String: String], ["kind": "owner", "id": "owner"])
-                    XCTAssertEqual(body.keys.sorted(), body["edited_body"] == nil
-                        ? ["expected_proposal_revision", "next_ceiling", "next_holder"]
-                        : ["edited_body", "expected_proposal_revision", "next_ceiling", "next_holder"])
-                    if let edited = body["edited_body"] as? String { XCTAssertEqual(edited, "Edited proposal") }
-                case "/api/tickets/t_02zd37tz/reject":
-                    XCTAssertEqual(request.httpMethod, "POST")
-                    XCTAssertEqual(body["message"] as? String, "Please revise")
-                    XCTAssertEqual(body["expected_proposal_revision"] as? Int, 15)
-                    XCTAssertEqual(body.keys.sorted(), ["expected_proposal_revision", "message"])
                 case "/api/collections/blockers/t_02zd37tz/t_blocker":
                     XCTAssertEqual(request.httpMethod, "DELETE"); XCTAssertTrue(body.isEmpty)
                 case "/api/tickets/t_02zd37tz/employee-configuration":
