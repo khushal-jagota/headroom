@@ -281,6 +281,4 @@ def test_darwin_home_update_matches_populated_python(
         "foreign_idle_job_refused": True, "unsettled_bootout_retained": True,
     }
     assert actual["v2_identity"]["version"] == 2
-    assert actual["v2_identity"]["installer_node"] == str(
-        Path(shutil.which("node") or "node").resolve()
-    )
+    assert actual["v2_identity"]["installer_node"] == str(Path(NODE).resolve())
