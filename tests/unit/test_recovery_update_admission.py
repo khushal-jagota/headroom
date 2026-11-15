@@ -2,13 +2,16 @@
 
 import asyncio
 from types import SimpleNamespace
+from typing import Any
 from unittest.mock import AsyncMock
+
+import pytest
 
 from planner.conversation.deploy_interruptions import coordinator
 from planner.conversation.workspace_admission import WorkspaceAdmission
 
 
-def _world():
+def _world() -> tuple[WorkspaceAdmission, Any, Any]:
     admission = WorkspaceAdmission()
     reference = SimpleNamespace(interruption_id="interruption")
     store = SimpleNamespace(
@@ -26,19 +29,21 @@ def _world():
     return admission, store, system
 
 
-def test_update_starts_during_recovery_wait_and_prevents_retry(monkeypatch):
-    async def exercise():
+def test_update_starts_during_recovery_wait_and_prevents_retry(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def exercise() -> None:
         admission, store, system = _world()
-        waits = []
-        finished = []
+        waits: list[float] = []
+        finished: list[str] = []
         system.start_admission.finish_unbound = finished.append
 
-        async def wait(delay):
+        async def wait(delay: float) -> None:
             waits.append(delay)
             assert not admission.active
             assert admission.close_starts()
 
-        monkeypatch.setattr(coordinator.asyncio, "sleep", wait)
+        monkeypatch.setattr(asyncio, "sleep", wait)
         await coordinator.run_automatic_recovery(system, store)
         assert waits == [1.0]
         assert system.is_running.await_count == 1
@@ -48,17 +53,17 @@ def test_update_starts_during_recovery_wait_and_prevents_retry(monkeypatch):
     asyncio.run(exercise())
 
 
-def test_recovery_retries_with_backoff_and_delivers_once(monkeypatch):
-    async def exercise():
+def test_recovery_retries_with_backoff_and_delivers_once(monkeypatch: pytest.MonkeyPatch) -> None:
+    async def exercise() -> None:
         admission, store, system = _world()
-        waits = []
+        waits: list[float] = []
         system.start_admission.try_start = lambda request: len(waits) >= 7
 
-        async def wait(delay):
+        async def wait(delay: float) -> None:
             assert not admission.active
             waits.append(delay)
 
-        monkeypatch.setattr(coordinator.asyncio, "sleep", wait)
+        monkeypatch.setattr(asyncio, "sleep", wait)
         await coordinator.run_automatic_recovery(system, store)
         assert waits == [1, 2, 4, 8, 16, 32, 60]
         assert system.send.await_count == 1
@@ -68,23 +73,23 @@ def test_recovery_retries_with_backoff_and_delivers_once(monkeypatch):
     asyncio.run(exercise())
 
 
-def test_update_closes_starts_during_admitted_attempt(monkeypatch):
-    async def exercise():
+def test_update_closes_starts_during_admitted_attempt(monkeypatch: pytest.MonkeyPatch) -> None:
+    async def exercise() -> None:
         admission, store, system = _world()
         system.start_admission.try_start = lambda request: True
-        finished = []
+        finished: list[str] = []
         system.start_admission.finish_unbound = finished.append
 
-        async def send(*args, **kwargs):
+        async def send(*args: Any, **kwargs: Any) -> None:
             assert admission.active
             assert admission.close_starts()
             raise RuntimeError("Workspace admission is closed for an owner update.")
 
-        async def wait(delay):
+        async def wait(delay: float) -> None:
             assert not admission.active
 
         system.send = AsyncMock(side_effect=send)
-        monkeypatch.setattr(coordinator.asyncio, "sleep", wait)
+        monkeypatch.setattr(asyncio, "sleep", wait)
         await coordinator.run_automatic_recovery(system, store)
         assert system.send.await_count == 1
         assert store.select_deployment_recoveries.return_value["c"]
