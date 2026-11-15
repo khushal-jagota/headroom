@@ -291,8 +291,8 @@ def compare_cli_sequence(
             marks=pytest.mark.xfail(
                 run=False,
                 reason=(
-                    "expected-open P3/P4/P5 (#916): P5 machine CLI catalog; "
-                    "P3 supervision state and recap fate; P4 workspace artifacts"
+                    "expected-open P3/P4 (#916): P3 supervision state and recap fate; "
+                    "P4 workspace artifacts"
                 ),
             ),
         ),
