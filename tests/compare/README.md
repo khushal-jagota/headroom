@@ -8,6 +8,22 @@ Source-row sort keys retain known normalized identities and use generic placehol
 
 Retained proofs, staging reasons, and package counts: [P2](expected_open/P2.md), [P3](expected_open/P3.md), [P4](expected_open/P4.md), [P5](expected_open/P5.md), [P6](expected_open/P6.md), [P7](expected_open/P7.md).
 
+The connected executor update cases use Python only as the existing HTTPS publication
+and receipt host. Their native Linux archive comes from the shared TypeScript
+`runtime_archive` fixture and passes the real retained `FilesService` extractor and
+revision validator. The fixture-only Python publication adapter accepts only those
+exact admitted bytes, digest, size, and revision. It does not claim Python archive
+parity or production deployment admission. The failed-attempt case offers the same
+release as a ready prefetch, waits for the consumer's separate `updates/releases`
+cache, and validates that runtime through the real Node revision admission before
+it fails the preparing attempt. The restart case executes the producer-admitted
+entrypoint, which imports the existing connected MacService host and its scripted
+provider. That archived-launch check does not claim a second publication download.
+This reuses the host's existing files worker and NodePeer process owner, with no
+additional worker or listener. These cases run only in hosted CI. Their execution
+cost remains recorded by the hosted test duration, not a local VPS run. P5's hosted
+release acceptance owns the complete production archive and host closure.
+
 ## Add an area
 
 Add two files with the same name:
