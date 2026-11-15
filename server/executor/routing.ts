@@ -1,4 +1,4 @@
-/** Only Mac Ticket children cross this seam. Recovery never allocates a local child. */
+/** Non-Home Ticket children cross this seam. Recovery never allocates a local child. */
 import type {
   BackendChild,
   BackendChildFactory,
@@ -12,6 +12,7 @@ import type { Database } from '../core/database/contracts.ts';
 import { PlannerError } from '../core/contracts.ts';
 import { BackendSpawnFailed } from '../conversation/backends/contracts.ts';
 import { read_ticket_by_conversation_id } from '../tickets/data/index.ts';
+import { HOME_MACHINE_ID } from '../execution_identity.ts';
 
 export function ticket_id_of(start: ResolvedConversationStart): string | null {
   const environment = Object.fromEntries(
@@ -50,16 +51,18 @@ export class LocaleBackendChildFactory {
       } catch (error) {
         if (!(error instanceof PlannerError && error.code === 'not_found')) throw error;
       }
-      if (canonical?.locale === 'macos') {
+      if (canonical && canonical.machine_id !== HOME_MACHINE_ID) {
         if (canonical.id !== ticket_id)
-          throw new BackendSpawnFailed('Mac Ticket requires its canonical Worker identity');
+          throw new BackendSpawnFailed('Remote Ticket requires its canonical Worker identity');
         return true;
       }
-      return (
-        ticket_id !== null &&
-        sql.get<{ locale: string }>('SELECT locale FROM tickets WHERE id=?', [ticket_id])
-          ?.locale === 'macos'
-      );
+      const destination =
+        ticket_id === null
+          ? undefined
+          : sql.get<{ machine_id: string }>('SELECT machine_id FROM tickets WHERE id=?', [
+              ticket_id,
+            ]);
+      return destination !== undefined && destination.machine_id !== HOME_MACHINE_ID;
     });
     return (remote ? this.remote_factory : this.local_factory)(options);
   }

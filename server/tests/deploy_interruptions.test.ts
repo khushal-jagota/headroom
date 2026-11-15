@@ -9,6 +9,7 @@ import { join } from 'node:path';
 import { setup } from './conversation_core_fixture.ts';
 import { configure_conversation_start } from '../runtime/conversation_start.ts';
 import { canonical_ticket_execution_refusal } from '../tickets/execution_admission.ts';
+import { ORIGINAL_MAC_MACHINE_ID } from '../execution_identity.ts';
 import { create, read } from './ticket_fixture.ts';
 import {
   reconcile,
@@ -352,9 +353,10 @@ test('recovery releases its deferred reservation when execution becomes unavaila
         expect(try_start(request)).toBe(false);
         expect(f.core.start_admission.snapshots()).toHaveLength(1);
         f.database.write((tx) => {
-          tx.run("UPDATE tickets SET conversation_id='core',locale='macos' WHERE id=?", [
-            ticket.id,
-          ]);
+          tx.run(
+            "UPDATE tickets SET conversation_id='core',locale='macos',machine_id=? WHERE id=?",
+            [ORIGINAL_MAC_MACHINE_ID, ticket.id],
+          );
           tx.run("INSERT INTO ticket_conversations VALUES ('core',?)", [ticket.id]);
         });
         return false;

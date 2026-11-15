@@ -246,6 +246,8 @@ async def reference(root: Path, data: dict[str, Any], patch: pytest.MonkeyPatch)
                 raise BackendPromptRejected("not admitted 🦉" * 6000)
             if text.endswith("replay"):
                 raise PromptWriteFailed("delivery fate unknown 🦉")
+            if text.endswith("accepted"):
+                return BackendPromptAccepted(False, agent_acceptance_proven=True)
             return BackendPromptAccepted(False)
 
         async def steer(self, turn: Any, content: Any, **options: Any) -> Any:
@@ -586,12 +588,6 @@ async def reference(root: Path, data: dict[str, Any], patch: pytest.MonkeyPatch)
         box.close()
 
 
-@pytest.mark.xfail(
-    run=False,
-    reason=(
-        "expected-open P2: #916 prompt acceptance adds agent_acceptance_proven"
-    ),
-)
 def test_unit22_mac_commands(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, request: pytest.FixtureRequest
 ) -> None:
@@ -629,6 +625,9 @@ def test_unit22_mac_commands(
         }
         source_error["error_type"] = "Error"
     assert observed["parity"] == expected
+    accepted = dict(expected["outcomes"])
+    assert accepted["prompt"]["result"]["agent_acceptance_proven"] is True
+    assert accepted["maintenance-prompt"]["result"]["agent_acceptance_proven"] is False
     assert expected["facts"] and all(expected["facts"].values())
     assert observed["actual_work_joined"]
     assert observed["guards"] and all(observed["guards"].values())

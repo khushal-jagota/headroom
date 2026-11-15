@@ -52,7 +52,7 @@ import type {
   TestCompositionContext,
   ServerOptions,
 } from './start.ts';
-import type { VpsExecutor } from '../executor/vps_transport.ts';
+import type { VpsExecutorRegistry } from '../executor/registry.ts';
 import { ServiceResources } from './service_resources.ts';
 
 interface ServerLifetime {
@@ -89,7 +89,7 @@ export class ServerServices {
     (value, stop) => value.shutdown?.(stop),
     (value) => value.settled(),
   );
-  readonly executor = this.resources.service<VpsExecutor>(
+  readonly executor = this.resources.service<VpsExecutorRegistry>(
     'executor services',
     (value, stop) => value.stop(stop),
     (value) => value.settled(),
@@ -181,6 +181,7 @@ export class ServerServices {
         child_processes,
       }) ?? null;
     this.executor.own(executor ?? undefined);
+    database.read((sql) => executor?.load(sql));
     const before_record: Omit<ConversationCompositionContext, 'record'> = {
       database,
       config,
@@ -400,7 +401,7 @@ export class ServerServices {
       conversationSystem,
       workspaceAdmission: conversationSystem?.workspace_admission,
       updateBarrier: this.update_barrier,
-      executor,
+      executor: executor?.get(ORIGINAL_MAC_MACHINE_ID) ?? null,
     });
     this.app.own(app);
     this.assert_startup_open();
@@ -408,10 +409,9 @@ export class ServerServices {
       if (!core) throw new Error('Configured executor requires the invocation conversation core.');
       executor.configure(core, app, this.update_barrier);
     }
-    const destination_present = (destination: string): boolean =>
-      destination === ORIGINAL_MAC_MACHINE_ID && executor?.presence.is_present() === true;
     core?.start_admission.configure_destinations(
-      (destination) => destination === HOME_MACHINE_ID || destination_present(destination),
+      (destination) =>
+        destination === HOME_MACHINE_ID || executor?.is_present(destination) === true,
     );
     await app.ready();
     this.assert_startup_open();

@@ -104,7 +104,7 @@ export interface BackendHttpRuntime {
     ): Promise<BackendUsageResult>;
   };
   readonly codex_sign_in: CodexSignInService | null;
-  readonly machine_catalog: () => RemoteCatalogSource | null;
+  readonly machine_catalog: (machine_id: string) => RemoteCatalogSource | null;
 }
 /** The login adapter supplies only the card's nonsecret comparison operands. */
 export interface CodexLoginStanding {

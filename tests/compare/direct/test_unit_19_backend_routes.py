@@ -275,6 +275,7 @@ def test_unit19_backend_route_answers_and_rows(
     homes = create_synthetic_homes(tmp_path)
     now = datetime.fromisoformat(NOW)
     seed = tmp_path / "seed.sqlite"
+    named_machine = "66666666-6666-4666-8666-666666666666"
     with synthetic_home_environment(homes), closing(connect(str(seed))) as conn:
         create_schema(conn)
         project = create_project(conn, name="Backend proof", now=int(now.timestamp()))
@@ -288,6 +289,26 @@ def test_unit19_backend_route_answers_and_rows(
             now=int(now.timestamp()),
             title_max_chars=200,
         )
+        conn.execute(
+            "INSERT INTO machines VALUES (?,'Named Linux','server','cyan',0)", (named_machine,)
+        )
+        # Keep the existing global retirement proof complete across every machine.
+        for value in fixture_cards():
+            save_machine_model_list(conn, named_machine, card(value))
+        named_ticket = create_ticket(
+            conn,
+            title="Named backend scope",
+            project_id=project.id,
+            brief="Synthetic",
+            worker_type="coding",
+            principal=OWNER_PRINCIPAL,
+            now=int(now.timestamp()),
+            title_max_chars=200,
+        )
+        conn.execute(
+            "UPDATE tickets SET machine_id=? WHERE id=?", (named_machine, named_ticket.id)
+        )
+        assert named_ticket.locale == TicketLocale.vps
         manager = create_manager(
             conn, title="Backend caller", project_id=project.id, clock=FakeClock(now)
         )
@@ -368,6 +389,13 @@ def test_unit19_backend_route_answers_and_rows(
         {
             "method": "POST",
             "path": "/api/conversation/backends",
+            "json": {"ticket_id": named_ticket.id},
+        }
+    )
+    requests.append(
+        {
+            "method": "POST",
+            "path": "/api/conversation/backends",
             "json": {"ticket_id": ticket.id},
             "headers": {"x-plan-actor": "worker"},
         }
@@ -421,6 +449,12 @@ def test_unit19_backend_route_answers_and_rows(
         result = card(next(value for value in cards if value["backend_key"] == key))
         return replace(result, version=environment.version) if key == Backend.codex else result
 
+    async def named_snapshot(key: Backend, **options: Any) -> BackendSnapshot:
+        result = card(next(value for value in cards if value["backend_key"] == key))
+        return replace(result, version="named-3.0.0")
+
+    named_catalog = SimpleNamespace(snapshot=named_snapshot)
+
     with (
         synthetic_home_environment(homes),
         patch("planner.conversation.snapshot.probe_backend", probe),
@@ -458,7 +492,11 @@ def test_unit19_backend_route_answers_and_rows(
                 {Backend(value["backend_key"]): RecordedUsage(value) for value in usage}
             ),
             codex_sign_in=sign_in,
-            system=SimpleNamespace(machine_catalog=None),
+            system=SimpleNamespace(
+                machine_catalog=SimpleNamespace(
+                    catalog_for=lambda machine: named_catalog if machine == named_machine else None
+                )
+            ),
         )
         install_ticket_model_controls(app)
 
@@ -519,7 +557,8 @@ def test_unit19_backend_route_answers_and_rows(
         400,
         400,
         400,
-    ] + [422] + [200] * 6 + [400]
+    ] + [422] + [200] * 7 + [400]
+    assert {item["version"] for item in answers[-2]["body"]["backends"]} == {"named-3.0.0"}
     assert answers[-1]["body"]["error"]["code"] == "agent_forbidden"
     spec = tmp_path / "spec.json"
     spec.write_text(
@@ -531,6 +570,7 @@ def test_unit19_backend_route_answers_and_rows(
                 "usage": usage,
                 "sign_in": pending,
                 "requests": requests,
+                "named_machine": named_machine,
             }
         )
     )

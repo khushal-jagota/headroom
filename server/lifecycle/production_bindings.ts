@@ -116,7 +116,7 @@ export function compose_production_backends(
         : new LocaleBackendChildFactory(
             context.database,
             local_factories.claude,
-            context.executor.runs.as_factory(),
+            context.executor.as_factory(),
           ).as_factory(),
     codex:
       context.executor == null
@@ -124,7 +124,7 @@ export function compose_production_backends(
         : new LocaleBackendChildFactory(
             context.database,
             local_factories.codex,
-            context.executor.runs.as_factory(),
+            context.executor.as_factory(),
           ).as_factory(),
     hermes:
       context.executor == null
@@ -132,7 +132,7 @@ export function compose_production_backends(
         : new LocaleBackendChildFactory(
             context.database,
             local_factories.hermes,
-            context.executor.runs.as_factory(),
+            context.executor.as_factory(),
           ).as_factory(),
   };
   const supplied_http = bindings.http(shared);
@@ -145,7 +145,7 @@ export function compose_production_backends(
           backend_state: supplied_http.backend_state,
           backend_usage: supplied_http.backend_usage,
           codex_sign_in: supplied_http.codex_sign_in,
-          machine_catalog: () => context.executor!.catalog,
+          machine_catalog: (machine_id) => context.executor!.catalog_for(machine_id),
           shutdown: (options) => supplied_http.shutdown?.(options) ?? Promise.resolve(),
           settled: () => supplied_http.settled(),
         };

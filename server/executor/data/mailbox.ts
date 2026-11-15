@@ -174,7 +174,28 @@ export function insert_child_command(
     return existing.command;
   }
   const child = command.child;
-  if (
+  if (command.arguments.kind === 'recheck_cleanup') {
+    const { source, ticket_id } = command.arguments;
+    const ticket = tx.get('SELECT conversation_id FROM tickets WHERE id=?', [ticket_id]);
+    const assignment = tx.get<{ principal_kind: string; principal_id: string }>(
+      'SELECT principal_kind,principal_id FROM executor_child_assignments WHERE executor_incarnation=? AND child_id=? AND conversation_id=?',
+      [source.executor_incarnation, source.child_id, source.conversation_id],
+    );
+    if (
+      current_incarnation(tx, machine_id) !== child.executor_incarnation ||
+      assignment?.principal_kind !== 'ticket' ||
+      assignment.principal_id !== ticket_id ||
+      !ticket ||
+      child.child_id !== source.child_id ||
+      child.conversation_id !== source.conversation_id
+    )
+      return {
+        command_id: command.command_id,
+        child,
+        disposition: 'refused',
+        result: { reason: 'cleanup_source_not_owned' },
+      };
+  } else if (
     current_incarnation(tx, machine_id) !== child.executor_incarnation ||
     open_child_assignment(tx, child) === null
   )

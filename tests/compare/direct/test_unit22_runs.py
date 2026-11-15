@@ -19,6 +19,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, cast
 from unittest.mock import patch
+from uuid import UUID
 
 import pytest
 from tests.support.executor_presence import lease_request, mac_identity, make_current
@@ -60,13 +61,14 @@ from planner.core.contracts import PlannerError, Principal, PrincipalKind
 from planner.core.db import connect, create_schema
 from planner.execution_identity import ChildReference
 from planner.executor import protocol as wire
+from planner.executor.registry import VpsExecutorRegistry
 from planner.executor.routing import LocaleBackendChildFactory
 from planner.executor.skills import read_canonical_skill_snapshot
 from planner.executor.vps_mailbox import SqliteCommandMailbox
 from planner.executor.vps_presence import MacPresenceService
 from planner.executor.vps_presence_store import accept_lease_in_transaction
 from planner.executor.vps_runs import MacRuns
-from planner.machines.contracts import ORIGINAL_MAC_MACHINE_ID
+from planner.machines.contracts import HOME_MACHINE_ID, ORIGINAL_MAC_MACHINE_ID
 from planner.tickets.api import write_create_ticket
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -204,6 +206,11 @@ def _runs_exchange(
                 "INSERT INTO machines(machine_id,name,icon,color,is_home) "
                 "VALUES (?,'Other','server','cyan',0)",
                 (other,),
+            )
+            conn.execute(
+                "INSERT INTO machine_executor_credentials(machine_id,credential_sha256) "
+                "VALUES (?,?)",
+                (other, "a" * 64),
             )
             accept_lease_in_transaction(conn, lease_request(fresh), NOW, other)
             conn.commit()
@@ -633,18 +640,13 @@ def _machine_runs_exchange(
             }
 
     async def reference() -> dict[str, Any]:
-        mailboxes = [
-            SqliteCommandMailbox(str(path), machine_id=machine, clock=lambda: NOW)
-            for machine in machines
-        ]
-        presences = [
-            MacPresenceService(str(path), mailbox, machine_id=machine, clock=lambda: NOW)
-            for machine, mailbox in zip(machines, mailboxes, strict=True)
-        ]
-        owners = [
-            MacRuns(str(path), presence, mailbox)
-            for presence, mailbox in zip(presences, mailboxes, strict=True)
-        ]
+        clock = FixedClock(datetime.fromtimestamp(NOW // 1000, UTC))
+        registry = VpsExecutorRegistry(str(path), clock, original_enabled=True)
+        with closing(connect(str(path))) as conn:
+            registry.load(conn)
+        endpoints = [registry.get(machine) for machine in machines]
+        assert all(endpoint is not None for endpoint in endpoints)
+        owners = [cast(Any, endpoint).runs for endpoint in endpoints]
 
         def snapshot() -> list[dict[str, Any]]:
             with closing(connect(str(path))) as conn:
@@ -677,6 +679,31 @@ def _machine_runs_exchange(
             ]
 
         try:
+            named_registry = VpsExecutorRegistry(str(path), clock)
+            try:
+                with closing(connect(str(path))) as conn:
+                    named_registry.load(conn)
+                named_only = [
+                    named_registry.get(machines[0]) is None,
+                    named_registry.get(machines[1]) is not None,
+                ]
+            finally:
+                await named_registry.close()
+            loaded = [registry.get(machine) is not None for machine in machines]
+            unknown = "77777777-7777-4777-8777-777777777777"
+            unknown_present = registry.is_present(unknown)
+            unknown_allocated = registry.get(unknown) is not None
+            refused_destinations = []
+            for machine in (unknown, HOME_MACHINE_ID):
+                try:
+                    await registry.ensure(machine)
+                    refused_destinations.append(False)
+                except ValueError:
+                    refused_destinations.append(True)
+            catalogs = [
+                registry.catalog_for(machine) is cast(Any, endpoint).catalog
+                for machine, endpoint in zip(machines, endpoints, strict=True)
+            ]
             for owner, child in zip(owners, children, strict=True):
                 owner.store.register_child(child, "ticket", ticket, NOW)
             before, original = snapshot(), rows()
@@ -685,20 +712,70 @@ def _machine_runs_exchange(
                 for index, owner in enumerate(owners)
             ]
             unchanged = rows() == original
+            choices: list[str] = []
+
+            def selected(owner: MacRuns, **options: Any) -> Any:
+                choices.append(owner.machine_id)
+                raise RuntimeError("selection only")
+
+            def local(**options: Any) -> Any:
+                choices.append("local")
+
+            router = LocaleBackendChildFactory(str(path), cast(Any, local), registry)
+            start = ResolvedConversationStart(
+                "routing", ConversationBackendKey.codex, "fixture", None,
+                ConversationRoleMaterials(
+                    "fixture", (("PLAN_ACTOR", "worker"), ("PLAN_TICKET_ID", ticket))
+                ),
+                Path("/tmp"), ConversationAccess.full,
+            )
+            with patch.object(MacRuns, "__call__", selected):
+                for machine in (*machines, HOME_MACHINE_ID):
+                    with closing(connect(str(path))) as conn:
+                        conn.execute(
+                            "UPDATE tickets SET machine_id=? WHERE id=?", (machine, ticket)
+                        )
+                        conn.commit()
+                    try:
+                        router(
+                            resolved_start=start,
+                            event_sink=cast(Any, None),
+                            message_files=cast(Any, None),
+                        )
+                    except RuntimeError as error:
+                        assert str(error) == "selection only"
             recovered = []
-            for owner, child in zip(owners, children, strict=True):
-                adopted = owner.recover(child)
+            for child in children:
+                adopted = registry.recover(child)
                 assert adopted is not None
                 recovered.append(adopted.initial_history_complete)
             with closing(connect(str(path))) as conn:
                 accept_lease_in_transaction(conn, replacement, NOW + 1, machines[1])
                 conn.commit()
             replaced = snapshot()
+            with closing(connect(str(path))) as conn:
+                tagged_stalls = [
+                    wait for source in registry.stall_sources()
+                    for wait in source.tracked_waits(conn, NOW)
+                    if wait.kind == "mac_replacement_pending"
+                ]
             retained = owners[1].recover(children[1])
             assert retained is not None
             owners[0].store.close_child(children[1], NOW + 2)
+            cleanup = await _cleanup_recheck_exchange(
+                path, registry, machines, children[1], ticket
+            )
             return dict(
                 before=before,
+                cleanup=cleanup,
+                loaded=loaded,
+                named_only=named_only,
+                unknown_present=unknown_present,
+                unknown_allocated=unknown_allocated,
+                refused_destinations=refused_destinations,
+                catalogs=catalogs,
+                choices=choices,
+                tagged_stalls=tagged_stalls,
                 refused=refused,
                 unchanged=unchanged,
                 recovered=recovered,
@@ -709,12 +786,7 @@ def _machine_runs_exchange(
                 rows=rows(),
             )
         finally:
-            for owner in owners:
-                await owner.close()
-            for presence in presences:
-                await presence.close()
-            for mailbox in mailboxes:
-                await mailbox.close()
+            await registry.close()
 
     with synthetic_home_environment(homes):
         expected = wire.encode_value(asyncio.run(reference()))
@@ -749,6 +821,28 @@ def _machine_runs_exchange(
     assert actual["refused"] == [["agent_forbidden"] * 3 + ["BackendSpawnFailed"]] * 2
     assert actual["replaced"][0]["unresolved"] == []
     assert actual["replaced"][1]["unresolved"] == [wire.as_object(children[1])]
+    assert actual["loaded"] == actual["catalogs"] == [True, True]
+    assert actual["named_only"] == [True, True]
+    assert not actual["unknown_present"] and not actual["unknown_allocated"]
+    assert actual["refused_destinations"] == [True, True]
+    assert actual["choices"] == [*machines, "local"]
+    assert [wait["machine_id"] for wait in actual["tagged_stalls"]] == [machines[1]]
+    cleanup = actual["cleanup"]
+    assert cleanup["held"] == [True] * 5 and all(cleanup["budgets"])
+    assert cleanup["blocked"]["complete"] and cleanup["recent"]["complete"]
+    assert not any(cleanup[key]["complete"] for key in (
+        "wrong_ticket", "missing_source", "mailbox_refused", "refused", "incomplete",
+        "no_result", "expired", "unreachable",
+    ))
+    assert cleanup["wrong_machine"] == "agent_forbidden"
+    for command in cleanup["requests"]:
+        assert command["child"] == {
+            **wire.as_object(children[1]),
+            "executor_incarnation": replacement.identity.executor_incarnation,
+        }
+        assert command["arguments"] == {
+            "kind": "recheck_cleanup", "source": wire.as_object(children[1]), "ticket_id": ticket,
+        }
     report = request.config.getoption("--compare-report-dir", default=None)
     if report:
         target = Path(report) / "unit22-machine-runs.json"
@@ -757,3 +851,130 @@ def _machine_runs_exchange(
             dict(seconds=time.perf_counter() - began, expected=expected, actual=actual),
             indent=2,
         ))
+
+
+async def _cleanup_recheck_exchange(
+    path: Path, registry: VpsExecutorRegistry, machines: list[str],
+    source: ChildReference, ticket: str,
+) -> dict[str, Any]:
+    endpoint = registry.get(machines[1])
+    other = registry.get(machines[0])
+    assert endpoint is not None and other is not None
+    presence, mailbox = endpoint.presence, endpoint.mailbox
+    presence._clock = other.presence._clock = mailbox._clock = lambda: NOW
+    base = presence.record()
+    assert base is not None and base.lease is not None
+    requests: list[dict[str, Any]] = []
+    ids: list[str] = []
+    budgets: list[bool] = []
+    current = presence.current_identity()
+    assert current is not None
+    result: dict[str, Any] = {}
+    result["wrong_ticket"] = await registry.recheck_cleanup(source, "missing-ticket")
+    result["missing_source"] = await registry.recheck_cleanup(
+        replace(source, child_id="missing-child"), ticket
+    )
+    try:
+        await other.runs.recheck_cleanup(source, ticket)
+    except PlannerError as error:
+        result["wrong_machine"] = error.code.value
+    result["mailbox_refused"] = await endpoint.runs.recheck_cleanup(source, "missing-ticket")
+    presence._clock = lambda: NOW + 61_000
+    try:
+        result["unreachable"] = await registry.recheck_cleanup(source, ticket)
+    finally:
+        presence._clock = lambda: NOW
+    original_put, original_wait, original_drain = (
+        mailbox.put_child_command, mailbox.wait_result, presence.wait_until_drained
+    )
+
+    async def execute(mode: str) -> Any:
+        entered = asyncio.Event()
+        reply: wire.CommandResult | None = None
+
+        async def put(command: wire.ChildCommand) -> Any:
+            nonlocal reply
+            placed = await original_put(command)
+            assert isinstance(placed, wire.MailboxCommand)
+            assert str(UUID(command.command_id)) == command.command_id
+            assert command.command_id not in ids
+            ids.append(command.command_id)
+            requests.append({
+                **wire.as_object(command), "command_id": f"cleanup-command-{len(ids)}",
+            })
+            await mailbox.poll(current, 0, 0)
+            outcome = wire.CommandOutcome(
+                command.command_id, command.child,
+                wire.CommandDisposition.refused if mode == "refused"
+                else wire.CommandDisposition.succeeded,
+                {"complete": mode != "incomplete", "reason": "fixture cleanup"},
+            )
+            reply = wire.CommandResult(command.command_id, outcome)
+            await mailbox.record_results(
+                current, wire.CommandOutcomeReport((reply,))
+            )
+            row = mailbox.command_row(command.command_id)
+            assert row is not None and row.result is not None
+            assert row.command.command_id == row.result.command_id == command.command_id
+            assert row.result.child_outcome is not None
+            assert row.result.child_outcome.command_id == command.command_id
+            return placed
+
+        async def wait(command_id: str, timeout_seconds: float | None = None) -> Any:
+            assert timeout_seconds is not None
+            budgets.append(0 <= timeout_seconds <= 30)
+            if mode == "no_result":
+                return None
+            if mode == "expired":
+                return reply
+            return await original_wait(command_id, timeout_seconds)
+
+        async def drain(conversation_id: str) -> None:
+            entered.set()
+            await original_drain(conversation_id)
+
+        with (
+            patch.object(mailbox, "put_child_command", put),
+            patch.object(mailbox, "wait_result", wait),
+            patch.object(presence, "wait_until_drained", drain),
+            patch("planner.executor.vps_runs.CLEANUP_RECHECK_TIMEOUT_SECONDS",
+                  -1 if mode == "expired" else 30),
+        ):
+            if mode == "blocked":
+                presence._record = replace(base, last_lease_at_ms=NOW - 26_000)
+            task = asyncio.create_task(registry.recheck_cleanup(source, ticket))
+            if mode == "blocked":
+                await entered.wait()
+                held = [not task.done()]
+                lease = base.lease
+                assert lease is not None
+                for changed in (
+                    replace(lease, waiting_conversations_truncated=True),
+                    replace(lease, waiting_conversations=(wire.WaitingConversation(
+                        source.conversation_id, 1),)),
+                    replace(lease, cleanup_uncertainties=(wire.WorkerCleanupUncertainty(
+                        ticket, source.conversation_id, "still pending"),)),
+                    replace(lease, identity=replace(lease.identity, executor_incarnation=
+                            "99999999-9999-4999-8999-999999999999")),
+                ):
+                    presence._record = replace(base, last_lease_at_ms=NOW, lease=changed)
+                    presence._wake_drains()
+                    await asyncio.sleep(0)
+                    held.append(not task.done())
+                presence._record = base
+                presence._wake_drains()
+                result["held"] = held
+            return await task
+
+    try:
+        for mode in ("refused", "incomplete", "no_result", "blocked", "recent", "expired"):
+            result[mode] = await execute(mode)
+        result["requests"], result["budgets"] = requests, budgets
+        return result
+    finally:
+        presence._record = base
+        with closing(connect(str(path))) as conn:
+            conn.executemany(
+                "DELETE FROM executor_commands WHERE command_id=?", [(key,) for key in ids]
+            )
+            conn.commit()

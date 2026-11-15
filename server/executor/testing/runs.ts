@@ -2,6 +2,8 @@
 import { readFileSync } from 'node:fs';
 import { createDatabase } from '../../core/database/index.ts';
 import { ChangeSignal } from '../../core/changes/index.ts';
+import { TestClock } from '../../core/clock.ts';
+import { HOME_MACHINE_ID, valid_uuid } from '../../execution_identity.ts';
 import {
   ResolvedConversationStart,
   ConversationRoleMaterials,
@@ -15,6 +17,7 @@ import type { WireTypes } from '../wire.generated.ts';
 import { MacPresenceService } from '../vps_presence.ts';
 import { SqliteCommandMailbox } from '../vps_mailbox.ts';
 import { MacRuns } from '../vps_runs.ts';
+import { VpsExecutorRegistry } from '../registry.ts';
 import { close_run_and_record_mac_process_interruption } from '../interruption_coordinator.ts';
 import { LocaleBackendChildFactory } from '../routing.ts';
 import { read_canonical_skill_snapshot } from '../data/skills.ts';
@@ -24,21 +27,25 @@ import { SqliteProcessConversationSystem } from '../../conversation/system.ts';
 import { adopted_running_turn } from '../../conversation/logic/retained_turn.ts';
 import { accept_lease_in_transaction } from '../vps_presence_store.ts';
 import { isDeepStrictEqual } from 'node:util';
+import { setImmediate as yield_turn } from 'node:timers/promises';
+import type { PresenceRecord } from '../contracts.ts';
 const spec = JSON.parse(readFileSync(0, 'utf8'));
 if (spec.mode === 'machines') {
+  Date.now = () => spec.now;
   const db = createDatabase(spec.path);
-  const mailboxes = spec.machines.map(
-    (machine_id: string) => new SqliteCommandMailbox(db, { machine_id, clock: () => spec.now }),
-  ) as SqliteCommandMailbox[];
-  const presences = mailboxes.map(
-    (mailbox, index) =>
-      new MacPresenceService(db, mailbox, {
-        machine_id: spec.machines[index],
-        changes: new ChangeSignal(),
-        clock: () => spec.now,
-      }),
-  );
-  const owners = presences.map((presence, index) => new MacRuns(db, presence, mailboxes[index]!));
+  const clock = new TestClock(new Date(spec.now).toISOString());
+  const options = {
+    db_path: spec.path,
+    changes: new ChangeSignal(),
+    media_signal: new AbortController().signal,
+  };
+  const registry = new VpsExecutorRegistry(db, clock, {
+    ...options,
+    original_enabled: true,
+  });
+  db.read((sql) => registry.load(sql));
+  const endpoints = (spec.machines as string[]).map((machine) => registry.get(machine)!);
+  const owners = endpoints.map((endpoint) => endpoint.runs);
   const references = spec.children as WireTypes['ChildReference'][];
   const attempt = (work: () => unknown) => {
     try {
@@ -67,8 +74,199 @@ if (spec.mode === 'machines') {
       owns: references.map((child) => owner.owns_conversation(child.conversation_id)),
       stalls: db.read((sql) => owner.stall_source().tracked_waits(sql, spec.now)),
     }));
+  const cleanup_recheck = async () => {
+    const endpoint = endpoints[1]!,
+      other = endpoints[0]!;
+    const presence = endpoint.presence,
+      mailbox = endpoint.mailbox;
+    const base = presence.record()!;
+    const current = presence.current_identity()!;
+    const source = references[1]!;
+    const requests: Record<string, unknown>[] = [],
+      ids: string[] = [],
+      budgets: boolean[] = [];
+    const result: Record<string, unknown> = {};
+    result.wrong_ticket = await registry.recheck_cleanup(source, 'missing-ticket');
+    result.missing_source = await registry.recheck_cleanup(
+      { ...source, child_id: 'missing-child' },
+      spec.ticket,
+    );
+    try {
+      await other.runs.recheck_cleanup(source, spec.ticket);
+    } catch (error) {
+      result.wrong_machine = (error as { code: string }).code;
+    }
+    result.mailbox_refused = await endpoint.runs.recheck_cleanup(source, 'missing-ticket');
+    Date.now = () => spec.now + 61_000;
+    try {
+      result.unreachable = await registry.recheck_cleanup(source, spec.ticket);
+    } finally {
+      Date.now = () => spec.now;
+    }
+    const original_put = mailbox.put_child_command.bind(mailbox);
+    const original_wait = mailbox.wait_result.bind(mailbox);
+    const original_drain = presence.wait_until_drained.bind(presence);
+    const memory = presence as unknown as {
+      set_record(record: PresenceRecord): void;
+      wake_drains(): void;
+    };
+    const execute = async (mode: string) => {
+      const entered = Promise.withResolvers<void>();
+      let reply: WireTypes['CommandResult'] | null = null;
+      const performance_now = performance.now.bind(performance);
+      const descriptor = Object.getOwnPropertyDescriptor(performance, 'now');
+      mailbox.put_child_command = async (command, options) => {
+        const placed = await original_put(command, options);
+        if (!('command_sequence' in placed)) throw new Error('Cleanup command was not admitted');
+        if (!valid_uuid(command.command_id) || ids.includes(command.command_id))
+          throw new Error('Cleanup command identity was not unique');
+        ids.push(command.command_id);
+        requests.push({
+          ...as_object(command, 'ChildCommand'),
+          command_id: `cleanup-command-${ids.length}`,
+        });
+        await mailbox.poll(current, 0, 0);
+        reply = {
+          command_id: command.command_id,
+          child_outcome: {
+            command_id: command.command_id,
+            child: command.child,
+            disposition: mode === 'refused' ? 'refused' : 'succeeded',
+            result: { complete: mode !== 'incomplete', reason: 'fixture cleanup' },
+          },
+          model_list: null,
+        };
+        await mailbox.record_results(current, { outcomes: [reply] });
+        const row = mailbox.command_row(command.command_id);
+        if (
+          row?.command.command_id !== command.command_id ||
+          row.result?.command_id !== command.command_id ||
+          row.result.child_outcome?.command_id !== command.command_id
+        )
+          throw new Error('Cleanup result lost its exact command correlation');
+        return placed;
+      };
+      mailbox.wait_result = async (id, timeout, options) => {
+        budgets.push(timeout != null && timeout >= 0 && timeout <= 30);
+        if (mode === 'no_result') return null;
+        if (mode === 'expired') {
+          Object.defineProperty(performance, 'now', {
+            configurable: true,
+            value: () => performance_now() + 31_000,
+          });
+          return reply;
+        }
+        return original_wait(id, timeout, options);
+      };
+      presence.wait_until_drained = async (conversation, options) => {
+        entered.resolve();
+        await original_drain(conversation, options);
+      };
+      try {
+        if (mode === 'blocked') memory.set_record({ ...base, last_lease_at_ms: spec.now - 26_000 });
+        const task = registry.recheck_cleanup(source, spec.ticket);
+        let completed = false;
+        void task.then(
+          () => {
+            completed = true;
+          },
+          () => {
+            completed = true;
+          },
+        );
+        if (mode === 'blocked') {
+          await entered.promise;
+          const held = [!completed];
+          const lease = base.lease!;
+          for (const changed of [
+            { ...lease, waiting_conversations_truncated: true },
+            {
+              ...lease,
+              waiting_conversations: [
+                { conversation_id: source.conversation_id, oldest_sequence: 1 },
+              ],
+            },
+            {
+              ...lease,
+              cleanup_uncertainties: [
+                {
+                  ticket_id: spec.ticket,
+                  conversation_id: source.conversation_id,
+                  reason: 'still pending',
+                },
+              ],
+            },
+            {
+              ...lease,
+              identity: {
+                ...lease.identity,
+                executor_incarnation: '99999999-9999-4999-8999-999999999999',
+              },
+            },
+          ]) {
+            memory.set_record({ ...base, last_lease_at_ms: spec.now, lease: changed });
+            memory.wake_drains();
+            await yield_turn();
+            held.push(!completed);
+          }
+          memory.set_record(base);
+          memory.wake_drains();
+          result.held = held;
+        }
+        return await task;
+      } finally {
+        mailbox.put_child_command = original_put;
+        mailbox.wait_result = original_wait;
+        presence.wait_until_drained = original_drain;
+        if (descriptor) Object.defineProperty(performance, 'now', descriptor);
+        else Reflect.deleteProperty(performance, 'now');
+      }
+    };
+    try {
+      for (const mode of ['refused', 'incomplete', 'no_result', 'blocked', 'recent', 'expired'])
+        result[mode] = await execute(mode);
+      result.requests = requests;
+      result.budgets = budgets;
+      return result;
+    } finally {
+      memory.set_record(base);
+      db.write((tx) => {
+        for (const id of ids) tx.run('DELETE FROM executor_commands WHERE command_id=?', [id]);
+      });
+    }
+  };
   let result;
   try {
+    const named_registry = new VpsExecutorRegistry(db, clock, options);
+    let named_only: boolean[];
+    try {
+      db.read((sql) => named_registry.load(sql));
+      named_only = [
+        named_registry.get(spec.machines[0]) === null,
+        named_registry.get(spec.machines[1]) !== null,
+      ];
+    } finally {
+      await named_registry.stop({ deadline: performance.now() / 1000 + 2 });
+      await named_registry.settled();
+    }
+    const loaded = (spec.machines as string[]).map((machine) => registry.get(machine) !== null);
+    const unknown = '77777777-7777-4777-8777-777777777777';
+    const unknown_present = registry.is_present(unknown);
+    const unknown_allocated = registry.get(unknown) !== null;
+    const refused_destinations = [];
+    for (const machine of [unknown, HOME_MACHINE_ID]) {
+      try {
+        await registry.ensure(machine);
+        refused_destinations.push(false);
+      } catch (error) {
+        if (!(error instanceof Error) || error.message !== 'Unknown executor destination')
+          throw error;
+        refused_destinations.push(true);
+      }
+    }
+    const catalogs = endpoints.map(
+      (endpoint) => registry.catalog_for(endpoint.machine_id) === endpoint.catalog,
+    );
     owners.forEach((owner, index) =>
       owner.store.register_child(references[index]!, 'ticket', spec.ticket, spec.now),
     );
@@ -84,8 +282,56 @@ if (spec.mode === 'machines') {
       ];
     });
     const unchanged = isDeepStrictEqual(rows(), original);
-    const recovered = owners.map(
-      (owner, index) => owner.recover(references[index]!)?.initial_history_complete,
+    const choices: string[] = [];
+    const constructors = owners.map((owner) => owner.create);
+    for (const owner of owners)
+      owner.create = () => {
+        choices.push(owner.machine_id);
+        throw new Error('selection only');
+      };
+    const router = new LocaleBackendChildFactory(
+      db,
+      () => {
+        choices.push('local');
+        throw new Error('selection only');
+      },
+      registry.as_factory(),
+    );
+    const start = new ResolvedConversationStart({
+      conversation_id: 'routing',
+      backend_key: 'codex',
+      model: 'fixture',
+      reasoning_effort: null,
+      role_materials: new ConversationRoleMaterials({
+        role_text: 'fixture',
+        identity_environment_variables: [
+          ['PLAN_ACTOR', 'worker'],
+          ['PLAN_TICKET_ID', spec.ticket],
+        ],
+      }),
+      workspace_folder: '/tmp',
+      access: 'full',
+    });
+    try {
+      for (const machine of [...spec.machines, HOME_MACHINE_ID]) {
+        db.write((tx) =>
+          tx.run('UPDATE tickets SET machine_id=? WHERE id=?', [machine, spec.ticket]),
+        );
+        try {
+          router.create({
+            resolved_start: start,
+            event_sink: { async report() {} },
+            message_files: endpoints[0]!.message_files,
+          });
+        } catch (error) {
+          if (!(error instanceof Error) || error.message !== 'selection only') throw error;
+        }
+      }
+    } finally {
+      owners.forEach((owner, index) => (owner.create = constructors[index]!));
+    }
+    const recovered = references.map(
+      (reference) => registry.recover(reference)?.initial_history_complete,
     );
     db.write((tx) =>
       accept_lease_in_transaction(
@@ -96,11 +342,30 @@ if (spec.mode === 'machines') {
       ),
     );
     const replaced = snapshot();
+    const tagged_stalls = db.read((sql) =>
+      registry
+        .stall_sources()
+        .flatMap((source) =>
+          source
+            .tracked_waits(sql, spec.now)
+            .filter((wait) => wait.kind === 'mac_replacement_pending'),
+        ),
+    );
     const retained_recovery = owners[1]!.recover(references[1]!)?.initial_history_complete;
     // This trusted exact-reference participant intentionally remains global, as in Python.
     owners[0]!.store.close_child(references[1]!, spec.now + 2);
+    const cleanup = await cleanup_recheck();
     result = {
       before,
+      cleanup,
+      loaded,
+      named_only,
+      unknown_present,
+      unknown_allocated,
+      refused_destinations,
+      catalogs,
+      choices,
+      tagged_stalls,
       refused,
       unchanged,
       recovered,
@@ -112,9 +377,8 @@ if (spec.mode === 'machines') {
     };
   } finally {
     const stop = { deadline: performance.now() / 1000 + 2 };
-    for (const owner of owners) await owner.stop(stop);
-    for (const presence of presences) await presence.stop(stop);
-    for (const mailbox of mailboxes) await mailbox.stop(stop);
+    await registry.stop(stop);
+    await registry.settled();
     db.close();
   }
   await new Promise<void>((resolve, reject) =>

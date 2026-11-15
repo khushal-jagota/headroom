@@ -25,6 +25,10 @@ The native schema describes protocol 26. Runtime identities still advertise prot
 until machine credentials, supervision, and workspace behavior reach parity. This is
 an incomplete staging port, not an accepted final difference.
 
+The active machine-admission comparison uses each runtime's supported identity
+and retains both full identities in its report. It proves destination selection,
+readiness, and refusal envelopes. It does not claim a same-wire protocol-26 exchange.
+
 ## Pending staging port: Linux host admission
 
 P5 owns the Linux host admission Node version policy. Python accepts Node majors at or
