@@ -93,7 +93,7 @@ const content = Buffer.from('result bytes');
 const manifest = {
   scope: 'ticket' as const,
   owner_id: 'ticket-1',
-  relative_path: 'out/result.bin',
+  relative_path: 'out/worktree',
   sha256: createHash('sha256').update(content).digest('hex'),
   byte_count: content.byteLength,
 };
@@ -211,9 +211,12 @@ test('the exported stall destroys the silent Readable before return and complete
   }
 });
 
-test('missing procfs refuses before content intake and closes the actual probe descriptor', async () => {
-  const { service } = world(),
+test('private roots and missing procfs refuse before content intake', async () => {
+  const { service, staging } = world(),
     next = vi.fn(async () => ({ value: content, done: false }));
+  await expect(
+    staging.file_target({ ...manifest, relative_path: 'worktree/private' }),
+  ).rejects.toThrow('Ticket worktree is private');
   const before = existsSync(service.staging) ? readdirSync(service.staging).sort() : [];
   faults.missing_proc = true;
   try {

@@ -3,7 +3,7 @@ import { lstat, mkdir, readFile, readdir, realpath, rm } from 'node:fs/promises'
 import { randomBytes } from 'node:crypto';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { ChildProcesses } from '../lifecycle/owned_processes.ts';
+import type { OwnedChildProcesses } from '../lifecycle/contracts.ts';
 import { path_is_within } from '../core/path_containment.ts';
 
 function ticket_name(ticket_id: string): RegExp {
@@ -18,7 +18,7 @@ async function prepare_root(home: string): Promise<string> {
     throw new Error(`Worker scratch root must be a private real directory: ${root}`);
   return root;
 }
-async function disk_directory(root: string): Promise<void> {
+async function disk_directory(root: string, processes: OwnedChildProcesses): Promise<void> {
   let kind: string | undefined;
   if (process.platform === 'linux') {
     const resolved = await realpath(root);
@@ -36,7 +36,7 @@ async function disk_directory(root: string): Promise<void> {
     }
   } else if (process.platform === 'darwin') {
     const output = await new Promise<string>((resolve, reject) => {
-      const child = new ChildProcesses().spawn('/sbin/mount', [], {
+      const child = processes.spawn('/sbin/mount', [], {
         env: { PATH: '/usr/bin:/bin:/usr/sbin:/sbin' },
         stdio: ['ignore', 'pipe', 'pipe'],
         detached: false,
@@ -46,10 +46,14 @@ async function disk_directory(root: string): Promise<void> {
       child.stdout!.on('data', (chunk) => {
         text += String(chunk);
       });
-      child.once('error', reject);
+      let failure: Error | undefined;
+      child.once('error', (error) => {
+        failure = error;
+      });
       child.once('close', (code) => {
         clearTimeout(timeout);
-        if (code === 0) resolve(text);
+        if (failure) reject(failure);
+        else if (code === 0) resolve(text);
         else reject(new Error('Cannot inspect the Mac scratch filesystem'));
       });
     });
@@ -126,12 +130,12 @@ export class WorkerScratch {
   }
   static async create(
     environment: Readonly<Record<string, string>>,
-    options: { home?: string; signal?: AbortSignal } = {},
+    options: { processes: OwnedChildProcesses; home?: string; signal?: AbortSignal },
   ): Promise<WorkerScratch> {
     options.signal?.throwIfAborted();
     const pattern = ticket_name(environment.PLAN_TICKET_ID ?? '');
     const root = await prepare_root(options.home ?? homedir());
-    await disk_directory(root);
+    await disk_directory(root, options.processes);
     let directory: string;
     while (true) {
       directory = join(root, `${environment.PLAN_TICKET_ID}-${randomBytes(3).toString('hex')}`);
