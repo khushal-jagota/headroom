@@ -2,7 +2,7 @@ import Foundation
 
 // Mirrors workspaceRail.ts and workItemPresentation.ts. Unread is an independent mark.
 enum WorkspaceSection: String, CaseIterable, Identifiable {
-    case approval, answer, yours, errored, agent, consequences, agentApproval, other
+    case approval, answer, yours, errored, agent, agentApproval, other
     var id: Self { self }
     var title: String {
         switch self {
@@ -11,7 +11,6 @@ enum WorkspaceSection: String, CaseIterable, Identifiable {
         case .yours: "Yours"
         case .errored: "Errored"
         case .agent: "Agent"
-        case .consequences: "Waiting on Consequences"
         case .agentApproval: "Awaiting an agent’s approval"
         case .other: "Other"
         }
@@ -34,7 +33,6 @@ enum WorkspaceGrouping {
         if ticket.assigned { return .yours }
         if ticket.agentState == "errored" { return .errored }
         if ticket.ticketStatus == "agent" || ticket.agentState == "working" { return .agent }
-        if ticket.waitingToCloseout == true { return .consequences }
         if ticket.awaitingAgentApproval { return .agentApproval }
         return .other
     }

@@ -25,7 +25,7 @@ The user defines and owns the desired outcome. Help clarify or express it when a
 
 ## Consequences
 
-Reach or work this stage only after the user explicitly engages the agent. Follow the user's instructions, record what actually resulted from the outcome, and keep the Consequences concise. Do not treat Ticket creation, opening, advancement, or silence as permission to start.
+Reach or work this stage only after the user explicitly engages the agent. Follow the user's instructions, record what actually resulted from the outcome, and keep the Consequences concise. Once the authorized work is complete, its report settles without another approval. This removes a completion gate, not the explicit engagement requirement. Do not treat Ticket creation, opening, advancement, or silence as permission to start.
 
 ## General discipline
 

@@ -18,7 +18,6 @@ GROUPS = (
     "errored",
     "backlog",
     "agent",
-    "waiting_to_closeout",
     "status_awaiting_approval",
     "empty",
     "blocked",
@@ -101,8 +100,6 @@ def group(value: dict[str, Any], attention: dict[str, Any] | None, *, rail: bool
         return "errored"
     if value["ticket_status"] == "agent" or working:
         return "agent"
-    if value["gating_field"] == "consequences" and value["ticket_status"] == "empty":
-        return "waiting_to_closeout"
     if parked and not owner:
         return "status_awaiting_approval"
     if value["stage"] == "done":

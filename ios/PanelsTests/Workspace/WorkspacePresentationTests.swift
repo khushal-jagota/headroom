@@ -34,7 +34,7 @@ final class WorkspacePresentationTests: XCTestCase {
         XCTAssertEqual(WorkspaceGrouping.section(for: try ticket(["awaiting_reply": true, "ticket_status": "agent"])), .agent)
         XCTAssertEqual(WorkspaceGrouping.section(for: try ticket(["awaiting_reply": true])), .other)
         XCTAssertEqual(WorkspaceGrouping.section(for: try ticket(["agent_state": "errored", "ticket_status": "agent"])), .errored)
-        XCTAssertEqual(WorkspaceGrouping.section(for: try ticket(["waiting_to_closeout": true, "awaiting_agent_approval": true])), .consequences)
+        XCTAssertEqual(WorkspaceGrouping.section(for: try ticket(["stage": "needs_consequences", "awaiting_agent_approval": true])), .agentApproval)
         XCTAssertEqual(WorkspaceGrouping.section(for: try ticket(["awaiting_agent_approval": true])), .agentApproval)
     }
 

@@ -237,7 +237,7 @@ describe('bounded navigation owner',()=>{
       const ordinary={kind:'manager' as const,id:'ordinary'};
       const full=[viewWindow('children',ordinary,{child_filter:'active',limit:0}),...WORK_ITEM_TICKET_GROUPS.filter(g=>g.key!=='awaiting_reply').map(g=>viewWindow('children',ordinary,{child_filter:'active',group:g.key,limit:60})),...(['backlogged','done'] as const).map(child_filter=>viewWindow('children',ordinary,{child_filter,limit:60})),...Array.from({length:60},(_,i)=>viewWindow('rail_tickets',{kind:'manager',id:`parent${i}`},{limit:60})),viewWindow('settled',null,{limit:60}),...Array.from({length:60},(_,i)=>viewWindow('unread',{kind:'manager',id:`settled${i}`},{limit:60}))];
       owner.setDemand('full',{windows:full});
-      expect(owner.getRequest().windows).toHaveLength(138);
+      expect(owner.getRequest().windows).toHaveLength(full.length + defaultViewRequest().windows.length);
       expect(owner.getRequest().windows.reduce((n,w)=>n+w.limit,0)).toBeLessThanOrEqual(256);
       expect(owner.getRequest().windows.filter(w=>['rail_parents','settled'].includes(w.section)).map(w=>w.limit)).toEqual([60,60]);
       // Additional Chief count/page scopes exercise pressure beyond the ordinary
