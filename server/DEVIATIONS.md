@@ -799,15 +799,6 @@ Ticket ownership marker in public reads, links, and listings, including aliases.
 currently reserves only the final marker and `.panels-workspace.json.tmp`. The temporary
 file contains the same private ownership data, so the Ticket workspace port hides it too.
 
-## Pending P3 custody: CLI workspace retirement
-
-The Manager authorizes the same temporary unavailable-runtime fence for CLI apply and
-scheduled cleanup. Both retain eligible Ticket workspaces and retirement replay until P3
-supplies durable child custody and its merged retirement API. Dry-run inventories and host
-maintenance remain active. The populated CLI comparison records Python removal and
-TypeScript retention explicitly, while it compares the remaining inventory and host result.
-
-
 ## Known gap: Mac workspace removal
 
 Linux removes eligible workspaces through open directory descriptors with no-follow

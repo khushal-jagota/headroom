@@ -83,8 +83,12 @@ export async function createEnvironmentRuntime(
             git_execution: { children: context.one_shot_children, environment: process.env },
             snapshot_ticket_scratch,
             prune_ticket_scratch,
-            // P3 owns live child retirement. Until its merged API arrives, retain custody.
-            retire_local_children: () => ({ reason: 'Conversation runtime is unavailable' }),
+            retire_local_children: (ticket_id, identity, operation) => {
+              const system = context.conversationSystem;
+              return system === undefined
+                ? { reason: 'Conversation runtime is unavailable' }
+                : system.retire_local_workspace(ticket_id, identity, operation);
+            },
           }),
       });
   const metrics = new MetricsRuntime({
