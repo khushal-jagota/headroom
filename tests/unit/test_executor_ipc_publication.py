@@ -14,7 +14,7 @@ from contextlib import asynccontextmanager
 from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
-from typing import cast
+from typing import Any, cast
 from uuid import uuid4
 
 import pytest
@@ -458,5 +458,40 @@ def test_failed_add_reports_unknown_and_never_proves_stop(
                 "error_type": "RuntimeError",
                 "error_message": "required source publication failed",
             }
+
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize("old_home", [True, False])
+def test_send_back_refuses_unsupported_home_before_publication(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, old_home: bool,
+) -> None:
+    """Version skew must not publish an operation an old Home cannot understand."""
+    from unittest.mock import AsyncMock
+
+    from planner.executor.mac_http import ExecutorHttpError
+
+    async def run() -> None:
+        async with ipc_service(tmp_path, monkeypatch) as (executor, child):
+            read = AsyncMock(
+                side_effect=ExecutorHttpError(400, "validation", "unsupported executor read")
+                if old_home else None,
+                return_value={"ticket_send_back": False},
+            )
+            executor.gateway.client = cast(Any, SimpleNamespace(read=read))
+            request = write_request(child, "unsupported")
+            request = replace(request, payload={
+                "operation": "ticket.send_back",
+                "arguments": {"ticket_id": "t_target", "body": {
+                    "message": "Try again", "expected_proposal_revision": 7,
+                }},
+            })
+            response = await executor.gateway.handle(request)
+            assert response.error is not None
+            assert "not supported by Home yet" in str(response.error["message"])
+            assert not executor.outbox.pending()
+            assert executor.outbox.lookup("unsupported") is None
+            read.assert_awaited_once()
+            assert read.call_args.args[0].path == "/api/executor/capabilities"
 
     asyncio.run(run())

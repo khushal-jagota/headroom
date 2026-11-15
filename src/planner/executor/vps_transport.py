@@ -454,6 +454,9 @@ class VpsExecutor:
     ) -> JsonObject:
         """Route 7: an allowlisted GET, as the child's own principal."""
         await run_on_worker_thread(self._require_read_child, identity, read)
+        if read.path == "/api/executor/capabilities":
+            await run_on_worker_thread(self.runs.authority, read.child)
+            return {"ticket_send_back": True}
         if not read.path.startswith(_READABLE_PATHS):
             raise PlannerError(ErrorCode.validation, "unsupported executor read")
         import httpx
