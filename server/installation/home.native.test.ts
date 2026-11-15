@@ -2,6 +2,7 @@
 import { test, expect } from 'vitest';
 import { randomUUID } from 'node:crypto';
 import {
+  cp,
   lstat,
   mkdir,
   mkdtemp,
@@ -26,6 +27,10 @@ import { ChildProcesses, OneShotChildren } from '../lifecycle/owned_processes.ts
 import { observe_promise } from '../core/promise_observer.ts';
 import { run_release_command } from '../environments/release/process.ts';
 import { healthy } from '../environments/updates/installer/health.ts';
+import { MAC_HOME } from '../environments/release/contracts.ts';
+import { extract_app_archive } from '../environments/release/archive.ts';
+import { admit_runtime } from '../environments/release/admission.ts';
+import { build_native_mini_homes, native_copied_updates } from './testing/darwin_home.native.ts';
 import type { AppManifest, ReleaseExecution } from '../environments/release/contracts.ts';
 import { process_inspector } from '../previews/platform.ts';
 import { DarwinWorkerProcesses } from '../platform_runtime/darwin/worker_processes.ts';
@@ -83,7 +88,19 @@ test.skipIf(!admitted)(
       cases: [],
     };
     const cases = report.cases as Record<string, unknown>[];
+    const build_processes = new ChildProcesses();
+    let mini_builds: Awaited<ReturnType<typeof build_native_mini_homes>> | undefined;
     try {
+      if (system === 'darwin') {
+        mini_builds = await build_native_mini_homes(base, {
+          child_processes: build_processes,
+          signal: AbortSignal.timeout(360_000),
+          deadline: performance.now() / 1000 + 360,
+        });
+        report.mini_builds = mini_builds;
+        report.boundary =
+          'Real sealed mini-home archives, admission, launchd and copied updater. Production archive foreground proof is separate.';
+      }
       for (const fault of ['none', 'health', 'auxiliary'] as const) {
         const started = performance.now(),
           record: Record<string, unknown> = { fault };
@@ -109,7 +126,8 @@ test.skipIf(!admitted)(
         let plan: HomeServicePlan | undefined,
           installed = false,
           clean = false,
-          activated = false;
+          activated = false,
+          retain_resources = false;
         let root_identity: { dev: number; ino: number } | undefined;
         const retained = new Map<string, { dev: number; ino: number; content: Buffer | string }>();
         const assert_owned = async (path: string): Promise<void> => {
@@ -152,6 +170,16 @@ test.skipIf(!admitted)(
             await capture();
             activated = true;
           }
+          if (
+            system === 'darwin' &&
+            fault === 'health' &&
+            activation &&
+            argv.at(-1)?.endsWith('/' + service_name + '.plist')
+          )
+            await writeFile(
+              join(root, 'data/probe-policy.json'),
+              JSON.stringify({ fail_sha: mini_builds!.a.manifest.app_sha }),
+            );
           if (fault === 'auxiliary' && activation && argv.at(-1)?.includes('.backup'))
             throw new Error('Native fixture auxiliary activation refused');
           return run_release_command(
@@ -174,9 +202,9 @@ test.skipIf(!admitted)(
           service: service_name,
           port: await free_port(),
           isolated_providers: true,
-          archive: join(base, 'mini-app-fixture'),
-          archive_sha256: 'b'.repeat(64),
-          revision,
+          archive: mini_builds?.a.archive ?? join(base, 'mini-app-fixture'),
+          archive_sha256: mini_builds?.a.archive_sha256 ?? 'b'.repeat(64),
+          revision: mini_builds?.a.manifest.app_sha ?? revision,
         };
         const inspector = process_inspector();
         const observe = async () => {
@@ -193,6 +221,7 @@ test.skipIf(!admitted)(
           system,
           architecture: system === 'linux' ? 'x86_64' : 'arm64',
           account_home: account,
+          node_executable: await realpath(process.execPath),
           uid: process.getuid!(),
           environment: { PATH: process.env.PATH, PLAN_SERVER_URL: 'http://127.0.0.1:1' },
           execution: execution(),
@@ -206,7 +235,18 @@ test.skipIf(!admitted)(
               : create_linux_home_service(value, host));
             return plan;
           },
-          extract: async (_archive, destination) => {
+          extract: async (_archive, destination, digest, sha, scope) => {
+            if (system === 'darwin')
+              return extract_app_archive(
+                _archive,
+                destination,
+                digest,
+                sha,
+                scope.child_processes,
+                undefined,
+                scope,
+                MAC_HOME,
+              );
             await mkdir(join(destination, 'bin'), { recursive: true });
             const wrapper = `#!${process.execPath}\nimport{run_server_supervisor}from ${JSON.stringify(supervisor)};\nimport{native_control_socket_path}from ${JSON.stringify(paths)};\nimport{join}from'node:path';\nif(process.argv[2]!=='serve')process.exit(0);\nconst root=process.cwd();process.exitCode=await run_server_supervisor({mode:{kind:'foreground'},application:{node_executable:process.execPath,entrypoint:join(root,'app/app.mjs'),launch_root:root,environment:{...process.env}},control_socket_path:native_control_socket_path(join(root,'data/control.sock')),lease_path:join(root,'data/lease'),port:Number(process.env.PLAN_PORT)});\n`;
             await writeFile(join(destination, 'package.json'), '{"type":"module"}\n');
@@ -224,7 +264,10 @@ test.skipIf(!admitted)(
               runtime_contract: { version: 2 } as AppManifest['runtime_contract'],
             };
           },
-          admit: async () => {},
+          admit: async (candidate, manifest, scope) => {
+            if (system === 'darwin')
+              await admit_runtime(candidate, manifest, scope.child_processes);
+          },
           healthy: async (port, sha, signal) => {
             await wait_for(async () => {
               try {
@@ -249,9 +292,27 @@ test.skipIf(!admitted)(
             installed = true;
             record.install_seconds = (performance.now() - started) / 1000;
             if (system === 'darwin') {
-              const identity = JSON.parse(await readFile(join(root, 'data/mac-home-installation.json'), 'utf8'));
-              expect(Object.keys(identity).sort()).toEqual(['version', 'uid', 'root', 'label', 'home_plist', 'backup_plist', 'installer_node'].sort());
-              expect(identity).toMatchObject({ version: 2, root, uid: deps.uid, label: service_name, installer_node: await realpath(process.execPath) });
+              const identity = JSON.parse(
+                await readFile(join(root, 'data/mac-home-installation.json'), 'utf8'),
+              );
+              expect(Object.keys(identity).sort()).toEqual(
+                [
+                  'version',
+                  'uid',
+                  'root',
+                  'label',
+                  'home_plist',
+                  'backup_plist',
+                  'installer_node',
+                ].sort(),
+              );
+              expect(identity).toMatchObject({
+                version: 2,
+                root,
+                uid: deps.uid,
+                label: service_name,
+                installer_node: await realpath(process.execPath),
+              });
               const old = await observe(),
                 began = performance.now(),
                 target = `gui/${deps.uid}/${service_name}`;
@@ -280,7 +341,7 @@ test.skipIf(!admitted)(
               expect(
                 await healthy(
                   `http://127.0.0.1:${request.port}/api/health`,
-                  revision,
+                  request.revision,
                   15,
                   deps.execution.signal,
                   deps.environment,
@@ -288,6 +349,23 @@ test.skipIf(!admitted)(
                 ),
               ).toBe(true);
               record.crash_recovery_seconds = (performance.now() - began) / 1000;
+              try {
+                await native_copied_updates({
+                  root,
+                  account,
+                  label: service_name,
+                  port: request.port,
+                  base,
+                  builds: mini_builds!,
+                  execution,
+                  primitives: primitives as DarwinWorkerProcesses,
+                  births,
+                  record,
+                });
+              } catch (error) {
+                retain_resources = true;
+                throw error;
+              }
             }
           } else {
             await expect(install_home(request, deps)).rejects.toThrow(
@@ -312,10 +390,11 @@ test.skipIf(!admitted)(
                   'Installer cleanup required native probe intervention. Retained ' + root,
                 );
               }
-              for (const path of [...retained.keys()].reverse()) {
-                await assert_owned(path);
-                await unlink(path);
-              }
+              if (!retain_resources)
+                for (const path of [...retained.keys()].reverse()) {
+                  await assert_owned(path);
+                  await unlink(path);
+                }
               if (system === 'linux')
                 await command(['systemctl', '--user', 'daemon-reload'], execution(), 30);
             }
@@ -367,7 +446,13 @@ test.skipIf(!admitted)(
             ).toBe(true);
             record.seconds = (performance.now() - started) / 1000;
             record.resource_paths = [...retained.keys()];
-            if (clean) {
+            if (system === 'darwin')
+              await cp(join(root, 'logs'), join(evidence, 'home-logs-' + token), {
+                recursive: true,
+              }).catch((error: NodeJS.ErrnoException) => {
+                if (error.code !== 'ENOENT') throw error;
+              });
+            if (clean && !retain_resources) {
               if (installed) {
                 const current = await lstat(root);
                 if (
@@ -388,6 +473,11 @@ test.skipIf(!admitted)(
       report.failure = error instanceof Error ? error.stack : String(error);
       throw error;
     } finally {
+      build_processes.seal();
+      build_processes.force_kill(performance.now() / 1000 + 5);
+      expect(
+        (await observe_promise(build_processes.settled(), AbortSignal.timeout(5000))).completed,
+      ).toBe(true);
       await mkdir(evidence, { recursive: true });
       await writeFile(
         join(evidence, `first-home-${system}.json`),
@@ -399,5 +489,5 @@ test.skipIf(!admitted)(
       });
     }
   },
-  300_000,
+  600_000,
 );
