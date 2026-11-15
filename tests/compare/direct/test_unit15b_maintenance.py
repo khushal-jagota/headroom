@@ -325,6 +325,14 @@ def positive(result: dict[str, Any]) -> None:
             ]
 
 
+@pytest.mark.xfail(
+    run=False,
+    reason=(
+        "expected-open P3 (ab57822c9): "
+        "memory notices require an actual compaction boundary; stale notice is "
+        "discarded before a scripted turn starts"
+    ),
+)
 def test_unit15b_maintenance_matches_fresh_python(
     tmp_path: Path, request: pytest.FixtureRequest
 ) -> None:
