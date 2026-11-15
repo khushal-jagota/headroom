@@ -41,6 +41,8 @@ export interface HomeServicePlan {
   finish_cleanup?(execution: ReleaseExecution): Promise<void>;
 }
 export interface HomeInstallHost {
+  /** Canonical external host Node, shared by its service PATH and installation identity. */
+  readonly node_executable: string;
   readonly system: 'linux' | 'darwin';
   readonly architecture: string;
   readonly account_home: string;

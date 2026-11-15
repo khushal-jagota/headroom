@@ -29,7 +29,7 @@ function normalized_path(path: string, root: string, system: string): string {
     .filter(
       (entry) =>
         entry !== join(root, 'app/.venv/bin') &&
-        (system !== 'linux' || entry !== dirname(process.execPath)),
+        entry !== dirname(realpathSync(process.execPath)),
     )
     .join(':');
 }
@@ -80,6 +80,7 @@ export async function home_install_comparison(
       PLAN_CLAUDE_EXECUTABLE: '/custom/claude',
     };
     const deps: HomeInstallDependencies = {
+      node_executable: realpathSync(process.execPath),
       system: value.system,
       architecture: value.system === 'darwin' ? 'arm64' : 'x86_64',
       account_home: account,

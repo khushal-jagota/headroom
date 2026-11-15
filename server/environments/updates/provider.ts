@@ -268,6 +268,8 @@ export class GitHubUpdateProvider implements UpdateProvider {
       throw new Error('Publication identity differs from trusted repository evidence.');
     if (instant(release.expires_at).epochMicroseconds <= BigInt(Date.now()) * 1000n) return null;
     if (release.manifest.runtime_contract === null) return null;
+    if (release.manifest.runtime_contract.system !== this.target.system || release.manifest.runtime_contract.architecture !== this.target.architecture)
+      throw new Error('Publication runtime target differs from this home');
     if (this.target.system === 'darwin' && (release.manifest.runtime_contract.version !== 2 ||
       release.manifest.runtime_contract.system !== 'darwin' || release.manifest.runtime_contract.architecture !== 'arm64' ||
       release.manifest.runtime_contract.role !== 'home')) throw new Error('Publication runtime target differs from this home');

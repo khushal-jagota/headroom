@@ -92,7 +92,7 @@ export async function create_darwin_home_service(
         label: request.service,
         home_plist: files[0]!.path,
         backup_plist: files[1]!.path,
-        installer_node: external_home_node(request.root, process.execPath),
+        installer_node: external_home_node(request.root, host.node_executable),
       }) + '\n',
     mode: 0o600,
   });

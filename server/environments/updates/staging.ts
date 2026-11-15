@@ -8,7 +8,6 @@ import { is_os_error } from '../../core/system_errors.ts';
 import type { OwnedChildProcesses } from '../../lifecycle/contracts.ts';
 import type { AppManifest, ReleaseStaging } from './contracts.ts';
 import { AppValidationError } from '../release/contracts.ts';
-import { LINUX_HOME } from '../release/contracts.ts';
 import type { RuntimeTarget } from '../release/contracts.ts';
 import { validate_app_manifest } from '../release/identity.ts';
 import { extract_app_archive, remove_owned_tree } from '../release/archive.ts';
@@ -38,13 +37,13 @@ async function remove_directory(path: string): Promise<void> {
     throw new Error('Cannot call rmtree on a symbolic link');
   await rm(path, { recursive: true });
 }
-async function staged_manifest(path: string, app_sha: string, expected_target: RuntimeTarget): Promise<AppManifest | null> {
+async function staged_manifest(path: string, app_sha: string, expected_target?: RuntimeTarget): Promise<AppManifest | null> {
   try {
     return await validate_app_manifest(join(path, 'manifest.json'), {
       expected_sha: app_sha,
       require_runtime: true,
       verify_artifact_digest: false,
-      expected_target,
+      ...(expected_target === undefined ? {} : { expected_target }),
     });
   } catch (error) {
     if (error instanceof AppValidationError || is_os_error(error)) return null;
@@ -56,7 +55,7 @@ export function create_release_staging(
   child_processes: OwnedChildProcesses,
   signal: AbortSignal,
   admit: RuntimeAdmission = (root, manifest) => admit_runtime(root, manifest, child_processes),
-  expected_target: RuntimeTarget = LINUX_HOME,
+  expected_target?: RuntimeTarget,
 ): ReleaseStaging {
   const admit_candidate: RuntimeAdmission = async (root, manifest) => {
     try {

@@ -840,8 +840,8 @@ New requests require no Python interpreter field. A new Mac home writes an expli
 The Mac updater reads the exact unversioned six-key legacy identity, including its `installer_python` metadata, without a Python probe or execution.
 It does not execute a Python installer or an interpreter probe.
 The service PATH omits `app/.venv/bin`, and the service environment omits Python bytecode settings.
-Linux puts the selected host Node directory before provider directories. Darwin keeps Homebrew ahead of discovered provider directories.
-The populated comparison normalizes the Python-only PATH entry, the selected Linux Node directory, and the bytecode flag.
+Both hosts use the selected canonical host Node directory before provider directories. Darwin puts that directory before Homebrew, and Homebrew stays ahead of discovered provider directories.
+The populated comparison normalizes the Python-only PATH entry, the selected Node directory on both hosts, and the bytecode flag.
 It compares every shared installation binding and separately checks each identity's exact keys and the external Node path.
 All remaining ordered PATH entries and service environment values compare with fresh Python.
 

@@ -11,7 +11,7 @@ import { GitHubUpdateProvider } from './updates/provider.ts';
 import { create_mac_update_composition } from './updates/mac/composition.ts';
 import { assert_installer_path, installer_test_mode } from './updates/installer/configuration.ts';
 import { collect_vps_status } from './vps_status/collect.ts';
-import { MAC_HOME, LINUX_HOME } from './release/contracts.ts';
+import { MAC_HOME } from './release/contracts.ts';
 
 /** Python selects the unified cgroup's service leaf and excludes the user manager. */
 export function own_service_unit(cgroup: string): string | null {
@@ -73,8 +73,8 @@ export const create_production_environment_operations: ProductionEnvironmentFact
     provider: () =>
       repository === null
         ? null
-        : new GitHubUpdateProvider(repository.repository, repository.token_file, { target: process.platform === 'darwin' ? MAC_HOME : LINUX_HOME }),
-    staging: create_release_staging(context.child_processes, signal, undefined, process.platform === 'darwin' ? MAC_HOME : LINUX_HOME),
+        : new GitHubUpdateProvider(repository.repository, repository.token_file, process.platform === 'darwin' ? { target: MAC_HOME } : {}),
+    staging: create_release_staging(context.child_processes, signal, undefined, process.platform === 'darwin' ? MAC_HOME : undefined),
     installer: create_installer_operations({
       application_root,
       node_executable: dependencies.node_executable,

@@ -9,14 +9,16 @@ export async function home_service_environment(
   host: HomeInstallHost,
 ): Promise<Record<string, string>> {
   const root = request.root;
-  const directories = [join(root, 'app/agent_backends/node_modules/.bin')];
+  const node_directory = dirname(host.node_executable);
+  const directories = host.system === 'darwin' ? [node_directory, join(root, 'app/agent_backends/node_modules/.bin')] :
+    [join(root, 'app/agent_backends/node_modules/.bin'), node_directory];
   if (host.system === 'darwin') {
     directories.push('/opt/homebrew/bin');
     for (const name of ['codex', 'claude']) {
       const executable = await find_release_executable(name, host.environment);
       if (executable) directories.push(dirname(resolve(executable)));
     }
-  } else directories.push(dirname(process.execPath));
+  }
   directories.push(join(host.account_home, '.local/bin'), '/usr/local/bin', '/usr/bin', '/bin');
   if (host.system === 'darwin') directories.push('/usr/sbin', '/sbin');
   const environment: Record<string, string> = {

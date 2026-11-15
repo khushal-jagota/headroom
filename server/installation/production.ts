@@ -5,7 +5,7 @@ import { basename } from 'node:path';
 import { extract_app_archive } from '../environments/release/archive.ts';
 import { admit_runtime } from '../environments/release/admission.ts';
 import { run_release_command, assert_release_execution } from '../environments/release/process.ts';
-import { MAC_HOME, LINUX_HOME } from '../environments/release/contracts.ts';
+import { MAC_HOME } from '../environments/release/contracts.ts';
 import type { ReleaseExecution } from '../environments/release/contracts.ts';
 import { require_host_node } from '../environments/release/logic/host.ts';
 import { healthy } from '../environments/updates/installer/health.ts';
@@ -53,6 +53,7 @@ export async function production_home_dependencies(
     system,
     architecture,
     account_home,
+    node_executable: await realpath(process.execPath),
     uid,
     command,
     extract: (archive, destination, digest, revision, scope) =>
@@ -64,7 +65,7 @@ export async function production_home_dependencies(
         scope.child_processes,
         undefined,
         scope,
-        system === 'darwin' ? MAC_HOME : LINUX_HOME,
+        system === 'darwin' ? MAC_HOME : undefined,
       ),
     async admit(app, manifest, scope) {
       assert_release_execution(scope);

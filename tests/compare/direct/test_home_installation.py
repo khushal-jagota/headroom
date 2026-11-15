@@ -55,14 +55,14 @@ def _python(base: Path, system: str, scenario: str, port: int, monkeypatch: Any)
     effects: list[list[str]] = []
     active: set[str] = set()
     jobs: dict[str, str] = {}
-    native_node_directory = str(Path(shutil.which("node") or "/usr/bin/node").parent)
+    native_node_directory = str(Path(shutil.which("node") or "/usr/bin/node").resolve().parent)
 
     def normalized_path(value: str) -> str:
         return ":".join(
             entry
             for entry in value.split(":")
             if entry != str(root / "app/.venv/bin")
-            and (system != "linux" or entry != native_node_directory)
+            and entry != native_node_directory
         )
 
     def command(arguments: list[str] | tuple[str, ...], **kwargs: Any) -> Any:
@@ -284,8 +284,8 @@ def test_first_home_installation_parity(tmp_path: Path, monkeypatch: Any, reques
                     ),
                     intentional_difference=(
                         "Node releases omit Python bytecode flags and .venv/bin PATH entries. "
-                        "Linux puts its selected host Node directory first. Only that directory "
-                        "is normalized from both Linux PATH lists. Remaining ordered entries, "
+                        "Each host uses its selected canonical Node directory. Only that directory "
+                        "is normalized from both platform PATH lists. Remaining ordered entries, "
                         "including Homebrew before custom provider directories, compare exactly."
                         " Native identity writes exact version-2 fields with canonical external installer_node."
                         " Python writes its exact legacy six-key identity. Both records compare every common binding."

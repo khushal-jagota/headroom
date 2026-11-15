@@ -69,6 +69,7 @@ async function fixture() {
     },
   };
   const deps: HomeInstallDependencies = {
+    node_executable: process.execPath,
     execution: { child_processes: owner, signal: controller.signal, deadline: null },
     environment: { HOME: account },
     account_home: account,
