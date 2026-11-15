@@ -164,6 +164,32 @@ class AgentGateway:
         submission_id = safe_component(request.request_id)
         if self.runner.admission_stopped:
             raise PermissionError("executor admission stopped")
+        if incoming.operation == "ticket.send_back":
+            if self.client is None:
+                raise ConnectionError("Home unavailable; send-back support is unconfirmed")
+            try:
+                async with asyncio.timeout_at(deadline):
+                    support = await self.client.read(
+                        LiveReadRequest(child.reference, "/api/executor/capabilities", {})
+                    )
+            except ExecutorHttpError as error:
+                if error.status == 400 and error.message == "unsupported executor read":
+                    raise ValueError(
+                        "Send-back is not supported by Home yet; update Home before retrying"
+                    ) from error
+                if error.status == 403:
+                    raise PermissionError(error.message or "support read forbidden") from error
+                raise ConnectionError(
+                    f"Home support read failed: HTTP {error.status} {error.code}"
+                ) from error
+            except Exception as error:
+                raise ConnectionError(
+                    f"Home support read failed: {type(error).__name__}"
+                ) from error
+            if support.get("ticket_send_back") is not True:
+                raise ValueError(
+                    "Send-back is not supported by Home yet; update Home before retrying"
+                )
         write = CliWrite(
             incoming.operation, as_object(incoming.arguments), child.reference, child.active_turn
         )

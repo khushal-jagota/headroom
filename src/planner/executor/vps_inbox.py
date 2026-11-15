@@ -239,6 +239,8 @@ class InboxStore(VpsDatabase):
         except (PlannerError, ValueError, KeyError, TypeError) as error:
             connection.execute("ROLLBACK TO SAVEPOINT domain_write")
             connection.execute("RELEASE SAVEPOINT domain_write")
+            if isinstance(error, PlannerError) and error.code is ErrorCode.retry_later:
+                raise
             disposition = ReceiptDisposition.refused
             refusal = error if isinstance(error, PlannerError) else _invalid(str(error))
             result = cast(JsonObject, refusal.to_payload())
