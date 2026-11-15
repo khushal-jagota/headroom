@@ -20,7 +20,7 @@ enum NavigationScope {
     /// Mirrors refreshDemand in web/src/lib/navigation/views/owner.ts. Parent lists and
     /// Review keep their pages; other windows share what remains one row per window per round.
     /// `selected` is the one owner whose record a detail screen keys its reloads on.
-    static func request(demands: [String: [ViewWindowRequest]], selected: ViewOwner? = nil, previous: ViewRequest) -> ViewRequest {
+    static func request(demands: [String: [ViewWindowRequest]], selected: ViewOwner? = nil, reviewConversationIDs: [String] = [], previous: ViewRequest) -> ViewRequest {
         var windows: [ViewWindowRequest] = []
         var position: [String: Int] = [:]
         for window in baseWindows + demands.keys.sorted().flatMap({ demands[$0]! }) {
@@ -35,20 +35,23 @@ enum NavigationScope {
             window.section == "review" || window.section == "rail_parents" || window.section == "settled"
                 || (window.section == "children" && window.owner?.kind == "chief")
         }
+        let conversationIDs = Array(Set(reviewConversationIDs)).sorted()
+        let availableRows = max(0, rowBudget - conversationIDs.count)
         let desired = windows.map(\.limit)
         let stableIndexes = windows.indices.filter { stable(windows[$0]) }
         var fixed = stableIndexes.reduce(0) { $0 + windows[$1].limit }
-        if fixed > rowBudget {
+        if fixed > availableRows {
             for index in stableIndexes { windows[index].limit = 0 }
-            fill(&windows, stableIndexes, desired: desired, available: rowBudget)
+            fill(&windows, stableIndexes, desired: desired, available: availableRows)
             fixed = stableIndexes.reduce(0) { $0 + windows[$1].limit }
         }
         let elastic = windows.indices.filter { !stable(windows[$0]) && windows[$0].limit > 0 }
         for index in elastic { windows[index].limit = 0 }
-        fill(&windows, elastic, desired: desired, available: max(0, rowBudget - fixed))
+        fill(&windows, elastic, desired: desired, available: max(0, availableRows - fixed))
         var next = previous
         next.windows = windows
         next.selected = selected
+        next.reviewConversationIds = conversationIDs
         guard next != previous else { return previous }
         next.scopeGeneration = previous.scopeGeneration + 1
         return next

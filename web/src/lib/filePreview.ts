@@ -104,7 +104,8 @@ export function resolvePreview(target: FilePreviewTarget): ResolvedPreview {
       throw new Error("unsafe conversation file target");
     }
     return {
-      kind: CONVERSATION_KIND_BY_EXTENSION.get(extensionFor(target.fileName)) || "download",
+      kind: CONVERSATION_KIND_BY_EXTENSION.get(extensionFor(target.fileName))
+        || conversationMediaKind(target.fileName),
       target,
       href: target.href,
       label: filenameLabel(target.fileName)
@@ -130,6 +131,12 @@ export function resolvePreview(target: FilePreviewTarget): ResolvedPreview {
     label: filenameLabel(target.path),
     previewHref: previewHashHref(target)
   };
+}
+
+/** A picture or video someone sent is drawn as itself; other files stay a download. */
+function conversationMediaKind(fileName: string): FilePreviewKind {
+  const kind = KIND_BY_EXTENSION.get(extensionFor(fileName));
+  return kind === "image" || kind === "video" ? kind : "download";
 }
 
 export function boundedConversationTextPreview(text: string): string {

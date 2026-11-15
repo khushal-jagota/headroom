@@ -30,42 +30,14 @@ extension APIClient {
         return try Self.decoder().decode(TicketRecapDelivery.self, from: data)
     }
 
-    func renameTicket(_ id: String, title: String) async throws {
-        struct Body: Encodable { let title: String }
-        _ = try await ticketWrite("/api/tickets/\(id)", method: "PATCH", body: Body(title: title))
-    }
-
     func editTicketRecap(_ id: String, recap: String) async throws {
         struct Body: Encodable { let recap: String }
         _ = try await ticketWrite("/api/tickets/\(id)", method: "PATCH", body: Body(recap: recap))
     }
 
-    func editTicketField(_ id: String, field: String, body: String) async throws {
-        struct Body: Encodable { let field_values: [String: String] }
-        _ = try await ticketWrite("/api/tickets/\(id)", method: "PATCH", body: Body(field_values: [field: body]))
-    }
-
     func completeTicketField(_ id: String, field: String, body: String) async throws {
         struct Body: Encodable { let body: String }
         _ = try await ticketWrite("/api/tickets/\(id)/complete/\(field)", method: "POST", body: Body(body: body))
-    }
-
-    func acceptTicketProposal(_ ticket: TicketDetail, proposal: TicketProposal, ceiling: String, holder: Principal, editedBody: String) async throws {
-        struct Body: Encodable {
-            let next_ceiling: String
-            let next_holder: Principal
-            let expected_proposal_revision: Int
-            let edited_body: String?
-        }
-        _ = try await ticketWrite("/api/tickets/\(ticket.id)/accept/\(proposal.field)", method: "POST",
-                                  body: Body(next_ceiling: ceiling, next_holder: holder,
-                                             expected_proposal_revision: proposal.revision,
-                                             edited_body: editedBody == proposal.body ? nil : editedBody))
-    }
-
-    func returnTicketProposal(_ id: String, message: String, expectedProposalRevision: Int) async throws {
-        struct Body: Encodable { let message: String; let expected_proposal_revision: Int }
-        _ = try await ticketWrite("/api/tickets/\(id)/reject", method: "POST", body: Body(message: message, expected_proposal_revision: expectedProposalRevision))
     }
 
     func removeTicketBlocker(_ id: String, blockerID: String) async throws {
