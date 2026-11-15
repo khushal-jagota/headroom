@@ -437,7 +437,7 @@ def test_shared_notes_merge_upgrades_a_copy_of_either_branch_without_schema_chan
             "SELECT type,name,tbl_name,sql FROM sqlite_master ORDER BY name"
         ))
     with schema_migration_transaction(target) as migration:
-        upgrade_schema_connection(migration, "head")
+        upgrade_schema_connection(migration, "native_shared_decision_notes")
     with closing(connect(target)) as copy:
         assert list(copy.execute(
             "SELECT type,name,tbl_name,sql FROM sqlite_master ORDER BY name"

@@ -8,6 +8,7 @@ from planner.notifications.contracts import (
     AttentionEdge,
     NotificationIntent,
 )
+from planner.notifications.logic.preview import notification_label
 
 _REASONS = {
     "awaiting_reply": "has a message for you",
@@ -52,10 +53,21 @@ def decide_notification(edge: AttentionEdge, *, enabled: bool) -> NotificationIn
     if not enabled:
         return None
     reason = _REASONS[edge.notification_type]
+    title = "Panels"
+    body = f"{notification_label(edge.subject_label)} {reason}."
+    reply = None
+    if edge.notification_type == "awaiting_reply" and edge.message is not None:
+        title = edge.message.sender_label
+        body = edge.message.preview
+        reply = edge.message.reply
+    elif edge.notification_type == "awaiting_approval" and edge.stage_label is not None:
+        title = notification_label(edge.subject_label)
+        body = f"{edge.stage_label} waits for your approval."
     return NotificationIntent(
-        title="Panels",
-        body=f"{edge.subject_label} {reason}.",
+        title=title,
+        body=body,
         route=_subject_route(edge),
         # OS notification replacement is the final overlap coalescing boundary.
         tag=_subject_tag(edge),
+        reply=reply,
     )

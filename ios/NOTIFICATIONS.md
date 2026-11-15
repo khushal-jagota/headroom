@@ -8,8 +8,8 @@ and preferences, with its own durable queue. `/api/changes` is a
 content-free foreground refresh signal, not a notification stream. Polling it
 cannot wake a suspended iOS app. The native app already follows it while open.
 
-`src/planner/notifications/contracts.py` defines five event types. Tickets offer
-all five; Chief and managers offer message, answer and error notifications.
+`src/planner/notifications/contracts.py` defines the notification catalog. Tickets,
+Chief, and managers each offer the event types that apply to them.
 `attention.py` records false-to-true transitions. `logic/policy.py` applies the
 saved preferences and constructs a title, body, route and replacement tag.
 `runtime.py`, `web_push.py`, and `apns.py` deliver those intents to browser
@@ -20,19 +20,21 @@ browser endpoint nor the browser encryption keys.
 
 | Event | Lock-screen example | Needed from Khushal |
 | --- | --- | --- |
-| awaiting_reply | Chief of Staff · Message / There is an unread message. Open Panels to read it. | Read the message |
+| awaiting_reply | Chief of Staff / The revised proposal is ready for review. | Read or reply |
 | awaiting_answer | iOS app · Needs an answer / A worker is waiting. Open Panels to answer the question. | Answer |
-| awaiting_approval | iOS app · Needs approval / A proposal is waiting. Open Panels to review it. | Decide on the proposal |
+| awaiting_approval | iOS app / What Changes waits for your approval. | Decide on the proposal |
 | assigned | iOS app · Assigned / The next stage is yours. Open Panels to complete it. | Complete the stage |
 | errored | iOS launch · Error / Something failed. Open Panels to inspect the error. | Inspect and decide what to do |
 
 These are payload examples, not generated claims about a live ticket. The sender
 must use the real subject label and only assert details established by the edge.
-Use a short subject label plus event in the title, one short action sentence in
-the body, and keep the full context in Panels. Truncate long subject labels at a
-word boundary around 60 characters. Never put prompts, secrets or full conversation
-contents on the lock screen. Do not claim a reply is necessary for every unread
-message unless the source actually establishes that.
+Message alerts show the sender and up to 240 characters of plain text. Sender and
+subject names have a 60-character limit. Attachment-only messages say “Sent an attachment.”
+Approval alerts preserve the saved workflow stage sentence when a name is long.
+The server captures this content and the original conversation when the attention
+edge arises. Native and web push share the visible content. These previews leave
+Panels through the notification provider. Use the system notification preview
+settings to control what appears on the lock screen.
 
 ## App implementation
 
@@ -49,8 +51,30 @@ known native route. A pending tap survives the shell's initial creation. Opening
 an alert never accepts a proposal, marks a conversation read or sends a message.
 A missing, unsafe or unknown route shows a calm error. The app refuses a payload
 for a different configured server and never changes the server automatically.
-Conversation reading and replies remain owned by the destination page.
-Notification handling only opens that page.
+Message alerts also offer the standard iOS text Reply action. The action requires
+device authentication. It needs no notification extension or extra entitlement.
+iOS launches the app in the background for this action, including after termination.
+The delegate reads the selected server without a SwiftUI scene. It refuses a reply
+for another server or a payload without its original conversation and recipient.
+If the app refuses a reply or cannot save it, a local alert says that the reply
+was not sent and asks the user to open Panels.
+
+The app saves the reply through the ordinary durable outbox before it sends or
+completes the action. The notification identity, original message, recipient,
+server, and reply text determine one outgoing identity. A repeated callback reuses
+that identity. Replies preserve the original conversation and never create or select
+a replacement conversation. The same transport, receipts, compatibility gate,
+and offline or uncertain-delivery rules apply to replies from a notification.
+The delegate allows at most 15 seconds for its delivery attempt. Remaining work
+resumes through the existing foreground drainer. It does not promise another
+background retry. Known limit: if the 15-second window cancels a POST before dispatch,
+the reply becomes uncertain. The user must retry it by hand. Finished work expires after 24 hours, uncertain work after seven
+days, and pending or failed work has no age limit.
+
+Settings → Notifications exposes switches for the same event preferences as the
+web. A successful save uses the server response. A failed save retains the last
+confirmed value and shows an error. The app serializes preference saves to prevent
+one response from overwriting a later choice.
 
 Release builds for physical iPhones enable server registration by default. Debug
 and Simulator builds retain `APNS_REGISTRATION_ENABLED=NO` and report **Server
@@ -108,8 +132,8 @@ Payload (custom fields are siblings of `aps`):
 {
   "aps": {
     "alert": {
-      "title": "iOS app · Needs approval",
-      "body": "A proposal is waiting. Open Panels to review it."
+      "title": "iOS app",
+      "body": "What Changes waits for your approval."
     },
     "sound": "default",
     "thread-id": "panels-ticket-t_42"
@@ -118,6 +142,22 @@ Payload (custom fields are siblings of `aps`):
   "route": "/#/workspace/t_42"
 }
 ```
+
+A message alert adds `"category": "PANELS_MESSAGE_REPLY"` inside `aps`, plus this
+sibling field. Legacy alerts without it retain their ordinary tap behavior:
+
+```json
+"reply": {
+  "conversation_id": "c_original",
+  "message_id": "c_original:7",
+  "recipient_kind": "manager",
+  "recipient_id": "m_original"
+}
+```
+
+The recipient kinds are `chief`, `manager`, and `ticket`. Chief uses the ID `chief`.
+The native action identifier is `PANELS_REPLY`. `message_id` identifies the original
+message event. It is not the outgoing reply identity.
 
 Keep the whole APNs payload under 4 KB. No badge is sent until the server owns a
 correct authoritative count. `server_url` must be the canonical HTTPS origin the
@@ -273,29 +313,41 @@ Apple references: [APNs registration](https://developer.apple.com/documentation/
 
 ## Focused verification
 
-`NotificationTests` fills three gaps in the existing model tests: untrusted
-notification routes and cross-server taps; retaining a cold-launch tap until a
-shell can consume it exactly once; and the native registration request/rejection
-contract. It reuses XCTest and URLProtocol and needs no live backend. Existing
-Feedback route tests do not exercise notification payload origins or callbacks.
+`NotificationTests` covers untrusted routes, cross-server taps, cold-launch taps,
+and the native registration contract. Reply cases add the missing boundary from
+untrusted notification metadata to a fixed recipient and conversation. A failed
+local commit leaves no dispatchable reply and preserves an unrelated composer.
+These tests reuse XCTest, SwiftData scratch stores, and the existing URLProtocol.
+The existing lost-response test now starts through the notification outbox entry
+point. It covers offline persistence, repeated callbacks after relaunch, and receipt
+reconciliation without a second send. This replaces the generic initiation of the
+same recovery case rather than adding a duplicate transport matrix.
 
-`PanelsNotificationUITests` is opt-in. Its distinct risk is the boundary from
-an OS-delivered notification through the delegate into SwiftUI navigation, with
-the app foreground, background and terminated. Pure parser tests cannot prove
-that system permission, delegate installation or actual notification taps work.
-One test uses the already booted PanelsLaneB, four fixture payloads, and a temporary
-loopback host that runs `simctl push`. The script holds
-`lockf /tmp/panels-PanelsLaneB.lock` throughout; it never boots, shuts down or erases
-a simulator. The test changes only its own app permission and performs read-only
-navigation. No backend writes or APNs registrations are enabled.
+`PanelsReviewUITests` holds the opt-in notification review. Its distinct boundary
+is an OS-delivered expanded notification through the delegate into the durable
+outbox, including background and terminated app launches. Pure parser and outbox
+tests cannot prove that the system exposes the Reply action or launches its callback.
+The same one-off loopback host also checks the visible approval text and preference
+switches. Its operation ledger records local preference writes and replies. It can
+lose a reply response and expose a receipt to check recovery without another send.
+No real backend messages or APNs registrations are enabled.
+
+The DEBUG `--conversation-stub` launch option selects and saves the loopback server
+through the ordinary `panels.baseURL` preference. A later SpringBoard launch uses
+that saved selection because it does not retain XCTest launch arguments. DEBUG
+notification parsing permits HTTP only for a loopback origin that exactly matches
+the selected server. Release notification parsing requires HTTPS. The Panels unit
+scheme also selects an unreachable loopback address to prevent live host reads.
 
 ```sh
 PANELS_PUSH_TEST_OUTPUT=/tmp/panels-notification-proof \
-  python3 ios/scripts/test-notifications-simulator.py
+  python3 ios/scripts/test-notifications-simulator.py --review
 ```
 
-The loopback helper uses port 18763; survey it before starting. It stops when the
-test exits. Results, screenshots and build output go outside the repository.
+The helper requires the owned PanelsLaneB already booted. It holds the lane lock
+and does not boot, erase, or shut down a Simulator. It surveys its loopback port
+and stops its own host when the review exits. The current Ticket records measured
+execution cost and evidence. Keep result bundles and build output outside artifacts.
 
 
 ## Delivery evidence (22 October 2026)

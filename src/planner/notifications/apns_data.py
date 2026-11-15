@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import json
 import sqlite3
+from dataclasses import asdict
 from typing import Literal, cast
 from uuid import uuid4
 
@@ -18,6 +20,7 @@ from planner.notifications.contracts import (
     APNsResult,
     EdgeKey,
     NotificationIntent,
+    NotificationReply,
     PendingAPNsDelivery,
 )
 
@@ -67,8 +70,8 @@ def queue_intent(
     conn.execute(
         "INSERT OR IGNORE INTO notification_apns_deliveries "
         "(subject_kind,subject_id,notification_type,generation,device_id,"
-        "title,body,route,tag,created_at,status,attempts,next_attempt_at) "
-        "SELECT ?,?,?,?,device_id,?,?,?,?,?,'pending',0,? "
+        "title,body,route,tag,reply_json,created_at,status,attempts,next_attempt_at) "
+        "SELECT ?,?,?,?,device_id,?,?,?,?,?,?,'pending',0,? "
         "FROM notification_apns_devices WHERE owner_id=?",
         (
             edge.subject_kind,
@@ -79,6 +82,7 @@ def queue_intent(
             intent.body,
             intent.route,
             intent.tag,
+            json.dumps(asdict(intent.reply)) if intent.reply is not None else None,
             now,
             now,
             OWNER_PRINCIPAL_ID,
@@ -116,7 +120,11 @@ def pending_deliveries(conn: sqlite3.Connection, now: int) -> tuple[PendingAPNsD
                 row["registration_version"],
                 row["updated_at"],
             ),
-            NotificationIntent(row["title"], row["body"], row["route"], row["tag"]),
+            NotificationIntent(
+                row["title"], row["body"], row["route"], row["tag"],
+                NotificationReply(**json.loads(row["reply_json"]))
+                if row["reply_json"] is not None else None,
+            ),
             row["attempts"],
             row["created_at"],
         )

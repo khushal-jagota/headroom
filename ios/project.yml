@@ -87,6 +87,10 @@ schemes:
         Panels: all
     test:
       targets: [PanelsTests]
+      shouldUseLaunchSchemeArgsEnv: false
+      commandLineArguments:
+        --conversation-stub: true
+        http://127.0.0.1:1: true
   PanelsNotifications:
     build:
       targets:

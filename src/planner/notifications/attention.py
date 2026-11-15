@@ -7,11 +7,13 @@ edges into deliveries, so several commits can safely share one wake-up.
 from __future__ import annotations
 
 import json
+import logging
 import sqlite3
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from typing import NamedTuple
 
 from planner.conversation.events import (
+    ConversationEventKind,
     ConversationEventPayload,
     ConversationTurnEnding,
     MessageToOwnerEventPayload,
@@ -22,15 +24,22 @@ from planner.conversation.events import (
     UserInputAnsweredEventPayload,
     UserInputFailedEventPayload,
     UserInputRequestedEventPayload,
+    conversation_event_payload_from_canonical_json,
 )
 from planner.conversation.logic.pending_requests import (
     REQUEST_TERMINATING_EVENT_KIND,
     advance_pending_requests,
 )
+from planner.conversation.message_content import message_content_text
+from planner.core.contracts import PrincipalKind
+from planner.notifications.contracts import NotificationMessage, NotificationReply
+from planner.notifications.logic.preview import message_preview, notification_label
 from planner.tickets import derivation
 from planner.tickets.contracts import TicketStatus
 from planner.worker_types.contracts import WorkflowDefinition
 from planner.worker_types.store import workflow_from_row
+
+_LOG = logging.getLogger(__name__)
 
 
 class ConversationAttention(NamedTuple):
@@ -237,6 +246,77 @@ def advance_conversation_attention(
     )
 
 
+def _edge_context_json(
+    conn: sqlite3.Connection, subject_kind: str, subject_id: str, notification_type: str
+) -> str | None:
+    """Read the source only while the rising edge's transaction holds the write lock."""
+    if notification_type not in {"awaiting_reply", "awaiting_approval"}:
+        return None
+    if subject_kind == "ticket":
+        row = conn.execute(
+            "SELECT title, conversation_id, stage, workflow_json FROM tickets WHERE id=?",
+            (subject_id,),
+        ).fetchone()
+    elif subject_kind == "manager":
+        row = conn.execute(
+            "SELECT i.title, a.conversation_id FROM managers i "
+            "LEFT JOIN agents a ON a.agent_key='manager_' || i.id WHERE i.id=?",
+            (subject_id,),
+        ).fetchone()
+    else:
+        row = conn.execute(
+            "SELECT 'Chief of Staff' AS title, conversation_id FROM agents WHERE agent_key=?",
+            (subject_id,),
+        ).fetchone()
+    if row is None:
+        return None
+    context: dict[str, object] = {"subject_label": notification_label(str(row["title"]))}
+    if notification_type == "awaiting_approval":
+        workflow = workflow_from_row(row)
+        context["stage_label"] = notification_label(workflow.stage_definition(row["stage"]).label)
+    elif row["conversation_id"] is not None:
+        conversation_id = str(row["conversation_id"])
+        message_row = conn.execute(
+            "SELECT sequence,payload FROM conversation_events WHERE conversation_id=? "
+            "AND kind='message_to_owner' ORDER BY sequence DESC LIMIT 1",
+            (conversation_id,),
+        ).fetchone()
+        if message_row is not None:
+            payload = conversation_event_payload_from_canonical_json(
+                ConversationEventKind.message_to_owner, str(message_row["payload"])
+            )
+            assert isinstance(payload, MessageToOwnerEventPayload)
+            reply = (
+                NotificationReply(
+                    conversation_id, f"{conversation_id}:{message_row['sequence']}",
+                    payload.sender.kind.value, payload.sender.id,
+                )
+                if payload.sender.kind in {
+                    PrincipalKind.chief, PrincipalKind.manager, PrincipalKind.ticket,
+                }
+                else None
+            )
+            context["message"] = asdict(NotificationMessage(
+                notification_label(payload.sender_label),
+                message_preview(message_content_text(payload.content)), reply,
+            ))
+    return json.dumps(context, ensure_ascii=False, separators=(",", ":"))
+
+
+def _optional_edge_context_json(
+    conn: sqlite3.Connection, subject_kind: str, subject_id: str, notification_type: str
+) -> str | None:
+    """Notification enrichment must not prevent its source write from committing."""
+    try:
+        return _edge_context_json(conn, subject_kind, subject_id, notification_type)
+    except Exception:
+        # Context errors can contain message words. Keep the diagnostic payload-free.
+        _LOG.warning(
+            "Notification context unavailable; queued generic alert (%s)", notification_type,
+        )
+        return None
+
+
 def _record(
     conn: sqlite3.Connection,
     subject_kind: str,
@@ -262,9 +342,11 @@ def _record(
         generation += 1
         conn.execute(
             "INSERT INTO notification_attention_edges"
-            "(subject_kind, subject_id, notification_type, generation, occurred_at) "
-            "VALUES (?, ?, ?, ?, ?)",
-            (subject_kind, subject_id, notification_type, generation, occurred_at),
+            "(subject_kind, subject_id, notification_type, generation, "
+            "occurred_at, context_json) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            (subject_kind, subject_id, notification_type, generation, occurred_at,
+             _optional_edge_context_json(conn, subject_kind, subject_id, notification_type)),
         )
     conn.execute(
         "INSERT INTO notification_attention_state"
@@ -457,9 +539,11 @@ def reconcile_attention(
             generation += 1
             conn.execute(
                 "INSERT INTO notification_attention_edges"
-                "(subject_kind, subject_id, notification_type, generation, occurred_at) "
-                "VALUES (?, ?, ?, ?, ?)",
-                (*key, generation, occurred_at),
+                "(subject_kind, subject_id, notification_type, generation, "
+                "occurred_at, context_json) "
+                "VALUES (?, ?, ?, ?, ?, ?)",
+                (*key, generation, occurred_at,
+                 _optional_edge_context_json(conn, subject_kind, subject_id, notification_type)),
             )
         conn.execute(
             "INSERT INTO notification_attention_state"

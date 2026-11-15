@@ -64,22 +64,25 @@ import Observation
     init(baseURL suppliedBaseURL: URL? = nil, session: URLSession = .shared) {
         self.session = session
         defer { restore() }
-        if let suppliedBaseURL { baseURL = suppliedBaseURL; return }
+        baseURL = suppliedBaseURL ?? Self.configuredBaseURL
+    }
+
+    /// The same selected origin is available before SwiftUI creates a scene.
+    nonisolated static var configuredBaseURL: URL {
 #if DEBUG
         if let at = ProcessInfo.processInfo.arguments.firstIndex(of: "--conversation-stub"), ProcessInfo.processInfo.arguments.indices.contains(at + 1),
            let local = URL(string: ProcessInfo.processInfo.arguments[at + 1]), ["localhost", "127.0.0.1"].contains(local.host) {
-            baseURL = local
-            return
+            // A SpringBoard notification response does not retain XCTest's
+            // launch arguments. Persist this explicit DEBUG fixture selection.
+            UserDefaults.standard.set(local.absoluteString, forKey: "panels.baseURL")
+            return local
         }
-#endif
-#if DEBUG
         if ProcessInfo.processInfo.arguments.contains("--conversation-smoke") {
-            baseURL = URL(string: "http://127.0.0.1:1")!
-            return
+            return URL(string: "http://127.0.0.1:1")!
         }
 #endif
         let saved = UserDefaults.standard.string(forKey: "panels.baseURL")
-        baseURL = saved.flatMap(URL.init(string:)) ?? APIClient.defaultBaseURL
+        return saved.flatMap(URL.init(string:)) ?? APIClient.defaultBaseURL
     }
 
     func configure(baseURL: URL) {

@@ -71,6 +71,17 @@ import Observation
         try store.outgoing.enqueue(frozen, server: LocalStore.server(api.baseURL))
         Task { await drain(api: api) }
     }
+    /// Save through the ordinary outgoing transaction, but let the notification
+    /// response own its bounded delivery window. Never modify an open composer.
+    @discardableResult
+    func enqueueNotificationReply(_ reply: NotificationReply, text: String, notificationID: String, api: APIClient) throws -> String {
+        let work = try NotificationReplies.work(reply: reply, text: text, notificationID: notificationID, selectedServer: api.baseURL)
+        let server = LocalStore.server(api.baseURL)
+        do { try store.outgoing.enqueue(work, server: server) }
+        catch OutgoingStore.StoreError.duplicateIdentity { /* The original durable intent remains authoritative. */ }
+        return work.id
+    }
+
     func run(api: APIClient) async {
         let runID = UUID(); foregroundRunID = runID
         let server = LocalStore.server(api.baseURL)

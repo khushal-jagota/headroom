@@ -3,6 +3,7 @@ import SwiftUI
 struct SettingsView: View {
     @Environment(AppStore.self) private var store
     @State private var section = "Config"
+    @State private var notificationEditor = NotificationPreferenceEditor()
     private var workerResource: ResourceHandle<SettingsWorkers> { store.resources.handle(SettingsResources.workers) }
     private var skillResource: ResourceHandle<SettingsSkills> { store.resources.handle(SettingsResources.skills) }
     private var scheduleResource: ResourceHandle<SettingsSchedules> { store.resources.handle(SettingsResources.schedules) }
@@ -50,6 +51,7 @@ struct SettingsView: View {
         .resourceDemand(notificationResource, active: section == "Notifications")
         .panelsRefreshable { await load() }
         .onChange(of: section) { _, _ in Haptics.selection() }
+        .onChange(of: store.baseURL) { _, _ in notificationEditor.resetError() }
         .sheet(isPresented: $showingServer) {
             ServerAddressSheet(initialAddress: store.baseURL.absoluteString) { store.configure(baseURL: $0) }
         }
@@ -122,19 +124,31 @@ struct SettingsView: View {
     private var notificationPreferences: some View {
         Group {
             NotificationDeviceSettings()
+            if let error = notificationEditor.error {
+                Section {
+                    LoadErrorView(message: error) {
+                        await notificationEditor.retry(using: store.client, resources: store.resources)
+                    }
+                }
+            }
             if let notifications {
                 ForEach(notifications.subjects, id: \.key) { subject in
                     Section {
                         ForEach(subject.types) { preference in
-                            HStack(alignment: .top, spacing: PanelsTheme.Space.md) {
+                            Toggle(isOn: Binding(get: { preference.enabled }, set: { enabled in
+                                Task {
+                                    await notificationEditor.save(subjectKey: subject.key, type: preference.id, enabled: enabled,
+                                                                  using: store.client, resources: store.resources)
+                                }
+                            })) {
                                 VStack(alignment: .leading, spacing: PanelsTheme.Space.xs) {
                                     Text(preference.label).font(PanelsTheme.TypeScale.itemTitle)
                                     Text(preference.description).font(PanelsTheme.TypeScale.small).foregroundStyle(PanelsTheme.muted)
                                 }
-                                Spacer(minLength: 0)
-                                Text(preference.enabled ? "On" : "Off")
-                                    .foregroundStyle(preference.enabled ? PanelsTheme.accent : PanelsTheme.faint)
-                            }.accessibilityElement(children: .combine)
+                            }
+                            .tint(PanelsTheme.accent)
+                            .disabled(notificationEditor.isSaving)
+                            .accessibilityIdentifier("notification-preference-\(subject.key)-\(preference.id)")
                         }
                     } header: { Text(subject.label).panelsSectionHeading(.notification) }.listRowBackground(PanelsTheme.raised)
                 }

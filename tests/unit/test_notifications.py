@@ -128,7 +128,7 @@ def test_the_loop_sends_one_edge_to_the_registered_device_and_records_it(
     # first on the phone and the approval would never be read.
     assert loop.poll_once() == 1
     assert [subscription for subscription, _ in sent] == [subscription_id]
-    assert [intent.body for _, intent in sent] == ["Phone-worthy work needs your approval."]
+    assert [intent.body for _, intent in sent] == ["Brief waits for your approval."]
     assert {intent.route for _, intent in sent} == {f"/#/workspace/{ticket.id}"}
     assert {intent.tag for _, intent in sent} == {f"panels-ticket-{ticket.id}"}
 
@@ -151,6 +151,15 @@ def _conversation_on_a_ticket(conn: Connection, ticket_id: str) -> None:
         "VALUES ('c_split', 'codex', '/tmp/workspace', 'full', 0, 1)"
     )
     conn.execute("UPDATE tickets SET conversation_id = 'c_split' WHERE id = ?", (ticket_id,))
+
+
+def _message_payload(ticket: Ticket, text: str = "status", label: str | None = None) -> str:
+    return conversation_event_payload_to_canonical_json(MessageToOwnerEventPayload(
+        content=text_message_content(text),
+        sender=Principal(PrincipalKind.ticket, ticket.id),
+        recipient=OWNER_PRINCIPAL,
+        sender_label=label or ticket.title,
+    ))
 
 
 def _conversation_event(conn: Connection, sequence: int, kind: str, payload: str) -> None:
@@ -281,7 +290,7 @@ def test_a_message_that_arrives_during_an_ask_still_raises_its_own_edge(
 
     _conversation_event(conn, 1, "permission_asked", json.dumps({"ask_id": "ask-1"}))
     attention.capture_ticket_attention(conn, ticket.id, 1)
-    _conversation_event(conn, 2, "message_to_owner", "{}")
+    _conversation_event(conn, 2, "message_to_owner", _message_payload(ticket))
     attention.capture_ticket_attention(conn, ticket.id, 2)
 
     assert _edges(conn, ticket.id) == [("awaiting_answer", 1), ("awaiting_reply", 1)]
@@ -458,7 +467,7 @@ def test_conversation_binding_and_unbinding_capture_existing_attention(tmp_path:
     ticket = _ticket(conn, 1)
     _conversation_on_a_ticket(conn, ticket.id)
     conn.execute("UPDATE tickets SET conversation_id=NULL WHERE id=?", (ticket.id,))
-    _conversation_event(conn, 1, "message_to_owner", "{}")
+    _conversation_event(conn, 1, "message_to_owner", _message_payload(ticket))
     conn.commit()
     tickets_data.write_ticket_conversation_start(
         conn,
@@ -530,3 +539,150 @@ def test_failed_notification_delivery_retains_one_edge_and_retry(tmp_path: Path)
             ).fetchone()[0]
             == 1
         )
+
+
+def test_message_edge_keeps_original_words_and_reply_destination_until_dispatch(
+    tmp_path: Path,
+) -> None:
+    """Later messages and a replacement conversation must not hijack an earlier alert."""
+    from planner.notifications import apns_data
+
+    database = str(tmp_path / "message-snapshot.db")
+    with closing(connect(database)) as conn:
+        create_schema(conn)
+        _subscribe(conn)
+        apns_data.register_device(conn, device_token="aabb" * 16, bundle_id="app.panels.ios",
+                                  environment="development", now=1)
+        ticket = _ticket(conn, 1)
+        _conversation_on_a_ticket(conn, ticket.id)
+        _conversation_event(conn, 1, "message_to_owner", _message_payload(
+            ticket, "**Ready** to [review](https://example.com).\nPlease check `copy`.",
+            "Wren Manager",
+        ))
+        attention.capture_ticket_attention(conn, ticket.id, 1)
+        # Keep the unread flag high, so this later message does not earn its own edge.
+        _conversation_event(conn, 2, "message_to_owner", _message_payload(ticket, "Later words"))
+        attention.capture_ticket_attention(conn, ticket.id, 2)
+        conn.execute("UPDATE tickets SET title='Changed name', conversation_id=NULL WHERE id=?",
+                     (ticket.id,))
+        conn.commit()
+        notifications_data.queue_deliveries(conn, 3)
+
+    with closing(connect(database)) as conn:
+        web = next(item.intent for item in notifications_data.pending_deliveries(conn, 3)
+                   if item.edge.notification_type == "awaiting_reply")
+        native = next(item.intent for item in apns_data.pending_deliveries(conn, 3)
+                      if item.edge.notification_type == "awaiting_reply")
+        assert (web.title, web.body) == ("Wren Manager", "Ready to review. Please check copy.")
+        assert (native.title, native.body) == (web.title, web.body)
+        assert native.reply is not None
+        assert (native.reply.conversation_id, native.reply.message_id,
+                native.reply.recipient_kind, native.reply.recipient_id) == (
+                    "c_split", "c_split:1", "ticket", ticket.id,
+                )
+        assert web.reply is None  # The browser has no native text action.
+
+
+def test_approval_edge_keeps_saved_human_stage_and_bounded_ticket_name(tmp_path: Path) -> None:
+    """Stage copy comes from the saved workflow, even when dispatch follows a stage change."""
+    with closing(connect(str(tmp_path / "approval-copy.db"))) as conn:
+        create_schema(conn)
+        _subscribe(conn)
+        ticket = _ticket(conn, 1)
+        workflow = json.loads(conn.execute("SELECT workflow_json FROM tickets WHERE id=?",
+                                          (ticket.id,)).fetchone()[0])
+        workflow["stages"][0]["label"] = "Project agreement"
+        conn.execute("UPDATE tickets SET workflow_json=? WHERE id=?",
+                     (json.dumps(workflow), ticket.id))
+        # Reset only the existing fixture edge, then capture a new real approval edge.
+        conn.execute("DELETE FROM notification_attention_edges WHERE subject_id=?", (ticket.id,))
+        conn.execute("DELETE FROM notification_attention_state WHERE subject_id=?", (ticket.id,))
+        long_title = "📋" * 90
+        conn.execute("UPDATE tickets SET title=? WHERE id=?", (long_title, ticket.id))
+        attention.capture_ticket_attention(conn, ticket.id, 2)
+        conn.execute("UPDATE tickets SET title='Later title',stage='needs_implementation' "
+                     "WHERE id=?",
+                     (ticket.id,))
+        conn.commit()
+        notifications_data.queue_deliveries(conn, 3)
+        (delivery,) = notifications_data.pending_deliveries(conn, 3)
+        assert delivery.intent.title == "📋" * 59 + "…"
+        assert delivery.intent.body == "Project agreement waits for your approval."
+
+
+def test_preview_discards_markdown_and_attachment_contents_and_bounds_unicode() -> None:
+    """Payload text needs readable words and a character bound, independent of byte width."""
+    from planner.notifications.logic.preview import message_preview, notification_label
+
+    markdown = "# Ready\n\n- **First** [link](https://private.example)\n- `second`"
+    assert message_preview(markdown) == "Ready First link second"
+    image = "![private description](https://private.example/image.png)"
+    assert message_preview(image) == "Sent an attachment."
+    assert message_preview("\n  ") == "Sent an attachment."
+    assert message_preview("界" * 241) == "界" * 239 + "…"
+    for render, budget in ((notification_label, 60), (message_preview, 240)):
+        for grapheme in ("👩‍💻", "🇬🇧", "e\u0301"):
+            # A partial cluster never fills the last codepoint slot.
+            prefix = "a" * (budget - 2)
+            assert render(prefix + grapheme + "tail") == prefix + "…"
+            # A complete cluster that fits keeps its original codepoints.
+            prefix = "a" * (budget - 1 - len(grapheme))
+            complete = render(prefix + grapheme + "xy")
+            assert complete == prefix + grapheme + "…"
+            assert len(complete) == budget
+
+
+def test_context_failure_preserves_message_commit_and_generic_notification(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Optional notification context cannot roll back either source writes or reconciliation."""
+    database = str(tmp_path / "context-failure.db")
+    with closing(connect(database)) as conn:
+        create_schema(conn)
+        ticket = _ticket(conn, 1)
+        _conversation_on_a_ticket(conn, ticket.id)
+        _subscribe(conn)
+
+    private_error = "private message words must not enter logs"
+
+    def fail_context(*_args: object) -> None:
+        raise ValueError(private_error)
+
+    monkeypatch.setattr(attention, "_edge_context_json", fail_context)
+    store = ConversationStore(database, integer_now=lambda: 2)
+    message = MessageToOwnerEventPayload(
+        content=text_message_content("Committed message"),
+        sender=Principal(PrincipalKind.ticket, ticket.id),
+        recipient=OWNER_PRINCIPAL,
+        sender_label=ticket.title,
+    )
+    asyncio.run(store.append_event("c_split", message))
+    with closing(connect(database)) as conn:
+        row = conn.execute("SELECT kind,payload FROM conversation_events").fetchone()
+        assert tuple(row) == (
+            "message_to_owner", conversation_event_payload_to_canonical_json(message),
+        )
+        edge = conn.execute(
+            "SELECT context_json FROM notification_attention_edges "
+            "WHERE subject_id=? AND notification_type='awaiting_reply'", (ticket.id,),
+        ).fetchone()
+        assert edge is not None and edge[0] is None
+        notifications_data.queue_deliveries(conn, 3)
+        message_intent = next(item.intent for item in notifications_data.pending_deliveries(conn, 3)
+                              if item.edge.notification_type == "awaiting_reply")
+        assert (message_intent.title, message_intent.body, message_intent.reply) == (
+            "Panels", "Phone-worthy work has a message for you.", None,
+        )
+        # The maintenance path also enriches edges, independent of runtime capture.
+        conn.execute("DELETE FROM notification_attention_edges WHERE subject_id=?", (ticket.id,))
+        conn.execute("DELETE FROM notification_attention_state WHERE subject_id=?", (ticket.id,))
+        conn.commit()
+        notifications_data.reconcile_attention(conn)
+        reconciled = conn.execute(
+            "SELECT context_json FROM notification_attention_edges "
+            "WHERE subject_id=? AND notification_type='awaiting_reply'", (ticket.id,),
+        ).fetchone()
+        assert reconciled is not None and reconciled[0] is None
+        assert conn.execute("SELECT COUNT(*) FROM conversation_events").fetchone()[0] == 1
+    assert "Notification context unavailable" in caplog.text
+    assert private_error not in caplog.text
