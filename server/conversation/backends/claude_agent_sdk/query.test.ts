@@ -7,9 +7,13 @@ import { afterEach, expect, it, vi } from 'vitest';
 import { spawn } from 'node:child_process';
 import type { ChildProcessWithoutNullStreams } from 'node:child_process';
 import type { Options, SpawnedProcess, SDKUserMessage } from '@anthropic-ai/claude-agent-sdk';
-import { WorkerUnit } from '../../worker_unit/index.ts';
+import { WorkerSupervisor } from '../../../worker_supervision/index.ts';
+import type { WorkerSupervisionRuntime } from '../../../worker_supervision/runtime.ts';
+import type { BackendEventSink } from '../contracts.ts';
+import { WorkerScratch } from '../../worker_scratch.ts';
 import { CLAUDE_PERMISSION_ORDER, claude_sdk_client } from './query.ts';
 import { CLAUDE_AGENT_SDK_VERSION } from '../claude_sdk.ts';
+import * as claude_sdk from '../claude_sdk.ts';
 
 const { query } = vi.hoisted(() => ({
   query:
@@ -23,13 +27,18 @@ const { query } = vi.hoisted(() => ({
 vi.mock('node:child_process', () => ({ spawn: vi.fn(), spawnSync: vi.fn() }));
 vi.mock('@anthropic-ai/claude-agent-sdk', () => ({ query }));
 vi.mock('../cli_compatibility.ts', () => ({ ensure_cli_compatible: vi.fn() }));
-vi.mock('../../worker_unit/index.ts', () => ({ WorkerUnit: { create: vi.fn() } }));
+vi.mock('../../../worker_supervision/index.ts', () => ({ WorkerSupervisor: { create: vi.fn() } }));
+vi.mock('../../worker_scratch.ts', () => ({ WorkerScratch: { create: vi.fn() } }));
 afterEach(() => {
   vi.resetAllMocks();
   vi.useRealTimers();
 });
 
-function setup(environment: Record<string, string> = {}, can_use_tool?: Options['canUseTool']) {
+function setup(
+  environment: Record<string, string> = {},
+  can_use_tool?: Options['canUseTool'],
+  custody_sink?: BackendEventSink,
+) {
   const writes: ((cause?: Error | null) => void)[] = [];
   const received: string[] = [];
   const child = Object.assign(new EventEmitter(), {
@@ -57,6 +66,7 @@ function setup(environment: Record<string, string> = {}, can_use_tool?: Options[
     },
     environment,
     can_use_tool,
+    custody_sink,
   );
   return { ...configured, writes, received };
 }
@@ -72,6 +82,7 @@ function setup_client<T extends object>(
   close_child: () => void,
   environment: Record<string, string> = {},
   can_use_tool?: Options['canUseTool'],
+  custody_sink?: BackendEventSink,
 ) {
   vi.mocked(spawn).mockReturnValue(child as never);
   let spawned: SpawnedProcess;
@@ -145,7 +156,9 @@ function setup_client<T extends object>(
     one_shot_children: new OneShotChildren(child_processes),
     pathToClaudeCodeExecutable: '/synthetic/claude',
     env: environment,
+    worker_supervision: environment.PLAN_TICKET_ID ? ({} as WorkerSupervisionRuntime) : undefined,
     canUseTool: can_use_tool,
+    custody_sink,
   });
   return {
     client,
@@ -176,7 +189,7 @@ it('waits for actual stdin completion and does not inherit a Worker containment 
     expect(writes).toHaveLength(1);
     writes.shift()!();
     await delivery;
-    expect(WorkerUnit.create).not.toHaveBeenCalled();
+    expect(WorkerSupervisor.create).not.toHaveBeenCalled();
     expect(spawn).toHaveBeenCalledExactlyOnceWith(
       '/synthetic/claude',
       [],
@@ -307,7 +320,7 @@ it('bounds output drain separately after the direct child exits without signalli
   await pumping();
 });
 
-it('joins one owned unit stop when EOF and disconnect overlap', async () => {
+it('joins supervision stop when EOF and disconnect overlap and retains scratch until proof', async () => {
   let complete_stop: () => void = () => {};
   let announce_stop: () => void = () => {};
   const stopped = new Promise<void>((resolve) => {
@@ -316,20 +329,63 @@ it('joins one owned unit stop when EOF and disconnect overlap', async () => {
   const began = new Promise<void>((resolve) => {
     announce_stop = resolve;
   });
+  const identity = {
+    pid: 4321,
+    birth: 'birth',
+    boot: 'boot',
+    unit: null,
+    supervision_record: '/synthetic/supervision.json',
+  };
+  const ready = Promise.withResolvers<void>();
+  const custody = Promise.withResolvers<void>();
+  const record_custody = vi.fn(async () => {
+    await custody.promise;
+  });
   const unit = {
     environment: {},
     argv: (original: readonly string[]) => original,
-    begin_launch: vi.fn(),
-    track_wrapper: vi.fn(),
-    launch_failed_before_spawn: vi.fn(),
-    stop: vi.fn(async () => {
+    path: '/synthetic/supervision.json',
+    spawned: vi.fn(async () => {}),
+    started: vi.fn(async () => {
+      await ready.promise;
+    }),
+    identity: vi.fn(async () => identity),
+    shutdown_settled: Promise.resolve(),
+    stop: vi.fn(async (native_stop: () => Promise<void>) => {
       announce_stop();
       await stopped;
+      await native_stop();
+      return { complete: true, reason: 'gone', scope: 'ticket' };
     }),
   };
-  vi.mocked(WorkerUnit.create).mockResolvedValue(unit as never);
-  const { client, finish_reader, pumping } = setup({ PLAN_TICKET_ID: 'synthetic-worker' });
-  await client.connect();
+  vi.mocked(WorkerSupervisor.create).mockResolvedValue(unit as never);
+  const scratch = { environment: { TMPDIR: '/synthetic/scratch' }, close: vi.fn(async () => {}) };
+  vi.mocked(WorkerScratch.create).mockResolvedValue(scratch as never);
+  const { client, child, finish_reader, pumping } = setup(
+    { PLAN_TICKET_ID: 'synthetic-worker' },
+    undefined,
+    {
+      report: async () => {},
+      record_local_child_supervision: async (path) => {
+        expect(path).toBe('/synthetic/supervision.json');
+        expect(spawn).not.toHaveBeenCalled();
+      },
+      record_local_child_custody: record_custody,
+    },
+  );
+  Object.assign(child, { pid: 4321 });
+  let connected = false;
+  const connecting = client.connect().then(() => {
+    connected = true;
+  });
+  await vi.waitFor(() => expect(unit.started).toHaveBeenCalled());
+  expect(connected).toBe(false);
+  ready.resolve();
+  await vi.waitFor(() => expect(record_custody).toHaveBeenCalledWith(identity));
+  expect(connected).toBe(false);
+  custody.resolve();
+  await connecting;
+  expect(await client.local_child_identity?.()).toEqual(identity);
   const stream = client.receive_messages()[Symbol.asyncIterator]();
   const next = stream.next();
   finish_reader();
@@ -337,10 +393,12 @@ it('joins one owned unit stop when EOF and disconnect overlap', async () => {
   const disconnect = client.disconnect();
   await Promise.resolve();
   expect(unit.stop).toHaveBeenCalledTimes(1);
+  expect(scratch.close).not.toHaveBeenCalled();
   complete_stop();
   await Promise.all([next, disconnect]);
   await pumping();
   expect(unit.stop).toHaveBeenCalledTimes(1);
+  expect(scratch.close).toHaveBeenCalledTimes(1);
 });
 
 it('preserves both native assistant/permission orders without waiting for SDK-filtered frames', async () => {
@@ -671,4 +729,78 @@ it('rejects an async prompt released after stdin fails before any message is reg
   expect(received).toEqual([]);
   await client.disconnect();
   await pumping();
+});
+
+it('revokes an unspawned Worker when its supervision reporter fails and closes scratch', async () => {
+  const supervisor = {
+    environment: {},
+    path: '/synthetic/supervision.json',
+    cancel_unspawned: vi.fn(async () => {}),
+    stop: vi.fn(async (_native?: () => Promise<void>, _options?: { deadline: number }) => ({
+      complete: true,
+      reason: 'never launched',
+      scope: 'ticket',
+    })),
+    shutdown_settled: Promise.resolve(),
+  };
+  const scratch = { environment: {}, close: vi.fn(async () => {}) };
+  vi.mocked(WorkerSupervisor.create).mockResolvedValueOnce(supervisor as never);
+  vi.mocked(WorkerScratch.create).mockResolvedValueOnce(scratch as never);
+  const reporting = Promise.withResolvers<void>();
+  const finish_report = Promise.withResolvers<void>();
+  const { client } = setup({ PLAN_TICKET_ID: 'synthetic-worker' }, undefined, {
+    report: async () => {},
+    record_local_child_supervision: async () => {
+      reporting.resolve();
+      await finish_report.promise;
+      throw new Error('custody write failed');
+    },
+  });
+  const connecting = expect(client.connect()).rejects.toThrow('custody write failed');
+  await reporting.promise;
+  let closed = false;
+  const deadline = performance.now() / 1000 + 2;
+  const closing = client.disconnect({ deadline }).then(() => {
+    closed = true;
+  });
+  await Promise.resolve();
+  expect(closed).toBe(false);
+  expect(scratch.close).not.toHaveBeenCalled();
+  finish_report.resolve();
+  await Promise.all([connecting, closing]);
+  expect(supervisor.cancel_unspawned).toHaveBeenCalledTimes(1);
+  expect(supervisor.stop.mock.calls[0][1]).toEqual({ deadline });
+  expect(spawn).not.toHaveBeenCalled();
+  expect(scratch.close).toHaveBeenCalledTimes(1);
+});
+
+it('disconnect during SDK import prevents late Query construction and retains the connect settlement', async () => {
+  const original = claude_sdk.load_claude_sdk;
+  const delayed = Promise.withResolvers<Awaited<ReturnType<typeof original>>>();
+  const loader = vi
+    .spyOn(claude_sdk, 'load_claude_sdk')
+    .mockImplementationOnce(() => delayed.promise);
+  const { client } = setup();
+  const connecting = expect(client.connect()).rejects.toThrow(
+    'startup stopped before SDK construction',
+  );
+  try {
+    await vi.waitFor(() => expect(loader).toHaveBeenCalled());
+    await client.disconnect();
+    let settled = false;
+    const actual = client.settled!().then(() => {
+      settled = true;
+    });
+    await Promise.resolve();
+    expect(settled).toBe(false);
+    delayed.resolve(await original());
+    await connecting;
+    await actual;
+    expect(query).not.toHaveBeenCalled();
+    expect(spawn).not.toHaveBeenCalled();
+  } finally {
+    delayed.resolve(await original());
+    loader.mockRestore();
+    await client.disconnect();
+  }
 });

@@ -101,6 +101,9 @@ export class ConversationState {
   readonly late_steers = new Set<Promise<void>>();
   readonly background_tasks_stopped_since_the_agent_last_acted = new Map<string, string>();
   child_is_quarantined = false;
+  local_child_retirement_proven = false;
+  local_preparation_cancelled = false;
+  custody_ready: Promise<void> | null = null;
   delivery_uncertain = false;
   has_delivered_prompt = false;
   being_killed = false;

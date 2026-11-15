@@ -19,8 +19,11 @@ export async function run_receipts(spec: { database: string }): Promise<unknown>
   database.write((tx) =>
     tx.run('INSERT INTO conversation_runtime_epoch VALUES (1,?)', ['unit15b-runtime']),
   );
-  const store = new ConversationStore(database, { integer_now: () => 100 });
   const registry = new ScriptedBackendRegistry();
+  const store = new ConversationStore(database, {
+    integer_now: () => 100,
+    local_child_custody: registry.custody.inspection,
+  });
   const files = new ConversationMessageFiles(spec.database);
   const core = new SqliteProcessConversationSystem({
     store,

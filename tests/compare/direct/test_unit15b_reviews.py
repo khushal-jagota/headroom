@@ -58,13 +58,14 @@ async def exercise(spec: dict[str, Any]) -> dict[str, Any]:
     path = spec["path"]
     registry = ScriptedBackendRegistry()
     store = ConversationStore(path, integer_now=lambda: 100)
+    monotonic = 100
     core = SqliteProcessConversationSystem(
         store=store,
         backend_child_factories={key: registry.make_child for key in ConversationBackendKey},
         message_files=ConversationMessageFiles(path),
         live_tail=ConversationLiveTail(),
         unix_time_now=lambda: 100,
-        monotonic_now=lambda: 100,
+        monotonic_now=lambda: monotonic,
     )
     fates: list[Any] = []
     try:
@@ -174,6 +175,9 @@ async def exercise(spec: dict[str, Any]) -> dict[str, Any]:
             fates.append(delivery_fate_json(await send()))
         if current_batch:
             fates.append({"delivered": await deliver(current_batch)})
+            assert fates[-1] == {"delivered": False}
+            monotonic += 1
+            fates.append({"delivered": await deliver(current_batch)})
         await core.wait_until_quiescent()
         observations = {identity: await registry.inspect(identity) for identity in ("c", "current")}
         if spec["case"] == "prepare":
@@ -188,7 +192,7 @@ async def exercise(spec: dict[str, Any]) -> dict[str, Any]:
                 message_files=ConversationMessageFiles(path),
                 live_tail=ConversationLiveTail(),
                 unix_time_now=lambda: 100,
-                monotonic_now=lambda: 100,
+                monotonic_now=lambda: monotonic,
             )
             fates.append(delivery_fate_json(await send()))
             assert not registry.current
@@ -220,10 +224,6 @@ def normalize(value: Any) -> Any:
     return json.loads(text)
 
 
-@pytest.mark.xfail(
-    run=False,
-    reason="expected-open P3 (#916): start-admission pacing defers the reassigned review wake",
-)
 def test_unit15b_review_start_boundaries(tmp_path: Path, request: pytest.FixtureRequest) -> None:
     started = time.perf_counter()
     environment = {
@@ -300,6 +300,7 @@ def test_unit15b_review_start_boundaries(tmp_path: Path, request: pytest.Fixture
             }
 
         if case.startswith("transfer"):
+            assert expected["fates"][1] == {"delivered": False}
             assert expected["fates"][0] == {"delivered": False}
         else:
             assert expected["fates"][0]["fate"] == "suppressed"

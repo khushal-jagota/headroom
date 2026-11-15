@@ -10,9 +10,10 @@ import asyncio
 import json
 import os
 import subprocess
+import sys
 import time
-from importlib import import_module
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, cast
 from unittest.mock import patch
 
@@ -21,47 +22,66 @@ import pytest
 ROOT = Path(__file__).resolve().parents[3]
 
 
-def _outcome(call: Any) -> Any:
-    # P3 replaces this retired fixture when its expected-open case returns.
-    worker_unit = import_module("planner.conversation.worker_unit")
-
-    try:
-        return call()
-    except worker_unit.WorkerUnitError as error:
-        return {"error": str(error)}
-
-
 def _python_bytes(spec: dict[str, Any]) -> dict[str, Any]:
-    # P3 replaces this retired fixture when its expected-open case returns.
-    worker_unit = import_module("planner.conversation.worker_unit")
+    from planner import worker_supervision
+    from planner.conversation.local_child_contracts import LocalHostBootIdentity
+    from planner.worker_supervision import records
+    from planner.worker_supervision.contracts import InspectionContext, WorkerProcess
 
     attempts: list[str] = []
 
-    async def forbidden(*arguments: Any, **keywords: Any) -> Any:
+    def forbidden(*arguments: Any, **_keywords: Any) -> Any:
         attempts.append(str(arguments[0]))
-        raise AssertionError("The byte comparison must not start a process")
+        raise AssertionError("The bootstrap comparison must not start a process")
 
-    with patch.object(asyncio, "create_subprocess_exec", forbidden):
-        unit = worker_unit.WorkerUnit(
-            name=spec["name"],
-            directory=Path(spec["directory"]),
-            environment=spec["environment"],
-            working_directory=Path(spec["working_directory"]),
-            slice_name=spec["slice_name"],
+    owner = WorkerProcess(**spec["owner"])
+    primitives = SimpleNamespace(snapshot=lambda _deadline: {owner.pid: owner})
+    context = InspectionContext(
+        cast(Any, primitives), LocalHostBootIdentity("synthetic-host", "synthetic-boot")
+    )
+
+    async def run() -> dict[str, Any]:
+        supervisor = await worker_supervision.WorkerSupervisor.create(
+            spec["environment"], Path(spec["working_directory"])
         )
-        result = {
-            "argv": [
-                _outcome(lambda command=command: list(unit.argv(command)))
-                for command in spec["commands"]
-            ],
-            "environment_hex": worker_unit._environment_file(spec["environment"]).encode().hex(),
-            "invalid_environment": [
-                _outcome(lambda value=value: worker_unit._environment_file(value))
-                for value in spec["invalid_environment"]
-            ],
+        assert supervisor is not None
+        pending = records.read(supervisor.path)
+        argv: list[list[str] | dict[str, str]] = []
+        for command in spec["commands"]:
+            try:
+                result = list(supervisor.argv(command))
+                assert result[:5] == [
+                    sys.executable,
+                    "-I",
+                    "-m",
+                    "planner.worker_supervision.launch",
+                    str(supervisor.path),
+                ]
+                argv.append(result)
+            except (ValueError, OSError) as error:
+                argv.append({"error": str(error)})
+        await supervisor.cancel_unspawned()
+        return {
+            "argv": argv,
+            "environment": supervisor.environment,
+            "pending": pending,
+            "revoked": records.read(supervisor.path),
             "child_launch_attempts": attempts,
         }
-    return result
+
+    with (
+        patch.object(asyncio, "create_subprocess_exec", forbidden),
+        patch.object(asyncio, "create_subprocess_shell", forbidden),
+        patch("subprocess.Popen", forbidden),
+        patch.object(os, "getpid", return_value=owner.pid),
+        patch.object(worker_supervision, "_inspection_context", return_value=context),
+        patch.object(
+            worker_supervision,
+            "uuid4",
+            return_value=SimpleNamespace(hex=spec["uuid"].replace("-", "")),
+        ),
+    ):
+        return asyncio.run(run())
 
 
 def _node_environment(root: Path) -> dict[str, str]:
@@ -111,12 +131,8 @@ def _node(spec: dict[str, Any], root: Path) -> dict[str, Any] | list[dict[str, A
     return cast(dict[str, Any] | list[dict[str, Any]], json.loads(result.stdout))
 
 
-@pytest.mark.xfail(
-    run=False,
-    reason="expected-open P3: #916 replaces WorkerUnit launch bytes with supervision",
-)
 def test_unit18_containment_bytes(tmp_path: Path, request: pytest.FixtureRequest) -> None:
-    """Protect exact systemd escaping without any service-manager connection."""
+    """Protect real bootstrap arguments and durable no-child revocation without execution."""
     started = time.perf_counter()
     working = tmp_path / "work % 'quoted'"
     binary = working / "relative-bin"
@@ -124,45 +140,53 @@ def test_unit18_containment_bytes(tmp_path: Path, request: pytest.FixtureRequest
     executable = binary / "fake-cli"
     executable.write_text("Scripted placeholder. Never execute.\n")
     executable.chmod(0o700)
-    symlink = binary / "linked-cli"
-    symlink.symlink_to(executable)
+    (binary / "linked-cli").symlink_to(executable)
     private = tmp_path / "private % 'quoted'"
     environment = {
-        "PATH": "relative-bin:",
+        "PATH": str(binary),
         "PLAN_TICKET_ID": "synthetic-byte-proof",
+        "PLAN_CONVERSATION_ID": "synthetic-conversation",
+        "PLAN_WORKER_PROCESS_ROOT": str(private),
+        "PLAN_EXECUTOR_CHILD_ID": "synthetic-child",
+        "PLAN_EXECUTOR_SOURCE_INCARNATION": "synthetic-incarnation",
         "QUOTED": "quote\" slash\\ dollar$ backtick` percent% single' snowman☃",
         "MULTILINE": "line one\nline two\r\nline three",
         "EMPTY": "",
-        "TMPDIR": str(private / "t"),
-        "TMP": str(private / "t"),
-        "TEMP": str(private / "t"),
     }
     spec = {
         "operation": "bytes",
-        "name": "panels-worker-" + "2" * 32 + ".service",
-        "directory": str(private),
-        "working_directory": str(working),
-        "slice_name": "unit18-synthetic.slice",
         "environment": environment,
+        "working_directory": str(working),
+        "uuid": "33333333-3333-3333-3333-333333333333",
+        "owner": {
+            "pid": 41,
+            "birth": "synthetic-birth",
+            "parent": 1,
+            "group": 41,
+            "session": 41,
+            "zombie": False,
+        },
         "commands": [
-            [
-                str(executable),
-                "--value=$HOME",
-                "`not-a-command`",
-                "one\ntwo",
-                "100%",
-                "",
-            ],
+            [str(executable), "--value=$HOME", "`not-a-command`", "one\ntwo", "100%", ""],
             ["relative-bin/fake-cli", "relative"],
             ["fake-cli", "path-lookup"],
             ["linked-cli", "preserve-symlink"],
             [],
             ["absent-cli"],
         ],
-        "invalid_environment": [{"BAD-NAME": "x"}, {"GOOD": "before\0after"}],
     }
-    expected = _python_bytes(spec)
-    actual = _node(spec, tmp_path)
+    expected, actual = _python_bytes(spec), _node(spec, tmp_path)
+    assert isinstance(actual, dict)
+
+    def comparable(value: dict[str, Any], prefix: int) -> dict[str, Any]:
+        return {
+            **value,
+            "argv": [
+                ["<native-bootstrap>", *command[prefix:]] if isinstance(command, list) else command
+                for command in value["argv"]
+            ],
+        }
+
     report = {
         "case": "unit18-containment-bytes",
         "inputs": spec,
@@ -171,28 +195,30 @@ def test_unit18_containment_bytes(tmp_path: Path, request: pytest.FixtureRequest
         "seconds": time.perf_counter() - started,
         "real_children": ["owned Node evaluator"],
         "service_manager_calls": 0,
-        "units_started": 0,
-        "normalization_rules": ["Keep invalid-entry names and failure shape; allow native quotes."],
+        "normalization_rules": [
+            "Exact raw bootstrap asserted in each language; "
+            "replace only Python -I/-m versus Node launch.ts prefix"
+        ],
+        "boundary": (
+            "Real create/cancel and private journal I/O with synthetic native process evidence; "
+            "bootstrap is never executed"
+        ),
     }
     destination = request.config.getoption("--compare-report-dir")
     if destination:
         path = Path(destination)
         path.mkdir(parents=True, exist_ok=True)
         (path / "unit18-containment-bytes.json").write_text(json.dumps(report, indent=2) + "\n")
-
-    def comparable(value: dict[str, Any]) -> dict[str, Any]:
-        errors = value["invalid_environment"]
-        assert len(errors) == len(spec["invalid_environment"])
-        for error, invalid in zip(errors, spec["invalid_environment"], strict=True):
-            assert set(error) == {"error"}
-            assert isinstance(error["error"], str) and next(iter(invalid)) in error["error"]
-        return {
-            **value,
-            "invalid_environment": [{"error": "<invalid environment>"} for _ in errors],
-        }
-
-    assert isinstance(actual, dict)
-    assert comparable(actual) == comparable(expected)
+    assert comparable(actual, 2) == comparable(expected, 4)
+    assert actual["pending"]["state"] == "pending"
+    assert actual["pending"]["root"] is None
+    assert actual["revoked"] == {
+        **actual["pending"],
+        "state": "complete",
+        "launch_revoked": True,
+        "reason": "The OS refused spawn before a child existed",
+    }
+    assert actual["child_launch_attempts"] == []
 
 
 def _python_versions(cases: list[dict[str, Any]], executable: str) -> list[dict[str, Any]]:

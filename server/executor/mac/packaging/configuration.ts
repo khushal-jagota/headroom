@@ -13,7 +13,6 @@ export const MAC_REQUIRED_FILES = [
   'server/executor/wire.schema.json',
   'server/core/database/application_schema.json',
   'server/skills/cli_commands.json',
-  'server/conversation/tool_shell_startup.bash',
   ...MAC_STATIC_FILES,
 ] as const;
 export const MAC_RUNTIME_CONSOLE = `#!/bin/sh

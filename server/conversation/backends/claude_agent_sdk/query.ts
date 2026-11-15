@@ -13,8 +13,11 @@ import type {
 } from '@anthropic-ai/claude-agent-sdk';
 import { PromptWriteFailed } from '../contracts.ts';
 import { ensure_cli_compatible } from '../cli_compatibility.ts';
-import { WorkerUnit } from '../../worker_unit/index.ts';
-import { with_tool_shell_kill_priority } from '../../tool_shell_kill_priority.ts';
+import { WorkerSupervisor } from '../../../worker_supervision/index.ts';
+import { local_process_identity } from '../../../worker_supervision/identity.ts';
+import { WorkerScratch } from '../../worker_scratch.ts';
+import type { LocalChildIdentity } from '../../local_child_contracts.ts';
+import type { StopOptions } from '../../../lifecycle/contracts.ts';
 import {
   CLAUDE_CANCEL_QUEUED_TIMEOUT_SECONDS,
   CLAUDE_PROCESS_CLOSE_TIMEOUT_SECONDS,
@@ -23,6 +26,9 @@ import {
 import type { ClaudeSdkClient, ClaudeSdkOptions, ClaudeSdkMessage } from './query_contracts.ts';
 import { ClaudeReceipts } from './receipts.ts';
 import { ObservedStdout, ObservedStderr, Pending, cancellation_uuid_set, object } from './wire.ts';
+import { STOP_SECONDS } from '../../../worker_supervision/config.ts';
+import { monotonic_seconds } from '../../../lifecycle/configuration.ts';
+import { observe_shutdown } from '../../shutdown.ts';
 import { observe_promise } from '../../../core/promise_observer.ts';
 import { OwnedCodexProcess } from '../codex_app_server/process.ts';
 
@@ -172,8 +178,18 @@ class ObservedClaudeSdkClient implements ClaudeSdkClient {
   private info: Record<string, unknown> | null = null;
   private owned_process: OwnedCodexProcess | null = null;
   private stream_closed: Pending<void> | null = null;
-  private worker_unit: WorkerUnit | null = null;
-  private worker_unit_stop: Promise<void> | null = null;
+  private supervisor: WorkerSupervisor | null = null;
+  private scratch: WorkerScratch | null = null;
+  private worker_stop: Promise<void> | null = null;
+  private registration: Promise<void> = Promise.resolve();
+  private readonly registered = new Pending<void>();
+  private preparation: Promise<void> = Promise.resolve();
+  private identity: LocalChildIdentity | null = null;
+  private supervision_settlement: Promise<void> = Promise.resolve();
+  private disconnect_task: Promise<void> | null = null;
+  private connecting: Promise<void> | null = null;
+  private stop_options: StopOptions | undefined;
+  private revocation: Promise<void> | null = null;
   private stderr: ObservedStderr | null = null;
   private cleanup_started = false;
   private readonly compatibility_controller = new AbortController();
@@ -191,7 +207,18 @@ class ObservedClaudeSdkClient implements ClaudeSdkClient {
   constructor(options: ClaudeSdkOptions) {
     this.options = options;
   }
-  async connect(): Promise<void> {
+  connect(): Promise<void> {
+    if (this.connecting) return this.connecting;
+    const task = this.connect_owned();
+    this.connecting = task;
+    void task
+      .finally(() => {
+        if (this.connecting === task) this.connecting = null;
+      })
+      .catch(() => {});
+    return task;
+  }
+  private async connect_owned(): Promise<void> {
     if (this.cleanup_started) throw new Error('a Claude transport cannot reconnect after cleanup');
     if (this.cli !== null) throw new Error('Claude transport is already connected');
     const overrides = copy_environment(this.options.env ?? {});
@@ -201,7 +228,6 @@ class ObservedClaudeSdkClient implements ClaudeSdkClient {
       signal: this.compatibility_controller.signal,
       children: this.options.one_shot_children,
     });
-    with_tool_shell_kill_priority(overrides);
     const environment = copy_environment(process.env);
     delete environment.CLAUDECODE;
     environment.CLAUDE_CODE_ENTRYPOINT = 'sdk-ts';
@@ -212,16 +238,19 @@ class ObservedClaudeSdkClient implements ClaudeSdkClient {
     if (this.options.cwd) environment.PWD = this.options.cwd;
     if (this.options.enableFileCheckpointing)
       environment.CLAUDE_CODE_ENABLE_SDK_FILE_CHECKPOINTING = 'true';
-    if (overrides.PLAN_TICKET_ID) {
-      this.worker_unit = await WorkerUnit.create(environment, this.options.cwd ?? process.cwd(), {
-        child_processes: this.options.child_processes,
-      });
-      if (this.worker_unit !== null) Object.assign(environment, this.worker_unit.environment);
-    }
     try {
+      this.preparation = this.prepare_worker(environment, Boolean(overrides.PLAN_TICKET_ID));
+      await this.preparation;
       const { query: sdk_query } = await load_claude_sdk();
+      if (this.cleanup_started) throw new Error('Claude startup stopped before SDK construction');
       // Ownership is internal composition data, never an unknown SDK option.
-      const { child_processes: _native, one_shot_children: _probes, ...sdk_options } = this.options;
+      const {
+        child_processes: _native,
+        one_shot_children: _probes,
+        worker_supervision: _supervision,
+        custody_sink: _custody,
+        ...sdk_options
+      } = this.options;
       this.cli = sdk_query({
         prompt: this.input,
         options: {
@@ -248,14 +277,51 @@ class ObservedClaudeSdkClient implements ClaudeSdkClient {
           spawnClaudeCodeProcess: (options) => this.start_process(options, environment),
         },
       });
-      const info: unknown = await this.cli.initializationResult();
+      // The SDK can invoke its synchronous spawn callback after query() returns.
+      const [info] = await Promise.all([this.cli.initializationResult(), this.registered.promise]);
       this.info = object(info) ? info : null;
     } catch (cause) {
-      await this.stop_worker_unit();
+      await this.revoke_unspawned();
+      await this.disconnect();
       throw native_exit_failure(cause);
     }
   }
 
+  private revoke_unspawned(): Promise<void> {
+    if (this.owned_process !== null || this.supervisor === null) return Promise.resolve();
+    if (this.revocation === null) {
+      const pending = this.supervisor.cancel_unspawned();
+      this.revocation = pending;
+      void pending.catch(() => {
+        if (this.revocation === pending) this.revocation = null;
+      });
+    }
+    return this.revocation;
+  }
+  private async prepare_worker(
+    environment: Record<string, string>,
+    worker: boolean,
+  ): Promise<void> {
+    if (worker) {
+      if (!this.options.worker_supervision) throw new Error('Worker supervision is required');
+      this.supervisor = await WorkerSupervisor.create(
+        environment,
+        this.options.cwd ?? process.cwd(),
+        {
+          runtime: this.options.worker_supervision,
+        },
+      );
+      if (this.supervisor !== null) Object.assign(environment, this.supervisor.environment);
+      this.scratch = await WorkerScratch.create(environment, {
+        processes: this.options.child_processes,
+      });
+      Object.assign(environment, this.scratch.environment);
+      if (this.supervisor !== null) {
+        Object.assign(this.supervisor.environment, environment);
+        await this.options.custody_sink?.record_local_child_supervision?.(this.supervisor.path);
+      }
+    }
+  }
   private start_process(
     options: SpawnOptions,
     environment: Record<string, string>,
@@ -263,23 +329,33 @@ class ObservedClaudeSdkClient implements ClaudeSdkClient {
     if (this.cleanup_started || this.owned_process !== null)
       throw new Error('a Claude transport cannot reconnect after cleanup');
     const original = [options.command, ...options.args];
-    const command = this.worker_unit === null ? original : this.worker_unit.argv(original);
-    this.worker_unit?.begin_launch();
-    let child: ChildProcessWithoutNullStreams;
-    try {
-      child = this.options.child_processes.spawn(command[0]!, [...command.slice(1)], {
+    const command = this.supervisor === null ? original : this.supervisor.argv(original);
+    const child: ChildProcessWithoutNullStreams = this.options.child_processes.spawn(
+      command[0]!,
+      [...command.slice(1)],
+      {
         cwd: options.cwd,
         env: environment,
         stdio: ['pipe', 'pipe', 'pipe'],
         detached: process.platform !== 'win32',
-      });
-    } catch (error) {
-      this.worker_unit?.launch_failed_before_spawn();
-      throw error;
-    }
-    this.worker_unit?.track_wrapper(child);
+      },
+    );
     const owned = new OwnedCodexProcess(child);
     this.owned_process = owned;
+    this.registration = this.register_process(owned);
+    void this.registration.then(
+      () => this.registered.resolve(),
+      (error: unknown) => this.registered.reject(error),
+    );
+    void owned.exited
+      .then(async () => {
+        await this.registration.catch(() => {});
+        await this.stop_worker();
+      })
+      .catch((error: unknown) => {
+        this.stream_failure ??= error instanceof Error ? error : new Error(String(error));
+        this.fail_writes(this.stream_failure);
+      });
     const stream_closed = new Pending<void>();
     this.stream_closed = stream_closed;
     child.once('close', () => {
@@ -472,15 +548,59 @@ class ObservedClaudeSdkClient implements ClaudeSdkClient {
       this.permission_waiters.delete(waiter);
     }
   }
-  private async stop_worker_unit(): Promise<void> {
-    if (this.worker_unit_stop !== null) return this.worker_unit_stop;
-    if (this.worker_unit === null) return;
-    const attempt = this.worker_unit.stop().catch((cause) => {
-      if (this.worker_unit_stop === attempt) this.worker_unit_stop = null;
-      throw cause;
+  private async register_process(owned: OwnedCodexProcess): Promise<void> {
+    const pid = owned.child.pid;
+    if (pid === undefined) {
+      if (this.supervisor !== null || this.options.custody_sink?.record_local_child_custody)
+        throw new Error('Claude process PID is unavailable');
+      return;
+    }
+    if (this.supervisor !== null) {
+      await this.supervisor.spawned(pid);
+      await this.supervisor.started(pid);
+      this.identity = await this.supervisor.identity();
+    } else if (this.options.worker_supervision) {
+      this.identity = await local_process_identity(pid, this.options.worker_supervision);
+    }
+    if (this.options.custody_sink?.record_local_child_custody) {
+      if (this.identity === null) throw new Error('Cannot establish the Claude process identity');
+      await this.options.custody_sink.record_local_child_custody(this.identity);
+    }
+  }
+  async local_child_identity(): Promise<LocalChildIdentity | null> {
+    await this.registration;
+    return this.identity;
+  }
+  private stop_worker(options?: StopOptions): Promise<void> {
+    if (this.worker_stop !== null) return this.worker_stop;
+    if (this.supervisor === null && this.scratch === null) return Promise.resolve();
+    const budget = options ?? this.stop_options ?? { deadline: monotonic_seconds() + STOP_SECONDS };
+    const attempt = (async () => {
+      const supervisor = this.supervisor;
+      if (supervisor !== null) {
+        const result = await supervisor.stop(() => this.stop_native(budget), budget);
+        this.supervision_settlement = supervisor.shutdown_settled;
+        if (!result.complete) throw new Error(result.reason);
+        this.supervisor = null;
+      }
+      await this.scratch?.close();
+      this.scratch = null;
+    })();
+    this.worker_stop = attempt;
+    void attempt.catch(() => {
+      if (this.worker_stop === attempt) this.worker_stop = null;
     });
-    this.worker_unit_stop = attempt;
     return attempt;
+  }
+  async settled(): Promise<void> {
+    await this.connecting?.catch(() => {});
+    await this.preparation.catch(() => {});
+    await this.registration.catch(() => {});
+    await this.disconnect_task?.catch(() => {});
+    await this.worker_stop?.catch(() => {});
+    await this.supervisor?.shutdown_settled;
+    await this.supervision_settlement;
+    await this.owned_process?.exited;
   }
   private fail_writes(cause: unknown): void {
     for (const pending of this.pending_writes.splice(0)) pending.completed.reject(cause);
@@ -568,7 +688,7 @@ class ObservedClaudeSdkClient implements ClaudeSdkClient {
       this.release_permission_waiters(true);
       this.receipts.stream_ended();
       this.raw_result_usage.clear();
-      await this.stop_worker_unit();
+      await this.stop_worker();
     }
   }
   watch_user_message(uuid: string): void {
@@ -619,12 +739,40 @@ class ObservedClaudeSdkClient implements ClaudeSdkClient {
       if (this.cancel_attempt === attempt) this.cancel_attempt = null;
     }
   }
-  async disconnect(): Promise<void> {
+  disconnect(options?: StopOptions): Promise<void> {
+    if (this.disconnect_task === null) {
+      this.stop_options = options ?? { deadline: monotonic_seconds() + STOP_SECONDS };
+      const task = this.disconnect_owned(this.stop_options);
+      this.disconnect_task = task;
+      void task.catch(() => {
+        if (this.disconnect_task === task) this.disconnect_task = null;
+      });
+    }
+    return options === undefined
+      ? this.disconnect_task
+      : observe_shutdown(this.disconnect_task, options, 'Claude cleanup remains unconfirmed');
+  }
+  private async disconnect_owned(options?: StopOptions): Promise<void> {
     this.cleanup_started = true;
     this.compatibility_controller.abort();
     this.release_permission_waiters(true);
     this.stderr?.end();
-    await this.stop_worker_unit();
+    await this.preparation.catch(() => {});
+    await this.registration.catch(() => {});
+    await this.revoke_unspawned();
+    await this.stop_worker(options);
+    await this.stop_native(options);
+    if (this.cli !== null) await this.cli.return(undefined);
+    this.receipts.clear();
+    this.raw_result_usage.clear();
+    this.cli = null;
+    this.owned_process = null;
+    this.stream_closed = null;
+    this.stderr = null;
+  }
+  private async stop_native(options?: StopOptions): Promise<void> {
+    const deadline =
+      options?.deadline ?? this.stop_options?.deadline ?? monotonic_seconds() + STOP_SECONDS;
     let close_failure: unknown;
     try {
       this.cli?.close();
@@ -639,18 +787,25 @@ class ObservedClaudeSdkClient implements ClaudeSdkClient {
       if (!owned.child.stdin.writableEnded) owned.child.stdin.end();
       const exited = await observe_promise(
         owned.exited,
-        CLAUDE_PROCESS_CLOSE_TIMEOUT_SECONDS * 1000,
+        Math.max(
+          0,
+          Math.min(CLAUDE_PROCESS_CLOSE_TIMEOUT_SECONDS, deadline - monotonic_seconds()),
+        ) * 1000,
       );
       if (!exited.completed)
         await owned.stop({
           grace_seconds: CLAUDE_PROCESS_CLOSE_TIMEOUT_SECONDS,
           kill_wait_seconds: CLAUDE_PROCESS_CLOSE_TIMEOUT_SECONDS,
           preserve_output: true,
+          deadline,
         });
       if (this.stream_closed !== null) {
         const drained = await observe_promise(
           this.stream_closed.promise,
-          CLAUDE_PROCESS_CLOSE_TIMEOUT_SECONDS * 1000,
+          Math.max(
+            0,
+            Math.min(CLAUDE_PROCESS_CLOSE_TIMEOUT_SECONDS, deadline - monotonic_seconds()),
+          ) * 1000,
         );
         if (!drained.completed) {
           owned.child.stdout.destroy();
@@ -660,15 +815,6 @@ class ObservedClaudeSdkClient implements ClaudeSdkClient {
       }
     }
     if (close_failure !== undefined) throw close_failure;
-    if (this.cli !== null) await this.cli.return(undefined);
-    this.receipts.clear();
-    this.raw_result_usage.clear();
-    this.cli = null;
-    this.owned_process = null;
-    this.stream_closed = null;
-    this.worker_unit = null;
-    this.worker_unit_stop = null;
-    this.stderr = null;
   }
 }
 

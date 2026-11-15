@@ -49,6 +49,15 @@ The executor participant owns a write-door savepoint around its domain writer.
 A refusal after take rolls back the event and commits its refusal receipt outside
 that savepoint. The store publishes no written events for that refused outcome.
 
+The record saves pending custody before a local child starts, then accepts the exact
+generation, boot, and process identity. Each turn binds that custody to its immutable
+occurrence. Confirmed retirement clears only that source's automatic-start bindings.
+
+Startup inspects custody before it enters the writer. The writer accepts each proof
+only if the complete source row and turn occurrence still match. An uncertain source
+keeps its lifecycle facts and blocks a replacement child. Historical conversations
+without custody keep their existing restart rule.
+
 The startup method reconciles lifecycle facts without a synthetic closing event.
 The record runtime reuses the server's existing ownership lock and starts background
 projection rebuild after reconciliation. Rebuild uses private, distinctly named

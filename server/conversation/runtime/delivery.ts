@@ -46,31 +46,13 @@ function owned(host: DeliveryServices, state: ConversationState, reservation: Re
     throw new DeliveryCancelled();
   }
 }
-export async function stop_child(
-  state: ConversationState,
-  child: BackendChild,
-  native_operation: <T>(operation: () => Promise<T>) => Promise<T> = (operation) => operation(),
-): Promise<boolean> {
-  try {
-    await native_operation(() => child.stop());
-  } catch (error) {
-    state.child_is_quarantined = true;
-    console.error(`conversation ${state.record.conversation_id} could not stop its child`, error);
-    return false;
-  }
-  if (state.child === child) {
-    state.child = null;
-    state.child_event_sink = null;
-    state.child_is_quarantined = false;
-  }
-  return true;
-}
 async function ensure_child(
   host: DeliveryServices,
   state: ConversationState,
   reservation: ReservedTurn,
   message: Message,
 ): Promise<BackendChild> {
+  await host.ensure_local_custody(state);
   if (state.child_is_quarantined) throw new BackendSpawnFailed(state.record.conversation_id);
   if (state.child !== null) return state.child;
   const previous = state.record.resolved_start();
@@ -103,16 +85,24 @@ async function ensure_child(
       ),
     );
   }
+  if (!child.stop_outside_lock) await host.record_local_child_preparation(state, child, sink);
   state.preparing_child = child;
   try {
     await host.native_operation(() =>
       child.start(resolved, { vendor_session_cursor: state.record.vendor_session_cursor }),
     );
+  } catch (error) {
+    if (!child.stop_outside_lock) {
+      state.child = child;
+      state.child_is_quarantined = true;
+      await host.discard_child(state, child);
+    }
+    throw error;
   } finally {
     if (state.preparing_child === child) state.preparing_child = null;
   }
   if (host.shutting_down || state.reserved_turn !== reservation) {
-    if (!host.shutting_down) await host.discard_child(state, child);
+    if (!host.shutting_down || !child.stop_outside_lock) await host.discard_child(state, child);
     throw new DeliveryCancelled();
   }
   state.child = child;
@@ -287,6 +277,17 @@ export async function deliver_prompt(
           reference,
         ),
       );
+    if (
+      !target.stop_outside_lock &&
+      !(await host.check_local_child_started(state, reservation.token))
+    ) {
+      await host.discard_child(state, target);
+      return result({
+        refusal_reason: R.backend_did_not_start,
+        record_refusal: true,
+        refusal_detail: 'The agent did not record its process identity. No prompt was sent.',
+      });
+    }
     host.start_admission.bind_source(reservation.token, target);
     const accepted = await host.native_operation(() =>
       target.write_prompt(reservation.token, wire_content, {
@@ -463,6 +464,12 @@ export async function write_replayed_prompt(
           reference,
         ),
       );
+    if (!child.stop_outside_lock && !(await host.check_local_child_started(state, token))) {
+      await host.discard_child(state, child);
+      throw new BackendSpawnFailed(
+        'The agent did not record its process identity. No prompt was sent.',
+      );
+    }
     host.start_admission.bind_source(token, child);
     const accepted = await host.native_operation(() =>
       child!.write_prompt(token, prompt.content, {

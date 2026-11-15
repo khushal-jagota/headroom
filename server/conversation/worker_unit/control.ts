@@ -22,14 +22,26 @@ export async function control_retained(
 ): Promise<readonly [number, string]> {
   return capture(() => unit.spawn(action, extra));
 }
-function capture(spawn: () => ChildProcess): Promise<readonly [number, string]> {
+export function control_retained_with_timeout(
+  unit: OwnedUnitControl,
+  action: 'show' | 'stop' | 'reset-failed',
+  extra: readonly string[],
+  timeout_seconds: number,
+): Promise<readonly [number, string]> {
+  if (timeout_seconds <= 0) return Promise.reject(new Error('Worker control deadline expired'));
+  return capture(() => unit.spawn(action, extra), timeout_seconds);
+}
+function capture(
+  spawn: () => ChildProcess,
+  timeout_seconds = CONTROL_TIMEOUT_SECONDS,
+): Promise<readonly [number, string]> {
   return new Promise((resolve, reject) => {
     const child = spawn();
     const output: Buffer[] = [];
     const errors: Buffer[] = [];
     child.stdout!.on('data', (chunk: Buffer) => output.push(chunk));
     child.stderr!.on('data', (chunk: Buffer) => errors.push(chunk));
-    const timeout = AbortSignal.timeout(CONTROL_TIMEOUT_SECONDS * 1000);
+    const timeout = AbortSignal.timeout(Math.ceil(timeout_seconds * 1000));
     const abort = () => signal_child(child, 'SIGKILL', false);
     timeout.addEventListener('abort', abort, { once: true });
     child.once('error', (error) => {

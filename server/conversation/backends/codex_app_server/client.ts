@@ -13,12 +13,18 @@ import {
   cli_version_error,
   VERSION_TIMEOUT_SECONDS,
 } from '../cli_compatibility.ts';
-import { WorkerUnit } from '../../worker_unit/index.ts';
-import { with_tool_shell_kill_priority } from '../../tool_shell_kill_priority.ts';
+import { WorkerSupervisor } from '../../../worker_supervision/service.ts';
+import type { WorkerSupervisionRuntime } from '../../../worker_supervision/runtime.ts';
+import { local_process_identity } from '../../../worker_supervision/identity.ts';
+import { STOP_SECONDS } from '../../../worker_supervision/config.ts';
+import type { LocalChildIdentity } from '../../local_child_contracts.ts';
+import { WorkerScratch } from '../../worker_scratch.ts';
 import { CONSUMED_SERVER_NOTIFICATIONS, decode_server_request } from './protocol.ts';
 import { OwnedCodexProcess, spawn_codex_process } from './process.ts';
 import { observe_promise } from '../../../core/promise_observer.ts';
-import type { OwnedChildProcesses } from '../../../lifecycle/contracts.ts';
+import { monotonic_seconds } from '../../../lifecycle/configuration.ts';
+import { observe_shutdown } from '../../shutdown.ts';
+import type { StopOptions, OwnedChildProcesses } from '../../../lifecycle/contracts.ts';
 import {
   CHILD_OUTPUT_LINE_LIMIT_BYTES,
   METHOD_NOT_FOUND_ERROR_CODE,
@@ -60,6 +66,8 @@ export interface CodexClientStart {
   environment: Readonly<Record<string, string>>;
   working_directory: string;
   worker_ticket_id?: string | null;
+  supervision_reporter?: (path: string) => Promise<void>;
+  custody_reporter?: (identity: LocalChildIdentity) => Promise<void>;
 }
 
 function error_text(error: unknown): string {
@@ -73,7 +81,9 @@ export class CodexAppServerClient {
   private readonly notifications: Readonly<Record<string, Reader>>;
   private readonly warning: (message: string) => void;
   private process: OwnedCodexProcess | null = null;
-  private worker_unit: WorkerUnit | null = null;
+  private supervisor: WorkerSupervisor | null = null;
+  private scratch: WorkerScratch | null = null;
+  private readonly worker_supervision: WorkerSupervisionRuntime | undefined;
   private request_id = 0;
   private start_task: Promise<void> | null = null;
   private version_process: OwnedCodexProcess | null = null;
@@ -81,9 +91,11 @@ export class CodexAppServerClient {
   private wire_broken = false;
   private stopping = false;
   private incarnation = 0;
-  private readonly unit_stops = new WeakMap<WorkerUnit, Promise<void>>();
   private stop_task: Promise<void> | null = null;
+  private stop_options: StopOptions | undefined;
+  private readonly cleanup_settlements = new Set<Promise<void>>();
   private watcher: Promise<void> | null = null;
+  private readonly watcher_settlements = new Set<Promise<boolean>>();
   private dispatch: Promise<void> = Promise.resolve();
   private writes: Promise<void> = Promise.resolve();
   private readonly active_writes = new Set<(error: unknown) => void>();
@@ -97,8 +109,10 @@ export class CodexAppServerClient {
     description: string;
     consumed_notifications?: Readonly<Record<string, Reader>>;
     warning?: (message: string) => void;
+    worker_supervision?: WorkerSupervisionRuntime;
   }) {
     this.child_processes = options.child_processes;
+    this.worker_supervision = options.worker_supervision;
     this.handler = options.handler;
     this.description = options.description;
     this.notifications = options.consumed_notifications ?? CONSUMED_SERVER_NOTIFICATIONS;
@@ -122,11 +136,13 @@ export class CodexAppServerClient {
       (this.process !== null &&
         this.process.child.exitCode === null &&
         this.process.child.signalCode === null) ||
-      (this.process === null && this.worker_unit !== null)
+      this.supervisor !== null ||
+      this.scratch !== null
     )
       throw new CodexChildWouldNotStart('the previous codex child still owns cleanup handles');
     this.stopping = false;
     this.stop_task = null;
+    this.stop_options = undefined;
     const incarnation = ++this.incarnation;
     const task = this.replace_dead_child(options, incarnation);
     this.start_task = task;
@@ -138,11 +154,9 @@ export class CodexAppServerClient {
   }
   private async replace_dead_child(options: CodexClientStart, incarnation: number): Promise<void> {
     const previous = this.process;
-    const previous_unit = this.worker_unit;
-    if (previous !== null) {
+    if (previous !== null || this.supervisor !== null || this.scratch !== null) {
       this.break_wire('the codex process ended');
-      await previous.stop();
-      if (previous_unit !== null) await this.stop_unit(previous_unit);
+      await this.cleanup(previous, this.supervisor, this.scratch);
       if (this.process === previous) this.process = null;
     }
     if (this.incarnation !== incarnation || this.stopping)
@@ -154,10 +168,13 @@ export class CodexAppServerClient {
     const assert_current = () => {
       if (!current()) throw new CodexChildWouldNotStart('the codex child stopped during startup');
     };
-    const environment = with_tool_shell_kill_priority({ ...options.environment });
+    let environment = { ...options.environment };
     let owned: OwnedCodexProcess | null = null;
-    let unit: WorkerUnit | null = null;
+    let supervisor: WorkerSupervisor | null = null;
+    let scratch: WorkerScratch | null = null;
     try {
+      if (options.worker_ticket_id && !this.worker_supervision)
+        throw new CodexChildWouldNotStart('Worker supervision is unavailable');
       await this.check_version(
         options.argv[0]!,
         environment,
@@ -166,22 +183,44 @@ export class CodexAppServerClient {
       );
       assert_current();
       if (options.worker_ticket_id) {
-        unit = await WorkerUnit.create(
-          { ...environment, PLAN_TICKET_ID: options.worker_ticket_id },
-          options.working_directory,
-          { child_processes: this.child_processes },
-        );
-        this.worker_unit = unit;
+        environment = { ...environment, PLAN_TICKET_ID: options.worker_ticket_id };
+        supervisor = await WorkerSupervisor.create(environment, options.working_directory, {
+          runtime: this.worker_supervision!,
+        });
+        if (!supervisor)
+          throw new CodexChildWouldNotStart('Worker supervision did not retain launch custody');
+        this.supervisor = supervisor;
+        scratch = await WorkerScratch.create(environment, { processes: this.child_processes });
+        this.scratch = scratch;
+        environment = scratch.environment;
+        Object.assign(supervisor.environment, environment);
         assert_current();
+        await options.supervision_reporter?.(supervisor.path);
       }
-      owned = await spawn_codex_process(unit?.argv(options.argv) ?? options.argv, {
-        child_processes: this.child_processes,
-        worker_unit: unit ?? undefined,
-        environment: unit?.environment ?? environment,
-        working_directory: options.working_directory,
-      });
       assert_current();
+      owned = await spawn_codex_process(supervisor?.argv(options.argv) ?? options.argv, {
+        child_processes: this.child_processes,
+        environment: supervisor?.environment ?? environment,
+        working_directory: options.working_directory,
+        on_created: (process) => {
+          owned = process;
+          this.process = process;
+        },
+      });
       this.process = owned;
+      if (supervisor) {
+        if (owned.child.pid === undefined)
+          throw new CodexChildWouldNotStart('Worker process identity is unavailable');
+        await supervisor.spawned(owned.child.pid);
+        await supervisor.started(owned.child.pid);
+      }
+      if (options.custody_reporter) {
+        const identity = await this.local_child_identity();
+        if (identity === null)
+          throw new CodexChildWouldNotStart('Cannot establish the Codex process identity');
+        await options.custody_reporter(identity);
+      }
+      assert_current();
       this.dispatch = Promise.resolve();
       this.writes = Promise.resolve();
       this.wire_broken = false;
@@ -189,15 +228,43 @@ export class CodexAppServerClient {
       this.stderr_bytes = 0;
       this.stderr_ever = 0;
       this.end_reason_value = null;
-      this.attach(owned, incarnation, unit);
+      this.attach(owned, incarnation, supervisor, scratch);
     } catch (error) {
-      try {
-        if (owned !== null) await owned.stop();
-      } finally {
-        if (unit !== null) await this.stop_unit(unit);
-      }
+      if (supervisor && (owned === null || owned.child.pid === undefined))
+        await supervisor.cancel_unspawned();
+      await this.cleanup(owned, supervisor, scratch, this.stop_options);
+      if (this.process === owned) this.process = null;
       throw new CodexChildWouldNotStart(error_text(error));
     }
+  }
+  async local_child_identity(): Promise<LocalChildIdentity | null> {
+    if (!this.process?.child.pid) return null;
+    if (this.supervisor) return this.supervisor.identity();
+    return this.worker_supervision
+      ? local_process_identity(this.process.child.pid, this.worker_supervision)
+      : null;
+  }
+  private async cleanup(
+    owned: OwnedCodexProcess | null,
+    supervisor: WorkerSupervisor | null,
+    scratch: WorkerScratch | null,
+    options?: StopOptions,
+  ): Promise<void> {
+    const deadline =
+      options?.deadline ?? (this.worker_supervision?.clock() ?? monotonic_seconds()) + STOP_SECONDS;
+    if (supervisor) {
+      const result = await supervisor.stop(owned ? () => owned.stop({ deadline }) : undefined, {
+        deadline,
+      });
+      const settled = supervisor.shutdown_settled;
+      this.cleanup_settlements.add(settled);
+      void settled.finally(() => this.cleanup_settlements.delete(settled)).catch(() => {});
+      if (!result.complete)
+        throw new CodexChildWouldNotStart(`Worker cleanup remains unproven: ${result.reason}`);
+    } else if (owned) await owned.stop({ deadline });
+    if (scratch) await scratch.close();
+    if (this.supervisor === supervisor) this.supervisor = null;
+    if (this.scratch === scratch) this.scratch = null;
   }
   private async check_version(
     executable: string,
@@ -215,13 +282,21 @@ export class CodexAppServerClient {
         },
         working_directory,
         close_stdin: true,
+        on_created: (process) => {
+          this.version_process = process;
+        },
       });
     } catch {
+      const failed = this.version_process;
+      if (failed) {
+        await failed.stop(this.stop_options);
+        if (this.version_process === failed) this.version_process = null;
+      }
       throw cli_version_error('codex', executable, 'check');
     }
     this.version_process = owned;
     if (this.incarnation !== incarnation || this.stopping) {
-      await owned.stop();
+      await owned.stop(this.stop_options);
       if (this.version_process === owned) this.version_process = null;
       throw new CodexChildWouldNotStart('the codex child stopped during startup');
     }
@@ -253,11 +328,16 @@ export class CodexAppServerClient {
         owned.child.exitCode,
       );
     } finally {
-      await owned.stop();
+      await owned.stop(this.stop_options);
       if (this.version_process === owned) this.version_process = null;
     }
   }
-  private attach(owned: OwnedCodexProcess, incarnation: number, unit: WorkerUnit | null): void {
+  private attach(
+    owned: OwnedCodexProcess,
+    incarnation: number,
+    supervisor: WorkerSupervisor | null,
+    scratch: WorkerScratch | null,
+  ): void {
     const current = () =>
       this.process === owned && this.incarnation === incarnation && !this.stopping;
     const decoder = new StringDecoder('utf8');
@@ -326,7 +406,19 @@ export class CodexAppServerClient {
     owned.child.stdin.on('error', (error) => {
       if (current()) this.break_wire(error_text(error));
     });
-    this.watcher = this.watch(owned, incarnation, unit);
+    const completion = this.watch(owned, incarnation, supervisor, scratch).catch((error) => {
+      if (current()) {
+        this.end_reason_value = error_text(error);
+        this.break_wire(this.end_reason_value);
+      }
+      return false;
+    });
+    this.watcher_settlements.add(completion);
+    void completion.finally(() => this.watcher_settlements.delete(completion)).catch(() => {});
+    // Pipe and metadata work settles before the callback can reenter core cleanup.
+    this.watcher = completion.then(async (notify) => {
+      if (notify) await this.handler.on_child_ended();
+    });
     void this.watcher.catch((error) => {
       if (!current()) return;
       this.end_reason_value = error_text(error);
@@ -336,8 +428,9 @@ export class CodexAppServerClient {
   private async watch(
     owned: OwnedCodexProcess,
     incarnation: number,
-    unit: WorkerUnit | null,
-  ): Promise<void> {
+    supervisor: WorkerSupervisor | null,
+    scratch: WorkerScratch | null,
+  ): Promise<boolean> {
     const current = () =>
       this.process === owned && this.incarnation === incarnation && !this.stopping;
     await owned.exited;
@@ -350,50 +443,47 @@ export class CodexAppServerClient {
     await observe_promise(Promise.all([stdout_done, stderr_done]), PIPE_DRAIN_SECONDS * 1000);
     let end_reason: string | null = null;
     try {
-      await owned.stop();
+      await this.cleanup(owned, supervisor, scratch, this.stop_options);
     } catch (error) {
-      end_reason = error_text(error);
+      end_reason = `Worker cleanup remains unproven: ${error_text(error)}`;
     }
-    if (unit !== null) {
-      try {
-        await this.stop_unit(unit);
-      } catch (error) {
-        end_reason = `Worker stopped, but its unit cleanup failed: ${error_text(error)}`;
-      }
-    }
-    if (!current()) return;
+    if (!current()) return false;
     await observe_promise(this.dispatch, PIPE_DRAIN_SECONDS * 1000);
-    if (!current()) return;
+    if (!current()) return false;
     this.end_reason_value = end_reason;
     this.break_wire(end_reason ?? 'the codex process ended');
-    await this.handler.on_child_ended();
+    return true;
   }
-  private async stop_unit(unit: WorkerUnit): Promise<void> {
-    let task = this.unit_stops.get(unit);
-    if (task === undefined) {
-      task = unit.stop();
-      this.unit_stops.set(unit, task);
-      void task.catch(() => this.unit_stops.delete(unit));
+  stop(options?: StopOptions): Promise<void> {
+    if (this.stop_task === null) {
+      this.stop_options = options ?? {
+        deadline: (this.worker_supervision?.clock() ?? monotonic_seconds()) + STOP_SECONDS,
+      };
+      const task = this.stop_owned(this.stop_options);
+      this.stop_task = task;
+      void task.catch(() => {
+        if (this.stop_task === task) this.stop_task = null;
+      });
     }
-    await task;
-    if (this.worker_unit === unit) this.worker_unit = null;
+    return options
+      ? observe_shutdown(this.stop_task, options, 'Codex child stop exceeded its deadline')
+      : this.stop_task;
   }
-  stop(): Promise<void> {
-    if (this.stop_task !== null) return this.stop_task;
-    const task = this.stop_owned();
-    this.stop_task = task;
-    void task.catch(() => {
-      this.stop_task = null;
-    });
-    return task;
+  async settled(): Promise<void> {
+    await Promise.allSettled([
+      ...(this.start_task ? [this.start_task] : []),
+      ...(this.stop_task ? [this.stop_task] : []),
+    ]);
+    while (this.watcher_settlements.size || this.cleanup_settlements.size)
+      await Promise.allSettled([...this.watcher_settlements, ...this.cleanup_settlements]);
   }
-  private async stop_owned(): Promise<void> {
+  private async stop_owned(options?: StopOptions): Promise<void> {
     this.stopping = true;
     this.incarnation += 1;
     this.break_wire('this child is being shut down');
     const startup = this.start_task;
     const version = this.version_process;
-    if (version !== null) await version.stop();
+    if (version !== null) await version.stop(options);
     if (startup !== null) {
       try {
         await startup;
@@ -402,19 +492,10 @@ export class CodexAppServerClient {
       }
     }
     const owned = this.process;
-    let cleanup_error: unknown;
-    if (this.worker_unit !== null) {
-      try {
-        await this.stop_unit(this.worker_unit);
-      } catch (error) {
-        cleanup_error = error;
-      }
-    }
-    if (owned !== null) await owned.stop();
+    await this.cleanup(owned, this.supervisor, this.scratch, options);
     // A core can call stop from its child-ended callback. Do not await that callback here.
-    this.process = null;
+    if (this.process === owned) this.process = null;
     this.watcher = null;
-    if (cleanup_error !== undefined) throw cleanup_error;
   }
   standard_error_tail(): string | null {
     return this.stderr.length ? Buffer.concat(this.stderr).toString('utf8') : null;

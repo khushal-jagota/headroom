@@ -2,6 +2,8 @@
 import { spawn } from 'node:child_process';
 import { createInterface } from 'node:readline';
 import { fileURLToPath } from 'node:url';
+import { local_process_identity } from '../../worker_supervision/identity.ts';
+import type { WorkerSupervisionRuntime } from '../../worker_supervision/runtime.ts';
 import * as backend from '../backends/contracts.ts';
 import type {
   BackendChild,
@@ -51,8 +53,12 @@ export class ScriptedChild implements BackendChild {
   #closed = false;
   last_observation: ScriptedSnapshot | null = null;
   #stderr = '';
+  readonly #sink: BackendEventSink;
+  readonly #supervision: WorkerSupervisionRuntime | undefined;
 
-  constructor(sink: BackendEventSink) {
+  constructor(sink: BackendEventSink, supervision?: WorkerSupervisionRuntime) {
+    this.#sink = sink;
+    this.#supervision = supervision;
     this.#child.stdin.on('error', (error) => this.#fail(error));
     this.#child.stderr.setEncoding('utf8');
     this.#child.stderr.on('data', (data: string) => {
@@ -137,6 +143,16 @@ export class ScriptedChild implements BackendChild {
     resolved_start: ResolvedConversationStart,
     options: { vendor_session_cursor: string | null },
   ): Promise<void> {
+    if (this.#sink.record_local_child_custody !== undefined) {
+      const pid = this.#child.pid;
+      const identity =
+        pid === undefined || this.#supervision === undefined
+          ? null
+          : await local_process_identity(pid, this.#supervision);
+      if (identity === null)
+        throw new Error('Cannot establish the scripted child process identity');
+      await this.#sink.record_local_child_custody(identity);
+    }
     await this.#request('start', { resolved_start, ...options });
   }
 

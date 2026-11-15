@@ -147,3 +147,247 @@ def test_unit22_mac_leases(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> N
     )
     assert result.returncode == 0, result.stderr
     assert json.loads(result.stdout) == expected
+
+
+def test_mac_cleanup_snapshot_populated(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, request: pytest.FixtureRequest
+) -> None:
+    """Journal attribution and missing-proof fences are absent from lease-wire coverage.
+
+    Reuse the existing direct Mac host. Real private files and the shipped journal
+    schema carry synthetic source history. No provider, signal, or TS SQL owner runs.
+    The journal API adapter remains a separate integration boundary.
+    """
+    import dataclasses
+    import sqlite3
+    import time
+
+    from tests.compare.direct.mac_executor_fixture import (
+        paired_fixture,
+        report_direct,
+        start_inputs,
+    )
+
+    from planner.conversation.local_child_contracts import LocalHostBootIdentity
+    from planner.execution_identity import ChildReference
+    from planner.executor import cleanup_reconciliation, legacy_worker_cleanup
+    from planner.executor.configuration import ExecutorPaths
+    from planner.executor.contracts import COMMAND_JOURNAL_SCHEMA
+    from planner.worker_supervision import records
+    from planner.worker_supervision.contracts import InspectionContext, WorkerProcess
+
+    def inputs(_root: Path) -> dict[str, Any]:
+        def source(name: str) -> dict[str, str]:
+            return dict(executor_incarnation="old", child_id=name, conversation_id=name)
+
+        commands: list[dict[str, str | None]] = []
+
+        def command(
+            name: str,
+            ticket: str,
+            *,
+            modern: bool = True,
+            stop: bool = False,
+            refused: bool = False,
+        ) -> None:
+            body = start_inputs(tmp_path)[0]
+            body["kind"] = "start"
+            body["resolved_start"]["conversation_id"] = name
+            body["resolved_start"]["role_materials"]["identity_environment_variables"] = [
+                ["PLAN_TICKET_ID", ticket]
+            ]
+            if modern:
+                body["supervision_protocol"] = 24
+            for operation in ("start", "stop") if stop else ("start",):
+                key = name + "-" + operation
+                child = dict(
+                    command_id=key,
+                    child=source(name),
+                    operation=operation,
+                    turn=None,
+                    arguments=body if operation == "start" else {"kind": "stop"},
+                )
+                raw = dict(
+                    command_id=key,
+                    command_sequence=len(commands) + 1,
+                    created_at_vps_ms=1,
+                    child_command=child,
+                )
+                result = None
+                if operation == "stop" or refused:
+                    result = json.dumps(
+                        dict(
+                            command_id=key,
+                            child_outcome=dict(
+                                command_id=key,
+                                child=source(name),
+                                disposition="refused" if refused else "succeeded",
+                                result={},
+                            ),
+                        )
+                    )
+                commands.append(dict(command_json=json.dumps(raw), result_json=result))
+
+        for name, ticket in (
+            ("missing", "one"),
+            ("legacy", "one"),
+            ("stopped", "one"),
+            ("refused", "one"),
+            ("live", "one"),
+            ("pending", "two"),
+            ("unreadable", "two"),
+        ):
+            command(
+                name,
+                ticket,
+                modern=name != "legacy",
+                stop=name == "stopped",
+                refused=name == "refused",
+            )
+        processes = [
+            dict(pid=pid, birth=str(pid), parent=0, group=pid, session=pid, zombie=False)
+            for pid in (1, 20, 30)
+        ]
+        owner, live, unassigned = processes
+        found = []
+        for index, (record_name, ticket, root, state) in enumerate(
+            (
+                ("live", "one", live, "running"),
+                ("pending", "two", None, "pending"),
+                ("complete", "two", live, "complete"),
+                (None, "three", unassigned, "running"),
+                ("unreadable", "two", live, "complete"),
+            ),
+            1,
+        ):
+            found.append(
+                dict(
+                    name=f"{index:032x}.json",
+                    mode=0o644 if record_name == "unreadable" else 0o600,
+                    record=dict(
+                        version=1,
+                        ticket_id=ticket,
+                        conversation_id=record_name,
+                        source_incarnation="old" if record_name else None,
+                        source_child_id=record_name,
+                        host="host",
+                        boot="boot",
+                        owner=owner,
+                        root=root,
+                        isolated=False,
+                        state=state,
+                        processes=[] if root is None else [root],
+                    ),
+                )
+            )
+        receipt = dict(
+            version=1,
+            attempted=True,
+            targets=[dict(process_id=101, started="legacy"), dict(process_id=102, started="gone")],
+            error="old inspection failed",
+        )
+        return dict(
+            commands=commands,
+            records=found,
+            processes=processes,
+            steps=[
+                dict(label="initial"),
+                dict(
+                    label="healthy",
+                    options=dict(
+                        healthy_sources=[source("live")], preparing_sources=[source("pending")]
+                    ),
+                ),
+                dict(label="ticket-only", options=dict(ticket_id="two")),
+                dict(label="legacy-attempted", receipt=receipt, legacy=[101]),
+                dict(label="legacy-absent", legacy=[]),
+                dict(
+                    label="revoke-pending",
+                    options=dict(revoke_pending=True, healthy_sources=[source("live")]),
+                ),
+                dict(label="ended", ended=[20, 30], readable=[found[-1]["name"]]),
+            ],
+        )
+
+    async def reference(root: Path, patch: pytest.MonkeyPatch) -> dict[str, Any]:
+        data = inputs(root)
+        paths = ExecutorPaths(root)
+        journals = paths.run / "worker-processes"
+        journals.mkdir(parents=True, mode=0o700)
+        paths.spool.mkdir()
+        for item in data["records"]:
+            records.write(journals / item["name"], item["record"])
+            (journals / item["name"]).chmod(item["mode"])
+        with sqlite3.connect(paths.spool / "commands.sqlite3") as conn:
+            conn.executescript(COMMAND_JOURNAL_SCHEMA)
+            for index, item in enumerate(data["commands"], 1):
+                raw = json.loads(item["command_json"])
+                conn.execute(
+                    "INSERT INTO commands(command_id,command_sequence,executor_incarnation,"
+                    "mailbox_command_json,phase,result_json,recorded_at_ms) "
+                    "VALUES (?,?,'old',?,'finished',?,1)",
+                    (raw["command_id"], index, item["command_json"], item["result_json"]),
+                )
+        table = {item["pid"]: WorkerProcess(**item) for item in data["processes"]}
+        native = SimpleNamespace(
+            owns_isolated_session_members=False,
+            requires_containment=False,
+            snapshot=lambda _: dict(table),
+            is_absent=lambda process, _: table.get(process.pid) != process,
+        )
+        patch.setattr(
+            "planner.worker_supervision._inspection_context",
+            lambda _: InspectionContext(native, LocalHostBootIdentity("host", "boot")),
+        )
+        legacy: set[int] = set()
+        patch.setattr(
+            legacy_worker_cleanup, "_started", lambda pid, _: "legacy" if pid in legacy else None
+        )
+        points = []
+        for step in data["steps"]:
+            if "receipt" in step:
+                (paths.run / legacy_worker_cleanup.RECEIPT).write_text(json.dumps(step["receipt"]))
+            if "legacy" in step:
+                legacy = set(step["legacy"])
+            for pid in step.get("ended", []):
+                table.pop(pid)
+            for name in step.get("readable", []):
+                (journals / name).chmod(0o600)
+            options = dict(step.get("options", {}))
+            for key in ("healthy_sources", "preparing_sources"):
+                if key in options:
+                    options[key] = frozenset(ChildReference(**value) for value in options[key])
+            snapshot = cleanup_reconciliation.snapshot_cleanup(
+                paths, current_incarnation="new", **options
+            )
+            points.append(
+                dict(
+                    label=step["label"],
+                    uncertainties=[dataclasses.asdict(value) for value in snapshot.uncertainties],
+                    sources=[
+                        dict(source=dataclasses.asdict(source), ticket_id=ticket)
+                        for source, ticket in snapshot.sources.items()
+                    ],
+                    notice=snapshot.notice,
+                )
+            )
+        return dict(points=points)
+
+    began = time.perf_counter()
+    expected, observed, _ = paired_fixture(
+        tmp_path,
+        monkeypatch,
+        reference=reference,
+        inputs=inputs,
+        entry="server/executor/mac/testing/cleanup_parity.ts",
+        python_timeout=10,
+        node_timeout=10,
+    )
+    assert observed["parity"] == expected
+    report_direct(
+        request,
+        "mac-cleanup-snapshot.json",
+        observed,
+        began,
+        "Private snapshot logic and real journal bytes. Journal API bridge remains open.",
+    )

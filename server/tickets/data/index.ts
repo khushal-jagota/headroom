@@ -1,4 +1,5 @@
 import { require_usable_model } from '../../conversation/backend_state.ts';
+import { worker_step_message_id_for_claim } from '../../runtime/worker_memory.ts';
 /** Ticket transitions receive the caller's transaction and never open a second writer. */
 import { createHash } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
@@ -1285,7 +1286,23 @@ export function take_worker_step_claim(
       o.now,
     ]);
   _write_worker_step_claim(tx, id, 'out', o.now);
-  return load_ticket_for_write(tx, id);
+  const claimed = load_ticket_for_write(tx, id);
+  tx.run("INSERT INTO worker_step_dispatch_intents VALUES (?,?,?,'prepared')", [
+    id,
+    claimed.worker_step_claim_revision,
+    worker_step_message_id_for_claim(id, claimed.worker_step_claim_revision),
+  ]);
+  return claimed;
+}
+export function mark_worker_step_dispatch_started(
+  tx: TransactionSql,
+  ticket_id: string,
+  claim_revision: number,
+): void {
+  tx.run(
+    "UPDATE worker_step_dispatch_intents SET state='dispatch_started' WHERE ticket_id=? AND claim_revision=? AND state='prepared'",
+    [ticket_id, claim_revision],
+  );
 }
 export function forget_user_stage_opener(
   tx: TransactionSql,

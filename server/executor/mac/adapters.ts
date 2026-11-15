@@ -23,6 +23,7 @@ import {
 import type { AcpChildLaunch } from '../../conversation/backends/hermes_acp/launch.ts';
 import type { OwnedChildProcesses, OwnedOneShotChildren } from '../../lifecycle/contracts.ts';
 import { expand_executor_path } from './platform.ts';
+import type { WorkerSupervisionRuntime } from '../../worker_supervision/runtime.ts';
 export interface MacBackendLaunches {
   readonly claude: ClaudeAgentSdkChildLaunch;
   readonly codex: CodexChildLaunch;
@@ -33,6 +34,7 @@ export interface MacAdapterOptions {
   readonly executable_path: (name: string) => string | null;
   readonly child_processes: OwnedChildProcesses;
   readonly one_shot_children: OwnedOneShotChildren;
+  readonly worker_supervision: WorkerSupervisionRuntime;
   readonly environment?: Readonly<NodeJS.ProcessEnv>;
 }
 export interface MacAdapterHost {
@@ -102,14 +104,17 @@ export function create_mac_adapter_host(options: MacAdapterOptions): MacAdapterH
         return create_claude_backend_child_factory(native_launch(launches.claude), {
           child_processes: options.child_processes,
           one_shot_children: options.one_shot_children,
+          worker_supervision: options.worker_supervision,
         });
       if (start.backend_key === 'hermes')
         return create_hermes_backend_child_factory(native_launch(launches.hermes), {
           child_processes: options.child_processes,
+          worker_supervision: options.worker_supervision,
         });
       // This explicit memory is factory-local, unlike the VPS's durable rejection row.
       return create_codex_backend_child_factory(native_launch(launches.codex), {
         child_processes: options.child_processes,
+        worker_supervision: options.worker_supervision,
         remembered_login_rejection: new RememberedCodexLoginRejection(),
       });
     },

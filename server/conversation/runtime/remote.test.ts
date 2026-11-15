@@ -21,6 +21,74 @@ import { text_message_content } from '../message_content.ts';
 import { Deferred } from './state.ts';
 import { retained_open_runs } from './remote.ts';
 
+// An acknowledgement must wait for receipt and steer settlement, then recheck its exact source.
+test('remote prompt acceptance releases only the matching live source after its barriers', async () => {
+  let now = 100;
+  const f = setup({ behavior: { barrier: 'receipt' }, core: { monotonic_now: () => now } });
+  const reference = {
+    conversation_id: 'core',
+    executor_incarnation: 'remote',
+    child_id: 'original',
+  };
+  let acknowledgement: Promise<void> | undefined;
+  let child: Awaited<typeof f.child> | undefined;
+  const steering = new Deferred<void>();
+  try {
+    await f.start();
+    expect(
+      f.core.start_admission.try_start(await f.core.automatic_start_request('sender', 'core')),
+    ).toBe(true);
+    const sent = f.send();
+    child = await f.child;
+    await child.wait_for_barrier('receipt');
+    const state = f.core.conversations.get('core')!;
+    const token = state.reserved_turn!.token;
+    state.retained_child_reference = reference;
+    await f.core.confirm_remote_prompt_accepted({ ...reference, child_id: 'stale' }, token);
+    await f.core.confirm_remote_prompt_accepted(reference, {
+      ...token,
+      turn_number: token.turn_number + 1,
+    });
+    const bindings = () =>
+      f.database.read((sql) => sql.all('SELECT identity FROM automatic_start_bindings'));
+    expect(bindings()).toEqual([{ identity: 'sender' }]);
+    let accepted = false;
+    acknowledgement = f.core.confirm_remote_prompt_accepted(reference, token).then(() => {
+      accepted = true;
+    });
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(accepted).toBe(false);
+    const replacement = { ...reference, child_id: 'replacement' };
+    state.retained_child_reference = replacement;
+    await child.release('receipt');
+    await sent;
+    await acknowledgement;
+    expect(bindings()).toEqual([{ identity: 'sender' }]);
+    state.steer_settlements.add(steering);
+    accepted = false;
+    acknowledgement = f.core.confirm_remote_prompt_accepted(replacement, token).then(() => {
+      accepted = true;
+    });
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(accepted).toBe(false);
+    expect(bindings()).toEqual([{ identity: 'sender' }]);
+    now = 101;
+    state.steer_settlements.delete(steering);
+    steering.resolve();
+    await acknowledgement;
+    expect(bindings()).toEqual([]);
+    expect(f.core.start_admission.snapshots()).toEqual([]);
+    expect(state.last_touched_monotonic).toBe(101);
+  } finally {
+    steering.resolve();
+    const state = f.core.conversations.get('core');
+    state?.steer_settlements.delete(steering);
+    await child?.release('receipt').catch(() => {});
+    await acknowledgement;
+    await f.core.shutdown({ deadline: performance.now() / 1000 + 5 });
+  }
+});
+
 test('retained-run admission drops explicit rejections and propagates programming errors', () => {
   const run = new RetainedBackendRun({
     reference: { conversation_id: 'remote', executor_incarnation: 'synthetic', child_id: 'child' },
@@ -236,7 +304,28 @@ test('kill during replay ends its turn and asks before a late successful reply',
       child_id: reference.child_id,
     });
     vi.spyOn(child, 'withdraw_delivery').mockResolvedValue(false);
-    vi.spyOn(child, 'stop').mockResolvedValue();
+    let retirement_confirmed = false;
+    Object.assign(f.core.options.backend_child_factories.codex, {
+      recover: () => child,
+      retained_runs: () => [
+        new RetainedBackendRun({
+          reference,
+          turn: token,
+          delivery_uncertain: false,
+          retirement_confirmed,
+        }),
+      ],
+    });
+    vi.spyOn(child, 'stop').mockImplementation(async () => {
+      retirement_confirmed = true;
+    });
+    const detach = child.detach.bind(child);
+    let detached = false;
+    vi.spyOn(child, 'detach').mockImplementation(async () => {
+      if (detached) return;
+      await detach();
+      detached = true;
+    });
     const write = vi.spyOn(child, 'write_prompt').mockImplementation(async () => {
       entered.resolve();
       await release.promise;
@@ -325,6 +414,9 @@ test('kill during replay ends its turn and asks before a late successful reply',
       ],
     });
     await f.core.wait_until_quiescent();
+    // The earlier confirmed Stop cleared the active source. This separate retirement
+    // names the same retained historical receipt for its source-only binding.
+    state.retained_child_reference = reference;
     expect(await f.core.retire_child_for_rebind(state, child)).toBe(true);
     expect(f.core.start_admission.snapshots()).toEqual([]);
     expect(f.database.read((sql) => sql.all('SELECT * FROM automatic_start_bindings'))).toEqual([]);

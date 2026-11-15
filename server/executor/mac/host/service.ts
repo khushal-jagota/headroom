@@ -2,6 +2,7 @@
 import { randomUUID } from 'node:crypto';
 import { ChildProcesses } from '../../../lifecycle/owned_processes.ts';
 import { OneShotChildren } from '../../../lifecycle/one_shot_children.ts';
+import { create_worker_supervision_runtime } from '../../../worker_supervision/composition.ts';
 import { SHUTDOWN_GRACE_SECONDS } from '../../../lifecycle/configuration.ts';
 import { ServerLifecycleError, ShutdownDeadlineExceeded } from '../../../lifecycle/contracts.ts';
 import type { StopOptions } from '../../../lifecycle/contracts.ts';
@@ -50,6 +51,9 @@ export class MacService {
   readonly journal: AsyncCommandJournal;
   readonly child_processes = new ChildProcesses();
   readonly one_shot_children = new OneShotChildren(this.child_processes);
+  readonly worker_supervision = create_worker_supervision_runtime({
+    one_shot_children: this.one_shot_children,
+  });
   readonly files: FilesService;
   readonly update_files: FilesService;
   readonly runtime: ReturnType<typeof mac_runtime_settings>;
@@ -106,6 +110,7 @@ export class MacService {
     this.processes = bindings.processes({
       child_processes: this.child_processes,
       one_shot_children: this.one_shot_children,
+      worker_supervision: this.worker_supervision,
       files: this.files,
       paths: configuration.paths,
     });
@@ -171,6 +176,7 @@ export class MacService {
       runtime,
       child_processes: this.child_processes,
       one_shot_children: this.one_shot_children,
+      worker_supervision: this.worker_supervision,
       client: this.client,
       files: this.files,
       update_files: this.update_files,
@@ -392,6 +398,15 @@ export class MacService {
       ...[...this.stopping].map((owner) => owner.settled()),
       this.child_processes.settled(),
       this.one_shot_children.settled(),
+    ]);
+    await this.join([
+      (async () => {
+        try {
+          await this.worker_supervision.close(this.options!);
+        } finally {
+          await this.worker_supervision.shutdown_settled;
+        }
+      })(),
     ]);
     for (const owner of [this.update_files, this.files, this.journal, this.outbox]) {
       this.begin_stop(owner);
