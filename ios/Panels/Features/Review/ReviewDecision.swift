@@ -32,6 +32,14 @@ struct DecisionGuidance: Sendable, Equatable {
     }
 }
 
+/// A sheet's interaction state survives replacement of its presented content.
+@MainActor @Observable final class DecisionApprovalFlow {
+    var selected: String?
+    var busy = false
+    var error: String?
+    var confirmationMessage: String?
+}
+
 /// Ordinary scope writes have no decision receipt. They are never saved to the Outbox.
 /// Keep the exact choice for an explicit read-only check after an uncertain result.
 @MainActor @Observable final class DecisionScopeChange {
@@ -119,6 +127,7 @@ struct DecisionGuidance: Sendable, Equatable {
 
 /// A draft belongs to the exact proposal the person read, including its revision.
 @MainActor @Observable final class ReviewDecision {
+    var approvalFlow = DecisionApprovalFlow()
     /// The Ticket's view stamp when the last load started; a read-ahead taken before a
     /// later change is not current when its card is shown.
     let scopeChange = DecisionScopeChange()

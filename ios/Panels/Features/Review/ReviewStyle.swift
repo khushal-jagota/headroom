@@ -228,12 +228,9 @@ struct DecisionApprovalSheet: View {
     var reviewerOnly = false
     var checkCurrent: (() async throws -> Void)? = nil
     var confirmation: (() -> String?)? = nil
+    let flow: DecisionApprovalFlow
     let save: (String?, Principal) async throws -> Void
     @Environment(\.dismiss) private var dismiss
-    @State private var selected: String?
-    @State private var confirmationMessage: String?
-    @State private var busy = false
-    @State private var error: String?
     private var reviewers: [(String, Principal)] {
         var values = [("User", Principal(kind: "owner", id: "owner"))]
         if let managerID { values.append(("Manager", Principal(kind: "manager", id: managerID))) }
@@ -244,62 +241,62 @@ struct DecisionApprovalSheet: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 0) {
                 HStack(spacing: 8) {
-                    if selected != nil && !reviewerOnly && confirmationMessage == nil {
-                        Button { selected = nil } label: { Image(systemName: "chevron.left").frame(width: 28, height: 36) }
+                    if flow.selected != nil && !reviewerOnly && flow.confirmationMessage == nil {
+                        Button { flow.selected = nil } label: { Image(systemName: "chevron.left").frame(width: 28, height: 36) }
                             .accessibilityLabel("Back to How far")
                     }
-                    Text(reviewerOnly ? "Who reviews" : selected.map { selectedID in "Who reviews · until \(stages.first { $0.id == selectedID }?.label ?? selectedID)" } ?? "How far")
+                    Text(reviewerOnly ? "Who reviews" : flow.selected.map { selectedID in "Who reviews · until \(stages.first { $0.id == selectedID }?.label ?? selectedID)" } ?? "How far")
                         .textCase(.uppercase).tracking(0.66).panelsScaledFont(size: 11, weight: .medium)
                         .foregroundStyle(PanelsTheme.Web.tertiary)
                 }.frame(minHeight: 36).padding(.horizontal, 12)
-                if let confirmationMessage {
+                if let confirmationMessage = flow.confirmationMessage {
                     Text(confirmationMessage).panelsScaledFont(size: 14)
                         .foregroundStyle(PanelsTheme.Web.text).padding(12)
                         .accessibilityIdentifier("decision.scopeConfirmation")
                     Button("Done") { dismiss() }.panelsScaledFont(size: 14).padding(12)
                         .accessibilityIdentifier("decision.scopeDone")
-                } else if reviewerOnly || selected != nil {
+                } else if reviewerOnly || flow.selected != nil {
                     ForEach(reviewers, id: \.1) { name, principal in
                         Button {
-                            busy = true; error = nil
+                            flow.busy = true; flow.error = nil
                             Task {
                                 do {
-                                    try await save(reviewerOnly ? nil : selected, principal)
-                                    if let message = confirmation?() { confirmationMessage = message }
+                                    try await save(reviewerOnly ? nil : flow.selected, principal)
+                                    if let message = confirmation?() { flow.confirmationMessage = message }
                                     else { dismiss() }
                                 }
-                                catch { self.error = error.localizedDescription }
-                                busy = false
+                                catch { flow.error = error.localizedDescription }
+                                flow.busy = false
                             }
                         } label: { row(name, selected: principal == holder) }
                             .accessibilityIdentifier("decision.reviewer.\(principal.kind)")
                     }
                 } else {
                     ForEach(stages) { stage in
-                        Button { selected = stage.id; Haptics.selection() } label: { row(stage.label, selected: stage.id == nextStage) }
+                        Button { flow.selected = stage.id; Haptics.selection() } label: { row(stage.label, selected: stage.id == nextStage) }
                             .accessibilityIdentifier("decision.stage.\(stage.id)")
                     }
                 }
-                if confirmationMessage == nil, let checkCurrent {
+                if flow.confirmationMessage == nil, let checkCurrent {
                     Button("Check current settings") {
-                        busy = true; error = nil
+                        flow.busy = true; flow.error = nil
                         Task {
                             do {
                                 try await checkCurrent()
-                                if let message = confirmation?() { confirmationMessage = message }
+                                if let message = confirmation?() { flow.confirmationMessage = message }
                                 else { dismiss() }
                             }
-                            catch { self.error = error.localizedDescription }
-                            busy = false
+                            catch { flow.error = error.localizedDescription }
+                            flow.busy = false
                         }
                     }.panelsScaledFont(size: 14).padding(12)
                         .accessibilityIdentifier("decision.checkCurrent")
                 }
-                if let error { Text(error).panelsScaledFont(size: 12.5).foregroundStyle(PanelsTheme.Web.error).padding(12) }
+                if let error = flow.error { Text(error).panelsScaledFont(size: 12.5).foregroundStyle(PanelsTheme.Web.error).padding(12) }
             }.padding(8)
-        }.buttonStyle(.plain).disabled(busy).background(PanelsTheme.Web.raised)
+        }.buttonStyle(.plain).disabled(flow.busy).background(PanelsTheme.Web.raised)
             .presentationCornerRadius(24).presentationDragIndicator(.visible)
-            .presentationDetents([.medium, .large]).interactiveDismissDisabled(busy)
+            .presentationDetents([.medium, .large]).interactiveDismissDisabled(flow.busy)
     }
     private func row(_ label: String, selected: Bool) -> some View {
         HStack { Text(label); Spacer(); if selected { Image(systemName: "checkmark").foregroundStyle(PanelsTheme.Web.accent) } }

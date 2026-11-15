@@ -251,7 +251,7 @@ private struct ReviewCardView: View {
                     if let proposal, let decision {
                         ReviewProposalSection(isActive: isActive, item: proposal, decision: decision, cardHeight: $cardHeight,
                                               canReload: sheet == nil && busyAction == nil && drag == 0,
-                                              onReviewer: { if decision.ready && !leaving && busyAction == nil { sheet = .reviewer } })
+                                              onReviewer: { if decision.ready && !leaving && busyAction == nil { decision.approvalFlow = DecisionApprovalFlow(); sheet = .reviewer } })
                             .opacity(exiting.contains(proposal.id) ? 0 : busyAction != nil ? 0.4 : 1)
                     }
                     ForEach(messages) { message in
@@ -314,7 +314,7 @@ private struct ReviewCardView: View {
                                           decision.acceptScopeRead(current)
                                           await store.refresh()
                                       } : nil,
-                                      confirmation: { decision.scopeChange.holdingProposal ? decision.scopeChange.message : nil }) { ceiling, holder in
+                                      confirmation: { decision.scopeChange.holdingProposal ? decision.scopeChange.message : nil }, flow: decision.approvalFlow) { ceiling, holder in
                     if selected == .reviewer || ceiling.map({ decision.manifest?.selectionApprovesPending(ceiling: $0, waitingStage: ticket.stage) == false }) == true {
                         let current = try await decision.scopeChange.save(api: store.client, ticket: ticket,
                             ceiling: selected == .reviewer ? nil : ceiling, holder: holder,
@@ -375,7 +375,7 @@ private struct ReviewCardView: View {
                 if await decision.approve(api: store.client, ceiling: "done", holder: holder, guidance: approvalGuidance) { complete() }
                 else { busyAction = nil; ReviewStyle.error() }
             }
-        } else { sheet = .approve }
+        } else { decision.approvalFlow = DecisionApprovalFlow(); sheet = .approve }
     }
     private func complete() {
         Haptics.light()

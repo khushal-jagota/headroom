@@ -3,6 +3,7 @@ import Observation
 
 /// Both pieces of the Ticket decision share the exact proposal and saved note.
 @MainActor @Observable final class TicketDecisionState {
+    var approvalFlow = DecisionApprovalFlow()
     var scopeChange = DecisionScopeChange()
     var guidance = "" {
         didSet {
@@ -122,6 +123,7 @@ struct TicketProposalCard: View {
             text: proposal.body, baseURL: store.baseURL) {
                 guard !decision.pending else { return }
                 _ = decision.capture(presentation: presentation, proposal: proposal, api: store.client)
+                decision.approvalFlow = DecisionApprovalFlow()
                 decision.reviewerOpen = true
             }
             .opacity(decision.pending ? 0.4 : 1)
@@ -139,7 +141,8 @@ struct TicketProposalCard: View {
                             _ = try await decision.scopeChange.check(online: Outbox.shared.networkAvailable && !store.serverUnreachable)
                             await refresh()
                         } : nil,
-                        confirmation: { decision.scopeChange.holdingProposal ? decision.scopeChange.message : nil }) { ceiling, holder in
+                        confirmation: { decision.scopeChange.holdingProposal ? decision.scopeChange.message : nil },
+                        flow: decision.approvalFlow) { ceiling, holder in
                             guard let ceiling else { return }
                             let lifecycle = ReviewWorkerManifest(workflow: snapshot.presentation.manifest)
                             if lifecycle.selectionApprovesPending(ceiling: ceiling, waitingStage: snapshot.presentation.ticket.stage) {
@@ -161,7 +164,8 @@ struct TicketProposalCard: View {
                             _ = try await decision.scopeChange.check(online: Outbox.shared.networkAvailable && !store.serverUnreachable)
                             await refresh()
                         } : nil,
-                        confirmation: { decision.scopeChange.holdingProposal ? decision.scopeChange.message : nil }) { _, holder in
+                        confirmation: { decision.scopeChange.holdingProposal ? decision.scopeChange.message : nil },
+                        flow: decision.approvalFlow) { _, holder in
                             _ = try await decision.scopeChange.save(api: snapshot.api, ticket: snapshot.presentation.ticket,
                                 ceiling: nil, holder: holder, online: Outbox.shared.networkAvailable && !store.serverUnreachable)
                             await refresh()
@@ -188,7 +192,10 @@ struct TicketDecisionDock: View {
                 if nextStage == "done" {
                     do { try decision.approve(snapshot, ceiling: "done", holder: presentation.ticket.ceilingHolder) }
                     catch { decision.error = error.localizedDescription }
-                } else { decision.approvalOpen = true }
+                } else {
+                    decision.approvalFlow = DecisionApprovalFlow()
+                    decision.approvalOpen = true
+                }
             }, onSendBack: {
                 let snapshot = decision.capture(presentation: presentation, proposal: proposal, api: store.client)
                 do { try decision.sendBack(snapshot) } catch { decision.error = error.localizedDescription }
