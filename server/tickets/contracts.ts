@@ -135,6 +135,7 @@ export interface TicketListFilters {
   ticket_statuses?: readonly TicketStatus[];
   excluded_ticket_statuses?: readonly TicketStatus[];
   include_terminal?: boolean;
+  active?: boolean;
   search?: string | null;
   is_backlogged?: boolean | null;
   worker_types?: readonly string[];

@@ -157,6 +157,26 @@ def test_unit20_retained_dataset_cli(tmp_path: Path, request: pytest.FixtureRequ
                 numeric_ticket=ticket.id, decision_revision=ticket.pending_proposal_revision
             )
             seed_seconds["python_proposal"] = time.perf_counter() - proposal_started
+            active_seed_started = time.perf_counter()
+            # Earlier excluded rows make a limit=1 request prove filtering precedes paging.
+            for deferred in (True, False):
+                excluded = tickets_data.create_ticket(
+                    conn, title="Year field search", principal=OWNER_PRINCIPAL,
+                    now=NOW - (2 if deferred else 1), title_max_chars=200, brief=None,
+                    project_id="project_vylo", worker_type=definition.worker_type,
+                    worker_runtime_definitions=load_worker_runtime_definitions(conn),
+                )
+                if deferred:
+                    tickets_data.set_ticket_backlog(
+                        conn, excluded.id, is_backlogged=True, principal=OWNER_PRINCIPAL, now=NOW,
+                    )
+                else:
+                    for field in fields:
+                        excluded = tickets_data.complete_user_owned_gate(
+                            conn, excluded.id, field=field, new_body="Complete",
+                            principal=OWNER_PRINCIPAL, now=NOW,
+                        )
+            seed_seconds["active_list"] = time.perf_counter() - active_seed_started
 
     spec = json.loads(LIST.read_text())
     steps = [step for step in spec["direct_requests"] if step["argv"] == ["dataset", "read"]]
@@ -351,6 +371,12 @@ def test_unit20_retained_dataset_cli(tmp_path: Path, request: pytest.FixtureRequ
             else:
                 evidence["numeric_ticket_human"].append(observed)
         evidence["numeric_ticket_proof_seconds"] = time.perf_counter() - ticket_started
+        evidence["active_list"] = _active_list_proof(
+            reference, candidate_host, tmp_path, captures["numeric_ticket"]
+        )
+        evidence["proposal_revision_cli"] = _proposal_revision_cli_proof(
+            reference, candidate_host, tmp_path, captures
+        )
         evidence["deferral"] = {
             name: _deferral_proof(handle, tmp_path, captures["numeric_ticket"])
             for name, handle in (("python", reference), ("typescript", candidate_host))
@@ -372,6 +398,81 @@ def test_unit20_retained_dataset_cli(tmp_path: Path, request: pytest.FixtureRequ
             _stop_server(handle)
         evidence["seconds"] = time.perf_counter() - started
         driver.write_report(request, "unit20-retained-dataset-cli", evidence)
+
+
+def _active_list_proof(
+    reference: ServerHandle, candidate: ServerHandle, root: Path, ticket_id: str
+) -> dict[str, Any]:
+    """Reuse populated hosts to prove active filtering before pagination and CLI transport."""
+    started = time.perf_counter()
+    step = {
+        "kind": "cli", "argv": [
+            "ticket", "list", "--active", "--search", "Year field search", "--limit", "1",
+        ],
+        "identity": {"actor": "owner"}, "exit_code": 0, "assert_http_status": 200,
+        "proof": "Active filtering excludes earlier deferred and terminal rows before limit=1.",
+    }
+    answers = [
+        run_cli(CliHost(handle, root), step, native, root / "active-list-input", "json")
+        for handle, native in ((reference, False), (reference, True), (candidate, True))
+    ]
+    assert comparable(answers[0]) == comparable(answers[1]) == comparable(answers[2])
+    for answer in answers:
+        body = json.loads(answer["stdout"])
+        assert [row["id"] for row in body["tickets"]] == [ticket_id]
+        assert body["page"]["match_count"] == 1
+    envelopes = []
+    with httpx.Client(trust_env=False, follow_redirects=False, timeout=30) as client:
+        for params, status in (
+            ({"active": "false", "search": "Year field search"}, 200),
+            ({"active": "true", "is_backlogged": "true"}, 400),
+            ({"active": "true", "include_terminal": "true"}, 400),
+            ({"active": "true", "detail": "full"}, 400),
+            ({"active": "true", "detail": "full", "id": ticket_id}, 400),
+            ({"active": "invalid"}, 422),
+        ):
+            query = {"detail": "summary", **params}
+            pair = [client.get(handle.base + "/api/tickets", params=query)
+                    for handle in (reference, candidate)]
+            assert all(answer.status_code == status for answer in pair), (
+                query, [(answer.status_code, answer.text) for answer in pair]
+            )
+            bodies = [answer.json() for answer in pair]
+            assert bodies[0] == bodies[1]
+            if status == 200:
+                assert len(bodies[0]["tickets"]) == bodies[0]["page"]["match_count"] == 2
+                assert any(row["is_backlogged"] for row in bodies[0]["tickets"])
+            envelopes.append({"query": query, "status": status, "body": bodies[0]})
+    return {"answers": answers, "envelopes": envelopes, "seconds": time.perf_counter() - started}
+
+
+def _proposal_revision_cli_proof(
+    reference: ServerHandle, candidate: ServerHandle, root: Path, captures: dict[str, Any]
+) -> dict[str, Any]:
+    """Explicit stale revisions must never approve or revise the current proposal."""
+    started = time.perf_counter()
+    cases = []
+    for action, methods in (("accept", ["GET"]), ("revise", ["POST"]), ("submit", [])):
+        argv = [
+            "ticket", "proposal", captures["numeric_ticket"], action,
+            "--expected-proposal-revision", str(captures["decision_revision"] + 1),
+        ]
+        if action == "accept":
+            argv += ["--ceiling", "needs_consequences", "--kickoff-title", "Must not change"]
+        step = {
+            "kind": "cli", "argv": argv, "identity": {"actor": "owner"},
+            "stdin": "Keep the current proposal", "exit_code": 1,
+            "proof": "Stale revision refuses mutation and submit rejects the revision option.",
+        }
+        answers = [
+            run_cli(CliHost(handle, root), step, native, root / "proposal-revision-input", "json")
+            for handle, native in ((reference, False), (reference, True), (candidate, True))
+        ]
+        assert comparable(answers[0]) == comparable(answers[1]) == comparable(answers[2])
+        for answer in answers:
+            assert [row["method"] for row in answer["wire"]] == methods
+        cases.append({"argv": argv, "answers": answers})
+    return {"cases": cases, "seconds": time.perf_counter() - started}
 
 
 def _decision_operation_proof(

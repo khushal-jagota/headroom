@@ -297,7 +297,8 @@ export const routes: FastifyPluginAsync<AreaServices> = async (app, services) =>
     let limit: number | undefined,
       offset: number | undefined,
       is_backlogged: boolean | null,
-      include_terminal: boolean;
+      include_terminal: boolean,
+      active: boolean;
     const failures: unknown[] = [];
     try {
       limit = integerQuery(scalar('limit'), 'limit');
@@ -319,6 +320,12 @@ export const routes: FastifyPluginAsync<AreaServices> = async (app, services) =>
     }
     try {
       include_terminal = boolean_query(last('include_terminal'), 'include_terminal') ?? false;
+    } catch (e) {
+      if (e instanceof QueryBooleanError) failures.push(e.payload());
+      else throw e;
+    }
+    try {
+      active = boolean_query(last('active'), 'active') ?? false;
     } catch (e) {
       if (e instanceof QueryBooleanError) failures.push(e.payload());
       else throw e;
@@ -348,6 +355,7 @@ export const routes: FastifyPluginAsync<AreaServices> = async (app, services) =>
         is_backlogged,
         worker_type,
         include_terminal: include_terminal || null,
+        active: active || null,
         search,
         project,
         project_id,
@@ -368,6 +376,7 @@ export const routes: FastifyPluginAsync<AreaServices> = async (app, services) =>
           manager_kind,
           manager_id,
           is_backlogged,
+          active: active || null,
           worker_type,
           exclude_stage,
           ticket_status,
@@ -390,6 +399,8 @@ export const routes: FastifyPluginAsync<AreaServices> = async (app, services) =>
         );
         return [{ tickets: rows }, rows];
       }
+      if (active && (is_backlogged === true || include_terminal))
+        throw new PlannerError('validation', 'active excludes backlogged and terminal Tickets');
       const manager =
         manager_kind !== null || manager_id !== null
           ? parse_manager({
@@ -425,6 +436,7 @@ export const routes: FastifyPluginAsync<AreaServices> = async (app, services) =>
           is_backlogged: is_backlogged!,
           worker_types: worker_type ?? [],
           include_terminal: include_terminal!,
+          active: active!,
           search,
         },
         resolved?.id ?? null,

@@ -19,6 +19,9 @@ import * as actions from '../actions.ts';
 import * as runs from '../run_actions.ts';
 import { Runtime } from '../runtime/supervisor.ts';
 import type { RunResult } from '../contracts.ts';
+import type { Database } from '../../core/database/contracts.ts';
+import * as source_data from '../data.ts';
+import { latest_due_slot, source_slot } from '../logic/local_time.ts';
 interface Spec {
   db_path: string;
   now: number;
@@ -173,10 +176,128 @@ export async function run(spec: Spec) {
       admission: admitted,
       sent: await deliver(chief, 5),
     });
-    return snapshots;
+    const began = performance.now();
+    snapshot('latest-occurrence-catchup', catchup_proof(database, loop, clock, spec));
+    return { snapshots, catchup_seconds: (performance.now() - began) / 1000 };
   } finally {
     await loop.stop({ deadline: performance.now() / 1000 + 5 });
     await store.finish_writes();
     database.close();
   }
+}
+
+function catchup_proof(database: Database, loop: SourceScheduleLoop, clock: TestClock, spec: Spec) {
+  const due = new Date(spec.now * 1000);
+  due.setSeconds(0, 0);
+  database.write((sql) =>
+    actions.set_schedule(
+      sql,
+      spec.source_id,
+      {
+        expected_revision: source_data.read_source(sql, spec.source_id).source_revision,
+        enabled: true,
+        local_time: source_slot(due)[1],
+      },
+      { principal: { kind: 'owner', id: 'owner' }, now: spec.now },
+    ),
+  );
+  const old = [2, 1].map((days) => {
+    const local_now = new Date(due);
+    local_now.setDate(local_now.getDate() - days);
+    return database.write((sql) =>
+      runs.admit_scheduled_run(sql, spec.source_id, {
+        local_now,
+        now: spec.now - days * 86400,
+      }),
+    ).id;
+  });
+  const stored_runs = () =>
+    database.read((sql) =>
+      sql
+        .all<Record<string, unknown>>(
+          "SELECT * FROM measure_source_runs WHERE source_id=? AND trigger='scheduled' ORDER BY created_at,schedule_date,schedule_time",
+          [spec.source_id],
+        )
+        .map((row) =>
+          Object.fromEntries(
+            Object.entries(row).map(([key, value]) => [
+              key,
+              [
+                'required_outputs',
+                'dataset_outputs',
+                'failure',
+                'metrics',
+                'test_candidates',
+                'test_dataset_results',
+              ].includes(key) && typeof value === 'string'
+                ? JSON.parse(value)
+                : value,
+            ]),
+          ),
+        ),
+    );
+  const notices = () => database.read((sql) => sql.all('SELECT * FROM manager_wakes ORDER BY id'));
+  const episodes = () =>
+    database.read((sql) =>
+      sql.all('SELECT * FROM measure_source_failure_episodes ORDER BY source_id,episode'),
+    );
+  const before_notices = notices(),
+    before_episodes = episodes();
+  clock.set(new Date(due.getTime() + 30 * 60 * 1000).toISOString());
+  database.write((sql) =>
+    sql.run('UPDATE measure_sources SET created_at=? WHERE id=?', [spec.now + 60, spec.source_id]),
+  );
+  loop.poll_once();
+  const creation_refused = stored_runs();
+  if (creation_refused.length !== 2) throw new Error('Source admitted a slot before creation');
+  database.write((sql) =>
+    sql.run('UPDATE measure_sources SET created_at=? WHERE id=?', [spec.now, spec.source_id]),
+  );
+  loop.poll_once();
+  loop.poll_once();
+  const admitted = stored_runs();
+  if (
+    admitted.length !== 3 ||
+    admitted[2]!.schedule_date !== source_slot(due)[0] ||
+    admitted[2]!.schedule_time !== source_slot(due)[1]
+  )
+    throw new Error('Source did not admit exactly the latest occurrence');
+  for (const id of old)
+    if (database.write((sql) => runs.claim_run(sql, id, { now: clock.nowUnix() })) !== null)
+      throw new Error('Source claimed an obsolete occurrence');
+  if (
+    database.write((sql) =>
+      runs.claim_run(sql, String(admitted[2]!.id), { now: clock.nowUnix() }),
+    ) === null
+  )
+    throw new Error('Source refused the latest occurrence');
+  const claimed = stored_runs();
+  if (
+    JSON.stringify(claimed.map((row) => row.status)) !==
+    JSON.stringify(['interrupted', 'interrupted', 'running'])
+  )
+    throw new Error('Source claim states differ');
+  if (
+    JSON.stringify(before_notices) !== JSON.stringify(notices()) ||
+    JSON.stringify(before_episodes) !== JSON.stringify(episodes())
+  )
+    throw new Error('Skipped schedule created a failure notice');
+  const previous = process.env.TZ;
+  process.env.TZ = 'Europe/Berlin';
+  let slots: (number | null)[];
+  try {
+    slots = [
+      ['02:30', '2026-03-29T03:30:00+02:00'],
+      ['02:30', '2026-03-29T03:30:01+02:00'],
+      ['02:30', '2026-10-25T02:15:00+01:00'],
+      ['09:00', '2026-10-27T08:59:00+01:00'],
+    ].map(([time, now]) => {
+      const slot = latest_due_slot(time!, new Date(now!));
+      return slot === null ? null : slot.getTime() / 1000;
+    });
+  } finally {
+    if (previous === undefined) delete process.env.TZ;
+    else process.env.TZ = previous;
+  }
+  return { creation_refused, admitted, claimed, episodes: before_episodes, slots };
 }

@@ -277,6 +277,7 @@ export interface TicketListFilters {
   is_backlogged: boolean | null;
   worker_types: string[];
   include_terminal: boolean;
+  active?: boolean;
   search: string | null;
 }
 export function list_ticket_summaries(
@@ -318,6 +319,7 @@ export function list_ticket_summaries(
       filters.excluded_ticket_statuses.includes(status)
     )
       continue;
+    if (filters.active && (v.terminal || v.is_backlogged)) continue;
     if ('integrity_error' in v) {
       const broken = broken_ticket(sql, row.id)!;
       if (
