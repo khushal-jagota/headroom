@@ -137,12 +137,29 @@ Workers still launch. Cleanup reports the unavailable support and retains its fe
 A process inventory alone cannot prove that unseen detached descendants ended.
 Old records retain their original evidence and do not acquire a new containment claim.
 
-The operator must copy the revised live unit and reload the user manager before the
-next planned service restart. Deploy does not copy unit files. Do not migrate active
-Workers between groups. The existing service stop covers the entire subtree, including
-old Workers. After that restart, new Workers use delegated groups. Generated executor
-units receive the same setting at installation. Restart them through their ordinary
-update route. This ticket does not apply either change to a live service.
+For the existing live installation, add only delegation through a user-unit drop-in.
+Do not replace the installed unit with the repository unit for this update. That
+also enables `PLAN_REFUSE_UNIDENTIFIED_AGENT_CALLS=1`, a separate operator decision.
+At the planned update, run these commands as `vps`:
+
+```sh
+mkdir -p "$HOME/.config/systemd/user/panels-live.service.d"
+cat > "$HOME/.config/systemd/user/panels-live.service.d/delegate.conf" <<'UNIT'
+[Service]
+Delegate=yes
+UNIT
+systemctl --user daemon-reload
+systemctl --user restart panels-live.service
+systemctl --user show panels-live.service -p ActiveState -p Delegate -p KillMode -p ControlGroup
+```
+
+Expect `ActiveState=active`, `Delegate=yes`, and `KillMode=control-group`. If the normal
+update already supplies that exact restart, create the drop-in and reload before it.
+Do not restart twice. Do not migrate active Workers between groups. The existing
+service stop covers the entire subtree, including old Workers. After that restart,
+new Workers use delegated groups. Generated executor units receive the same setting
+at installation. Restart them through their ordinary update route. This ticket does
+not apply either change to a live service.
 
 | Home service property | Worker behavior |
 |---|---|
