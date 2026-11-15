@@ -10,7 +10,7 @@ The foundation fixes schema, machine keys, and stale fixtures. The cases below r
 They remain collected with `xfail(run=False)` and do not count as parity. Remove each mark when its package restores the proof.
 No comparison field is hidden. Deferred parameters add no active host or runtime cost.
 
-Collected case counts: P2 43, P3 10, P4 4, P5 11, P6 8.
+Collected case counts: P2 43, P3 10, P4 4, P5 11, P6 6.
 
 ### P2 — Executor protocol and custody
 
