@@ -134,7 +134,6 @@
     "block": null,
     "unblock": null,
     "proposal": null,
-    "request-help": null,
     "assign": null
   },
   "manager": {
@@ -161,7 +160,6 @@
   "worker": {
     "my-ticket": null,
     "propose": null,
-    "request-help": null,
     "recap": null
   }
 }
