@@ -83,6 +83,7 @@ export type ArchiveUnpackRequest = {
       readonly purpose: 'mac-inspection';
       readonly archive_sha256: string;
       readonly archive_size: number;
+      readonly platform?: 'darwin' | 'linux';
     }
 );
 export type ArchiveUnpackResult =
@@ -161,11 +162,18 @@ export interface MacArchiveInspection {
   readonly python: boolean;
   readonly node: boolean;
   readonly entrypoint: boolean;
+  readonly native_linux?: {
+    readonly version: 2;
+    readonly app_sha: string;
+    readonly inventory_sha256: string;
+    readonly panels: boolean;
+  };
 }
 export interface MacInspectionExecution {
   readonly child_processes: OwnedChildProcesses;
   readonly signal: AbortSignal;
   readonly deadline: number;
+  readonly platform?: 'darwin' | 'linux';
 }
 /** The observer ended while this promise still owns child, descriptor, and work cleanup. */
 export class MacArchiveInspectionUnsettled extends Error {

@@ -17,6 +17,9 @@ TypeScript uses host Node and the shared executor CLI instead of Python's privat
 The default join root is the XDG data directory's `panels/executor-typescript`, with separate `data/` and `installation/` children.
 Its user unit is `panels-executor-typescript.service`, separate from Python's unit.
 Role admission retains the Python marker filename and identity fields. Native admission binds the Node manifest, contract and inventory.
+The Manager authorizes inactive inventory entries for bundled better-sqlite3 ARM64 prebuilds in the Linux x86_64 archive.
+The actual AArch64 header and matching package selector must agree. These entries retain their byte hashes and never enter the active dependency closure.
+Other unknown ELF architectures still refuse. Python's current Linux builder refuses these foreign ELF files rather than classifying them.
 Paired synthetic proofs project the interpreter, root, PATH, and unit differences explicitly. Real runtime execution remains a hosted acceptance boundary.
 
 ## Executor protocol parity evidence
@@ -35,15 +38,15 @@ and retains both full identities in its report. It proves destination selection,
 readiness, and refusal envelopes. The dedicated wire comparisons check the shared
 protocol contract separately.
 
-## Pending staging port: Linux host admission
+## Linux host Node major — accepted
 
-P5 owns the Linux host admission Node version policy. Python accepts Node majors at or
-above the required major. TypeScript requires the declared major. Python reports
-`runtime requires Node 22.18.0 or newer`, while TypeScript reports
-`runtime requires Node 22.18.0 or a later Node 22` for the observed minimum-version refusal.
-The exact host comparison remains expected-open P5. Release identity, archive, frontier,
-and native probe report checks stay active. Their report records both host results.
-This is an open port boundary, not accepted final parity.
+The Manager accepts Node 22-only host admission for the native release.
+The version 2 contract fixes `node_major: 22`, and native modules use that Node ABI.
+A newer major can load those modules incorrectly. The builder and join recipe require Node 22 >=22.18.
+Python accepts majors at or above 22. TypeScript refuses a newer major and preserves the declared major.
+Its minimum-version diagnostic also names that restriction explicitly.
+The active host comparison checks this difference and parity for all other admission results.
+Its report retains both complete host result lists. No host observation is hidden.
 
 ## Native TypeScript presentation
 
@@ -807,15 +810,6 @@ TypeScript treats `.panels-workspace.json.<32 lowercase hex characters>.tmp` as 
 Ticket ownership marker in public reads, links, and listings, including aliases. Python
 currently reserves only the final marker and `.panels-workspace.json.tmp`. The temporary
 file contains the same private ownership data, so the Ticket workspace port hides it too.
-
-## Pending P3 custody: CLI workspace retirement
-
-The Manager authorizes the same temporary unavailable-runtime fence for CLI apply and
-scheduled cleanup. Both retain eligible Ticket workspaces and retirement replay until P3
-supplies durable child custody and its merged retirement API. Dry-run inventories and host
-maintenance remain active. The populated CLI comparison records Python removal and
-TypeScript retention explicitly, while it compares the remaining inventory and host result.
-
 
 ## Workspace Stop publication retry
 

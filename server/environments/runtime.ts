@@ -83,8 +83,12 @@ export async function createEnvironmentRuntime(
             git_execution: { children: context.one_shot_children, environment: process.env },
             snapshot_ticket_scratch,
             prune_ticket_scratch,
-            // P3 owns live child retirement. Until its merged API arrives, retain custody.
-            retire_local_children: () => ({ reason: 'Conversation runtime is unavailable' }),
+            retire_local_children: (ticket_id, identity, operation) => {
+              const system = context.conversationSystem;
+              return system?.retire_local_workspace === undefined
+                ? { reason: 'Conversation runtime is unavailable' }
+                : system.retire_local_workspace(ticket_id, identity, operation);
+            },
           }),
       });
   const metrics = new MetricsRuntime({
@@ -99,6 +103,12 @@ export async function createEnvironmentRuntime(
     root: join(data_directory, 'mac-updates'),
     platform_for: (machine_id) =>
       context.database.read((sql) => executor_platform(sql, machine_id)),
+    linux_registered: () =>
+      context.database.read((sql) =>
+        Boolean(
+          sql.get("SELECT 1 FROM machine_executor_credentials WHERE platform='linux' LIMIT 1"),
+        ),
+      ),
     attempts,
     provider,
     current_app_sha: config.app_sha,
@@ -198,6 +208,7 @@ export async function createEnvironmentRuntime(
         const actuals = [
           () => metrics.settled(),
           () => updates.settled(),
+          () => mac.service.settled(),
           () => scratch?.settled(),
         ];
         for (const actual of actuals) {
@@ -245,6 +256,7 @@ export async function createEnvironmentRuntime(
       Promise.all([
         metrics.settled(),
         updates.settled(),
+        mac.service.settled(),
         scratch?.settled(),
         starting?.catch(() => {}),
       ]).then(() => {}),

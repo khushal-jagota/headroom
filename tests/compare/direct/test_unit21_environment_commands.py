@@ -449,31 +449,21 @@ def test_unit21_environment_command_function_parity(
                 assert result["stdout"] == "" and result["stderr"]
                 native_manifest_failures.append({"case": index, "python": expected[index]})
                 expected_commands[index] = dict(exit_code=1, stdout="", stderr="")
-        retirement_fence_difference = None
         if scope == "scratch":
             index = next(
                 i
                 for i, call in enumerate(calls)
                 if call["command"] == "cleanup" and call["args"]["apply"]
             )
-            python_cleanup = json.loads(expected_commands[index]["stdout"])
-            native_cleanup = json.loads(actual["results"][index]["stdout"])
-            python_result = python_cleanup["ticket_workspaces_result"]
-            native_result = native_cleanup["ticket_workspaces_result"]
-            retained = {
-                "path": str(eligible_workspace),
-                "reason": "Conversation runtime is unavailable",
-            }
+            python_result = json.loads(expected_commands[index]["stdout"])[
+                "ticket_workspaces_result"
+            ]
+            native_result = json.loads(actual["results"][index]["stdout"])[
+                "ticket_workspaces_result"
+            ]
             assert python_result["removed"] == [str(eligible_workspace)]
-            assert native_result["removed"] == []
-            assert native_result["skipped"] == [*python_result["skipped"], retained]
-            assert eligible_workspace.is_dir()
-            retirement_fence_difference = {"python": python_result, "typescript": native_result}
-            python_cleanup["ticket_workspaces_result"] = native_result
-            expected_commands[index] = {
-                **expected_commands[index],
-                "stdout": json.dumps(python_cleanup) + "\n",
-            }
+            assert native_result == python_result
+            assert not eligible_workspace.exists()
         assert stable(actual["results"][:-1]) == stable(expected_commands[:-1])
         assert expected[-1] == {"thrown": "DatabaseError"}
         assert actual["results"][-1] == {"thrown": "SqliteError"}
@@ -568,7 +558,6 @@ def test_unit21_environment_command_function_parity(
                     "results": actual["results"],
                     "raw_results": actual["raw_results"],
                     "native_manifest_failures": native_manifest_failures,
-                    "pending_custody_retirement_fence": retirement_fence_difference,
                     "operators": actual["operators"],
                     "scratch_owned": actual["scratch_owned"],
                     "cold_imports": actual["cold"],

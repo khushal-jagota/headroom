@@ -73,8 +73,8 @@ jobs:
             local status=$?
             trap - EXIT
             set +e
-            if [ -f "$executor_root/build/linux-executor-publication.json" ]; then
-              cp "$executor_root/build/linux-executor-publication.json" "$executor_evidence/publication.json" || status=1
+            if [ -f "$executor_root/tmp/build/linux-executor-publication.json" ]; then
+              cp "$executor_root/tmp/build/linux-executor-publication.json" "$executor_evidence/publication.json" || status=1
             fi
             local retained=true
             # Failed entries can still own native work at their original deadline.
@@ -110,7 +110,7 @@ jobs:
           writeFileSync(join(root, 'request.json'), JSON.stringify({
             source_root: process.env.GITHUB_WORKSPACE,
             requested_sha: process.env.EXECUTOR_REVISION,
-            output_directory: join(root, 'build'),
+            output_directory: join(root, 'tmp', 'build'),
           }));
           writeFileSync(join(process.env.EXECUTOR_EVIDENCE, 'platform.json'), JSON.stringify({
             revision: process.env.EXECUTOR_REVISION, platform: process.platform, architecture: process.arch,

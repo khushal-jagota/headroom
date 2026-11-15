@@ -33,6 +33,7 @@ export function create_test_environment_operations(
       service: mac_context.signal.aborted
         ? {
             for_machine: unavailable,
+            settled: () => Promise.resolve(),
             prepare: async () => unavailable(),
             check: unavailable,
             status: () => null,

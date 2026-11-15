@@ -27,7 +27,7 @@ from planner.environments.update_attempts import (
     attempt_to_dict,
     parse_attempt,
 )
-from planner.environments.update_contracts import UpdateAttempt
+from planner.environments.update_contracts import PublishedLinuxExecutorUpdate, UpdateAttempt
 
 ROOT = Path(__file__).resolve().parents[3]
 NOW = "2026-11-05T12:00:00+00:00"
@@ -713,10 +713,6 @@ def _identities(value: Any) -> Any:
     return visit(json.loads(json.dumps(value)))
 
 
-@pytest.mark.xfail(
-    run=False,
-    reason="expected-open P5: #916 update barrier changes pause and deadline transitions",
-)
 def test_service_owner_actions_and_synchronous_poll_match_python(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -1064,10 +1060,6 @@ def test_service_continuations_fence_stop_and_observe_external_attempts(
     )
 
 
-@pytest.mark.xfail(
-    run=False,
-    reason="expected-open P5: #916 deployment snapshots include the update barrier",
-)
 def test_owner_routes_populated_mac_reads_and_deployment_snapshot_match_python(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -1216,10 +1208,6 @@ def test_owner_routes_populated_mac_reads_and_deployment_snapshot_match_python(
     )
 
 
-@pytest.mark.xfail(
-    run=False,
-    reason="expected-open P5: #916 trusted publications include Linux executor artifacts",
-)
 def test_provider_trust_evidence_and_streamed_download_match_python(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -1669,3 +1657,45 @@ def test_preparation_save_cut_cancel_and_stale_recovery_match_python(
         "complete": True, "answers": actual, "seconds": time.perf_counter() - started,
         "new_browser_hosts": 0, "new_service_hosts": 0,
     })
+
+
+def test_linux_only_publication_creates_companion_request(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, request: pytest.FixtureRequest
+) -> None:
+    """Gap: a Linux companion requires its own request even when no Mac artifact exists."""
+    started = time.perf_counter()
+    host, value = _service_fixture(tmp_path, monkeypatch)
+    host.release = replace(
+        host.release, mac=None, linux_executor=PublishedLinuxExecutorUpdate(10, "e" * 64, 20)
+    )
+    host.service.provider.offered = host.release
+    host.service.prefetch()
+    pressed = host.service.install(host.release.manifest.app_sha, "idle", confirm_activity=False)
+    assert pressed.mac_attempt_id is not None
+    expected = _identities(
+        {"pressed": attempt_to_dict(pressed), "stored": asdict(host.store.read())}
+    )
+    response = _node(
+        tmp_path,
+        {
+            **value,
+            "release": json.loads(json.dumps(asdict(host.release))),
+            "actions": [{"op": "install", "mode": "idle"}],
+        },
+        "probe_service",
+    )
+    assert response["answers"][0]["error"] is None
+    actual = _identities(
+        {"pressed": response["answers"][0]["result"], "stored": response["attempt"]}
+    )
+    _report(
+        request,
+        "linux-executor-attempt.json",
+        {
+            "equal": actual == expected,
+            "python": expected,
+            "typescript": actual,
+            "seconds": time.perf_counter() - started,
+        },
+    )
+    assert actual == expected

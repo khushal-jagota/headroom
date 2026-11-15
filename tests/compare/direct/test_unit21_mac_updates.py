@@ -9,6 +9,7 @@ import os
 import shutil
 import subprocess
 import tarfile
+import threading
 import time
 import zipfile
 from dataclasses import asdict, replace
@@ -21,7 +22,7 @@ from tests.compare.direct import test_unit21_updates as update_fixture
 from tests.compare.direct.test_unit21_backups import _report
 from tests.compare.direct.test_unit21_updates import _environment
 from tests.compare.json_values import json_values
-from tests.unit.test_mac_updates import MacProvider, attempt
+from tests.unit.test_mac_updates import MacProvider, attempt, finish_linux_preparation
 
 from planner.core import change_signal
 from planner.environments.mac_updates import MacUpdateService
@@ -48,6 +49,11 @@ def _python(request: dict[str, Any]) -> dict[str, Any]:
     attempts = FileUpdateAttemptStore(root.parent / "update-attempt.json")
     releases = {key: parse_release(value) for key, value in request["releases"].items()}
     records = {key: parse_attempt(value) for key, value in request["attempts"].items()}
+    gates: dict[int, tuple[threading.Event, threading.Event]] = {}
+    failures: set[int] = set()
+    registered = False
+    clock = 0.0
+    native_monotonic = time.monotonic
 
     class Provider:
         def available(self) -> None:
@@ -55,20 +61,31 @@ def _python(request: dict[str, Any]) -> dict[str, Any]:
 
         def download_artifact(self, artifact_id: int, destination: Path) -> None:
             downloads.append(artifact_id)
+            if artifact_id in gates:
+                entered, released = gates[artifact_id]
+                entered.set()
+                assert released.wait(5), "held Linux download was not released"
+            if artifact_id in failures:
+                raise ConnectionError("Linux artifact unavailable")
             shutil.copyfile(request["artifacts"][str(artifact_id)], destination)
 
     provider = Provider()
 
     def make(sha: str, available: bool) -> MacUpdateService:
         result = MacUpdateService(
-            root, attempts, provider if available else None, sha, lambda: ready
+            root, attempts, provider if available else None, sha, lambda: ready,
+            linux_registered=lambda: registered,
         )
         result.platform_for = lambda machine: platforms.get(machine, "darwin")
         return result
 
     platforms: dict[str, str] = {}
     output: list[dict[str, Any]] = []
-    with patch.object(change_signal, "emit", lambda: emitted.append(None)):
+    with (
+        patch.object(change_signal, "emit", lambda: emitted.append(None)),
+        patch("planner.environments.mac_updates.time.monotonic",
+              lambda: clock if request.get("linux_offers") else native_monotonic()),
+    ):
         primary = make("a" * 40, True)
         for op in request["operations"]:
             try:
@@ -77,6 +94,30 @@ def _python(request: dict[str, Any]) -> dict[str, Any]:
                 service = primary.for_machine(op["machine_id"]) if "machine_id" in op else primary
                 if action == "platform":
                     platforms[op["machine_id"]] = op["platform"]
+                elif action == "registered":
+                    registered = op["registered"]
+                elif action == "clock":
+                    clock += op["seconds"]
+                elif action == "hold":
+                    gates[op["artifact_id"]] = (threading.Event(), threading.Event())
+                elif action == "wait_download":
+                    assert gates[op["artifact_id"]][0].wait(5)
+                elif action == "release":
+                    gates[op["artifact_id"]][1].set()
+                elif action == "fail":
+                    failures.add(op["artifact_id"])
+                elif action == "recover":
+                    failures.discard(op["artifact_id"])
+                elif action == "repair":
+                    request["artifacts"][str(op["artifact_id"])] = request["repairs"][
+                        str(op["artifact_id"])
+                    ]
+                elif action == "settled":
+                    finish_linux_preparation(primary)
+                elif action == "downloads":
+                    result = [*downloads]
+                elif action == "retention":
+                    result = json.loads((root / "linux/retained-archives.json").read_text())
                 elif action == "machine":
                     result = {
                         "cached": service is primary.for_machine(op["machine_id"]),
@@ -93,6 +134,8 @@ def _python(request: dict[str, Any]) -> dict[str, Any]:
                 elif action == "ready":
                     ready = None if op["key"] is None else releases[op["key"]]
                 elif action == "restart":
+                    if request.get("linux_offers"):
+                        finish_linux_preparation(primary)
                     primary = make(op["sha"], op["provider"])
                 elif action == "check":
                     result = asdict(service.check())
@@ -150,6 +193,10 @@ def _python(request: dict[str, Any]) -> dict[str, Any]:
                 output.append({"result": result})
             except Exception as error:
                 output.append({"error": type(error).__name__, "message": str(error)})
+        for _, released in gates.values():
+            released.set()
+        if request.get("linux_offers"):
+            finish_linux_preparation(primary)
     return {"output": output, "downloads": downloads, "emitted": len(emitted)}
 
 

@@ -107,6 +107,8 @@ Leases carry one machine's bounded state and update offer. Command polls carry a
 - `src/planner/stalls/`: wait checks and watchdog.
 - `src/planner/environments/mac_executor.py` and `environments/mac_app/`: Mac installation and signed launcher.
 - `src/planner/environments/linux_executor.py`: Linux installation and systemd user service.
-- `scripts/build_linux_executor.py`: Linux executor archive and native startup proof.
+- `scripts/build_linux_executor.py`: Python executor archive and native startup proof.
+- `server/environments/linux_executor/`: native TypeScript executor archive, installation, and private enrollment entry.
+- `server/environments/updates/mac/`: shared destination-specific executor offers and archive cache.
 
 _Last verified: 2026-11-14._

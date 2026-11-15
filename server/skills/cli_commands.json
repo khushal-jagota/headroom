@@ -2,6 +2,7 @@
   "machine": {
     "list": null,
     "register": null,
+    "join-command": null,
     "replace-credential": null
   },
   "executor": {

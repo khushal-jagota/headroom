@@ -14,10 +14,23 @@ try {
   process.exitCode = await with_publication_entry(async (execution, register_output) => {
     if (process.argv.length !== 3) throw new Error('Expected one publication receipt request file');
     const request = await publication_json_file(process.argv[2]!);
+    const required =
+      'artifact_id,linux_artifact_zip,linux_build_artifact_id,linux_build_artifact_zip,mac_artifact_id,mac_artifact_zip,mac_build_result,output_directory,source_root'.split(
+        ',',
+      );
+    const linux_executor_fields = [
+      'linux_executor_artifact_zip',
+      'linux_executor_artifact_id',
+      'linux_executor_build_result',
+    ];
     if (
       !is_object(request) ||
-      Object.keys(request).sort().join(',') !==
-        'artifact_id,linux_artifact_zip,linux_build_artifact_id,linux_build_artifact_zip,mac_artifact_id,mac_artifact_zip,mac_build_result,output_directory,source_root'
+      required.some((key) => !(key in request)) ||
+      Object.keys(request).some(
+        (key) => !required.includes(key) && !linux_executor_fields.includes(key),
+      ) ||
+      (linux_executor_fields.some((key) => key in request) &&
+        !linux_executor_fields.every((key) => key in request))
     )
       throw new Error('Invalid publication receipt request');
     const provenance = await source_run(publication_text(process.env.GITHUB_SHA, 'GITHUB_SHA'));
@@ -42,6 +55,22 @@ try {
         ),
         mac_artifact_id: publication_id(request.mac_artifact_id, 'Mac artifact ID'),
         mac_build_result: publication_text(request.mac_build_result, 'Mac build result'),
+        ...('linux_executor_artifact_zip' in request
+          ? {
+              linux_executor_artifact_zip: publication_text(
+                request.linux_executor_artifact_zip,
+                'Linux executor artifact ZIP',
+              ),
+              linux_executor_artifact_id: publication_id(
+                request.linux_executor_artifact_id,
+                'Linux executor artifact ID',
+              ),
+              linux_executor_build_result: publication_text(
+                request.linux_executor_build_result,
+                'Linux executor build result',
+              ),
+            }
+          : {}),
       },
       provenance,
       execution,

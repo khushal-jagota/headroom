@@ -8,6 +8,7 @@ import { workspace_identity } from './filesystem.ts';
 import { clean_for_database } from './cleanup.ts';
 import { register_workspace } from './data.ts';
 import { RETENTION_SECONDS } from './contracts.ts';
+import type { WorkspaceRetirementOperation } from './contracts.ts';
 const injection = vi.hoisted(() => ({ fail_commit: false }));
 vi.mock('../core/database/index.ts', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../core/database/index.ts')>();
@@ -109,4 +110,69 @@ test('a failed database commit restores the detached physical folder and rolls b
     ),
   ).toBeUndefined();
   expect(workspace_identity(options.admit_path(folder))).toEqual(identity);
+});
+
+// Gap: durable custody proofs do not prove the live runtime controls when detach
+// starts, or that a previously committed grant still passes through that runtime.
+test('runtime retirement holds detach and can refuse replay despite a committed grant', async () => {
+  const { db, path, ticket, folder, identity, options } = setup();
+  let entered!: () => void, release!: () => void;
+  const admission = new Promise<void>((resolve) => {
+    entered = resolve;
+  });
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const retire: WorkspaceRetirementOperation = async (id, actual, operation) => {
+    // The shared fixture root can retain retirement records from another database.
+    if (id !== ticket.id) return { reason: 'Unrelated synthetic workspace' };
+    expect(actual).toEqual(identity);
+    entered();
+    await gate;
+    return await operation();
+  };
+  const grant = () =>
+    db.read((sql) =>
+      sql.get(
+        'SELECT 1 FROM ticket_workspace_retirements WHERE ticket_id=? AND machine_id=? AND workspace_id=?',
+        [ticket.id, identity.machine_id, identity.workspace_id],
+      ),
+    );
+  const cleaning = clean_for_database(path, RETENTION_SECONDS, {
+    ...options,
+    retire_local_children: retire,
+    prune_ticket_scratch: () => false,
+  });
+  try {
+    await admission;
+    expect(existsSync(folder)).toBe(true);
+    expect(grant()).toBeUndefined();
+  } finally {
+    release();
+  }
+  const result = await cleaning;
+  const retained = result.skipped.find(
+    (item) => item.reason === 'Worker scratch path is not an owned real directory',
+  );
+  expect(retained).toBeDefined();
+  expect(existsSync(folder)).toBe(false);
+  expect(grant()).toBeDefined();
+  expect(existsSync(retained!.path)).toBe(true);
+  const refuse = vi.fn<WorkspaceRetirementOperation>(() => ({
+    reason: 'Conversation runtime is unavailable',
+  }));
+  const prune = vi.fn(() => true);
+  const replay = await clean_for_database(path, RETENTION_SECONDS, {
+    ...options,
+    retire_local_children: refuse,
+    prune_ticket_scratch: prune,
+  });
+  expect(refuse).toHaveBeenCalledWith(
+    ticket.id,
+    expect.objectContaining(identity),
+    expect.any(Function),
+  );
+  expect(replay.removed).not.toContain(retained!.path);
+  expect(existsSync(retained!.path)).toBe(true);
+  expect(prune).not.toHaveBeenCalled();
 });

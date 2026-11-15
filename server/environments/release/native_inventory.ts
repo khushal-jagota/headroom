@@ -30,6 +30,7 @@ import {
 } from '../updates/logic/runtime_contract.ts';
 import {
   elf_executable,
+  elf_architecture_exclusion,
   hash_native_file,
   inactive_musl,
   native_format,
@@ -129,9 +130,9 @@ export async function complete_node_runtime(
       dynamic = object.dynamic;
     const paths = dynamic.runpath ?? dynamic.rpath;
     const header = await read_elf(path, '-hW', execution);
-    if (!header.includes('Advanced Micro Devices X86-64'))
-      throw new RuntimeContractError(`unknown ELF architecture: ${name}`);
-    const inactive = await inactive_musl(path, dynamic.needed, dynamic.interpreter);
+    const foreign = elf_architecture_exclusion(name, header);
+    const inactive =
+      foreign !== null || (await inactive_musl(path, dynamic.needed, dynamic.interpreter));
     if (dynamic.interpreter !== null && !inactive && dynamic.interpreter !== GLIBC_INTERPRETER)
       throw new RuntimeContractError(`unknown ELF loader: ${name}: ${dynamic.interpreter}`);
     const notes = await read_elf(path, '-nW', execution);
@@ -195,7 +196,7 @@ export async function complete_node_runtime(
       path: name,
       format: 'ELF',
       active: !inactive,
-      exclusion: inactive ? 'musl dynamic variant selected only on musl hosts' : null,
+      exclusion: foreign ?? (inactive ? 'musl dynamic variant selected only on musl hosts' : null),
       role: path.endsWith('.node')
         ? 'addon'
         : elf_executable(header, dynamic.interpreter)

@@ -1,8 +1,18 @@
+import { path_is_within } from '../core/path_containment.ts';
+import { filesRoot } from '../files/logic/paths.ts';
+import { register_workspace } from '../ticket_workspaces/data.ts';
+import { workspace_identity } from '../ticket_workspaces/filesystem.ts';
+import { RETENTION_SECONDS } from '../ticket_workspaces/contracts.ts';
+import type { ScratchRuntimeOptions } from '../environments/ticket_scratch/contracts.ts';
+import type { TestCompositionContext } from '../core/start.ts';
+import { SqliteProcessConversationSystem } from '../conversation/system.ts';
+import { ConversationMessageFiles } from '../conversation/record/message_files.ts';
+import { ConversationStartRequest, ConversationRoleMaterials } from '../conversation/contracts.ts';
 /** The loop tests do not cover environment setup or its separate drain and providers. */
 import { afterEach, expect, test, vi } from 'vitest';
-import { mkdirSync } from 'node:fs';
-import { dirname } from 'node:path';
-import { fixture, fixture_path } from './ticket_fixture.ts';
+import { mkdirSync, realpathSync, existsSync, writeFileSync, readFileSync } from 'node:fs';
+import { dirname, join, resolve } from 'node:path';
+import { fixture, fixture_path, create } from './ticket_fixture.ts';
 import { startServer } from '../core/start.ts';
 import { acquireRuntimeOwnership } from '../core/locks/index.ts';
 import { InMemoryConversationSystem } from '../conversation/in_memory_conversation_system.ts';
@@ -370,3 +380,130 @@ test('shutdown during environment setup retains ownership and prevents later pro
   expect(close_count).toBe(1);
   acquireRuntimeOwnership(path).close();
 });
+
+// Gap: callback-only cleanup tests cannot prove production environment composition
+// delegates a populated, conversation-linked workspace to the real P3 runtime.
+test.skipIf(process.platform !== 'linux')(
+  'scheduled workspace cleanup uses real conversation retirement and retains uncertain custody',
+  async () => {
+    const path = setup(),
+      synthetic = realpathSync(dirname(path));
+    function admit(target: string): string {
+      target = resolve(target);
+      if (!path_is_within(synthetic, target)) throw new Error('outside synthetic fixture');
+      let ancestor = target;
+      while (!existsSync(ancestor)) ancestor = dirname(ancestor);
+      if (!path_is_within(synthetic, realpathSync(ancestor)))
+        throw new Error('synthetic symlink escape');
+      return target;
+    }
+    let cleanup!: ScratchRuntimeOptions['clean_workspaces'];
+    const factory = scratchRuntime.create_ticket_scratch_runtime;
+    vi.spyOn(scratchRuntime, 'create_ticket_scratch_runtime').mockImplementation((options) => {
+      cleanup = options.clean_workspaces;
+      return factory(options);
+    });
+    let core!: SqliteProcessConversationSystem;
+    let database!: TestCompositionContext['database'];
+    const server = await startServer({
+      createConversationCore(context) {
+        database = context.database;
+        const forbidden = () => {
+          throw new Error('This proof never starts an external provider');
+        };
+        core = new SqliteProcessConversationSystem({
+          store: context.record.store,
+          message_files: new ConversationMessageFiles(path),
+          delivery_model_refusal: () => null,
+          execution_refusal: () => null,
+          backend_child_factories: { codex: forbidden, claude: forbidden, hermes: forbidden },
+        });
+        return core;
+      },
+      createEnvironments: create_test_environment_runtime,
+    });
+    const retirement = vi.spyOn(core, 'retire_local_workspace');
+    try {
+      const fixtures = [];
+      for (const [name, state] of [
+        ['eligible', 'retired'],
+        ['uncertain', 'started'],
+      ] as const) {
+        const ticket = create(database);
+        const folder = admit(join(filesRoot(path, 'ticket'), ticket.id));
+        mkdirSync(folder, { recursive: true });
+        writeFileSync(admit(join(folder, 'artifact.txt')), name);
+        const identity = workspace_identity(admit(folder));
+        const conversation_id = `workspace-${name}`;
+        await core.start_conversation(
+          new ConversationStartRequest({
+            conversation_id,
+            model: 'synthetic-model',
+            workspace_folder: folder,
+            role_materials: new ConversationRoleMaterials({
+              role_text: 'Synthetic retirement proof',
+            }),
+          }),
+        );
+        database.write((sql) => {
+          register_workspace(sql, ticket.id, conversation_id, identity);
+          sql.run('UPDATE ticket_workspace_lifecycle SET ended_at=0 WHERE ticket_id=?', [
+            ticket.id,
+          ]);
+          sql.run(
+            'UPDATE conversation_child_custody SET generation=?,state=? WHERE conversation_id=?',
+            ['synthetic-custody', state, conversation_id],
+          );
+        });
+        fixtures.push({ ticket, folder, identity, conversation_id });
+      }
+      // Invoke the exact cleanup closure supplied by production composition to its
+      // scheduled runtime. Existing timer proofs own the initial ten-minute delay.
+      const cleanup_options = { signal: new AbortController().signal, admit_path: admit };
+      const result = await cleanup(path, RETENTION_SECONDS, cleanup_options);
+      const [eligible, uncertain] = fixtures;
+      expect(retirement).toHaveBeenCalledWith(
+        eligible!.ticket.id,
+        eligible!.identity,
+        expect.any(Function),
+      );
+      expect(retirement).toHaveBeenCalledWith(
+        uncertain!.ticket.id,
+        uncertain!.identity,
+        expect.any(Function),
+      );
+      expect(result.removed).toContain(eligible!.folder);
+      expect(existsSync(admit(eligible!.folder))).toBe(false);
+      expect(readFileSync(admit(join(uncertain!.folder, 'artifact.txt')), 'utf8')).toBe(
+        'uncertain',
+      );
+      expect(result.skipped).toContainEqual({
+        path: uncertain!.folder,
+        reason: 'Local child retirement is not proven',
+      });
+      expect(
+        database.read((sql) =>
+          sql.get('SELECT 1 FROM ticket_workspace_retirements WHERE ticket_id=?', [
+            eligible!.ticket.id,
+          ]),
+        ),
+      ).toBeDefined();
+      expect(
+        database.read((sql) =>
+          sql.get('SELECT 1 FROM ticket_workspace_retirements WHERE ticket_id=?', [
+            uncertain!.ticket.id,
+          ]),
+        ),
+      ).toBeUndefined();
+    } finally {
+      // Release the synthetic uncertainty after its preservation assertion so this
+      // test's server can complete its ordinary shutdown without retained custody.
+      database.write((sql) =>
+        sql.run(
+          "UPDATE conversation_child_custody SET state='retired' WHERE conversation_id LIKE 'workspace-%'",
+        ),
+      );
+      await server.close({ deadline: performance.now() / 1000 + 5 });
+    }
+  },
+);

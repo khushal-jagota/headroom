@@ -7,6 +7,23 @@ import type { ElfDynamic, ReleaseExecution } from '../contracts.ts';
 import { FILE_CHUNK_BYTES } from '../configuration.ts';
 import { run_release_command } from '../process.ts';
 import { MACH_O_MAGIC, NATIVE_TOOL_SECONDS } from './configuration.ts';
+import { RuntimeContractError } from '../../updates/logic/runtime_contract.ts';
+
+/** A bundled ARM64 selector asset cannot enter the x64 runtime dependency graph. */
+export function elf_architecture_exclusion(
+  relative_path: string,
+  header: string,
+): 'foreign architecture prebuild' | null {
+  if (header.includes('Advanced Micro Devices X86-64')) return null;
+  if (
+    /^\s*Machine:\s+AArch64\s*$/mu.test(header) &&
+    /(?:^|\/)node_modules\/better-sqlite3\/prebuilds\/linux(?:musl)?-arm64\.node$/u.test(
+      relative_path,
+    )
+  )
+    return 'foreign architecture prebuild';
+  throw new RuntimeContractError(`unknown ELF architecture: ${relative_path}`);
+}
 
 export function parse_dynamic(output: string, program_header: string): ElfDynamic {
   const paths = (tag: string): string[] =>
