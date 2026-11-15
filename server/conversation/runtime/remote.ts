@@ -86,6 +86,29 @@ export function retained_run(
     ) ?? null
   );
 }
+export async function confirm_remote_prompt_accepted(
+  host: SqliteProcessConversationSystem,
+  reference: ChildReference,
+  turn: TurnToken,
+): Promise<void> {
+  const state = host.conversation_state(reference.conversation_id);
+  if (state === null || !same_reference(state.retained_child_reference, reference)) return;
+  await own_settlement(
+    state,
+    (async () => {
+      await host.wait_for_reservation(state, turn);
+      const lease = await acquire_after_steers(state);
+      try {
+        if (!same_turn(state.running_turn?.token ?? null, turn)) return;
+        state.last_touched_monotonic = host.monotonic_now();
+        if (same_reference(state.retained_child_reference, reference))
+          await host.accept_automatic_start(state, turn);
+      } finally {
+        lease.release();
+      }
+    })(),
+  );
+}
 export function restore_retained_run(
   host: SqliteProcessConversationSystem,
   state: ConversationState,

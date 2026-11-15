@@ -1421,6 +1421,12 @@ export class SqliteProcessConversationSystem implements DeliveryServices, Conver
   retained_run(state: ConversationState) {
     return remote.retained_run(this, state);
   }
+  confirm_remote_prompt_accepted(
+    reference: ChildReference,
+    turn: WireValue<'TurnToken'>,
+  ): Promise<void> {
+    return remote.confirm_remote_prompt_accepted(this, reference, admit_remote_turn(turn));
+  }
   fence_replaced_remote_child(
     reference: ChildReference,
     options: { retry_later_at?: number } = {},
