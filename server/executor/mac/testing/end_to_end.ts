@@ -1,7 +1,8 @@
 /** Hosted Python/VPS peer. One real Mac invocation, with scripted provider bindings. */
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
-import { readFile } from 'node:fs/promises';
+import { readFile, writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
 import { createInterface } from 'node:readline';
 import { MacService } from '../host/service.ts';
 import { production_bindings } from '../host/entry.ts';
@@ -34,10 +35,16 @@ import {
   UserInputOption,
 } from '../../../conversation/events.ts';
 import type { TurnToken } from '../../../conversation/backends/contracts.ts';
+import type { ResolvedConversationStart } from '../../../conversation/contracts.ts';
+import { WorkerSupervisor } from '../../../worker_supervision/service.ts';
+import { RECORD_ROOT_ENV } from '../../../worker_supervision/config.ts';
 import type { AcceptanceReceipt, QueuedEnvelope } from '../../wire.generated.ts';
 import { text_message_content } from '../../../conversation/message_content.ts';
 import { create_claude_backend_child_factory } from '../../../conversation/backends/claude_agent_sdk/adapter.ts';
 import { create_claude_cleanup_fixture } from './claude_cleanup.ts';
+import { runtime_archive } from '../updates/testing/runtime_archive.ts';
+import { LINUX_EXECUTOR } from '../../../environments/release/contracts.ts';
+import { LINUX_EXECUTOR_ENTRYPOINT } from '../../../environments/linux_executor/configuration.ts';
 
 // Stdout belongs to the fixture protocol. Keep host diagnostics in the existing log.
 console.debug = console.error;
@@ -98,14 +105,39 @@ const bindings: MacHostBindings = {
       panels_server_url: origin.origin,
       executable_path: () => null,
     });
+    const record_scripted_worker = async (resolved: ResolvedConversationStart) => {
+      assert.ok(resolved.role_materials);
+      const environment = Object.fromEntries(
+        resolved.role_materials.identity_environment_variables,
+      );
+      environment.PLAN_CONVERSATION_ID = resolved.conversation_id;
+      assert.ok(environment[RECORD_ROOT_ENV]);
+      // These fixture natives never spawn a process. Preserve that exact evidence
+      // through the invocation's real owner before the scripted start can succeed.
+      const receipt = await WorkerSupervisor.create(environment, resolved.workspace_folder, {
+        runtime: owners.worker_supervision,
+      });
+      assert.ok(receipt);
+      await receipt.cancel_unspawned();
+    };
     return {
       ...host,
       factory: (resolved) => {
-        if (claude_cleanup && resolved.backend_key === 'claude')
-          return create_claude_backend_child_factory(host.launches.claude, {
+        if (claude_cleanup && resolved.backend_key === 'claude') {
+          const create = create_claude_backend_child_factory(host.launches.claude, {
             ...owners,
             client_factory: claude_cleanup.client_factory,
           });
+          return (values) => {
+            const child = create(values),
+              start = child.start.bind(child);
+            child.start = async (resolved, start_options) => {
+              await record_scripted_worker(resolved);
+              await start(resolved, start_options);
+            };
+            return child;
+          };
+        }
         return (values) => {
           const owned_sink = values.event_sink;
           retired_sink = active_sink;
@@ -119,6 +151,7 @@ const bindings: MacHostBindings = {
             withdraw_delivery: unsupported,
             detach: unsupported,
             async start(resolved, start_options) {
+              await record_scripted_worker(resolved);
               calls.starts++;
               calls.starts_details.push({
                 conversation_id: resolved.conversation_id,
@@ -457,6 +490,51 @@ try {
         await service.settled();
         write({ id: command.id, result: { stopped: true, calls } });
         break;
+      }
+      if (command.operation === 'runtime_archive') {
+        const entrypoint = `await import(${JSON.stringify(import.meta.url)});\n`;
+        const archive = runtime_archive(command.revision, false, LINUX_EXECUTOR, entrypoint);
+        const path = join(input.root, 'fixture-native-runtime.tar.gz');
+        await writeFile(path, archive.bytes);
+        const runtime = await service.update_files.extract_runtime(
+          path,
+          join(input.root, 'fixture-native-releases'),
+          archive.sha,
+          archive.bytes.length,
+          command.revision,
+          LINUX_EXECUTOR,
+        );
+        const revision = await service.update_files.read_runtime_revision(
+          runtime,
+          command.revision,
+          LINUX_EXECUTOR,
+        );
+        write({
+          id: command.id,
+          result: {
+            base64: archive.bytes.toString('base64'),
+            sha256: archive.sha,
+            byte_count: archive.bytes.length,
+            revision,
+            entrypoint: join(runtime, LINUX_EXECUTOR_ENTRYPOINT),
+          },
+        });
+        continue;
+      }
+      if (command.operation === 'admit_cached_runtime') {
+        const runtime = join(
+          input.root,
+          'updates',
+          'releases',
+          command.revision + '-' + command.sha256,
+        );
+        const revision = await service.update_files.read_runtime_revision(
+          runtime,
+          command.revision,
+          LINUX_EXECUTOR,
+        );
+        write({ id: command.id, result: { revision, runtime } });
+        continue;
       }
       if (command.operation === 'publish') {
         assert.equal(command.publication, 'ticket.edit');

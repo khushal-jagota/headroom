@@ -34,13 +34,6 @@ from planner.executor.protocol import EnvelopeKind, ReceiptDisposition, decode_b
 pytestmark = pytest.mark.usefixtures("executor_transport_home")
 
 
-@pytest.mark.xfail(
-    run=False,
-    reason=(
-        "expected-open P2: #916 staging protocol24 machine credentials and cleanup "
-        "leases leave the TS22 Mac unleased"
-    ),
-)
 def test_mac_replacement_drains_then_interrupts_old_run_and_recovers_once(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -134,13 +127,6 @@ def test_mac_replacement_drains_then_interrupts_old_run_and_recovers_once(
     asyncio.run(run())
 
 
-@pytest.mark.xfail(
-    run=False,
-    reason=(
-        "expected-open P2: #916 staging protocol24 machine credentials and cleanup "
-        "leases leave the TS22 Mac unleased"
-    ),
-)
 def test_a_message_the_replaced_mac_process_never_fetched_reaches_the_fresh_agent_once(
     tmp_path: Path,
 ) -> None:
@@ -184,13 +170,6 @@ def test_a_message_the_replaced_mac_process_never_fetched_reaches_the_fresh_agen
     asyncio.run(run())
 
 
-@pytest.mark.xfail(
-    run=False,
-    reason=(
-        "expected-open P2: #916 staging protocol24 machine credentials and cleanup "
-        "leases leave the TS22 Mac unleased"
-    ),
-)
 def test_stop_waits_for_its_proof_item_after_its_result_and_a_dropped_link(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -240,13 +219,6 @@ def test_stop_waits_for_its_proof_item_after_its_result_and_a_dropped_link(
     asyncio.run(run())
 
 
-@pytest.mark.xfail(
-    run=False,
-    reason=(
-        "expected-open P2: #916 staging protocol24 machine credentials and cleanup "
-        "leases leave the TS22 Mac unleased"
-    ),
-)
 def test_shutdown_waits_for_admitted_outcome_application_and_final_event_receipts(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -340,16 +312,14 @@ def test_shutdown_waits_for_admitted_outcome_application_and_final_event_receipt
     asyncio.run(run())
 
 
-@pytest.mark.xfail(
-    run=False,
-    reason=(
-        "expected-open P2: #916 staging protocol24 machine credentials and cleanup "
-        "leases leave the TS22 Mac unleased"
-    ),
-)
 def test_old_websocket_is_refused_needs_update_while_update_route_serves_it(tmp_path: Path) -> None:
     from planner.environments.mac_updates import MacUpdateService
     from planner.environments.update_attempts import FileUpdateAttemptStore
+    from planner.executor.configuration import (
+        EXECUTOR_CREDENTIAL_HEADER,
+        EXECUTOR_HANDOVER_CLOSE_PATH,
+    )
+    from planner.executor.credential_file import credential_path, read_credential
     from planner.executor.update_contracts import MacUpdateCheck
 
     async def run() -> None:
@@ -361,6 +331,12 @@ def test_old_websocket_is_refused_needs_update_while_update_route_serves_it(tmp_
                 "a" * 40,
                 lambda: None,
             )
+            only_id = {"X-Panels-Executor-ID": "test-executor"}
+            credential = read_credential(credential_path(harness.mac_root))
+            assert credential is not None
+            authenticated = {**only_id, EXECUTOR_CREDENTIAL_HEADER: credential}
+            identity = harness.endpoint.health().identity
+            assert identity is not None
 
             def positions() -> list[tuple[Any, ...]]:
                 with contextlib.closing(connect(harness.endpoint.db_path)) as connection:
@@ -373,19 +349,42 @@ def test_old_websocket_is_refused_needs_update_while_update_route_serves_it(tmp_
 
             before = positions()
             async with harness.proxy.session_factory() as session:
+                async with session.post(
+                    harness.proxy.origin + EXECUTOR_HANDOVER_CLOSE_PATH, headers=authenticated
+                ) as answer:
+                    assert answer.status == 200
+                    assert await answer.json() == {"closed": True}
                 with pytest.raises(aiohttp.WSServerHandshakeError) as refused:
                     async with session.ws_connect(
                         "wss" + harness.proxy.origin[5:] + "/api/executor/connect",
-                        headers={"X-Panels-Executor-ID": "test-executor"},
+                        headers=only_id,
                     ):
                         raise AssertionError("old WebSocket was accepted")
                 assert refused.value.status == 403
                 health = harness.endpoint.health()
+                assert health.presence == "present" and health.refusal is None
+                assert health.identity == identity
+                async with session.get(
+                    harness.proxy.origin + "/api/executor/update", headers=only_id
+                ) as answer:
+                    assert answer.status == 403
+                health = harness.endpoint.health()
+                assert health.presence == "present" and health.refusal is None
+                assert health.identity == identity
+                with pytest.raises(aiohttp.WSServerHandshakeError) as refused:
+                    async with session.ws_connect(
+                        "wss" + harness.proxy.origin[5:] + "/api/executor/connect",
+                        headers=authenticated,
+                    ):
+                        raise AssertionError("authenticated old WebSocket was accepted")
+                assert refused.value.status == 403
+                health = harness.endpoint.health()
+                assert health.presence == "refused"
                 assert health.refusal is not None and health.refusal.reason == MAC_NEEDS_UPDATE
                 assert health.refusal.peer_identity is None
                 async with session.get(
                     harness.proxy.origin + "/api/executor/update",
-                    headers={"X-Panels-Executor-ID": "test-executor"},
+                    headers=authenticated,
                 ) as answer:
                     assert answer.status == 200
                     assert decode_bounded(await answer.read(), MacUpdateCheck).target is None
@@ -395,6 +394,7 @@ def test_old_websocket_is_refused_needs_update_while_update_route_serves_it(tmp_
                 return harness.endpoint.health().presence == "present"
 
             await eventually(present, "current Node lease did not clear the old refusal", 15)
+            assert harness.endpoint.health().identity == identity
             await harness.end_turn()
             assert isinstance(
                 await harness.system.send(
@@ -408,13 +408,6 @@ def test_old_websocket_is_refused_needs_update_while_update_route_serves_it(tmp_
     asyncio.run(run())
 
 
-@pytest.mark.xfail(
-    run=False,
-    reason=(
-        "expected-open P2: #916 staging protocol24 machine credentials and cleanup "
-        "leases leave the TS22 Mac unleased"
-    ),
-)
 def test_exact_model_and_effort_cross_authenticated_native_dispatch(tmp_path: Path) -> None:
     from tests.integration.test_executor_end_to_end import create_mac_ticket
 
