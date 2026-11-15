@@ -24,7 +24,6 @@ struct NotificationDeviceSettings: View {
                 Text("Check notification access in iOS Settings.")
             }
             Text(notifications.registrationMessage).font(PanelsTheme.TypeScale.small).foregroundStyle(PanelsTheme.muted)
-            Text("Change which events notify you on the web.").font(PanelsTheme.TypeScale.small).foregroundStyle(PanelsTheme.faint)
         }.listRowBackground(PanelsTheme.raised)
             .task { await notifications.refresh(using: store.client) }
     }

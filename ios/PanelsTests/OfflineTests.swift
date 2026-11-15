@@ -688,22 +688,38 @@ import XCTest
         XCTAssertEqual(try dynamic.store.outgoing.summary(server: server, id: creation.id)?.state, "waiting")
         XCTAssertEqual(try dynamic.store.outgoing.summary(server: server, id: creation.id)?.provenance, "unattempted")
     }
-    func testLostResponseReconcilesReceiptWithoutResending() async throws {
+    /// Reuse the existing recovery host to prove the new notification handoff,
+    /// rather than repeat the transport matrix for another composer.
+    func testNotificationReplySurvivesOfflineRelaunchAndReconcilesWithoutDuplicateSend() async throws {
         let outbox = Outbox(store: store)
-        try outbox.save(message("lost"), server: server)
+        let reply = NotificationReply(serverURL: api.baseURL, conversationID: "conversation", messageID: "conversation:7", owner: .ticket("ticket"))
+        let id = try outbox.enqueueNotificationReply(reply, text: "Reply from notification", notificationID: "push-7", api: api)
+        OfflineProtocol.state.offline = true
+        await outbox.drain(api: api)
+        XCTAssertEqual(outbox.work(server, id: id)?.state, .waiting)
+        XCTAssertTrue(OfflineProtocol.state.writes.isEmpty)
+
+        let reopened = Outbox(store: LocalStore(url: directory.appendingPathComponent("test.store")))
+        XCTAssertEqual(try reopened.enqueueNotificationReply(reply, text: "Reply from notification", notificationID: "push-7", api: api), id)
+        XCTAssertEqual(reopened.entries(server).count, 1)
+        XCTAssertEqual(reopened.work(server, id: id)?.message?.conversationId, "conversation")
+        OfflineProtocol.state.offline = false
         OfflineProtocol.state.loseResponse = true
         OfflineProtocol.state.responseError = .cancelled
-        await outbox.drain(api: api)
-        XCTAssertEqual(outbox.entries(server).first?.state, .uncertain)
-        XCTAssertEqual(try store.outgoing.summary(server: server, id: "lost")?.provenance, "attempted")
-        let reopened = Outbox(store: LocalStore(url: directory.appendingPathComponent("test.store")))
         await reopened.drain(api: api)
+        XCTAssertEqual(reopened.work(server, id: id)?.state, .uncertain)
+        XCTAssertEqual(try reopened.store.outgoing.summary(server: server, id: id)?.provenance, "attempted")
+
+        let resumed = Outbox(store: LocalStore(url: directory.appendingPathComponent("test.store")))
+        XCTAssertEqual(try resumed.enqueueNotificationReply(reply, text: "Reply from notification", notificationID: "push-7", api: api), id)
+        await resumed.drain(api: api)
         XCTAssertEqual(OfflineProtocol.state.requests, [
+            "POST /api/tickets/ticket/conversation/send",
             "POST /api/tickets/ticket/conversation/send",
             "GET /api/conversation/conversations/conversation/view/receipts"
         ])
-        XCTAssertEqual(OfflineProtocol.state.writes, ["lost"])
-        XCTAssertEqual(reopened.entries(server).first?.state, .sent)
+        XCTAssertEqual(OfflineProtocol.state.writes, [id])
+        XCTAssertEqual(resumed.work(server, id: id)?.state, .sent)
     }
     func testChangedProposalHoldsBothDecisionKindsAndKeepsGuidance() async throws {
         let detail = try APIClient.decoder().decode(TicketDetail.self, from: OfflineProtocol.state.ticket)

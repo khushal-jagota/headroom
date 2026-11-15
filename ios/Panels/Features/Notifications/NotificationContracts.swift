@@ -29,3 +29,17 @@ struct NotificationOpen: Equatable, Sendable {
     let serverURL: URL
     let destination: NotificationDestination
 }
+
+/// Only message notifications carry an immutable reply destination.
+struct NotificationReply: Equatable, Sendable {
+    let serverURL: URL
+    let conversationID: String
+    let messageID: String
+    let owner: ConversationOwner
+}
+
+enum NotificationActions {
+    static let messageCategory = "PANELS_MESSAGE_REPLY"
+    static let reply = "PANELS_REPLY"
+    static let backgroundAttemptSeconds: Double = 15
+}

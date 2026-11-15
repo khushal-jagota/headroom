@@ -362,7 +362,9 @@ The app never renews the server's activity lease. Stale readings keep their samp
 time and show “No feed”. Pull-to-refresh also reloads history.
 
 Settings reads agent launch defaults, role skills, schedules and notification
-preferences. Server preferences are read-only; management remains on the web.
+preferences. Notification switches change the same server preferences as the web.
+A failed save retains the confirmed value and offers Retry. Other configuration
+remains read-only; management stays on the web.
 The Server sheet changes only this app's stored HTTPS address. Its save closure
 can be replaced by a stub. Native notification permission, APNs token handling and tap routing are implemented.
 Server delivery remains disabled until the APNs endpoint and Apple signing are

@@ -73,6 +73,32 @@ import UserNotifications
         pendingOpen = open
     }
 
+    func receivedReply(_ reply: NotificationReply?, text: String, notificationID: String) async {
+        guard let reply else {
+            routingError = "This notification cannot receive a reply. Open the conversation in Panels."
+            return
+        }
+        // A text response launches the app without requiring a SwiftUI scene.
+        // Read the same selected server that an ordinary launch uses.
+        let selected = AppStore.configuredBaseURL
+        let api = client.flatMap { LocalStore.server($0.baseURL) == LocalStore.server(selected) ? $0 : nil }
+            ?? APIClient(baseURL: selected)
+        do {
+            try Outbox.shared.enqueueNotificationReply(reply, text: text, notificationID: notificationID, api: api)
+        } catch {
+            routingError = "Reply was not sent: \(error.localizedDescription)"
+            return
+        }
+        // Persist first. iOS grants a short action-handling window, not a
+        // repeating background worker. The foreground drainer resumes leftovers.
+        await withTaskGroup(of: Void.self) { group in
+            group.addTask { await Outbox.shared.drain(api: api) }
+            group.addTask { try? await Task.sleep(for: .seconds(NotificationActions.backgroundAttemptSeconds)) }
+            _ = await group.next()
+            group.cancelAll()
+        }
+    }
+
     func consumeOpen(for serverURL: URL) -> NotificationDestination? {
         guard let open = pendingOpen else { return nil }
         pendingOpen = nil
@@ -115,7 +141,12 @@ import UserNotifications
 
 final class PanelsNotificationDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCenterDelegate {
     func application(_ application: UIApplication, didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil) -> Bool {
-        UNUserNotificationCenter.current().delegate = self
+        let center = UNUserNotificationCenter.current()
+        center.delegate = self
+        let reply = UNTextInputNotificationAction(identifier: NotificationActions.reply, title: "Reply",
+            options: [.authenticationRequired], textInputButtonTitle: "Send", textInputPlaceholder: "Reply")
+        center.setNotificationCategories([UNNotificationCategory(identifier: NotificationActions.messageCategory,
+            actions: [reply], intentIdentifiers: [])])
         return true
     }
     func application(_ application: UIApplication, didRegisterForRemoteNotificationsWithDeviceToken deviceToken: Data) {
@@ -134,9 +165,14 @@ final class PanelsNotificationDelegate: NSObject, UIApplicationDelegate, UNUserN
         // Decode before crossing actors; UNNotificationResponse stays on its
         // callback executor. UIKit's response completion must run on main too:
         // the async protocol bridge completed off-main and crashed on resume.
-        let open = isDefaultTap ? NotificationRouting.parse(response.notification.request.content.userInfo) : nil
+        let userInfo = response.notification.request.content.userInfo
+        let open = isDefaultTap ? NotificationRouting.parse(userInfo) : nil
+        let text = response.actionIdentifier == NotificationActions.reply ? (response as? UNTextInputNotificationResponse)?.userText : nil
+        let reply = text == nil ? nil : NotificationRouting.reply(userInfo)
+        let notificationID = response.notification.request.identifier
         Task { @MainActor in
             if isDefaultTap { NotificationController.shared.receivedTap(open) }
+            if let text { await NotificationController.shared.receivedReply(reply, text: text, notificationID: notificationID) }
             completionHandler()
         }
     }

@@ -129,11 +129,30 @@ class EdgeKey:
 
 
 @dataclass(frozen=True, slots=True)
+class NotificationReply:
+    """The original message destination, independent of later conversation changes."""
+
+    conversation_id: str
+    message_id: str
+    recipient_kind: str
+    recipient_id: str
+
+
+@dataclass(frozen=True, slots=True)
+class NotificationMessage:
+    sender_label: str
+    preview: str
+    reply: NotificationReply | None
+
+
+@dataclass(frozen=True, slots=True)
 class AttentionEdge:
     key: EdgeKey
     subject: Principal
     subject_label: str
     occurred_at: int
+    message: NotificationMessage | None = None
+    stage_label: str | None = None
 
     @property
     def notification_type(self) -> str:
@@ -146,6 +165,7 @@ class NotificationIntent:
     body: str
     route: str
     tag: str
+    reply: NotificationReply | None = None
 
 
 @dataclass(frozen=True, slots=True)

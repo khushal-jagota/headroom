@@ -24,6 +24,8 @@ from planner.notifications.contracts import (
     AttentionEdge,
     EdgeKey,
     NotificationIntent,
+    NotificationMessage,
+    NotificationReply,
     PendingDelivery,
     PushSubscription,
     WebPushIdentity,
@@ -372,7 +374,7 @@ def _queue_attention_deliveries(conn: sqlite3.Connection, now: int) -> int:
     subscriptions = active_subscription_ids(conn)
     decided = 0
     for row in conn.execute(
-        "SELECT subject_kind, subject_id, notification_type, generation, occurred_at "
+        "SELECT subject_kind, subject_id, notification_type, generation, occurred_at, context_json "
         "FROM notification_attention_edges WHERE decided=0 "
         "AND subject_kind IN ('ticket','manager','agent') "
         "ORDER BY occurred_at, subject_kind, subject_id, "
@@ -396,13 +398,24 @@ def _queue_attention_deliveries(conn: sqlite3.Connection, now: int) -> int:
             label_row = (_agent_label(subject_key[1]),)
         if label_row is None:
             continue
-        label = str(label_row[0])
+        context = json.loads(row["context_json"]) if row["context_json"] is not None else {}
+        label = str(context.get("subject_label", label_row[0]))
+        message_data = context.get("message")
+        message = None
+        if message_data is not None:
+            reply_data = message_data["reply"]
+            message = NotificationMessage(
+                message_data["sender_label"], message_data["preview"],
+                NotificationReply(**reply_data) if reply_data is not None else None,
+            )
         key = EdgeKey(*subject_key, int(row["generation"]))
         edge = AttentionEdge(
             key=key,
             subject=subject,
             subject_label=label,
             occurred_at=int(row["occurred_at"]),
+            message=message,
+            stage_label=context.get("stage_label"),
         )
         intent = decide_notification(
             edge,

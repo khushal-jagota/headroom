@@ -1,4 +1,5 @@
 import Foundation
+import Observation
 
 struct SettingsWorkers: Decodable, Sendable {
     let workers: [SettingsWorker]
@@ -23,9 +24,9 @@ struct SettingsSchedule: Decodable, Sendable, Identifiable {
     let workerType: String
     let kickoffNote: String
 }
-struct SettingsNotifications: Decodable, Sendable {
-    struct Subject: Decodable, Sendable {
-        struct Preference: Decodable, Sendable, Identifiable {
+struct SettingsNotifications: Codable, Sendable {
+    struct Subject: Codable, Sendable {
+        struct Preference: Codable, Sendable, Identifiable {
             let id: String
             let label: String
             let description: String
@@ -42,6 +43,18 @@ extension APIClient {
     func settingsSkills() async throws -> SettingsSkills { try await get("/api/skills") }
     func settingsSchedules() async throws -> SettingsSchedules { try await get("/api/schedules") }
     func settingsNotifications() async throws -> SettingsNotifications { try await get("/api/notifications/settings") }
+    func setNotificationPreference(subjectKey: String, type: String, enabled: Bool) async throws -> SettingsNotifications {
+        struct Body: Encodable { let enabled: Bool }
+        let endpoint = try url("/api/notifications/preferences").appending(component: subjectKey).appending(component: type)
+        var request = try self.request(endpoint)
+        request.httpMethod = "PUT"
+        request.timeoutInterval = 25
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONEncoder().encode(Body(enabled: enabled))
+        let (data, response) = try await session.data(for: request)
+        try Self.validate(response, data: data)
+        return try Self.decoder().decode(SettingsNotifications.self, from: data)
+    }
 }
 enum SettingsServerAddress {
     static func validated(_ text: String) -> URL? {
@@ -59,4 +72,42 @@ enum SettingsResources {
     static let skills = ResourceRegistration<SettingsSkills>(key: "/api/skills", versioned: false, signalRefreshInterval: ResourceLimits.fallbackSeconds)
     static let schedules = ResourceRegistration<SettingsSchedules>(key: "/api/schedules", versioned: false, signalRefreshInterval: ResourceLimits.fallbackSeconds)
     static let notifications = ResourceRegistration<SettingsNotifications>(key: "/api/notifications/settings", versioned: false, signalRefreshInterval: ResourceLimits.fallbackSeconds)
+}
+
+/// Preference writes retain the confirmed catalogue until the server accepts a change.
+@MainActor @Observable final class NotificationPreferenceEditor {
+    private struct Change {
+        let subjectKey: String
+        let type: String
+        let enabled: Bool
+    }
+    private(set) var isSaving = false
+    private(set) var error: String?
+    private var failedChange: Change?
+
+    func save(subjectKey: String, type: String, enabled: Bool, using client: APIClient, resources: ResourceOwner) async {
+        guard !isSaving else { return }
+        isSaving = true
+        error = nil
+        failedChange = nil
+        let change = Change(subjectKey: subjectKey, type: type, enabled: enabled)
+        let generation = resources.admissionGeneration
+        defer { isSaving = false }
+        do {
+            let result = try await client.setNotificationPreference(subjectKey: subjectKey, type: type, enabled: enabled)
+            guard generation == resources.admissionGeneration else { return }
+            resources.handle(SettingsResources.notifications).accept(result)
+        } catch {
+            guard generation == resources.admissionGeneration else { return }
+            self.error = "Could not change this notification. \(error.localizedDescription)"
+            failedChange = change
+        }
+    }
+
+    func retry(using client: APIClient, resources: ResourceOwner) async {
+        guard let change = failedChange else { return }
+        await save(subjectKey: change.subjectKey, type: change.type, enabled: change.enabled, using: client, resources: resources)
+    }
+
+    func resetError() { error = nil; failedChange = nil }
 }

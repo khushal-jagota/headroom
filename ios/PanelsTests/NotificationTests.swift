@@ -27,6 +27,42 @@ final class NotificationTests: XCTestCase {
         XCTAssertNil(NotificationRouting.parse(["server_url": "https://user:pass@panels.example", "route": "/#/review"]))
     }
 
+    func testReplyRequiresOriginalConversationAndSupportedRecipient() throws {
+        var payload: [AnyHashable: Any] = ["server_url": "https://panels.example", "reply": [
+            "conversation_id": "c_original", "message_id": "c_original:7", "recipient_kind": "manager", "recipient_id": "m_original"
+        ]]
+        let reply = try XCTUnwrap(NotificationRouting.reply(payload))
+        XCTAssertEqual(reply.conversationID, "c_original")
+        XCTAssertEqual(reply.owner, .manager("m_original"))
+        let work = try NotificationReplies.work(reply: reply, text: "Keep this conversation", notificationID: "push-1", selectedServer: reply.serverURL)
+        XCTAssertEqual(work.message?.conversationId, "c_original")
+        XCTAssertThrowsError(try NotificationReplies.work(reply: reply, text: "Reply", notificationID: "push-1", selectedServer: URL(string: "https://other.example")!))
+        XCTAssertThrowsError(try NotificationReplies.work(reply: reply, text: " \n", notificationID: "push-1", selectedServer: reply.serverURL))
+        payload["reply"] = ["recipient_kind": "manager", "recipient_id": "m_new"]
+        XCTAssertNil(NotificationRouting.reply(payload), "A legacy alert cannot borrow the recipient's current conversation")
+        payload["reply"] = ["conversation_id": "../other", "message_id": "source", "recipient_kind": "manager", "recipient_id": "m_original"]
+        XCTAssertNil(NotificationRouting.reply(payload))
+        payload["reply"] = ["conversation_id": "c_original", "message_id": "source", "recipient_kind": "goal", "recipient_id": "g_retired"]
+        XCTAssertNil(NotificationRouting.reply(payload))
+    }
+
+    @MainActor func testNotificationReplySaveFailureCannotLeaveDispatchableWork() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        var fail = false
+        let store = LocalStore(url: directory.appendingPathComponent("reply.store"), beforeSave: { if fail { throw CocoaError(.fileWriteUnknown) } })
+        let outbox = Outbox(store: store)
+        let api = APIClient(baseURL: URL(string: "https://reply-test.invalid")!)
+        let server = LocalStore.server(api.baseURL)
+        try store.put(server: server, kind: "draft", id: "composer", data: Data("Unfinished draft".utf8))
+        let reply = NotificationReply(serverURL: api.baseURL, conversationID: "c_original", messageID: "source:7", owner: .chief)
+        fail = true
+        XCTAssertThrowsError(try outbox.enqueueNotificationReply(reply, text: "Reply", notificationID: "push", api: api))
+        XCTAssertTrue(try store.outgoing.schedulingSummaries(server: server).isEmpty)
+        XCTAssertEqual(store.draft(server: server, id: "composer"), "Unfinished draft")
+        XCTAssertNotNil(store.outgoingError)
+    }
+
     func testRegistrationEncodesNativeContractAndSurfacesRejection() async throws {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.protocolClasses = [NativePushURLProtocol.self]

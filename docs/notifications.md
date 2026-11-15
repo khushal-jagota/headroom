@@ -31,9 +31,9 @@ The writer records the flag and the edge in the same transaction as the change t
 
 The flags are separate because the events are separate. Held as one flag, a message and an ask that arrived second would raise no edge and reach nobody. An ask awaits an answer only while its turn is open. When the turn ends, its unanswered asks clear, so the next ask can raise a new edge.
 
-A push carries a short title, a body such as "has a message for you", a link, and one replacement tag per subject, so a newer push replaces the older one on the device. It never carries the transcript, the prompt, or the text of an ask. The link opens the Ticket, Chief, or Manager it is about.
+A message push names its sender and shows a short plain-text preview. An approval push names the Ticket and the stage that waits. Both native and browser push use these words. The source write saves this context with its edge, so later messages or stage changes do not replace it. A push also carries a link and one replacement tag per subject. A newer push replaces the older one on the device. The link opens the Ticket, Chief, or Manager it is about.
 
-Changing a preference affects future edges and does not replay the past.
+The browser and iPhone Settings change the same preferences. A failed save keeps the confirmed value and shows an error. A preference change affects future edges and does not replay the past.
 
 Headroom can be installed from the browser. Pushes need HTTPS outside localhost, and on iPhone or iPad they work from the installed Home Screen app. The service worker only handles pushes. It does not cache the app, and there is no offline copy.
 
@@ -41,7 +41,7 @@ Headroom can be installed from the browser. Pushes need HTTPS outside localhost,
 
 - Only edges notify. A flag that stays true does not keep pushing, and a correction never pushes.
 - Every push passes the one policy door. Sources never call delivery, and delivery never reads source state.
-- The push payload is privacy-safe. What was said stays in Headroom.
+- Push providers and the lock screen receive the bounded message preview. The full transcript, prompt, attachment contents, and text of asks stay in Panels. System notification preview controls determine what the locked device displays.
 - Preferences are by class, not by item, so a new Manager needs no setup.
 
 ## Code
@@ -50,12 +50,12 @@ Headroom can be installed from the browser. Pushes need HTTPS outside localhost,
 - `static/service-worker.js`: the service worker.
 - `web/src/routes/NotificationsRoute.svelte`: the settings section.
 
-_Last verified: 2026-11-04._
+_Last verified: 2026-11-15._
 
 
 ## Native iOS push
 
-The native app uses Apple Push Notification service (APNs). The browser keeps its
+The native app uses Apple Push Notification service (APNs). Press and hold a message notification to reply after device authentication. The app saves that reply in its ordinary outbox, addressed to the original conversation. Offline and uncertain replies follow the existing recovery flow. The action can launch the app in the background without an extension. The system permits one bounded delivery attempt, and pending work resumes when the app next opens. The browser keeps its
 existing Web Push path. Each path records delivery separately for the same attention
 edge and notification preference. Native retries stop after five minutes or five attempts.
 No Apple credentials means no native network calls and no claim of successful delivery.
