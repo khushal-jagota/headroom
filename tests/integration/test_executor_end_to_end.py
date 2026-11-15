@@ -91,7 +91,7 @@ from planner.core.clock import RealClock
 from planner.core.contracts import CHIEF_PRINCIPAL, OWNER_PRINCIPAL, Principal, PrincipalKind
 from planner.core.db import connect, create_schema
 from planner.execution_identity import AskKind, AskReference, ExecutorIdentity
-from planner.executor.configuration import ExecutorPaths
+from planner.executor.configuration import EXECUTOR_CREDENTIAL_HEADER, ExecutorPaths
 from planner.executor.mac_outbox import OutboxEntry
 from planner.executor.mac_service import MacService
 from planner.executor.protocol import (
@@ -113,6 +113,8 @@ from planner.executor.protocol import (
 )
 from planner.executor.vps_files import InputFile
 from planner.executor.vps_transport import VpsExecutor
+from planner.machines.contracts import ORIGINAL_MAC_MACHINE_ID
+from planner.machines.executor_credentials import close_original_handover
 from planner.worker_supervision import WorkerSupervisor
 from planner.worker_supervision.config import RECORD_ROOT_ENV
 
@@ -2173,6 +2175,12 @@ def test_old_websocket_is_refused_needs_update_while_update_route_serves_it(
             origin = harness.proxy.origin
             only_id = {"X-Panels-Executor-ID": EXECUTOR_ID}
             authenticated = harness.mac.client.authentication_headers()
+            # The trial runtime's accepted "current" report closes the handover.
+            with contextlib.closing(connect(harness.endpoint.db_path)) as connection:
+                close_original_handover(
+                    connection, ORIGINAL_MAC_MACHINE_ID,
+                    authenticated[EXECUTOR_CREDENTIAL_HEADER], None,
+                )
 
             def positions() -> list[tuple[Any, ...]]:
                 with contextlib.closing(connect(harness.endpoint.db_path)) as connection:
@@ -2192,7 +2200,7 @@ def test_old_websocket_is_refused_needs_update_while_update_route_serves_it(
                         raise AssertionError("the old WebSocket was accepted")
                 except aiohttp.WSServerHandshakeError as refused:
                     assert refused.status == 403
-                # Issuance permanently closed the original ID-only authority. A
+                # Closure permanently ended the original ID-only authority. A
                 # refused unauthenticated peer cannot mark the real machine refused.
                 health = harness.endpoint.health()
                 assert health.presence == "present" and health.refusal is None
