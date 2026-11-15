@@ -1,6 +1,7 @@
 /** Canonical holder page storage. Rich dependencies enter through the goal-unit seam. */
 import type { ReadSql, TransactionSql } from '../core/database/contracts.ts';
 import { PlannerError } from '../core/contracts.ts';
+import { document_edit } from '../goals/logic/revisions.ts';
 import { parse_numeric_json, stringify_numeric_json } from '../core/http/numeric_json.ts';
 import { newId } from '../core/ids.ts';
 import type { ManagerPageDocument as PageDocument } from './contracts.ts';
@@ -30,6 +31,9 @@ export function write_page(
   manager_id: string | null,
   body: Record<string, unknown>,
 ) {
+  body = document_edit(body, read_page(tx, manager_id).page_revision);
+  if (Object.keys(body).length !== 1 || !Object.hasOwn(body, 'page'))
+    throw new PlannerError('validation', 'provide exactly the page field');
   let page: PageDocument | null = null;
   if (body.page != null) {
     try {

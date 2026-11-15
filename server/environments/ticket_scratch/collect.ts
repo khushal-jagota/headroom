@@ -1,30 +1,12 @@
 import { ChildProcesses, signal_child } from '../../lifecycle/owned_processes.ts';
 import type { SpawnOptions } from 'node:child_process';
-import { lstat, readdir, stat } from 'node:fs/promises';
+import { lstat, stat } from 'node:fs/promises';
 import { constants, homedir } from 'node:os';
 import { isAbsolute, join } from 'node:path';
-import { path_is_within } from '../../core/path_containment.ts';
-import { createReadAccess } from '../../core/database/index.ts';
 import { stop_one_shot_child } from '../../lifecycle/one_shot_children.ts';
-import type { ReadSql } from '../../core/database/contracts.ts';
 import { expand_path, resolved_path } from '../paths.ts';
 import { LEGACY_HOME_FOLDERS, SCRATCH_FOLDERS } from './configuration.ts';
-import type {
-  GitResult,
-  ScratchLayout,
-  ScratchPassOptions,
-  TicketScratch,
-  TicketStates,
-  Worktree,
-} from './contracts.ts';
-import {
-  compare_paths,
-  compare_strings,
-  finished,
-  ticket_id_of_branch,
-  ticket_id_of_name,
-  ticket_id_of_path,
-} from './logic.ts';
+import type { GitResult, ScratchLayout, ScratchPassOptions } from './contracts.ts';
 
 export function missing(error: unknown): boolean {
   return (
@@ -49,11 +31,15 @@ export function git(
   directory = options.admit_path?.(directory) ?? directory;
   return new Promise((resolve, reject) => {
     const launch_options: SpawnOptions = {
-      env: Object.fromEntries(
-        Object.entries(options.git_execution?.environment ?? process.env).filter(
-          ([key]) => !key.startsWith('GIT_'),
+      env: {
+        ...Object.fromEntries(
+          Object.entries(options.git_execution?.environment ?? process.env).filter(
+            ([key]) => !key.startsWith('GIT_'),
+          ),
         ),
-      ),
+        GIT_OPTIONAL_LOCKS: '0',
+        GIT_TERMINAL_PROMPT: '0',
+      },
       stdio: ['ignore', 'pipe', 'pipe'],
     };
     const argv = ['-C', directory, ...args];
@@ -139,95 +125,4 @@ export async function layout_for(
     admitted_database(db_path),
   ]);
   return configured === actual ? layout_under(root, home, admit_path) : null;
-}
-export function read_ticket_states(sql: ReadSql): TicketStates {
-  return new Map(
-    sql
-      .all<{ id: string; stage: string; updated_at: number }>(
-        'SELECT id, stage, updated_at FROM tickets',
-      )
-      .map((row) => [String(row.id), [String(row.stage), Number(row.updated_at)] as const]),
-  );
-}
-export async function read_ticket_states_from(db_path: string): Promise<TicketStates> {
-  const reader = createReadAccess(
-    await resolved_path(isAbsolute(db_path) ? db_path : process.cwd() + '/' + db_path),
-  );
-  try {
-    return reader.read(read_ticket_states);
-  } finally {
-    reader.close();
-  }
-}
-export async function list_worktrees(
-  repository: string,
-  options: ScratchPassOptions = {},
-): Promise<Worktree[]> {
-  const output = await git(repository, ['worktree', 'list', '--porcelain'], options);
-  if (output.returncode !== 0) return [];
-  const result: Worktree[] = [];
-  for (const block of output.stdout.trim().split('\n\n').slice(1)) {
-    let path: string | null = null,
-      branch: string | null = null;
-    for (const line of block.split('\n')) {
-      if (line.startsWith('worktree ')) path = line.slice('worktree '.length);
-      else if (line.startsWith('branch '))
-        branch = line.slice('branch '.length).replace(/^refs\/heads\//, '');
-    }
-    if (path !== null) result.push({ path, branch });
-  }
-  return result;
-}
-export async function collect_ticket_scratch(
-  layout: ScratchLayout,
-  states: TicketStates,
-  now: number,
-  options: ScratchPassOptions = {},
-): Promise<TicketScratch[]> {
-  options.signal?.throwIfAborted();
-  if (options.admit_path)
-    layout = {
-      repository: options.admit_path(layout.repository),
-      folders: layout.folders.map((path) => options.admit_path!(path)),
-    };
-  if ((await entry_stat(join(layout.repository, '.git'), true)) === null) return [];
-  const entries = new Map<string, Set<string>>(),
-    branches = new Map<string, Set<string>>();
-  const add = (map: Map<string, Set<string>>, owner: string, value: string) => {
-    if (!map.has(owner)) map.set(owner, new Set());
-    map.get(owner)!.add(value);
-  };
-  for (const folder of layout.folders) {
-    options.signal?.throwIfAborted();
-    if (!(await entry_stat(folder))?.isDirectory()) continue;
-    for (const child of await readdir(folder)) {
-      const owner = ticket_id_of_name(child);
-      if (owner !== null) add(entries, owner, join(folder, child));
-    }
-  }
-  for (const worktree of await list_worktrees(layout.repository, options)) {
-    if (layout.folders.some((folder) => path_is_within(folder, worktree.path))) continue;
-    const owner = ticket_id_of_path(worktree.path) ?? ticket_id_of_branch(worktree.branch);
-    if (owner !== null) add(entries, owner, worktree.path);
-  }
-  const local = await git(
-    layout.repository,
-    ['for-each-ref', '--format=%(refname:short)', 'refs/heads'],
-    options,
-  );
-  if (local.returncode === 0) {
-    for (const branch of local.stdout.trim().split(/\s+/).filter(Boolean)) {
-      const owner = ticket_id_of_branch(branch);
-      if (owner !== null) add(branches, owner, branch);
-    }
-  }
-  options.signal?.throwIfAborted();
-  return [...new Set([...entries.keys(), ...branches.keys()])]
-    .sort(compare_strings)
-    .filter((owner) => finished(owner, states, now))
-    .map((ticket_id) => ({
-      ticket_id,
-      entries: [...(entries.get(ticket_id) ?? [])].sort(compare_paths),
-      branches: [...(branches.get(ticket_id) ?? [])].sort(compare_strings),
-    }));
 }

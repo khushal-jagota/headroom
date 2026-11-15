@@ -3338,6 +3338,10 @@
               "type": "null"
             }
           ]
+        },
+        "expected_revision": {
+          "title": "Expected Revision",
+          "type": "integer"
         }
       },
       "title": "GoalEditBody",
@@ -3434,7 +3438,7 @@
       }
     },
     "notes": [
-      "Read panels goal show GOAL_ID --json first. Send changed fields to panels goal edit GOAL_ID on stdin. Omitted goal fields stay unchanged. Authority checks run before the existing document validator.",
+      "Read panels goal show GOAL_ID --json first. Send changed fields to panels goal edit GOAL_ID on stdin. Include expected_revision from that read to refuse a stale edit. Omitted goal fields stay unchanged. Authority checks run before the existing document validator.",
       "A kind change requires the destination main-display choice in the same request: binary needs primary_checklist_block_id, including explicit null for binary completion; quantitative needs a non-null primary_chart and completion_rule. A configured numeric rule cannot be cleared while the goal remains quantitative. Manual completed writes must agree with automatic completion. A selected checklist must exist in the resulting page, including nested layouts. If a page edit removes the selected checklist, explicitly select a replacement or binary completion. A quantitative goal cannot clear its main chart without an explicit valid display switch. Ordinary edits preserve existing and legacy display configurations.",
       "Before an item-date edit, copy the accepted page from goal show and keep every block, item ID, state, and unrelated field. Change only the intended item's deadline. The workshop examples are complete fictional pages; never replace a real page with an example page.",
       "Replace placeholder IDs with existing records. Page block and checklist-item IDs can be omitted and are generated. SegmentedView IDs are required. Saved component IDs must be nonempty and unique. Sections need exactly one of blocks or views.",

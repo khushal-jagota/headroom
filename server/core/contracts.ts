@@ -30,6 +30,7 @@ export class PlannerError extends Error {
           not_found: 404,
           diagnostic_expired: 410,
           stale_claim: 409,
+          revision_conflict: 409,
           already_running: 409,
           gateway_offline: 503,
           skill_save_incomplete: 500,

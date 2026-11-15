@@ -34,10 +34,13 @@ export async function run_page_command(invocation: Invocation): Promise<CommandR
     case 'page edit': {
       const target = route(invocation);
       const body = await stdin_object(invocation);
-      if (Object.keys(body).length !== 1 || !Object.hasOwn(body, 'page')) {
+      if (
+        !Object.hasOwn(body, 'page') ||
+        Object.keys(body).some((key) => !['page', 'expected_revision'].includes(key))
+      ) {
         fail_validation(
           invocation,
-          'Provide exactly the page field. Use null to clear the holder document.',
+          'Provide page and optional expected_revision. Use null to clear the holder document.',
           {
             recovery: 'panels page schema',
           },

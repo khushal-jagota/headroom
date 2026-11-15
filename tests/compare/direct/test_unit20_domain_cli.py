@@ -57,21 +57,7 @@ from planner.worker_types.store import read_definition, write_definition
 LIST = ROOT / "tests/compare/lists/unit-20-commands.domain.json"
 
 
-@pytest.mark.parametrize(
-    "schema_scope",
-    [
-        "ported",
-        pytest.param(
-            "goal-page",
-            marks=pytest.mark.xfail(
-                run=False, reason="expected-open P6: #928 goal/page schemas add expected_revision"
-            ),
-        ),
-    ],
-)
-def test_unit20_retained_dataset_cli(
-    tmp_path: Path, request: pytest.FixtureRequest, schema_scope: str
-) -> None:
+def test_unit20_retained_dataset_cli(tmp_path: Path, request: pytest.FixtureRequest) -> None:
     started = time.perf_counter()
     captures: dict[str, Any] = {}
 
@@ -346,9 +332,7 @@ def test_unit20_retained_dataset_cli(
             else:
                 evidence["numeric_ticket_human"].append(observed)
         evidence["numeric_ticket_proof_seconds"] = time.perf_counter() - ticket_started
-        evidence["runtime_guidance"] = _runtime_proof(
-            reference, candidate_host, tmp_path, exact_goal_page_schema=schema_scope == "goal-page"
-        )
+        evidence["runtime_guidance"] = _runtime_proof(reference, candidate_host, tmp_path)
     finally:
         for handle in reversed(handles):
             _stop_server(handle)
@@ -360,8 +344,6 @@ def _runtime_proof(
     reference: ServerHandle,
     candidate: ServerHandle,
     root: Path,
-    *,
-    exact_goal_page_schema: bool,
 ) -> dict[str, Any]:
     """Fresh shared exports pin every byte and each accepted schema language path."""
     from tests.compare.direct import unit20_domain_fixtures as fixtures
@@ -404,25 +386,13 @@ process.stdout.write(JSON.stringify({...Object.fromEntries(Object.entries(declar
     )
     steps = fixtures.direct_steps("measure-source")
     fresh_schemas = schema_declarations()
-    pending_schemas: dict[str, Any] = {}
     for name, value in fresh_schemas.items():
         observed = json.loads(exported["schemas"][name])
-        if name in {"goal", "page"} and not exact_goal_page_schema:
-            # The deferred exact-schema parameter retains these two complete assertions.
-            # No field projection changes either schema. The report keeps both raw values.
-            pending_schemas[name] = {
-                "owner": "P6",
-                "change": "#928 adds expected_revision to Goal and holder-page schemas",
-                "python": value,
-                "typescript": observed,
-            }
-        else:
-            assert observed == value, name
+        assert observed == value, name
     proof: dict[str, Any] = {
         "changed_paths": {},
         "outputs": {},
         "schema_drift": {
-            "expected_open": pending_schemas,
             "fresh_python": fresh_schemas,
             "typescript_json": exported["schemas"],
             "canonical_validated_examples": exported["validated_examples"],
@@ -830,10 +800,6 @@ def test_unit20_real_preview_cli(tmp_path: Path, request: pytest.FixtureRequest)
     "backend",
     ["tests.compare.host", "tests.compare.ts_launcher"],
     ids=["python", "typescript"],
-)
-@pytest.mark.xfail(
-    run=False,
-    reason="expected-open P6: #928 goal/page CLI schemas now include expected_revision",
 )
 def test_unit20_domain_same_python_host(
     tmp_path: Path, request: pytest.FixtureRequest, backend: str
