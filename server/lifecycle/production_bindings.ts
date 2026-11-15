@@ -1,5 +1,8 @@
 /** The only adapter-selection point, with explicit environment composition still required. */
 import type { ConversationCompositionContext } from '../core/start.ts';
+import { dirname, join } from 'node:path';
+import { expand_path } from '../environments/paths.ts';
+import { resolve_path_sync } from '../core/path_resolution.ts';
 import type {
   BackendChildFactory,
   RetainedBackendChildFactory,
@@ -184,7 +187,10 @@ export function create_production_backend_bindings(): ProductionBackendBindings 
       throw new Error('Production backend bindings belong to another server invocation');
     if (launches === undefined) {
       owner = context.database;
-      launches = production_backend_launches(`http://${HOST}:${context.config.port}`);
+      launches = production_backend_launches(
+        `http://${HOST}:${context.config.port}`,
+        join(dirname(resolve_path_sync(expand_path(context.config.db_path))), 'worker-processes'),
+      );
     }
     return launches;
   };

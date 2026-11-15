@@ -1,6 +1,8 @@
-/** Installed agents use their configured paths without filesystem canonicalization. */
+/** Provider paths stay configured; Worker records use the canonical invocation root. */
 import { accessSync, constants, statSync } from 'node:fs';
 import { expand_path } from '../environments/paths.ts';
+import { resolve_path_sync } from '../core/path_resolution.ts';
+import { RECORD_ROOT_ENV } from '../worker_supervision/config.ts';
 import { resolve_hermes_python } from '../environments/registry/launch.ts';
 import { codex_app_server_child_launch } from '../conversation/backends/codex_app_server/adapter.ts';
 import {
@@ -30,7 +32,10 @@ function on_path(name: string, supplied_path: string | undefined): string {
     }
   return name;
 }
-export function production_backend_launches(panels_server_url: string) {
+export function production_backend_launches(
+  panels_server_url: string,
+  worker_process_root?: string,
+) {
   const settings = provider_launch_settings();
   const environment = settings.environment;
   const hermes_python = resolve_hermes_python(settings.hermes_python, {});
@@ -46,7 +51,7 @@ export function production_backend_launches(panels_server_url: string) {
       override === undefined ? on_path('claude', environment.PATH) : expand_path(override),
     environment_overrides: [['PLAN_SERVER_URL', panels_server_url]],
   };
-  return {
+  const launches = {
     claude,
     codex: codex_app_server_child_launch({
       codex_executable: on_path('codex', environment.PATH),
@@ -54,6 +59,32 @@ export function production_backend_launches(panels_server_url: string) {
     }),
     hermes: hermes_acp_child_launch(hermes),
     hermes_catalog: hermes_model_catalog_launch(hermes),
+  };
+  if (worker_process_root === undefined) return launches;
+  const supervision_environment = [
+    RECORD_ROOT_ENV,
+    resolve_path_sync(expand_path(worker_process_root)),
+  ] as const;
+  return {
+    ...launches,
+    claude: {
+      ...launches.claude,
+      environment_overrides: [
+        ...(launches.claude.environment_overrides ?? []),
+        supervision_environment,
+      ],
+    },
+    codex: {
+      ...launches.codex,
+      environment_overrides: [
+        ...(launches.codex.environment_overrides ?? []),
+        supervision_environment,
+      ],
+    },
+    hermes: {
+      ...launches.hermes,
+      environment_overrides: [...launches.hermes.environment_overrides, supervision_environment],
+    },
   };
 }
 export type ProductionBackendLaunches = ReturnType<typeof production_backend_launches>;
