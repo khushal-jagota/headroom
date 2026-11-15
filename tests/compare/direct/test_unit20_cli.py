@@ -298,10 +298,6 @@ def test_unit20_same_python_host_populated_sequence(
     compare_cli_sequence(LIST, backend, tmp_path, request)
 
 
-@pytest.mark.xfail(
-    run=False,
-    reason="expected-open P5: #916 executor credential/install CLI catalog remains unported",
-)
 def test_unit20_every_help_and_group_usage(tmp_path: Path, request: pytest.FixtureRequest) -> None:
     """Fresh Click metadata selects cases; no frozen help snapshot hides Python drift."""
     started = time.perf_counter()
@@ -421,10 +417,6 @@ def test_unit20_every_help_and_group_usage(tmp_path: Path, request: pytest.Fixtu
         _stop_server(handle)
 
 
-@pytest.mark.xfail(
-    run=False,
-    reason="expected-open P5: #916 executor credential/install CLI catalog remains unported",
-)
 def test_unit20_declarations_match_fresh_python(
     tmp_path: Path, request: pytest.FixtureRequest
 ) -> None:
