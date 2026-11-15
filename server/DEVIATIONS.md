@@ -41,15 +41,15 @@ The active machine-admission comparison uses each runtime's supported identity
 and retains both full identities in its report. It proves destination selection,
 readiness, and refusal envelopes. It does not claim a same-wire protocol-26 exchange.
 
-## Pending staging port: Linux host admission
+## Linux host Node major — accepted
 
-P5 owns the Linux host admission Node version policy. Python accepts Node majors at or
-above the required major. TypeScript requires the declared major. Python reports
-`runtime requires Node 22.18.0 or newer`, while TypeScript reports
-`runtime requires Node 22.18.0 or a later Node 22` for the observed minimum-version refusal.
-The exact host comparison remains expected-open P5. Release identity, archive, frontier,
-and native probe report checks stay active. Their report records both host results.
-This is an open port boundary, not accepted final parity.
+The Manager accepts Node 22-only host admission for the native release.
+The version 2 contract fixes `node_major: 22`, and native modules use that Node ABI.
+A newer major can load those modules incorrectly. The builder and join recipe require Node 22 >=22.18.
+Python accepts majors at or above 22. TypeScript refuses a newer major and preserves the declared major.
+Its minimum-version diagnostic also names that restriction explicitly.
+The active host comparison checks this difference and parity for all other admission results.
+Its report retains both complete host result lists. No host observation is hidden.
 
 ## Native TypeScript presentation
 

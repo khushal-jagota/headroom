@@ -365,6 +365,7 @@ def _admission_rules(root: Path) -> tuple[dict[str, Any], dict[str, Any]]:
             (2, "v22.0.0", facts["feature_sets"]),
             (2, "v22.18.0", facts["feature_sets"]),
             (2, "v22.18.0", [[]]),
+            (2, "v24.0.0", facts["feature_sets"]),
         ]
     ]
     read_text = Path.read_text
@@ -810,19 +811,7 @@ def _ios_fixture(root: Path) -> dict[str, Any]:
     )
 
 
-@pytest.mark.parametrize(
-    "scope",
-    [
-        "release",
-        pytest.param(
-            "host-admission",
-            marks=pytest.mark.xfail(
-                run=False,
-                reason="expected-open P5: #916 port Linux host admission Node version policy",
-            ),
-        ),
-    ],
-)
+@pytest.mark.parametrize("scope", ["release", "host-admission"])
 def test_unit21_release_identity_archive_and_frontier(
     tmp_path: Path, request: pytest.FixtureRequest, scope: str
 ) -> None:
@@ -1157,7 +1146,12 @@ def test_unit21_release_identity_archive_and_frontier(
     )
     assert actual["native_loader"] == expected_loader
     if scope == "host-admission":
-        assert actual["admission"] == expected_admission
+        native_hosts = expected_admission["hosts"].copy()
+        assert native_hosts[1] == "runtime requires Node 22.18.0 or newer"
+        assert native_hosts[4] is None
+        native_hosts[1] = "runtime requires Node 22.18.0 or a later Node 22"
+        native_hosts[4] = "runtime requires Node 22"
+        assert actual["admission"] == {**expected_admission, "hosts": native_hosts}
     else:
         assert actual["admission"]["reports"] == expected_admission["reports"]
     built = actual["builder"]
@@ -1362,16 +1356,12 @@ def test_unit21_release_identity_archive_and_frontier(
                         "full_native_closure": "OPEN; static synthetic paths only",
                     },
                     "admission_rules": actual["admission"],
-                    "expected_open": (
-                        {
-                            "owner": "P5 platform runtime",
-                            "boundary": "Linux host admission Node version policy",
-                            "python": expected_admission["hosts"],
-                            "typescript": actual["admission"]["hosts"],
-                        }
-                        if scope == "release"
-                        else None
-                    ),
+                    "accepted_node_major_policy": {
+                        "required_major": 22,
+                        "python": expected_admission["hosts"],
+                        "typescript": actual["admission"]["hosts"],
+                        "verified": scope == "host-admission",
+                    },
                     "admission_group": group_proof,
                     "source_only_builder": built,
                     "unit_boundaries": actual["units"],
