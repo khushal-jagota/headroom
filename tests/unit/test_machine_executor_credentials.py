@@ -26,6 +26,7 @@ from planner.executor.credential_file import read_credential, write_credential
 from planner.machines.contracts import ORIGINAL_MAC_MACHINE_ID
 from planner.machines.executor_credentials import (
     authenticate_executor,
+    close_original_handover,
     executor_platform,
     issue_original_credential,
     register_machine,
@@ -33,7 +34,7 @@ from planner.machines.executor_credentials import (
 )
 
 
-def test_original_pending_handover_survives_restart_until_first_authentication(
+def test_original_pending_handover_survives_restart_and_trial_until_closure(
     tmp_path: Path, caplog: pytest.LogCaptureFixture
 ) -> None:
     database = str(tmp_path / "home.db")
@@ -61,6 +62,12 @@ def test_original_pending_handover_survives_restart_until_first_authentication(
             authenticate_executor(conn, "original", grant.credential, "original")
             == grant.machine_id
         )
+        # A trial runtime that leased, then crashed or missed the supervisor's window,
+        # sent no "current" report: its fallback keeps the old authority and the grant.
+        assert authenticate_executor(conn, "original", None, "original") == grant.machine_id
+        assert issue_original_credential(conn, str(uuid4())) == grant
+        assert caplog.text.count("credential confirmed at_ms=") == 0
+        close_original_handover(conn, grant.machine_id, grant.credential, str(uuid4()))
         row = dict(conn.execute("SELECT * FROM machine_executor_credentials").fetchone())
         assert grant.credential not in json.dumps(row)
         assert row["legacy_closed_at_ms"] >= grant.issued_at_ms
@@ -73,6 +80,9 @@ def test_original_pending_handover_survives_restart_until_first_authentication(
             authenticate_executor(conn, "original", grant.credential, "original")
             == grant.machine_id
         )
+        with pytest.raises(PlannerError):
+            authenticate_executor(conn, "original", None, "original")
+        close_original_handover(conn, grant.machine_id, grant.credential, None)
         assert caplog.text.count("credential issued at_ms=") == 1
         assert caplog.text.count("credential confirmed at_ms=") == 1
         replacement = replace_credential(conn, grant.machine_id)
@@ -86,7 +96,7 @@ def test_original_pending_handover_survives_restart_until_first_authentication(
             authenticate_executor(conn, "original", None, "original")
 
 
-def test_pending_retry_serializes_with_first_authentication_and_rotation(tmp_path: Path) -> None:
+def test_pending_retry_serializes_with_handover_closure_and_rotation(tmp_path: Path) -> None:
     database = str(tmp_path / "home.db")
     with closing(connect(database)) as conn:
         create_schema(conn)
@@ -101,16 +111,16 @@ def test_pending_retry_serializes_with_first_authentication_and_rotation(tmp_pat
             except PlannerError:
                 return None  # Acknowledgment won the race.
 
-    def confirm() -> str:
+    def confirm() -> None:
         with closing(connect(database)) as conn:
             barrier.wait()
-            return authenticate_executor(conn, "original", grant.credential, "original")
+            close_original_handover(conn, grant.machine_id, grant.credential, None)
 
     with ThreadPoolExecutor(max_workers=2) as executor:
         retry_result = executor.submit(retry)
         confirm_result = executor.submit(confirm)
         assert retry_result.result() in (None, grant)
-        assert confirm_result.result() == grant.machine_id
+        confirm_result.result()
     with closing(connect(database)) as conn:
         row = conn.execute("SELECT * FROM machine_executor_credentials").fetchone()
         assert row["legacy_closed_at_ms"] is not None and row["pending_credential"] is None

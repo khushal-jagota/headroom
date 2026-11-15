@@ -31,15 +31,19 @@ Settings → Machines shows availability, current Worker activity, and Tickets t
 
 ## Credentials and the original Mac
 
-The owner registers an extra destination and obtains one join command and its private credential. The command installs a new executor and checks an accepted lease. The owner supplies the trusted HTTPS origin of the same home that issues the credential. A credential permits executor requests for one destination. Replacing it invalidates the old credential. The home normally stores only a verifier. During the original Mac handover, it also keeps the pending credential until the first authenticated request.
+The owner registers an extra destination and obtains one join command and its private credential. The command installs a new executor and checks an accepted lease. The owner supplies the trusted HTTPS origin of the same home that issues the credential. A credential permits executor requests for one destination. Replacing it invalidates the old credential. The home normally stores only a verifier. During the original Mac handover, it also keeps the pending credential until the handover closes.
 
-The original Mac has a one-time transition from its existing authority. The first upgraded runtime requests its credential automatically and saves it privately before its work loops start. Until the first request authenticates with that credential, the original Mac can fetch the same pending credential again. Its old authority permits that fetch. The first authenticated request permanently closes the old authority and removes the pending secret. That closure survives home restarts and migration replay.
+The original Mac has a one-time transition from its existing authority. The first upgraded runtime requests its credential automatically and saves it privately before its work loops start. That runtime is an update trial, and the Mac supervisor keeps it only if it confirms in time. So the old authority stays open until the trial runtime sends a "current" update report with the credential. That report closes the handover: the old authority closes permanently, and the pending secret is removed. That closure survives home restarts and migration replay.
+
+Until the handover closes, the home accepts both the credential and the old authority. A trial that crashes or misses its window falls back to a runtime that can still lease and report the revert. Each start of an upgraded runtime asks for its credential before it uses its saved file. While the handover is open, the home returns its pending credential, or a new one after a home database restore. After closure, or when the home is unreachable, the Mac uses its saved file.
 
 The home log records issuance and closure times with the executor incarnation.
 
-Until that first authenticated request, the old trust proves the owner login and the claimed executor ID. It does not prove the physical device. Under the accepted transition exception, another device under that login can take the original Mac's one-time credential. The operator replacement command provides recovery. A lost reply or a crash before the private save permits another fetch of the same credential, including after a home restart. The home never silently issues another credential.
+Until the handover closes, the old trust proves the owner login and the claimed executor ID. It does not prove the physical device. Under the accepted transition exception, another device under that login can take the original Mac's one-time credential. The operator replacement command provides recovery. A lost reply or a crash before the private save permits another fetch of the same credential, including after a home restart. The home never silently issues another credential.
 
-After the first authenticated request, every executor request needs the credential, including update requests. A previous runtime that lacks credential support cannot regain the old authority after rollback.
+After the handover closes, every executor request needs the credential, including update requests. A previous runtime that lacks credential support cannot regain the old authority after rollback.
+
+The home closes the handover just before the trial runtime confirms to the supervisor. If the runtime dies in that short gap, the supervisor restores a runtime that the home refuses. The Mac installation runbook gives the [manual recovery](../ops/mac-executor/installation.md#recover-a-mac-locked-out-after-its-credential-handover).
 
 ## Starts and presence
 
