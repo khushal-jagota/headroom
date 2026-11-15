@@ -13,7 +13,8 @@ from __future__ import annotations
 import asyncio
 import sqlite3
 import threading
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from dataclasses import replace
 from typing import Any
 
@@ -79,7 +80,8 @@ def test_locked_acceptance_keeps_conversation_reads_and_the_fence_live_until_can
         sqlite_threads: list[int] = []
         real_connect = connect
 
-        def traced_connect(*args: Any, **kwargs: Any) -> sqlite3.Connection:
+        @contextmanager
+        def traced_connection(*args: Any, **kwargs: Any) -> Iterator[sqlite3.Connection]:
             connection = real_connect(*args, **kwargs)
 
             def trace(statement: str) -> None:
@@ -88,9 +90,12 @@ def test_locked_acceptance_keeps_conversation_reads_and_the_fence_live_until_can
                     waiting.set()
 
             connection.set_trace_callback(trace)
-            return connection
+            try:
+                yield connection
+            finally:
+                connection.close()
 
-        monkeypatch.setattr(store_module, "connect", traced_connect)
+        monkeypatch.setattr(store_module, "runtime_connection", traced_connection)
         original: Callable[..., AcceptanceReceipt | None] = getattr(store, blocked_unit)
 
         def contended(*args: Any, **kwargs: Any) -> AcceptanceReceipt | None:

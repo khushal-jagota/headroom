@@ -8,6 +8,13 @@ import { ExecutorValidationError } from './executor/protocol_errors.ts';
 import { strip } from './core/whitespace.ts';
 import type { ExecutorIdentity as WireIdentity } from './executor/wire.generated.ts';
 
+export const HOME_MACHINE_ID = '75a49e78-97de-4e28-8dc5-79646761c46f';
+export const ORIGINAL_MAC_MACHINE_ID = 'ee17b608-a449-4966-a808-a791ba7df1c7';
+
+export function legacy_machine_id(locale: string): string {
+  return locale === 'macos' ? ORIGINAL_MAC_MACHINE_ID : HOME_MACHINE_ID;
+}
+
 export interface ExecutorIdentity {
   protocol_version: number;
   application_revision: string;

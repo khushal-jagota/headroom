@@ -28,7 +28,7 @@ export type UpdateStatus = {
   attempt: UpdateAttempt | null;
   /** The running SHA. */
   app_sha: string;
-  /** A plain sentence for the failed states. */
+  /** Plain text for the existing offer, waiting, and failure details. */
   detail: string | null;
   /** Until when a lost connection still counts as updating. */
   deadline_at: string | null;

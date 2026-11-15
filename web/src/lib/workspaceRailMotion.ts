@@ -74,7 +74,9 @@ export function createRailMotionController(root: () => HTMLElement | null,
   let frozen = false;
   // Hover holds structure still, except a goal window its own answer reports as short:
   // the rows it is missing would otherwise wait for the pointer to leave.
-  const holding = () => frozen && !(read().goalRails ?? []).some((holder) => goalRailWindowShort(holder.window));
+  // A released Empty handoff also passes the hover, so its row does not wait in a stale group.
+  let handoffReleased = false;
+  const holding = () => frozen && !handoffReleased && !(read().goalRails ?? []).some((holder) => goalRailWindowShort(holder.window));
   let busy = false;
   let disposed = false;
   let manualOpen: boolean | null = null;
@@ -256,6 +258,7 @@ export function createRailMotionController(root: () => HTMLElement | null,
     capturePageRestoration();
     const heldSection = !directFold() ? holdSection() : null;
     present(next);
+    handoffReleased = false;
     await tick();
     if (disposed) return;
     const deferredPageRestoration = flushPageRestoration();
@@ -393,11 +396,8 @@ export function createRailMotionController(root: () => HTMLElement | null,
       if (disposed) return;
       pending = next;
       if (next.handoffRetained?.size) present(signalsOnly(next));
-      if (releasedHandoff) {
-        // Expiry and cancellation release the grace even while hover or motion holds structure.
-        for (const animation of animations) animation.cancel();
-        present({...next,rail:stabilizeWorkspaceRail(next.rail,read().rail)});
-      }
+      // A released handoff moves like any other change, after motion already playing.
+      if (releasedHandoff) handoffReleased = true;
       if (manualOpen !== null) {
         directSettled = activeParents(read()) === activeParents(next) ? next : null;
         if (closingBody) closingBody = signalsOnly(next);

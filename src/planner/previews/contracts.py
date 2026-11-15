@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
-from planner.tickets.contracts import TicketLocale
+from planner.machines.contracts import HOME_MACHINE_ID
 
 
 class PreviewError(Exception):
@@ -57,4 +57,4 @@ class TicketEligibility:
     ticket_id: str
     project_folder: Path | None
     terminal: bool
-    locale: TicketLocale = TicketLocale.vps
+    machine_id: str = HOME_MACHINE_ID

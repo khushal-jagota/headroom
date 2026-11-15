@@ -26,7 +26,7 @@ Chief is the special case. It is a global principal that stands above everything
 
 A Manager acts through the same routes as everyone else. It has no private API. [Authority](authority.md) limits it to its own record and its current children. It can create child Tickets, approve or send back their proposals, message them, delete them, and restart a Worker that errored. It cannot move a Ticket to another Manager. Only Khushal and Chief can.
 
-The Manager can edit its own page and held goal pages directly. Its plain goal field states its purpose. Artifacts hold supporting files. Neither replaces a page document.
+The Manager can edit its own page and held goal pages directly. A captured document revision protects an edit from replacing newer content. Its plain goal field states its purpose. Artifacts hold supporting files. Neither replaces a page document.
 
 The owner, Chief, Managers, and Workers talk through Send Message, which delivers a real prompt into the recipient's conversation. Two Managers can message each other. That is speech, not authority over each other's Tickets.
 
@@ -39,7 +39,7 @@ Some events become durable **wakes**, real prompts queued into the responsible C
 - a Ticket turn failing when an agent holds that Ticket's review;
 - a [measure source](measures.md) failing when that Manager or Chief is responsible for it.
 
-Each wake is recorded in the same write as the event that caused it, then delivered by a loop, so a crash cannot lose it. A notice that has gone stale, such as a proposal already decided, is dropped rather than sent. Replying to a wake approves nothing. Proposals are decided only through the [Ticket lifecycle](tickets.md).
+Each wake is recorded in the same write as the event that caused it, then delivered by a loop, so a crash cannot lose it. A notice that has gone stale, such as a proposal already decided, is dropped rather than sent. Backlog pauses an undelivered proposal wake until resume. Failure notices still report real events. Replying to a wake approves nothing. Proposals are decided only through the [Ticket lifecycle](tickets.md).
 
 When the event concerns Khushal rather than an agent, it reaches him through [Review](review.md) and [notifications](notifications.md) instead.
 

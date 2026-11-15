@@ -31,6 +31,10 @@ struct ReviewApproval: Codable, Sendable {
     let nextHolder: Principal
 }
 
+enum DecisionResponseError: Error, Equatable {
+    case unsupported, invalid
+}
+
 extension APIClient {
     func reviewManifest(_ workerType: String?) async throws -> ReviewWorkerManifest {
         guard let workerType else { throw APIError(status: 0, message: "This ticket has no saved workflow.") }
@@ -49,6 +53,75 @@ extension APIClient {
     func returnReview(_ ticketID: String, message: String, expectedProposalRevision: Int) async throws {
         struct Body: Encodable { let message: String; let expectedProposalRevision: Int }
         _ = try await reviewWrite("/api/tickets/\(ticketID)/reject", body: Body(message: message, expectedProposalRevision: expectedProposalRevision))
+    }
+
+    /// Encode once when the decision is saved. Recovery sends these exact bytes.
+    static func encodeReviewDecision(_ command: DecisionCommand) throws -> Data {
+        let encoder = JSONEncoder()
+        encoder.keyEncodingStrategy = .convertToSnakeCase
+        encoder.outputFormatting = [.sortedKeys]
+        return try encoder.encode(command)
+    }
+
+    func submitReviewDecision(ticketID: String, operationID: String, command: DecisionCommand,
+                              frozenBody: Data) async throws -> DecisionReceipt {
+        // Validate the full frozen intent, then send its original bytes unchanged.
+        let frozenCommand = try Self.decoder().decode(DecisionCommand.self, from: frozenBody)
+        guard frozenCommand == command else {
+            throw APIError(status: 0, message: "The saved decision does not match its frozen request.")
+        }
+        var request = try self.request(try url(decisionOperationPath(ticketID: ticketID, operationID: operationID)))
+        request.httpMethod = "POST"
+        request.cachePolicy = .reloadIgnoringLocalCacheData
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.timeoutInterval = 25
+        request.httpBody = frozenBody
+        let (data, response) = try await session.data(for: request)
+        try Self.validate(response, data: data)
+        let value = try Self.decoder().decode(DecisionOperationResponse.self, from: data)
+        // A successful POST always confirms a terminal outcome. Null remains unknown.
+        guard let receipt = try Self.validateReviewDecisionResponse(value, ticketID: ticketID,
+            operationID: operationID, command: command, allowMissingReceipt: false) else {
+            throw DecisionResponseError.invalid
+        }
+        return receipt
+    }
+
+    func lookupReviewDecision(ticketID: String, operationID: String,
+                              command: DecisionCommand) async throws -> DecisionReceipt? {
+        // Receipt absence is never inferred from an ordinary response cache.
+        let (data, _) = try await responseData(decisionOperationPath(ticketID: ticketID, operationID: operationID))
+        let value = try Self.decoder().decode(DecisionOperationResponse.self, from: data)
+        return try Self.validateReviewDecisionResponse(value, ticketID: ticketID,
+            operationID: operationID, command: command, allowMissingReceipt: true)
+    }
+
+    private func decisionOperationPath(ticketID: String, operationID: String) -> String {
+        "/api/tickets/\(ticketID)/decision-operations/\(operationID)"
+    }
+
+    static func validateReviewDecisionResponse(_ response: DecisionOperationResponse, ticketID: String,
+        operationID: String, command: DecisionCommand, allowMissingReceipt: Bool) throws -> DecisionReceipt? {
+        guard response.receiptContract == 1 else {
+            throw DecisionResponseError.unsupported
+        }
+        guard let receipt = response.receipt else {
+            if allowMissingReceipt { return nil }
+            throw DecisionResponseError.invalid
+        }
+        guard receipt.operationId == operationID, receipt.ticketId == ticketID,
+              receipt.decision == command.decision, receipt.field == command.field,
+              receipt.expectedProposalRevision == command.expectedProposalRevision else {
+            throw DecisionResponseError.invalid
+        }
+        switch receipt.outcome {
+        case "applied" where receipt.transition != nil && receipt.error == nil:
+            return receipt
+        case "refused" where receipt.transition == nil && receipt.error != nil:
+            return receipt
+        default:
+            throw DecisionResponseError.invalid
+        }
     }
 
     func transcribeReviewAudio(_ audio: Data) async throws -> String {

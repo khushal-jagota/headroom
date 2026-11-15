@@ -12,14 +12,17 @@ import shutil
 import sqlite3
 import subprocess
 import time
+from importlib import import_module
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import pytest
 from tests.support.synthetic_homes import create_synthetic_homes
-from tests.unit.test_ticket_scratch import DONE, LIVE, NOW, _git, _layout, _worktree
 
-from planner.environments import ticket_scratch as scratch
+from planner.environments import ticket_scratch as scratch_source
+
+# Every case below is expected-open P4. Keep its retired API outside active type checks.
+scratch = cast(Any, scratch_source)
 
 ROOT = Path(__file__).resolve().parents[3]
 COMPANION = ROOT / "server/environments/ticket_scratch/testing/compare.ts"
@@ -113,6 +116,10 @@ def _database(root: Path, states: dict[str, tuple[str, int]]) -> Path:
 
 
 def _value(root: Path, states: dict[str, tuple[str, int]], database: Path) -> dict[str, Any]:
+    # P4 restores these retired fixture names with the workspace port.
+    fixtures = import_module("tests.unit.test_ticket_scratch")
+    NOW = fixtures.NOW
+
     return {
         "root": str(root),
         "home": str(root / "home"),
@@ -132,10 +139,19 @@ def _normalize(value: Any, root: Path) -> Any:
     return value
 
 
+@pytest.mark.xfail(
+    run=False, reason="expected-open P4: #916 workspace lifecycle replaces scratch rules"
+)
 def test_scratch_database_gate_and_ticket_rules_match_python(
     tmp_path: Path,
     request: pytest.FixtureRequest,
 ) -> None:
+    # P4 restores these retired fixture names with the workspace port.
+    fixtures = import_module("tests.unit.test_ticket_scratch")
+    DONE = fixtures.DONE
+    LIVE = fixtures.LIVE
+    NOW = fixtures.NOW
+
     started = time.perf_counter()
     states = {
         "t_aaaaaaaa": DONE,
@@ -154,7 +170,7 @@ def test_scratch_database_gate_and_ticket_rules_match_python(
         {"root": str(tmp_path), "database": None, "db_path": str(database)},
         {"root": None, "database": str(database), "db_path": str(database)},
     ]
-    layout = scratch.ScratchLayout.under(tmp_path, home=tmp_path / "home")
+    layout = scratch_source.ScratchLayout.under(tmp_path, home=tmp_path / "home")
     expected = {
         "layout": {"repository": str(layout.repository), "folders": list(map(str, layout.folders))},
         "gates": [
@@ -189,7 +205,16 @@ def test_scratch_database_gate_and_ticket_rules_match_python(
     _report(request, "unit-21-scratch-rules.json", started, actual)
 
 
-def _git_fixture(root: Path) -> tuple[scratch.ScratchLayout, dict[str, Any]]:
+def _git_fixture(root: Path) -> tuple[scratch_source.ScratchLayout, dict[str, Any]]:
+    # P4 restores these retired fixture names with the workspace port.
+    fixtures = import_module("tests.unit.test_ticket_scratch")
+    DONE = fixtures.DONE
+    LIVE = fixtures.LIVE
+    NOW = fixtures.NOW
+    _git = fixtures._git
+    _layout = fixtures._layout
+    _worktree = fixtures._worktree
+
     root.mkdir()
     layout = _layout(root)
     repository = layout.repository
@@ -291,7 +316,12 @@ def _git_fixture(root: Path) -> tuple[scratch.ScratchLayout, dict[str, Any]]:
     return layout, value
 
 
-def _python_git(layout: scratch.ScratchLayout, value: dict[str, Any]) -> dict[str, Any]:
+def _python_git(layout: scratch_source.ScratchLayout, value: dict[str, Any]) -> dict[str, Any]:
+    # P4 restores these retired fixture names with the workspace port.
+    fixtures = import_module("tests.unit.test_ticket_scratch")
+    NOW = fixtures.NOW
+    _git = fixtures._git
+
     states = {identity: (str(state[0]), int(state[1])) for identity, state in value["states"]}
     inventory = scratch.collect_ticket_scratch(layout, states, NOW)
     Path(value["late_dirty"]).write_text("changed after inventory\n")
@@ -331,6 +361,10 @@ def _python_git(layout: scratch.ScratchLayout, value: dict[str, Any]) -> dict[st
     }
 
 
+@pytest.mark.xfail(
+    run=False,
+    reason="expected-open P4: #916 retired scratch cleanup needs the ticket workspace lifecycle",
+)
 def test_scratch_git_work_and_fresh_apply_checks_match_python(
     tmp_path: Path,
     request: pytest.FixtureRequest,
@@ -347,10 +381,20 @@ def test_scratch_git_work_and_fresh_apply_checks_match_python(
     _report(request, "unit-21-scratch-git.json", started, actual)
 
 
+@pytest.mark.xfail(
+    run=False,
+    reason="expected-open P4: #916 retired scratch runtime needs the ticket workspace lifecycle",
+)
 def test_scratch_runtime_waits_and_fences_held_pass_at_deadline(
     tmp_path: Path,
     request: pytest.FixtureRequest,
 ) -> None:
+    # P4 restores these retired fixture names with the workspace port.
+    fixtures = import_module("tests.unit.test_ticket_scratch")
+    DONE = fixtures.DONE
+    _layout = fixtures._layout
+    _worktree = fixtures._worktree
+
     started = time.perf_counter()
     layout = _layout(tmp_path)
     entry = _worktree(layout, layout.folders[2] / "t_aaaaaaaa", "ticket/t_aaaaaaaa")

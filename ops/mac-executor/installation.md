@@ -2,7 +2,9 @@
 
 The executor uses a native Panels app, one Python environment, one source checkout, and one GUI LaunchAgent.
 The app is meant to be the owner-local identity that macOS attributes permission requests to. Python remains internal to the existing installation.
-Apple Development signing does not establish a distributable or notarized release.
+New joins use an ad-hoc signature. No user certificate is required.
+The optional Apple Development route remains available for existing local installations.
+Neither route establishes a notarized release.
 Native requester attribution and consent persistence require the separate native checks below.
 The operator installs and updates it with ordinary package and service commands.
 This procedure preserves the existing persistent executor root.
@@ -12,6 +14,141 @@ It supplies no automatic updater, deployment transaction, or automatic rollback.
 Run host commands only under separate authorization for the target Mac.
 Code review and this runbook grant no live authority.
 Linux tests establish software behavior, not installed credentials, login behavior, reboot, or pre-unlock operation.
+
+
+## Join a new machine with one command
+
+This path installs a published runtime into a new private root. It never replaces an existing executor.
+Use macOS 15 or newer on Apple Silicon, Node 22 or newer, Xcode command-line tools, and a graphical login session.
+The installer signs the fixed native launcher ad hoc and checks its strict signature.
+No signing certificate or keychain identity is required.
+Developer ID distribution and notarization remain separate work.
+The GitHub CLI must be installed and authenticated for access to the release repository.
+Provider login remains a separate step. Tailscale must reach the same home's trusted HTTPS origin.
+
+On that home, use the owner login and run:
+
+```sh
+panels machine join-command "Studio Mac" --home https://HOME-ORIGIN
+```
+
+Use the same owner command for a Linux x86_64 machine. The executor reports its host platform after credential authentication.
+On Linux, the bootstrap selects the Linux executor archive and its systemd user service.
+Linux needs Node 22 or newer and an active systemd user manager. No native Mac tools are required.
+Enable user lingering if that service must start after reboot without a login.
+
+Use the trusted HTTPS origin of this same home. Check the address before you share the credential.
+The command prints one command for the new Mac and a private credential.
+Run that command on the Mac. Paste the credential at its private prompt.
+The credential never enters command arguments or shell history.
+Keep the credential private. The home stores its verifier and can revoke it through credential replacement.
+The installer checks the archive identity, installs the fixed launcher, writes private data, and starts its own LaunchAgent.
+Success requires a fresh accepted lease through the new installation's private socket, with the expected release revision.
+A failed connection remains a failed join even if the service starts.
+For the combined check, the owner must also compare the home health identity with the local identity for this machine.
+A failed join removes its new service and installation so that you can retry. If shutdown remains unknown, cleanup retains them and reports the service.
+Ad-hoc designated requirements bind launcher bytes. A replacement launcher can have a different requirement.
+Strict checks of both signatures do not prove privacy permission continuity.
+The final combined Mac check must replace the launcher through an update and check the retained privacy permissions.
+A runtime update that keeps the launcher does not prove that boundary.
+Native permission continuity, login, sleep, and reboot remain not tested here.
+
+## Register another destination or replace a credential
+
+The original Mac receives its first machine credential automatically. No operator step belongs to a successful handover.
+
+For another Mac, register a destination on the home as the owner:
+
+```sh
+umask 077
+panels machine register "Studio Mac" --json > machine-grant.json
+```
+
+Keep the grant private. It contains the credential, which the home prints once.
+
+Use its `machine_id` as the executor ID in the ordinary installation inputs. Give this executor its own persistent root.
+
+Move the grant privately to that Mac. Install it into the selected executor root before the service starts:
+
+```sh
+PLAN_EXECUTOR_ROOT="/absolute/private/executor-root" panels executor credential --file "/private/path/machine-grant.json"
+```
+
+The command writes the private credential file outside versioned runtimes. Updates retain that file.
+
+If a credential needs replacement, run this command on the home as the owner:
+
+```sh
+umask 077
+panels machine replace-credential MACHINE_ID --json > machine-grant.json
+```
+
+Install that grant into the same selected root. Restart only that executor so its clients use the replacement. Remove the transfer copy after installation.
+
+Until the handover closes, the original Mac can fetch the same pending credential with its old authority. A lost reply or a crash before the private save needs no operator step. This retry also works after a home restart.
+
+The handover closes when the trial runtime sends a credentialed "current" update report. This permanently closes the old authority, including its update requests, and removes the pending secret. The home log records issuance and closure times with the executor incarnation. A home restart or migration replay never reopens that authority. An older runtime without credential support cannot use it after rollback.
+
+If the wrong device takes the credential, use the operator replacement command.
+
+## Recover a Mac locked out after its credential handover
+
+Use this procedure for the original Mac only, and only when all of these are true:
+
+- Settings → Machines shows the Mac away after an update.
+- `$EXECUTOR_ROOT/updates/failure.json` names a reverted trial.
+- The executor logs under `$EXECUTOR_ROOT/logs` show `HTTP 403` on every lease.
+
+In this state, the home closed the handover, but the supervisor restored the previous runtime. That runtime has no credential, so the home refuses it. The new runtime is still on disk, and its credential is saved. The recovery selects the new runtime by hand.
+
+Stop the executor with the steps in [Obtain successful graceful exit](#obtain-successful-graceful-exit). The quiesce request uses the local socket, so it works without the home.
+
+Find the request ID of the trial and the folder of the new runtime:
+
+```sh
+UPDATES="$EXECUTOR_ROOT/updates"
+cat "$UPDATES/failure.json"
+ls "$UPDATES/releases"
+```
+
+Each folder name in `releases` is `<revision>-<archive sha256>`. Select the folder whose revision is the revision that the home runs. Set `REQUEST_ID` to the `request_id` value from `failure.json`. Set `RELEASE` to the full path of the selected folder.
+
+Write the selection, then remove the failure record:
+
+```sh
+"$VENV/bin/python" -I -c '
+import json, os, sys
+from pathlib import Path
+updates, request_id, release = Path(sys.argv[1]), sys.argv[2], Path(sys.argv[3])
+selection = updates / "selection.json"
+previous = json.loads(selection.read_text())["runtime_path"] if selection.exists() else None
+record = {
+    "request_id": request_id,
+    "application_revision": release.name.partition("-")[0],
+    "runtime_path": str(release),
+    "previous_runtime_path": previous,
+}
+temporary = updates / ".selection.json.recovery"
+temporary.write_text(json.dumps(record, sort_keys=True) + "\n")
+os.replace(temporary, selection)
+' "$UPDATES" "$REQUEST_ID" "$RELEASE"
+rm "$UPDATES/failure.json"
+```
+
+Remove `failure.json` after the selection is written. If it stays, the new runtime reports the trial as reverted, not current.
+
+Start the job again:
+
+```sh
+launchctl bootstrap "gui/$(id -u)" "$PLIST"
+launchctl kickstart "$SERVICE"
+```
+
+Check that Settings → Machines shows the Mac present at the new revision.
+
+### After a home database restore
+
+A home database restore can remove the home's copy of the Mac credential. An upgraded runtime asks the home for its credential at each start, so the next update needs no Mac step. A runtime from before that change uses its saved file without a check. If the next update installs such a runtime, every trial gets `HTTP 403` and reverts. In that case, remove `$EXECUTOR_ROOT/machine-credential.json` before the next Mac update.
 
 ## Record inputs before changes
 
@@ -75,7 +212,7 @@ Set operator-reviewed values for these inputs:
 - `EVIDENCE`: an absolute private directory outside the source, environment, and persistent executor root.
 - `PANELS_SERVER_URL`: the HTTPS app origin of the intended VPS app.
 - `EXECUTOR_ID`: the logical executor ID that the VPS is configured to admit.
-- `LOCAL_IDENTITY`: the SHA-1 hash of the owner's Apple Development signing identity, as listed by `security find-identity -v -p codesigning`.
+- `LOCAL_IDENTITY`: `-` for the default ad-hoc route. An explicit legacy Apple Development route uses its certificate SHA-1 fingerprint.
 
 Use the existing Tailscale Serve route only when it targets the intended endpoint and durable state.
 The owner's normal app URL targets production. It does not select an isolated verification database.
@@ -137,12 +274,12 @@ PY
 
 Check that the resolved commit equals the reviewed full SHA.
 Record the constants printed from the exact candidate source; they govern compatibility.
-At the time of writing the candidate uses wire protocol 22, outbox format 5 and
+The Worker supervision candidate uses wire protocol 24, outbox format 5 and
 command journal format 1. Both Mac and VPS must match the candidate's wire protocol
 before work, and the existing `spool/outbox.sqlite3` and `spool/commands.sqlite3` must
 pass the candidate's SQLite version checks below. A missing command journal is created
 at start; a previous runtime ignores it. Plan the VPS and Mac updates together when the
-protocol changes. Protocol 22 replaced the WebSocket of protocol 21: a protocol-21 Mac
+protocol changes. A protocol-23 Mac
 is refused with "Mac needs update" and can still update itself through the update route.
 
 Each new native Worker start installs the canonical database skills into the selected provider's normal skills home.
@@ -316,19 +453,19 @@ There is no reader or converter for other journal formats.
 
 Run these commands only in an authorized window on the Mac. Source approval alone does not authorize compilation, signing, installation, prompts, or service changes.
 
-Use the normal owner account. Do not copy or export signing keys.
-Sign with the owner's Apple Development identity, not a Developer ID Application identity.
-Use it only for the owner-local route. Do not claim outside-App-Store distribution.
-A later distribution channel or certificate change needs a separate decision.
+Use the normal owner account. The default route signs the launcher ad hoc and needs no user certificate.
+An explicit legacy Apple Development route can retain its existing identity. Do not copy or export its signing keys.
+Neither route establishes Developer ID distribution or notarization. Those remain separate work.
 
 After source and environment preparation, choose an absent candidate path outside the installed app:
 
 ```sh
 CANDIDATE_APP="$EVIDENCE/Panels.app"
+LOCAL_IDENTITY="${LOCAL_IDENTITY:--}"
 "$VENV/bin/python" -I -B -m planner.environments.mac_app build \
   --home "$HOME" --output "$CANDIDATE_APP" --revision "$CANDIDATE_SHA" \
   --python "$VENV/bin/python" --installed-app "$APP" --bundle-id "$BUNDLE_ID"
-/usr/bin/codesign --force --sign "$LOCAL_IDENTITY" "$CANDIDATE_APP"
+/usr/bin/codesign --force --sign "$LOCAL_IDENTITY" --timestamp=none "$CANDIDATE_APP"
 "$VENV/bin/python" -I -B -m planner.environments.mac_app verify \
   --app "$CANDIDATE_APP" --identity "$LOCAL_IDENTITY" \
   --bundle-id "$BUNDLE_ID" --python "$VENV/bin/python" > "$EVIDENCE/candidate-signature.txt"
@@ -337,9 +474,10 @@ CANDIDATE_APP="$EVIDENCE/Panels.app"
 The build needs native arm64 macOS, Xcode Command Line Tools, and the selected Python environment at its final path.
 It creates a new candidate and refuses replacement of the selected installed app or the default installed app.
 A failed build leaves its partial candidate for inspection.
-The compiler can apply an ad hoc signature. That signature is not accepted for installation.
-The explicit development signature replaces it. There is no ad hoc fallback.
-If signing requests keychain interaction, stop and return the decision to the owner. Do not change keychain policy.
+The explicit command applies the selected signature and the verifier checks it strictly.
+The default ad-hoc route needs no keychain identity.
+If an explicit certificate route requests keychain interaction, stop and return the decision to the owner.
+Do not change keychain policy.
 
 The default bundle identifier is `com.panels.executor.app`. The explicit `--bundle-id` selects another identity.
 The native executable and display name remain `Panels`.
@@ -348,7 +486,7 @@ It forwards arguments without a shell and preserves the process identity and exi
 The app contains no copied Python runtime or provider dependencies.
 Do not re-sign those external dependencies or infer attribution from their ancestry alone.
 
-For an update, preserve the old signed app before replacement. Verify both signatures and mutual designated requirements:
+For an update, preserve the old signed app before replacement. Verify both strict signatures and the same bundle identity:
 
 ```sh
 "$VENV/bin/python" -I -B -m planner.environments.mac_app verify \
@@ -357,7 +495,11 @@ For an update, preserve the old signed app before replacement. Verify both signa
   > "$EVIDENCE/update-signature-compatibility.txt"
 ```
 
-A missing or invalid previous signature stops an update. A first installation has no previous signed app, so it omits `--previous`.
+A missing or invalid previous signature stops an update. A first installation omits `--previous`.
+The certificate route also checks mutual designated requirements.
+Ad-hoc requirements bind launcher bytes, so a replacement can have a different requirement.
+Strict checks of both ad-hoc signatures do not prove privacy permission continuity.
+The native trial below must check that continuity after the update replaces the launcher.
 Consent granted to an executor that ran without the app does not carry over to it.
 Never invent a compatible requirement or weaken the signature check to continue.
 Use `--previous` only for an update of the same installation, not for a new installation identity.
@@ -459,17 +601,21 @@ permission and question callbacks. Check that an ordinary Worker reads canonical
 writes an artifact through `PLAN_TICKET_FILES_DIR`, and that the served Ticket link opens it.
 Check a short network loss and a VPS restart against
 [the restart rules](../../docs/executor.md).
-A Mac service restart must also establish that launchd ends its provider processes;
-scripted tests cannot prove that host behavior. As a backstop, the executor records its
-agent processes in `$EXECUTOR_ROOT/run/agent-processes.json`; at its next start, before
-its first lease, it sends SIGTERM and then, after 10 seconds, SIGKILL to each recorded
-process whose start time still matches. Mac application previews remain
+A Mac service restart must also establish what happens to its provider processes.
+Scripted Linux tests cannot prove that host behavior. The shared Worker supervisor
+records per-Worker process ownership under `$EXECUTOR_ROOT/run/worker-processes` and
+reconciles it before the first lease. Unknown cleanup fences the affected Ticket, and the lease reports its reason. Unrelated Tickets continue. On macOS, signals to recorded survivors require an immediate PID and microsecond
+birth check. A small check-to-signal race remains. Unknown cleanup stays visible. A tool
+that detaches before observation can escape. The first upgraded start attempts cleanup from the older `agent-processes.json`
+once under its original recorded-start rule, then removes that old file. Any survivor
+becomes an unassigned PID notice. It does not fence a Ticket or authorize another signal.
+Mac application previews remain
 unavailable. Retain evidence separately from production and preserve pending bytes.
 This runbook does not authorize changing application routes or account policy.
 
 Code paths: `src/planner/environments/mac_executor.py`, `src/planner/executor/cli.py`,
 `src/planner/executor/mac_outbox.py`, `src/planner/executor/mac_mailbox.py`,
-`src/planner/executor/mac_agent_processes.py`, `requirements-build.txt`, `requirements-executor.txt`,
+`src/planner/worker_supervision/`, `requirements-build.txt`, `requirements-executor.txt`,
 `agent_backends/package-lock.json`.
 
 ## Narrow permission setup and native evidence
@@ -496,7 +642,7 @@ The native verification window must include these exact boundaries:
 3. Start through the reviewed LaunchAgent. Observe the actual responsible requester during the first authorized access.
 4. Run an ordinary selected-provider task whose real tool child accesses that resource. Retain process-chain and requester evidence.
 5. Repeat the same access in the same run, after provider restart, and after an authorized executor restart.
-6. Repeat after one ordinary locally signed app update. Require the new app to satisfy the old designated requirement and vice versa.
+6. Repeat after an update that replaces the native launcher. Check actual privacy permission continuity for the ad-hoc route. A runtime-only update does not prove this. For the explicit certificate route, also require mutual designated requirements.
 7. Repeat after one compatible native Python update in the retained environment. Do not assume a path alone preserves consent.
 8. Check separately authorized denial and another resource. Use owner-controlled consent or a disposable test account, without resetting existing grants.
 

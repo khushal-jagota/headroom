@@ -124,6 +124,7 @@ export function derive(
       (snapshots ? 't.workflow_json,' : '') +
       (integrity ? 't.integrity_error_reason,' : '') +
       (version < 7 ? 't.priority,' : '') +
+      (hasColumn(sql, 'tickets', 'machine_id') ? 't.machine_id,' : '') +
       't.title,t.worker_type,t.stage,t.deadline,t.manager_kind,t.manager_id,t.conversation_id,t.ceiling,t.locale,t.worker_step_claim,t.pending_proposal,t.is_backlogged,t.ceiling_holder,t.pending_proposal_revision,t.updated_at,t.created_at,t.recap' +
       (version >= 11 ? ',t.recap_updated_at,t.recap_stage_changed' : '');
     const t = sql.get<Row>(
@@ -159,6 +160,7 @@ export function derive(
         'updated_at',
         'deadline',
         'locale',
+        'machine_id',
       ])
         value[key] = t[key];
       Object.assign(value, {
@@ -218,6 +220,7 @@ export function derive(
       'conversation_id',
       'ceiling',
       'locale',
+      'machine_id',
     ])
       value[key] = t[key];
     if (version < 7) value.priority = t.priority;

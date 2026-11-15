@@ -145,6 +145,15 @@ def test_unit21_fresh_schema_bootstrap_is_complete_unique_and_atomic(
         assert first["preferences"] == [
             dict(row) for row in connection.execute("SELECT * FROM notification_preferences")
         ]
+        expected_machines = [
+            dict(row) for row in connection.execute("SELECT * FROM machines ORDER BY machine_id")
+        ]
+        expected_credentials = [
+            dict(row)
+            for row in connection.execute(
+                "SELECT * FROM machine_executor_credentials ORDER BY machine_id"
+            )
+        ]
         expected_revision = connection.execute("SELECT revision FROM navigation_meta").fetchone()[0]
         expected_pragmas = {
             name: connection.execute(f"PRAGMA {name}").fetchone()[0]
@@ -153,6 +162,8 @@ def test_unit21_fresh_schema_bootstrap_is_complete_unique_and_atomic(
     for state in actual["states"]:
         assert state["schema"] == expected_schema
         assert state["inventory"] == inventory
+        assert state["machines"] == expected_machines
+        assert state["machine_credentials"] == expected_credentials
         assert state["file_pragmas"] == expected_pragmas
         assert state["revision"] == {"version_num": seed["alembicRevision"]}
         assert state["navigation"]["schema_version"] == 7

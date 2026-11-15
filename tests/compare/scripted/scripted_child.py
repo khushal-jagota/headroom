@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any, NotRequired, TypedDict, Unpack, cast
 
 from planner.conversation.backends import contracts as backend
+from planner.conversation.child_custody import process_identity
 from planner.conversation.contracts import (
     AnswerFate,
     ComposerCatalogEntry,
@@ -315,6 +316,13 @@ class ScriptedChild(backend.BackendChild):
         *,
         vendor_session_cursor: str | None,
     ) -> None:
+        record_custody = getattr(self.sink, "record_local_child_custody", None)
+        if record_custody is not None:
+            process = await self._process()
+            identity = await asyncio.to_thread(process_identity, process.pid)
+            if identity is None:
+                raise RuntimeError("Cannot establish the scripted child process identity")
+            await record_custody(identity)
         await self._request(
             "start", resolved_start=resolved_start, vendor_session_cursor=vendor_session_cursor
         )

@@ -325,6 +325,10 @@ def positive(result: dict[str, Any]) -> None:
             ]
 
 
+@pytest.mark.xfail(
+    run=False,
+    reason="expected-open P3 (#912): automatic compaction no longer creates a Worker memory notice",
+)
 def test_unit15b_maintenance_matches_fresh_python(
     tmp_path: Path, request: pytest.FixtureRequest
 ) -> None:

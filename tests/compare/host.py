@@ -46,6 +46,7 @@ from planner.core.config import Config, load_config
 from planner.core.contracts import OWNER_PRINCIPAL, Principal, PrincipalKind
 from planner.core.db import connect
 from planner.core.server import create_app
+from planner.machines.data import legacy_machine_id
 from planner.manager_wakes.runtime import ManagerWakeLoop
 from planner.measure_sources.registry import build_participants
 from planner.measure_sources.schedule_loop import SourceScheduleLoop
@@ -274,7 +275,7 @@ def _scripted_routes(
                 "ON CONFLICT(machine_id,backend_key) DO UPDATE "
                 "SET snapshot_json=excluded.snapshot_json",
                 (
-                    body["machine"],
+                    legacy_machine_id(body["machine"]),
                     body["backend"],
                     json.dumps(
                         {
@@ -492,7 +493,7 @@ def build_app(config: Config) -> FastAPI:
     from planner.conversation.storage import ConversationStore
     from planner.conversation.system import SqliteProcessConversationSystem
 
-    # Constructor seams receive the shared clock before reconciliation or autonomous work.
+    # Persist deterministic wall time. Automatic-start pacing uses the real monotonic clock.
     patch(
         "planner.conversation.runtime_composition.ConversationStore",
         partial(ConversationStore, integer_now=clock.now_unix),
@@ -502,7 +503,6 @@ def build_app(config: Config) -> FastAPI:
         partial(
             SqliteProcessConversationSystem,
             unix_time_now=clock.now_unix,
-            monotonic_now=clock.now_unix,
         ),
     ).start()
 

@@ -3,21 +3,36 @@ import SwiftUI
 struct AllGoalsView: View {
     @Environment(AppStore.self) private var store
     @Environment(\.scenePhase) private var scenePhase
-    @State private var goals: [GoalRecord] = []
-    @State private var managers: [ManagerSummary] = []
-    @State private var projects: [GoalJSON] = []
-    @State private var sessions: [String: PageSession] = [:]
+    @State private var goalsHandle: ResourceHandle<GoalsResponse>?
+    @State private var managersHandle: ResourceHandle<ManagersResponse>?
+    @State private var projectsHandle: ResourceHandle<GoalJSON>?
+    private var goals: [GoalRecord] { goalsHandle?.value?.goals ?? [] }
+    private var managers: [ManagerSummary] { managersHandle?.value?.managers ?? [] }
+    private var projects: [GoalJSON] { projectsHandle?.value?["projects"].array ?? [] }
+    @State private var sessions = PageSessionCollection()
     @State private var filters = GoalFilters()
     @State private var draft = GoalFilters()
-    @State private var selectedFilter: Int?
-    @State private var sheet = false
-    @State private var loaded = false
-    @State private var nextRefreshAt: Double?
-    @State private var error: String?
-    private let columns = ["Goal", "Current", "Target", "Project", "Due", "State"]
+    private enum FilterColumn: Int, CaseIterable, Identifiable {
+        case goal, current, target, project, due, state
+        var id: Int { rawValue }
+        var title: String {
+            switch self {
+            case .goal: "Goal"
+            case .current: "Current"
+            case .target: "Target"
+            case .project: "Project"
+            case .due: "Due"
+            case .state: "State"
+            }
+        }
+    }
+    @State private var selectedFilter: FilterColumn?
+    private var loaded: Bool { goalsHandle?.value != nil }
+    private var nextRefreshAt: Double? { goalsHandle?.value?.nextRefreshAt }
+    private var error: String? { goalsHandle?.error ?? managersHandle?.error ?? projectsHandle?.error }
     private func readings(_ goal: GoalRecord) -> (Double?, Double?) {
         if let checklist = GoalPresentation.primaryChecklist(goal) { return (Double(checklist["items"].array.filter { $0["state"].text == "done" }.count), Double(checklist["items"].array.count)) }
-        guard let session = sessions[goal.id], let block = GoalPresentation.primaryChart(goal), block.kind != "binary" else { return (nil, nil) }
+        guard let session = sessions.session(goal.id, server: store.baseURL), let block = GoalPresentation.primaryChart(goal), block.kind != "binary" else { return (nil, nil) }
         let projection = session.readings?.charts[block.id] ?? .null
         let data = GoalChartPresentation.data(block, values: session.readings?.values ?? [], range: "all", projection: projection)
         let headline = GoalChartPresentation.headline(block, data: data, projection: projection)
@@ -28,12 +43,12 @@ struct AllGoalsView: View {
             VStack(alignment: .leading, spacing: 24) {
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 8) {
-                        ForEach(columns.indices, id: \.self) { column in
-                            Button { draft = filters; selectedFilter = column; sheet = true } label: {
-                                HStack(spacing: 6) { Text(columns[column]); Image(systemName: "line.3.horizontal.decrease").font(.system(size: 10)) }
+                        ForEach(FilterColumn.allCases) { column in
+                            Button { draft = filters; selectedFilter = column } label: {
+                                HStack(spacing: 6) { Text(column.title); Image(systemName: "line.3.horizontal.decrease").font(.system(size: 10)) }
                                     .font(.footnote).padding(.horizontal, 12).frame(minHeight: 36)
-                                    .background(filters.active(column) ? PanelsTheme.accentSurface : PanelsTheme.raised, in: Capsule())
-                            }.buttonStyle(.plain).foregroundStyle(filters.active(column) ? PanelsTheme.accentText : PanelsTheme.muted)
+                                    .background(filters.active(column.rawValue) ? PanelsTheme.accentSurface : PanelsTheme.raised, in: Capsule())
+                            }.buttonStyle(.plain).foregroundStyle(filters.active(column.rawValue) ? PanelsTheme.accentText : PanelsTheme.muted)
                         }
                     }
                 }
@@ -49,9 +64,10 @@ struct AllGoalsView: View {
         }.panelsScreen().panelsNavigationTitle("All goals").navigationBarTitleDisplayMode(.inline).toolbar(.visible, for: .navigationBar)
             .screenLoadState("goals", hasContent: loaded, error: error) { await load() }
             .panelsRefreshable { await load() }
-            .task(id: "\(store.baseURL):\(store.revision):\(scenePhase == .active)") { if scenePhase == .active { await load() } }
-            .modifier(GoalBoundaryRefresh(at: nextRefreshAt, refresh: load))
-            .sheet(isPresented: $sheet) { filterSheet }
+            .task(id: "\(store.baseURL):\(scenePhase == .active)") { if scenePhase == .active { await follow() } }
+            .task(id: "\(store.baseURL):\(goals.map(\.id)):\(scenePhase == .active)") { if scenePhase == .active { await followReadings() } }
+            .onChange(of: sessions.unfinishedKeys) { _, _ in sessions.prune() }
+            .sheet(item: $selectedFilter) { column in filterSheet(column) }
             .accessibilityIdentifier("all-goals-screen")
     }
     private func row(_ goal: GoalRecord) -> some View {
@@ -82,29 +98,29 @@ struct AllGoalsView: View {
         if let block = GoalPresentation.primaryChart(goal), block.kind != "binary" { return GoalChartPresentation.format(block, value) }
         return value.map { GoalChartPresentation.number($0) } ?? "—"
     }
-    private var filterSheet: some View {
+    private func filterSheet(_ column: FilterColumn) -> some View {
         NavigationStack {
             Form {
-                switch selectedFilter {
-                case 0: TextField("Goal contains", text: $draft.goal)
-                case 1: numberFilter($draft.current)
-                case 2: numberFilter($draft.target)
-                case 3:
+                switch column {
+                case .goal: TextField("Goal contains", text: $draft.goal)
+                case .current: numberFilter($draft.current)
+                case .target: numberFilter($draft.target)
+                case .project:
                     Picker("Project", selection: $draft.project) {
                         Text("All projects").tag("all")
                         ForEach(projects, id: \.id) { Text($0["name"].text).tag($0.id) }
                     }.pickerStyle(.inline)
-                case 4:
+                case .due:
                     filterDate("From", value: $draft.dueFrom)
                     filterDate("To", value: $draft.dueTo)
-                default:
+                case .state:
                     Picker("State", selection: $draft.state) { Text("All").tag("all"); Text("Active").tag("active"); Text("Inactive").tag("inactive") }
                     Picker("Completion", selection: $draft.completion) { Text("All").tag("all"); Text("Done").tag("done"); Text("Not done").tag("open") }
                 }
-            }.panelsScreen().navigationTitle(columns[selectedFilter ?? 0]).navigationBarTitleDisplayMode(.inline)
+            }.panelsScreen().navigationTitle(column.title).navigationBarTitleDisplayMode(.inline)
                 .toolbar {
-                    ToolbarItem(placement: .cancellationAction) { Button("Clear") { clear() } }
-                    ToolbarItem(placement: .confirmationAction) { Button("Apply") { filters = draft; sheet = false } }
+                    ToolbarItem(placement: .cancellationAction) { Button("Clear") { clear(column) } }
+                    ToolbarItem(placement: .confirmationAction) { Button("Apply") { filters = draft; selectedFilter = nil } }
                 }
         }.presentationDetents([.medium, .large]).preferredColorScheme(.dark)
     }
@@ -125,29 +141,36 @@ struct AllGoalsView: View {
             }
         }
     }
-    private func clear() {
-        switch selectedFilter {
-        case 0: draft.goal = ""
-        case 1: draft.current = .init()
-        case 2: draft.target = .init()
-        case 3: draft.project = "all"
-        case 4: draft.dueFrom = ""; draft.dueTo = ""
-        default: draft.state = "all"; draft.completion = "all"
+    private func clear(_ column: FilterColumn) {
+        switch column {
+        case .goal: draft.goal = ""
+        case .current: draft.current = .init()
+        case .target: draft.target = .init()
+        case .project: draft.project = "all"
+        case .due: draft.dueFrom = ""; draft.dueTo = ""
+        case .state: draft.state = "all"; draft.completion = "all"
         }
     }
+    private func follow() async {
+        let list = store.resources.handle(GoalResources.list), managers = store.resources.handle(GoalResources.managers), projects = store.resources.handle(GoalResources.projects)
+        goalsHandle = list; managersHandle = managers; projectsHandle = projects
+        list.acquire(); managers.acquire(); projects.acquire()
+        defer { list.release(); managers.release(); projects.release() }
+        await load()
+        do { try await Task.sleep(for: .seconds(365 * 24 * 60 * 60)) } catch { }
+    }
+    private func followReadings() async {
+        let active = sessions.update(goals, api: store.client, resources: store.resources)
+        active.forEach { $0.acquire() }; defer { active.forEach { $0.release() } }
+        await withTaskGroup(of: Void.self) { group in
+            for session in active { group.addTask { await session.refresh() } }
+        }
+        do { try await Task.sleep(for: .seconds(365 * 24 * 60 * 60)) } catch { }
+    }
     private func load() async {
-        let api = store.client
-        do {
-            async let response = api.goals()
-            async let managerResponse = api.managers()
-            async let projectResponse = api.goalProjects()
-            let (list, projects, managers) = try await (response, projectResponse, managerResponse); try Task.checkCancellation()
-            guard api.baseURL == store.baseURL else { return }
-            self.managers = managers.managers; goals = list.goals; nextRefreshAt = list.nextRefreshAt; self.projects = projects["projects"].array; loaded = true; error = nil
-            for goal in goals { sessions[goal.id] = PageSession.session(id: goal.id, api: api, initial: goal) }
-            await withTaskGroup(of: Void.self) { group in
-                for session in sessions.values { group.addTask { await session.refresh() } }
-            }
-        } catch { if !Task.isCancelled { self.error = error.localizedDescription } }
+        async let list: () = goalsHandle?.refresh() ?? ()
+        async let managers: () = managersHandle?.refresh() ?? ()
+        async let projects: () = projectsHandle?.refresh() ?? ()
+        _ = await (list, managers, projects)
     }
 }

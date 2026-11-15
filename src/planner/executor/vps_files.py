@@ -19,7 +19,10 @@ from pathlib import Path
 from uuid import uuid4
 
 from planner.conversation.message_content import MessageFile
-from planner.conversation.message_files import ConversationMessageFiles, MessageFileMissing
+from planner.conversation.message_files import (
+    ConversationMessageFiles,
+    MessageFileMissing,
+)
 from planner.core.contracts import ErrorCode, PlannerError
 from planner.core.task_settlement import run_on_worker_thread
 from planner.execution_identity import ExecutorIdentity
@@ -59,7 +62,7 @@ class VpsFiles:
         self.inbox = inbox
         self.mailbox = mailbox
         self.message_files = message_files
-        self.staging = Path(db_path).resolve().parent / "executor-uploads"
+        self.staging = inbox.store.upload_staging_root
 
     async def upload(
         self,
@@ -71,10 +74,12 @@ class VpsFiles:
     ) -> None:
         """Route 5. Bytes are in staging when this returns; the caller keeps ownership of
         the install until it ends, so a dropped request never leaves it half done."""
-        del identity  # Fenced by the route; authority is the child's assignment.
+        await run_on_worker_thread(self.inbox.store.require_sender, identity)
         manifest = upload.manifest
         if manifest.sha256 != sha256 or content_length != manifest.byte_count:
-            raise PlannerError(ErrorCode.validation, "upload does not match its manifest")
+            raise PlannerError(
+                ErrorCode.validation, "upload does not match its manifest"
+            )
         try:
             await run_on_worker_thread(self.inbox.authorize_upload, upload)
         except ValueError as error:
@@ -82,7 +87,10 @@ class VpsFiles:
         await run_on_worker_thread(self.staging.mkdir, parents=True, exist_ok=True)
         incoming = self.staging / f".incoming-{uuid4().hex}"
         descriptor = await run_on_worker_thread(
-            os.open, incoming, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600
+            os.open,
+            incoming,
+            os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+            0o600,
         )
         try:
             try:
@@ -90,22 +98,32 @@ class VpsFiles:
                 iterator = aiter(chunks)
                 while True:
                     try:
-                        chunk = await asyncio.wait_for(anext(iterator), FILE_TRANSFER_STALL_SECONDS)
+                        chunk = await asyncio.wait_for(
+                            anext(iterator), FILE_TRANSFER_STALL_SECONDS
+                        )
                     except StopAsyncIteration:
                         break
                     except TimeoutError as error:
                         raise PlannerError(
-                            ErrorCode.retry_later, "the upload stopped moving; send it again"
+                            ErrorCode.retry_later,
+                            "the upload stopped moving; send it again",
                         ) from error
                     if count + len(chunk) > manifest.byte_count:
-                        raise PlannerError(ErrorCode.validation, "upload exceeds its manifest")
+                        raise PlannerError(
+                            ErrorCode.validation, "upload exceeds its manifest"
+                        )
                     for start in range(0, len(chunk), FILE_CHUNK_BYTES):
                         piece = chunk[start : start + FILE_CHUNK_BYTES]
                         await run_on_worker_thread(_write_all, descriptor, piece)
                         digest.update(piece)
                         count += len(piece)
-                if count != manifest.byte_count or digest.hexdigest() != manifest.sha256:
-                    raise PlannerError(ErrorCode.validation, "upload is short or corrupt")
+                if (
+                    count != manifest.byte_count
+                    or digest.hexdigest() != manifest.sha256
+                ):
+                    raise PlannerError(
+                        ErrorCode.validation, "upload is short or corrupt"
+                    )
                 await run_on_worker_thread(os.fsync, descriptor)
             finally:
                 os.close(descriptor)

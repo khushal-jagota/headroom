@@ -4,6 +4,7 @@ struct WorkspaceView: View {
     @Environment(\.dynamicTypeSize) private var typeSize
     @State private var visible = false
     @Environment(AppStore.self) private var store
+    @Environment(\.scenePhase) private var scenePhase
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var groups: [String: [WorkspaceTicketGroup]] = [:]
     @State private var managers: [ManagerSummary] = []
@@ -19,8 +20,9 @@ struct WorkspaceView: View {
     @State private var settledRequestedOffset = 0
     @State private var settledError: String?
     @State private var parentsPage: (anchor: String, direction: String)?
-    @State private var goals: GoalsResponse?
-    @State private var goalsError: String?
+    @State private var goalsHandle: ResourceHandle<GoalsResponse>?
+    private var goals: GoalsResponse? { goalsHandle?.value }
+    private var goalsError: String? { goalsHandle?.error }
 
     private var hasContent: Bool { store.chief != nil || store.workspaceLoaded }
     private var refreshError: String? { store.errors["Navigation"]?.message ?? store.errors["Chief"]?.message ?? goalsError }
@@ -91,15 +93,19 @@ struct WorkspaceView: View {
         .onChange(of: workspaceWindows) { _, windows in if visible { store.setNavigationDemand("workspace", windows) } }
         .onChange(of: store.view?.contentVersion) { _, _ in if visible { updateGroups() } }
         .onChange(of: store.baseURL) { _, _ in
-            groups = [:]; managers = []; settled = nil; parentsPage = nil; goals = nil; goalsError = nil
+            groups = [:]; managers = []; settled = nil; parentsPage = nil; goalsHandle = nil
             settledError = nil; settledOpen = false; settledRequestedOffset = 0
         }
         // Settled rows keep their paged list read, only while the section is open, and
         // read again when the view's settled count changes or the connection recovers.
         .task(id: "\(store.baseURL.absoluteString):\(store.counts?.settled ?? -1):\(store.connectionSession):\(visible):\(settledOpen)") { if visible && settledOpen { await refreshSupplementary() } }
-        // Goals are outside the navigation view, so they read again at each store revision.
-        .modifier(GoalBoundaryRefresh(at: goals?.nextRefreshAt) { await loadGoals(store.client) })
-        .task(id: "\(store.baseURL.absoluteString):\(store.revision):\(visible)") { if visible { await loadGoals(store.client) } }
+        .task(id: "\(store.baseURL):\(visible):\(scenePhase == .active)") {
+            if visible, scenePhase == .active {
+                let handle = store.resources.handle(GoalResources.list); goalsHandle = handle
+                handle.acquire(); defer { handle.release() }; await handle.refresh()
+                do { try await Task.sleep(for: .seconds(365 * 24 * 60 * 60)) } catch { }
+            }
+        }
         }
     }
 
@@ -200,6 +206,7 @@ struct WorkspaceView: View {
 
     private func refresh() async {
         await store.refresh()
+        await goalsHandle?.refresh()
         if settledOpen { await refreshSupplementary() }
     }
 
@@ -207,13 +214,7 @@ struct WorkspaceView: View {
         await loadSettled(store.client, through: settledRequestedOffset)
     }
 
-    private func loadGoals(_ api: APIClient) async {
-        do {
-            let response = try await api.goals()
-            guard !Task.isCancelled, api.baseURL == store.baseURL else { return }
-            goals = response; goalsError = nil
-        } catch { if !Task.isCancelled, api.baseURL == store.baseURL { goalsError = error.localizedDescription } }
-    }
+    private func loadGoals(_ api: APIClient) async { await goalsHandle?.refresh() }
 
     private func loadSettled(_ api: APIClient, through offset: Int) async {
         do {

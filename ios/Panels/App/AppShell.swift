@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 struct AppShell: View {
     @Environment(AppStore.self) private var store
@@ -6,17 +7,25 @@ struct AppShell: View {
     @Environment(\.scenePhase) private var scenePhase
     @State private var updateRequired = false
     @State private var deploymentState: DeploymentStatusPresentation?
-    @State private var selectedTab: AppTab = .workspace
+    @State private var selectedTab: AppTab = .review
+    @State private var savedReviewWork = ReviewSavedWork()
     @State private var reviewPath: [AppRoute] = []
     @State private var workspacePath: [AppRoute] = []
     @State private var morePath: [AppRoute] = []
 
     var body: some View {
-        Group {
+        // Keep the tab graph mounted inside an owned UIKit view. Hide that exact
+        // view while the separate connection cover remains visible and accessible.
+        MountedTabContent(content: tabs, isCovered: store.serverUnreachable)
+        // The inner UIKit host owns physical and keyboard safe areas once.
+        .ignoresSafeArea(.all)
+        .allowsHitTesting(!store.serverUnreachable)
+        .overlay {
             if store.serverUnreachable {
                 ServerUnreachableView { await store.refresh() }
-            } else {
-                tabs
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .background(PanelsTheme.surface)
+                    .ignoresSafeArea()
             }
         }
         .task {
@@ -41,6 +50,7 @@ struct AppShell: View {
                 .accessibilityIdentifier("ios-update-required")
             }
         }
+        .environment(savedReviewWork)
         .task(id: notifications.pendingOpen?.id) { openNotification() }
         .task(id: "push:\(store.baseURL):\(scenePhase == .active)") {
             if scenePhase == .active { await notifications.refresh(using: store.client) }
@@ -49,16 +59,25 @@ struct AppShell: View {
             Button("OK") { notifications.routingError = nil }
         } message: { Text(notifications.routingError ?? "") }
         // Owner override: tabs select; pushes and back navigation give a light impact.
+        .onChange(of: ReviewSavedWork.Key(server: LocalStore.server(store.baseURL), revision: LocalStore.shared.outgoingRevision(LocalStore.server(store.baseURL))), initial: true) { _, key in
+            savedReviewWork.refresh(key.server)
+        }
         .onChange(of: selectedTab) { _, _ in Haptics.selection() }
         .onChange(of: reviewPath) { old, new in if old != new { Haptics.light() } }
         .onChange(of: workspacePath) { old, new in if old != new { Haptics.light() } }
         .onChange(of: morePath) { old, new in if old != new { Haptics.light() } }
         .onChange(of: store.baseURL) { _, _ in reviewPath = []; workspacePath = []; morePath = [] }
         .safeAreaInset(edge: .top, spacing: 0) {
-            if let error = LocalStore.shared.saveError { Text(error).font(.footnote).foregroundStyle(PanelsTheme.error).padding(8) }
+            VStack(spacing: 0) {
+                if let error = LocalStore.shared.outgoingError ?? LocalStore.shared.saveError { Text(error).font(.footnote).foregroundStyle(PanelsTheme.error).padding(8) }
+                OutgoingStorageErrors(server: LocalStore.server(store.baseURL)).id(LocalStore.server(store.baseURL))
+            }
         }
         .onChange(of: Outbox.shared.networkAvailable) { _, available in
-            if available, scenePhase == .active { Task { await store.refresh() } }
+            if available, scenePhase == .active {
+                store.resources.resumeActiveReads()
+                Task { await store.refresh() }
+            }
         }
         .task(id: "outbox:\(store.baseURL):\(scenePhase == .active)") {
             if scenePhase == .active { await Outbox.shared.run(api: store.client) }
@@ -71,7 +90,7 @@ struct AppShell: View {
     private var tabs: some View {
         TabView(selection: $selectedTab) {
             NavigationStack(path: $reviewPath) {
-                ReviewView(openTicket: { id in
+                ReviewView(savedWork: savedReviewWork, isActive: selectedTab == .review && reviewPath.isEmpty && scenePhase == .active && !store.serverUnreachable, openTicket: { id in
                     var transaction = Transaction(animation: nil)
                     transaction.disablesAnimations = true
                     withTransaction(transaction) {
@@ -97,11 +116,11 @@ struct AppShell: View {
     }
 
     private var reviewBadge: Int {
-        let pending = Set(Outbox.shared.entries(LocalStore.server(store.baseURL)).filter {
-            ($0.kind == .approval || $0.kind == .sendBack) && [.waiting, .sending].contains($0.state)
-        }.compactMap(\.ticketID))
         let count = store.counts?.review ?? 0
-        return store.presentation?.reviewBadge(count: count, pendingDecisionTickets: pending) ?? max(0, count - pending.count)
+        guard let presentation = store.presentation, let review = store.review else { return count }
+        let pending = ReviewSavedWork.pendingDecisionTickets(in: review.cards,
+            decisions: savedReviewWork.decisions(LocalStore.server(store.baseURL)))
+        return presentation.reviewBadge(count: count, pendingDecisionTickets: pending)
     }
 
     private var moreTabImage: UIImage {
@@ -134,5 +153,58 @@ struct AppShell: View {
 
     private func detail(_ route: AppRoute) -> some View {
         RouteDestination(route: route)
+    }
+}
+
+/// Own the content boundary rather than infer a UIKit ancestor from SwiftUI.
+/// Hiding the child view retains its controller, SwiftUI graph, and route state.
+private struct MountedTabContent<Content: View>: UIViewControllerRepresentable {
+    let content: Content
+    let isCovered: Bool
+
+    func makeUIViewController(context: Context) -> Controller {
+        Controller(root: Root(content: content, environment: context.environment), isCovered: isCovered)
+    }
+
+    func updateUIViewController(_ controller: Controller, context: Context) {
+        controller.isCovered = isCovered
+        controller.host.rootView = Root(content: content, environment: context.environment)
+        controller.host.view.isHidden = isCovered
+    }
+
+    struct Root: View {
+        let content: Content
+        let environment: EnvironmentValues
+        var body: some View { content.environment(\.self, environment) }
+    }
+
+    final class Controller: UIViewController {
+        let host: UIHostingController<Root>
+        var isCovered: Bool
+
+        init(root: Root, isCovered: Bool) {
+            host = UIHostingController(rootView: root)
+            self.isCovered = isCovered
+            super.init(nibName: nil, bundle: nil)
+        }
+
+        required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+        override func loadView() {
+            view = UIView()
+            view.backgroundColor = .clear
+            addChild(host)
+            host.view.backgroundColor = .clear
+            host.view.translatesAutoresizingMaskIntoConstraints = false
+            view.addSubview(host.view)
+            NSLayoutConstraint.activate([
+                host.view.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+                host.view.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+                host.view.topAnchor.constraint(equalTo: view.topAnchor),
+                host.view.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+            ])
+            host.view.isHidden = isCovered
+            host.didMove(toParent: self)
+        }
     }
 }

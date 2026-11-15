@@ -1,7 +1,11 @@
 /** Durable decorations of backend cards share the existing database write door. */
 import type { Database, ReadSql, TransactionSql } from '../core/database/contracts.ts';
 import { PlannerError } from '../core/contracts.ts';
-import type { TicketLocale } from '../tickets/contracts.ts';
+import {
+  HOME_MACHINE_ID,
+  ORIGINAL_MAC_MACHINE_ID,
+  legacy_machine_id,
+} from '../execution_identity.ts';
 import { snapshot_for_wire } from '../executor/backend_snapshot.ts';
 import { recognize_variant } from './model_resolution/logic/variants.ts';
 import type { ConversationBackendKey } from './contracts.ts';
@@ -60,12 +64,14 @@ export class BackendStateStore {
       const row =
         ticket_id === null
           ? undefined
-          : sql.get<{ locale: TicketLocale }>('SELECT locale FROM tickets WHERE id=?', [ticket_id]);
-      return model_refusal(sql, backend_key, model_id, row?.locale ?? 'vps');
+          : sql.get<{ machine_id: string }>('SELECT machine_id FROM tickets WHERE id=?', [
+              ticket_id,
+            ]);
+      return model_refusal(sql, backend_key, model_id, row?.machine_id ?? HOME_MACHINE_ID);
     });
   }
   keep_vps_model_list(snapshot: BackendSnapshot): void {
-    this.database.write((tx) => save_machine_model_list(tx, 'vps', snapshot));
+    this.database.write((tx) => save_machine_model_list(tx, HOME_MACHINE_ID, snapshot));
   }
   write_model_enablement(
     backend_key: ConversationBackendKey,
@@ -131,19 +137,23 @@ export function disabled_models(
 /** Persist one machine's list and retire switch-offs only with complete lists everywhere. */
 export function save_machine_model_list(
   tx: TransactionSql,
-  machine: TicketLocale,
+  machine: string,
   snapshot: BackendSnapshot,
 ): void {
   tx.run(
     'INSERT INTO machine_backend_snapshots VALUES (?,?,?) ' +
       'ON CONFLICT(machine_id,backend_key) DO UPDATE SET snapshot_json=excluded.snapshot_json ' +
       'WHERE snapshot_json != excluded.snapshot_json',
-    [machine, snapshot.backend_key, JSON.stringify(snapshot_for_wire(snapshot))],
+    [
+      snapshot_machine_id(machine),
+      snapshot.backend_key,
+      JSON.stringify(snapshot_for_wire(snapshot)),
+    ],
   );
   if (!snapshot.models_complete) return;
   const offered = new Set<string>();
-  for (const each_machine of ['vps', 'macos'] as const) {
-    const listed = offered_model_ids(tx, each_machine, snapshot.backend_key);
+  for (const { machine_id } of tx.all<{ machine_id: string }>('SELECT machine_id FROM machines')) {
+    const listed = offered_model_ids(tx, machine_id, snapshot.backend_key);
     if (listed === null) return;
     for (const model of listed) offered.add(model);
   }
@@ -160,12 +170,12 @@ export function save_machine_model_list(
 }
 export function offered_model_ids(
   sql: ReadSql,
-  machine: TicketLocale,
+  machine: string,
   backend_key: ConversationBackendKey,
 ): readonly string[] | null {
   const row = sql.get<{ snapshot_json: string }>(
     'SELECT snapshot_json FROM machine_backend_snapshots WHERE machine_id=? AND backend_key=?',
-    [machine, backend_key],
+    [snapshot_machine_id(machine), backend_key],
   );
   if (!row) return null;
   const snapshot = JSON.parse(row.snapshot_json) as BackendSnapshot;
@@ -190,7 +200,7 @@ export function model_refusal(
   sql: ReadSql,
   backend_key: ConversationBackendKey,
   model_id: string,
-  machine: TicketLocale,
+  machine: string,
 ): string | null {
   if (!model_is_enabled(sql, backend_key, model_id))
     return `Model "${model_id}" is disabled. Choose an enabled model.`;
@@ -199,13 +209,26 @@ export function model_refusal(
   if (offered === null || is_offered(backend_key, model_id, offered)) return null;
   const disabled = disabled_models(sql, backend_key);
   const choices = offered.filter((model) => !disabled.has(model)).join(', ');
-  return `Model "${model_id}" is not offered by ${backend_key} on ${machine === 'vps' ? 'the VPS' : 'the Mac'}. Choose one of: ${choices}.`;
+  return `Model "${model_id}" is not offered by ${backend_key} on ${machine_name(sql, machine)}. Choose one of: ${choices}.`;
+}
+function snapshot_machine_id(machine: string): string {
+  return machine === 'vps' || machine === 'macos' ? legacy_machine_id(machine) : machine;
+}
+function machine_name(sql: ReadSql, machine: string): string {
+  const machine_id = snapshot_machine_id(machine);
+  const row = sql.get<{ name: string }>('SELECT name FROM machines WHERE machine_id=?', [
+    machine_id,
+  ]);
+  if (!row) throw new PlannerError('validation', 'Unknown machine destination', { machine_id });
+  if (machine_id === HOME_MACHINE_ID && row.name === 'VPS') return 'the VPS';
+  if (machine_id === ORIGINAL_MAC_MACHINE_ID && row.name === 'Mac') return 'the Mac';
+  return row.name;
 }
 export function require_usable_model(
   sql: ReadSql,
   backend_key: ConversationBackendKey,
   model_id: string,
-  machine: TicketLocale,
+  machine: string,
 ): void {
   const refusal = model_refusal(sql, backend_key, model_id, machine);
   if (refusal !== null)

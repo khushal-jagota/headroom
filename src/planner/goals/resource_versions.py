@@ -35,18 +35,20 @@ class GoalResources:
                 revision, lambda: views.list_json(conn, now, active=active, project_id=project)
             )
         if len(parts) == 2 and not query:
-            return ResourceSnapshot(
-                revision, lambda: views.goal_json(conn, data.read_goal(conn, parts[1]), now)
-            )
+            goal = data.read_goal(conn, parts[1])
+            revision = str(goal.revision) + ":" + now.date().isoformat()
+            return ResourceSnapshot(revision, lambda: views.goal_json(conn, goal, now))
         if (
             len(parts) == 3
             and parts[2] == "readings"
             and not set(query) - {"first_date", "last_date"}
         ):
+            goal = data.read_goal(conn, parts[1])
+            revision = str(goal.revision) + ":" + now.date().isoformat()
             revision += ":" + source_revision(conn, "automatic-measures", "all")
             # Bound dataset and named-input calendars change readings at midnight.
             # The saved goal document keeps its independent revision above.
-            dates, _ = views.reading_calendar(conn, data.read_goal(conn, parts[1]), now)
+            dates, _ = views.reading_calendar(conn, goal, now)
             revision += ":" + dates
             return ResourceSnapshot(
                 revision,

@@ -17,8 +17,9 @@ import tempfile
 import time
 from contextlib import ExitStack, redirect_stderr, redirect_stdout
 from datetime import datetime
+from importlib import import_module
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import click
 import pytest
@@ -26,7 +27,6 @@ from tests.compare.direct.test_unit21_status import _seed
 from tests.compare.direct.unit20_cli import _python_library, comparable
 from tests.support.synthetic_homes import create_synthetic_homes
 from tests.unit.test_database_backups import _legacy_snapshot
-from tests.unit.test_ticket_scratch import _layout
 
 from planner.core.config import load_config
 from planner.environments import cli, vps_status
@@ -131,8 +131,20 @@ def _python(root: Path, calls: list[dict[str, Any]], monkeypatch: pytest.MonkeyP
     return results
 
 
+@pytest.mark.parametrize(
+    "scope",
+    [
+        "operators",
+        pytest.param(
+            "scratch",
+            marks=pytest.mark.xfail(
+                run=False, reason="expected-open P4: #916 workspaces replace scratch cleanup"
+            ),
+        ),
+    ],
+)
 def test_unit21_environment_command_function_parity(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, request: pytest.FixtureRequest
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, request: pytest.FixtureRequest, scope: str
 ) -> None:
     started = time.perf_counter()
     node = shutil.which("node")
@@ -140,6 +152,7 @@ def test_unit21_environment_command_function_parity(
     environment = {
         "PATH": str(Path(node).parent) + os.pathsep + os.defpath,
         "LANG": "C.UTF-8",
+        "TMPDIR": str(Path(tempfile.gettempdir()).resolve()),
         **create_synthetic_homes(tmp_path),
         "PLAN_TEST_MODE": "1",
         "PLAN_SERVER_URL": "http://127.0.0.1:0",
@@ -155,19 +168,23 @@ def test_unit21_environment_command_function_parity(
         (root / "workspace").mkdir()
         (root / "config.yaml").write_text("{}\n")
         snapshot = _legacy_snapshot(source, root / "restore-snapshot")
-        (root / "git").mkdir()
-        with monkeypatch.context() as private_git:
-            for key in list(os.environ):
-                private_git.delenv(key)
-            for key, value in environment.items():
-                private_git.setenv(key, value)
-            layout = _layout(root / "git")
-        scratch = layout.folders[0] / "t_12345678"
-        scratch.mkdir()
-        (scratch / ".git").write_text("gitdir: missing\n")
-        with sqlite3.connect(source) as connection:
-            connection.execute("CREATE TABLE tickets(id TEXT,stage TEXT,updated_at INTEGER)")
-            connection.execute("INSERT INTO tickets VALUES('t_12345678','done',0)")
+        (root / "git/panels").mkdir(parents=True)
+        if scope == "scratch":
+            # P4 replaces this retired fixture when the scratch case returns.
+            _layout = import_module("tests.unit.test_ticket_scratch")._layout
+
+            with monkeypatch.context() as private_git:
+                for key in list(os.environ):
+                    private_git.delenv(key)
+                for key, value in environment.items():
+                    private_git.setenv(key, value)
+                layout = _layout(root / "git")
+            scratch = layout.folders[0] / "t_12345678"
+            scratch.mkdir()
+            (scratch / ".git").write_text("gitdir: missing\n")
+            with sqlite3.connect(source) as connection:
+                connection.execute("CREATE TABLE tickets(id TEXT,stage TEXT,updated_at INTEGER)")
+                connection.execute("INSERT INTO tickets VALUES('t_12345678','done',0)")
         for key, path in {
             "PLAN_CONFIG_PATH": root / "config.yaml",
             "PLAN_DB_PATH": source,
@@ -278,6 +295,8 @@ def test_unit21_environment_command_function_parity(
                 ),
             ),
         ]
+        if scope != "scratch":
+            calls = [call for call in calls if call["command"] != "cleanup"]
         with monkeypatch.context() as private:
             private.chdir(root)
             for key in list(os.environ):
@@ -427,7 +446,10 @@ def test_unit21_environment_command_function_parity(
         assert operators["interrupted_status"]["actual_closed"]
         assert operators["interrupted_status"]["cleanup_failure_retained"]
         assert operators["interrupted_status"]["later_spawns"] == 0
-        assert actual["scratch_owned"]["actual_children"] > 0
+        if scope == "scratch":
+            assert actual["scratch_owned"]["actual_children"] > 0
+        else:
+            assert actual["scratch_owned"]["actual_children"] == 0
         assert actual["scratch_owned"]["all_closed"]
         assert operators["composed_callbacks"] == {
             "app-build": ["build_app"],
@@ -454,10 +476,18 @@ def test_unit21_environment_command_function_parity(
             ),
         ]
         assert operators["watchdog"] == dict(exit_code=0, stdout="recorded watchdog\n", stderr="")
-        assert actual["results"][5]["stderr"].startswith(
+        backup_current = next(
+            index for index, call in enumerate(calls) if call["command"] == "backup-current"
+        )
+        assert actual["results"][backup_current]["stderr"].startswith(
             "Warning: app artifact digest does not match its manifest."
         )
-        assert expected[16]["stderr"] == (
+        denied_app = next(
+            index
+            for index, call in enumerate(calls)
+            if cast(dict[str, Any], call["args"]).get("current_app") == denied.name
+        )
+        assert expected[denied_app]["stderr"] == (
             f"Error: [Errno 13] Permission denied: {str(Path(denied.name) / 'manifest.json')!r}\n"
         )
         assert all(

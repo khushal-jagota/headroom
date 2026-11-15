@@ -1,3 +1,4 @@
+import { ORIGINAL_MAC_MACHINE_ID } from '../execution_identity.ts';
 /** Real file operations with one virtual transfer timer and narrow OS-failure seams. */
 import { createHash } from 'node:crypto';
 import { dirname, join } from 'node:path';
@@ -104,14 +105,14 @@ function world() {
     tx.run(
       "INSERT INTO conversations(conversation_id,backend_key,model,workspace_folder,access,created_at) VALUES ('c','codex','fixture','/tmp','full',1760000000)",
     );
-    tx.run('INSERT INTO mac_executor_presence(singleton,executor_incarnation) VALUES (1,?)', [
+    tx.run('INSERT INTO mac_executor_presence(machine_id,executor_incarnation) VALUES (?,?)', [
+      ORIGINAL_MAC_MACHINE_ID,
       identity.executor_incarnation,
     ]);
-    tx.run("INSERT INTO mac_runs VALUES (?,?,?,'ticket','ticket-1',1,0,'open')", [
-      'c',
-      identity.executor_incarnation,
-      'child',
-    ]);
+    tx.run(
+      "INSERT INTO mac_runs(conversation_id,executor_incarnation,child_id,principal_kind,principal_id,turn_number,delivery_uncertain,stop_state) VALUES (?,?,?,'ticket','ticket-1',1,0,'open')",
+      ['c', identity.executor_incarnation, 'child'],
+    );
     tx.run(
       "INSERT INTO executor_child_assignments VALUES (?,?,?,'ticket','ticket-1',1760000000000,NULL)",
       [identity.executor_incarnation, 'child', 'c'],

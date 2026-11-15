@@ -21,7 +21,7 @@
  let chart=$derived(display.chart),checklist=$derived(display.checklist);
  setContext<PageContext>(PAGE_CONTEXT,createGoalPageContext({
   goalId:()=>goalId,goal:()=>goal,readings:()=>readings.data,narrow:()=>false,sessions:()=>sessions,
- },{updateBlock:editor.updateBlock}));
+ },{subscribeWriting:editor.subscribeWriting,updateBlock:editor.updateBlock}));
  /* The whole card opens its goal. The title stays the one link (the card's single tab stop);
     a press anywhere else on the card follows it, unless it lands on a control inside the card
     (a check, the period switch, Hide/Show, "N completed", a button, an inline edit, a link,

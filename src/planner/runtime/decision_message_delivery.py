@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import sqlite3
 from collections.abc import Callable
+from typing import cast
 
 from planner.conversation.contracts import (
     ConversationSystem,
@@ -18,10 +19,11 @@ from planner.conversation.contracts import (
 from planner.conversation.message_content import MessageContent, text_message_content
 from planner.core.task_settlement import run_on_worker_thread
 from planner.executor.clock import now_ms
+from planner.machines.contracts import HOME_MACHINE_ID
 from planner.runtime import conversation_start
 from planner.tickets import data as tickets_data
 from planner.tickets import decision_messages, locale_configuration
-from planner.tickets.contracts import TicketLocale
+from planner.tickets.contracts import Ticket, WorkerStepClaim
 from planner.worker_types.registry import WorkerTypeRegistry
 
 _log = logging.getLogger(__name__)
@@ -51,34 +53,40 @@ async def deliver_ticket_decision_messages(
     async with conversation_start.conversation_link_lock(f"ticket:{ticket_id}"):
         conn = await run_on_worker_thread(connect_database)
         try:
-            ticket = tickets_data.read_ticket(conn, ticket_id)
-            if ticket.is_backlogged or not locale_configuration.can_execute_locale(
-                conn, ticket.locale
-            ):
-                return None
-            if ticket.locale is TicketLocale.macos and not locale_configuration.mac_is_present(
-                conn, now_ms()
-            ):
-                return None
-            from planner.conversation.backend_state import model_is_enabled
-            from planner.conversation.contracts import require_conversation_backend_key
+            def read_pending() -> tuple[Ticket, list[sqlite3.Row]]:
+                ticket = tickets_data.read_ticket(conn, ticket_id)
+                if ticket.is_backlogged or not locale_configuration.can_execute_machine(
+                    conn, ticket.machine_id
+                ):
+                    return ticket, []
+                if ticket.machine_id != HOME_MACHINE_ID and not locale_configuration.mac_is_present(
+                    conn, now_ms(), ticket.machine_id
+                ):
+                    return ticket, []
+                from planner.conversation.backend_state import model_is_enabled
+                from planner.conversation.contracts import require_conversation_backend_key
 
-            if ticket.employee_launch_model is not None and not model_is_enabled(
-                conn,
-                require_conversation_backend_key(ticket.employee_backend),
-                ticket.employee_launch_model,
-            ):
-                return None
-            rows = conn.execute(
-                "SELECT * FROM ticket_decision_messages WHERE ticket_id=? "
-                "AND delivery_status != 'delivered' ORDER BY created_at,rowid",
-                (ticket_id,),
-            ).fetchall()
+                if ticket.employee_launch_model is not None and not model_is_enabled(
+                    conn,
+                    require_conversation_backend_key(ticket.employee_backend),
+                    ticket.employee_launch_model,
+                ):
+                    return ticket, []
+                rows = conn.execute(
+                    "SELECT * FROM ticket_decision_messages WHERE ticket_id=? "
+                    "AND delivery_status != 'delivered' ORDER BY created_at,rowid",
+                    (ticket_id,),
+                ).fetchall()
+                return ticket, rows
+
+            ticket, rows = await run_on_worker_thread(read_pending)
             for row in rows:
                 identity = str(row["decision_id"])
                 sender_message_id = str(row["sender_message_id"])
                 target = row["conversation_id"]
-                status = decision_messages.recorded_outcome(conn, target, sender_message_id)
+                status = await run_on_worker_thread(
+                    decision_messages.recorded_outcome, conn, target, sender_message_id
+                )
                 if status is not None:
                     if status == row["delivery_status"] and status != "delivered":
                         break
@@ -129,7 +137,9 @@ async def deliver_ticket_decision_messages(
                     return text_message_content(model_text)
 
                 try:
-                    ticket = tickets_data.read_ticket(conn, ticket_id)
+                    ticket = await run_on_worker_thread(tickets_data.read_ticket, conn, ticket_id)
+                    if ticket.worker_step_claim is WorkerStepClaim.errored:
+                        break
                     delivered = await conversation_start.send_to_ticket_conversation(
                         conversation_system,
                         conn,
@@ -147,11 +157,14 @@ async def deliver_ticket_decision_messages(
                     # A setup failure before content_for is safe to retry. Anything
                     # after the marker stays ambiguous until its conversation outcome.
                     _log.exception("decision message could not be sent (ticket=%s)", ticket_id)
-                    attempt = conn.execute(
-                        "SELECT delivery_status,conversation_id FROM ticket_decision_messages "
-                        "WHERE decision_id=?",
-                        (identity,),
-                    ).fetchone()
+                    def read_attempt(decision_identity: str = identity) -> sqlite3.Row | None:
+                        return cast(sqlite3.Row | None, conn.execute(
+                            "SELECT delivery_status,conversation_id FROM ticket_decision_messages "
+                            "WHERE decision_id=?",
+                            (decision_identity,),
+                        ).fetchone())
+
+                    attempt = await run_on_worker_thread(read_attempt)
                     if attempt is not None and attempt["delivery_status"] == "sending":
                         await run_on_worker_thread(
                             _set_status, conn, identity, "uncertain", attempt["conversation_id"]

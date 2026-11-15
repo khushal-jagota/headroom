@@ -129,6 +129,7 @@ export const TICKET_STORED_COLUMNS = [
   'manager_kind',
   'is_backlogged',
   'locale',
+  'machine_id',
 ] as const;
 type Stored = Record<string, unknown> & {
   id: string;
@@ -200,6 +201,7 @@ export function read_ticket(sql: ReadSql, id: string): Ticket {
     created_at: Number(r.created_at),
     updated_at: Number(r.updated_at),
     locale: stored_locale(r.locale),
+    machine_id: String(r.machine_id),
     is_backlogged: !!r.is_backlogged,
     pending_proposal_revision: Number(r.pending_proposal_revision),
   };

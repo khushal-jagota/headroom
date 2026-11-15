@@ -49,8 +49,11 @@ struct TicketStepPage: View {
     let field: TicketWorkerType.Field
     let manifest: TicketWorkerType
     @Environment(AppStore.self) private var store
-    @State private var detail: TicketDetail?
-    @State private var error: String?
+    private var resource: ResourceHandle<TicketRead> { store.resources.handle(TicketResources.detail(ticketID)) }
+    private var fieldResource: ResourceHandle<TicketFieldBody> { store.resources.handle(TicketResources.field(ticketID, field.id)) }
+    private var detail: TicketDetail? { resource.value?.detail }
+    @State private var saveError: String?
+    private var error: String? { saveError ?? resource.error ?? fieldResource.error }
     @State private var editing = false
     @State private var draft = ""
     @State private var busy = false
@@ -74,7 +77,7 @@ struct TicketStepPage: View {
                         TextEditor(text: $draft).frame(minHeight: 360).scrollContentBackground(.hidden)
                             .padding(PanelsTheme.Space.md).background(PanelsTheme.recessed)
                     } else {
-                        let text = pendingProposal?.body ?? detail?.fieldValues[field.id] ?? ""
+                        let text = pendingProposal?.body ?? fieldResource.value?.value ?? detail?.fieldValues[field.id] ?? ""
                         ArtifactMarkdownContent(source: text.isEmpty ? "Not started" : text, baseURL: store.baseURL)
                     }
                 } else if error == nil { RingSpinner() }
@@ -90,17 +93,17 @@ struct TicketStepPage: View {
                                     do {
                                         try await store.client.editTicketField(ticketID, field: field.id, body: draft)
                                         editing = false; Haptics.success(); await load(); await store.refresh()
-                                    } catch { self.error = error.localizedDescription; Haptics.error() }
+                                    } catch { self.saveError = error.localizedDescription; Haptics.error() }
                                     busy = false
                                 }
-                            } else { draft = detail?.fieldValues[field.id] ?? ""; editing = true }
+                            } else { draft = fieldResource.value?.value ?? detail?.fieldValues[field.id] ?? ""; editing = true }
                         }.disabled(busy)
                     }
                 }
                 if editing { ToolbarItem(placement: .cancellationAction) { Button("Cancel") { editing = false }.disabled(busy) } }
             }
-            .task(id: "\(store.baseURL.absoluteString)|\(store.connectionSession)") { await load() }
-            .reload(onChangeOf: store.ticketStamp(ticketID)) { await load() }
+            .resourceDemand(resource)
+            .resourceDemand(fieldResource)
             .navigationDemand("ticket-step:\(ticketID)", selected: ViewOwner(kind: "ticket", id: ticketID))
             .navigationDestination(item: $artifact) { RouteDestination(route: $0) }
             .environment(\.openURL, OpenURLAction { url in
@@ -109,7 +112,9 @@ struct TicketStepPage: View {
             })
     }
     private func load() async {
-        do { let value = try await store.client.ticket(ticketID); try Task.checkCancellation(); detail = value; error = nil }
-        catch { if !Task.isCancelled { self.error = error.localizedDescription } }
+        store.resources.invalidate([resource.key, fieldResource.key])
+        async let detail: Void = resource.refresh()
+        async let field: Void = fieldResource.refresh()
+        _ = await (detail, field)
     }
 }

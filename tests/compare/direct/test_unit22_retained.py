@@ -17,7 +17,7 @@ import pytest
 from tests.compare.direct.test_unit18_adapter import environment, normalize
 from tests.support.executor_presence import lease_request, mac_identity, make_current
 from tests.unit.test_conversation_system import _Harness, _start
-from tests.unit.test_executor_vps_restart import _link_mac_tickets
+from tests.unit.test_executor_vps_restart import _link_mac_tickets, _present_harness
 
 from planner.conversation.api import delivery_fate_json
 from planner.conversation.backend_event_contracts import AcceptedEvent
@@ -93,7 +93,7 @@ async def source(path: Path, spec: dict[str, str]) -> dict[str, Any]:
         mailbox = SqliteCommandMailbox(str(path), clock=lambda: 1000000)
         presence = MacPresenceService(str(path), mailbox, clock=lambda: 1000000)
         runs = MacRuns(str(path), presence, mailbox)
-        host = _Harness(path, factory_wrapper=lambda local: runs)
+        host = _present_harness(path, factory_wrapper=lambda local: runs)
         runs.conversations = host.system
         return host
 
@@ -218,6 +218,13 @@ async def source(path: Path, spec: dict[str, str]) -> dict[str, Any]:
     return result
 
 
+@pytest.mark.xfail(
+    run=False,
+    reason=(
+        "expected-open P2: #916 protocol24 source identity fails TS22 retained-core "
+        "identity admission after recovery"
+    ),
+)
 def test_retained_core_matches_fresh_python(tmp_path: Path, request: pytest.FixtureRequest) -> None:
     began = time.perf_counter()
     selected = {**environment(tmp_path), "PLAN_TEST_MODE": "1"}

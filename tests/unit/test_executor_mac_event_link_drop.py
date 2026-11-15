@@ -552,6 +552,10 @@ def test_a_mac_event_held_past_the_limit_is_told_to_retry_later_and_applies_once
             )
 
             release()
+            # The short budget proves timeout while held, not SQLite speed after release.
+            monkeypatch.setattr(
+                vps_inbox, "MAC_ITEM_RETRY_LATER_SECONDS", SETTLES_WITHIN_SECONDS
+            )
             receipt = _only_receipt(await asyncio.wait_for(world.send(), SETTLES_WITHIN_SECONDS))
             assert receipt.disposition is ReceiptDisposition.accepted
             assert receipt.result == {"applied": True}

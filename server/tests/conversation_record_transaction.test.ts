@@ -1,3 +1,4 @@
+import { ORIGINAL_MAC_MACHINE_ID } from '../execution_identity.ts';
 import { expect, test } from 'vitest';
 import { fixture, fixture_path } from './ticket_fixture.ts';
 import { ConversationStore } from '../conversation/record/data/store.ts';
@@ -144,7 +145,8 @@ test('executor refusal after take commits only its receipt and replays without a
     connection_generation: 0,
   };
   database.write((tx) =>
-    tx.run('INSERT INTO mac_executor_presence(singleton,executor_incarnation) VALUES (1,?)', [
+    tx.run('INSERT INTO mac_executor_presence(machine_id,executor_incarnation) VALUES (?,?)', [
+      ORIGINAL_MAC_MACHINE_ID,
       identity.executor_incarnation,
     ]),
   );

@@ -43,7 +43,7 @@
  async function write(edit:Edit,patch:GoalWriteFields){
   const accepted=edit.accepted,editor=edit.editor;
   if(!accepted||!editor)throw new Error('Focus this field before another edit.');
-  const saved=await editor.write(patch);
+  const saved=await editor.write({...patch,expected_revision:accepted.revision});
    // A previous field can save while focus enters its pristine sibling. Only
    // this known local acceptance advances that sibling's unused snapshot.
    for(const sibling of Object.values(fields)){

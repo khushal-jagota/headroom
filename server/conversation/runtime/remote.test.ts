@@ -1,3 +1,4 @@
+import { ORIGINAL_MAC_MACHINE_ID } from '../../execution_identity.ts';
 import { expect, test, vi } from 'vitest';
 import { setup } from '../../tests/conversation_core_fixture.ts';
 import { SignalPublicationCoordinator } from '../publication/coordinator.ts';
@@ -83,7 +84,8 @@ test('a refused remote take restores runtime before the global finalizer and pub
     connection_generation: 0,
   };
   f.database.write((tx) =>
-    tx.run('INSERT INTO mac_executor_presence(singleton,executor_incarnation) VALUES(1,?)', [
+    tx.run('INSERT INTO mac_executor_presence(machine_id,executor_incarnation) VALUES(?,?)', [
+      ORIGINAL_MAC_MACHINE_ID,
       identity.executor_incarnation,
     ]),
   );

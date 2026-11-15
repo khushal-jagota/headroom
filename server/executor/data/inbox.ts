@@ -155,7 +155,7 @@ export class InboxStore {
     options: { dispatching?: boolean } = {},
   ): void {
     tx.run(
-      'INSERT INTO mac_inbox_positions VALUES(?,?,?,?,?,?) ON CONFLICT(sender_id,conversation_id) DO UPDATE SET sequence=excluded.sequence,submission_id=excluded.submission_id,disposition=excluded.disposition,result_json=excluded.result_json',
+      'INSERT INTO mac_inbox_positions(sender_id,conversation_id,sequence,submission_id,disposition,result_json) VALUES(?,?,?,?,?,?) ON CONFLICT(sender_id,conversation_id) DO UPDATE SET sequence=excluded.sequence,submission_id=excluded.submission_id,disposition=excluded.disposition,result_json=excluded.result_json',
       [
         envelope.sender_id,
         envelope.conversation_id,

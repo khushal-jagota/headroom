@@ -46,6 +46,27 @@ final class NavigationViewTests: XCTestCase {
         XCTAssertEqual(refusal(NavigationViewFrames.apply(promoted, reset)), .reset("overflow"))
     }
 
+    @MainActor func testCurrentOwnerReferencesDistinguishUnknownFromClearedAndReplacement() async throws {
+        let base = URL(string: "https://owner-references-\(UUID().uuidString).invalid")!
+        let unknown = AppStore(baseURL: base)
+        let owners = [ConversationOwner.chief, .manager("item"), .ticket("source-ticket")]
+        for owner in owners { XCTAssertNil(unknown.currentConversationID(owner)) }
+        for expected in ["old", nil, "new"] as [String?] {
+            var manager = sourceManager
+            manager["value"] = (sourceManager["value"] as! [String: Any]).merging(["conversation_id": expected as Any? ?? NSNull()]) { $1 }
+            let value = try snapshot([chiefRecord(expected), manager,
+                sourceTicket(["conversation_id": expected as Any? ?? NSNull()]), project("project", "Project")])
+            let encoder = JSONEncoder(); encoder.keyEncodingStrategy = .convertToSnakeCase
+            try await LocalStore.shared.cacheResponse(server: LocalStore.server(base),
+                id: base.absoluteString + "/api/navigation/view/snapshot#latest", data: encoder.encode(value))
+            let restored = AppStore(baseURL: base)
+            for owner in owners {
+                let current = try XCTUnwrap(restored.currentConversationID(owner), "The view carries this owner even when its link clears")
+                XCTAssertEqual(current, expected)
+            }
+        }
+    }
+
     // MARK: Ticket and manager facts (presentation.ts)
 
     func testTicketFactsMatchDesktopDerivation() throws {
@@ -75,6 +96,40 @@ final class NavigationViewTests: XCTestCase {
         XCTAssertEqual(WorkspaceGrouping.section(for: closing.summary), .consequences)
     }
 
+    func testTicketLocaleSurvivesDecodeAndMappingBeforeRuntimeMark() throws {
+        // The canonical navigation Ticket fixture identifies its machine even when
+        // the server supplies current conversation facts. The phone's executor
+        // health still gates the Mac working mark; durable unread survives.
+        let records = try snapshot([ticket(), conversation("a-conversation")]).content.records
+        guard case .ticket(_, let decoded) = records[0] else { return XCTFail("Expected Ticket") }
+        XCTAssertEqual(decoded.locale, "macos")
+        let presented = try XCTUnwrap(NavigationPresentation(records).tickets.first)
+        XCTAssertEqual(presented.locale, "macos")
+        let summary = presented.summary
+        XCTAssertEqual(summary.locale, "macos")
+        let unavailable = try XCTUnwrap(TicketMachine.signal(summary.conversationSignal, locale: summary.locale, health: nil))
+        XCTAssertFalse(unavailable.working)
+        XCTAssertTrue(unavailable.messageForOwner)
+        let ready = ExecutorHealth(mode: "remote", identity: .init(executorIncarnation: "mac", connectionGeneration: 2), connectionState: "ready", lastContactAtMs: 1000)
+        XCTAssertTrue(try XCTUnwrap(TicketMachine.signal(summary.conversationSignal, locale: summary.locale, health: ready)).working)
+
+        XCTAssertFalse(TicketMachine.conversationActivityUnknown(nil, owner: .chief, health: nil))
+        XCTAssertFalse(TicketMachine.conversationActivityUnknown(nil, owner: .manager("manager"), health: nil))
+        XCTAssertTrue(TicketMachine.conversationActivityUnknown(nil, owner: .ticket("ticket"), health: ready))
+
+        for locale in ["future-machine", nil] as [String?] {
+            var record = ticket()
+            var value = record["value"] as! [String: Any]
+            value["locale"] = locale
+            record["value"] = value
+            let mapped = try XCTUnwrap(NavigationPresentation(try snapshot([record, conversation("a-conversation")]).content.records).tickets.first).summary
+            XCTAssertEqual(mapped.locale, locale)
+            let shown = try XCTUnwrap(TicketMachine.signal(mapped.conversationSignal, locale: mapped.locale, health: ready))
+            XCTAssertFalse(shown.working, "Unknown machine identity grants no runtime authority")
+            XCTAssertTrue(shown.messageForOwner)
+        }
+    }
+
     // MARK: Review queue (presentation.ts, ReviewRoute.svelte)
 
     func testReviewQueueUsesCanonicalAddressesOldestWaitAndWindowOrder() throws {
@@ -88,6 +143,15 @@ final class NavigationViewTests: XCTestCase {
         ]
         let source = [pending, current, historical, parentManager(), project("p", "Project")] + addresses
         let cards = NavigationPresentation(try snapshot(source).content.records).review
+        let nativeSnapshot = try snapshot(source)
+        let nativePart = try XCTUnwrap(NavigationPresentation(nativeSnapshot.content.records).reviewQueue(in: nativeSnapshot).cards.first?.parts.first)
+        XCTAssertEqual(nativePart.proposalRevision, 1)
+        let newerSource = source.map { $0["kind"] as? String == "ticket" ? ticket(["ticket_status": "awaiting_approval", "proposal_field": "plan", "proposal_revision": 2, "proposal_created_at": 2]) : $0 }
+        let newerSnapshot = try snapshot(newerSource)
+        let newerPart = try XCTUnwrap(NavigationPresentation(newerSnapshot.content.records).reviewQueue(in: newerSnapshot).cards.first?.parts.first)
+        XCTAssertEqual(newerPart.waitingSince, nativePart.waitingSince)
+        XCTAssertEqual(newerPart.proposalRevision, 2)
+        XCTAssertNotEqual(newerPart.id, nativePart.id)
         let message = NavigationReviewMessage(conversationId: "a-conversation", addressId: "current-worker", addressCurrent: true, ownerKind: "ticket", ownerId: "a", title: "A", waitingSince: 1, recap: "Worker recap", ownerReadThroughSequence: 0)
         XCTAssertEqual(cards, [
             .ticket(id: "a", title: "A", waitingSince: 1, proposal: NavigationReviewProposal(ticketId: "a", field: "plan", title: "A", waitingSince: 2, proposalField: "plan", proposalRevision: 1), messages: [message]),
@@ -120,7 +184,7 @@ final class NavigationViewTests: XCTestCase {
         let window = viewWindow("review", members: [["kind": "address", "id": "current-manager"], ["kind": "ticket", "id": "a"]], total: 3)
         let queue = NavigationPresentation(try snapshot(source).content.records).reviewQueue(in: try snapshot(source, windows: [window]))
         XCTAssertEqual(queue.cards.map(\.id), ["message:historical:2.0", "ticket:a"])
-        XCTAssertEqual(queue.cards.map { $0.parts.map(\.id) }, [["message:historical:2.0"], ["a:plan:2.0", "message:a-conversation:1.0"]])
+        XCTAssertEqual(queue.cards.map { $0.parts.map(\.id) }, [["message:historical:2.0"], ["a:plan:2.0:revision:1", "message:a-conversation:1.0"]])
         XCTAssertEqual(queue.items[0].owner, .manager("parent"))
         XCTAssertEqual(queue.unloadedCount, 1)
         XCTAssertEqual(queue.runningWorkerCount, 1)
@@ -184,7 +248,7 @@ final class NavigationViewTests: XCTestCase {
     private let authority: [String: Any] = ["delivery_session_id": "delivery", "availability": ["state": "current", "generation": "1", "reason": NSNull()],
                                             "permit": ["scope": "signal-workspace", "runtime_epoch": "producer", "installation_id": "installed", "generation": "1"]]
     private func coverage(_ revision: String) -> [String: Any] {
-        ["scope": "workspace", "schema_version": 10, "semantics": "attention-knowledge-v10-ticket-workflows", "epoch": "e1", "revision": revision]
+        ["scope": "workspace", "schema_version": 11, "semantics": "attention-knowledge-v11-recap-freshness", "epoch": "e1", "revision": revision]
     }
     private func counts(review: Int = 0) -> [String: Any] { ["running_conversations": 1, "out_claims": 0, "review": review, "unread": 0, "settled": 0] }
     private func identity(_ event: String, session: String = "delivery") -> [String: Any] {
@@ -226,7 +290,7 @@ final class NavigationViewTests: XCTestCase {
     }
     /// navigation-application.test.ts `ticket` and its parent.
     private func ticket(_ changes: [String: Any] = [:]) -> [String: Any] {
-        let value: [String: Any] = ["title": "A", "recap": "", "recap_preview": "", "worker_type": "coding", "stage_label": "Plan", "workflow_label": "Coding", "stage": "needs_plan",
+        let value: [String: Any] = ["title": "A", "recap": "", "recap_preview": "", "recap_updated_at": NSNull(), "recap_stage_changed": false, "machine_id": "ee17b608-a449-4966-a808-a791ba7df1c7", "worker_type": "coding", "stage_label": "Plan", "workflow_label": "Coding", "stage": "needs_plan",
             "ticket_status": "empty", "blocked": false, "created_at": 1, "updated_at": 1, "worker_step_claim_out": false, "deadline": NSNull(), "project_id": "p",
             "manager_kind": "manager", "manager_id": "parent", "conversation_id": "a-conversation", "is_backlogged": false, "ceiling": "needs_plan",
             "ceiling_holder": ["kind": "owner", "id": "owner"], "gating_field": "plan", "proposal_field": NSNull(), "proposal_revision": 0, "proposal_created_at": NSNull(),
@@ -238,7 +302,7 @@ final class NavigationViewTests: XCTestCase {
     }
     /// workspace-rail-projection.test.ts `sourceTicket` and `sourceRecords`.
     private func sourceTicket(_ changes: [String: Any] = [:], id: String = "source-ticket") -> [String: Any] {
-        let value: [String: Any] = ["title": "Source Ticket", "recap": "Full source recap.\n" + String(repeating: "Body continues. ", count: 20), "recap_preview": "Source recap",
+        let value: [String: Any] = ["title": "Source Ticket", "recap": "Full source recap.\n" + String(repeating: "Body continues. ", count: 20), "recap_preview": "Source recap", "recap_updated_at": NSNull(), "recap_stage_changed": false, "machine_id": "75a49e78-97de-4e28-8dc5-79646761c46f",
             "worker_type": "coding", "stage_label": "Implementation", "workflow_label": "Coding", "stage": "needs_implementation", "ticket_status": "empty", "blocked": false,
             "created_at": 1, "updated_at": 11, "worker_step_claim_out": false, "deadline": NSNull(), "project_id": "project", "manager_kind": "manager", "manager_id": "item",
             "conversation_id": "conversation", "is_backlogged": false, "ceiling": "needs_implementation", "ceiling_holder": ["kind": "owner", "id": "owner"],

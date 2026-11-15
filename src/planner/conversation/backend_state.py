@@ -20,6 +20,8 @@ from planner.conversation.snapshot import BackendSnapshot
 from planner.core.db import connect
 from planner.core.errors import ErrorCode, PlannerError
 from planner.execution_identity import TicketLocale
+from planner.machines.contracts import HOME_MACHINE_ID, ORIGINAL_MAC_MACHINE_ID
+from planner.machines.data import legacy_machine_id, read_machine
 
 
 @dataclass(frozen=True, slots=True)
@@ -72,6 +74,12 @@ class DurableCodexLoginRejection:
             return
         conn = connect(self._db_path, self._busy_timeout_ms)
         try:
+            found = conn.execute(
+                "SELECT 1 FROM codex_login_rejection WHERE account_id = ? AND last_refresh = ?",
+                (generation.account_id, generation.last_refresh),
+            ).fetchone()
+            if found is None:
+                return
             conn.execute("BEGIN IMMEDIATE")
             conn.execute(
                 "DELETE FROM codex_login_rejection WHERE account_id = ? AND last_refresh = ?",
@@ -173,10 +181,10 @@ class BackendStateStore:
                 None
                 if ticket_id is None
                 else conn.execute(
-                    "SELECT locale FROM tickets WHERE id = ?", (ticket_id,)
+                    "SELECT machine_id FROM tickets WHERE id = ?", (ticket_id,)
                 ).fetchone()
             )
-            machine = TicketLocale.vps if row is None else TicketLocale(str(row["locale"]))
+            machine = HOME_MACHINE_ID if row is None else str(row["machine_id"])
             return model_refusal(conn, backend_key, model_id, machine)
         finally:
             conn.close()
@@ -185,7 +193,7 @@ class BackendStateStore:
         conn = connect(self._db_path, self._busy_timeout_ms)
         try:
             conn.execute("BEGIN IMMEDIATE")
-            save_machine_model_list(conn, TicketLocale.vps, snapshot)
+            save_machine_model_list(conn, HOME_MACHINE_ID, snapshot)
             conn.execute("COMMIT")
         except BaseException:
             if conn.in_transaction:
@@ -272,7 +280,7 @@ _CLAUDE_LONG_CONTEXT_SUFFIX: Final = "[1m]"
 
 
 def save_machine_model_list(
-    conn: sqlite3.Connection, machine: TicketLocale, snapshot: BackendSnapshot
+    conn: sqlite3.Connection, machine: str | TicketLocale, snapshot: BackendSnapshot
 ) -> None:
     """Keep the model list one machine reported, so a model check can read it later.
 
@@ -288,13 +296,13 @@ def save_machine_model_list(
         "ON CONFLICT(machine_id,backend_key) DO UPDATE "
         "SET snapshot_json=excluded.snapshot_json "
         "WHERE snapshot_json != excluded.snapshot_json",
-        (machine.value, snapshot.backend_key.value, json.dumps(as_object(snapshot))),
+        (_machine_id(machine), snapshot.backend_key.value, json.dumps(as_object(snapshot))),
     )
     if not snapshot.models_complete:
         return
     offered: set[str] = set()
-    for each_machine in TicketLocale:
-        listed = offered_model_ids(conn, each_machine, snapshot.backend_key)
+    for row in conn.execute("SELECT machine_id FROM machines"):
+        listed = offered_model_ids(conn, str(row["machine_id"]), snapshot.backend_key)
         if listed is None:
             return
         offered.update(listed)
@@ -313,7 +321,7 @@ def save_machine_model_list(
 
 
 def offered_model_ids(
-    conn: sqlite3.Connection, machine: TicketLocale, backend_key: ConversationBackendKey
+    conn: sqlite3.Connection, machine: str | TicketLocale, backend_key: ConversationBackendKey
 ) -> tuple[str, ...] | None:
     """The models this machine's backend last listed in full, in its own order.
 
@@ -323,7 +331,7 @@ def offered_model_ids(
     row = conn.execute(
         "SELECT snapshot_json FROM machine_backend_snapshots "
         "WHERE machine_id = ? AND backend_key = ?",
-        (machine.value, backend_key.value),
+        (_machine_id(machine), backend_key.value),
     ).fetchone()
     return None if row is None else _complete_model_list(str(row["snapshot_json"]))
 
@@ -361,7 +369,7 @@ def model_refusal(
     conn: sqlite3.Connection,
     backend_key: ConversationBackendKey,
     model_id: str,
-    machine: TicketLocale,
+    machine: str | TicketLocale,
 ) -> str | None:
     """Why this model cannot be chosen here, or None when it can.
 
@@ -380,7 +388,7 @@ def model_refusal(
     disabled = disabled_models(conn, backend_key)
     choices = ", ".join(model for model in offered if model not in disabled)
     return (
-        f'Model "{model_id}" is not offered by {backend_key.value} on {_MACHINE_NAMES[machine]}. '
+        f'Model "{model_id}" is not offered by {backend_key.value} on {_machine_name(conn, machine)}. '
         f"Choose one of: {choices}."
     )
 
@@ -389,14 +397,24 @@ def _disabled_refusal(model_id: str) -> str:
     return f'Model "{model_id}" is disabled. Choose an enabled model.'
 
 
-_MACHINE_NAMES: Final = {TicketLocale.vps: "the VPS", TicketLocale.macos: "the Mac"}
+def _machine_id(machine: str | TicketLocale) -> str:
+    return legacy_machine_id(machine) if machine in ("vps", "macos") else str(machine)
+
+
+def _machine_name(conn: sqlite3.Connection, machine: str | TicketLocale) -> str:
+    destination = read_machine(conn, _machine_id(machine))
+    if destination.machine_id == HOME_MACHINE_ID and destination.name == "VPS":
+        return "the VPS"
+    if destination.machine_id == ORIGINAL_MAC_MACHINE_ID and destination.name == "Mac":
+        return "the Mac"
+    return destination.name
 
 
 def require_usable_model(
     conn: sqlite3.Connection,
     backend_key: ConversationBackendKey,
     model_id: str,
-    machine: TicketLocale,
+    machine: str | TicketLocale,
 ) -> None:
     """Refuse a new choice the machine would not run, without changing saved selections."""
     refusal = model_refusal(conn, backend_key, model_id, machine)
