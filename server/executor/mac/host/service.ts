@@ -440,11 +440,9 @@ export class MacService {
     ]);
     await this.join([
       (async () => {
-        try {
-          await this.worker_supervision.close(this.options!);
-        } finally {
-          await this.worker_supervision.shutdown_settled;
-        }
+        // stop() observes the deadline. File owners wait for actual metadata cleanup.
+        void this.worker_supervision.close(this.options!).catch(() => {});
+        await this.worker_supervision.shutdown_settled;
       })(),
     ]);
     for (const owner of [this.update_files, this.files, this.journal, this.outbox]) {

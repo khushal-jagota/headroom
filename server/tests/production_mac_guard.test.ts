@@ -411,7 +411,24 @@ test('local composition refuses a retained Mac Ticket before constructing its se
       ),
     ).toBeDefined();
     recovery_core = new SqliteProcessConversationSystem(f.core.options);
-    await unchanged(() => recovery_core!.tell_agents_of_background_tasks_lost_at_restart());
+    // Python consumes the recorded tasks before admission queues their notices.
+    // Neither conversation has a live adopted Mac run, so those two tasks ended.
+    const before_lost_tasks = snapshot();
+    expect(before_lost_tasks.conversation_background_tasks).toEqual(
+      [unknown, selected]
+        .map((conversation_id) =>
+          JSON.stringify({
+            conversation_id,
+            task_id: 'persisted-task',
+            task_description: 'Retained Mac task',
+          }),
+        )
+        .sort(),
+    );
+    await recovery_core.tell_agents_of_background_tasks_lost_at_restart();
+    expect(snapshot()).toEqual({ ...before_lost_tasks, conversation_background_tasks: [] });
+    expect(local_constructor).not.toHaveBeenCalled();
+    expect(f.children).toHaveLength(0);
     const recovery_send = vi.spyOn(recovery_core, 'send');
     const recovery_record = vi.spyOn(recovery_core, 'record_events_transaction');
     await unchanged(() => run_automatic_recovery(recovery_core!, database));
