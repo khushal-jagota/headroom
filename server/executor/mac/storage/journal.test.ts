@@ -23,6 +23,7 @@ import { OutboxStore } from './outbox.ts';
 import { open_test_command_journal } from './testing/journal_factory.ts';
 import type { TestJournalDependencies } from './testing/journal_factory.ts';
 import { JOURNAL_NAME } from './journal_schema.ts';
+import { read_cleanup_commands } from '../cleanup_reconciliation.ts';
 import type { CanonicalReader } from './journal_contracts.ts';
 import type { OutboxCleanup } from './resources.ts';
 
@@ -285,6 +286,11 @@ test('shutdown drains one admitted multi-chunk finish and retains the lock acros
   const delivery = item.value!.command[Symbol.asyncIterator]();
   expect(Buffer.from((await delivery.next()).value!)).toEqual(Buffer.from(command));
   await fresh.close();
+  const cleanup = read_cleanup_commands(journal)()[Symbol.asyncIterator]();
+  const evidence = await cleanup.next();
+  expect(Buffer.from(evidence.value!.command_json).toString()).toBe(command);
+  expect(evidence.value!.result_json).toBeNull();
+  await cleanup.return?.();
   // Issued cursors have their own bound and explicit close returns their capacity.
   const cursors = [];
   for (let i = 0; i < 32; i++) cursors.push(await journal.unreported(1));

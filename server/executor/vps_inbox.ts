@@ -122,6 +122,12 @@ export class MacInbox {
     this.agent_writes = new AgentWrites(store, clock, runs);
     void this.completion.catch(() => {});
   }
+  get machine_id(): string {
+    return this.store.machine_id;
+  }
+  get upload_staging_root(): string {
+    return this.store.staging.staging;
+  }
   private admit(): void {
     if (this.closed) throw new ServerLifecycleError('Executor inbox is closed.');
   }
@@ -140,6 +146,7 @@ export class MacInbox {
   ): Promise<WireValue<'ItemBatchReply'>> {
     this.admit();
     validate_batch(conversation_id, batch);
+    for (const item of batch.items) this.store.require_envelope(item.envelope, identity);
     return this.own(this.take_batch(batch, identity));
   }
   private async take_batch(
@@ -308,6 +315,7 @@ export class MacInbox {
     options: { retry_later_at?: number } = {},
   ): Promise<Receipt> {
     this.admit();
+    this.store.require_envelope(envelope, identity);
     const payload = envelope.payload;
     const raw = payload.child;
     const ask = payload.ask;
@@ -367,6 +375,7 @@ export class MacInbox {
     identity: ExecutorIdentity,
     deadline: number,
   ): Promise<Receipt> {
+    this.store.require_envelope(envelope, identity);
     let published: PublishedFiles | null = null;
     const close_published = async () => {
       await published?.close();

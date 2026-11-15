@@ -1,16 +1,20 @@
 # VPS executor
 
-`vps_transport.ts::VpsExecutor` owns one invocation's mailbox, presence, inbox, file transfers, retained Mac runs, and catalog relay. Its constructor receives the application's database, clock, change signal, and media cutoff. It does not create another database owner. `app_transport.ts::create_executor_routes` supplies the HTTP and obsolete-WebSocket boundary.
+`registry.ts::VpsExecutorRegistry` owns the invocation's executor destinations. Each `vps_transport.ts::VpsExecutor` owns one destination's mailbox, presence, inbox, file transfers, retained runs, and catalog relay. They share the application's database, clock, change signal, and media cutoff. `app_transport.ts::create_executor_routes` supplies the HTTP and obsolete-WebSocket boundary.
 
-Production creates the endpoint only when an executor ID is configured. `LocaleBackendChildFactory` selects remote children for Mac Tickets and preserves local factories for VPS work. A canonical Mac Ticket with absent or conflicting Worker identity hints refuses before child creation. Persisted presence alone cannot enable remote execution. Without an endpoint, the existing local-only admission policy still refuses Mac work.
+Production loads credentialed destinations before retained adoption. Enrollment commits the machine grant, then awaits the same registry's `ensure(machine_id)` before it returns the grant. A configured executor ID also enables the original Mac's legacy endpoint. `LocaleBackendChildFactory` selects remote children by the canonical Ticket's `machine_id` and keeps Home work local. A remote Ticket with absent or conflicting Worker identity hints refuses before child creation. Recovery selects the persisted incarnation and assignment, even after the Ticket changes destination. Unknown destinations and Home cannot create an executor through `ensure`.
 
-Mailbox and presence owners accept a `machine_id`, with the original Mac as the default. Each owner scopes presence, commands, cursors, and aggregate recovery reads to that machine. Command sequences remain global. Public command-ID reads check machine ownership. Trusted exact-child recovery reads retain their existing caller authority. Production still uses one executor endpoint until the registry port lands.
+Each endpoint accepts one `machine_id`, with the original Mac as the default. Its mailbox, presence, run custody, inbox, catalog relay, and upload staging share that destination. Each owner scopes presence, commands, cursors, retained recovery, replacement stalls, receipts, and catalog rows to that machine. Command sequences remain global. Public command-ID and child-authority reads check machine ownership. Trusted exact-child transaction participants retain their existing caller authority. The registry tags aggregate stalls with their machine. Its `is_present(machine_id)` reads existing owners and never allocates one.
+
+Inbox admission checks the sender, child incarnation, and conversation before receipt replay or any batch effects. Receipt rows record their machine. Uploads for named machines use `executor-uploads/<machine_id>` while the original Mac keeps `executor-uploads`. Publication still targets the canonical Ticket files only after authority checks.
+
+Ticket execution admission, readiness, restart, memory notices, and decision delivery use `ticket.machine_id`. The policy helpers are `can_execute_machine(machine_id, connection)` and `machine_unavailable_reason(machine_id, connection)`. Home remains local. A known compatible remote incarnation permits queued work while absent, but readiness and restart also require that destination's presence. Refusals retain Python's existing payload fields.
 
 ## Startup and retained state
 
-Before record initialization, `core/start.ts` asks the endpoint for `open_runs()`. The single reconciliation therefore preserves retained turns before the core adopts them. Adoption restores asks, saved answers, provider identities, memory-notice maintenance state, and exact child references. A stale or stopping child remains quarantined until its corresponding retirement proof arrives.
+Before record initialization, startup loads the registry and asks it for `open_runs()`. The single reconciliation therefore preserves every loaded destination's retained turns before the core adopts them. Adoption restores asks, saved answers, provider identities, memory-notice maintenance state, and exact child references. A stale or stopping child remains quarantined until its corresponding retirement proof arrives.
 
-`configure` binds the actual core to the inbox and run owner. `start` loads durable presence/mailbox state and resumes replacement drains, late-steer watches, and never-ran prompt delivery. A fresh child registered before a VPS crash receives its owed prompt on the original turn. Interruption closure and exact claim restoration follow the committed prompt. Production reads the endpoint's health and stall sources, and its `machine_catalog` uses the same catalog relay.
+Registry `configure` binds every endpoint to the same core, start-admission gate, and update barrier. A destination added later receives the same bindings and starts before `ensure` returns it. Endpoint `start` loads durable presence/mailbox state and resumes replacement drains, late-steer watches, and never-ran prompt delivery. A fresh child registered before a VPS crash receives its owed prompt on the original turn. Interruption closure and exact claim restoration follow the committed prompt. Ticket catalog reads select `catalog_for(ticket.machine_id)` while Home uses local snapshots.
 
 Durable items enter through `MacInbox`. Ordered receipts, replay, assignment authority, canonical writes, answer application, and file publication share the existing write door. A refused domain effect can roll back its savepoint while the outer refusal receipt commits. Runtime predictions are restored before the global publication finalizer, so rolled-back events do not escape through the live tail or Signal.
 
@@ -18,12 +22,18 @@ Agent messages require an explicit recipient through `message.send`. Executor tr
 
 Live batches carry only message deltas, thinking notices, and tool progress. They use the current exact child's event sink and create no durable item receipt. Completed backend prose uses the item route for journal and receipt custody. The core does not turn it into an addressed notebook message. Lifecycle changes and other durable events also use that route. Live reads enter the existing application routes under the child's assigned principal; they do not grant arbitrary owner access.
 
+The Mac runner's `prompt_accepted` result carries the native provider's `agent_acceptance_proven` value exactly. Its default is false. A generic executor receipt keeps that default. The later VPS outcome-to-core confirmation seam remains port work.
+
 ## Routes and authority
 
-All thirteen executor endpoints require trusted Tailscale login, the configured executor ID, no browser Origin, and no duplicate security headers. There is no executor bearer token. Work requests carrying incarnation headers check the supported protocol and current identity before reading the body; a lease admits identity from its payload. Incarnation is a row fence, not a credential. Transaction participants compare affected row incarnations and relevant assignments with the admitted request. Updates remain reachable before work-version admission.
+Executor ingress requires trusted Tailscale login, a claimed executor ID, no browser Origin, and no duplicate security headers. The shared machine credential helper authenticates the destination before the registry selects or creates an endpoint. The original configured ID retains legacy authority until credential handover closes. Work requests then check the supported protocol and current identity before reading the body; a lease admits identity from its payload. Incarnation is a row fence, separate from the credential. Transaction participants compare affected row incarnations and relevant assignments with the admitted request. Updates remain reachable before work-version admission.
+
+Only the original configured executor can request bootstrap credentials, with no credential header and a supported identity. The shared helper owns its database write. Authentication and update reports keep legacy authority open. After the supervisor keeps the runtime, its explicit credentialed close request closes handover through the shared helper. The close route needs neither a work protocol nor a current incarnation and accepts repeat requests.
 
 | Method | Path | Boundary |
 | --- | --- | --- |
+| POST | `/api/executor/credential` | Original executor credential bootstrap before handover closes |
+| POST | `/api/executor/credential/handover/close` | Credentialed handover closure after the supervisor keeps the runtime |
 | POST | `/api/executor/lease` | Admit identity and versions, update presence, settle replacement custody |
 | GET | `/api/executor/commands` | Current executor's bounded mailbox poll |
 | POST | `/api/executor/commands/outcomes` | Current executor's typed command outcomes; stop success still needs exact proof |
@@ -38,15 +48,23 @@ All thirteen executor endpoints require trusted Tailscale login, the configured 
 | POST | `/api/executor/update` | Strict typed update report with current health |
 | WebSocket | `/api/executor/connect` | Refuse the obsolete transport before upgrade |
 
-`ComposedEnvironmentRuntime.mac_updates` exposes the environment's one Mac update service. Startup binds that same instance to the executor, presence checks, and update routes. Update reports pass strict generated decoding before the current health snapshot and synchronous service call. The default production backend/environment dependency table remains a supplier-owned gate.
+`ComposedEnvironmentRuntime.mac_updates` supplies `for_machine(machine_id)` for each current or later endpoint's presence checks and update routes. Update reports pass strict generated decoding before the current health snapshot and synchronous service call. The health route selects the requested destination and keeps the original Mac's native-build generation adjustment exclusive to that destination. The default production backend/environment dependency table remains a supplier-owned gate.
 
 ## Stop and recovery ownership
 
 An ordinary owner kill waits without a deadline for exact Mac stop proof, as Python does; only that conversation waits. A successful stop result alone does not prove termination. The matching accepted `child_stopped` item or proven process replacement closes exact custody. Rebind waits for that retirement outside the conversation lock before a fresh child takes the same reserved prompt. A safe initial-delivery withdrawal can finish the kill before remote retirement completes.
 
+Registry `recheck_cleanup(source, ticket_id)` resolves the historical exact assignment and Ticket principal. The mailbox sends inspection to the current incarnation, with the retained source in its arguments. Closed source assignments remain inspectable and grant no start or stop authority. A successful inspection also waits for a recent lease of the current incarnation with no truncated list, queued items for that conversation, or cleanup uncertainty. One deadline covers inspection and drain. Registration of the core cleanup callback awaits P3's custody interface merge.
+
 The invocation registers the endpoint through the existing producer lifecycle. Every stop observer receives the original absolute monotonic shutdown deadline. `settled()` retains raw completion after an observer expires. VPS shutdown detaches an active retained Mac child without starting a stop command; an already-running stop remains owned. Failed actual stop attempts remain retryable.
 
 Catalog cancellation withdraws its waiting command and completes that cleanup before the mailbox seals. A caller's cancelled observation does not cancel the shared catalog read. Endpoint shutdown seals new work and joins admitted saves, file cleanup, catalog withdrawal, and run/presence work before database closure. During shutdown, the catalog's short cleanup signal is capped by the original deadline.
+
+## Linux launch
+
+The shared executor entrypoint also serves Linux. Linux default data paths use P5's `default_linux_executor_root` helper, with explicit `PLAN_EXECUTOR_ROOT` precedence. Relative nonempty XDG paths refuse. The supervisor uses admitted host Node for every Linux runtime and P5's exact PATH and entrypoint helpers. Retained runtime reads use `LINUX_EXECUTOR` target admission. Darwin installation assets keep their Mac paths even when the build host is Linux.
+
+This launch slice preserves ready-marker promotion, failed-trial rollback, and handoff custody. Worker cleanup, lease composition, and final protocol activation remain port work.
 
 ## Shared wire
 

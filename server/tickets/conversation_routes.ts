@@ -3,6 +3,7 @@ import { require_usable_model } from '../conversation/backend_state.ts';
 import type { FastifyPluginAsync } from 'fastify';
 import type { AreaServices } from '../core/authority/register.ts';
 import { CHIEF, PlannerError } from '../core/contracts.ts';
+import { requireAbove } from '../core/authority/service.ts';
 import { dictionaryBody } from '../list_reads/http.ts';
 import { require_conversation_backend_key } from '../conversation/contracts.ts';
 import type { ConversationSystem } from '../conversation/contracts.ts';
@@ -70,6 +71,18 @@ function resolve_configuration(
 }
 export const conversation_routes: FastifyPluginAsync<AreaServices> = async (app, services) => {
   const files = new FileConversationMessageFiles(services.config.db_path);
+  app.post<{ Params: { ticket_id: string } }>(
+    '/tickets/:ticket_id/recheck-worker-cleanup',
+    async (request) => {
+      const ticket_id = request.params.ticket_id;
+      services.database.read((sql) => {
+        data.read_ticket(sql, ticket_id);
+        requireAbove(sql, services.identity(request).principal, { kind: 'ticket', id: ticket_id });
+      });
+      const result = await conversations(services).recheck_worker_cleanup!(ticket_id);
+      return { complete: result.complete, reason: result.reason, scope: result.scope };
+    },
+  );
   app.put<{
     Params: {
       ticket_id: string;

@@ -258,13 +258,20 @@ async function proposal(inv: Invocation): Promise<CommandResult> {
     )
   )
     fail_validation(inv, `${scalar(action)} does not accept proposal approval options`);
+  if (action === 'submit' && v.expected_proposal_revision != null)
+    fail_validation(inv, 'submit does not accept --expected-proposal-revision');
   if (action === 'submit') return submit_proposal(inv, tid);
   tid = ticket_id(inv, tid);
   if (action === 'revise') {
     const text = await read_source(inv, '-');
-    const detail = await send(inv, 'GET', '/api/tickets', { params: { detail: 'full', id: tid } });
-    if (!detail.pending_proposal) fail_validation(inv, 'ticket has no pending proposal');
-    const revision = detail.pending_proposal.revision;
+    let revision = v.expected_proposal_revision;
+    if (revision == null) {
+      const detail = await send(inv, 'GET', '/api/tickets', {
+        params: { detail: 'full', id: tid },
+      });
+      if (!detail.pending_proposal) fail_validation(inv, 'no pending proposal to revise');
+      revision = detail.pending_proposal.revision;
+    }
     const data = await send(inv, 'POST', `/api/tickets/${tid}/reject`, {
       json_body: {
         message: text,
@@ -286,6 +293,9 @@ async function proposal(inv: Invocation): Promise<CommandResult> {
     fail_validation(inv, `no pending ${scalar(field)} proposal`, {
       no_route: 'No panels approval call is available until a proposal exists.',
     });
+  const revision = v.expected_proposal_revision ?? detail.pending_proposal.revision;
+  if (scalar(revision) !== scalar(detail.pending_proposal.revision))
+    fail_validation(inv, 'the visible proposal changed; read it again before accepting');
   if (v.ceiling == null) fail_validation(inv, 'approval requires --ceiling');
   if (v.kickoff_title != null) {
     if (field !== 'brief')
@@ -293,8 +303,8 @@ async function proposal(inv: Invocation): Promise<CommandResult> {
     await send(inv, 'PATCH', `/api/tickets/${tid}`, { json_body: { title: v.kickoff_title } });
   }
   const payload: Body = {
-    expected_proposal_revision: detail.pending_proposal.revision,
-    decision_id: `${tid}:${scalar(detail.pending_proposal.revision)}:accept`,
+    expected_proposal_revision: revision,
+    decision_id: `${tid}:${scalar(revision)}:accept`,
     next_ceiling: v.ceiling,
     next_holder: v.holder != null ? holder(inv, v.holder) : caller_principal(inv),
   };
@@ -618,6 +628,7 @@ export async function run_work_command(inv: Invocation): Promise<CommandResult> 
     }
     case 'ticket list': {
       const params: Body = {
+        active: v.active || null,
         is_backlogged: v.is_backlogged,
         worker_type: v.worker_type?.length ? v.worker_type : null,
         stage: v.stage?.length ? v.stage : null,
@@ -693,6 +704,15 @@ export async function run_work_command(inv: Invocation): Promise<CommandResult> 
       data = { ticket_id: tid, conversation_id: cid, events: page.events, has_more: page.has_more };
       return emit(data, as_json, `${scalar(tid)} ${scalar(data.events.length)} history events`);
     }
+    case 'ticket recheck-worker-cleanup':
+      data = await send(inv, 'POST', `/api/tickets/${v.ticket_id}/recheck-worker-cleanup`, {
+        json_body: {},
+      });
+      return emit(
+        data,
+        as_json,
+        `Worker cleanup ${data.complete ? 'complete' : 'not proven'}: ${scalar(data.reason)}`,
+      );
     case 'ticket restart-worker': {
       if ((v.backend == null) !== (v.model == null))
         fail_validation(inv, 'restart-worker needs --backend and --model together, or neither');

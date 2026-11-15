@@ -108,7 +108,7 @@ Set `PANELS_TEST_SERVER_BACKEND=typescript` to select TypeScript in the existing
 
 Registered areas supply their domain routes and projections. The conversation test host supplies a scripted backend through the real core. Python still owns schema creation/migration. Real production binding and packaged supervision remain later gates. Embedded `startServer` has unavailable catalog/sign-in providers by default, while an explicit normal-mode embedding still permits generic machine probes. It is not a claim that all machine I/O is disabled.
 
-`worker_supervision` supplies durable process journals, shared observations, bounded cleanup, and the pre-execution bootstrap. Its runtime receives platform primitives and the invocation's existing process owner. Linux uses pidfds and delegated cgroup identities. macOS uses the existing native bridge for immediate PID and microsecond birth checks. Journals preserve device and inode integers exactly. Backend launch owners and durable conversation custody still need these bindings before the TypeScript port can claim the Worker behavior in [Conversations](../docs/conversations.md#worker-processes).
+`worker_supervision` supplies durable process journals, shared observations, bounded cleanup, and the pre-execution bootstrap. Codex, Claude, and Hermes share the invocation's runtime and process owners. Explicit Worker starts use P4's scratch helper and report supervision before spawn, then exact identity before startup succeeds. Cleanup retains scratch until process retirement is proven. Linux uses pidfds and delegated cgroup identities. macOS uses the existing native bridge for immediate PID and microsecond birth checks. Journals preserve device and inode integers exactly. Durable conversation custody remains a later binding before the TypeScript port can claim the complete Worker behavior in [Conversations](../docs/conversations.md#worker-processes).
 
 ## Known follow-ups
 
@@ -171,13 +171,13 @@ The scripted test host can open and continue conversations through these routes.
 
 `create_claude_backend_child_factory` in `conversation/backends/claude_agent_sdk/adapter.ts` takes an explicit `claude_executable` and optional `environment_overrides`. Conversation identity overrides the launch environment. The adapter uses SDK `0.3.316`. It checks the selected executable against the `2.1.219` minimum before startup. It does not select the SDK's bundled CLI. Production provider composition remains outside this unit.
 
-The SDK public spawn hook owns the exact child and its required WorkerUnit. An input queue offer proves neither a completed write nor native acceptance. Ordinary delivery needs UUID admission receipts; native commands retain Python's write-completion contract. Stop requires a valid cancellation receipt with an empty `still_queued` set and settlement of the active command.
+The SDK public spawn hook retains the exact child. Worker starts also use the shared supervision runtime and scratch owner. An input queue offer proves neither a completed write nor native acceptance. Ordinary delivery needs UUID admission receipts; native commands retain Python's write-completion contract. Stop requires a valid cancellation receipt with an empty `still_queued` set and settlement of the active command.
 
 The Claude spawn hook and Codex adapter use `lifecycle/owned_processes.ts` for process custody, signals, and bounded termination. SDK exit callbacks still follow stream closure. Cleanup observes direct-child exit first, then a separate bounded output drain. Each Claude shutdown phase retains its five-second limit.
 
 `tests/compare/direct/test_unit18_adapter.py` drives the TS scripted CLI through both real adapters and conversation cores. It compares events, lifecycle facts, view rows, and delivery fates. This scripted proof does not establish real-provider coverage of all 19 backend events.
 
-On Linux, `BASH_ENV` points to the absolute source path of `server/conversation/tool_shell_startup.bash` for TS and `src/planner/conversation/tool_shell_startup.bash` for Python. The direct proof permits only this exact source-location pair and requires identical file bytes. A byte difference fails the proof. Other environment differences require explicit acceptance in `DEVIATIONS.md`.
+Workers no longer add a `BASH_ENV` override. The shared bootstrap sets the Worker process policy before backend execution.
 
 The paired scripted proof also exercises the real CLI's observed ordering, status and rate-limit frames, and optional message fields. The one-attempt provider driver and its results remain Ticket artifacts, outside automatic discovery.
 
@@ -286,24 +286,21 @@ Usage reads consume parsed JSON values without retaining numeric token spelling.
 The direct Unit 17 checks compare fresh Python answers and the same scripted TypeScript
 executable. The startup check intercepts all provider and service-manager launches and
 records complete environments, command arguments, and working directories.
-On Linux, the one child-environment difference is `BASH_ENV`: Python names
-`src/planner/conversation/tool_shell_startup.bash`, and TypeScript names
-`server/conversation/tool_shell_startup.bash` through the shared TypeScript helper.
-The Manager requested this runtime independence from Python source. The startup check
-asserts both exact paths, compares the scripts byte for byte, and compares every other
-environment variable, command argument, and working directory without normalization.
+The startup check compares the complete environment and bootstrap record. It asserts
+each language's exact bootstrap command before it compares the shared launch values.
+Neither runtime adds the retired tool-shell `BASH_ENV` override.
 
 ### Codex process lifetime and remaining wire differences
 
 TypeScript starts Codex in a detached process group and a new session. Normal cleanup
 signals that owned group while its direct child remains alive. After it observes the
-child's exit, it does not signal the numeric group id, which the OS can reuse. WorkerUnit
-cleanup retains the existing service-manager containment for Worker conversations.
+child's exit, it does not signal the numeric group id, which the OS can reuse. Worker
+cleanup uses durable supervision, with delegated cgroups on supported Linux hosts.
 
 If Node dies before cleanup, the OS closes its stdin pipe. Codex exits when it reads EOF.
 There is no parent-death signal or server-supervisor replacement in this adapter. Python's
 uncontained child shares the server's session instead of starting a new one. Descendants
-that survive a natural leader exit outside WorkerUnit are not cleaned up through a late
+that survive a natural leader exit outside Worker supervision are not cleaned up through a late
 group signal.
 
 The Manager requested documentation of these remaining wire differences:

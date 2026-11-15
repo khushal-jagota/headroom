@@ -1,10 +1,16 @@
 /** Route-required memory reads. Automatic scans and notice dispatch belong to Unit 9. */
 import { randomUUID } from 'node:crypto';
-import { can_execute_locale } from '../tickets/locale_configuration.ts';
+import { can_execute_machine } from '../tickets/locale_configuration.ts';
 import { automated_maintenance_suppression_reason } from '../tickets/data/index.ts';
 import type { ReadSql } from '../core/database/contracts.ts';
 export const WORKER_STEP_MESSAGE_PREFIX = 'worker_step_message_';
 export const ANSWERING_SENDER_MESSAGE_PREFIX = 'worker_step_';
+export function worker_step_message_id_for_claim(
+  ticket_id: string,
+  claim_revision: number,
+): string {
+  return `${WORKER_STEP_MESSAGE_PREFIX}${ticket_id}:${claim_revision}`;
+}
 export function new_worker_step_message_id(): string {
   return WORKER_STEP_MESSAGE_PREFIX + randomUUID().replaceAll('-', '');
 }
@@ -77,11 +83,11 @@ export function ticket_ids_holding_an_unanswered_memory_loss(sql: ReadSql): stri
 export function ticket_needs_memory_notice(sql: ReadSql, ticket_id: string): boolean {
   const row = sql.get<{
     conversation_id: string | null;
-    locale: import('../tickets/contracts.ts').TicketLocale;
-  }>("SELECT conversation_id, locale FROM tickets WHERE id=? AND worker_step_claim='out'", [
+    machine_id: string;
+  }>("SELECT conversation_id,machine_id FROM tickets WHERE id=? AND worker_step_claim='out'", [
     ticket_id,
   ]);
-  if (!row || !can_execute_locale(sql, row.locale)) return false;
+  if (!row || !can_execute_machine(row.machine_id, sql)) return false;
   if (!boundary_is_unanswered(sql, row.conversation_id, 'working_turn_compacted_through_sequence'))
     return false;
   if (

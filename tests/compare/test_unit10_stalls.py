@@ -18,8 +18,6 @@ from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 
-import pytest
-
 from planner.notifications.contracts import APNsResult, WebPushResult
 from planner.stalls.checker import StallChecker
 from planner.stalls.contracts import TrackedWait, TrackedWaitKind
@@ -52,10 +50,6 @@ class RecordingPush:
         pass
 
 
-@pytest.mark.xfail(
-    run=False,
-    reason="expected-open P6: #928 NotificationIntent adds nullable reply to watchdog sends",
-)
 def test_checker_and_watchdog_match_python(tmp_path: Path) -> None:
     started = time.monotonic()
     seed = tmp_path / "seed.db"
@@ -102,6 +96,19 @@ def test_checker_and_watchdog_match_python(tmp_path: Path) -> None:
             INSERT INTO notification_apns_devices VALUES (
                 'device-stall-proof','0011aaff','invalid.panels.ios','development',2,1,1
             );
+        """)
+        conn.executescript("""
+            INSERT INTO tickets VALUES ('named-ticket','Named machine','ticket-conversation',
+                'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa');
+            INSERT INTO mac_executor_presence(machine_id) VALUES
+                ('ee17b608-a449-4966-a808-a791ba7df1c7'),
+                ('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa');
+            CREATE TABLE executor_incarnations(executor_incarnation TEXT,machine_id TEXT);
+            INSERT INTO executor_incarnations VALUES
+                ('assigned-executor','aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa');
+            CREATE TABLE executor_child_assignments(executor_incarnation TEXT,conversation_id TEXT);
+            INSERT INTO executor_child_assignments VALUES
+                ('assigned-executor','assigned-conversation');
         """)
     seed_state = tmp_path / "seed-state"
     seed_state.mkdir()
@@ -153,6 +160,52 @@ def test_checker_and_watchdog_match_python(tmp_path: Path) -> None:
             "check": False,
         },
     ]
+    original, extra = "ee17b608-a449-4966-a808-a791ba7df1c7", "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+    named_base = base + 300_000
+    named_waits = [
+        dict(
+            kind="mac_command_unfetched",
+            wait_key=key,
+            conversation_id=conversation,
+            detail=key,
+            started_at_ms=named_base,
+            machine_id=machine,
+        )
+        for key, conversation, machine in (
+            ("ticket", "ticket-conversation", None),
+            ("assigned", "assigned-conversation", None),
+            ("override", "ticket-conversation", original),
+            ("waiting", None, extra),
+            ("waiting", None, None),
+        )
+    ]
+    for name, delta, machine, since, restart in (
+        ("extra-starts", 0, extra, 0, False),
+        ("extra-overdue", 120_000, extra, 0, False),
+        ("restart-new-stretch", 600_000, extra, 600_000, True),
+        ("original-overdue", 720_000, original, 600_000, False),
+        ("clear", 720_001, None, 0, False),
+    ):
+        steps.append(
+            dict(
+                name=name,
+                now_ms=named_base + delta,
+                waits=named_waits if machine else [],
+                muted=True,
+                check=True,
+                restart=restart,
+                presence=[]
+                if machine is None
+                else [
+                    dict(
+                        machine_id=machine,
+                        last_contact_at_ms=named_base + delta,
+                        last_lease_at_ms=named_base + delta,
+                        continuous_since_ms=named_base + since,
+                    )
+                ],
+            )
+        )
     python_database = tmp_path / "python" / "test.db"
     python_state = tmp_path / "python" / "state"
     now_ms = base
@@ -162,12 +215,12 @@ def test_checker_and_watchdog_match_python(tmp_path: Path) -> None:
         def tracked_waits(self, _conn: sqlite3.Connection, _now: int) -> tuple[TrackedWait, ...]:
             return waits
 
-    checker = StallChecker(
-        str(python_database),
-        ProcessWaitRegistry(),
-        lambda: (Source(),),
-        lambda: now_ms,
-    )
+    def make_checker() -> StallChecker:
+        return StallChecker(
+            str(python_database), ProcessWaitRegistry(), lambda: (Source(),), lambda: now_ms
+        )
+
+    checker = make_checker()
     expected = []
     for step in steps:
         now_ms = int(step["now_ms"])
@@ -175,7 +228,24 @@ def test_checker_and_watchdog_match_python(tmp_path: Path) -> None:
             TrackedWait(**{**value, "kind": TrackedWaitKind(value["kind"])})
             for value in step["waits"]
         )
+        if step.get("restart"):
+            asyncio.run(checker.close())
+            checker = make_checker()
         with sqlite3.connect(python_database) as conn:
+            for presence in step.get("presence", []):
+                conn.execute(
+                    "UPDATE mac_executor_presence SET last_contact_at_ms=?,last_lease_at_ms=?,"
+                    "continuous_since_ms=? WHERE machine_id=?",
+                    tuple(
+                        presence[key]
+                        for key in (
+                            "last_contact_at_ms",
+                            "last_lease_at_ms",
+                            "continuous_since_ms",
+                            "machine_id",
+                        )
+                    ),
+                )
             conn.execute("UPDATE notification_preferences SET enabled=?", (not step["muted"],))
         if step["check"]:
             asyncio.run(checker.check_once())
@@ -229,6 +299,7 @@ def test_checker_and_watchdog_match_python(tmp_path: Path) -> None:
                 "rows": rows,
             }
         )
+    asyncio.run(checker.close())
     root = Path(__file__).resolve().parents[2]
     completed = subprocess.run(
         ["node", str(root / "server/stalls/testing_compare.ts")],
@@ -250,6 +321,22 @@ def test_checker_and_watchdog_match_python(tmp_path: Path) -> None:
     report_path = tmp_path / "unit10-stalls-comparison.json"
     report_path.write_text(json.dumps(report, indent=2) + "\n")
     assert actual == json.loads(json.dumps(expected))
+    active = [
+        {row["finding_key"] for row in phase["rows"]["findings"] if row["cleared_at_ms"] is None}
+        for phase in actual[-5:]
+    ]
+    extra_keys = {
+        "mac_command_unfetched:ticket",
+        "mac_command_unfetched:assigned",
+        f"mac_command_unfetched:machine={extra}:waiting",
+    }
+    assert active == [
+        set(),
+        extra_keys,
+        extra_keys,
+        extra_keys | {"mac_command_unfetched:override", "mac_command_unfetched:waiting"},
+        set(),
+    ]
     print(
         json.dumps(
             {"seconds": report["seconds"], "phases": len(actual), "report": str(report_path)}

@@ -129,6 +129,7 @@ function insert(
   command: WireValue<'MailboxCommand'>,
   incarnation: string,
   machine_id: string,
+  turn_number: number | null = command.child_command?.turn?.turn_number ?? null,
 ): WireValue<'MailboxCommand'> {
   const child = command.child_command;
   tx.run(
@@ -140,7 +141,7 @@ function insert(
       operation(command),
       child?.child.conversation_id ?? null,
       child?.child.child_id ?? null,
-      child?.turn == null ? null : child.turn.turn_number,
+      turn_number,
       command.created_at_vps_ms,
       machine_id,
     ],
@@ -174,7 +175,28 @@ export function insert_child_command(
     return existing.command;
   }
   const child = command.child;
-  if (
+  if (command.arguments.kind === 'recheck_cleanup') {
+    const { source, ticket_id } = command.arguments;
+    const ticket = tx.get('SELECT conversation_id FROM tickets WHERE id=?', [ticket_id]);
+    const assignment = tx.get<{ principal_kind: string; principal_id: string }>(
+      'SELECT principal_kind,principal_id FROM executor_child_assignments WHERE executor_incarnation=? AND child_id=? AND conversation_id=?',
+      [source.executor_incarnation, source.child_id, source.conversation_id],
+    );
+    if (
+      current_incarnation(tx, machine_id) !== child.executor_incarnation ||
+      assignment?.principal_kind !== 'ticket' ||
+      assignment.principal_id !== ticket_id ||
+      !ticket ||
+      child.child_id !== source.child_id ||
+      child.conversation_id !== source.conversation_id
+    )
+      return {
+        command_id: command.command_id,
+        child,
+        disposition: 'refused',
+        result: { reason: 'cleanup_source_not_owned' },
+      };
+  } else if (
     current_incarnation(tx, machine_id) !== child.executor_incarnation ||
     open_child_assignment(tx, child) === null
   )
@@ -186,6 +208,26 @@ export function insert_child_command(
     };
   if (['start', 'write_prompt', 'stop'].includes(command.operation))
     prepare_command_in_transaction(tx, command);
+  let turn_number = command.turn?.turn_number ?? null;
+  if (command.operation === 'cancel_running_turn' && turn_number === null) {
+    const parameters = [child.conversation_id, child.executor_incarnation, child.child_id];
+    const bound = tx.get<{ turn_number: string }>(
+      'SELECT CAST(turn_number AS TEXT) AS turn_number FROM automatic_start_bindings ' +
+        'WHERE conversation_id=? AND executor_incarnation=? AND child_id=? ' +
+        'ORDER BY turn_number DESC LIMIT 1',
+      parameters,
+    );
+    if (bound !== undefined) turn_number = counter(bound.turn_number);
+    else {
+      const retained = tx.get<{ turn_number: string }>(
+        'SELECT CAST(turn_number AS TEXT) AS turn_number FROM mac_runs ' +
+          'WHERE conversation_id=? AND executor_incarnation=? AND child_id=?',
+        parameters,
+      );
+      if (retained !== undefined && counter(retained.turn_number) !== 0)
+        turn_number = counter(retained.turn_number);
+    }
+  }
   return insert(
     tx,
     {
@@ -197,6 +239,7 @@ export function insert_child_command(
     },
     child.executor_incarnation,
     machine_id,
+    turn_number,
   );
 }
 export function insert_model_list_request(

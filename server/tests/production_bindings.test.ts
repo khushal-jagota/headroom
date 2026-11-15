@@ -1,7 +1,8 @@
 /** Adapter protocols do not prove real selection or the catalog's composed DB barrier. */
 import { afterEach, expect, test, vi } from 'vitest';
+import { VpsExecutorRegistry } from '../executor/registry.ts';
 import { dirname, join, resolve } from 'node:path';
-import { mkdirSync, realpathSync } from 'node:fs';
+import { mkdirSync, realpathSync, writeFileSync } from 'node:fs';
 import subprocess from 'node:child_process';
 import http from 'node:http';
 import https from 'node:https';
@@ -14,6 +15,7 @@ import { create_durable_codex_login_rejection } from '../conversation/backend_st
 import * as claude from '../conversation/backends/claude_agent_sdk/adapter.ts';
 import * as codex from '../conversation/backends/codex_app_server/adapter.ts';
 import * as hermes from '../conversation/backends/hermes_acp/adapter.ts';
+import * as production_launches from '../lifecycle/production_launches.ts';
 import { HermesModelCatalogOwner } from '../conversation/backends/hermes_acp/catalog.ts';
 import { ModelCatalogCleanupFailed } from '../conversation/backends/catalog_cleanup.ts';
 import * as snapshot from '../conversation/snapshot/composition.ts';
@@ -89,6 +91,10 @@ test('configured real bindings share owners and durable memory while Hermes clea
     database = fixture();
   const { path, root, claude_path, hermes_source, hermes_python } =
     private_production_environment(database);
+  // Launch custody comes from the composed config, even without either ambient variable.
+  writeFileSync(join(root, 'absent-config.yaml'), JSON.stringify({ db_path: path }));
+  vi.stubEnv('PLAN_DB_PATH', undefined);
+  vi.stubEnv('PLAN_WORKER_PROCESS_ROOT', undefined);
   // Keep I/O traps for the entire lifetime, including a mistakenly deferred probe.
   const forbidden = (): never => {
     throw new Error('Unexpected production I/O');
@@ -119,6 +125,7 @@ test('configured real bindings share owners and durable memory while Hermes clea
     vi.spyOn(hermes, 'create_hermes_backend_child_factory'),
   ] as const;
   const http_runtime = vi.spyOn(snapshot, 'create_backend_runtime');
+  const launches = vi.spyOn(production_launches, 'production_backend_launches');
   let release!: (error?: Error) => void,
     entered!: () => void,
     hold = false;
@@ -166,12 +173,31 @@ test('configured real bindings share owners and durable memory while Hermes clea
     const claude_call = constructors[0].mock.calls[0]!,
       codex_call = constructors[1].mock.calls[0]!;
     const hermes_call = constructors[2].mock.calls[0]!;
+    const worker_process_root = join(dirname(realpathSync(path)), 'worker-processes');
+    expect(process.env.PLAN_DB_PATH).toBeUndefined();
+    expect(process.env.PLAN_WORKER_PROCESS_ROOT).toBeUndefined();
+    expect(context.config.db_path).toBe(path);
+    expect(launches).toHaveBeenCalledExactlyOnceWith('http://127.0.0.1:0', worker_process_root);
+    for (const call of [claude_call, codex_call, hermes_call])
+      expect(Object.fromEntries(call[0].environment_overrides ?? []).PLAN_WORKER_PROCESS_ROOT).toBe(
+        worker_process_root,
+      );
+    expect(
+      Object.fromEntries(launches.mock.results[0]!.value.hermes_catalog.environment_overrides),
+    ).not.toHaveProperty('PLAN_WORKER_PROCESS_ROOT');
     expect(claude_call).toEqual([
       {
         claude_executable: claude_path,
-        environment_overrides: [['PLAN_SERVER_URL', 'http://127.0.0.1:0']],
+        environment_overrides: [
+          ['PLAN_SERVER_URL', 'http://127.0.0.1:0'],
+          ['PLAN_WORKER_PROCESS_ROOT', worker_process_root],
+        ],
       },
-      { child_processes: context.child_processes, one_shot_children: context.one_shot_children },
+      {
+        child_processes: context.child_processes,
+        one_shot_children: context.one_shot_children,
+        worker_supervision: context.worker_supervision,
+      },
     ]);
     expect([codex_call[1].child_processes, hermes_call[1].child_processes]).toEqual([
       context.child_processes,
@@ -303,7 +329,9 @@ test('default production startup binds the real installer and environment runtim
       node_executable: process.execPath,
       admitted_legacy_null_sha: null,
     });
-    expect(executor).toBeNull();
+    expect(executor).toBeInstanceOf(VpsExecutorRegistry);
+    expect(executor!.configured()).toBe(false);
+    expect(executor!.health_payload()).toBeNull();
     expect(inputs.child_processes).toBe(mac_context.child_processes);
     expect(inputs.signal).toBe(mac_context.signal);
     expect(inputs.signal).toBe(backend.mock.calls[0]![0].one_shot_children!.signal);

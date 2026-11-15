@@ -39,7 +39,7 @@ function own_hermes_catalog(
     backend_state: base.backend_state,
     backend_usage: base.backend_usage,
     codex_sign_in: base.codex_sign_in,
-    machine_catalog: () => base.machine_catalog(),
+    machine_catalog: (machine_id) => base.machine_catalog(machine_id),
     shutdown(options) {
       if (!finished && !invoking) {
         const {

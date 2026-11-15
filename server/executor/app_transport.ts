@@ -1,9 +1,10 @@
-/** Protocol 22 routes have their own executor ingress, separate from actor authority. */
+/** Machine credentials select an executor owner before work-incarnation admission. */
 import type { FastifyInstance, FastifyPluginAsync, FastifyReply, FastifyRequest } from 'fastify';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { Duplex } from 'node:stream';
 import { Readable } from 'node:stream';
 import type { Config } from '../core/config.ts';
+import type { Database } from '../core/database/contracts.ts';
 import { PlannerError } from '../core/contracts.ts';
 import { HttpError } from '../core/http/errors.ts';
 import { sendFile } from '../core/http/static.ts';
@@ -17,13 +18,18 @@ import {
 } from '../core/unidentified_agent_calls/admission.ts';
 import type { Endpoint } from '../core/unidentified_agent_calls/contracts.ts';
 import { UpdateConflict } from '../environments/updates/attempts.ts';
-import type { MacUpdateServiceContract } from '../environments/updates/mac/contracts.ts';
-import { VpsExecutor } from './vps_transport.ts';
+import {
+  authenticate_executor,
+  close_original_handover,
+  issue_original_credential,
+} from '../machines/executor_credentials.ts';
+import type { VpsExecutorRegistry } from './registry.ts';
 import {
   decode_bounded,
   decode_json,
   encode_bounded,
   ExecutorValidationError,
+  parse_identity,
 } from './protocol.ts';
 import type { WireInput, WireRootName, WireTypes } from './protocol.ts';
 import type { InputFile } from './contracts.ts';
@@ -35,18 +41,27 @@ import {
   MAX_ITEM_BATCH_BYTES,
   MAX_MAILBOX_POLL_BYTES,
   MAX_MAC_UPDATE_RESPONSE_BYTES,
+  EXECUTOR_HANDOVER_CLOSE_PATH,
 } from './configuration.ts';
 
 const EXECUTOR_ID = 'x-panels-executor-id';
 const INCARNATION = 'x-panels-executor-incarnation';
 const PROTOCOL = 'x-panels-executor-protocol';
+const CREDENTIAL = 'x-panels-executor-credential';
+const PLATFORM = 'x-panels-executor-platform';
 const DESCRIPTION = 'x-panels-file-upload';
-const SINGLETON = new Set(['tailscale-user-login', 'origin', EXECUTOR_ID, INCARNATION, PROTOCOL]);
+const SINGLETON = new Set([
+  'tailscale-user-login',
+  'origin',
+  EXECUTOR_ID,
+  INCARNATION,
+  PROTOCOL,
+  CREDENTIAL,
+]);
 export interface ExecutorHttpServices {
   readonly config: Config;
-  readonly endpoint: VpsExecutor | null;
-  /** One real per-store service arrives from environment composition. */
-  readonly updates: () => MacUpdateServiceContract | null;
+  readonly database: Database;
+  readonly registry: VpsExecutorRegistry | null;
 }
 function header_map(request: IncomingMessage): Map<string, string[]> {
   const headers = new Map<string, string[]>();
@@ -56,22 +71,54 @@ function header_map(request: IncomingMessage): Map<string, string[]> {
   }
   return headers;
 }
-/** Trusted login is normalized by the shared HTTP middleware before this check. */
-export function require_executor_ingress(
-  raw: IncomingMessage,
-  executor_id: string | null,
-  trusted_login: string | null,
-): void {
-  if (!executor_id || !trusted_login)
-    throw new ExecutorValidationError('trusted executor ingress is required');
+/** Credentials bind this claim to a destination after trusted ingress admission. */
+export function executor_ingress_claim(raw: IncomingMessage, trusted_login: string | null): string {
+  if (!trusted_login) throw new ExecutorValidationError('trusted executor ingress is required');
   const headers = header_map(raw);
   for (const [name, values] of headers)
     if (SINGLETON.has(name) && values.length !== 1)
       throw new ExecutorValidationError('duplicate executor security header is not allowed');
   if (headers.has('origin'))
     throw new ExecutorValidationError('browser origin is not allowed on executor routes');
-  if (headers.get(EXECUTOR_ID)?.[0] !== executor_id)
+  const claimed_id = headers.get(EXECUTOR_ID)?.[0];
+  if (!claimed_id || claimed_id.length > 128)
+    throw new ExecutorValidationError('executor identity is required');
+  return claimed_id;
+}
+/** Only the original configured executor can ask for its bootstrap credential. */
+export function require_executor_ingress(
+  raw: IncomingMessage,
+  executor_id: string | null,
+  trusted_login: string | null,
+): string {
+  const claimed_id = executor_ingress_claim(raw, trusted_login);
+  if (!executor_id || claimed_id !== executor_id)
     throw new ExecutorValidationError('executor identity does not match configuration');
+  return claimed_id;
+}
+function authenticated_machine(
+  raw: IncomingMessage,
+  trusted_login: string | null,
+  services: ExecutorHttpServices,
+): string {
+  let claimed_id: string;
+  try {
+    claimed_id = executor_ingress_claim(raw, trusted_login);
+  } catch (error) {
+    if (!(error instanceof ExecutorValidationError)) throw error;
+    throw new PlannerError('agent_forbidden', error.message);
+  }
+  const headers = header_map(raw);
+  return services.database.write((tx) =>
+    authenticate_executor(
+      tx,
+      claimed_id,
+      headers.get(CREDENTIAL)?.[0] ?? null,
+      services.config.executor_id,
+      headers.get(INCARNATION)?.[0] ?? null,
+      { authenticated_platform: headers.get(PLATFORM)?.[0] ?? null },
+    ),
+  );
 }
 class BodyTooLarge extends PlannerError {
   constructor() {
@@ -225,25 +272,20 @@ export function create_executor_routes(services: ExecutorHttpServices): FastifyP
   return async (app) => {
     app.removeAllContentTypeParsers();
     app.addContentTypeParser('*', (_request, payload, done) => done(null, payload));
-    const ingress = (request: FastifyRequest) =>
-      require_executor_ingress(
+    const authenticate = (request: FastifyRequest) =>
+      authenticated_machine(
         request.raw,
-        services.config.executor_id,
         (request as FastifyRequest & { trustedLogin?: string }).trustedLogin ?? null,
+        services,
       );
-    const endpoint_for = (request: FastifyRequest) => {
-      try {
-        ingress(request);
-      } catch (error) {
-        if (!(error instanceof ExecutorValidationError)) throw error;
-        throw new PlannerError('agent_forbidden', error.message);
-      }
-      if (!(services.endpoint instanceof VpsExecutor))
+    const endpoint_for = async (request: FastifyRequest) => {
+      const machine_id = authenticate(request);
+      if (services.registry === null)
         throw new PlannerError('retry_later', 'executor endpoint unavailable');
-      return services.endpoint;
+      return services.registry.ensure(machine_id);
     };
-    const current_for = (request: FastifyRequest) => {
-      const endpoint = endpoint_for(request);
+    const current_for = async (request: FastifyRequest) => {
+      const endpoint = await endpoint_for(request);
       return {
         endpoint,
         identity: endpoint.require_current({
@@ -252,17 +294,21 @@ export function create_executor_routes(services: ExecutorHttpServices): FastifyP
         }),
       };
     };
-    const updates_for = (request: FastifyRequest) => {
+    const updates_for = async (request: FastifyRequest) => {
+      let machine_id: string;
       try {
-        ingress(request);
+        machine_id = authenticate(request);
       } catch (error) {
-        if (!(error instanceof ExecutorValidationError)) throw error;
+        if (!(error instanceof PlannerError)) throw error;
         throw new HttpError(403, error.message);
       }
-      services.endpoint?.record_contact();
-      const updates = services.updates();
+      if (services.registry === null)
+        throw new PlannerError('retry_later', 'executor endpoint unavailable');
+      const endpoint = await services.registry.ensure(machine_id);
+      endpoint.record_contact();
+      const updates = services.registry.update_service_for(machine_id);
       if (!updates) throw new HttpError(503, 'Mac update service unavailable');
-      return updates;
+      return { endpoint, updates };
     };
     const work =
       (handler: (request: FastifyRequest, reply: FastifyReply) => Promise<unknown>) =>
@@ -275,9 +321,52 @@ export function create_executor_routes(services: ExecutorHttpServices): FastifyP
         }
       };
     app.post(
+      '/api/executor/credential',
+      work(async (request, reply) => {
+        try {
+          require_executor_ingress(
+            request.raw,
+            services.config.executor_id,
+            (request as FastifyRequest & { trustedLogin?: string }).trustedLogin ?? null,
+          );
+          if (header_map(request.raw).has(CREDENTIAL))
+            throw new PlannerError('agent_forbidden', 'Credential handover is already closed');
+          const raw = decode(
+            await body(request, MAX_ENVELOPE_BYTES),
+            'JsonObject',
+            MAX_ENVELOPE_BYTES,
+          );
+          const identity = parse_identity(raw);
+          const grant = issue_original_credential(services.database, identity.executor_incarnation);
+          return reply.send(grant);
+        } catch (error) {
+          if (error instanceof ExecutorValidationError)
+            throw new PlannerError('agent_forbidden', error.message);
+          throw error;
+        }
+      }),
+    );
+    app.post(
+      EXECUTOR_HANDOVER_CLOSE_PATH,
+      work(async (request, reply) => {
+        const headers = header_map(request.raw);
+        const credential = headers.get(CREDENTIAL)?.[0];
+        if (credential === undefined)
+          throw new PlannerError('agent_forbidden', 'Executor credential is required');
+        const machine_id = authenticate(request);
+        close_original_handover(
+          services.database,
+          machine_id,
+          credential,
+          headers.get(INCARNATION)?.[0] ?? null,
+        );
+        return reply.send({ closed: true });
+      }),
+    );
+    app.post(
       '/api/executor/lease',
       work(async (request, reply) => {
-        const endpoint = endpoint_for(request);
+        const endpoint = await endpoint_for(request);
         endpoint.record_contact();
         const response = await endpoint.lease(
           decode(await body(request, MAX_ENVELOPE_BYTES), 'LeaseRequest', MAX_ENVELOPE_BYTES),
@@ -290,7 +379,7 @@ export function create_executor_routes(services: ExecutorHttpServices): FastifyP
     app.get(
       '/api/executor/commands',
       work(async (request, reply) => {
-        const { endpoint, identity } = current_for(request),
+        const { endpoint, identity } = await current_for(request),
           { after, wait } = poll_parameters(request);
         const cancellation = new AbortController();
         const disconnected = () => cancellation.abort();
@@ -311,7 +400,7 @@ export function create_executor_routes(services: ExecutorHttpServices): FastifyP
     app.post(
       '/api/executor/commands/outcomes',
       work(async (request, reply) => {
-        const { endpoint, identity } = current_for(request);
+        const { endpoint, identity } = await current_for(request);
         return typed_reply(
           reply,
           await endpoint.record_outcomes(
@@ -329,7 +418,7 @@ export function create_executor_routes(services: ExecutorHttpServices): FastifyP
     app.post(
       '/api/executor/conversations/:conversation_id/items',
       work(async (request, reply) => {
-        const { endpoint, identity } = current_for(request),
+        const { endpoint, identity } = await current_for(request),
           { conversation_id } = request.params as { conversation_id: string };
         return typed_reply(
           reply,
@@ -346,7 +435,7 @@ export function create_executor_routes(services: ExecutorHttpServices): FastifyP
     app.put(
       '/api/executor/uploads/:sha256',
       work(async (request, reply) => {
-        const { endpoint, identity } = current_for(request),
+        const { endpoint, identity } = await current_for(request),
           { sha256 } = request.params as { sha256: string };
         if (request.headers['content-encoding'] || !/^[0-9a-f]{64}$/.test(sha256))
           throw new PlannerError('validation', 'an upload is raw bytes named by digest');
@@ -370,7 +459,7 @@ export function create_executor_routes(services: ExecutorHttpServices): FastifyP
       '/api/executor/commands/:command_id/files/:stored_file_id',
       { config: { uncompressed: true } },
       work(async (request, reply) => {
-        const { endpoint, identity } = current_for(request),
+        const { endpoint, identity } = await current_for(request),
           params = request.params as { command_id: string; stored_file_id: string };
         await input_response(
           reply,
@@ -382,7 +471,7 @@ export function create_executor_routes(services: ExecutorHttpServices): FastifyP
     app.post(
       '/api/executor/reads',
       work(async (request, reply) => {
-        const { endpoint, identity } = current_for(request);
+        const { endpoint, identity } = await current_for(request);
         const value = await endpoint.read(
           identity,
           decode(await body(request, MAX_ENVELOPE_BYTES), 'LiveReadRequest', MAX_ENVELOPE_BYTES),
@@ -393,7 +482,7 @@ export function create_executor_routes(services: ExecutorHttpServices): FastifyP
     app.post(
       '/api/executor/conversations/:conversation_id/live',
       work(async (request, reply) => {
-        const { endpoint, identity } = current_for(request),
+        const { endpoint, identity } = await current_for(request),
           { conversation_id } = request.params as { conversation_id: string };
         await endpoint.live(
           identity,
@@ -405,7 +494,8 @@ export function create_executor_routes(services: ExecutorHttpServices): FastifyP
     );
     app.get('/api/executor/update', { config: { uncompressed: true } }, async (request, reply) => {
       try {
-        return typed_reply(reply, await updates_for(request).check(), 'MacUpdateCheck');
+        const { updates } = await updates_for(request);
+        return typed_reply(reply, updates.check(), 'MacUpdateCheck');
       } catch (error) {
         update_failure(error);
       }
@@ -413,7 +503,7 @@ export function create_executor_routes(services: ExecutorHttpServices): FastifyP
     const archive = async (request: FastifyRequest, reply: FastifyReply, prefetch: boolean) => {
       try {
         const params = request.params as { request_id: string; archive_sha256: string };
-        const updates = updates_for(request);
+        const { updates } = await updates_for(request);
         const path = await (prefetch
           ? updates.prefetch_archive(params.archive_sha256)
           : updates.archive(params.request_id));
@@ -434,7 +524,7 @@ export function create_executor_routes(services: ExecutorHttpServices): FastifyP
       (request, reply) => archive(request, reply, true),
     );
     app.post('/api/executor/update', { config: { uncompressed: true } }, async (request, reply) => {
-      const updates = updates_for(request);
+      const { endpoint, updates } = await updates_for(request);
       let bytes: Uint8Array;
       try {
         bytes = await body(request, MAX_MAC_UPDATE_RESPONSE_BYTES);
@@ -443,14 +533,15 @@ export function create_executor_routes(services: ExecutorHttpServices): FastifyP
           throw new HttpError(413, 'Mac update report exceeds its size limit');
         throw error;
       }
+      let report: WireTypes['MacUpdateReport'];
       try {
-        const report = decode_json(bytes, 'MacUpdateReport');
+        report = decode_json(bytes, 'MacUpdateReport');
         // This read and report call share one uninterrupted synchronous continuation.
-        updates.report(report, services.endpoint?.health() ?? null);
-        return reply.send({ confirmed: report.phase === 'current' });
+        updates.report(report, endpoint.health());
       } catch (error) {
         update_failure(error);
       }
+      return reply.send({ confirmed: report.phase === 'current' });
     });
     install_old_websocket_refusal(app, services);
   };
@@ -485,13 +576,18 @@ function install_old_websocket_refusal(app: FastifyInstance, services: ExecutorH
         server: endpoint(connection.localAddress, connection.localPort),
       });
       if (!admitted.admitted) return close_before_accept(socket, websocket_refusal());
+      let machine_id: string;
       try {
-        require_executor_ingress(request, config.executor_id, trusted_login);
-      } catch {
+        machine_id = authenticated_machine(request, trusted_login, services);
+      } catch (error) {
+        if (!(error instanceof PlannerError)) throw error;
         return close_before_accept(socket, { code: 1008 });
       }
       try {
-        await services.endpoint?.refuse_old_websocket();
+        if (services.registry !== null) {
+          const owner = await services.registry.ensure(machine_id);
+          await owner.refuse_old_websocket();
+        }
       } finally {
         close_before_accept(socket, { code: 1008 });
       }

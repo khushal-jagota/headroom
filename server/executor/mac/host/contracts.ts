@@ -17,6 +17,7 @@ import type { MacHttpOptions } from '../transport/contracts.ts';
 import type { ExecutorIdentity, MacUpdateCheck } from '../../wire.generated.ts';
 import type { GatewayOutbox } from '../ipc/outbox.ts';
 import type { mac_runtime_settings } from '../../../core/config.ts';
+import type { WorkerSupervisionRuntime } from '../../../worker_supervision/runtime.ts';
 
 export interface MacOwnedService {
   stop(options: StopOptions): Promise<void>;
@@ -28,13 +29,10 @@ export interface MacHostLoop extends MacOwnedService {
 export interface MacHostUpdates extends MacHostLoop {
   offer(update: MacUpdateCheck): void;
 }
-export interface MacAgentProcesses extends MacOwnedService {
-  end_orphans(signal: AbortSignal): Promise<void>;
-  record_children(): Promise<void>;
-}
 export interface MacInvocation {
   readonly child_processes: OwnedChildProcesses;
   readonly one_shot_children: OwnedOneShotChildren;
+  readonly worker_supervision: WorkerSupervisionRuntime;
 }
 export interface MacHostContext extends MacInvocation {
   readonly identity: import('../../../execution_identity.ts').ExecutorIdentity;
@@ -60,9 +58,6 @@ export interface MacHostBindings {
     invocation: MacInvocation,
     on_failure: (error: Error) => void,
   ): MacCatalog;
-  processes(
-    context: MacInvocation & { readonly files: FilesService; readonly paths: ExecutorPaths },
-  ): MacAgentProcesses | null;
   updates(context: MacHostContext): MacHostUpdates;
   client?(
     server_url: string,

@@ -23,6 +23,7 @@ import type {
 import type {
   AsyncCommandJournal,
   CanonicalReader,
+  CleanupJournalCommand,
   JournalCursor,
   JournalSpoolOwner,
   SidecarOpenScope,
@@ -697,6 +698,14 @@ export class CommandJournal implements AsyncCommandJournal {
   }
   mark_outputs_published(command_id: string): Promise<void> {
     return this.call({ operation: 'mark_outputs_published', command_id });
+  }
+  async cleanup_evidence(): Promise<JournalCursor<CleanupJournalCommand>> {
+    const value = await this.call<{ cursor: number }>({ operation: 'cleanup_evidence' });
+    return new Cursor(this, value.cursor, (row, reader) => ({
+      command_id: row.command_id,
+      command: reader(row.command!),
+      result: row.result === undefined ? null : reader(row.result),
+    }));
   }
   async unpublished(): Promise<JournalCursor<UnpublishedJournalCommand>> {
     const value = await this.call<{ cursor: number }>({ operation: 'unpublished' });

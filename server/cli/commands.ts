@@ -358,6 +358,11 @@ export function create_commands(environment: NodeJS.ProcessEnv = {}): CliCommand
   );
   command('executor', 'Run the native Mac executor through the app HTTPS service.');
   command(
+    'executor credential',
+    'Install a registration or replacement credential into this executor root.',
+    [option('source', '--file <FILE>', readable_path('file', true), { required: true })],
+  );
+  command(
     'executor health',
     "Print this executor's identity, process, last accepted lease and any refusal.",
   );
@@ -1268,6 +1273,10 @@ export function create_commands(environment: NodeJS.ProcessEnv = {}): CliCommand
     }),
   ]);
   command('ticket list', 'List Tickets with bounded filters.', [
+    option('active', '--active', boolean, {
+      default: false,
+      description: 'Only unfinished, non-backlogged Tickets.',
+    }),
     option('is_backlogged', '--backlogged', boolean, {
       description: 'Filter explicit Ticket deferral.',
     }),
@@ -1314,6 +1323,10 @@ export function create_commands(environment: NodeJS.ProcessEnv = {}): CliCommand
   ]);
   command('ticket proposal', 'Submit, accept, or revise the current Ticket proposal.', [
     argument('proposal_args', '[PROPOSAL_ARGS...]', text, {}),
+    option('expected_proposal_revision', '--expected-proposal-revision <INTEGER>', integer(1), {
+      description:
+        'The revision of the proposal you inspected. Omission pins the command-time read.',
+    }),
     option('ceiling', '--ceiling <TEXT>', text, {
       description: 'Next ceiling for an accepted proposal.',
     }),
@@ -1341,6 +1354,17 @@ export function create_commands(environment: NodeJS.ProcessEnv = {}): CliCommand
       description: 'Print machine-readable JSON. Errors are printed as JSON on stderr.',
     }),
   ]);
+  command(
+    'ticket recheck-worker-cleanup',
+    'Recheck exact Worker cleanup without starting work or discarding evidence.',
+    [
+      argument('ticket_id', '<TICKET_ID>', text, {}),
+      option('as_json', '--json', boolean, {
+        default: false,
+        description: 'Print machine-readable JSON. Errors are printed as JSON on stderr.',
+      }),
+    ],
+  );
   command('ticket restart-worker', 'Restart one dead Worker through the existing recovery route.', [
     argument('ticket_id', '<TICKET_ID>', text, {}),
     option('backend', '--backend <TEXT>', text, {

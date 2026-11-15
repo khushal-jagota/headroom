@@ -107,6 +107,7 @@ async function invoke(
         return {
           kind: 'prompt_accepted',
           composed_content_delivered: result.composed_content_delivered,
+          agent_acceptance_proven: result.agent_acceptance_proven,
         };
       } catch (error) {
         if (error instanceof BackendPromptRejected) child.active_turn = previous;
@@ -171,6 +172,16 @@ export async function dispatch_command(
 ) {
   if (command.child.executor_incarnation !== dependencies.incarnation)
     return outcome(command, 'refused', { reason: 'incarnation_gone' });
+  if (command.arguments.kind === 'recheck_cleanup') {
+    const result = await dependencies.recheck_cleanup(
+      command.arguments.source,
+      command.arguments.ticket_id,
+    );
+    return outcome(command, result.source_available ? 'succeeded' : 'uncertain', {
+      complete: result.complete,
+      reason: result.reason,
+    });
+  }
   if (command.operation === 'stop') return dependencies.stop_exact(command, work, invoking);
   if (
     dependencies.state.is_retiring(command.child.child_id) ||

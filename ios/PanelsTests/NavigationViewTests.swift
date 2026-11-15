@@ -218,6 +218,47 @@ final class NavigationViewTests: XCTestCase {
         XCTAssertEqual(proposal?.proposalField, "plan")
     }
 
+    /// A fresh queue alone cannot remove a painted message. Its current owner must
+    /// invalidate it, including when a read elsewhere already emptied that queue.
+    func testExternalFinalApprovalRemovesHeldCardButReadElsewhereRetainsMessage() throws {
+        let context: [[String: Any]] = [["conversation_id": "a-conversation", "canonical_address_id": "worker"]]
+        let worker = address("worker", owner: ("ticket", "a"), conversation: "a-conversation", current: true, parent: ("manager", "parent"))
+        let initial = try snapshot([ticket(["ticket_status": "awaiting_approval", "proposal_field": "plan", "proposal_revision": 1, "proposal_created_at": 2]),
+            conversation("a-conversation"), worker], windows: [viewWindow("review", members: [["kind": "ticket", "id": "a"]])], reviewContext: context)
+        let queue = ReviewQueue()
+        let held = try XCTUnwrap(NavigationPresentation(initial.content.records).reviewQueue(in: initial).cards.first)
+        XCTAssertEqual(held.parts.count, 2)
+
+        // A read elsewhere keeps the valid painted run, even after live membership clears.
+        let read = try snapshot([ticket(), conversation("a-conversation", read: 1, message: false), worker],
+            windows: [viewWindow("review", members: [])], reviewContext: context)
+        let before = NavigationPresentation(read.content.records).reviewQueue(in: read).cards
+        XCTAssertTrue(before.isEmpty)
+        XCTAssertEqual(queue.parts(of: held, in: before, view: read).map(\.id), held.parts.filter(\.isMessage).map(\.id))
+
+        // No local decision flags participate: the final approval arrives from elsewhere.
+        let patch = try frame(["event": "patch", "previous_coverage": coverage("0"), "coverage": coverage("1"),
+            "previous_content_version": "one", "content_version": "done", "upserts": [ticket(["stage": "done", "terminal": true])],
+            "evictions": [], "windows": [viewWindow("review", members: [])], "counts": counts(), "review_context": context,
+            "review_summary": ["skipped": 0, "new": 0]])
+        let done = try NavigationViewFrames.apply(read, patch).get()
+        let after = NavigationPresentation(done.content.records).reviewQueue(in: done).cards
+        XCTAssertEqual(before.map(\.id), after.map(\.id), "Owner eligibility changes even though queue identities remain empty")
+        XCTAssertTrue(queue.parts(of: held, in: after, view: done).isEmpty, "The externally completed Ticket must leave the painted Review card")
+
+        // An explicit null replaces the old context atomically when its address disappears.
+        let removed = try frame(["event": "patch", "previous_coverage": coverage("1"), "coverage": coverage("2"),
+            "previous_content_version": "done", "content_version": "deleted", "upserts": [],
+            "evictions": [["kind": "ticket", "id": "a"], ["kind": "address", "id": "worker"]],
+            "windows": [viewWindow("review", members: [])], "counts": counts(),
+            "review_context": [["conversation_id": "a-conversation", "canonical_address_id": NSNull()]],
+            "review_summary": ["skipped": 0, "new": 0]])
+        let deleted = try NavigationViewFrames.apply(done, removed).get()
+        XCTAssertEqual(deleted.content.reviewContext.count, 1)
+        XCTAssertNil(deleted.content.reviewContext.first?.canonicalAddressId)
+        XCTAssertTrue(queue.parts(of: held, in: [], view: deleted).isEmpty)
+    }
+
     // MARK: Request (owner.ts refreshDemand, read.py request)
 
     func testRequestSendsEveryFieldAndStaysWithinTheRowBudget() throws {
@@ -227,15 +268,21 @@ final class NavigationViewTests: XCTestCase {
         let windows = [ViewWindowRequest(section: "settled", limit: 60)] + chiefChildren
             + (0..<8).map { ViewWindowRequest(section: "rail_tickets", owner: .manager("o\($0)"), limit: 60) }
         let initial = ViewRequest(windows: NavigationScope.baseWindows)
-        let request = NavigationScope.request(demands: ["rail": windows], previous: initial)
-        XCTAssertLessThanOrEqual(request.windows.reduce(0) { $0 + $1.limit }, 256)
+        let heldConversations = ["held-b", "held-a", "held-a"]
+        let request = NavigationScope.request(demands: ["rail": windows], reviewConversationIDs: heldConversations, previous: initial)
+        XCTAssertLessThanOrEqual(request.windows.reduce(0) { $0 + $1.limit } + request.reviewConversationIds.count, 256)
+        XCTAssertEqual(request.reviewConversationIds, ["held-a", "held-b"])
         XCTAssertEqual(request.windows.filter { $0.section == "children" }.map(\.limit), [30, 30, 30])
         XCTAssertEqual(request.windows.first { $0.section == "settled" }?.limit, 60)
         XCTAssertEqual(request.scopeGeneration, 1)
-        XCTAssertEqual(NavigationScope.request(demands: ["rail": windows], previous: request).scopeGeneration, 1, "An unchanged scope keeps its generation")
+        XCTAssertEqual(NavigationScope.request(demands: ["rail": windows], reviewConversationIDs: heldConversations.reversed(), previous: request).scopeGeneration, 1, "An unchanged scope keeps its generation")
 
         let json = try JSONSerialization.jsonObject(with: Data(try request.encoded().utf8)) as! [String: Any]
         XCTAssertEqual(Set(json.keys), ["projection_version", "scope_generation", "locale", "selected", "selected_conversation_id", "review_conversation_ids", "review_skipped_keys", "review_priority_keys", "windows"])
+        XCTAssertEqual(json["review_conversation_ids"] as? [String], ["held-a", "held-b"])
+        let released = NavigationScope.request(demands: ["rail": windows], previous: request)
+        XCTAssertTrue(released.reviewConversationIds.isEmpty)
+        XCTAssertEqual(released.scopeGeneration, 2)
         XCTAssertTrue(json["selected"] is NSNull)
         XCTAssertEqual(json["projection_version"] as? Int, 7)
         let review = try XCTUnwrap((json["windows"] as! [[String: Any]]).first)
@@ -255,9 +302,9 @@ final class NavigationViewTests: XCTestCase {
         var authority = self.authority; authority["delivery_session_id"] = session
         return ["event": event, "wire_version": 3, "projection_version": 7, "view_id": "view-0", "scope_generation": 0, "ordering_generation": "fixture", "authority": authority]
     }
-    private func snapshot(_ records: [[String: Any]], windows: [[String: Any]] = []) throws -> ViewSnapshot {
+    private func snapshot(_ records: [[String: Any]], windows: [[String: Any]] = [], reviewContext: [[String: Any]] = []) throws -> ViewSnapshot {
         let value = identity("snapshot").merging(["coverage": coverage("0"), "content_version": "one", "mode": "current",
-            "content": ["records": records, "windows": windows, "counts": counts(), "review_context": [], "review_summary": ["skipped": 0, "new": 0]]]) { $1 }
+            "content": ["records": records, "windows": windows, "counts": counts(), "review_context": reviewContext, "review_summary": ["skipped": 0, "new": 0]]]) { $1 }
         guard case .snapshot(let snapshot) = try frame(value) else { throw URLError(.cannotDecodeContentData) }
         return snapshot
     }

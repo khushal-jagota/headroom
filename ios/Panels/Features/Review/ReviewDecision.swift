@@ -1,7 +1,7 @@
 import Foundation
 import Observation
 
-/// The approval sheet displays this exact note and submits only this proposal-bound snapshot.
+/// A decision submits only this proposal-bound snapshot of the visible note.
 struct DecisionGuidance: Sendable, Equatable {
     let server: String
     let ticketID: String
@@ -32,14 +32,108 @@ struct DecisionGuidance: Sendable, Equatable {
     }
 }
 
+/// A sheet's interaction state survives replacement of its presented content.
+@MainActor @Observable final class DecisionApprovalFlow {
+    var selected: String?
+    var busy = false
+    var error: String?
+    var confirmationMessage: String?
+}
+
+/// Ordinary scope writes have no decision receipt. They are never saved to the Outbox.
+/// Keep the exact choice for an explicit read-only check after an uncertain result.
+@MainActor @Observable final class DecisionScopeChange {
+    struct Choice: Equatable {
+        let server: String
+        let ticketID: String
+        let ceiling: String
+        let holder: Principal
+    }
+    private(set) var choice: Choice?
+    private(set) var busy = false
+    private(set) var needsCheck = false
+    private(set) var canRetry = false
+    private(set) var holdingProposal = false
+    private(set) var message: String?
+    @ObservationIgnored private var capturedAPI: APIClient?
+
+    func save(api: APIClient, ticket: TicketDetail, ceiling: String?, holder: Principal, online: Bool) async throws -> TicketDetail {
+        guard !busy else { throw APIError(status: 0, message: "A settings check is already in progress.") }
+        guard !needsCheck || canRetry else { throw APIError(status: 0, message: message ?? "Check current settings before another change.") }
+        choice = Choice(server: LocalStore.server(api.baseURL), ticketID: ticket.id,
+                        ceiling: ceiling ?? ticket.ceiling, holder: holder)
+        capturedAPI = api
+        holdingProposal = true
+        guard online else {
+            message = "Not sent while offline. Your choice is kept. No proposal approval was sent."
+            throw APIError(status: 0, message: message!)
+        }
+        busy = true
+        needsCheck = false
+        canRetry = false
+        defer { busy = false }
+        do {
+            try await api.setTicketApprovalLimit(ticket.id, ceiling: ceiling, holder: holder)
+        } catch let error as APIError where (400..<500).contains(error.status) {
+            message = "Not sent. \(error.localizedDescription) No proposal approval was sent."
+            throw APIError(status: error.status, message: message!)
+        } catch {
+            // A transport failure or server error cannot establish whether the write applied.
+            // The next request is a GET, never another PATCH.
+        }
+        needsCheck = true
+        return try await readCurrent()
+    }
+
+    func releasePresentation() { holdingProposal = false }
+
+    func check(online: Bool) async throws -> TicketDetail {
+        guard !busy else { throw APIError(status: 0, message: "A settings check is already in progress.") }
+        holdingProposal = true
+        guard online else {
+            message = "Not checked while offline. Your choice is kept. No proposal approval was sent."
+            throw APIError(status: 0, message: message!)
+        }
+        busy = true
+        defer { busy = false }
+        return try await readCurrent()
+    }
+
+    private func readCurrent() async throws -> TicketDetail {
+        guard let choice, let api = capturedAPI else { throw APIError(status: 0, message: "Choose the settings first.") }
+        let current: TicketDetail
+        do {
+            // APIClient.ticket always uses a network GET with reloadIgnoringLocalCacheData.
+            current = try await api.ticket(choice.ticketID)
+        } catch {
+            needsCheck = true
+            canRetry = false
+            message = "The change is not confirmed. Check current settings when online. No proposal approval was sent."
+            throw APIError(status: 0, message: message!)
+        }
+        let waiting = current.pendingProposal == nil ? " Refresh the Ticket for its current proposal." : " The proposal still waits."
+        guard current.ceiling == choice.ceiling, current.ceilingHolder == choice.holder else {
+            needsCheck = true
+            canRetry = true
+            message = "Current settings do not match your choice. The change is not confirmed." + waiting + " No proposal approval was sent."
+            throw APIError(status: 0, message: message!)
+        }
+        needsCheck = false
+        canRetry = false
+        message = "Current settings match your choice." + waiting + " No proposal approval was sent."
+        return current
+    }
+}
+
 /// A draft belongs to the exact proposal the person read, including its revision.
 @MainActor @Observable final class ReviewDecision {
+    var approvalFlow = DecisionApprovalFlow()
     /// The Ticket's view stamp when the last load started; a read-ahead taken before a
     /// later change is not current when its card is shown.
+    let scopeChange = DecisionScopeChange()
     var loadedStamp: String?
     var ticket: TicketDetail?
     var manifest: ReviewWorkerManifest?
-    var draft = "" { didSet { persistDraft(draft, old: oldValue, suffix: ":edit") } }
     var revisionDraft = "" { didSet { persistDraft(revisionDraft, old: oldValue, suffix: ":guidance") } }
     private var draftServer: String?
     private var draftIdentity: String?
@@ -54,7 +148,6 @@ struct DecisionGuidance: Sendable, Equatable {
         guard draftIdentity != id || discard else { return }
         restoringDrafts = true
         draftServer = LocalStore.server(api.baseURL); draftIdentity = id
-        draft = discard ? proposal.body : LocalStore.shared.draft(server: draftServer!, id: id + ":edit") ?? proposal.body
         revisionDraft = LocalStore.shared.draft(server: draftServer!, id: id + ":guidance") ?? ""
         restoringDrafts = false
     }
@@ -71,8 +164,9 @@ struct DecisionGuidance: Sendable, Equatable {
 
     var proposal: TicketProposal? { ticket?.pendingProposal }
     var canReturn: Bool { proposal?.field != "brief" && ticket?.conversationId != nil }
-    var approvalStages: [ReviewWorkerManifest.Stage] { manifest?.approvalStages(after: ticket?.stage ?? "") ?? [] }
-    var ready: Bool { proposal != nil && !changed && !busy && !resolved && !approvalStages.isEmpty }
+    var nextStage: String? { manifest?.advance[ticket?.stage ?? ""] }
+    var approvalStages: [ReviewWorkerManifest.Stage] { manifest?.stages ?? [] }
+    var ready: Bool { proposal != nil && !changed && !busy && !resolved && nextStage != nil && !approvalStages.isEmpty }
 
     static func matches(_ lhs: TicketProposal, _ rhs: TicketProposal) -> Bool {
         lhs.field == rhs.field && lhs.createdAt == rhs.createdAt && lhs.revision == rhs.revision
@@ -102,9 +196,9 @@ struct DecisionGuidance: Sendable, Equatable {
                 error = "This proposal is no longer waiting. Refresh Review for the latest queue."
                 return
             }
-            if let existing = proposal, !Self.matches(existing, incoming), (draft != existing.body || !revisionDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty), !discardDraft {
+            if let existing = proposal, !Self.matches(existing, incoming), !revisionDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, !discardDraft {
                 changed = true
-                error = "The proposal changed while you were editing. Your draft is kept below. Reload to read the new version."
+                error = "The proposal changed. Your note is kept below. Reload to read the new version."
                 return
             }
             let lifecycle: ReviewWorkerManifest
@@ -125,16 +219,13 @@ struct DecisionGuidance: Sendable, Equatable {
         }
     }
 
-    func rename(api: APIClient, title: String) async -> Bool {
-        guard !busy, let ticket, !title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return false }
-        busy = true
-        defer { busy = false }
-        do {
-            try await api.renameReviewTicket(ticket.id, title: title)
-            self.ticket = try await api.ticket(ticket.id)
-            error = nil
-            return true
-        } catch { self.error = error.localizedDescription; return false }
+    func acceptScopeRead(_ current: TicketDetail) {
+        guard let existing = proposal, let incoming = current.pendingProposal, Self.matches(existing, incoming) else {
+            changed = true
+            error = "The proposal changed. Refresh Review before a decision. Your note is kept."
+            return
+        }
+        ticket = current
     }
 
     func approvalGuidance(api: APIClient) -> DecisionGuidance? {
@@ -147,13 +238,14 @@ struct DecisionGuidance: Sendable, Equatable {
     }
 
     func approve(api: APIClient, ceiling: String, holder: Principal, guidance: DecisionGuidance? = nil) async -> Bool {
-        guard ready, let ticket, let proposal, approvalStages.contains(where: { $0.id == ceiling }) else { return false }
+        guard ready, let ticket, let proposal, manifest?.ceilingRange.contains(ceiling) == true,
+              manifest?.selectionApprovesPending(ceiling: ceiling, waitingStage: ticket.stage) == true else { return false }
         guard guidance == nil || guidance?.matches(server: LocalStore.server(api.baseURL), ticketID: ticket.id, proposal: proposal) == true else {
             error = "The proposal changed. Close approval and review it again."
             return false
         }
         let body = ReviewApproval(expectedProposalRevision: proposal.revision,
-                                  editedBody: draft == proposal.body ? nil : draft,
+                                  editedBody: nil,
                                   nextCeiling: ceiling, nextHolder: holder)
         return enqueue(PendingWork(id: UUID().uuidString, created: .now, kind: .approval,
             ticketID: ticket.id, proposal: proposal, approval: body, guidance: guidance?.text, draftID: guidance?.draftID, decisionDraftUpdatedAt: guidance?.draftUpdatedAt,
@@ -184,6 +276,42 @@ struct ReviewQueue {
     /// Skipped part identities, each with its card's identity.
     private(set) var skipped: [String: String] = [:]
     private(set) var resolved: Set<String> = []
+    /// Retain a painted message only while its canonical owner remains eligible.
+    /// A proposal decided here stays until its local exit finishes.
+    func parts(of card: ReviewCard, in cards: [ReviewCard], holdingProposals: Set<String> = [], view: ViewSnapshot?) -> [ReviewItem] {
+        let held = card.parts.filter { part in
+            !resolved.contains(part.id) && (part.isMessage ? Self.messageEligible(part, in: view) : holdingProposals.contains(part.id))
+        }
+        let live = (cards.first { $0.id == card.id }?.parts ?? []).filter { part in
+            !resolved.contains(part.id) && !held.contains { $0.id == part.id || ($0.isMessage && $0.conversationId == part.conversationId) }
+        }
+        let all = live + held
+        return all.filter { !$0.isMessage } + all.filter(\.isMessage)
+    }
+    private static func messageEligible(_ item: ReviewItem, in view: ViewSnapshot?) -> Bool {
+        guard let view else { return true }
+        let context = view.content.reviewContext.first { $0.conversationId == item.conversationId }
+        if let context {
+            guard let canonical = context.canonicalAddressId, canonical == item.addressId else { return false }
+        } else {
+            // Until the held scope arrives, the admitted canonical address governs.
+            let addresses = view.content.records.compactMap { record -> (String, ViewAddressValue)? in
+                if case .address(let id, let value) = record, value.conversationId == item.conversationId { return (id, value) }
+                return nil
+            }.sorted { ($0.1.current ? 0 : 1, $0.0) < ($1.1.current ? 0 : 1, $1.0) }
+            if let canonical = addresses.first?.0, canonical != item.addressId { return false }
+        }
+        let owner = view.content.records.first { $0.key.kind == item.ownerKind && $0.key.id == item.ownerId }
+        switch item.ownerKind {
+        case "ticket":
+            if case .ticket(_, let value) = owner { return value.stage != "done" && !value.isBacklogged }
+            return context == nil
+        case "manager":
+            if case .manager(_, let value) = owner { return !value.settled }
+            return context == nil
+        default: return true
+        }
+    }
     func pending(_ card: ReviewCard) -> [ReviewItem] { card.parts.filter { !resolved.contains($0.id) } }
     func isSkipped(_ card: ReviewCard) -> Bool {
         let parts = pending(card)

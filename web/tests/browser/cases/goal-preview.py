@@ -14,6 +14,7 @@ from datetime import date, timedelta
 from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 
+from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 from playwright.sync_api import expect
 
 TODAY = "2026-10-30"
@@ -188,6 +189,23 @@ class GoalFixture:
             "next_refresh_at": int(time.time()) + 86400,
         }
 
+    @staticmethod
+    def checked(route, goal, body):
+        """Every goal write captures the accepted revision; a stale one conflicts."""
+        assert "expected_revision" in body, body
+        if body["expected_revision"] != goal["revision"]:
+            route.fulfill(
+                status=409,
+                json={
+                    "error": {
+                        "code": "revision_conflict",
+                        "message": "this document changed; read it again before saving",
+                    }
+                },
+            )
+            return None
+        return {key: value for key, value in body.items() if key != "expected_revision"}
+
     def accept(self, route, path, body):
         self.version += 1
         if path.endswith("/manual-writes"):
@@ -211,7 +229,9 @@ class GoalFixture:
         else:
             identity = path.split("/")[3]
             goal = self.goals[identity]
-            assert "expected_revision" not in body, body
+            body = self.checked(route, goal, body)
+            if body is None:
+                return
             goal.update(body)
             goal["revision"] += 1
             if goal["primary_checklist_block_id"]:
@@ -1616,16 +1636,10 @@ def authored_goal_presentation(browser, url):
                 )
                 card = text.locator('[data-file-preview-kind="markdown"]')
                 card.scroll_into_view_if_needed()
-                if phone:
-                    expect(card.locator(".pv-name")).to_be_visible()
-                else:
-                    expect(card.get_by_role(
-                        "heading", name="Wren intake", exact=True
-                    )).to_be_visible()
-                    expect(card).to_contain_text("The release identity is Wren iOS.")
-                    expect(card.locator(".file-preview-natural p")).to_have_css(
-                        "white-space", "normal"
-                    )
+                # Embedded, the Markdown artifact is a link; its document opens on press.
+                expect(card.locator("a.file-preview-artifact-link")).to_be_visible()
+                assert card.locator(".markdown-block").count() == 0
+                if not phone:
                     prose_geometry = text.locator(".markdown-block > p").first.evaluate("""p => {
                         const source = p.querySelector('strong').nextSibling;
                         const top = phrase => {
@@ -1640,8 +1654,8 @@ def authored_goal_presentation(browser, url):
                     }""")
                     assert abs(prose_geometry["secondLine"] - prose_geometry["firstLine"]
                                - prose_geometry["lineHeight"]) <= 1, prose_geometry
-                link = card.locator("a.pv-name:visible")
-                expect(link).to_have_text("intake.md")
+                link = card.locator("a.file-preview-artifact-link:visible")
+                expect(link).to_have_text("Wren intake")
                 original = page.url
                 link.click()
                 viewer = page.locator("[data-ticket-artifact]")
@@ -1882,16 +1896,25 @@ class NativeGoalEditFixture(GoalFixture):
     def accept(self, route, path, body):
         if path.endswith("/manual-writes"):
             return super().accept(route, path, body)
+        goal = self.goals[path.split("/")[3]]
+        revision = body["expected_revision"]
+        assert type(revision) is int and revision >= 0, body
+        if revision != goal["revision"]:
+            route.fulfill(status=409, json={"error": {
+                "code": "revision_conflict",
+                "message": "this document changed; read it again before saving",
+                "detail": {"expected_revision": revision, "current_revision": goal["revision"]},
+            }})
+            return
         if self.fail_next:
             self.fail_next -= 1
             route.fulfill(
                 status=503, json={"error": {"code": "fixture", "message": "Save rejected"}}
             )
             return
-        goal = self.goals[path.split("/")[3]]
-        goal.update(
-            copy.deepcopy(body)
-        )
+        goal.update(copy.deepcopy({
+            key: value for key, value in body.items() if key != "expected_revision"
+        }))
         goal["revision"] += 1
         self.version += 1
         selected = next(
@@ -2003,20 +2026,25 @@ def native_goal_edits(browser, url):
         def field_write(field, value, action, goal_id=identity):
             before = len(fixture.writes)
             revision = fixture.goals[goal_id]["revision"]
+            expected_body = {field: value, "expected_revision": revision}
             configuration = {
                 key: copy.deepcopy(fixture.goals[goal_id][key])
                 for key in ("primary_chart", "primary_checklist_block_id")
             }
-            with page.expect_response(
-                lambda response: (
-                    urlsplit(response.url).path == f"/api/goals/{goal_id}"
-                    and response.request.method == "PATCH"
-                    and response.request.post_data_json == {
-                        field: value
-                    }
-                )
-            ) as response:
-                action()
+            try:
+                with page.expect_response(
+                    lambda response: (
+                        urlsplit(response.url).path == f"/api/goals/{goal_id}"
+                        and response.request.method == "PATCH"
+                        and response.request.post_data_json == expected_body
+                    )
+                ) as response:
+                    action()
+            except PlaywrightTimeoutError as failure:
+                raise AssertionError({
+                    "mode": mode, "goal_id": goal_id, "expected": expected_body,
+                    "dispatched": fixture.writes[before:],
+                }) from failure
             assert response.value.status == 200, (
                 field,
                 fixture.writes[-1],
@@ -2041,7 +2069,7 @@ def native_goal_edits(browser, url):
             assert len(fixture.writes) == before + 1, fixture.writes[before:]
             path, body = fixture.writes[-1]
             assert path == f"/api/goals/{goal_id}", (path, body)
-            assert body == {field: value}, body
+            assert body == expected_body, {"mode": mode, "expected": expected_body, "actual": body}
             for key, accepted in configuration.items():
                 assert fixture.goals[goal_id][key] == accepted, (field, key)
 
@@ -2230,6 +2258,7 @@ def native_goal_edits(browser, url):
 
                 if not phone:
                     # Preserve a focused draft through a background accepted refresh.
+                    captured_revision = fixture.goals[identity]["revision"]
                     title.fill("Local draft after refresh")
                     fixture.goals[identity]["title"] = "Remote accepted title"
                     fixture.goals[identity]["why"] = "Remote accepted purpose"
@@ -2239,14 +2268,27 @@ def native_goal_edits(browser, url):
                     expect(why).to_have_text("Remote accepted purpose")
                     expect(title).to_have_text("Local draft after refresh")
                     count = len(fixture.writes)
-                    title.press("Enter")
-                    wait_writes(count + 1)
-                    expect(goal.locator(".error-line")).to_have_count(0)
-                    assert fixture.writes[-1][1] == {"title": "Local draft after refresh"}
+                    remote = copy.deepcopy(fixture.goals[identity])
+                    with page.expect_response(lambda response: (
+                        urlsplit(response.url).path == f"/api/goals/{identity}"
+                        and response.request.method == "PATCH"
+                    )) as refused:
+                        title.press("Enter")
+                    assert refused.value.status == 409, mode
+                    assert fixture.writes[-1][1] == {
+                        "title": "Local draft after refresh",
+                        "expected_revision": captured_revision,
+                    }, {"mode": mode, "body": fixture.writes[-1][1]}
+                    assert fixture.goals[identity] == remote
                     assert len(fixture.writes) == count + 1
+                    expect(goal.locator(".error-line")).to_contain_text("this document changed")
                     expect(title).to_have_text("Local draft after refresh")
                     title.press("Escape")
-                    expect(title).to_have_text("Local draft after refresh")
+                    expect(title).to_have_text("Remote accepted title")
+                    expect(goal.locator(".error-line")).to_have_count(0)
+                    field_write("title", "Local draft after refresh", lambda: text_action(
+                        title, "Local draft after refresh"
+                    ))
 
                     # Failed structured drafts retain their selected value. Explicit
                     # retry uses the same payload; discard restores accepted data.
@@ -2273,10 +2315,30 @@ def native_goal_edits(browser, url):
                     expect(state).to_have_value("true")
                     assert len(fixture.writes) == count
 
-                    # Background changes do not require a revision token for this edit.
+                    # A background change refuses the captured snapshot until discard/refocus.
+                    captured_revision = fixture.goals[identity]["revision"]
                     state.focus()
                     fixture.goals[identity]["revision"] += 1
                     fixture.version += 1
+                    remote = copy.deepcopy(fixture.goals[identity])
+                    count = len(fixture.writes)
+                    with page.expect_response(lambda response: (
+                        urlsplit(response.url).path == f"/api/goals/{identity}"
+                        and response.request.method == "PATCH"
+                    )) as refused:
+                        state.select_option("false")
+                    assert refused.value.status == 409, mode
+                    assert fixture.writes[-1][1] == {
+                        "active": False, "expected_revision": captured_revision,
+                    }, {"mode": mode, "body": fixture.writes[-1][1]}
+                    assert fixture.goals[identity] == remote
+                    assert len(fixture.writes) == count + 1
+                    expect(goal.locator(".error-line")).to_contain_text("this document changed")
+                    expect(state).to_have_value("false")
+                    goal.get_by_role("button", name="Discard edit", exact=True).click()
+                    expect(state).to_have_value("true")
+                    expect(goal.locator(".error-line")).to_have_count(0)
+                    refresh()
                     field_write("active", False, lambda: state.select_option("false"))
                     expect(state).to_have_value("false")
                     assert fixture.goals[identity]["active"] is False
@@ -2483,7 +2545,9 @@ def native_goal_edits(browser, url):
             text = goal.locator('[data-block="text"]').first
             markdown = text.get_by_role("textbox", name="Text", exact=True)
             count = len(fixture.writes)
-            link = text.locator('[data-file-preview-kind="markdown"] a.pv-name:visible')
+            link = text.locator(
+                '[data-file-preview-kind="markdown"] a.file-preview-artifact-link:visible'
+            )
             (link.tap if phone else link.click)()
             viewer = page.locator("[data-ticket-artifact]")
             expect(viewer.get_by_role("heading", name="Wren intake", exact=True)).to_be_visible()
@@ -3195,25 +3259,51 @@ def checklist_deadline_controls(browser, url):
                 )
                 date_control(panel).get_by_role("button", name="Discard edit", exact=True).click()
                 expect(native).to_have_value("2026-11-04")
-                # An external edit invalidates the focused draft. Recovery refreshes
-                # accepted data, and the next edit keeps neighboring content.
+                # An external edit refuses the captured date revision and retains its draft.
+                captured_revision = fixture.goals["checklist"]["revision"]
                 native.fill("2026-11-06")
                 accepted_item("review")["detail"] = "Accepted neighboring context"
                 fixture.goals["checklist"]["revision"] += 1
                 fixture.version += 1
-                native.press("Enter")
-                wait_fixture(
-                    lambda: accepted_item().get("deadline") == "2026-11-06",
-                    "Date edit after external change",
+                remote = copy.deepcopy(fixture.goals["checklist"])
+                before = len(fixture.writes)
+                with page.expect_response(lambda response: (
+                    urlsplit(response.url).path == "/api/goals/checklist"
+                    and response.request.method == "PATCH"
+                )) as refused:
+                    native.press("Enter")
+                assert refused.value.status == 409, mode
+                assert len(fixture.writes) == before + 1
+                path, body = fixture.writes[-1]
+                assert path == "/api/goals/checklist"
+                assert set(body) == {"page", "expected_revision"}, body
+                assert body["expected_revision"] == captured_revision, {"mode": mode, "body": body}
+                assert fixture.goals["checklist"] == remote
+                expect(date_control(panel).get_by_role("alert")).to_contain_text(
+                    "this document changed"
                 )
+                expect(native).to_have_value("2026-11-06")
+                expect(native).to_have_attribute("readonly", "")
+                date_control(panel).get_by_role("button", name="Discard edit", exact=True).click()
+                expect(native).to_have_value("2026-11-04")
                 expect(date_control(panel).get_by_role("alert")).to_have_count(0)
+                refresh()
+                page.wait_for_function(
+                    "revision => {const state = window.__goalQueryState('checklist'); "
+                    "return state.fetchStatus === 'idle' && state.revision === revision;}",
+                    arg=remote["revision"],
+                )
+                save_date(panel, "2026-11-06")
+                assert fixture.writes[-1][1]["expected_revision"] == remote["revision"]
+                assert accepted_item("review")["detail"] == "Accepted neighboring context"
+                accepted_revision = fixture.goals["checklist"]["revision"]
                 native.fill("2026-11-07")
                 native.press("Enter")
                 wait_fixture(
                     lambda: accepted_item().get("deadline") == "2026-11-07",
                     "New explicit edit",
                 )
-                assert "expected_revision" not in fixture.writes[-1][1]
+                assert fixture.writes[-1][1]["expected_revision"] == accepted_revision
                 assert accepted_item("review")["detail"] == "Accepted neighboring context"
                 expect(date_control(panel).get_by_role("alert")).to_have_count(0)
                 if output:

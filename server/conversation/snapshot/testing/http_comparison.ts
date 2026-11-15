@@ -21,10 +21,12 @@ import { createBackendRoutes } from '../routes.ts';
 import { ConversationHttpWriteScope } from '../../http/writes.ts';
 import { RecordingBackendProbeEnvironment } from '../recording_environment.ts';
 import { ticketModelCatalogControl } from './ticket_models.ts';
+import type { RemoteCatalogSource } from '../../model_resolution/contracts.ts';
 interface Spec {
   readonly db_path: string;
   readonly now: string;
   readonly cards: readonly BackendSnapshot[];
+  readonly named_machine: string;
   readonly usage: readonly (Omit<BackendUsageResult, 'observed_at' | 'windows'> & {
     observed_at: string | null;
     windows: readonly {
@@ -159,6 +161,18 @@ export async function run(spec: Spec) {
     ) as Partial<Record<ConversationBackendKey, { refresh(): Promise<BackendUsageResult> }>>,
   );
   const writes = new ConversationHttpWriteScope();
+  const named_catalog: RemoteCatalogSource = {
+    identity: null,
+    ready: true,
+    owns_conversation: () => false,
+    retained: () => null,
+    async snapshot(key) {
+      return {
+        ...spec.cards.find((value) => value.backend_key === key)!,
+        version: 'named-3.0.0',
+      };
+    },
+  };
   const runtime: BackendHttpRuntime = {
     settled: () => writes.drain(),
     database,
@@ -166,7 +180,7 @@ export async function run(spec: Spec) {
     backend_state: new BackendStateStore(database),
     backend_usage: usage,
     codex_sign_in: sign_in,
-    machine_catalog: () => null,
+    machine_catalog: (machine_id) => (machine_id === spec.named_machine ? named_catalog : null),
   };
   const config = loadConfig();
   config.db_path = spec.db_path;

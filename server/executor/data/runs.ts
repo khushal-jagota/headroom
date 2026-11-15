@@ -5,7 +5,8 @@ import type { ChildReference } from '../../conversation/backends/contracts.ts';
 import { PlannerError } from '../../core/contracts.ts';
 import type { Database, ReadSql, TransactionSql } from '../../core/database/contracts.ts';
 import { execution_unavailable_reason } from '../../tickets/locale_configuration.ts';
-import { current_incarnation } from '../vps_presence_store.ts';
+import { current_incarnation, require_incarnation_owner } from '../vps_presence_store.ts';
+import { ORIGINAL_MAC_MACHINE_ID } from '../../execution_identity.ts';
 import { ExecutorValidationError } from '../protocol.ts';
 import type { WireValue } from '../contracts.ts';
 import {
@@ -16,8 +17,10 @@ import {
 
 export class ExecutorStore {
   readonly database: Database;
-  constructor(database: Database) {
+  readonly machine_id: string;
+  constructor(database: Database, machine_id: string = ORIGINAL_MAC_MACHINE_ID) {
     this.database = database;
+    this.machine_id = machine_id;
   }
   retained_runs(): readonly RetainedBackendRun[] {
     return this.database.read((sql) =>
@@ -31,7 +34,8 @@ export class ExecutorStore {
           stop_state: string;
           current_incarnation: string | null;
         }>(
-          'SELECT r.executor_incarnation,r.child_id,r.conversation_id,CAST(r.turn_number AS TEXT) AS turn_number,r.delivery_uncertain,r.stop_state,p.executor_incarnation AS current_incarnation FROM mac_runs AS r LEFT JOIN mac_executor_presence AS p ON p.machine_id=r.machine_id ORDER BY r.rowid',
+          'SELECT r.executor_incarnation,r.child_id,r.conversation_id,CAST(r.turn_number AS TEXT) AS turn_number,r.delivery_uncertain,r.stop_state,p.executor_incarnation AS current_incarnation FROM mac_runs AS r LEFT JOIN mac_executor_presence AS p ON p.machine_id=r.machine_id WHERE r.machine_id=? ORDER BY r.rowid',
+          [this.machine_id],
         )
         .map(
           (row) =>
@@ -56,7 +60,8 @@ export class ExecutorStore {
   unresolved_runs_of_replaced_incarnations(): readonly ChildReference[] {
     return this.database.read((sql) =>
       sql.all<ChildReference>(
-        "SELECT r.executor_incarnation,r.child_id,r.conversation_id FROM mac_runs AS r LEFT JOIN mac_executor_presence AS p ON p.machine_id=r.machine_id WHERE r.stop_state<>'closed' AND r.executor_incarnation IS NOT p.executor_incarnation ORDER BY r.rowid",
+        "SELECT r.executor_incarnation,r.child_id,r.conversation_id FROM mac_runs AS r LEFT JOIN mac_executor_presence AS p ON p.machine_id=r.machine_id WHERE r.machine_id=? AND r.stop_state<>'closed' AND r.executor_incarnation IS NOT p.executor_incarnation ORDER BY r.rowid",
+        [this.machine_id],
       ),
     );
   }
@@ -78,7 +83,7 @@ export class ExecutorStore {
     now_ms: number,
   ): void {
     this.database.write((tx) => {
-      const current = current_incarnation(tx);
+      const current = current_incarnation(tx, this.machine_id);
       if (current !== child.executor_incarnation)
         throw new BackendSpawnFailed(
           current !== null
@@ -116,7 +121,7 @@ export class ExecutorStore {
         [child.conversation_id],
       )!;
       tx.run(
-        "INSERT INTO mac_runs(conversation_id,executor_incarnation,child_id,principal_kind,principal_id,turn_number,delivery_uncertain,stop_state) VALUES(?,?,?,?,?,?,0,'open') ON CONFLICT(conversation_id) DO UPDATE SET executor_incarnation=excluded.executor_incarnation,child_id=excluded.child_id,principal_kind=excluded.principal_kind,principal_id=excluded.principal_id,turn_number=excluded.turn_number,delivery_uncertain=0,stop_state='open'",
+        "INSERT INTO mac_runs(conversation_id,executor_incarnation,child_id,principal_kind,principal_id,turn_number,delivery_uncertain,stop_state,machine_id) VALUES(?,?,?,?,?,?,0,'open',?) ON CONFLICT(conversation_id) DO UPDATE SET executor_incarnation=excluded.executor_incarnation,child_id=excluded.child_id,principal_kind=excluded.principal_kind,principal_id=excluded.principal_id,machine_id=excluded.machine_id,turn_number=excluded.turn_number,delivery_uncertain=0,stop_state='open'",
         [
           child.conversation_id,
           child.executor_incarnation,
@@ -124,6 +129,7 @@ export class ExecutorStore {
           principal_kind,
           principal_id,
           counter(turn.turn_number),
+          this.machine_id,
         ],
       );
       tx.run('INSERT INTO executor_child_assignments VALUES (?,?,?,?,?,?,NULL)', [
@@ -137,12 +143,18 @@ export class ExecutorStore {
     });
   }
   has_closed_child_assignment(child: ChildReference): boolean {
-    return this.database.read((sql) => has_closed_child_assignment(sql, child));
+    return this.database.read((sql) => {
+      require_incarnation_owner(sql, child.executor_incarnation, this.machine_id);
+      return has_closed_child_assignment(sql, child);
+    });
   }
   child_assignment(child: ChildReference): readonly [string, string] | null {
-    return this.database.read((sql) => open_child_assignment(sql, child));
+    return this.database.read((sql) => this.open_child_assignment(sql, child));
   }
-  readonly open_child_assignment = open_child_assignment;
+  open_child_assignment(sql: ReadSql, child: ChildReference): readonly [string, string] | null {
+    require_incarnation_owner(sql, child.executor_incarnation, this.machine_id);
+    return open_child_assignment(sql, child);
+  }
   close_child(child: ChildReference, now_ms: number): void {
     this.database.write((tx) => close_child_in_transaction(tx, child, now_ms));
   }

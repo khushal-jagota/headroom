@@ -2059,6 +2059,11 @@ async def _admission_phases(
         return next(item for item in state()["rows"] if item["command_id"] == name)
 
     await p("machine", machine_id=ORIGINAL_MAC_MACHINE_ID)
+    # A native cancel can omit its wire turn. Its row retains current-turn authority.
+    fallback = await put("ad-current-cancel", "cancel_running_turn", "basic", turn=None)
+    assert fallback["child_command"]["turn"] is None
+    assert row("ad-current-cancel")["turn"] == str(TURN)
+    await call("withdraw", "ad-current-cancel", "delivery_withdrawn")
     # Settle retained delivered rows before the unchanged-state admission assertions.
     await call("poll", IDENTITY, await call("high"), 0)
     await p("admission", method="open", path=str(paths[1]))
@@ -2081,7 +2086,25 @@ async def _admission_phases(
     for index in range(30):
         await put(f"ad-cancel-pad-{index}", "steer", "basic")
     prompt = await put("ad-cancel-prompt", "write_prompt", "basic")
-    await put("ad-cancel", "cancel_running_turn", "basic")
+    await p("sql", statements=[_statement(
+        "UPDATE mac_runs SET turn_number=? WHERE conversation_id='basic'", TURN - 1,
+    )])
+    cancel = await put("ad-cancel", "cancel_running_turn", "basic", turn=None)
+    assert cancel["child_command"]["turn"] is None
+    assert row("ad-cancel")["turn"] == str(TURN)
+    # The held start's binding wins over the older run. Retry keeps that original turn.
+    await p("sql", statements=[
+        _statement("UPDATE automatic_start_bindings SET turn_number=? WHERE identity='ad-basic'",
+                   TURN + 1),
+        _statement("UPDATE mac_runs SET turn_number=? WHERE conversation_id='basic'", TURN + 2),
+    ])
+    assert await put("ad-cancel", "cancel_running_turn", "basic", turn=None) == cancel
+    assert row("ad-cancel")["turn"] == str(TURN)
+    await p("sql", statements=[
+        _statement("UPDATE automatic_start_bindings SET turn_number=? WHERE identity='ad-basic'",
+                   TURN),
+        _statement("UPDATE mac_runs SET turn_number=? WHERE conversation_id='basic'", TURN),
+    ])
     assert prompt["command_sequence"] - start["command_sequence"] == 32
     await p("arm", mode="admission_race", before_sql=[
         _statement("INSERT INTO executor_commands(command_id,executor_incarnation,operation,"

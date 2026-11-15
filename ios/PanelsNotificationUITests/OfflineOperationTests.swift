@@ -50,23 +50,20 @@ final class OfflineOperationTests: XCTestCase {
         let approve = app.buttons["review.approve"]
         XCTAssertTrue(approve.waitForExistence(timeout: 10))
         approve.tap()
-        let approval = app.buttons["review.confirmApproval"]
-        XCTAssertTrue(approval.waitForExistence(timeout: 5))
-        approval.tap()
+        // The fixture's next stage is Done: approval is one tap.
         let sendBack = app.buttons["review.sendBack"]
         XCTAssertTrue(sendBack.waitForExistence(timeout: 8))
         sendBack.tap()
         let guidanceAny = app.descendants(matching: .any).matching(identifier: "review.revision").firstMatch
         XCTAssertTrue(guidanceAny.waitForExistence(timeout: 5))
         guidanceAny.tap(); guidanceAny.typeText("Keep this send-back guidance")
-        let confirmReturn = app.buttons["review.confirmReturn"]
-        XCTAssertTrue(confirmReturn.waitForExistence(timeout: 5))
-        confirmReturn.tap()
+        // The note stays pinned; the same action now submits it.
+        sendBack.tap()
         app.terminate(); app.launch()
         XCTAssertTrue(workspace.waitForExistence(timeout: 3)); workspace.tap()
         XCTAssertTrue(chief.waitForExistence(timeout: 3), "Cached Workspace did not restore offline")
         app.tabBars.buttons["Review"].tap()
-        XCTAssertTrue(app.buttons.matching(NSPredicate(format: "label CONTAINS 'Record offline'")).firstMatch.waitForExistence(timeout: 5), "Cached Review did not restore the remaining ask offline")
+        XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label CONTAINS 'Record offline'")).firstMatch.waitForExistence(timeout: 5), "Cached Review did not restore the remaining ask offline")
         // Returning connectivity cannot authorize a second attempt for the unknown result.
         app.tabBars.buttons["Workspace"].tap()
         try await proof(base, "online")

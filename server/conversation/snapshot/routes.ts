@@ -7,6 +7,7 @@ import { JsonNumber } from '../../core/http/numeric_json.ts';
 import { PlannerError } from '../../core/contracts.ts';
 import { dictionaryBody, scalarQueries } from '../../list_reads/http.ts';
 import { read_ticket } from '../../tickets/data/index.ts';
+import { HOME_MACHINE_ID } from '../../execution_identity.ts';
 import { ConversationBackendKey } from '../contracts.ts';
 import { Fields, body_fields, object } from '../http/intake.ts';
 import type { ConversationHttpWriteScope } from '../http/writes.ts';
@@ -118,7 +119,9 @@ export function createBackendRoutes(
         throw new PlannerError('validation', 'ticket_id is required', {});
       const ticket = runtime.database.read((sql) => read_ticket(sql, raw.ticket_id as string));
       const source =
-        ticket.locale === 'macos' ? runtime.machine_catalog() : runtime.backend_snapshots;
+        ticket.machine_id === HOME_MACHINE_ID
+          ? runtime.backend_snapshots
+          : runtime.machine_catalog(ticket.machine_id);
       if (source === null)
         throw new PlannerError('validation', 'The selected machine is unavailable', {});
       const snapshots = await Promise.all(

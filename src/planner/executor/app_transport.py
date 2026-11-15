@@ -1,8 +1,8 @@
 """Machine-authenticated executor routes, with protocol 26 work admission.
 
 Each request binds its credential to a named destination before it selects an owner.
-The original configured executor keeps its prior authority until its first credential
-authentication.
+The original configured executor keeps its prior authority until its runtime reports
+that the Mac supervisor kept a credentialed runtime.
 Work requests also require that machine's current incarnation. Update requests retain
 protocol-independent recovery, but never bypass permanent credential handover.
 """
@@ -40,6 +40,7 @@ from planner.executor.configuration import (
     EXECUTOR_CREDENTIAL_PATH,
     EXECUTOR_FILE_SHA256_HEADER,
     EXECUTOR_FILE_UPLOAD_HEADER,
+    EXECUTOR_HANDOVER_CLOSE_PATH,
     EXECUTOR_INCARNATION_HEADER,
     EXECUTOR_ITEMS_PATH,
     EXECUTOR_LEASE_PATH,
@@ -267,6 +268,28 @@ def build_executor_router() -> APIRouter:
         except PlannerError as error:
             return _error(error)
 
+    @router.post(EXECUTOR_HANDOVER_CLOSE_PATH)
+    async def close_handover(request: Request) -> Response:
+        """The runtime asks only once the Mac supervisor's decision to keep it is final,
+        so every earlier revert lands on a runtime the old authority still admits."""
+        try:
+            credential = request.headers.get(EXECUTOR_CREDENTIAL_HEADER)
+            if credential is None:
+                raise PlannerError(ErrorCode.agent_forbidden, "Executor credential is required")
+            machine_id = await authenticated_machine(request)
+
+            def close() -> None:
+                with runtime_connection(database_path(request)) as conn:
+                    executor_credentials.close_original_handover(
+                        conn, machine_id, credential,
+                        request.headers.get(EXECUTOR_INCARNATION_HEADER),
+                    )
+
+            await run_on_worker_thread(close)
+        except PlannerError as error:
+            return _error(error)
+        return JSONResponse({"closed": True})
+
     # --- 1-8: the work and presence routes ------------------------------------------------
 
     @router.post(EXECUTOR_LEASE_PATH)
@@ -489,18 +512,6 @@ def build_executor_router() -> APIRouter:
             service.report(report, endpoint.health() if isinstance(endpoint, VpsExecutor) else None)
         except (ValidationError, UpdateConflict, OSError, ValueError) as error:
             raise HTTPException(409, str(error)) from error
-        credential = request.headers.get(EXECUTOR_CREDENTIAL_HEADER)
-        if report.phase == "current" and credential is not None:
-            # The supervisor keeps the trial runtime only after this confirmation, so the
-            # old authority closes here and never sooner. A failed closure confirms nothing.
-            def close_handover() -> None:
-                with runtime_connection(database_path(request)) as conn:
-                    executor_credentials.close_original_handover(
-                        conn, service.machine_id, credential,
-                        request.headers.get(EXECUTOR_INCARNATION_HEADER),
-                    )
-
-            await run_on_worker_thread(close_handover)
         return {"confirmed": report.phase == "current"}
 
     # --- 10: the old WebSocket, refused ---------------------------------------------------

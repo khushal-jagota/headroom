@@ -5,6 +5,7 @@ import { observe_shutdown } from '../../conversation/shutdown.ts';
 import { ServerLifecycleError } from '../../lifecycle/contracts.ts';
 import type { StopOptions } from '../../lifecycle/contracts.ts';
 import { TRANSFER_CHUNK_BYTES } from './configuration.ts';
+import type { RuntimeTarget } from '../../environments/release/contracts.ts';
 import type {
   DirectoryHandle,
   TransferHandle,
@@ -107,8 +108,12 @@ export class FilesService {
       }
     });
   }
-  read_runtime_revision(path: string, expected: string): Promise<string> {
-    return this.request('read_runtime_revision', [path, expected]);
+  read_runtime_revision(
+    path: string,
+    expected: string,
+    expected_target?: RuntimeTarget,
+  ): Promise<string> {
+    return this.request('read_runtime_revision', [path, expected, expected_target]);
   }
   extract_runtime(
     archive: string,
@@ -116,8 +121,16 @@ export class FilesService {
     sha256: string,
     bytes: number,
     revision: string,
+    expected_target?: RuntimeTarget,
   ): Promise<string> {
-    return this.request('extract_runtime', [archive, releases, sha256, bytes, revision]);
+    return this.request('extract_runtime', [
+      archive,
+      releases,
+      sha256,
+      bytes,
+      revision,
+      expected_target,
+    ]);
   }
   read_runtime_record(path: string): Promise<string | null> {
     return this.request('read_runtime_record', [path]);

@@ -2,6 +2,23 @@
 
 This file records intentional differences that the migration Manager accepted. No new difference enters this file without that acceptance. Close an entry when Python adopts the same behavior.
 
+## Native Darwin home contract
+
+The Manager authorizes a version 2 Darwin arm64 home contract for the native Node release.
+Python defines a version 1 Darwin contract with `python_version` and Node major 22 or newer.
+The native contract replaces `python_version` with `minimum_node_version: '22.18.0'` and fixes `node_major: 22`.
+It preserves the home role, minimum OS 15.0, inventory digest, and system library prefixes.
+P7 owns Darwin host admission and entrypoint branches. Metadata admission alone does not prove a runnable Darwin release.
+
+## Native Linux executor layout
+
+The Manager assigns P5 the native Linux executor archive and installation layout, which P2 reuses for launch.
+TypeScript uses host Node and the shared executor CLI instead of Python's private interpreter.
+The default join root is the XDG data directory's `panels/executor-typescript`, with separate `data/` and `installation/` children.
+Its user unit is `panels-executor-typescript.service`, separate from Python's unit.
+Role admission retains the Python marker filename and identity fields. Native admission binds the Node manifest, contract and inventory.
+Paired synthetic proofs project the interpreter, root, PATH, and unit differences explicitly. Real runtime execution remains a hosted acceptance boundary.
+
 ## Pending staging port: mailbox authority and protocol
 
 P2 owns these boundaries. The active machine-scope comparison now proves that stale
@@ -16,6 +33,10 @@ remain intact. These implemented boundaries do not claim full executor parity.
 The native schema describes protocol 26. Runtime identities still advertise protocol 22
 until machine credentials, supervision, and workspace behavior reach parity. This is
 an incomplete staging port, not an accepted final difference.
+
+The active machine-admission comparison uses each runtime's supported identity
+and retains both full identities in its report. It proves destination selection,
+readiness, and refusal envelopes. It does not claim a same-wire protocol-26 exchange.
 
 ## Pending staging port: Linux host admission
 
@@ -303,7 +324,7 @@ The migration Manager accepted these three differences in the Part 1 review on
 November 12, 2026:
 
 - TypeScript cleans up the owned process group. Python's uncontained client stops
-  only its direct child. The WorkerUnit path retains its existing containment.
+  only its direct child. Worker starts now use the shared supervision runtime.
 - A write failure immediately fails all pending requests and suspended writes in
   TypeScript. Python marks the wire broken, while some pending requests wait for
   a later child exit or their own deadline.
@@ -314,15 +335,6 @@ These differences do not authorize one request's cancellation to stop the whole
 app-server, or a timeout to reject unrelated pending requests. Those operations
 retain Python's scope. The process implementation never signals a group after
 it observes the direct child's exit.
-
-## Codex shell startup path
-
-The migration Manager required the TypeScript-owned startup script in the Part 1 review
-on November 12, 2026. On Linux, Python sets `BASH_ENV` to
-`src/planner/conversation/tool_shell_startup.bash`. TypeScript sets it to
-`server/conversation/tool_shell_startup.bash` through the shared TypeScript helper.
-The paired startup check asserts each exact path and identical script bytes. Every other
-child environment value and launch argument compares exactly.
 
 ## Recorded usage test composition and shutdown
 
@@ -469,7 +481,7 @@ TypeScript validates the live payload through the shared wire boundary before th
 ## Mac canonical skill publication ownership and durability
 
 The Manager accepted these Mac-only safety differences during PR 817 source review on November 13, 2026.
-The shared server publisher keeps Python behavior, including legacy `skills` symlink conversion and replacement of existing entries.
+The private workspace projection keeps legacy publication behavior. Account publication now follows staging ownership checks and never replaces foreign entries.
 The Mac uses an explicit owned-link policy in that same shared module. It never recursively removes provider entries.
 Before any publication or derived-state write, the Mac requires an absolute existing provider home and an existing real `skills` directory.
 The trusted adapter host supplies that home separately from the snapshot. Its real path must equal its configured normalized path.

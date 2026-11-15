@@ -150,41 +150,59 @@ export async function kill(
   state: ConversationState,
 ): Promise<void> {
   state.being_killed = true;
+  let succeeded = false;
   try {
-    state.last_touched_monotonic = host.monotonic_now();
-    if (await kill_initial_delivery(host, state, () => discard_all(host, state))) {
-      return;
-    }
-    const lease = await host.acquire_settled(state);
-    try {
-      await discard_all(host, state);
-      try {
-        if (state.child === null && state.retained_child_reference !== null)
-          state.child =
-            retained_factory(
-              host.options.backend_child_factories[state.record.backend_key],
-            )?.recover(state.retained_child_reference) ?? null;
-        if (state.running_turn)
-          await cancel_and_end_running_turn(host, state, state.running_turn, lease);
-        if (state.child) await host.discard_child(state, state.child);
-      } finally {
-        if (!host.shutting_down) settle_phase(state);
-      }
-    } finally {
-      lease.release();
-    }
-    await state.retirement_task;
+    await kill_owned(host, state);
+    await host.confirm_killed_source(state);
+    succeeded = true;
   } finally {
     try {
       if (!host.shutting_down)
         await host.persist(state, () =>
           host.options.store.take_background_tasks(state.record.conversation_id),
         );
+    } catch (error) {
+      succeeded = false;
+      throw error;
     } finally {
       state.being_killed = false;
-      await host.drain_held_prompts(state);
+      if (
+        !succeeded &&
+        !state.child_is_quarantined &&
+        !host.options.store.blocked_local_conversations.has(state.record.conversation_id)
+      )
+        host.schedule_drain(state);
     }
   }
+  await host.drain_held_prompts(state);
+}
+async function kill_owned(
+  host: SqliteProcessConversationSystem,
+  state: ConversationState,
+): Promise<void> {
+  state.last_touched_monotonic = host.monotonic_now();
+  if (await kill_initial_delivery(host, state, () => discard_all(host, state))) {
+    return;
+  }
+  const lease = await host.acquire_settled(state);
+  try {
+    await discard_all(host, state);
+    try {
+      if (state.child === null && state.retained_child_reference !== null)
+        state.child =
+          retained_factory(host.options.backend_child_factories[state.record.backend_key])?.recover(
+            state.retained_child_reference,
+          ) ?? null;
+      if (state.running_turn)
+        await cancel_and_end_running_turn(host, state, state.running_turn, lease);
+      if (state.child) await host.discard_child(state, state.child);
+    } finally {
+      if (!host.shutting_down) settle_phase(state);
+    }
+  } finally {
+    lease.release();
+  }
+  await state.retirement_task;
 }
 export async function send_now(
   host: SqliteProcessConversationSystem,

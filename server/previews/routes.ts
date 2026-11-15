@@ -3,6 +3,7 @@ import type { FastifyPluginAsync } from 'fastify';
 import type { AreaServices, PreparedAreaRoutes } from '../core/authority/register.ts';
 import { PlannerError } from '../core/contracts.ts';
 import { HttpError } from '../core/http/errors.ts';
+import { stringify_numeric_json } from '../core/http/numeric_json.ts';
 import { PreviewError, base_path, type PreviewRecord } from './contracts.ts';
 import { LIFECYCLE_SECONDS } from './config.ts';
 import { PreviewService } from './service.ts';
@@ -36,6 +37,7 @@ export function createPreviewRoutes(): PreparedPreviewRoutes {
     seal_registered?.();
   };
   const routes: FastifyPluginAsync<AreaServices> = async (app, services) => {
+    app.setReplySerializer(stringify_numeric_json);
     const lifetime = install_request_lifetime(app);
     const service = new PreviewService(
       services.database,

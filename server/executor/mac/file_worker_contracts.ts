@@ -1,5 +1,6 @@
 /** Private thread messages. These are not executor wire or file-manifest types. */
 import type { FileVersion } from './file_metadata.ts';
+import type { RuntimeTarget } from '../../environments/release/contracts.ts';
 export interface DirectoryHandle {
   readonly id: number;
 }
@@ -13,7 +14,7 @@ export interface CapturedBlob {
   modified_ns: bigint;
 }
 export interface FileOperationArguments {
-  read_runtime_revision: [path: string, expected: string];
+  read_runtime_revision: [path: string, expected: string, expected_target?: RuntimeTarget];
   unlink_at: [directory: number, name: string];
   extract_runtime: [
     archive: string,
@@ -21,6 +22,7 @@ export interface FileOperationArguments {
     sha256: string,
     bytes: number,
     revision: string,
+    expected_target?: RuntimeTarget,
   ];
   read_runtime_record: [path: string];
   atomic_runtime_record: [path: string, text: string];

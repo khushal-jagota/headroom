@@ -18,6 +18,7 @@ interface Step {
     | 'reported'
     | 'shrink'
     | 'inspect'
+    | 'cleanup'
     | 'publish'
     | 'crash';
   hex?: string;
@@ -64,6 +65,7 @@ async function digest(
   stats: StreamStats,
   command_id: string,
   column: 'mailbox_command_json' | 'result_json',
+  original = false,
 ): Promise<unknown> {
   if (reader === null) return null;
   const stored = stored_body(command_id, column);
@@ -91,7 +93,7 @@ async function digest(
   );
   const streamed = Buffer.concat(chunks);
   const canonical = Buffer.from(JSON.stringify(JSON.parse(stored.toString())));
-  if (stored.equals(canonical)) {
+  if (original || stored.equals(canonical)) {
     assert.deepEqual(streamed, stored, 'The reader must stream the native stored bytes');
     assert.equal(hash.digest('hex'), createHash('sha256').update(stored).digest('hex'));
     stats.native_exact_checks++;
@@ -234,6 +236,28 @@ export async function journal_parity(input: Input): Promise<unknown> {
         case 'shrink':
           await journal.shrink_to_tombstones();
           break;
+        case 'cleanup': {
+          const cursor = await journal.cleanup_evidence();
+          const rows: unknown[] = [];
+          try {
+            for await (const row of cursor)
+              rows.push({
+                id: row.command_id,
+                command: await digest(
+                  row.command,
+                  stream,
+                  row.command_id,
+                  'mailbox_command_json',
+                  true,
+                ),
+                result: await digest(row.result, stream, row.command_id, 'result_json', true),
+              });
+          } finally {
+            await cursor.close();
+          }
+          observations.push(rows);
+          break;
+        }
         case 'inspect':
           observations.push({
             ...((await inspect(journal, step.ids!, stream)) as object),

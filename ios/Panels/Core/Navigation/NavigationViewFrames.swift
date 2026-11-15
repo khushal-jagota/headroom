@@ -41,7 +41,7 @@ enum NavigationViewFrames {
             var next = previous
             next.coverage = patch.coverage
             next.contentVersion = patch.contentVersion
-            next.content = ViewContent(records: records, windows: patch.windows, counts: patch.counts)
+            next.content = ViewContent(records: records, windows: patch.windows, counts: patch.counts, reviewContext: patch.reviewContext)
             return .success(next)
         }
     }

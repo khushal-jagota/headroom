@@ -263,18 +263,7 @@ def _preview_lifecycle(browser, url):
         page.wait_for_function("!document.querySelector('[data-preview-index=\"0\"] [data-visible-content-restoring]')")
         assert not page.evaluate("window.__firstPreview.isConnected")
         assert sum('preview0.html' in href for href in reads) == 2, reads
-        expect(restored_slot.locator('.quiet-line')).to_have_text('preview0.html — file fetch failed: 503')
-        failed_name = restored_slot.locator('.file-preview-failed-name')
-        expect(failed_name).to_have_text('preview0.html')
-        assert failed_name.evaluate("""element => {
-          const style = getComputedStyle(element);
-          const reference = document.createElement('span');
-          reference.style.color = 'var(--text-strong)';
-          element.append(reference);
-          const strongColor = getComputedStyle(reference).color;
-          reference.remove();
-          return style.fontWeight === '600' && style.color === strongColor;
-        }""")
+        expect(restored_slot.locator('[data-html-fetch-notice]')).to_have_text('file fetch failed: 503')
         # Failure completes restoration and is retryable when this preview returns.
         page.locator('[data-preview-fixture]').evaluate("element=>element.scrollTop=element.scrollHeight")
         page.wait_for_function("document.querySelector('[data-preview-index=\"0\"] [data-visible-content-state]')?.dataset.visibleContentState !== 'active'")
@@ -1180,7 +1169,9 @@ def _run(browser, urls):
             f"delayed-{kind}-{mode}": (
                 lambda page, url, kind=kind, mode=mode: delayed_case(page, url, kind, mode)
             )
-            for kind in ["image", "markdown"]
+            # An embedded Markdown artifact is now a link and loads nothing, so only a
+            # delayed picture still changes a row's geometry after it is drawn.
+            for kind in ["image"]
             for mode in ["following", "scrollback"]
         },
     }
@@ -4419,10 +4410,14 @@ def _short_lens_restoration(browser, url):
 def _chat_charts(browser, url):
     """The real transcript must mount shared charts, not only parse their specs."""
     import os
+    import sys
     import time
     from pathlib import Path
 
     from playwright.sync_api import expect
+
+    # Match the native document-edge shortcut used by descendant_keyboard_case.
+    home_key = "Home" if sys.platform == "darwin" else "Control+Home"
 
     started = time.perf_counter()
     page = browser.new_page(viewport={"width": 1100, "height": 1100})
@@ -4524,7 +4519,7 @@ def _chat_charts(browser, url):
         # and use a reader gesture so automatic following yields to manual navigation.
         groups = page.locator("[data-markdown-window]")
         expect(groups).not_to_have_count(0)
-        thread.press("Control+Home")
+        thread.press(home_key)
         expect(page.get_by_role("heading", name="Long message chart", exact=True)).to_be_visible(timeout=10000)
         # Visit enough groups to exceed the shared four-view retention budget.
         # A direct jump retains the chart by design and does not prove eviction.
@@ -4532,7 +4527,7 @@ def _chat_charts(browser, url):
             groups.nth(index).scroll_into_view_if_needed()
             expect(groups.nth(index).locator(":scope > *")).not_to_have_count(0)
         expect(chart_hosts).to_have_count(0, timeout=10000)
-        thread.press("Control+Home")
+        thread.press(home_key)
         expect(page.get_by_role("heading", name="Long message chart", exact=True)).to_be_visible(timeout=10000)
         expect(chart_hosts).to_have_count(1)
         page.evaluate("window.__chatChartProbe.remove()")

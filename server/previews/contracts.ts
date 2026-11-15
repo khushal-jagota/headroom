@@ -9,8 +9,8 @@ export class PreviewError extends Error {
 export interface ProcessIdentity {
   boot_id: string;
   pid: number;
-  start_ticks: number;
-  listener_inode: number;
+  start_ticks: number | bigint;
+  listener_inode: number | bigint;
   port: number;
   worktree: string;
 }
@@ -29,7 +29,7 @@ export interface TicketEligibility {
   ticket_id: string;
   project_folder: string | null;
   terminal: boolean;
-  locale: 'vps' | 'macos';
+  machine_id: string;
 }
 export const base_path = (record: PreviewRecord): string =>
   `/dev/tickets/${record.ticket_id}/${record.generation}/`;
@@ -40,3 +40,9 @@ export function port(record: PreviewRecord): number {
 export type Header = [string, string];
 
 export type PreviewSessionKind = 'http' | 'websocket';
+
+export interface ProcessInspector {
+  discover(port: number, worktree: string): Promise<ProcessIdentity>;
+  check(identity: ProcessIdentity): Promise<void>;
+  connected(identity: ProcessIdentity, local_port: number): Promise<void>;
+}

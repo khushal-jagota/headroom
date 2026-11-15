@@ -2175,7 +2175,7 @@ def test_old_websocket_is_refused_needs_update_while_update_route_serves_it(
             origin = harness.proxy.origin
             only_id = {"X-Panels-Executor-ID": EXECUTOR_ID}
             authenticated = harness.mac.client.authentication_headers()
-            # The trial runtime's accepted "current" report closes the handover.
+            # A kept runtime's close request closes the handover. A repeat does nothing.
             with contextlib.closing(connect(harness.endpoint.db_path)) as connection:
                 close_original_handover(
                     connection, ORIGINAL_MAC_MACHINE_ID,

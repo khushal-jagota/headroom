@@ -157,6 +157,26 @@ def test_unit20_retained_dataset_cli(tmp_path: Path, request: pytest.FixtureRequ
                 numeric_ticket=ticket.id, decision_revision=ticket.pending_proposal_revision
             )
             seed_seconds["python_proposal"] = time.perf_counter() - proposal_started
+            active_seed_started = time.perf_counter()
+            # Earlier excluded rows make a limit=1 request prove filtering precedes paging.
+            for deferred in (True, False):
+                excluded = tickets_data.create_ticket(
+                    conn, title="Year field search", principal=OWNER_PRINCIPAL,
+                    now=NOW - (2 if deferred else 1), title_max_chars=200, brief=None,
+                    project_id="project_vylo", worker_type=definition.worker_type,
+                    worker_runtime_definitions=load_worker_runtime_definitions(conn),
+                )
+                if deferred:
+                    tickets_data.set_ticket_backlog(
+                        conn, excluded.id, is_backlogged=True, principal=OWNER_PRINCIPAL, now=NOW,
+                    )
+                else:
+                    for field in fields:
+                        excluded = tickets_data.complete_user_owned_gate(
+                            conn, excluded.id, field=field, new_body="Complete",
+                            principal=OWNER_PRINCIPAL, now=NOW,
+                        )
+            seed_seconds["active_list"] = time.perf_counter() - active_seed_started
 
     spec = json.loads(LIST.read_text())
     steps = [step for step in spec["direct_requests"] if step["argv"] == ["dataset", "read"]]
@@ -351,6 +371,19 @@ def test_unit20_retained_dataset_cli(tmp_path: Path, request: pytest.FixtureRequ
             else:
                 evidence["numeric_ticket_human"].append(observed)
         evidence["numeric_ticket_proof_seconds"] = time.perf_counter() - ticket_started
+        evidence["active_list"] = _active_list_proof(
+            reference, candidate_host, tmp_path, captures["numeric_ticket"]
+        )
+        evidence["proposal_revision_cli"] = _proposal_revision_cli_proof(
+            reference, candidate_host, tmp_path, captures
+        )
+        evidence["deferral"] = {
+            name: _deferral_proof(handle, tmp_path, captures["numeric_ticket"])
+            for name, handle in (("python", reference), ("typescript", candidate_host))
+        }
+        deferred_python, deferred_typescript = evidence["deferral"].values()
+        assert deferred_python["responses"] == deferred_typescript["responses"]
+        assert deferred_python["snapshots"] == deferred_typescript["snapshots"]
         evidence["decision_seed_seconds"] = seed_seconds
         evidence["decision_operations"] = {
             name: _decision_operation_proof(handle, tmp_path, captures)
@@ -365,6 +398,81 @@ def test_unit20_retained_dataset_cli(tmp_path: Path, request: pytest.FixtureRequ
             _stop_server(handle)
         evidence["seconds"] = time.perf_counter() - started
         driver.write_report(request, "unit20-retained-dataset-cli", evidence)
+
+
+def _active_list_proof(
+    reference: ServerHandle, candidate: ServerHandle, root: Path, ticket_id: str
+) -> dict[str, Any]:
+    """Reuse populated hosts to prove active filtering before pagination and CLI transport."""
+    started = time.perf_counter()
+    step = {
+        "kind": "cli", "argv": [
+            "ticket", "list", "--active", "--search", "Year field search", "--limit", "1",
+        ],
+        "identity": {"actor": "owner"}, "exit_code": 0, "assert_http_status": 200,
+        "proof": "Active filtering excludes earlier deferred and terminal rows before limit=1.",
+    }
+    answers = [
+        run_cli(CliHost(handle, root), step, native, root / "active-list-input", "json")
+        for handle, native in ((reference, False), (reference, True), (candidate, True))
+    ]
+    assert comparable(answers[0]) == comparable(answers[1]) == comparable(answers[2])
+    for answer in answers:
+        body = json.loads(answer["stdout"])
+        assert [row["id"] for row in body["tickets"]] == [ticket_id]
+        assert body["page"]["match_count"] == 1
+    envelopes = []
+    with httpx.Client(trust_env=False, follow_redirects=False, timeout=30) as client:
+        for params, status in (
+            ({"active": "false", "search": "Year field search"}, 200),
+            ({"active": "true", "is_backlogged": "true"}, 400),
+            ({"active": "true", "include_terminal": "true"}, 400),
+            ({"active": "true", "detail": "full"}, 400),
+            ({"active": "true", "detail": "full", "id": ticket_id}, 400),
+            ({"active": "invalid"}, 422),
+        ):
+            query = {"detail": "summary", **params}
+            pair = [client.get(handle.base + "/api/tickets", params=query)
+                    for handle in (reference, candidate)]
+            assert all(answer.status_code == status for answer in pair), (
+                query, [(answer.status_code, answer.text) for answer in pair]
+            )
+            bodies = [answer.json() for answer in pair]
+            assert bodies[0] == bodies[1]
+            if status == 200:
+                assert len(bodies[0]["tickets"]) == bodies[0]["page"]["match_count"] == 2
+                assert any(row["is_backlogged"] for row in bodies[0]["tickets"])
+            envelopes.append({"query": query, "status": status, "body": bodies[0]})
+    return {"answers": answers, "envelopes": envelopes, "seconds": time.perf_counter() - started}
+
+
+def _proposal_revision_cli_proof(
+    reference: ServerHandle, candidate: ServerHandle, root: Path, captures: dict[str, Any]
+) -> dict[str, Any]:
+    """Explicit stale revisions must never approve or revise the current proposal."""
+    started = time.perf_counter()
+    cases = []
+    for action, methods in (("accept", ["GET"]), ("revise", ["POST"]), ("submit", [])):
+        argv = [
+            "ticket", "proposal", captures["numeric_ticket"], action,
+            "--expected-proposal-revision", str(captures["decision_revision"] + 1),
+        ]
+        if action == "accept":
+            argv += ["--ceiling", "needs_consequences", "--kickoff-title", "Must not change"]
+        step = {
+            "kind": "cli", "argv": argv, "identity": {"actor": "owner"},
+            "stdin": "Keep the current proposal", "exit_code": 1,
+            "proof": "Stale revision refuses mutation and submit rejects the revision option.",
+        }
+        answers = [
+            run_cli(CliHost(handle, root), step, native, root / "proposal-revision-input", "json")
+            for handle, native in ((reference, False), (reference, True), (candidate, True))
+        ]
+        assert comparable(answers[0]) == comparable(answers[1]) == comparable(answers[2])
+        for answer in answers:
+            assert [row["method"] for row in answer["wire"]] == methods
+        cases.append({"argv": argv, "answers": answers})
+    return {"cases": cases, "seconds": time.perf_counter() - started}
 
 
 def _decision_operation_proof(
@@ -382,35 +490,9 @@ def _decision_operation_proof(
     }
 
     def retained_rows() -> dict[str, Any]:
-        with closing(sqlite3.connect(f"file:{handle.db_path}?mode=ro", uri=True)) as conn:
-            conn.row_factory = sqlite3.Row
-            conn.execute("BEGIN")
-            stored = {
-                table: [
-                    dict(row)
-                    for row in conn.execute(
-                        f"SELECT * FROM {table} WHERE "
-                        f"{'id' if table == 'tickets' else 'ticket_id'}=?",
-                        (ticket_id,),
-                    )
-                ]
-                for table in ("tickets", "ticket_decision_messages", "ticket_decision_operations")
-            }
-        # Decode stored JSON containers as the ordinary source-row comparison does.
-        containers = {
-            "field_values", "field_approvals", "pending_proposal", "ceiling_holder",
-            "workflow_json", "receipt_json",
-        }
-        return {
-            table: [
-                {
-                    key: json.loads(value) if key in containers and value is not None else value
-                    for key, value in row.items()
-                }
-                for row in values
-            ]
-            for table, values in stored.items()
-        }
+        return _ticket_source_rows(handle, ticket_id, (
+            "tickets", "ticket_decision_messages", "ticket_decision_operations",
+        ))
 
     with httpx.Client(trust_env=False, follow_redirects=False, timeout=30) as client:
         applied = client.post(path, json=command)
@@ -431,6 +513,90 @@ def _decision_operation_proof(
         assert envelopes[3] == {"receipt_contract": 1, "receipt": None}
         assert retained_rows() == saved
     return {"envelopes": envelopes, "rows": saved, "seconds": time.perf_counter() - started}
+
+
+def _ticket_source_rows(
+    handle: ServerHandle, ticket_id: str, tables: tuple[str, ...]
+) -> dict[str, Any]:
+    with closing(sqlite3.connect(f"file:{handle.db_path}?mode=ro", uri=True)) as conn:
+        conn.row_factory = sqlite3.Row
+        conn.execute("BEGIN")
+        stored = {}
+        for table in tables:
+            column = "subject_id" if table.startswith("notification_") else (
+                "id" if table == "tickets" else "ticket_id"
+            )
+            order = "notification_type,generation" if table.startswith("notification_") else (
+                "operation_id" if table == "ticket_decision_operations" else
+                "decision_id" if table == "ticket_decision_messages" else "id"
+            )
+            subject = " AND subject_kind='ticket'" if table.startswith("notification_") else ""
+            stored[table] = [dict(row) for row in conn.execute(
+                f"SELECT * FROM {table} WHERE {column}=?{subject} ORDER BY {order}", (ticket_id,),
+            )]
+    # Keep command/request identity bytes exact; decode ordinary document containers only.
+    containers = {
+        "field_values", "field_approvals", "pending_proposal", "ceiling_holder",
+        "workflow_json", "receipt_json", "context_json", "destination_json",
+    }
+    for values in stored.values():
+        for row in values:
+            for key in row.keys() & containers:
+                if row[key] is not None:
+                    row[key] = json.loads(row[key])
+    return stored
+
+
+
+def _deferral_proof(handle: ServerHandle, root: Path, ticket_id: str) -> dict[str, Any]:
+    """Defer/resume the existing proposal on both actual hosts before its receipt proof."""
+    started = time.perf_counter()
+    CliHost(handle, root).check()
+    tables = (
+        "tickets", "notification_attention_state", "notification_attention_edges",
+        "attention_gate_intervals",
+    )
+    snapshots = [_ticket_source_rows(handle, ticket_id, tables)]
+    responses = []
+    with httpx.Client(trust_env=False, follow_redirects=False, timeout=30) as client:
+        for action in ("backlog", "resume"):
+            answer = client.post(handle.base + f"/api/tickets/{ticket_id}/{action}", json={})
+            assert answer.status_code == 200, answer.text
+            responses.append(answer.json())
+            snapshots.append(_ticket_source_rows(handle, ticket_id, tables))
+    before, paused, resumed = snapshots
+    original = before["tickets"][0]
+    for index, snapshot in enumerate(snapshots):
+        ticket = snapshot["tickets"][0]
+        assert bool(ticket["is_backlogged"]) is (index == 1)
+        for key in (
+            "pending_proposal", "pending_proposal_revision", "field_values",
+            "field_approvals", "stage", "ceiling", "ceiling_holder",
+        ):
+            assert ticket[key] == original[key]
+    for kind in ("assigned", "awaiting_approval"):
+        states = [
+            next(row for row in state["notification_attention_state"]
+                 if row["notification_type"] == kind)
+            for state in snapshots
+        ]
+        assert [state["active"] for state in states] == [1, 0, 1]
+        generation = states[0]["generation"]
+        assert [state["generation"] for state in states] == [generation, generation, generation + 1]
+    assert paused["notification_attention_edges"] == before["notification_attention_edges"]
+    assert len(resumed["notification_attention_edges"]) == (
+        len(before["notification_attention_edges"]) + 2
+    )
+    for row in before["notification_attention_edges"]:
+        assert row in resumed["notification_attention_edges"]
+    assert len(paused["attention_gate_intervals"]) == len(before["attention_gate_intervals"])
+    assert paused["attention_gate_intervals"][-1]["closed_at"] is not None
+    assert len(resumed["attention_gate_intervals"]) == len(before["attention_gate_intervals"]) + 1
+    assert resumed["attention_gate_intervals"][-1]["closed_at"] is None
+    return {
+        "responses": responses, "snapshots": snapshots,
+        "seconds": time.perf_counter() - started,
+    }
 
 
 def _runtime_proof(
@@ -882,11 +1048,114 @@ def test_unit20_real_preview_cli(tmp_path: Path, request: pytest.FixtureRequest)
                 results.append(modes)
                 assert child.poll() is None
         assert results[0] == results[1] == results[2], evidence
+        # Reuse these populated hosts to prove exact integers through SQLite and the real route.
+        exact = 2**62 + 567
+        integer_responses = []
+        for handle in (reference, candidate):
+            with closing(sqlite3.connect(handle.db_path)) as connection:
+                connection.execute(
+                    "UPDATE ticket_application_previews SET start_ticks=?,listener_inode=? "
+                    "WHERE ticket_id=?",
+                    (exact, exact, ticket["id"]),
+                )
+                connection.commit()
+            current = fixtures.api(
+                handle, "GET", "/api/previews", identity={"ticket_id": ticket["id"]}
+            )
+            assert current["process"]["start_ticks"] == exact
+            assert current["process"]["listener_inode"] == exact
+            assert type(current["process"]["start_ticks"]) is int
+            integer_responses.append(current["process"])
+        assert integer_responses[0] == integer_responses[1]
+        evidence["exact_preview_integers"] = integer_responses
     finally:
         for handle in reversed(handles):
             _stop_server(handle)
         evidence["seconds"] = time.perf_counter() - started
         driver.write_report(request, "unit20-real-preview-cli", evidence)
+
+
+def test_unit20_worker_cleanup_cli(tmp_path: Path, request: pytest.FixtureRequest) -> None:
+    """Reuse the domain host to prove CLI output and rank enforcement across HTTP."""
+    from planner.machines.contracts import ORIGINAL_MAC_MACHINE_ID
+
+    started = time.perf_counter()
+    captured: list[str] = []
+
+    def seed(target: Path) -> None:
+        with closing(connect(str(target))) as conn:
+            ticket = tickets_data.create_ticket(
+                conn,
+                title="Cleanup recheck",
+                principal=OWNER_PRINCIPAL,
+                now=NOW,
+                title_max_chars=200,
+                brief=None,
+                worker_type="coding",
+                machine_id=ORIGINAL_MAC_MACHINE_ID,
+                worker_runtime_definitions=load_worker_runtime_definitions(conn),
+            )
+            tickets_data.set_ticket_backlog(
+                conn,
+                ticket.id,
+                is_backlogged=True,
+                principal=OWNER_PRINCIPAL,
+                now=NOW,
+            )
+            captured.append(ticket.id)
+
+    handle = _start_server(
+        tmp_path / "cleanup", server_module="tests.compare.ts_launcher", seed_db=seed
+    )
+    try:
+        host = CliHost(handle, tmp_path)
+        step = dict(
+            kind="cli",
+            argv=["ticket", "recheck-worker-cleanup", captured[0]],
+            identity=dict(actor="owner"),
+            exit_code=0,
+            assert_http_status=200,
+            proof="Recheck preserves JSON/text cleanup output without starting a Worker.",
+        )
+        outputs = []
+        for mode in ("json", "text"):
+            answers = [
+                run_cli(host, step, candidate, tmp_path / f"{mode}-{candidate}", mode)
+                for candidate in (False, True)
+            ]
+            assert comparable(answers[0]) == comparable(answers[1])
+            if mode == "json":
+                result = json.loads(answers[0]["stdout"])
+                assert (
+                    set(result) == {"complete", "reason", "scope"} and result["complete"] is False
+                )
+            else:
+                assert answers[0]["stdout"] == answers[1]["stdout"]
+                assert answers[0]["stdout"].startswith("Worker cleanup not proven: ")
+            outputs.append(answers)
+        step.update(
+            identity=dict(actor="worker", ticket_id=captured[0]),
+            exit_code=1,
+            assert_http_status=400,
+        )
+        denied = [
+            run_cli(host, step, candidate, tmp_path / f"denied-{candidate}")
+            for candidate in (False, True)
+        ]
+        assert comparable(denied[0]) == comparable(denied[1])
+        assert json.loads(denied[0]["stderr"])["error"]["code"] == "agent_forbidden"
+        driver.write_report(
+            request,
+            "unit20-worker-cleanup-cli",
+            dict(
+                outputs=outputs,
+                denied=denied,
+                seconds=time.perf_counter() - started,
+                boundary="Existing domain host: fresh Python CLI versus TS CLI through the TS API.",
+            ),
+        )
+    finally:
+        _stop_server(handle)
 
 
 @pytest.mark.parametrize(

@@ -276,8 +276,11 @@ test('a whole-transaction storage failure inside savepoints remains retryable at
       );
     }
   }
+  const store = new InboxStore(database, new FileStaging(filename));
+  // This storage-only host replaces domain intake and does not create an executor schema.
+  store.require_envelope = () => {};
   const inbox = new FullInbox(
-    new InboxStore(database, new FileStaging(filename)),
+    store,
     {
       now: () => new Date(0),
       nowUnix: () => 0,

@@ -3,24 +3,44 @@ import SwiftUI
 struct TicketStepRow: View {
     let field: TicketWorkerType.Field
     let presentation: TicketPresentation
-    private var current: Bool { field.id == presentation.currentField }
+    @Environment(AppStore.self) private var store
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var expanded = false
     private var complete: Bool { presentation.isComplete(field.id) }
+    private var fieldResource: ResourceHandle<TicketFieldBody> { store.resources.handle(TicketResources.field(presentation.ticket.id, field.id)) }
 
     var body: some View {
-        NavigationLink {
-            TicketStepPage(ticketID: presentation.ticket.id, field: field, manifest: presentation.manifest)
-        } label: {
-            HStack(alignment: .firstTextBaseline, spacing: PanelsTheme.Space.md) {
-                TicketStepMark(field: field.id, presentation: presentation)
-                Text(field.label).foregroundStyle(current ? PanelsTheme.strong : PanelsTheme.muted)
-                Spacer(minLength: 0)
-                if current && presentation.ticket.pendingProposal?.field == field.id {
-                    Text("awaiting approval").foregroundStyle(PanelsTheme.accent).font(PanelsTheme.TypeScale.caption)
-                } else if let approval = presentation.ticket.fieldApprovals[field.id] {
-                    Text(approval.displayLabel).foregroundStyle(PanelsTheme.faint).font(PanelsTheme.TypeScale.caption)
-                }
-            }.font(PanelsTheme.TypeScale.body).frame(minHeight: 44).contentShape(Rectangle())
-        }.buttonStyle(.plain).accessibilityIdentifier("ticket-step-\(field.id)")
+        VStack(alignment: .leading, spacing: 0) {
+            Button {
+                guard complete else { return }
+                withAnimation(reduceMotion ? nil : PanelsTheme.Motion.disclosure) { expanded.toggle() }
+            } label: {
+                HStack(spacing: 10) {
+                    TicketStepMark(field: field.id, presentation: presentation)
+                    Text(field.label).panelsScaledFont(size: PanelsTheme.Web.bodySize)
+                        .foregroundStyle(PanelsTheme.Web.secondary)
+                    Spacer(minLength: 0)
+                    if let approval = presentation.ticket.fieldApprovals[field.id] {
+                        Text(approval.displayLabel).panelsScaledFont(size: PanelsTheme.Web.smallSize)
+                            .foregroundStyle(PanelsTheme.Web.tertiary)
+                    }
+                }.frame(minHeight: 40).padding(.horizontal, 8).contentShape(Rectangle())
+            }.buttonStyle(.plain).accessibilityIdentifier("ticket-step-\(field.id)")
+                .accessibilityValue(complete ? (expanded ? "Expanded" : "Collapsed") : "")
+            if expanded && complete {
+                VStack(alignment: .leading, spacing: 8) {
+                    if let error = fieldResource.error {
+                        LoadErrorView(message: error) { await fieldResource.refresh() }
+                    }
+                    DecisionMarkdown(source: fieldResource.value?.value ?? presentation.ticket.fieldValues[field.id] ?? "", baseURL: store.baseURL, emphasizesFirstParagraph: false)
+                }.padding(.vertical, 12).padding(.horizontal, 16)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(PanelsTheme.Web.recessed, in: RoundedRectangle(cornerRadius: 8))
+                    .overlay(RoundedRectangle(cornerRadius: 8).stroke(PanelsTheme.Web.border, lineWidth: 1))
+                    .padding(.bottom, 12)
+                    .resourceDemand(fieldResource)
+            }
+        }
     }
 }
 
@@ -31,90 +51,13 @@ struct TicketStepMark: View {
     var body: some View {
         Group {
             if presentation.isComplete(field) {
-                Circle().fill(PanelsTheme.success).accessibilityLabel("Complete")
-            } else if current && presentation.ticket.agentState == "errored" {
-                Circle().fill(PanelsTheme.error).accessibilityLabel("Error")
-            } else if current && presentation.working && presentation.ticket.pendingProposal == nil {
-                RingSpinner(size: .compact, color: PanelsTheme.accent).accessibilityLabel("Working")
+                Circle().fill(PanelsTheme.Web.success).accessibilityLabel("Complete")
+            } else if current {
+                Circle().fill(PanelsTheme.Web.accent).accessibilityLabel("Current step")
             } else {
-                Circle().strokeBorder(current ? PanelsTheme.accent : PanelsTheme.faint.opacity(0.4), lineWidth: 1.5)
-                    .accessibilityLabel(current ? "Current step" : "Not started")
+                Circle().strokeBorder(PanelsTheme.Web.tertiary, lineWidth: 2).opacity(0.56)
+                    .accessibilityLabel("Not started")
             }
-        }.frame(width: 10, height: 10)
-    }
-}
-
-struct TicketStepPage: View {
-    let ticketID: String
-    let field: TicketWorkerType.Field
-    let manifest: TicketWorkerType
-    @Environment(AppStore.self) private var store
-    private var resource: ResourceHandle<TicketRead> { store.resources.handle(TicketResources.detail(ticketID)) }
-    private var fieldResource: ResourceHandle<TicketFieldBody> { store.resources.handle(TicketResources.field(ticketID, field.id)) }
-    private var detail: TicketDetail? { resource.value?.detail }
-    @State private var saveError: String?
-    private var error: String? { saveError ?? resource.error ?? fieldResource.error }
-    @State private var editing = false
-    @State private var draft = ""
-    @State private var busy = false
-    @State private var artifact: AppRoute?
-    private var presentation: TicketPresentation? { detail.map { TicketPresentation(ticket: $0, manifest: manifest) } }
-    private var pendingProposal: TicketProposal? {
-        detail?.pendingProposal.flatMap { $0.field == field.id ? $0 : nil }
-    }
-
-    var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: PanelsTheme.Space.lg) {
-                if let error { LoadErrorView(message: error) { await load() } }
-                if let presentation {
-                    HStack(spacing: PanelsTheme.Space.md) {
-                        TicketStepMark(field: field.id, presentation: presentation)
-                        Text(pendingProposal != nil ? "Awaiting approval" : detail?.fieldApprovals[field.id]?.displayLabel ?? "")
-                            .font(PanelsTheme.TypeScale.small).foregroundStyle(PanelsTheme.faint)
-                    }
-                    if editing {
-                        TextEditor(text: $draft).frame(minHeight: 360).scrollContentBackground(.hidden)
-                            .padding(PanelsTheme.Space.md).background(PanelsTheme.recessed)
-                    } else {
-                        let text = pendingProposal?.body ?? fieldResource.value?.value ?? detail?.fieldValues[field.id] ?? ""
-                        ArtifactMarkdownContent(source: text.isEmpty ? "Not started" : text, baseURL: store.baseURL)
-                    }
-                } else if error == nil { RingSpinner() }
-            }.padding(PanelsTheme.Space.xl)
-        }.panelsScreen().navigationTitle(field.label).navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                if pendingProposal == nil, presentation?.isComplete(field.id) == true {
-                    ToolbarItem(placement: .primaryAction) {
-                        Button(editing ? "Done" : "Edit") {
-                            if editing {
-                                busy = true; Haptics.light()
-                                Task {
-                                    do {
-                                        try await store.client.editTicketField(ticketID, field: field.id, body: draft)
-                                        editing = false; Haptics.success(); await load(); await store.refresh()
-                                    } catch { self.saveError = error.localizedDescription; Haptics.error() }
-                                    busy = false
-                                }
-                            } else { draft = fieldResource.value?.value ?? detail?.fieldValues[field.id] ?? ""; editing = true }
-                        }.disabled(busy)
-                    }
-                }
-                if editing { ToolbarItem(placement: .cancellationAction) { Button("Cancel") { editing = false }.disabled(busy) } }
-            }
-            .resourceDemand(resource)
-            .resourceDemand(fieldResource)
-            .navigationDemand("ticket-step:\(ticketID)", selected: ViewOwner(kind: "ticket", id: ticketID))
-            .navigationDestination(item: $artifact) { RouteDestination(route: $0) }
-            .environment(\.openURL, OpenURLAction { url in
-                if let route = TicketArtifactRoute.linkedDestination(url, baseURL: store.baseURL, title: url.lastPathComponent) { artifact = route; return .handled }
-                return ArtifactTarget.isRetiredGoalURL(url, baseURL: store.baseURL) ? .discarded : .systemAction
-            })
-    }
-    private func load() async {
-        store.resources.invalidate([resource.key, fieldResource.key])
-        async let detail: Void = resource.refresh()
-        async let field: Void = fieldResource.refresh()
-        _ = await (detail, field)
+        }.frame(width: 8, height: 8)
     }
 }

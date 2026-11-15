@@ -10,6 +10,7 @@ import { ConversationRoleMaterials, ResolvedConversationStart } from '../convers
 import { SqliteProcessConversationSystem } from '../conversation/system.ts';
 import type { BackendChildFactory } from '../conversation/backends/contracts.ts';
 import { VpsExecutor } from '../executor/vps_transport.ts';
+import { VpsExecutorRegistry } from '../executor/registry.ts';
 import { MacRemoteChild } from '../executor/vps_remote_child.ts';
 import { ExecutorStore } from '../executor/data/runs.ts';
 import { compose_production_backends } from '../lifecycle/production_bindings.ts';
@@ -26,7 +27,6 @@ import {
   create_test_environment_operations,
   create_test_environment_runtime,
 } from '../environments/testing/composition.ts';
-import { MailboxStallSource } from '../executor/data/mailbox.ts';
 import type { StallSource } from '../stalls/contracts.ts';
 import { MacUpdateService } from '../environments/updates/mac/service.ts';
 import type { MacUpdateServiceContract } from '../environments/updates/mac/contracts.ts';
@@ -73,6 +73,10 @@ function retained_fixture() {
     },
   ]);
   database.write((tx) => {
+    tx.run(
+      'INSERT INTO executor_incarnations(executor_incarnation,machine_id,first_leased_at_ms) VALUES(?,?,?)',
+      [incarnation, ORIGINAL_MAC_MACHINE_ID, Date.now() - 120000],
+    );
     write_ticket_conversation_start(tx, ticket.id, {
       conversation_id: 'kept',
       backend: 'codex',
@@ -121,6 +125,7 @@ test('configured restart adopts before reconciliation and Mac locality never sel
     throw new Error('local constructor selected');
   });
   let core!: SqliteProcessConversationSystem, endpoint!: VpsExecutor;
+  let registry!: VpsExecutorRegistry;
   let context!: ConversationCompositionContext,
     bound!: ReturnType<typeof compose_production_backends>;
   let mac_updates!: MacUpdateServiceContract;
@@ -139,14 +144,18 @@ test('configured restart adopts before reconciliation and Mac locality never sel
   try {
     server = await startServer({
       createExecutor(current) {
-        endpoint = new VpsExecutor(current.database, current.clock, {
+        registry = new VpsExecutorRegistry(current.database, current.clock, {
           db_path: path,
           changes: current.changes,
           media_signal: current.media_signal,
+          original_enabled: true,
         });
-        return endpoint;
+        return registry;
       },
-      readOpenRuns: () => endpoint.open_runs(),
+      readOpenRuns() {
+        endpoint = registry.get(ORIGINAL_MAC_MACHINE_ID)!;
+        return registry.open_runs();
+      },
       createConversationCore(current) {
         context = current;
         const http = create_backend_runtime({
@@ -175,10 +184,11 @@ test('configured restart adopts before reconciliation and Mac locality never sel
     expect(core.runtime_turn('kept')?.token.turn_number).toBe(1);
     expect(core.conversation_state('kept')?.child).toBeInstanceOf(MacRemoteChild);
     expect(endpoint.presence.is_present()).toBe(false);
-    expect(bound.http.machine_catalog()).toBe(endpoint.catalog);
+    expect(bound.http.machine_catalog(ORIGINAL_MAC_MACHINE_ID)).toBe(endpoint.catalog);
     const sources = bound.stall_sources();
     expect(sources).toContain(local_source);
-    expect(sources.some((source) => source instanceof MailboxStallSource)).toBe(true);
+    expect(sources).toHaveLength(4);
+    expect(endpoint.mailbox.start_admission).toBe(core.start_admission);
     expect(mac_updates).toBeInstanceOf(MacUpdateService);
     expect(endpoint.updates).toBe(mac_updates);
     const check = vi.spyOn(mac_updates, 'check');
@@ -188,6 +198,20 @@ test('configured restart adopts before reconciliation and Mac locality never sel
       prefetch: null,
     });
     expect(check).toHaveBeenCalledTimes(1);
+    const named_machine = '66666666-6666-4666-8666-666666666666';
+    context.database.write((tx) => {
+      tx.run("INSERT INTO machines VALUES (?,'Named','server','cyan',0)", [named_machine]);
+      tx.run('INSERT INTO machine_executor_credentials(machine_id) VALUES (?)', [named_machine]);
+    });
+    const [named, same_named] = await Promise.all([
+      registry.ensure(named_machine),
+      registry.ensure(named_machine),
+    ]);
+    expect(named).toBe(same_named);
+    expect(named.mailbox.start_admission).toBe(core.start_admission);
+    expect(named.updates).toBe(mac_updates.for_machine(named_machine));
+    expect(named.updates).not.toBe(endpoint.updates);
+    expect(bound.http.machine_catalog(named_machine)).toBe(named.catalog);
     const away_ticket = create(context.database, { locale: 'macos' });
     const away = new ResolvedConversationStart({
       ...start,
@@ -242,11 +266,12 @@ test('production constructs its real executor and reconciles that executor inven
   const { root } = retained_fixture();
   const revision = 'a'.repeat(40);
   vi.stubEnv('PLAN_APP_SHA', revision);
-  const inventory = vi.spyOn(VpsExecutor.prototype, 'open_runs');
+  const inventory = vi.spyOn(VpsExecutorRegistry.prototype, 'open_runs');
   const local = vi.fn<BackendChildFactory>(() => {
     throw new Error('local constructor selected');
   });
   let endpoint!: VpsExecutor, core!: SqliteProcessConversationSystem;
+  let registry!: VpsExecutorRegistry;
   let server: StartedServer | undefined;
   try {
     server = await start_production_server({
@@ -270,18 +295,19 @@ test('production constructs its real executor and reconciles that executor inven
           admitted_legacy_null_sha: null,
         },
         async factory(current, dependencies) {
-          if (!(current.executor instanceof VpsExecutor) || !current.core)
+          if (!(current.executor instanceof VpsExecutorRegistry) || !current.core)
             throw new Error('Production must supply its real invocation executor and core');
-          endpoint = current.executor;
+          registry = current.executor;
+          endpoint = registry.get(ORIGINAL_MAC_MACHINE_ID)!;
           core = current.core;
-          expect(dependencies.executor).toBe(endpoint);
+          expect(dependencies.executor).toBe(registry);
           return create_test_environment_operations(current);
         },
       },
     });
     expect(endpoint.application_revision).toBe(revision);
     expect(inventory).toHaveBeenCalledTimes(1);
-    expect(inventory.mock.contexts[0]).toBe(endpoint);
+    expect(inventory.mock.contexts[0]).toBe(registry);
     expect(inventory.mock.results[0]!.value.get('kept')).toEqual({
       turn_number: 1,
       executor_process_current: true,

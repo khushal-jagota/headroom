@@ -1,5 +1,10 @@
 import type { ReadSql } from '../core/database/contracts.ts';
-import { ORIGINAL_MAC_MACHINE_ID, supports_executor_versions } from '../execution_identity.ts';
+import {
+  HOME_MACHINE_ID,
+  ORIGINAL_MAC_MACHINE_ID,
+  supports_executor_versions,
+} from '../execution_identity.ts';
+import { read_machine } from '../machines/data.ts';
 import { judge_presence } from '../executor/logic/presence.ts';
 import { read_presence } from '../executor/vps_presence_store.ts';
 import type { ExecutorRefusal } from '../executor/contracts.ts';
@@ -52,4 +57,28 @@ export function execution_unavailable_reason(sql: ReadSql, locale: TicketLocale)
     return 'Mac Tickets cannot start: no compatible Mac executor has leased yet';
   }
   return `The Ticket locale ${locale} cannot execute on this machine`;
+}
+
+export function can_execute_machine(machine_id: string, connection: ReadSql): boolean {
+  if (machine_id === HOME_MACHINE_ID) return true;
+  const record = read_presence(connection, machine_id);
+  return (
+    record !== null &&
+    record.executor_incarnation !== null &&
+    record.identity !== null &&
+    record.refusal === null &&
+    supports_executor_versions(
+      record.identity.protocol_version,
+      record.identity.spool_format_version,
+    )
+  );
+}
+
+export function machine_unavailable_reason(machine_id: string, connection: ReadSql): string {
+  const machine = read_machine(connection, machine_id);
+  if (machine_id === ORIGINAL_MAC_MACHINE_ID) {
+    const reason = execution_unavailable_reason(connection, 'macos');
+    return machine.name === 'Mac' ? reason : reason.replace(/the Mac|Mac/g, () => machine.name);
+  }
+  return `Waiting for ${machine.name}`;
 }

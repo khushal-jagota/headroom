@@ -16,7 +16,7 @@ import * as data from '../tickets/data/index.ts';
 import * as decisions from '../tickets/decision_messages.ts';
 import { conversation_holds_an_unanswered_memory_loss } from '../runtime/worker_memory.ts';
 import { restart_worker } from '../tickets/worker_restart.ts';
-import { OWNER } from '../core/contracts.ts';
+import { OWNER, PlannerError } from '../core/contracts.ts';
 import { configured_worker_type_registry } from '../worker_types/configuration.ts';
 import { InMemoryConversationSystem } from '../conversation/in_memory_conversation_system.ts';
 import {
@@ -40,6 +40,9 @@ import { ShutdownDeadlineExceeded } from '../lifecycle/contracts.ts';
 import { Deferred } from '../conversation/runtime/state.ts';
 import { acquireLock } from '../core/locks/index.ts';
 import { ChangeSignal } from '../core/changes/index.ts';
+import { AutomaticStartAdmission, explicit_start } from '../conversation/start_admission/index.ts';
+import { HOME_MACHINE_ID, ORIGINAL_MAC_MACHINE_ID } from '../execution_identity.ts';
+import * as readiness from '../runtime/worker_step_readiness.ts';
 afterEach(() => vi.restoreAllMocks());
 // Ordinary-step cases start after the initial approval instruction reached its Worker.
 function create(...args: Parameters<typeof create_ticket>): ReturnType<typeof create_ticket> {
@@ -199,7 +202,10 @@ test('restart refuses a Mac ticket while the Mac is away without changing it', a
   const ticket = create(db);
   await start_ready_worker_step(ticket.id, options);
   db.write((tx) => {
-    tx.run("UPDATE tickets SET locale='macos' WHERE id=?", [ticket.id]);
+    tx.run("UPDATE tickets SET locale='macos',machine_id=? WHERE id=?", [
+      ORIGINAL_MAC_MACHINE_ID,
+      ticket.id,
+    ]);
   });
   const before = read(db, ticket.id);
   const kill = vi.spyOn(system, 'kill');
@@ -233,7 +239,26 @@ test.each([
 ] as const)('delivery %s preserves its claim outcome', async (_name, fate, expected_claim) => {
   const { db, system, options } = setup();
   const ticket = create(db);
-  vi.spyOn(system, 'send').mockResolvedValue(fate());
+  vi.spyOn(system, 'send').mockImplementation(async (_id, _content, sent) => {
+    const claimed = read(db, ticket.id);
+    expect(sent.sender_message_id).toBe(
+      `worker_step_message_${ticket.id}:${claimed.worker_step_claim_revision}`,
+    );
+    expect(
+      db.read((sql) =>
+        sql.get(
+          'SELECT * FROM worker_step_dispatch_intents WHERE ticket_id=? AND claim_revision=?',
+          [ticket.id, claimed.worker_step_claim_revision],
+        ),
+      ),
+    ).toEqual({
+      ticket_id: ticket.id,
+      claim_revision: claimed.worker_step_claim_revision,
+      sender_message_id: sent.sender_message_id,
+      state: 'dispatch_started',
+    });
+    return fate();
+  });
   const result = await start_ready_worker_step(ticket.id, options);
   expect(result.started).toBe(false);
   expect(read(db, ticket.id).worker_step_claim).toBe(expected_claim);
@@ -252,7 +277,22 @@ test('an occupied conversation prevents another claim or opener', async () => {
     }),
   );
   expect(await system.is_running(taken.conversation_id!)).toBe(true);
+  const starts = new AutomaticStartAdmission({ clock: () => 0 });
+  Object.assign(system, { start_admission: starts });
+  starts.try_start({
+    identity: `worker-preparation:${ticket.id}`,
+    work_class: 'worker',
+    destination: HOME_MACHINE_ID,
+  });
+  const refusal = vi.fn(() => new PlannerError('validation', 'Execution refused'));
+  configure_conversation_start(db, {
+    db_path: fixture_path(db),
+    workspace_root: dirname(fixture_path(db)),
+    execution_refusal: refusal,
+  });
   expect((await start_ready_worker_step(ticket.id, options)).started).toBe(false);
+  expect(starts.snapshots()).toEqual([]);
+  expect(refusal).not.toHaveBeenCalled();
   expect(read(db, ticket.id).worker_step_claim).toBe('none');
   expect(system.backend_prompt_writes(taken.conversation_id!)).toHaveLength(1);
 });
@@ -375,6 +415,89 @@ test('poll hook, in-flight deduplication, and shutdown share one loop owner', as
   await loop.stop({ deadline: performance.now() / 1000 + 1 });
   expect(loop.poll_once()).toEqual([]);
 });
+
+// The engine proof does not establish that readiness transfers its preparation
+// reservation or that explicit starts bypass this automatic caller.
+test('automatic preparation transfers the claim identity, refunds refusal, and exempts an explicit retry', async () => {
+  const { db, system, options } = setup();
+  const ticket = create(db);
+  const starts = new AutomaticStartAdmission({ clock: () => 0 });
+  Object.assign(system, { start_admission: starts });
+  const prepare = vi.spyOn(starts, 'try_start');
+  vi.spyOn(system, 'send').mockImplementation(async (_id, _content, sent) => {
+    expect(starts.snapshots().map((entry) => entry.request.identity)).toEqual([
+      sent.sender_message_id,
+    ]);
+    return new PromptDeliveryRefused({ refusal_reason: 'session_did_not_load' });
+  });
+  expect((await start_ready_worker_step(ticket.id, options)).delivery_fate).toBe('refused');
+  expect(prepare).toHaveBeenCalledWith({
+    identity: `worker-preparation:${ticket.id}`,
+    work_class: 'worker',
+    destination: HOME_MACHINE_ID,
+  });
+  expect(starts.snapshots()).toEqual([]);
+  expect((await start_ready_worker_step(ticket.id, options)).delivery_fate).toBe(null);
+  expect(read(db, ticket.id).worker_step_claim).toBe('none');
+  vi.mocked(system.send).mockResolvedValue(new PromptDeliveryStarted());
+  expect((await explicit_start(() => start_ready_worker_step(ticket.id, options))).started).toBe(
+    true,
+  );
+  expect(prepare).toHaveBeenCalledTimes(2);
+});
+
+// Existing start cases do not hold asynchronous preparation open across polls.
+// Reuse their in-memory conversations and SQLite source. Machine policy has its
+// own direct proof, so this case isolates destination fairness and preparation caps.
+test('blocked preparations cap each destination and rotate the next pass', async () => {
+  const { db, system, options } = setup();
+  const tickets = Array.from({ length: 4 }, () => create(db));
+  for (const ticket of tickets) {
+    await start_ready_worker_step(ticket.id, options);
+    const taken = read(db, ticket.id);
+    system.complete_running_turn(taken.conversation_id!);
+    db.write((tx) =>
+      data.release_worker_step_claim(tx, ticket.id, {
+        expected_claim: taken.worker_step_claim,
+        expected_claim_revision: taken.worker_step_claim_revision,
+        now,
+      }),
+    );
+  }
+  db.write((tx) => {
+    for (const [index, ticket] of tickets.entries())
+      tx.run('UPDATE tickets SET updated_at=? WHERE id=?', [now + index, ticket.id]);
+    tx.run("UPDATE tickets SET locale='macos',machine_id=? WHERE id=?", [
+      ORIGINAL_MAC_MACHINE_ID,
+      tickets[3]!.id,
+    ]);
+  });
+  Object.assign(system, {
+    start_admission: new AutomaticStartAdmission({ limit: 2, clock: () => 0 }),
+  });
+  vi.spyOn(readiness, 'is_ready_for_worker_step').mockReturnValue(true);
+  const gate = new Deferred<void>();
+  const running = vi.spyOn(system, 'is_running').mockImplementation(async () => {
+    await gate.promise;
+    return false;
+  });
+  const loop = new WorkerStepReadinessLoop(options);
+  try {
+    expect(loop.poll_once()).toEqual([tickets[0]!.id, tickets[3]!.id, tickets[1]!.id]);
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(running).toHaveBeenCalledTimes(3);
+    expect(loop.poll_once()).toEqual([]);
+    gate.resolve();
+    await loop.drain();
+    running.mockRestore();
+    expect(loop.poll_once()[0]).toBe(tickets[3]!.id);
+    await loop.drain();
+  } finally {
+    gate.resolve();
+    await loop.stop({ deadline: performance.now() / 1000 + 1 });
+  }
+});
+
 test('production composition requires opt-in and dispatcher ownership; test mode never polls automatically', async () => {
   const { db, options } = setup();
   create(db);

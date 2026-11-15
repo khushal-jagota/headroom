@@ -118,6 +118,7 @@ class Normalizer:
         self.root = str(root)
         self.ids: dict[str, str] = {}
         self.tokens: dict[str, dict[str, int]] = {}
+        self.process_identities: dict[str, int] = {}
 
     def token(self, value: Any, context: str) -> Any:
         if value is None:
@@ -129,6 +130,17 @@ class Normalizer:
         if key not in seen:
             seen[key] = len(seen)
         return seen[key]
+
+    def process_identity_token(self, value: Any) -> Any:
+        if value is None:
+            return None
+        assert type(value) in (bool, int, float, str, bytes), value
+        kind = type(value).__name__
+        exact = value.hex() if isinstance(value, bytes) else value
+        key = json.dumps([kind, exact], sort_keys=True)
+        if key not in self.process_identities:
+            self.process_identities[key] = len(self.process_identities)
+        return {"process_identity_kind": kind, "token": self.process_identities[key]}
 
     def normalize(
         self,
@@ -154,7 +166,11 @@ class Normalizer:
                 ):
                     continue
                 item = value[key]
-                if apply_rules and rule_key in self.rules.get(
+                if apply_rules and table and rule_key in self.rules.get(
+                    "process_identity_tokens", {}
+                ):
+                    out[str(self.normalize(key))] = self.process_identity_token(item)
+                elif apply_rules and rule_key in self.rules.get(
                     "tokens" if table else "response_tokens", {}
                 ):
                     out[str(self.normalize(key))] = self.token(item, f"{context}.{key}")
@@ -385,6 +401,9 @@ def rows(path: Path, normalizer: Normalizer) -> dict[str, list[Any]]:
                     for k, v in row.items()
                     if f"{table_name}.{k}" not in normalizer.rules.get("ignore", {})
                     and f"{table_name}.{k}" not in normalizer.rules.get("tokens", {})
+                    and f"{table_name}.{k}" not in normalizer.rules.get(
+                        "process_identity_tokens", {}
+                    )
                 }
                 return ID.sub(
                     lambda match: normalizer.ids.get(match.group(), "<id>"),
@@ -396,12 +415,18 @@ def rows(path: Path, normalizer: Normalizer) -> dict[str, list[Any]]:
             normalized = []
             for row in raw:
                 identity = (
-                    {k: row[k] for k in primary}
+                    {
+                        k: row[k] for k in primary
+                        if f"{table}.{k}" not in normalizer.rules.get("process_identity_tokens", {})
+                    }
                     if primary
                     else {
                         k: v
                         for k, v in row.items()
                         if f"{table}.{k}" not in normalizer.rules.get("tokens", {})
+                        and f"{table}.{k}" not in normalizer.rules.get(
+                            "process_identity_tokens", {}
+                        )
                     }
                 )
                 context = json.dumps(normalizer.normalize(identity), sort_keys=True)

@@ -60,6 +60,7 @@ await startServer({
   createConversationCore: conversationSystem
     ? undefined
     : (context) => {
+        registry.bind_runtime(context.worker_supervision);
         const { config, database, record, clock, changes } = context;
         return new SqliteProcessConversationSystem({
           store: record.store,
@@ -71,7 +72,6 @@ await startServer({
           backend_child_factories: registry.factories,
           message_files: new ConversationMessageFiles(config.db_path),
           unix_time_now: () => clock.nowUnix(),
-          monotonic_now: () => clock.nowUnix(),
           require_runtime_ownership: context.require_runtime_ownership,
           require_signal_current: () => context.publication.current_read(),
           save_attempt: context.publication.save_attempt,

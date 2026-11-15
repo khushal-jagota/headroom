@@ -6,7 +6,7 @@ Source-row sort keys retain known normalized identities and use generic placehol
 
 ## Expected-open staging ports
 
-Retained proofs, staging reasons, and package counts: [P2](expected_open/P2.md), [P3](expected_open/P3.md), [P4](expected_open/P4.md), [P5](expected_open/P5.md), [P6](expected_open/P6.md).
+Retained proofs, staging reasons, and package counts: [P2](expected_open/P2.md), [P3](expected_open/P3.md), [P4](expected_open/P4.md), [P5](expected_open/P5.md), [P6](expected_open/P6.md), [P7](expected_open/P7.md).
 
 ## Add an area
 
@@ -62,9 +62,12 @@ The rule file contains reason maps:
 
 - `ignore`: exact `table.column` exceptions for source rows.
 - `tokens`: exact `table.column` counters or digests compared by change.
+- `process_identity_tokens`: exact `table.column` native identities in one typed namespace for the entire run.
 - `response_ignore`: exact response paths, such as `body.events.*.created_at`.
 - `response_tokens`: exact response paths for counters or digests compared by change.
 - `derived_tables`: tables excluded from SQL comparison. Add probes for their public output.
+
+Process identity tokens retain every field, null, value kind, and repeated reference across all declared tables, rows, and columns. Distinct typed values get distinct tokens. These opaque values do not set source-row sort order. Unit 15 queue declares only custody PID and birth evidence because each comparison host owns different native children. The [production reporter checks](../../server/conversation/backends/codex_app_server/client.test.ts), [custody guards](../../server/conversation/child_custody.test.ts), and [native process ABI checks](../../server/platform_runtime/worker_processes.native.test.ts) establish the raw identity. A per-row or per-column namespace cannot establish those reference relationships and is not permitted.
 
 The `*` response path segment denotes an array item. It is not an arbitrary wildcard. Do not hide content digests as random ids. Give each wall-time field an explicit rule and reason.
 

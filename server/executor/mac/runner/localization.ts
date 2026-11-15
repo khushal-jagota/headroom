@@ -6,6 +6,7 @@ import { resolve_path_sync } from '../../../core/path_resolution.ts';
 import { inspect } from 'node:util';
 import { ServerLifecycleError } from '../../../lifecycle/contracts.ts';
 import { BackendSpawnFailed } from '../../../conversation/backends/contracts.ts';
+import { RECORD_ROOT_ENV } from '../../../worker_supervision/config.ts';
 import {
   ConversationRoleMaterials,
   ResolvedConversationStart,
@@ -109,13 +110,31 @@ export async function localize_start(
   identity.set(EXECUTOR_CAPABILITY_ENV, capability);
   identity.set(EXECUTOR_ROOT_ENV, options.paths.root);
   identity.set('PLAN_TICKET_FILES_DIR', artifacts);
+  identity.set(RECORD_ROOT_ENV, join(options.paths.run, 'worker-processes'));
+  identity.set('PLAN_EXECUTOR_SOURCE_INCARNATION', reference.executor_incarnation);
   identity.set(NATIVE_SKILLS_DIR_ENV, join(generation, 'skills'));
+  let role_text = resolved.role_materials?.role_text ?? '';
+  if (identity.get('PLAN_TICKET_WORKSPACE_MANAGED') === '1') {
+    role_text +=
+      '\n\nPanels owns this Ticket workspace. ' +
+      `Use the supplied worktree at ${workspace}. ` +
+      'Do not create or remove worktrees. Keep scratch and dependencies inside it. ' +
+      `Write reviewable artifacts and evidence under ${join(artifacts, 'artifacts')}. ` +
+      'Follow repository setup instructions. Workers commit, push, open PRs, and merge. ' +
+      'Panels removes the complete Ticket folder seven days after the Ticket ends, ' +
+      'unless unpublished or uncommitted work prevents safe removal.';
+  } else {
+    role_text +=
+      `\n\nThis existing conversation keeps its original workspace at ${workspace}. ` +
+      'Continue the work there, including any unpublished changes. ' +
+      `Write reviewable output under ${join(artifacts, 'artifacts')}.`;
+  }
   return new ResolvedConversationStart({
     ...resolved,
     workspace_folder: workspace,
     workspace_path_policy: WorkspacePathPolicy.absolute,
     role_materials: new ConversationRoleMaterials({
-      role_text: resolved.role_materials?.role_text ?? '',
+      role_text,
       identity_environment_variables: [...identity],
     }),
   });

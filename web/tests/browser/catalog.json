@@ -76,6 +76,14 @@
       "companions": [
         "web/tests/artifact-press.test.ts"
       ]
+    },
+    {
+      "id": "embedded-artifacts-and-media",
+      "path": "web/tests/artifact-media-browser.test.mjs",
+      "cases": [
+        "artifact-media"
+      ],
+      "companions": []
     }
   ]
 }

@@ -116,7 +116,7 @@ function absolute(value: string): string {
   if (!isAbsolute(valid_text(value))) throw new Error('Unit paths must be absolute');
   return value;
 }
-function unit_value(value: string): string {
+export function unit_value(value: string): string {
   return JSON.stringify(valid_text(value)).replaceAll('%', '%%');
 }
 function template(name: string, values: Readonly<Record<string, string>>): string {

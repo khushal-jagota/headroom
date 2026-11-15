@@ -44,7 +44,7 @@ struct WorkspaceView: View {
     var body: some View {
         ScrollViewReader { proxy in
         ScrollView {
-            LazyVStack(spacing: 12) {
+            LazyVStack(spacing: PanelsTheme.Web.Rail.gap) {
                 if hasContent {
                     WorkspaceCard(title: store.chief?.label ?? "Chief of Staff", chief: true,
                                   route: .chief, signal: store.chiefSignal, groups: groups["chief"] ?? [],
@@ -62,10 +62,10 @@ struct WorkspaceView: View {
                             Button("Next") { if let anchor = window.next { parentsPage = (anchor, "after") } }.disabled(window.next == nil)
                         }.frame(minHeight: 44)
                     }
-                    settledSection(proxy: proxy).padding(.top, 16)
+                    settledSection(proxy: proxy)
                 }
             }
-            .padding(.horizontal, 16).padding(.top, 8).padding(.bottom, 24)
+            .padding(.horizontal, PanelsTheme.Web.Rail.inset).padding(.top, 8).padding(.bottom, 24)
         }
         .scrollPosition($scrollPosition)
         .onScrollGeometryChange(for: CGFloat.self) { $0.contentOffset.y + $0.contentInsets.top } action: { _, offset in scrollOffset = offset }
@@ -83,7 +83,8 @@ struct WorkspaceView: View {
         .navigationBarTitleDisplayMode(.inline)
         .onChange(of: selectedRoute) { old, new in if old != new { Haptics.light() } }
         .navigationDestination(item: $selectedRoute) { RouteDestination(route: $0) }
-        .panelsScreen()
+        .scrollContentBackground(.hidden).textCase(nil)
+        .background(PanelsTheme.Web.surface).foregroundStyle(PanelsTheme.Web.text)
         .onAppear {
             visible = true
             store.setNavigationDemand("workspace", workspaceWindows)
@@ -121,12 +122,15 @@ struct WorkspaceView: View {
                 toggleSettled(proxy: proxy)
             } label: {
                 HStack(spacing: 8) {
-                    Text("Settled").foregroundStyle(PanelsTheme.text)
-                    if let count = settled?.page.matchCount ?? store.counts?.settled { Text(String(count)).foregroundStyle(PanelsTheme.faint) }
+                    Text("Settled")
+                    if let count = settled?.page.matchCount ?? store.counts?.settled { Text(String(count)).panelsScaledFont(size: PanelsTheme.Web.smallSize).foregroundStyle(PanelsTheme.Web.tertiary) }
                     Spacer()
                     if settledOpen && settled == nil && settledError == nil { RingSpinner(size: .compact) }
-                }.panelsScaledFont(size: 17).frame(minHeight: 44).contentShape(Rectangle())
-            }.buttonStyle(.plain)
+                    Image(systemName: "chevron.right").font(.system(size: 14))
+                        .foregroundStyle(PanelsTheme.Web.tertiary).rotationEffect(.degrees(settledOpen ? 90 : 0))
+                }.panelsScaledFont(size: PanelsTheme.Web.rowSize).padding(.horizontal, PanelsTheme.Web.Rail.textInset)
+                    .frame(minHeight: PanelsTheme.Web.Rail.settledHeight).contentShape(Rectangle())
+            }.buttonStyle(WorkspaceRailButtonStyle(header: true))
                 .id("settledLine")
                 .disabled(settledAnimating)
                 .accessibilityIdentifier("workspace-settled")
@@ -141,8 +145,9 @@ struct WorkspaceView: View {
                             HStack {
                                 Text(manager.title).lineLimit(typeSize.isAccessibilitySize ? nil : 1).fixedSize(horizontal: false, vertical: true).frame(maxWidth: .infinity, alignment: .leading)
                                 ConversationSignalMark(signal: manager.conversationSignal)
-                            }.panelsScaledFont(size: 16).foregroundStyle(manager.conversationSignal?.messageForOwner == true ? PanelsTheme.strong : PanelsTheme.faint).frame(minHeight: 44)
-                        }.buttonStyle(.plain)
+                            }.panelsScaledFont(size: PanelsTheme.Web.rowSize).padding(.horizontal, PanelsTheme.Web.Rail.textInset)
+                                .frame(minHeight: PanelsTheme.Web.Rail.settledRowHeight)
+                        }.buttonStyle(WorkspaceRailButtonStyle(resting: manager.conversationSignal?.messageForOwner == true ? PanelsTheme.Web.strong : PanelsTheme.Web.railRow))
                             .conversationAccessibility(label: manager.title, signal: manager.conversationSignal)
                             .onScrollVisibilityChange { visible in
                                 if visible, settled.managers.suffix(10).contains(where: { $0.id == manager.id }), settled.page.nextOffset != nil {
@@ -155,8 +160,9 @@ struct WorkspaceView: View {
                 if settledLoading && settled != nil { RingSpinner(size: .compact).frame(maxWidth: .infinity) }
                 }.opacity(settledRowsVisible ? 1 : 0)
             }
-        }.padding(.horizontal, 16)
-            .frame(minHeight: settledOpen ? max(44, viewportHeight - 24) : 44, alignment: .top)
+        }.padding(PanelsTheme.Web.Rail.padding)
+            .background(PanelsTheme.Web.rail, in: RoundedRectangle(cornerRadius: PanelsTheme.Web.cardRadius))
+            .frame(minHeight: settledOpen ? max(40, viewportHeight - 24) : 40, alignment: .top)
     }
 
     private func toggleSettled(proxy: ScrollViewProxy) {

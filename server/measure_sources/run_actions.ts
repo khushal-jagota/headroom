@@ -20,6 +20,7 @@ import { encode_record } from './records.ts';
 import * as data from './data.ts';
 import { record_failure } from './notices.ts';
 import * as retention from './retention.ts';
+import { latest_due_slot, source_slot } from './logic/local_time.ts';
 function selected_script(source: MeasureSource) {
   if (!source.active_script)
     throw new PlannerError('validation', 'the selected source script is absent');
@@ -99,12 +100,7 @@ export function admit_scheduled_run(
   { local_now, now, slot }: { local_now: Date; now: number; slot?: [string, string] },
 ): SourceRun {
   const source = data.read_source(sql, id),
-    date =
-      slot?.[0] ??
-      `${String(local_now.getFullYear()).padStart(4, '0')}-${String(local_now.getMonth() + 1).padStart(2, '0')}-${String(local_now.getDate()).padStart(2, '0')}`,
-    time =
-      slot?.[1] ??
-      `${String(local_now.getHours()).padStart(2, '0')}:${String(local_now.getMinutes()).padStart(2, '0')}`;
+    [date, time] = slot ?? source_slot(local_now);
   if (!source.enabled || source.local_time !== time)
     throw new PlannerError('validation', 'source is not due in this slot');
   const existing = sql.get<{ id: string }>(
@@ -133,7 +129,7 @@ function fail(
   sql: TransactionSql,
   run: SourceRun,
   f: RunFailure,
-  { now, status = 'failed' }: { now: number; status?: RunStatus },
+  { now, status = 'failed', notify = true }: { now: number; status?: RunStatus; notify?: boolean },
 ): void {
   sql.run('UPDATE measure_source_runs SET status=?,failure=?,finished_at=? WHERE id=?', [
     status,
@@ -141,7 +137,7 @@ function fail(
     now,
     run.id,
   ]);
-  if (run.mode === 'collection') record_failure(sql, data.read_run(sql, run.id), { now });
+  if (notify && run.mode === 'collection') record_failure(sql, data.read_run(sql, run.id), { now });
 }
 export function claim_run(
   sql: TransactionSql,
@@ -150,6 +146,18 @@ export function claim_run(
 ): SourceRun | null {
   const run = data.read_run(sql, id);
   if (run.status !== 'pending') return null;
+  if (run.trigger === 'scheduled') {
+    const source = data.read_source(sql, run.source_id);
+    const slot =
+      source.enabled && source.local_time !== null
+        ? latest_due_slot(source.local_time, new Date(now * 1000))
+        : null;
+    const label = slot === null ? null : source_slot(slot);
+    if (label === null || run.schedule_date !== label[0] || run.schedule_time !== label[1]) {
+      fail(sql, run, failure('interrupted'), { now, status: 'interrupted', notify: false });
+      return null;
+    }
+  }
   if (
     sql.get("SELECT 1 FROM measure_source_runs WHERE source_id=? AND status='running'", [
       run.source_id,

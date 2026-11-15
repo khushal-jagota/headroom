@@ -1,9 +1,11 @@
 /** A stop certificate follows the exact child's command and source publications. */
 import type { ChildCommand, ChildReference, CommandOutcome } from '../../wire.generated.ts';
-import type { MacCommandWork } from './command_contracts.ts';
+import type { MacCommandWork, MacCommandServiceContract } from './command_contracts.ts';
+import { ExecutorValidationError } from '../../protocol_errors.ts';
 import type { MacRetirementContract, MacRetirementDependencies } from './retirement_contracts.ts';
-import { error_message, error_outcome, outcome } from './logic/outcomes.ts';
+import { error_message, error_outcome, outcome, same_wire } from './logic/outcomes.ts';
 import { same_reference } from '../../child_reference.ts';
+import { reference_key } from './state.ts';
 import { observe_shutdown } from '../../../conversation/shutdown.ts';
 import type { StopOptions } from '../../../lifecycle/contracts.ts';
 import { remember_model_catalog_failure } from '../../../conversation/backends/catalog_cleanup.ts';
@@ -14,6 +16,10 @@ export class MacRetirement implements MacRetirementContract {
   private shutdown_options: StopOptions | undefined;
   private readonly shutdown = new AbortController();
   private readonly operations = new Set<Promise<CommandOutcome>>();
+  private readonly publishing_stops = new Map<
+    string,
+    { command: ChildCommand; actual: Promise<CommandOutcome> }
+  >();
   private readonly failures = new Set<unknown>();
   private actual_join: Promise<void> | undefined;
   constructor(dependencies: MacRetirementDependencies) {
@@ -61,18 +67,65 @@ export class MacRetirement implements MacRetirementContract {
     work: MacCommandWork,
     invoking: () => void,
   ): Promise<CommandOutcome> {
-    const actual = Promise.resolve().then(() => this.retire(command, work, invoking));
+    const previous = this.publishing_stops.get(reference_key(command.child));
+    if (previous) {
+      const refused = () => outcome(command, 'refused', { reason: 'child_stop_in_progress' });
+      return this.own(previous.actual.then(refused, refused), true);
+    }
+    const actual = Promise.resolve().then(async () => {
+      const result = await this.stop_source(command, work, invoking);
+      if (result.disposition === 'succeeded') this.forget_source(command.child, work);
+      return result;
+    });
+    return this.own(actual, true);
+  }
+  stop_and_publish(
+    command: ChildCommand,
+    commands: MacCommandServiceContract,
+  ): Promise<CommandOutcome> {
+    if (command.operation !== 'stop' || command.arguments.kind !== 'stop')
+      return Promise.reject(
+        new ExecutorValidationError('Retirement requires an exact child stop command'),
+      );
+    const key = reference_key(command.child);
+    const previous = this.publishing_stops.get(key);
+    if (previous)
+      return this.own(
+        previous.actual.then(
+          (result) =>
+            same_wire(previous.command, command, 'ChildCommand')
+              ? result
+              : outcome(command, 'refused', { reason: 'child_stop_in_progress' }),
+          () => outcome(command, 'refused', { reason: 'child_stop_in_progress' }),
+        ),
+        false,
+      );
+    const actual = Promise.resolve().then(async () => {
+      const result = await this.stop_source(command, commands, () => {});
+      await commands.adopt_unjournaled_outcome(command, result);
+      if (result.disposition === 'succeeded') this.forget_source(command.child, commands);
+      return result;
+    });
+    this.publishing_stops.set(key, { command, actual });
+    const finished = () => {
+      if (this.publishing_stops.get(key)?.actual === actual) this.publishing_stops.delete(key);
+    };
+    void actual.then(finished, finished);
+    // A failed FIFO publication retains its command record and stopped child for retry.
+    return this.own(actual, false);
+  }
+  private own(actual: Promise<CommandOutcome>, retain_failure: boolean): Promise<CommandOutcome> {
     this.operations.add(actual);
     void actual.then(
       () => this.operations.delete(actual),
       (error) => {
-        remember_model_catalog_failure(this.failures, error);
+        if (retain_failure) remember_model_catalog_failure(this.failures, error);
         this.operations.delete(actual);
       },
     );
     return this.observe_work(actual);
   }
-  private async retire(
+  private async stop_source(
     command: ChildCommand,
     work: MacCommandWork,
     invoking: () => void,
@@ -132,10 +185,12 @@ export class MacRetirement implements MacRetirementContract {
           : new AggregateError(failures, failures.map(error_message).join('; '));
       return outcome(command, 'uncertain', error_outcome(command, error).result);
     }
+    return outcome(command, 'succeeded', {});
+  }
+  private forget_source(reference: ChildReference, work: MacCommandWork): void {
     this.dependencies.state.mark_retired(reference);
     this.dependencies.native_children.retire(reference);
     this.prune(reference);
     work.prune(reference);
-    return outcome(command, 'succeeded', {});
   }
 }

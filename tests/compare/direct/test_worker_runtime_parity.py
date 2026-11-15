@@ -48,6 +48,7 @@ WALL = NOW * 1000
 TABLES = (
     "tickets",
     "ticket_paired_stage_openers",
+    "worker_step_dispatch_intents",
     "ticket_conversations",
     "agents",
     "conversations",
@@ -549,6 +550,154 @@ def test_worker_decisions_parity(tmp_path: Path) -> None:
             conn.close()
 
 
+def test_machine_admission_and_refusal_envelopes(tmp_path: Path) -> None:
+    """One destination's presence must not admit or block another destination.
+
+    Reuse the populated Ticket fixture and Node evaluator without a host. Runtime
+    protocol activation remains deferred: each side uses its supported identity,
+    and both complete fixture identities remain explicit in the comparison report.
+    This proves machine admission, not a same-wire protocol-26 exchange.
+    """
+    from planner.machines.contracts import HOME_MACHINE_ID
+    from planner.tickets import locale_configuration
+    from planner.tickets.worker_restart import require_restartable
+
+    began = time.monotonic()
+    machine_a = "44444444-4444-4444-8444-444444444444"
+    machine_b = "55555555-5555-4555-8555-555555555555"
+    source_identity = {
+        "protocol_version": PROTOCOL_VERSION,
+        "spool_format_version": SPOOL_FORMAT_VERSION,
+        "application_revision": "machine-admission-fixture",
+        "executor_incarnation": "77777777-7777-4777-8777-777777777777",
+        "connection_generation": 0,
+    }
+    # The runtime deviation remains recorded until the whole executor port is ready.
+    candidate_identity = {**source_identity, "protocol_version": 22}
+    with synthetic_home_environment(create_synthetic_homes(tmp_path)):
+        conn = connect(str(tmp_path / "python.sqlite"))
+        try:
+            create_schema(conn)
+            for machine_id, name in ((machine_a, "Travel Linux"), (machine_b, "Office")):
+                conn.execute(
+                    "INSERT INTO machines VALUES (?,?,'server','cyan',0)", (machine_id, name)
+                )
+            machine_tickets = {}
+            for name, machine_id in (
+                ("home", HOME_MACHINE_ID), ("original", ORIGINAL_MAC_MACHINE_ID),
+                ("a", machine_a), ("b", machine_b),
+            ):
+                ticket = new_ticket(conn)
+                conn.execute(
+                    "UPDATE tickets SET machine_id=?,locale=? WHERE id=?",
+                    (machine_id, "vps" if machine_id == HOME_MACHINE_ID else "macos", ticket.id),
+                )
+                machine_tickets[name] = ticket.id
+            conn.execute(
+                "INSERT INTO mac_executor_presence(machine_id,executor_incarnation,identity_json,"
+                "last_contact_at_ms,last_lease_at_ms,continuous_since_ms) VALUES(?,?,?,?,?,?)",
+                (machine_a, source_identity["executor_incarnation"], json.dumps(source_identity),
+                 WALL, WALL, WALL),
+            )
+            conn.commit()
+
+            async def exercise() -> dict[str, Any]:
+                system = InMemoryConversationSystem()
+
+                async def capture() -> dict[str, Any]:
+                    result = {}
+                    for name, ticket_id in machine_tickets.items():
+                        current = tickets.read_ticket(conn, ticket_id)
+                        admitted = locale_configuration.can_execute_machine(
+                            conn, current.machine_id
+                        )
+                        restart_error: dict[str, Any] | None = None
+                        send_error: dict[str, Any] | None = None
+                        try:
+                            with patch("planner.tickets.worker_restart.now_ms", return_value=WALL):
+                                require_restartable(conn, OWNER_PRINCIPAL, ticket_id)
+                        except PlannerError as error:
+                            restart_error = error.to_payload()
+                        if not admitted:
+                            try:
+                                await start.send_to_ticket_conversation(
+                                    system, conn, ticket_id,
+                                    text_message_content("Refused machine opener"),
+                                    now=NOW, conversation_id=None, sender_label="test",
+                                )
+                                raise AssertionError("A refused destination started a conversation")
+                            except PlannerError as error:
+                                send_error = error.to_payload()
+                        with patch(
+                            "planner.runtime.worker_step_readiness.now_ms", return_value=WALL
+                        ):
+                            blocker = readiness.worker_step_blocker(
+                                conn, current, worker_type_definition=current.workflow
+                            )
+                        result[name] = {
+                            "admitted": admitted,
+                            "reason": locale_configuration.machine_unavailable_reason(
+                                conn, current.machine_id
+                            ),
+                            "readiness": blocker, "restart": restart_error, "send": send_error,
+                        }
+                    return result
+
+                phases = [await capture()]
+                conn.execute(
+                    "UPDATE mac_executor_presence SET last_lease_at_ms=? WHERE machine_id=?",
+                    (WALL - 60000, machine_a),
+                )
+                other_identity = {
+                    **source_identity,
+                    "executor_incarnation": "88888888-8888-4888-8888-888888888888",
+                }
+                conn.execute(
+                    "INSERT INTO mac_executor_presence"
+                    "(machine_id,executor_incarnation,identity_json,last_contact_at_ms,"
+                    "last_lease_at_ms,continuous_since_ms) VALUES(?,?,?,?,?,?)",
+                    (machine_b, other_identity["executor_incarnation"], json.dumps(other_identity),
+                     WALL, WALL, WALL),
+                )
+                conn.execute(
+                    "UPDATE machines SET name=? WHERE machine_id=?",
+                    ("Café $&", ORIGINAL_MAC_MACHINE_ID),
+                )
+                conn.commit()
+                phases.append(await capture())
+                unknown = None
+                try:
+                    locale_configuration.machine_unavailable_reason(conn, "unknown")
+                except PlannerError as error:
+                    unknown = error.to_payload()
+                return {
+                    "fixture": {
+                        "source_identity": source_identity,
+                        "candidate_identity": candidate_identity,
+                    },
+                    "phases": phases, "unknown": unknown, "rows": rows(conn),
+                }
+
+            answer = compare(conn, tmp_path, {
+                "mode": "machine_admission", "ticket_id": "", "machine_tickets": machine_tickets,
+                "named_machines": [machine_a, machine_b], "source_identity": source_identity,
+                "candidate_identity": candidate_identity,
+            }, lambda: asyncio.run(exercise()))
+            assert answer["phases"][0]["a"]["admitted"]
+            assert answer["phases"][0]["a"]["readiness"] is None
+            assert not answer["phases"][0]["b"]["admitted"]
+            assert answer["phases"][1]["a"]["admitted"]
+            assert answer["phases"][1]["a"]["readiness"] == "Waiting for Travel Linux"
+            assert answer["phases"][1]["b"]["readiness"] is None
+            assert answer["phases"][1]["original"]["send"]["error"]["detail"] == {
+                "ticket_id": machine_tickets["original"],
+                "locale": "macos", "machine_locale": "vps",
+            }
+        finally:
+            conn.close()
+    print(f"machine admission and refusal proof: {time.monotonic() - began:.3f}s")
+
+
 def test_automatic_start_admission_populated_lifecycle(tmp_path: Path) -> None:
     """Gap: pure engine tests cannot prove fresh staging admission rows agree.
 
@@ -919,3 +1068,278 @@ def test_worker_journal_exact_python_roundtrip(tmp_path: Path) -> None:
     assert path.read_bytes() == expected
     assert records.read(path) == record
     print(f"exact journal Python roundtrip: {time.monotonic() - began:.3f}s")
+
+
+def test_local_child_custody_populated_transitions(tmp_path: Path) -> None:
+    """Compare generation, occurrence, and startup proof fences on populated rows."""
+    import os
+    from contextlib import closing
+    from types import SimpleNamespace
+
+    from tests.compare.direct.test_unit18_adapter import environment
+
+    from planner.conversation import child_custody
+    from planner.conversation.backends.contracts import BackendSpawnFailed
+    from planner.conversation.deploy_interruptions.contracts import CapturedTurn, CaptureManifest
+    from planner.conversation.deploy_interruptions.files import write_manifest
+    from planner.conversation.local_child_contracts import LocalChildIdentity, LocalHostBootIdentity
+    from planner.conversation.logic.conversation_start_resolution import (
+        resolve_conversation_start_request,
+    )
+    from planner.conversation.storage import ConversationStore
+    from planner.worker_supervision import records
+
+    began = time.monotonic()
+    selected = environment(tmp_path)
+    py_path = tmp_path / "python.sqlite"
+    journal = tmp_path / "journals" / ("b" * 32 + ".json")
+    journal.parent.mkdir(mode=0o700)
+    records.write(
+        journal,
+        dict(
+            version=1,
+            ticket_id="synthetic",
+            conversation_id="pending",
+            processes=[],
+            state="starting",
+        ),
+    )
+    startup_ids = (
+        "startup-blocked",
+        "startup-proven",
+        "startup-manifest",
+        "startup-unavailable",
+        "startup-changed",
+        "startup-mismatch",
+    )
+    initial_ids = ("started", "pending", "quiet", *startup_ids, "startup-legacy")
+    queries = {
+        "custody": "SELECT * FROM conversation_child_custody ORDER BY conversation_id",
+        "facts": (
+            "SELECT * FROM conversation_lifecycle_facts ORDER BY conversation_id,kind,identity"
+        ),
+        "bindings": "SELECT * FROM automatic_start_bindings ORDER BY conversation_id,identity",
+        "accounts": "SELECT * FROM deploy_interruption_accounts ORDER BY capture_id",
+        "interruptions": "SELECT * FROM deploy_interruptions ORDER BY interruption_id",
+    }
+
+    def snapshot(*names: str) -> dict[str, Any]:
+        with closing(connect(str(py_path))) as conn:
+            return {name: [dict(row) for row in conn.execute(queries[name])] for name in names}
+
+    def write(sql: str, parameters: tuple[Any, ...] = ()) -> None:
+        with closing(connect(str(py_path))) as conn:
+            conn.execute(sql, parameters)
+            conn.commit()
+
+    async def prepare() -> None:
+        store = ConversationStore(str(py_path), integer_now=lambda: 100)
+        for name in initial_ids:
+            await store.create_conversation(
+                resolve_conversation_start_request(
+                    ConversationStartRequest(
+                        conversation_id=name, model="model", workspace_folder=tmp_path
+                    )
+                )
+            )
+            if name != "quiet":
+                await store.reserve_turn(name)
+                write(
+                    "UPDATE conversation_turn_occurrences SET occurrence_id=?,"
+                    "runtime_epoch='epoch' WHERE conversation_id=?",
+                    (name + "-occurrence", name),
+                )
+                write(
+                    "INSERT INTO automatic_start_bindings "
+                    "(identity,work_class,destination,conversation_id,turn_number) "
+                    "VALUES (?,'worker','home',?,1)",
+                    (name, name),
+                )
+
+    async def exercise() -> dict[str, Any]:
+        store = ConversationStore(str(py_path), integer_now=lambda: 100)
+        identity = LocalChildIdentity(42, "birth", "boot", None, None)
+        points: list[dict[str, Any]] = []
+        absent, change_during_inspection, restoring = False, False, False
+
+        def inspected(row: sqlite3.Row) -> bool:
+            if restoring and row["conversation_id"] == "startup-blocked":
+                return False
+            if change_during_inspection or (
+                restoring and row["conversation_id"] == "startup-changed"
+            ):
+                write(
+                    "UPDATE conversation_child_custody SET generation='replacement' "
+                    "WHERE conversation_id=?",
+                    (row["conversation_id"],),
+                )
+            return row["state"] == "retired" or absent
+
+        def capture(label: str, result: Any) -> None:
+            points.append(
+                dict(
+                    label=label,
+                    result=plain(result),
+                    **snapshot("custody", "facts", "bindings"),
+                    settled=plain(store.settled_recorded_turn("pending")),
+                )
+            )
+
+        def proof(*_: Any) -> SimpleNamespace:
+            return SimpleNamespace(complete=absent)
+
+        with (
+            patch.object(
+                child_custody,
+                "host_boot_identity",
+                return_value=LocalHostBootIdentity("host", "boot"),
+            ),
+            patch.object(child_custody, "retirement_row_proven", side_effect=inspected),
+            patch.object(child_custody, "stop_recorded_child", side_effect=lambda *_: absent),
+            patch("planner.worker_supervision.inspect_record", side_effect=proof),
+            patch("planner.worker_supervision.stop_record", side_effect=proof),
+        ):
+            await store.record_child_custody("started", "old")
+            await store.record_child_custody("started", "new")
+            with pytest.raises(BackendSpawnFailed):
+                await store.record_child_custody("started", "old", identity)
+            capture("stale-start", True)
+            await store.record_child_custody("started", "new", identity)
+            capture("started", await store.check_local_child_started("started", "new", 1))
+            write(
+                "UPDATE conversation_child_custody SET occurrence_id='wrong' "
+                "WHERE conversation_id='started'"
+            )
+            capture("wrong-occurrence", await store.check_local_child_started("started", "new", 1))
+            write(
+                "UPDATE conversation_child_custody SET occurrence_id='started-occurrence' "
+                "WHERE conversation_id='started'"
+            )
+            await store.record_child_custody("pending", "pending-generation")
+            await store.record_child_custody("quiet", "quiet-generation")
+            with pytest.raises(ValueError):
+                await store.record_child_supervision("quiet", "quiet-generation", str(journal))
+            capture("wrong-journal-owner", True)
+            await store.record_child_supervision("pending", "pending-generation", str(journal))
+            capture(
+                "pending-unknown", await store.settle_recorded_source("pending", inspect_only=True)
+            )
+            absent = True
+            capture(
+                "pending-undelivered",
+                await store.settle_recorded_source("pending", inspect_only=True),
+            )
+            await store.record_child_custody("quiet", "quiet-generation", identity)
+            change_during_inspection = True
+            capture(
+                "changed-during-inspection",
+                await store.retire_idle_recorded_source("quiet", inspect_only=True),
+            )
+            change_during_inspection = False
+            capture(
+                "quiet-retired", await store.retire_idle_recorded_source("quiet", inspect_only=True)
+            )
+            capture(
+                "started-retired", await store.settle_recorded_source("started", inspect_only=True)
+            )
+            capture("retirement-proof", await store.recorded_source_retirement_proven("started"))
+            for name in startup_ids:
+                await store.record_child_custody(name, name)
+                await store.record_child_custody(name, name, identity)
+            write(
+                "UPDATE conversation_child_custody SET occurrence_id='wrong' "
+                "WHERE conversation_id='startup-mismatch'"
+            )
+            write("DELETE FROM conversation_child_custody WHERE conversation_id='startup-legacy'")
+            write(
+                "UPDATE conversation_lifecycle_facts SET status='unavailable' "
+                "WHERE conversation_id='startup-unavailable' AND kind='turn'"
+            )
+            write(
+                "UPDATE conversation_lifecycle_facts SET status='unknown' "
+                "WHERE conversation_id IN ('startup-unavailable','pending') "
+                "AND kind='attempt' AND operation='prompt'"
+            )
+            write_manifest(
+                py_path,
+                CaptureManifest(
+                    "saved-deployment",
+                    "saved-capture",
+                    99,
+                    "captured",
+                    None,
+                    tuple(
+                        CapturedTurn(
+                            name,
+                            1,
+                            name + "-occurrence",
+                            "epoch",
+                            "intent",
+                            "Agent conversation",
+                            "unknown",
+                            None,
+                            None,
+                            None,
+                        )
+                        for name in ("startup-blocked", "startup-manifest")
+                    ),
+                ),
+            )
+            restoring = True
+            restored = ConversationStore(str(py_path), integer_now=lambda: 100)
+            with closing(connect(str(py_path))) as conn:
+                restored._reconcile_runtime(conn, {})
+                changed = (
+                    conn.execute(
+                        "SELECT epoch FROM conversation_runtime_epoch WHERE singleton=1"
+                    ).fetchone()[0]
+                    != "epoch"
+                )
+            restart = dict(
+                blocked=sorted(restored.blocked_local_conversations),
+                **snapshot("facts", "custody", "accounts", "interruptions"),
+                epoch_changed=changed,
+            )
+        return dict(points=points, restart=restart)
+
+    with patch.dict(os.environ, selected, clear=True), closing(connect(str(py_path))) as conn:
+        create_schema(conn)
+        conn.execute("INSERT INTO conversation_runtime_epoch VALUES (1,'epoch')")
+        conn.commit()
+        asyncio.run(prepare())
+        expected = compare(
+            conn,
+            tmp_path,
+            {"mode": "custody", "journal": str(journal)},
+            lambda: asyncio.run(exercise()),
+        )
+    assert [point["result"] for point in expected["points"]] == [
+        True,
+        True,
+        False,
+        True,
+        None,
+        "undelivered",
+        False,
+        True,
+        "retired",
+        True,
+    ]
+    assert expected["restart"]["blocked"] == [
+        "startup-blocked",
+        "startup-changed",
+        "startup-mismatch",
+    ]
+    captures = expected["restart"]["interruptions"]
+    assert {row["source_conversation_id"] for row in captures} == {
+        "startup-manifest",
+        "startup-proven",
+        "startup-unavailable",
+    }
+    assert (
+        next(row for row in captures if row["source_conversation_id"] == "startup-unavailable")[
+            "original_status"
+        ]
+        == "unavailable"
+    )
+    print(f"local child custody populated parity: {time.monotonic() - began:.3f}s")

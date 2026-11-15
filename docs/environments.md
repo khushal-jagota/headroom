@@ -57,7 +57,7 @@ The user units in `ops/panels-environments/` cover the live service, the deploym
 
 ## Ticket scratch
 
-Panels owns each Ticket's workspace. Before repository work starts, it creates the branch and the `worktree/` folder inside that machine's Ticket files folder. The sibling `artifacts/` folder holds documents and evidence. Workers use the same workspace on later turns. They install dependencies, commit, push, open pull requests, and perform approved merges. They do not create worktrees or remove Ticket files.
+Panels owns each Ticket's workspace. A Project can name its repository directly or contain one repository; the conventional `repository` child also selects it explicitly. On the Mac, a Ticket without a Project gets a plain work folder, independent of repositories in the shared workspace. Before repository work starts, it creates the branch and the `worktree/` folder inside that machine's Ticket files folder. The sibling `artifacts/` folder holds documents and evidence. Workers use the same workspace on later turns. They install dependencies, commit, push, open pull requests, and perform approved merges. They do not create worktrees or remove Ticket files.
 
 Codex, Claude, and Hermes use real disk scratch at `~/.pw/<ticket-id>-<six hex characters>` on Linux and macOS. This short path leaves room for Unix sockets. `TMPDIR`, `TMP`, and `TEMP` point there, and the launcher removes it when the backend process ends, including failed startup. A fresh backend folder replaces other scratch folders for the same Ticket. Retirement removes the scratch recorded before that workspace detached, so a later retry preserves fresh backend scratch.
 
@@ -94,6 +94,7 @@ Renaming the account, moving host state, or changing Tailscale Serve is operator
 - `src/planner/environments/`: the registry, launch environments, status, and cleanup. `logic/validation.py` and `logic/launch_env.py` hold the rules.
 - `src/planner/core/config.py`: configuration and `PLAN_*` overrides. `src/planner/skill_sources.py`: the workspace skills link.
 - `src/planner/server_lifecycle/`: who may stop a server.
+- `server/lifecycle/`, `server/skills/account.ts`, and `server/environments/vps_status/`: TypeScript home custody, account publication, and cleanup.
 - `ops/panels-environments/`: user units, timers, and the host wrapper.
 
 Named execution destinations and physical workspace identity are separate. A Ticket’s `machine_id` selects home execution or the original executor. `WorkspaceIdentity.machine_id` identifies one local physical data tree. Workspace registration binds its folder to the conversation on that destination. A display edit never rotates either identity.

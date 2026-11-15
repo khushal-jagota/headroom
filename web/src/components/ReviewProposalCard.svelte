@@ -28,7 +28,6 @@
   import MarkdownBlock from "./MarkdownBlock.svelte";
   import WorkerProposalCard from "./WorkerProposalCard.svelte";
   import ComposerField from "./conversation/ComposerField.svelte";
-  import type { ReviewDecisionBody } from "../lib/review/decision";
   import {
     createVoiceCapture,
     voiceCaptureAvailable,
@@ -190,15 +189,8 @@
     void navigation.owner.recover().catch(() => undefined);
   });
 
-  async function accept(payload: Record<string, unknown>): Promise<unknown> {
-    if (!acceptField) throw new Error("Review decision is not a Ticket field");
-    requireVisibleProposal();
-    const proposalKey = currentKey;
-    const result = await write(`/api/tickets/${ticketId}/accept/${acceptField}`, {
-      method: "POST", body: payload
-    });
-    if (currentKey === proposalKey) announceResolved();
-    return result;
+  async function accept(): Promise<void> {
+    announceResolved();
   }
 
   function saveTitle(raw: string): Promise<unknown> {
@@ -208,10 +200,7 @@
     });
   }
 
-  async function returnProposal(body: ReviewDecisionBody): Promise<void> {
-    const proposalKey = currentKey;
-    await write(`/api/tickets/${ticketId}/reject`, { method: "POST", body });
-    if (currentKey !== proposalKey) return;
+  async function returnProposal(): Promise<void> {
     revisionDraft = "";
     announceResolved();
   }

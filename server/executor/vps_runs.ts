@@ -19,11 +19,13 @@ import { observe_shutdown, is_shutdown_business_cancellation } from '../conversa
 import type { Database } from '../core/database/contracts.ts';
 import { PlannerError } from '../core/contracts.ts';
 import type { Principal } from '../core/contracts.ts';
-import { supports_executor_versions } from '../execution_identity.ts';
+import { ORIGINAL_MAC_MACHINE_ID, supports_executor_versions } from '../execution_identity.ts';
 import { ServerLifecycleError } from '../lifecycle/contracts.ts';
 import type { StopOptions } from '../lifecycle/contracts.ts';
 import type { StallSource } from '../stalls/contracts.ts';
 import { WAITS } from '../stalls/registry.ts';
+import type { CleanupResult } from '../worker_supervision/contracts.ts';
+import { cleanup_result } from '../worker_supervision/inspection.ts';
 import { execution_unavailable_reason } from '../tickets/locale_configuration.ts';
 import { now_ms } from './clock.ts';
 import { native_message_content } from './backend_events.ts';
@@ -34,6 +36,7 @@ import { steer_never_arrived } from './data/mailbox.ts';
 import { ExecutorValidationError } from './protocol.ts';
 import {
   STEER_DELIVERY_LIMIT_SECONDS,
+  CLEANUP_RECHECK_TIMEOUT_SECONDS,
   DRAIN_RETRY_INITIAL_SECONDS,
   DRAIN_RETRY_MAX_SECONDS,
 } from './configuration.ts';
@@ -90,6 +93,7 @@ function undelivered(
   };
 }
 export class MacRuns {
+  readonly machine_id: string;
   readonly store: ExecutorStore;
   readonly presence: MacPresenceService;
   readonly mailbox: SqliteCommandMailbox;
@@ -109,7 +113,8 @@ export class MacRuns {
     this.database = database;
     this.presence = presence;
     this.mailbox = mailbox;
-    this.store = new ExecutorStore(database);
+    this.machine_id = presence.machine_id;
+    this.store = new ExecutorStore(database, this.machine_id);
     this.actual_settlement = new Promise<void>((resolve, reject) => {
       this.resolve_settlement = resolve;
       this.reject_settlement = reject;
@@ -230,6 +235,54 @@ export class MacRuns {
   }
   mac_is_present(): boolean {
     return this.presence.is_present();
+  }
+  recheck_cleanup(source: ChildReference, ticket_id: string): Promise<CleanupResult> {
+    return this.own(async () => {
+      const current = this.presence.current_identity();
+      if (current === null || !this.presence.is_present())
+        return cleanup_result(false, 'The executor is not reachable for a cleanup inspection');
+      const deadline = performance.now() + CLEANUP_RECHECK_TIMEOUT_SECONDS * 1000;
+      const command: WireValue<'ChildCommand'> = {
+        command_id: randomUUID(),
+        child: {
+          executor_incarnation: current.executor_incarnation,
+          child_id: source.child_id,
+          conversation_id: source.conversation_id,
+        },
+        operation: 'recheck_cleanup',
+        turn: null,
+        arguments: { kind: 'recheck_cleanup', source, ticket_id },
+      };
+      const placed = await this.mailbox.put_child_command(command, {
+        signal: this.cancellation.signal,
+      });
+      if (!('command_sequence' in placed))
+        return cleanup_result(false, String(placed.result.reason ?? 'Cleanup source refused'));
+      const result = await this.mailbox.wait_result(
+        command.command_id,
+        Math.max(0, (deadline - performance.now()) / 1000),
+        { signal: this.cancellation.signal },
+      );
+      const outcome = result?.child_outcome;
+      if (outcome == null)
+        return cleanup_result(false, 'The cleanup inspection did not return before its deadline');
+      const reason = String(outcome.result.reason ?? 'Cleanup inspection returned no proof');
+      if (outcome.disposition !== 'succeeded' || outcome.result.complete !== true)
+        return cleanup_result(false, reason);
+      const remaining = deadline - performance.now();
+      if (remaining <= 0)
+        return cleanup_result(false, 'Cleanup passed; a fresh executor lease is still pending');
+      const timeout = AbortSignal.timeout(Math.ceil(remaining));
+      try {
+        await this.presence.wait_until_drained(source.conversation_id, {
+          signal: AbortSignal.any([timeout, this.cancellation.signal]),
+        });
+      } catch (error) {
+        if (!timeout.aborted || this.cancellation.signal.aborted) throw error;
+        return cleanup_result(false, 'Cleanup passed; a fresh executor lease is still pending');
+      }
+      return cleanup_result(true, reason);
+    });
   }
   put(command: WireValue<'ChildCommand'>): Promise<boolean> {
     return this.own(
@@ -622,7 +675,7 @@ export class MacRuns {
     }
   }
   stall_source(): StallSource {
-    return new ReplacementStallSource();
+    return new ReplacementStallSource(this.machine_id);
   }
   private stop_owner(options: StopOptions): Promise<void> {
     if (!this.sealed) {
@@ -656,19 +709,24 @@ export class MacRuns {
   }
 }
 export class ReplacementStallSource implements StallSource {
+  readonly machine_id: string;
+  constructor(machine_id: string = ORIGINAL_MAC_MACHINE_ID) {
+    this.machine_id = machine_id;
+  }
   tracked_waits(
     sql: Parameters<StallSource['tracked_waits']>[0],
     now: number,
   ): ReturnType<StallSource['tracked_waits']> {
     return sql
       .all<{ conversation_id: string; replaced_at_ms: number }>(
-        "SELECT r.conversation_id,COALESCE(i.replaced_at_ms,i.first_leased_at_ms,?) AS replaced_at_ms FROM mac_runs AS r LEFT JOIN executor_incarnations AS i ON i.executor_incarnation=r.executor_incarnation LEFT JOIN mac_executor_presence AS p ON p.machine_id=r.machine_id WHERE r.stop_state<>'closed' AND r.executor_incarnation IS NOT p.executor_incarnation ORDER BY r.rowid",
-        [now],
+        "SELECT r.conversation_id,COALESCE(i.replaced_at_ms,i.first_leased_at_ms,?) AS replaced_at_ms FROM mac_runs AS r LEFT JOIN executor_incarnations AS i ON i.executor_incarnation=r.executor_incarnation LEFT JOIN mac_executor_presence AS p ON p.machine_id=i.machine_id WHERE r.machine_id=? AND r.stop_state<>'closed' AND r.executor_incarnation IS NOT p.executor_incarnation ORDER BY r.rowid",
+        [now, this.machine_id],
       )
       .map((row) => ({
         kind: 'mac_replacement_pending',
         wait_key: row.conversation_id,
         conversation_id: row.conversation_id,
+        machine_id: null,
         detail: "A replaced Mac process's items are still draining",
         started_at_ms: row.replaced_at_ms,
       }));

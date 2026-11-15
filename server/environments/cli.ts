@@ -193,8 +193,10 @@ export async function environment_provision_skills(
   deps: OperatorPathInputs,
 ): Promise<Result> {
   try {
-    provision_environment_skills(args, deps);
-    return success('provisioned Panels skills for Hermes, Codex, and Claude');
+    const warning = provision_environment_skills(args, deps);
+    return warning
+      ? { exit_code: 0, stdout: '', stderr: warning + '\n' }
+      : success('provisioned Panels skills for Hermes, Codex, and Claude');
   } catch (error) {
     if (!domain_error(error)) throw error;
     return failed(error);

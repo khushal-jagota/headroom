@@ -1,7 +1,20 @@
 import { ConversationStartAborted } from '../runtime/abort.ts';
 import { ShutdownDeadlineExceeded } from '../lifecycle/contracts.ts';
+import { AutomaticStartAdmission } from '../conversation/start_admission/index.ts';
 import { expect, test, vi } from 'vitest';
-import { fixture, fixture_path, create } from './ticket_fixture.ts';
+import {
+  fixture,
+  fixture_path,
+  create,
+  edit,
+  propose,
+  manager,
+  read,
+  now,
+} from './ticket_fixture.ts';
+import { OWNER, CHIEF } from '../core/contracts.ts';
+import * as tickets from '../tickets/data/index.ts';
+import { add_work_attention } from '../work_attention.ts';
 import { ConversationStore } from '../conversation/record/data/store.ts';
 import { ResolvedConversationStart, PromptDeliveryMode } from '../conversation/contracts.ts';
 import { PromptEventPayload } from '../conversation/events.ts';
@@ -29,6 +42,131 @@ import {
   ManagerWakeLoop,
   reconcile_batch_outcomes,
 } from '../manager_wakes/runtime.ts';
+
+// A deferred proposal remains open but cannot hide factual failures or inflate its Manager.
+test('deferral pauses proposal slots and Manager rollups while direct Ticket facts remain', async () => {
+  const db = fixture(),
+    id = manager(db, 'Deferred work');
+  const ticket = propose(
+    db,
+    edit(db, create(db, { manager_id: id }), { ceiling_holder: { kind: 'manager', id } }),
+    'Review later',
+  );
+  db.write((sql) =>
+    sql.run("INSERT INTO navigation_records VALUES ('ticket',?,?)", [
+      ticket.id,
+      JSON.stringify({
+        id: ticket.id,
+        ticket_status: 'awaiting_approval',
+        ceiling_holder: ticket.ceiling_holder,
+        stage: ticket.stage,
+      }),
+    ]),
+  );
+  const detail: Record<string, unknown>[] = [{ id: ticket.id }],
+    managers: Record<string, unknown>[] = [{ id }];
+  await add_work_attention(db, undefined, detail, managers);
+  expect(managers[0]!.ticket_rollup).toMatchObject({ awaiting_agent_approval: true });
+  db.write((sql) =>
+    tickets.set_ticket_backlog(sql, ticket.id, {
+      is_backlogged: true,
+      principal: OWNER,
+      now: now + 3,
+    }),
+  );
+  await add_work_attention(db, undefined, detail, managers);
+  expect(detail[0]!.awaiting_agent_approval).toBe(true);
+  expect(managers[0]!.ticket_rollup).toMatchObject({ awaiting_agent_approval: false });
+  expect(
+    db.write((sql) => data.claim_next_batch(sql, { process_token: 'deferral', now: now + 4 })),
+  ).toBeNull();
+  db.write((sql) =>
+    data.create_worker_error_wake(sql, {
+      target: { kind: 'manager', id },
+      ticket_id: ticket.id,
+      ticket_title: ticket.title,
+      claim_revision: 1,
+      error_reason: 'actual failure',
+      now: now + 5,
+    }),
+  );
+  const factual = db.write((sql) =>
+    data.claim_next_batch(sql, { process_token: 'deferral', now: now + 6 }),
+  );
+  expect(factual?.message).toContain('actual failure');
+  expect(factual?.message).not.toContain('filed a proposal');
+  expect(
+    db.read((sql) => sql.get("SELECT closed_at FROM manager_wakes WHERE source_kind='proposal'")),
+  ).toEqual({ closed_at: null });
+});
+
+// Admission must discard an immutable prepared message, not its still-current source.
+test('a prepared deferred batch is discarded and resume claims its unchanged proposal once', () => {
+  const db = fixture();
+  const ticket = propose(
+    db,
+    edit(db, create(db), { ceiling_holder: CHIEF }),
+    'Review after resume',
+  );
+  const claim = (now: number) =>
+    db.write((sql) => data.claim_next_batch(sql, { process_token: 'deferral', now }));
+  const prepared = claim(now + 2)!;
+  db.write((sql) =>
+    data.record_batch_offering(sql, prepared.id, {
+      conversation_id: 'deferral-batch',
+      process_token: 'deferral',
+      now: now + 3,
+    }),
+  );
+  db.write((sql) =>
+    tickets.set_ticket_backlog(sql, ticket.id, {
+      is_backlogged: true,
+      principal: OWNER,
+      now: now + 4,
+    }),
+  );
+  expect(
+    db.write((sql) =>
+      data.admit_notice_batch(sql, {
+        conversation_id: 'deferral-batch',
+        sender_message_id: prepared.sender_message_id,
+        now: now + 5,
+      }),
+    ),
+  ).toEqual([true, 'ticket_backlogged']);
+  expect(claim(now + 20)).toBeNull();
+  expect(read(db, ticket.id).pending_proposal).toEqual(ticket.pending_proposal);
+  db.write((sql) =>
+    tickets.set_ticket_backlog(sql, ticket.id, {
+      is_backlogged: false,
+      principal: OWNER,
+      now: now + 21,
+    }),
+  );
+  const resumed = claim(now + 22)!;
+  expect(resumed.message).toBe(prepared.message);
+  expect(resumed.sender_message_id).not.toBe(prepared.sender_message_id);
+  expect(claim(now + 23)).toBeNull();
+  db.write((sql) => {
+    data.record_batch_offering(sql, resumed.id, {
+      conversation_id: 'deferral-batch',
+      process_token: 'deferral',
+      now: now + 24,
+    });
+    data.close_delivered_batch(sql, resumed.id, { now: now + 25 });
+    tickets.set_ticket_backlog(sql, ticket.id, {
+      is_backlogged: true,
+      principal: OWNER,
+      now: now + 26,
+    });
+    tickets.set_ticket_backlog(sql, ticket.id, {
+      is_backlogged: false,
+      principal: OWNER,
+      now: now + 27,
+    });
+  });
+  expect(claim(now + 40)).toBeNull();
+});
 
 test('automatic notices batch only new Tickets even when they share a Chief', async () => {
   const database = fixture();
@@ -186,6 +324,8 @@ test('wake stop records uncertainty immediately and retains a hung send without 
     workspace_root: '/workspace',
   });
   const system = new InMemoryConversationSystem();
+  const starts = new AutomaticStartAdmission({ clock: () => 100 });
+  Object.assign(system, { start_admission: starts });
   await system.start_conversation(
     new ConversationStartRequest({
       conversation_id: 'hung-wake',
@@ -249,6 +389,7 @@ test('wake stop records uncertainty immediately and retains a hung send without 
   const pass = loop.poll_once().catch((error: unknown) => error);
   try {
     await entered;
+    expect(starts.snapshots().map((item) => item.request.work_class)).toEqual(['supervisor']);
     expect(
       database.read((sql) => sql.get<{ status: string }>('SELECT status FROM manager_wake_batches'))
         ?.status,
@@ -265,6 +406,7 @@ test('wake stop records uncertainty immediately and retains a hung send without 
     });
     await expect(stopping).rejects.toBeInstanceOf(ShutdownDeadlineExceeded);
     expect(await pass).toBeInstanceOf(ConversationStartAborted);
+    expect(starts.snapshots()).toEqual([]);
     expect(
       database.read((sql) =>
         sql.get<{ closed_at: number | null }>('SELECT closed_at FROM manager_wakes'),

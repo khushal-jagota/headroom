@@ -11,6 +11,7 @@ import { ConversationRoleMaterials, ConversationStartRequest } from '../conversa
 import { text_message_content } from '../conversation/message_content.ts';
 import { Deferred } from '../conversation/runtime/state.ts';
 import { ScriptedChild } from '../conversation/testing/scripted_child.ts';
+import { ScriptedCustody } from '../conversation/testing/scripted_custody.ts';
 import type { ScriptedBehavior } from '../conversation/testing/scripted_protocol.ts';
 import type { ConversationStoreOptions } from '../conversation/record/contracts.ts';
 import type { ConversationCoreOptions } from '../conversation/runtime/contracts.ts';
@@ -22,8 +23,10 @@ import {
 
 const children: ScriptedChild[] = [];
 const directories: string[] = [];
+const custody_scopes: ScriptedCustody[] = [];
 afterEach(async () => {
   await Promise.all(children.splice(0).map((child) => child.terminate()));
+  await Promise.all(custody_scopes.splice(0).map((scope) => scope.close()));
   for (const directory of directories.splice(0))
     rmSync(directory, { recursive: true, force: true });
   vi.restoreAllMocks();
@@ -43,11 +46,17 @@ export function setup(
   database.write((tx) =>
     tx.run('INSERT INTO conversation_runtime_epoch VALUES (1,?)', ['test-runtime']),
   );
-  const store = new ConversationStore(database, { integer_now: () => 100, ...options.record });
+  const custody = new ScriptedCustody();
+  custody_scopes.push(custody);
+  const store = new ConversationStore(database, {
+    integer_now: () => 100,
+    local_child_custody: custody.inspection,
+    ...options.record,
+  });
   const created = new Deferred<ScriptedChild>();
   const local_children: ScriptedChild[] = [];
   const factory: ConversationCoreOptions['backend_child_factories']['codex'] = ({ event_sink }) => {
-    const child = new ScriptedChild(event_sink);
+    const child = new ScriptedChild(event_sink, custody.runtime);
     children.push(child);
     local_children.push(child);
     const configured = options.behavior

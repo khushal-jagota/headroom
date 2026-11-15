@@ -49,3 +49,13 @@ export const build_linux_collector: BuildCollector = (raw, config) =>
       service_query: query_services,
     },
   );
+
+/** Platform selection occurs inside the owned sampler worker. */
+export const build_home_collector: BuildCollector = async (raw, config) => {
+  if (process.platform === 'linux') return build_linux_collector(raw, config);
+  if (process.platform === 'darwin') {
+    const { DarwinCollector } = await import('./darwin.ts');
+    return new DarwinCollector(config);
+  }
+  throw new Error('Resource collection is unavailable on this operating system.');
+};

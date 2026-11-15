@@ -1,5 +1,8 @@
 /** The only adapter-selection point, with explicit environment composition still required. */
 import type { ConversationCompositionContext } from '../core/start.ts';
+import { dirname, join } from 'node:path';
+import { expand_path } from '../environments/paths.ts';
+import { resolve_path_sync } from '../core/path_resolution.ts';
 import type {
   BackendChildFactory,
   RetainedBackendChildFactory,
@@ -116,7 +119,7 @@ export function compose_production_backends(
         : new LocaleBackendChildFactory(
             context.database,
             local_factories.claude,
-            context.executor.runs.as_factory(),
+            context.executor.as_factory(),
           ).as_factory(),
     codex:
       context.executor == null
@@ -124,7 +127,7 @@ export function compose_production_backends(
         : new LocaleBackendChildFactory(
             context.database,
             local_factories.codex,
-            context.executor.runs.as_factory(),
+            context.executor.as_factory(),
           ).as_factory(),
     hermes:
       context.executor == null
@@ -132,7 +135,7 @@ export function compose_production_backends(
         : new LocaleBackendChildFactory(
             context.database,
             local_factories.hermes,
-            context.executor.runs.as_factory(),
+            context.executor.as_factory(),
           ).as_factory(),
   };
   const supplied_http = bindings.http(shared);
@@ -145,7 +148,7 @@ export function compose_production_backends(
           backend_state: supplied_http.backend_state,
           backend_usage: supplied_http.backend_usage,
           codex_sign_in: supplied_http.codex_sign_in,
-          machine_catalog: () => context.executor!.catalog,
+          machine_catalog: (machine_id) => context.executor!.catalog_for(machine_id),
           shutdown: (options) => supplied_http.shutdown?.(options) ?? Promise.resolve(),
           settled: () => supplied_http.settled(),
         };
@@ -184,7 +187,10 @@ export function create_production_backend_bindings(): ProductionBackendBindings 
       throw new Error('Production backend bindings belong to another server invocation');
     if (launches === undefined) {
       owner = context.database;
-      launches = production_backend_launches(`http://${HOST}:${context.config.port}`);
+      launches = production_backend_launches(
+        `http://${HOST}:${context.config.port}`,
+        join(dirname(resolve_path_sync(expand_path(context.config.db_path))), 'worker-processes'),
+      );
     }
     return launches;
   };
@@ -193,15 +199,18 @@ export function create_production_backend_bindings(): ProductionBackendBindings 
       create_claude_backend_child_factory(current(context).claude, {
         child_processes: context.child_processes,
         one_shot_children: context.one_shot_children,
+        worker_supervision: context.worker_supervision,
       }),
     codex: (context) =>
       create_codex_backend_child_factory(current(context).codex, {
         child_processes: context.child_processes,
+        worker_supervision: context.worker_supervision,
         remembered_login_rejection: context.codex_login_rejection,
       }),
     hermes: (context) =>
       create_hermes_backend_child_factory(current(context).hermes, {
         child_processes: context.child_processes,
+        worker_supervision: context.worker_supervision,
       }),
     http: (context) => {
       const selected = current(context);

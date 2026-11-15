@@ -1,10 +1,14 @@
 import { randomUUID } from 'node:crypto';
+import { stringify_python_json } from '../core/http/numeric_json.ts';
+import { TASK_ALERT_IS_CURRENT } from './attention.ts';
+import { expire_stale_deliveries } from './data.ts';
 import type { TransactionSql } from '../core/database/contracts.ts';
 import type {
   APNsDevice,
   APNsResult,
   EdgeKey,
   NotificationIntent,
+  NotificationReply,
   PendingAPNsDelivery,
 } from './contracts.ts';
 import {
@@ -58,8 +62,8 @@ export function queue_intent(
 ): void {
   sql.run(
     `INSERT OR IGNORE INTO notification_apns_deliveries
-    (subject_kind,subject_id,notification_type,generation,device_id,title,body,route,tag,created_at,status,attempts,next_attempt_at)
-    SELECT ?,?,?,?,device_id,?,?,?,?,?,'pending',0,? FROM notification_apns_devices WHERE owner_id=?`,
+    (subject_kind,subject_id,notification_type,generation,device_id,title,body,route,tag,reply_json,created_at,status,attempts,next_attempt_at)
+    SELECT ?,?,?,?,device_id,?,?,?,?,?,?,'pending',0,? FROM notification_apns_devices WHERE owner_id=?`,
     [
       edge.subject_kind,
       edge.subject_id,
@@ -69,6 +73,17 @@ export function queue_intent(
       intent.body,
       intent.route,
       intent.tag,
+      intent.reply === null
+        ? null
+        : stringify_python_json(
+            {
+              conversation_id: intent.reply.conversation_id,
+              message_id: intent.reply.message_id,
+              recipient_kind: intent.reply.recipient_kind,
+              recipient_id: intent.reply.recipient_id,
+            },
+            { ensure_ascii: true },
+          ),
       now,
       now,
       'owner',
@@ -76,19 +91,20 @@ export function queue_intent(
   );
 }
 export function pending_deliveries(sql: TransactionSql, now: number): PendingAPNsDelivery[] {
-  sql.run(
-    `UPDATE notification_apns_deliveries SET status='expired'
-    WHERE status IN ('pending','retry') AND created_at<=?`,
-    [now - APNS_DELIVERY_TTL_SECONDS],
-  );
+  expire_stale_deliveries(sql, now, true);
   return sql
-    .all<EdgeKey & APNsDevice & NotificationIntent & { attempts: number; created_at: number }>(
+    .all<
+      EdgeKey &
+        APNsDevice &
+        NotificationIntent & { attempts: number; created_at: number; reply_json: string | null }
+    >(
       `SELECT d.*,s.device_token,s.bundle_id,s.environment,s.registration_version,s.updated_at
      FROM notification_apns_deliveries d JOIN notification_apns_devices s USING(device_id)
      WHERE d.status IN ('pending','retry') AND d.next_attempt_at<=?
        AND ((d.subject_kind='ticket' AND EXISTS (SELECT 1 FROM tickets WHERE id=d.subject_id))
          OR (d.subject_kind='manager' AND EXISTS (SELECT 1 FROM managers WHERE id=d.subject_id))
          OR (d.subject_kind='agent' AND EXISTS (SELECT 1 FROM agents WHERE agent_key=d.subject_id)))
+       AND ${TASK_ALERT_IS_CURRENT}
      ORDER BY d.next_attempt_at,d.device_id LIMIT ?`,
       [now, APNS_BATCH_SIZE],
     )
@@ -107,7 +123,13 @@ export function pending_deliveries(sql: TransactionSql, now: number): PendingAPN
         registration_version: row.registration_version,
         updated_at: row.updated_at,
       },
-      intent: { title: row.title, body: row.body, route: row.route, tag: row.tag },
+      intent: {
+        title: row.title,
+        body: row.body,
+        route: row.route,
+        tag: row.tag,
+        reply: row.reply_json === null ? null : (JSON.parse(row.reply_json) as NotificationReply),
+      },
       attempts: row.attempts,
       created_at: row.created_at,
     }));

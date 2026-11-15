@@ -1,6 +1,6 @@
 import { writeSync } from 'node:fs';
 import type { AreaLoopOptions } from '../areas.ts';
-import type { VpsExecutor } from '../executor/vps_transport.ts';
+import type { VpsExecutorRegistry } from '../executor/registry.ts';
 import { loadConfig, SHUTDOWN_GRACE_SECONDS } from './config.ts';
 import type { Clock } from './clock.ts';
 import type { Config } from './config.ts';
@@ -39,6 +39,7 @@ export type {
 import { assert_test_database_path } from './test_paths.ts';
 import { ServerServices } from './server_services.ts';
 import type { UpdateBarrier } from '../environments/update_barrier.ts';
+import type { WorkerSupervisionRuntime } from '../worker_supervision/runtime.ts';
 
 export interface ExecutorCompositionContext {
   readonly database: Database;
@@ -60,8 +61,9 @@ export interface ConversationCompositionContext extends Omit<
   revoke_signal(): void;
   one_shot_children: OwnedOneShotChildren;
   child_processes: OwnedChildProcesses;
-  executor?: VpsExecutor | null;
+  executor?: VpsExecutorRegistry | null;
   update_barrier?: UpdateBarrier;
+  worker_supervision: WorkerSupervisionRuntime;
 }
 export interface TestCompositionContext extends ConversationCompositionContext {
   /** Existing original stop only. Test close hooks must never create another budget. */
@@ -74,7 +76,7 @@ export interface TestCompositionContext extends ConversationCompositionContext {
 export interface ServerOptions {
   /** Actual process entries supply this. Embedded servers never terminate their host. */
   onShutdownComplete?: ShutdownCompletion;
-  createExecutor?: (context: ExecutorCompositionContext) => VpsExecutor | null;
+  createExecutor?: (context: ExecutorCompositionContext) => VpsExecutorRegistry | null;
   createUsageService?: (context: ConversationCompositionContext) => RecordedUsageService;
   createBackendServices?: (context: ConversationCompositionContext) => BackendHttpRuntime;
   /** Off until Unit 21 explicitly composes the production lifecycle. */
@@ -241,6 +243,12 @@ export async function startServer(options: ServerOptions = {}): Promise<StartedS
       // Producer cleanup can publish additional native control children. Take this
       // snapshot only AFTER every producer begins, then make a FRESH native join.
       const producer_actual = shutdown.shutdown_settled;
+      stages.own('Worker supervision', async () => {
+        await producer_actual.catch(() => {});
+        // The coordinator observes the shared deadline. This stage owns actual cleanup.
+        void services.worker_supervision.close(stop).catch(() => {});
+        await services.worker_supervision.shutdown_settled;
+      });
       stages.own('native processes and worker units', async () => {
         await producer_actual.catch(() => {}); // Individual stages retain their failures.
         await child_processes.settled();

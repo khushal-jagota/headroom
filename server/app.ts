@@ -17,7 +17,9 @@ import { registerCoreRoutes } from './core/routes.ts';
 import type { Changes } from './core/routes.ts';
 import { registerArea } from './core/authority/register.ts';
 import { create_executor_routes } from './executor/app_transport.ts';
-import type { VpsExecutor } from './executor/vps_transport.ts';
+import type { VpsExecutorRegistry } from './executor/registry.ts';
+import { HOME_MACHINE_ID, ORIGINAL_MAC_MACHINE_ID } from './execution_identity.ts';
+import { PlannerError } from './core/contracts.ts';
 import type { Area } from './core/authority/register.ts';
 import type { ConversationSystem } from './conversation/contracts.ts';
 import type { SignalNavigationAuthority } from './conversation/publication/authority.ts';
@@ -33,7 +35,7 @@ export interface AppServices {
   areas?: readonly Area[];
   workspaceAdmission?: WorkspaceAdmission;
   updateBarrier?: UpdateBarrier;
-  executor?: VpsExecutor | null;
+  executor?: VpsExecutorRegistry | null;
 }
 export async function createApp(config: Config, services: AppServices): Promise<FastifyInstance> {
   const app = Fastify({
@@ -43,6 +45,7 @@ export async function createApp(config: Config, services: AppServices): Promise<
     forceCloseConnections: false,
   });
   services.own_app?.(app);
+  app.decorate('executor_registry', services.executor ?? null);
   const clock = services.clock ?? buildClock(config);
   const request_lifetime = install_request_lifetime(app, services.request_lifetime);
   const changes = services.changes ?? new ChangeSignal();
@@ -69,15 +72,31 @@ export async function createApp(config: Config, services: AppServices): Promise<
   app.register(
     create_executor_routes({
       config,
-      endpoint: services.executor ?? null,
-      updates: () => services.executor?.updates ?? null,
+      database: services.database,
+      registry: services.executor ?? null,
     }),
   );
-  app.get('/api/executor/health', async (_request, reply) => {
-    if (!services.executor) return { mode: 'local', connection_state: 'disconnected' };
-    const health = services.executor.health_payload();
+  app.get('/api/executor/health', async (request, reply) => {
+    const machine_id =
+      new URL(request.url, 'http://executor').searchParams.getAll('machine_id').at(-1) ||
+      ORIGINAL_MAC_MACHINE_ID;
+    const endpoint = services.executor?.get(machine_id);
+    if (!endpoint) {
+      if (machine_id !== HOME_MACHINE_ID && machine_id !== ORIGINAL_MAC_MACHINE_ID)
+        throw new PlannerError('not_found', 'Unknown executor destination');
+      return { mode: 'local', connection_state: 'disconnected' };
+    }
+    const health = endpoint.health_payload();
     const present = health.presence === 'present';
-    const identity = services.executor.health().identity;
+    if (machine_id !== ORIGINAL_MAC_MACHINE_ID)
+      return reply.type('application/json').send(
+        JSON.stringify({
+          mode: 'remote',
+          ...health,
+          connection_state: present ? 'ready' : 'disconnected',
+        }),
+      );
+    const identity = endpoint.health().identity;
     return reply.type('application/json').send(
       JSON.stringify({
         ...health,

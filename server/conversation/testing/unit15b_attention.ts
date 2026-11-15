@@ -1,5 +1,9 @@
 /** Attention provenance through the real area composition and scripted core. */
 import { createDatabase } from '../../core/database/index.ts';
+import {
+  notification_content_proof,
+  notification_freshness_proof,
+} from '../../notifications/testing/content.ts';
 import { SHUTDOWN_GRACE_SECONDS } from '../../lifecycle/configuration.ts';
 import { loadConfig } from '../../core/config.ts';
 import { createAreasRuntime } from '../../areas.ts';
@@ -9,6 +13,7 @@ import { ConversationStartRequest } from '../contracts.ts';
 import { text_message_content } from '../message_content.ts';
 import { delivery_fate_json } from '../http.ts';
 import { ScriptedChild } from './scripted_child.ts';
+import { ScriptedCustody } from './scripted_custody.ts';
 import { read_summary } from '../../attention/actions.ts';
 import { summary_request } from '../../attention/contracts.ts';
 import { BackendStateStore } from '../backend_state.ts';
@@ -22,6 +27,7 @@ export async function exercise(spec: {
   ticket: string;
   workspace: string;
   start: number;
+  preview_cases: string[];
 }): Promise<unknown> {
   let now = spec.start - 86400;
   const database = createDatabase(spec.database);
@@ -32,17 +38,20 @@ export async function exercise(spec: {
     PLAN_LOGS_DIR: `${spec.workspace}/logs`,
     PLAN_CREDENTIAL_KEY_PATH: `${spec.workspace}/synthetic-credential-key`,
   });
-  areas.initialize(database, config, {
+  const custody = new ScriptedCustody();
+  const clock = {
     now: () => new Date(now * 1000),
     nowUnix: () => now,
     isoformat: () => new Date(now * 1000).toISOString(),
-  });
+  };
+  await areas.prepareRecord(database, config, clock, custody.inspection, new Map());
+  areas.initialize(database, config, clock);
   const { store } = areas.getRuntime();
   const children: ScriptedChild[] = [];
   const factory = ({
     event_sink,
   }: Parameters<import('../backends/contracts.ts').BackendChildFactory>[0]) => {
-    const child = new ScriptedChild(event_sink);
+    const child = new ScriptedChild(event_sink, custody.runtime);
     children.push(child);
     return child;
   };
@@ -101,7 +110,7 @@ export async function exercise(spec: {
       conversation_lifecycle_facts: 'conversation_id,turn_number,kind,operation,identity',
       conversation_view_lookups: 'conversation_id,lookup_kind,source_sequence,lookup_id',
     };
-    return database.read((sql) => ({
+    const result = database.read((sql) => ({
       fates,
       native_text,
       rows: Object.fromEntries(
@@ -121,9 +130,25 @@ export async function exercise(spec: {
         spec.start + 86401,
       ),
     }));
+    const content = notification_content_proof(
+      database,
+      store,
+      spec.ticket,
+      now,
+      spec.preview_cases,
+    );
+    const freshness = notification_freshness_proof(database, spec.ticket, now);
+    return {
+      ...result,
+      notification_content: content.proof,
+      content_seconds: content.seconds,
+      notification_freshness: freshness.proof,
+      freshness_seconds: freshness.seconds,
+    };
   } finally {
     await core.shutdown({ deadline: performance.now() / 1000 + SHUTDOWN_GRACE_SECONDS });
     for (const child of children) await child.terminate();
+    await custody.close();
     await areas.closeRecord();
     database.close();
   }

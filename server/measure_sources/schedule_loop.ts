@@ -1,4 +1,4 @@
-/** One current-minute clock for source scheduling and Goal reconciliation. */
+/** One polling clock for source scheduling and Goal reconciliation. */
 import type { Database } from '../core/database/contracts.ts';
 import type { Clock } from '../core/clock.ts';
 import type { WorkspaceAdmission } from '../conversation/workspace_admission.ts';
