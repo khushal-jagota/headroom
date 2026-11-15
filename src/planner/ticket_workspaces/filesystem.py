@@ -22,7 +22,6 @@ from planner.ticket_workspaces.contracts import (
     WorkspaceIdentity,
     WorkspaceState,
 )
-from planner.ticket_workspaces.processes import process_in_use
 
 _TICKET_ID = re.compile(rf"^({TICKET_ID_PATTERN})(?:-|$)")
 _SKIP_DIRECTORIES = frozenset({".git", ".venv", "node_modules"})
@@ -524,15 +523,22 @@ def reason_to_keep(
                     remote_hashes.add(commit)
             if not remote_hashes:
                 return f"no remote copy can be verified for {checkout}"
-            refs = "--all" if (checkout / ".git").is_dir() else "HEAD"
+            refs = ["HEAD"]
+            marker_root = root.parent if root.name == WORKTREE_DIRECTORY else root
+            marker_path = marker_root / OWNERSHIP_FILE
+            if checkout == marker_root / WORKTREE_DIRECTORY and marker_path.is_file():
+                marker = json.loads(marker_path.read_text())
+                branch = marker.get("branch")
+                if branch:
+                    refs.append(f"refs/heads/{branch}")
             unpublished = _git(
-                checkout, "rev-list", "-n", "1", refs, "--not", *sorted(remote_hashes)
+                checkout, "rev-list", "-n", "1", *refs, "--not", *sorted(remote_hashes)
             )
             if unpublished.returncode:
                 return f"Git cannot compare remote work for {checkout}"
             if unpublished.stdout.strip():
                 return f"unpushed work in {checkout}"
-        except (OSError, subprocess.TimeoutExpired) as exc:
+        except (OSError, ValueError, subprocess.TimeoutExpired) as exc:
             return f"Git inspection failed for {checkout}: {exc}"
     return None
 
@@ -665,7 +671,7 @@ def _cleanup_local_workspaces(
             elif checkout_only and not (checkout / ".git").exists():
                 reason = "Ticket artifacts remain for seven days"
             else:
-                reason = process_in_use(checkout) if checkout.exists() else None
+                reason = None
                 if checkout_only and reason is None:
                     try:
                         if set(workspace_ticket_owners(checkout)) - {ticket_id}:
@@ -822,11 +828,6 @@ def prepare_workspace_retirement(
 
 
 def detach_workspace(path: Path, target: Path, *, checkout_only: bool) -> None:
-    checkout = path / WORKTREE_DIRECTORY
-    if checkout.exists():
-        reason = process_in_use(checkout)
-        if reason:
-            raise RuntimeError(reason)
     if not checkout_only:
         path.rename(target)
         return
@@ -854,9 +855,6 @@ def detach_workspace(path: Path, target: Path, *, checkout_only: bool) -> None:
 def _remove_retired(path: Path) -> str | None:
     """Repair Git's backlink after atomic folder rename, then remove safe work."""
     for checkout in _checkouts(path):
-        reason = process_in_use(checkout)
-        if reason:
-            return reason
         if (checkout / ".git").is_file():
             result = _git(checkout, "worktree", "repair", str(checkout))
             if result.returncode:

@@ -821,6 +821,10 @@ class MacRunner:
         async def authorize_locked(
             state: WorkspaceState, workspace: WorkspaceIdentity, *, replay: bool = False
         ) -> bool:
+            if self.legacy_cleanup_notice or any(
+                item.ticket_id == state.ticket_id for item in self.cleanup_uncertainties
+            ):
+                return False
             children = [
                 child
                 for child in self._children.values()

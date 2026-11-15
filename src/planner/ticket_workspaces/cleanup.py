@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import sqlite3
 from contextlib import closing
 from pathlib import Path
@@ -43,26 +44,64 @@ def clean_for_database(
             for row in conn.execute("SELECT id FROM tickets WHERE worker_step_claim='out'")
         )
 
-    def custody_retired(conn: sqlite3.Connection, identity: WorkspaceIdentity) -> bool:
+    def custody_retired(
+        conn: sqlite3.Connection, identity: WorkspaceIdentity, *, require_registration: bool
+    ) -> bool:
         # A separate CLI process cannot stop or release a live runtime's children.
-        # Missing legacy custody keeps its existing policy. Any recorded uncertainty
-        # stays fenced until the runtime positively retires it.
+        # A registered conversation without a retired custody record is uncertain.
+        if require_registration and conn.execute(
+            "SELECT 1 FROM ticket_workspace_conversations "
+            "WHERE machine_id=? AND workspace_id=? LIMIT 1",
+            (identity.machine_id, identity.workspace_id),
+        ).fetchone() is None:
+            return False
         return (
             conn.execute(
                 "SELECT 1 FROM ticket_workspace_conversations w "
-                "JOIN conversation_child_custody c USING(conversation_id) "
-                "WHERE w.machine_id=? AND w.workspace_id=? AND c.state!='retired' LIMIT 1",
+                "LEFT JOIN conversation_child_custody c USING(conversation_id) "
+                "WHERE w.machine_id=? AND w.workspace_id=? "
+                "AND (c.state IS NULL OR c.state!='retired') LIMIT 1",
                 (identity.machine_id, identity.workspace_id),
             ).fetchone()
             is None
         )
 
     def granted(expected: WorkspaceState, identity: WorkspaceIdentity) -> bool:
+        # An interrupted plain artifact folder needs no Worker proof. A recorded Git
+        # checkout does; missing or malformed evidence is conservatively treated as Git.
+        def replay_requires_registration() -> bool:
+            retired_root = ticket_files_root(db_path).parent / ".ticket-retired"
+            try:
+                for record_path in retired_root.glob("*.json"):
+                    record = json.loads(record_path.read_text())
+                    recorded_identity = (
+                        record.get("ticket_id"),
+                        record.get("machine_id"),
+                        record.get("workspace_id"),
+                    )
+                    if recorded_identity != (
+                        expected.ticket_id, identity.machine_id, identity.workspace_id
+                    ):
+                        continue
+                    target = Path(record["target"])
+                    if target.parent != retired_root or target.is_symlink():
+                        return True
+                    marker = json.loads((target / ".panels-workspace.json").read_text())
+                    return (
+                        marker.get("checkout_kind") == "clone"
+                        or marker.get("repository") is not None
+                    )
+            except (OSError, ValueError, KeyError, TypeError):
+                return True
+            return True
+
         def check() -> Path | str:
             with closing(connect(db_path)) as fresh:
                 fresh.execute("BEGIN IMMEDIATE")
                 try:
-                    authorized = custody_retired(fresh, identity) and (
+                    authorized = custody_retired(
+                        fresh, identity, require_registration=replay_requires_registration()
+                    ) and (
                         has_committed_retirement(fresh, expected, identity)
                         or authorize_retirement(fresh, expected, now, identity)
                     )
@@ -96,7 +135,8 @@ def clean_for_database(
             with closing(connect(db_path)) as fresh:
                 fresh.execute("BEGIN IMMEDIATE")
                 try:
-                    if not custody_retired(fresh, identity):
+                    is_git_checkout = (path / "worktree" / ".git").exists()
+                    if not custody_retired(fresh, identity, require_registration=is_git_checkout):
                         fresh.rollback()
                         return "Local child retirement is not proven"
                     if not authorize_retirement(fresh, expected, now, identity):

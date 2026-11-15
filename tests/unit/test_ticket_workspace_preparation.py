@@ -35,7 +35,6 @@ def test_replacement_repairs_retired_worktree_registration_before_reusing_its_pa
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(filesystem, "process_in_use", lambda _path: None)
     layout = _layout(tmp_path)
     folder = tmp_path / "files/tickets/t_aaaaaaaa"
     old = prepare_workspace(folder, layout.repository, "t_aaaaaaaa")
