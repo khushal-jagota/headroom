@@ -106,6 +106,3 @@ If you start your own server, record its PID at launch and stop that exact PID. 
 busy, pick another port. Never free a port.
 
 If the live server must restart, say so and stop.
-
-To send a proposal back, read its revision with `panels ticket show ID proposal`, then run
-`panels ticket proposal ID revise --revision N < GUIDANCE_FILE`. Keep that revision on retries.

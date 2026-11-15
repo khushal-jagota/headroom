@@ -117,6 +117,3 @@ Workers preserve their original history and proposals without actionable approva
 
 If PLAN_MANAGER_ID is absent, use the retained PLAN_SPRINT_ITEM_ID for the same Manager. If both differ, stop and report the identity conflict.
 
-
-To send a proposal back, read its revision with `panels ticket show ID proposal`, then run
-`panels ticket proposal ID revise --revision N < GUIDANCE_FILE`. Keep that revision on retries.
