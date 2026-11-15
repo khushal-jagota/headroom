@@ -10,7 +10,7 @@ The foundation fixes schema, machine keys, and stale fixtures. The cases below r
 They remain collected with `xfail(run=False)` and do not count as parity. Remove each mark when its package restores the proof.
 No comparison field is hidden. Deferred parameters add no active host or runtime cost.
 
-Collected case counts: P2 43, P3 10, P4 4, P5 11, P6 6.
+Collected case counts: P2 43, P3 9, P4 4, P5 11, P6 6.
 
 ### P2 — Executor protocol and custody
 
@@ -60,13 +60,17 @@ Collected case counts: P2 43, P3 10, P4 4, P5 11, P6 6.
 | [`test_unit22_retained.py::test_retained_core_matches_fresh_python`](direct/test_unit22_retained.py) | expected-open P2: #916 protocol24 source identity fails TS22 retained-core identity admission after recovery |
 | [`test_unit22_runs.py::test_retained_runs_rebuild_drain_and_rewrite`](direct/test_unit22_runs.py) | expected-open P2: #916 protocol24 replacement lease is refused by TS22, so the retained-run drain remains unsettled at exit13 |
 
+P2 now owns the shared nullable `TrackedWait.machine_id` metadata. The existing
+[`save-retry comparison`](direct/test_unit15b_wait.py) is active again. The new
+[`machine-scope comparison`](direct/test_unit22_mailbox.py) uses the existing populated mailbox seed and peer.
+The original full mailbox comparison above stays expected-open until runtime protocol admission matches Python.
+
 ### P3 — Worker supervision and admission
 
 | Retained case | Staging change |
 | --- | --- |
 | [`test_unit15b_maintenance.py::test_unit15b_maintenance_matches_fresh_python`](direct/test_unit15b_maintenance.py) | expected-open P3 (#912): automatic compaction no longer creates a Worker memory notice |
 | [`test_unit15b_reviews.py::test_unit15b_review_start_boundaries`](direct/test_unit15b_reviews.py) | expected-open P3 (#916): start-admission pacing defers the reassigned review wake |
-| [`test_unit15b_wait.py::test_unit15b_save_wait`](direct/test_unit15b_wait.py) | expected-open P3 (#916): save-retry TrackedWait now includes nullable machine_id |
 | [`test_unit16_adapter.py::test_unit16_adapter_real_core_parity`](direct/test_unit16_adapter.py) | expected-open P3 (#912): Hermes tools events persist working-turn compaction boundary |
 | [`test_unit17_adapter.py::test_unit17_adapter_real_core_parity`](direct/test_unit17_adapter.py) | expected-open P3 (#912): persist working-turn compaction boundary through Codex events |
 | [`test_unit17_startup.py::test_unit17_startup_environment`](direct/test_unit17_startup.py) | expected-open P3: #916 replaces WorkerUnit launch with supervision |

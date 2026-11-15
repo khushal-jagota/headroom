@@ -72,7 +72,8 @@ CONVERSATIONS = (
     "pending",
 )
 ROWS = (
-    "SELECT CAST(command_sequence AS TEXT) AS sequence,command_id,executor_incarnation,operation,"
+    "SELECT CAST(command_sequence AS TEXT) AS sequence,command_id,machine_id,"
+    "executor_incarnation,operation,"
     "conversation_id,child_id,CAST(turn_number AS TEXT) AS turn,command_json,state,created_at_ms,"
     "delivered_at_ms,finished_at_ms,outcome_json,typeof(command_sequence) AS sequence_type,"
     "typeof(turn_number) AS turn_type,typeof(created_at_ms) AS created_type,"
@@ -166,7 +167,7 @@ def _observe(path: Path) -> dict[str, Any]:
         queries = {
             "rows": ROWS,
             "runs": (
-                "SELECT conversation_id,executor_incarnation,child_id,"
+                "SELECT conversation_id,machine_id,executor_incarnation,child_id,"
                 "CAST(turn_number AS TEXT) AS turn,delivery_uncertain,stop_state,"
                 "typeof(turn_number) AS turn_type,typeof(delivery_uncertain) AS uncertain_type "
                 "FROM mac_runs ORDER BY conversation_id"
@@ -438,6 +439,7 @@ def _seed(path: Path) -> None:
 class _Source:
     def __init__(self, path: Path) -> None:
         self.path, self.now, self.signals = path, NOW, 0
+        self.machine_id = ORIGINAL_MAC_MACHINE_ID
         self.store = ExecutorStore(str(path))
         self.tasks: dict[str, asyncio.Task[Any]] = {}
         self.trace: list[Any] = []
@@ -476,7 +478,9 @@ class _Source:
                 )
 
     def _owner(self) -> None:
-        self.mailbox = SqliteCommandMailbox(str(self.path), clock=lambda: self.now)
+        self.mailbox = SqliteCommandMailbox(
+            str(self.path), machine_id=self.machine_id, clock=lambda: self.now
+        )
         self.stalls = self.mailbox.stall_source()
         self.mailbox.settled_listener = self._listener
         original_insert = self.mailbox._insert_child_command
@@ -569,7 +573,8 @@ class _Source:
 
     def _presence_owner(self) -> None:
         self.presence = MacPresenceService(
-            str(self.path), self.mailbox, application_revision="fixture", clock=lambda: self.now
+            str(self.path), self.mailbox, machine_id=self.machine_id,
+            application_revision="fixture", clock=lambda: self.now
         )
 
         def update() -> Any:
@@ -691,6 +696,36 @@ class _Source:
 
     async def execute(self, action: dict[str, Any]) -> Any:
         op = action["op"]
+        if op == "machine":
+            if self.presence is not None:
+                await self.presence.close()
+                self.presence = None
+            await self.mailbox.close()
+            self.machine_id = action["machine_id"]
+            self.store = ExecutorStore(str(self.path), machine_id=self.machine_id)
+            self._owner()
+        elif op == "lease_store":
+            with self.store._transaction() as connection:
+                accepted = accept_lease_in_transaction(
+                    connection, _typed("LeaseRequest", action["args"][0]),
+                    self.now, self.machine_id,
+                )
+                if accepted.replaced_incarnation is not None:
+                    current = accepted.current.executor_incarnation
+                    assert current is not None
+                    self.mailbox.replace_incarnation_in_transaction(
+                        connection, replaced=accepted.replaced_incarnation,
+                        current=current, now_ms=self.now,
+                    )
+            return accepted
+        elif op == "validate_lease":
+            if self.presence is None:
+                self._presence_owner()
+            assert self.presence is not None
+            with self.store._transaction() as connection:
+                return self.presence._validated_lease(
+                    connection, _typed("LeaseRequest", action["args"][0])
+                )
         if op == "presence":
             return await self._presence_control(action)
         if op == "presence_begin":
@@ -884,6 +919,16 @@ def _semantic_snapshot(snapshot: dict[str, Any]) -> dict[str, Any]:
     reason="expected-open P2: #916 port successor-incarnation report authority and receipts",
 )
 def test_unit22_mailbox_exchange(tmp_path: Path, request: pytest.FixtureRequest) -> None:
+    _mailbox_exchange(tmp_path, request)
+
+
+def test_unit22_machine_scoped_mailbox(tmp_path: Path, request: pytest.FixtureRequest) -> None:
+    _mailbox_exchange(tmp_path, request, machine_scope=True)
+
+
+def _mailbox_exchange(
+    tmp_path: Path, request: pytest.FixtureRequest, *, machine_scope: bool = False
+) -> None:
     async def exercise() -> dict[str, Any]:
         started = time.perf_counter()
         seed = tmp_path / "seed.sqlite"
@@ -1028,6 +1073,12 @@ def test_unit22_mailbox_exchange(tmp_path: Path, request: pytest.FixtureRequest)
 
         try:
             assert (await node({"op": "open", "path": str(paths[1]), "now": NOW}))["ok"]
+            if machine_scope:
+                evidence = await _machine_phases(paired, paths, observed_errors)
+                await source.mailbox.close()
+                assert (await node({"op": "stop"}))["ok"]
+                assert (await node({"op": "finish"}))["ok"]
+                return {"machines": evidence, "seconds": time.perf_counter() - started}
             # Persistence, exact native-default replay, first-result custody and recovery.
             prompt = _command("prompt")
             placed = await call("put", prompt)
@@ -1811,9 +1862,106 @@ def test_unit22_mailbox_exchange(tmp_path: Path, request: pytest.FixtureRequest)
     result = asyncio.run(asyncio.wait_for(exercise(), 60))
     directory = request.config.getoption("--compare-report-dir")
     if directory:
-        report_path = Path(directory) / "unit-22-mailbox.json"
+        report_path = Path(directory) / (
+            "unit-22-mailbox-machines.json" if machine_scope else "unit-22-mailbox.json"
+        )
         report_path.parent.mkdir(parents=True, exist_ok=True)
         report_path.write_text(json.dumps(result, indent=2) + "\n")
+
+
+async def _machine_phases(paired: Any, paths: list[Path], errors: list[Any]) -> Any:
+    """Compare real SQL and private authority validation, without wire-readiness claims."""
+    other = "44444444-4444-4444-8444-444444444444"
+    process = "55555555-5555-4555-8555-555555555555"
+    replacement = "66666666-6666-4666-8666-666666666666"
+
+    def state() -> Any:
+        expected = _semantic_snapshot(_observe(paths[0]))
+        assert _semantic_snapshot(_observe(paths[1])) == expected
+        return expected
+
+    async def p(op: str, **args: Any) -> Any:
+        result = await paired(dict(op=op, **args))
+        state()
+        return result
+
+    async def call(method: str, *args: Any) -> Any:
+        return await p("call", method=method, args=args)
+
+    async def refused(op: str, **args: Any) -> None:
+        before, count = state(), len(errors)
+        assert await p(op, **args) is None
+        assert len(errors) == count + 1 and state() == before
+
+    def lease(incarnation: str, **changes: Any) -> Any:
+        value = wire.encode_value(replace(
+            lease_request(mac_identity(incarnation)), mac_wall_clock_ms=NOW
+        ))
+        return {**value, **changes}
+
+    first = await call("put", _command("scope-a1", "start"))
+    assert first["child_command"]["arguments"]["supervision_protocol"] == 24
+    await p("sql", statements=[_statement(
+        "INSERT INTO machines VALUES (?,'Other','laptop','blue',0)", other,
+    )])
+    await p("machine", machine_id=other)
+    await p("lease_store", args=[lease(process)])
+    assert await call("high") == 0
+    await p("sql", statements=[
+        _statement("UPDATE mac_runs SET machine_id=?,executor_incarnation=? "
+                   "WHERE conversation_id='expiry'", other, process),
+        _statement("UPDATE executor_child_assignments SET executor_incarnation=? "
+                   "WHERE conversation_id='expiry'", process),
+    ])
+    second = await call("put", _command(
+        "scope-b1", "start", "expiry", child=_child("expiry", process),
+    ))
+    await p("machine", machine_id=ORIGINAL_MAC_MACHINE_ID)
+    assert await call("high") == first["command_sequence"]
+    third = await call("put", _command("scope-a2", "steer"))
+    sequences = [row["command_sequence"] for row in (first, second, third)]
+    assert sequences == list(range(BASE + 1, BASE + 4))
+    await refused("call", method="report", args=[
+        SUCCESSOR, {"outcomes": [_result(first["child_command"])]},
+    ])
+    assert "not the current" in errors[-1]["message"]
+    await refused("inspect", child=_child("basic"), turn=TURN, key="scope-b1")
+    await refused("call", method="put", args=[{
+        **_command("scope-foreign-recheck", "stop"), "operation": "recheck_cleanup",
+        "arguments": {"kind": "recheck_cleanup", "source": _child("expiry", process),
+                      "ticket_id": "fixture"},
+    }])
+    for changes in (
+        {"waiting_conversations": [{"conversation_id": "expiry", "oldest_sequence": 1}]},
+        {"working_turns": [{"child": _child("basic", process), "tool_running": False,
+                            "turn": {"conversation_id": "basic", "turn_number": TURN}}]},
+        {"cleanup_uncertainties": [{"ticket_id": "fixture", "conversation_id": "expiry",
+                                    "reason": "uncertain"}]},
+    ):
+        await refused("validate_lease", args=[lease(OLD, **changes)])
+    filtered = await p("validate_lease", args=[lease(OLD, waiting_conversations=[
+        {"conversation_id": "unknown", "oldest_sequence": 1},
+    ])])
+    assert filtered["waiting_conversations"] == []
+    await p("machine", machine_id=other)
+    await refused("lease_store", args=[lease(OLD)])
+    assert await call("high") == second["command_sequence"]
+    polled = await call("poll", wire.encode_value(mac_identity(process)), BASE, 0)
+    assert [row["command_id"] for row in polled["commands"]] == ["scope-b1"]
+    inspected = await p("inspect", child=_child("expiry", process), turn=TURN, key="scope-b1")
+    assert inspected["open"] == ["scope-b1"]
+    assert inspected["input"] == second["child_command"]
+    assert all(row[0]["executor_incarnation"] == process for row in inspected["rewritten"])
+    await p("lease_store", args=[lease(replacement)])
+    await refused("call", method="report", args=[
+        wire.encode_value(mac_identity(process)), {"outcomes": []},
+    ])
+    final = state()
+    assert next(row for row in final["incarnations"]
+                if row["executor_incarnation"] == OLD)["replaced_at_ms"] is None
+    assert all(row["state"] == "waiting" for row in final["rows"]
+               if row["command_id"] in ("scope-a1", "scope-a2"))
+    return {"errors": errors, "global_sequences": sequences}
 
 
 async def _presence_phases(source: _Source, node: Any, paired: Any, paths: list[Path]) -> Any:

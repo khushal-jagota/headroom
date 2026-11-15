@@ -4,6 +4,8 @@
 
 Production creates the endpoint only when an executor ID is configured. `LocaleBackendChildFactory` selects remote children for Mac Tickets and preserves local factories for VPS work. A canonical Mac Ticket with absent or conflicting Worker identity hints refuses before child creation. Persisted presence alone cannot enable remote execution. Without an endpoint, the existing local-only admission policy still refuses Mac work.
 
+Mailbox and presence owners accept a `machine_id`, with the original Mac as the default. Each owner scopes presence, commands, cursors, and aggregate recovery reads to that machine. Command sequences remain global. Public command-ID reads check machine ownership. Trusted exact-child recovery reads retain their existing caller authority. Production still uses one executor endpoint until the registry port lands.
+
 ## Startup and retained state
 
 Before record initialization, `core/start.ts` asks the endpoint for `open_runs()`. The single reconciliation therefore preserves retained turns before the core adopts them. Adoption restores asks, saved answers, provider identities, memory-notice maintenance state, and exact child references. A stale or stopping child remains quarantined until its corresponding retirement proof arrives.
