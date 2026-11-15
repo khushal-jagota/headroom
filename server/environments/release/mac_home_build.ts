@@ -105,6 +105,9 @@ export async function build_mac_home(
         verbatimSymlinks: true,
         errorOnExist: true,
         force: false,
+        // better-sqlite3 13.1.1 selects darwin-arm64 in its default loader.
+        // Its unused x64 prebuild cannot enter this arm64-only Mach-O closure.
+        filter: (path) => path !== join(modules, 'better-sqlite3/prebuilds/darwin-x64.node'),
       });
     };
     await mkdir(app, { mode: 0o700 });
