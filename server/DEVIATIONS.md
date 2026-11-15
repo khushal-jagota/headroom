@@ -10,6 +10,15 @@ The native contract replaces `python_version` with `minimum_node_version: '22.18
 It preserves the home role, minimum OS 15.0, inventory digest, and system library prefixes.
 P7 owns Darwin host admission and entrypoint branches. Metadata admission alone does not prove a runnable Darwin release.
 
+## Native Linux executor layout
+
+The Manager assigns P5 the native Linux executor archive and installation layout, which P2 reuses for launch.
+TypeScript uses host Node and the shared executor CLI instead of Python's private interpreter.
+The default join root is the XDG data directory's `panels/executor-typescript`, with separate `data/` and `installation/` children.
+Its user unit is `panels-executor-typescript.service`, separate from Python's unit.
+Role admission retains the Python marker filename and identity fields. Native admission binds the Node manifest, contract and inventory.
+Paired synthetic proofs project the interpreter, root, PATH, and unit differences explicitly. Real runtime execution remains a hosted acceptance boundary.
+
 ## Pending staging port: mailbox authority and protocol
 
 P2 owns these boundaries. The active machine-scope comparison now proves that stale

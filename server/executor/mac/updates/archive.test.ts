@@ -15,6 +15,8 @@ import { join } from 'node:path';
 import { afterEach, expect, test } from 'vitest';
 import { FilesService } from '../files.ts';
 import { runtime_archive } from './testing/runtime_archive.ts';
+import { LINUX_EXECUTOR } from '../../../environments/release/contracts.ts';
+import type { RuntimeTarget } from '../../../environments/release/contracts.ts';
 import { ShutdownDeadlineExceeded } from '../../../lifecycle/contracts.ts';
 
 const roots: string[] = [],
@@ -26,10 +28,10 @@ const manifest = {
   platform: 'darwin',
   architecture: 'arm64',
 };
-function fixture(unsafe = false) {
+function fixture(unsafe = false, target?: RuntimeTarget) {
   const root = realpathSync(mkdtempSync(join(tmpdir(), 'mac-runtime-')));
   roots.push(root);
-  const { bytes, sha } = runtime_archive(revision, unsafe);
+  const { bytes, sha } = runtime_archive(revision, unsafe, target);
   const archive = join(root, 'archive.tar.gz'),
     releases = join(root, 'updates', 'releases');
   writeFileSync(archive, bytes);
@@ -41,7 +43,7 @@ function fixture(unsafe = false) {
     releases,
     destination: join(releases, revision + '-' + sha),
     files,
-    install: () => files.extract_runtime(archive, releases, sha, bytes.length, revision),
+    install: () => files.extract_runtime(archive, releases, sha, bytes.length, revision, target),
   };
 }
 afterEach(async () => {
@@ -86,4 +88,40 @@ test('ordered async work finishes before queued cleanup after an expired stop ob
   expect(JSON.parse((await record)!)).toEqual(manifest);
   await f.files.stop({ deadline: performance.now() / 1000 + 10 });
   await f.files.settled();
+});
+
+test('admits Linux executor archives and retained revisions without a private interpreter', async () => {
+  const f = fixture(false, LINUX_EXECUTOR);
+  expect(await f.install()).toBe(f.destination);
+  expect(existsSync(join(f.destination, 'node'))).toBe(false);
+  expect(existsSync(join(f.destination, '.venv'))).toBe(false);
+  expect(await f.files.read_runtime_revision(f.destination, revision, LINUX_EXECUTOR)).toBe(
+    revision,
+  );
+  expect(await f.install()).toBe(f.destination);
+  const marker = join(f.destination, 'mac-runtime.json');
+  const original = readFileSync(marker, 'utf8');
+  writeFileSync(marker, JSON.stringify({ ...JSON.parse(original), role: 'home' }));
+  await expect(
+    f.files.read_runtime_revision(f.destination, revision, LINUX_EXECUTOR),
+  ).rejects.toThrow('does not match linux/x86_64/executor');
+  await expect(f.install()).rejects.toThrow('does not match linux/x86_64/executor');
+  writeFileSync(marker, original);
+  const path = join(f.destination, 'manifest.json');
+  const document = JSON.parse(readFileSync(path, 'utf8'));
+  writeFileSync(path, JSON.stringify({ ...document, app_sha: 'b'.repeat(40) }));
+  await expect(
+    f.files.read_runtime_revision(f.destination, revision, LINUX_EXECUTOR),
+  ).rejects.toThrow('app manifest SHA does not match expected SHA');
+  writeFileSync(path, JSON.stringify(document));
+  const payload = join(f.destination, 'runtime/contract.json');
+  writeFileSync(payload, '{}');
+  await expect(
+    f.files.read_runtime_revision(f.destination, revision, LINUX_EXECUTOR),
+  ).rejects.toThrow('Runtime manifest contract differs from payload.');
+  writeFileSync(payload, JSON.stringify(document.runtime_contract));
+  writeFileSync(join(f.destination, 'runtime/inventory.json'), 'changed');
+  await expect(
+    f.files.read_runtime_revision(f.destination, revision, LINUX_EXECUTOR),
+  ).rejects.toThrow('Runtime inventory differs from contract.');
 });

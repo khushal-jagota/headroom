@@ -8,7 +8,12 @@ import { path_is_within } from '../../core/path_containment.ts';
 import { is_record } from '../../core/records.ts';
 import { is_file } from '../backup/evidence.ts';
 import type { OwnedChildProcesses } from '../../lifecycle/contracts.ts';
-import type { AppManifest, RuntimeContract, NodeRuntimeContract } from './contracts.ts';
+import type {
+  AppManifest,
+  RuntimeContract,
+  NodeRuntimeContract,
+  RuntimeTarget,
+} from './contracts.ts';
 import { AppValidationError } from './contracts.ts';
 import { validate_app_manifest } from './identity.ts';
 import {
@@ -191,6 +196,7 @@ export async function admit_runtime(
   root: string,
   manifest: AppManifest,
   child_processes: OwnedChildProcesses,
+  expected_target?: RuntimeTarget,
 ): Promise<void> {
   if (manifest.runtime_contract === null)
     throw new AppValidationError('candidate lacks a runtime contract; republish the app');
@@ -199,6 +205,7 @@ export async function admit_runtime(
   // The caller validates artifact bytes. Admission separately rebinds receipt, contract and inventory before code.
   const bound = await validate_app_manifest(join(root, 'manifest.json'), {
     expected_sha: manifest.app_sha,
+    expected_target,
     require_runtime: true,
     verify_artifact_digest: false,
   });
