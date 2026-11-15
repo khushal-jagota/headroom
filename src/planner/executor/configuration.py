@@ -144,6 +144,7 @@ EXECUTOR_ID_HEADER: Final = "X-Panels-Executor-ID"
 EXECUTOR_PLATFORM_HEADER: Final = "X-Panels-Executor-Platform"
 EXECUTOR_CREDENTIAL_HEADER: Final = "X-Panels-Executor-Credential"
 EXECUTOR_CREDENTIAL_PATH: Final = "/api/executor/credential"
+EXECUTOR_HANDOVER_CLOSE_PATH: Final = "/api/executor/credential/handover/close"
 EXECUTOR_INCARNATION_HEADER: Final = "X-Panels-Executor-Incarnation"
 EXECUTOR_PROTOCOL_HEADER: Final = "X-Panels-Executor-Protocol"
 # Route 5: base64url of the JSON FileUploadRequest. Route 6: the served bytes' digest.
