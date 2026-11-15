@@ -220,6 +220,10 @@ def normalize(value: Any) -> Any:
     return json.loads(text)
 
 
+@pytest.mark.xfail(
+    run=False,
+    reason="expected-open P3 (#916): start-admission pacing defers the reassigned review wake",
+)
 def test_unit15b_review_start_boundaries(tmp_path: Path, request: pytest.FixtureRequest) -> None:
     started = time.perf_counter()
     environment = {

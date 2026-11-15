@@ -493,7 +493,7 @@ def build_app(config: Config) -> FastAPI:
     from planner.conversation.storage import ConversationStore
     from planner.conversation.system import SqliteProcessConversationSystem
 
-    # Constructor seams receive the shared clock before reconciliation or autonomous work.
+    # Persist deterministic wall time. Automatic-start pacing uses the real monotonic clock.
     patch(
         "planner.conversation.runtime_composition.ConversationStore",
         partial(ConversationStore, integer_now=clock.now_unix),
@@ -503,7 +503,6 @@ def build_app(config: Config) -> FastAPI:
         partial(
             SqliteProcessConversationSystem,
             unix_time_now=clock.now_unix,
-            monotonic_now=clock.now_unix,
         ),
     ).start()
 
