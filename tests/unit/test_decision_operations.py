@@ -541,22 +541,22 @@ def test_send_back_old_revision_refused_after_resolution_and_replacement(
 
 def test_send_back_busy_writer_fails_fast_and_leaves_no_receipt(tmp_db: sqlite3.Connection) -> None:
     """A locked writer cannot stall send-back or leave a durable refusal receipt."""
-    from planner.tickets.actions import revision_write
-
     original = _park(tmp_db)
     _conversation_on_a_ticket(tmp_db, original.id)
     original = data.read_ticket(tmp_db, original.id)
     command = _command(original, "send_back")
     db_path = str(tmp_db.execute("PRAGMA database_list").fetchone()[2])
-    with closing(connect(db_path)) as blocker:
+    path = f"/api/tickets/{original.id}/decision-operations/busy-operation"
+    with TestClient(_app(tmp_db)) as client, closing(connect(db_path)) as blocker:
         blocker.execute("BEGIN IMMEDIATE")
-        with pytest.raises(PlannerError) as refused:
-            with revision_write(tmp_db):
-                decision_operations.apply(
-                    tmp_db, original.id, "busy-operation", command, actor=OWNER_PRINCIPAL, now=3,
-                )
-        assert refused.value.code is ErrorCode.retry_later
-        assert refused.value.detail == {"retryable": True}
+        refused = client.post(path, json=command)
+        assert refused.status_code == 503
+        assert refused.json()["error"]["code"] == "retry_later"
+        assert refused.json()["error"]["detail"] == {"retryable": True}
         blocker.rollback()
-    assert _count(tmp_db) == 0
-    assert data.read_ticket(tmp_db, original.id).pending_proposal == original.pending_proposal
+        assert client.get(path).json()["receipt"] is None
+        accepted = client.post(path, json=command)
+        assert accepted.status_code == 200
+        assert accepted.json()["receipt"]["outcome"] == "applied"
+    assert _count(tmp_db) == 1
+    assert data.read_ticket(tmp_db, original.id).pending_proposal is None
