@@ -190,7 +190,7 @@ async def notification_content_proof(
             table: [
                 {
                     key: json.loads(value)
-                    if key in {"context_json", "reply_json"} and value is not None else value
+                    if key == "context_json" and value is not None else value
                     for key, value in dict(row).items()
                 }
                 for row in conn.execute(
@@ -225,7 +225,7 @@ def notification_freshness_proof(database: str, ticket: str, now: int) -> dict[s
                 table: [
                     {
                         key: json.loads(value)
-                        if key in {"context_json", "reply_json"} and value is not None else value
+                        if key == "context_json" and value is not None else value
                         for key, value in dict(row).items()
                     }
                     for row in conn.execute(
