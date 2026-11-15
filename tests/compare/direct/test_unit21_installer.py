@@ -35,7 +35,7 @@ from tests.integration.test_update_installer import (
 )
 from tests.support.synthetic_homes import create_synthetic_homes
 
-from planner.environments import update_installer as installer
+from planner.platform_runtime.linux import update_installer as installer
 
 ROOT = Path(__file__).resolve().parents[3]
 COMPANION = ROOT / "server/environments/updates/installer/testing/compare.ts"

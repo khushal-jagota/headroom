@@ -1,3 +1,4 @@
+import { ORIGINAL_MAC_MACHINE_ID } from '../execution_identity.ts';
 /** Actual startup preserves retained turns and keeps away/unconfigured Mac work remote. */
 import { dirname, join } from 'node:path';
 import { expect, test, vi } from 'vitest';
@@ -80,8 +81,9 @@ function retained_fixture() {
       now: 100,
     });
     tx.run(
-      'INSERT INTO mac_executor_presence(singleton,executor_incarnation,identity_json,last_lease_at_ms) VALUES(1,?,?,?)',
+      'INSERT INTO mac_executor_presence(machine_id,executor_incarnation,identity_json,last_lease_at_ms) VALUES(?,?,?,?)',
       [
+        ORIGINAL_MAC_MACHINE_ID,
         incarnation,
         JSON.stringify({
           protocol_version: 22,

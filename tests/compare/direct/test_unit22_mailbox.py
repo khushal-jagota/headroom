@@ -47,6 +47,7 @@ from planner.executor.store import ExecutorStore
 from planner.executor.vps_mailbox import SqliteCommandMailbox
 from planner.executor.vps_presence import MacPresenceService, no_update_check
 from planner.executor.vps_presence_store import accept_lease_in_transaction, read_presence
+from planner.machines.contracts import ORIGINAL_MAC_MACHINE_ID
 
 ROOT = Path(__file__).resolve().parents[3]
 NOW = 1_760_000_000_000
@@ -176,7 +177,7 @@ def _observe(path: Path) -> dict[str, Any]:
                 "FROM executor_child_assignments ORDER BY executor_incarnation,child_id"
             ),
             "presence": (
-                "SELECT *,typeof(singleton) AS singleton_type,"
+                "SELECT *,typeof(machine_id) AS machine_type,"
                 "typeof(last_contact_at_ms) AS contact_type,typeof(last_lease_at_ms) AS lease_type,"
                 "typeof(continuous_since_ms) AS continuous_type,"
                 "typeof(going_to_sleep_at_ms) AS sleep_type FROM mac_executor_presence"
@@ -307,7 +308,8 @@ def _seed(path: Path) -> None:
         )
     with closing(connect(str(path))) as connection:
         connection.execute(
-            "INSERT INTO executor_incarnations VALUES (?,?,?)",
+            "INSERT INTO executor_incarnations"
+            "(executor_incarnation,first_leased_at_ms,replaced_at_ms) VALUES (?,?,?)",
             (HISTORICAL, NOW - 30000, NOW - 1000),
         )
 
@@ -1314,7 +1316,9 @@ def test_unit22_mailbox_exchange(tmp_path: Path, request: pytest.FixtureRequest)
                     "op": "sql",
                     "statements": [
                         _statement(
-                            "UPDATE mac_executor_presence SET identity_json='{}' WHERE singleton=1"
+                            "UPDATE mac_executor_presence SET identity_json='{}' "
+                            "WHERE machine_id=?",
+                            ORIGINAL_MAC_MACHINE_ID,
                         )
                     ],
                 }
@@ -1350,8 +1354,9 @@ def test_unit22_mailbox_exchange(tmp_path: Path, request: pytest.FixtureRequest)
                     "op": "sql",
                     "statements": [
                         _statement(
-                            "UPDATE mac_executor_presence SET identity_json=? WHERE singleton=1",
+                            "UPDATE mac_executor_presence SET identity_json=? WHERE machine_id=?",
                             identity_json,
+                            ORIGINAL_MAC_MACHINE_ID,
                         )
                     ],
                 }
@@ -1417,14 +1422,18 @@ def test_unit22_mailbox_exchange(tmp_path: Path, request: pytest.FixtureRequest)
                     OLD,
                 ),
                 _statement(
-                    "INSERT INTO executor_incarnations VALUES (?,?,NULL)", NEW, stale_at + 1
+                    "INSERT INTO executor_incarnations"
+                    "(executor_incarnation,first_leased_at_ms,replaced_at_ms) VALUES (?,?,NULL)",
+                    NEW,
+                    stale_at + 1,
                 ),
                 _statement(
                     "UPDATE mac_executor_presence SET executor_incarnation=?,"
-                    "identity_json=?,last_lease_at_ms=? WHERE singleton=1",
+                    "identity_json=?,last_lease_at_ms=? WHERE machine_id=?",
                     NEW,
                     _json(SUCCESSOR),
                     stale_at + 1,
+                    ORIGINAL_MAC_MACHINE_ID,
                 ),
             ]
             for conversation in ("race", "pending"):

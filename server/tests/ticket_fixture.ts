@@ -9,6 +9,7 @@ import {
   type ReadSql,
   type TransactionSql,
 } from '../core/database/index.ts';
+import { seed_machine_rows } from '../environments/bootstrap.ts';
 import { load_worker_runtime_definitions } from '../worker_types/configuration.ts';
 import { seed_packaged_skills } from '../skills/data.ts';
 import { seed_shipped_worker_types, seed_chief_settings } from '../worker_types/shipped.ts';
@@ -42,6 +43,7 @@ with sqlite3.connect(sys.argv[1]) as connection:
 const seedDatabase = createDatabase(seed);
 try {
   seedDatabase.write((tx) => {
+    seed_machine_rows(tx);
     seed_packaged_skills(tx);
     seed_shipped_worker_types(tx);
     seed_chief_settings(tx);

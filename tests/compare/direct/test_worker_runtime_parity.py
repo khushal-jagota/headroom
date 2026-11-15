@@ -32,6 +32,7 @@ from planner.core.db import connect, create_schema
 from planner.core.errors import PlannerError
 from planner.execution_configuration import PROTOCOL_VERSION, SPOOL_FORMAT_VERSION
 from planner.executor.configuration import MAC_AWAY_AFTER_SECONDS
+from planner.machines.contracts import ORIGINAL_MAC_MACHINE_ID
 from planner.managers import data as managers
 from planner.runtime import conversation_start as start
 from planner.runtime import worker_step_readiness as readiness
@@ -260,10 +261,10 @@ def presence(conn: sqlite3.Connection, state: str) -> None:
     sleep = WALL if state == "asleep" else None
     conn.execute(
         """INSERT INTO mac_executor_presence
-            (singleton,executor_incarnation,identity_json,last_contact_at_ms,
+            (machine_id,executor_incarnation,identity_json,last_contact_at_ms,
              last_lease_at_ms,continuous_since_ms,going_to_sleep_at_ms)
-            VALUES (1,?,?,?,?,?,?)""",
-        ("synthetic", json.dumps(identity), WALL, lease, WALL, sleep),
+            VALUES (?,?,?,?,?,?,?)""",
+        (ORIGINAL_MAC_MACHINE_ID, "synthetic", json.dumps(identity), WALL, lease, WALL, sleep),
     )
     if state == "refused":
         refusal = dict(
@@ -278,8 +279,8 @@ def presence(conn: sqlite3.Connection, state: str) -> None:
             refused_at_ms=WALL,
         )
         conn.execute(
-            "UPDATE mac_executor_presence SET refusal_json=? WHERE singleton=1",
-            (json.dumps(refusal),),
+            "UPDATE mac_executor_presence SET refusal_json=? WHERE machine_id=?",
+            (json.dumps(refusal), ORIGINAL_MAC_MACHINE_ID),
         )
 
 
@@ -287,7 +288,10 @@ def check_readiness(conn: sqlite3.Connection, root: Path, outcome: str) -> dict[
     ticket = new_ticket(conn, "new_worker" if outcome == "user_opened" else "coding")
     fieldless = None
     if outcome in ("present", "expired", "asleep", "incompatible", "absent", "refused"):
-        conn.execute("UPDATE tickets SET locale='macos' WHERE id=?", (ticket.id,))
+        conn.execute(
+            "UPDATE tickets SET locale='macos',machine_id=? WHERE id=?",
+            (ORIGINAL_MAC_MACHINE_ID, ticket.id),
+        )
         if outcome != "absent":
             presence(conn, outcome)
     elif outcome == "backlogged":

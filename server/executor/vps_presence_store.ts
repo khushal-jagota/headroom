@@ -1,7 +1,7 @@
 /** Caller-owned presence SQL. Lease admission and postcommit publication belong to the owner. */
 import type { ReadSql, TransactionSql } from '../core/database/contracts.ts';
 import { PlannerError } from '../core/contracts.ts';
-import type { ExecutorIdentity } from '../execution_identity.ts';
+import { ORIGINAL_MAC_MACHINE_ID, type ExecutorIdentity } from '../execution_identity.ts';
 import type { AcceptedLease, ExecutorRefusal, PresenceRecord, WireValue } from './contracts.ts';
 import { as_object, decode_json, decode_value, ExecutorValidationError } from './protocol.ts';
 import { continuous_since_after_lease } from './logic/presence.ts';
@@ -43,7 +43,8 @@ export function read_presence(sql: ReadSql): PresenceRecord | null {
     refusal_json: string | null;
   }>(
     'SELECT executor_incarnation,identity_json,last_contact_at_ms,last_lease_at_ms,' +
-      'continuous_since_ms,going_to_sleep_at_ms,lease_json,refusal_json FROM mac_executor_presence WHERE singleton=1',
+      'continuous_since_ms,going_to_sleep_at_ms,lease_json,refusal_json FROM mac_executor_presence WHERE machine_id=?',
+    [ORIGINAL_MAC_MACHINE_ID],
   );
   if (!row) return null;
   return {
@@ -73,7 +74,8 @@ export function not_current(executor_incarnation: string): PlannerError {
 export function current_incarnation(sql: ReadSql): string | null {
   return (
     sql.get<{ executor_incarnation: string | null }>(
-      'SELECT executor_incarnation FROM mac_executor_presence WHERE singleton=1',
+      'SELECT executor_incarnation FROM mac_executor_presence WHERE machine_id=?',
+      [ORIGINAL_MAC_MACHINE_ID],
     )?.executor_incarnation ?? null
   );
 }
@@ -127,9 +129,10 @@ export function accept_lease_in_transaction(
     refusal: null,
   };
   tx.run(
-    'INSERT INTO mac_executor_presence(singleton,executor_incarnation,identity_json,last_contact_at_ms,last_lease_at_ms,continuous_since_ms,going_to_sleep_at_ms,lease_json,refusal_json) VALUES (1,?,?,?,?,?,?,?,?) ' +
-      'ON CONFLICT(singleton) DO UPDATE SET executor_incarnation=excluded.executor_incarnation,identity_json=excluded.identity_json,last_contact_at_ms=excluded.last_contact_at_ms,last_lease_at_ms=excluded.last_lease_at_ms,continuous_since_ms=excluded.continuous_since_ms,going_to_sleep_at_ms=excluded.going_to_sleep_at_ms,lease_json=excluded.lease_json,refusal_json=excluded.refusal_json',
+    'INSERT INTO mac_executor_presence(machine_id,executor_incarnation,identity_json,last_contact_at_ms,last_lease_at_ms,continuous_since_ms,going_to_sleep_at_ms,lease_json,refusal_json) VALUES (?,?,?,?,?,?,?,?,?) ' +
+      'ON CONFLICT(machine_id) DO UPDATE SET executor_incarnation=excluded.executor_incarnation,identity_json=excluded.identity_json,last_contact_at_ms=excluded.last_contact_at_ms,last_lease_at_ms=excluded.last_lease_at_ms,continuous_since_ms=excluded.continuous_since_ms,going_to_sleep_at_ms=excluded.going_to_sleep_at_ms,lease_json=excluded.lease_json,refusal_json=excluded.refusal_json',
     [
+      ORIGINAL_MAC_MACHINE_ID,
       incarnation,
       JSON.stringify(as_object(current.identity!, 'ExecutorIdentity')),
       current.last_contact_at_ms,
@@ -171,15 +174,19 @@ export function record_refusal(tx: TransactionSql, value: ExecutorRefusal): bool
   )
     return false;
   tx.run(
-    'INSERT INTO mac_executor_presence(singleton,last_contact_at_ms,refusal_json) VALUES (1,?,?) ON CONFLICT(singleton) DO UPDATE SET last_contact_at_ms=MAX(COALESCE(last_contact_at_ms,0),excluded.last_contact_at_ms),refusal_json=excluded.refusal_json',
-    [value.refused_at_ms, JSON.stringify(as_object(value, 'ExecutorRefusal'))],
+    'INSERT INTO mac_executor_presence(machine_id,last_contact_at_ms,refusal_json) VALUES (?,?,?) ON CONFLICT(machine_id) DO UPDATE SET last_contact_at_ms=MAX(COALESCE(last_contact_at_ms,0),excluded.last_contact_at_ms),refusal_json=excluded.refusal_json',
+    [
+      ORIGINAL_MAC_MACHINE_ID,
+      value.refused_at_ms,
+      JSON.stringify(as_object(value, 'ExecutorRefusal')),
+    ],
   );
   return true;
 }
 /** Contact-only commits remain silent. No lease or incarnation authority is required. */
 export function record_contact(tx: TransactionSql, at_ms: number): void {
   tx.run(
-    'INSERT INTO mac_executor_presence(singleton,last_contact_at_ms) VALUES (1,?) ON CONFLICT(singleton) DO UPDATE SET last_contact_at_ms=MAX(COALESCE(last_contact_at_ms,0),excluded.last_contact_at_ms)',
-    [at_ms],
+    'INSERT INTO mac_executor_presence(machine_id,last_contact_at_ms) VALUES (?,?) ON CONFLICT(machine_id) DO UPDATE SET last_contact_at_ms=MAX(COALESCE(last_contact_at_ms,0),excluded.last_contact_at_ms)',
+    [ORIGINAL_MAC_MACHINE_ID, at_ms],
   );
 }

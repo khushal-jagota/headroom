@@ -46,6 +46,7 @@ from planner.core.config import Config, load_config
 from planner.core.contracts import OWNER_PRINCIPAL, Principal, PrincipalKind
 from planner.core.db import connect
 from planner.core.server import create_app
+from planner.machines.data import legacy_machine_id
 from planner.manager_wakes.runtime import ManagerWakeLoop
 from planner.measure_sources.registry import build_participants
 from planner.measure_sources.schedule_loop import SourceScheduleLoop
@@ -274,7 +275,7 @@ def _scripted_routes(
                 "ON CONFLICT(machine_id,backend_key) DO UPDATE "
                 "SET snapshot_json=excluded.snapshot_json",
                 (
-                    body["machine"],
+                    legacy_machine_id(body["machine"]),
                     body["backend"],
                     json.dumps(
                         {

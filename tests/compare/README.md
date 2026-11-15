@@ -4,6 +4,19 @@ The runner sends one request list to Python and a candidate server on separate c
 
 Source-row sort keys retain known normalized identities and use generic placeholders for unknown IDs, so independent rows remain aligned across insertion orders.
 
+## Expected-open staging ports
+
+These cases remain collected as expected failures. They do not count as parity.
+P3 replaces their retired `worker_unit` fixtures with the worker supervision contract.
+The `run=False` marks prevent an obsolete launch fixture from running before that port.
+The other Unit 18 startup checks still run.
+
+| Case | Owner | Boundary that remains open |
+| --- | --- | --- |
+| `test_unit17_startup_environment` | P3 worker supervision | Codex containment and startup environment |
+| `test_unit18_containment_bytes` | P3 worker supervision | Supervisor launch bytes |
+| `test_unit18_adapter_real_core_parity` | P3 worker supervision | Claude launch custody through the real core |
+
 ## Add an area
 
 Add two files with the same name:
