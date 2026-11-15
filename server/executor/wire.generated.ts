@@ -2,7 +2,7 @@
 // Required nullable fields stay required. Defaults are optional on the wire.
 import wire_schema from './wire.schema.json' with { type: 'json' };
 export const WIRE_SCHEMA = wire_schema;
-export const PROTOCOL_VERSION = 22;
+export const PROTOCOL_VERSION = 26;
 export const SPOOL_FORMAT_VERSION = 5;
 export const COMMAND_JOURNAL_FORMAT_VERSION = 1;
 export type AcceptanceReceipt = {
@@ -124,7 +124,14 @@ export type ChildCommand = {
   turn: TurnToken | null;
 };
 export type ChildCommandArguments = (
-  StartRun | WritePrompt | Steer | CancelTurn | AnswerPermission | AnswerUserInput | StopRun
+  | StartRun
+  | WritePrompt
+  | Steer
+  | CancelTurn
+  | AnswerPermission
+  | AnswerUserInput
+  | StopRun
+  | RecheckCleanup
 ) & { kind: string };
 export type ChildOperation =
   | 'start'
@@ -133,7 +140,8 @@ export type ChildOperation =
   | 'cancel_running_turn'
   | 'answer_permission_ask'
   | 'answer_user_input'
-  | 'stop';
+  | 'stop'
+  | 'recheck_cleanup';
 export type ChildReference = {
   child_id: string;
   conversation_id: string;
@@ -187,8 +195,10 @@ export type DurableAnswer = {
 export type EnvelopeKind = 'backend_event' | 'cli_write' | 'child_stopped' | 'answer_application';
 export type ExecutorHealthRead = {
   admission_stopped: boolean;
+  cleanup_uncertainties?: WorkerCleanupUncertainty[];
   identity: ExecutorIdentity | null;
   last_contact_at_ms: number | null;
+  legacy_cleanup_notice?: string | null;
   oldest_item_age_ms: number | null;
   presence: PresenceClass;
   queue_depth: number | null;
@@ -260,8 +270,10 @@ export type LeaseReply = {
 };
 export type LeaseRequest = {
   admission_stopped: boolean;
+  cleanup_uncertainties?: WorkerCleanupUncertainty[];
   going_to_sleep?: boolean;
   identity: ExecutorIdentity;
+  legacy_cleanup_notice?: string | null;
   mac_wall_clock_ms: number;
   oldest_item_age_ms: number | null;
   process_id: number;
@@ -388,6 +400,11 @@ export type QuiescenceReceipt = {
   quiescence: Quiescence;
 };
 export type ReceiptDisposition = 'accepted' | 'refused' | 'uncertain';
+export type RecheckCleanup = {
+  kind?: 'recheck_cleanup';
+  source: ChildReference;
+  ticket_id: string;
+};
 export type RejectedCommandResult = { command_id: string; reason: string };
 export type ResolvedConversationStart = {
   access: ConversationAccess;
@@ -403,6 +420,7 @@ export type StartRun = {
   canonical_skill_snapshot: CanonicalSkillSnapshot;
   kind?: 'start';
   resolved_start: ResolvedConversationStart;
+  supervision_protocol?: number;
   vendor_session_cursor?: string | null;
   workspace_home_relative?: string | null;
 };
@@ -459,8 +477,24 @@ export type UserInputQuestion = {
 export type UserInputRequested = { request: BackendUserInputRequest };
 export type VendorSessionCursorRebound = { vendor_session_cursor: string };
 export type WaitingConversation = { conversation_id: string; oldest_sequence: number };
+export type WorkerCleanupUncertainty = {
+  conversation_id: string;
+  reason: string;
+  ticket_id: string;
+};
 export type WorkingTurn = { child: ChildReference; tool_running: boolean; turn: TurnToken };
+export type WorkspaceIdentity = { machine_id: string; workspace_id: string };
 export type WorkspacePathPolicy = 'home_relative' | 'absolute' | 'executor_default';
+export type WorkspaceRegistrationRequest = { child: ChildReference; workspace: WorkspaceIdentity };
+export type WorkspaceRetirementReply = { authorized: boolean };
+export type WorkspaceRetirementRequest = {
+  replay?: boolean;
+  state: WorkspaceState;
+  workspace: WorkspaceIdentity;
+};
+export type WorkspaceState = { deleted: boolean; ended_at: number | null; ticket_id: string };
+export type WorkspaceStatesReply = { at_vps_ms: number; states: WorkspaceState[] };
+export type WorkspaceStatesRequest = { ticket_ids: string[] };
 export type WritePrompt = {
   automatic_compaction?: boolean;
   content: MessageContent;
@@ -538,6 +572,7 @@ export interface WireTypes {
   QuiesceRequest: QuiesceRequest;
   Quiescence: Quiescence;
   QuiescenceReceipt: QuiescenceReceipt;
+  RecheckCleanup: RecheckCleanup;
   RejectedCommandResult: RejectedCommandResult;
   ResolvedConversationStart: ResolvedConversationStart;
   StartRun: StartRun;
@@ -555,7 +590,15 @@ export interface WireTypes {
   UserInputRequested: UserInputRequested;
   VendorSessionCursorRebound: VendorSessionCursorRebound;
   WaitingConversation: WaitingConversation;
+  WorkerCleanupUncertainty: WorkerCleanupUncertainty;
   WorkingTurn: WorkingTurn;
+  WorkspaceIdentity: WorkspaceIdentity;
+  WorkspaceRegistrationRequest: WorkspaceRegistrationRequest;
+  WorkspaceRetirementReply: WorkspaceRetirementReply;
+  WorkspaceRetirementRequest: WorkspaceRetirementRequest;
+  WorkspaceState: WorkspaceState;
+  WorkspaceStatesReply: WorkspaceStatesReply;
+  WorkspaceStatesRequest: WorkspaceStatesRequest;
   WritePrompt: WritePrompt;
 }
 export type WireRootName = keyof WireTypes;

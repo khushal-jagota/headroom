@@ -46,7 +46,9 @@ Catalog cancellation withdraws its waiting command and completes that cleanup be
 
 ## Shared wire
 
-Both TypeScript peers use `wire.schema.json` as the message contract. The same schemas generate `wire.generated.ts` and supply Ajv validation. Protocol 22 uses HTTPS JSON. The spool format is 5 and the command journal format is 1.
+Both TypeScript peers use `wire.schema.json` as the message contract. The same schemas generate `wire.generated.ts` and supply Ajv validation. The schema now describes Python wire protocol 26, including supervision protocol 24 inside start commands, cleanup evidence, and workspace messages. The spool format is 5 and the command journal format is 1.
+
+This schema preparation does not enable protocol 26 execution. Both runtime identities still advertise protocol 22 through `execution_configuration.ts`. Machine credentials, supervision, and workspace behavior remain port work before protocol 26 activation.
 
 Regenerate or check the types in an isolated development environment:
 
@@ -58,7 +60,7 @@ node server/executor/tools/generate_wire.ts --check
 
 Remove inherited `PLAN_*` and provider-home variables before repository execution. Supply private paths and an explicit non-live server URL. Ticket actions through `panels` retain the Worker's identity variables. The generator starts no server and opens no database or network connection.
 
-Required nullable fields stay required. Schema defaults supply optional fields. Generic envelopes keep opaque JSON payloads intact until their selected consumer applies its admission rules.
+Required nullable fields stay required. Schema defaults supply optional fields. A locally constructed lease defaults cleanup uncertainties to an empty list. Incoming leases must carry that key explicitly, or intake refuses them with `The lease lacks Worker cleanup evidence`. Generic envelopes keep opaque JSON payloads intact until their selected consumer applies its admission rules.
 
 | Open source family | Runtime consumer | Boundary |
 | --- | --- | --- |

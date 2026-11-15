@@ -43,6 +43,7 @@ def test_unit22_shared_protocol_exchange(tmp_path: Path, request: pytest.Fixture
     assert {
         "malformed-json",
         "missing-required-field",
+        "lease-cleanup-evidence-missing",
         "missing-nullable-field",
         "unknown-enum",
         "no-scalar-coercion",
