@@ -33,13 +33,16 @@ export function capture_gate(
   { ticket_id, active, now }: { ticket_id: string; active: boolean; now: number },
 ): void {
   if (!installed(sql)) return;
-  const opened = sql.get<{ id: number }>(
-    'SELECT id FROM attention_gate_intervals WHERE ticket_id=? AND closed_at IS NULL',
+  const opened = sql.get<{ id: number; observed_since: number }>(
+    'SELECT id,observed_since FROM attention_gate_intervals WHERE ticket_id=? AND closed_at IS NULL',
     [ticket_id],
   );
   if (!active) {
     if (opened)
-      sql.run('UPDATE attention_gate_intervals SET closed_at=? WHERE id=?', [now, opened.id]);
+      sql.run('UPDATE attention_gate_intervals SET closed_at=? WHERE id=?', [
+        Math.max(now, opened.observed_since),
+        opened.id,
+      ]);
     return;
   }
   if (opened) return;

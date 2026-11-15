@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { TASK_ALERT_IS_CURRENT } from './attention.ts';
 import type { TransactionSql } from '../core/database/contracts.ts';
 import type {
   APNsDevice,
@@ -89,6 +90,7 @@ export function pending_deliveries(sql: TransactionSql, now: number): PendingAPN
        AND ((d.subject_kind='ticket' AND EXISTS (SELECT 1 FROM tickets WHERE id=d.subject_id))
          OR (d.subject_kind='manager' AND EXISTS (SELECT 1 FROM managers WHERE id=d.subject_id))
          OR (d.subject_kind='agent' AND EXISTS (SELECT 1 FROM agents WHERE agent_key=d.subject_id)))
+       AND ${TASK_ALERT_IS_CURRENT}
      ORDER BY d.next_attempt_at,d.device_id LIMIT ?`,
       [now, APNS_BATCH_SIZE],
     )

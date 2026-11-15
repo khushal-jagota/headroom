@@ -1,6 +1,21 @@
 import type { ReadSql, TransactionSql } from '../core/database/contracts.ts';
 import { capture_gate } from '../attention/history.ts';
 import { workflow_from_row } from '../worker_types/store.ts';
+import type { EdgeKey } from './contracts.ts';
+// Task alerts describe a current obligation; message and error edges remain facts.
+export const TASK_ALERT_IS_CURRENT = `(d.subject_kind!='ticket'
+  OR d.notification_type NOT IN ('awaiting_approval','assigned','awaiting_answer')
+  OR (EXISTS (SELECT 1 FROM tickets t WHERE t.id=d.subject_id AND t.is_backlogged=0)
+    AND EXISTS (SELECT 1 FROM notification_attention_state a
+      WHERE a.subject_kind=d.subject_kind AND a.subject_id=d.subject_id
+        AND a.notification_type=d.notification_type AND a.active=1 AND a.generation=d.generation)))`;
+export function task_alert_is_current(sql: ReadSql, edge: EdgeKey): boolean {
+  return !!sql.get<{ current: number }>(
+    `SELECT ${TASK_ALERT_IS_CURRENT} AS current FROM
+      (SELECT ? AS subject_kind,? AS subject_id,? AS notification_type,? AS generation) d`,
+    [edge.subject_kind, edge.subject_id, edge.notification_type, edge.generation],
+  )?.current;
+}
 export interface ConversationAttention {
   unread_message: boolean;
   pending_ask: boolean;
@@ -223,6 +238,7 @@ export function capture_ticket_attention(
     pending_proposal: string | null;
     ceiling_holder: string;
     conversation_id: string | null;
+    is_backlogged: number;
   }>('SELECT * FROM tickets WHERE id=?', [id]);
   if (!row) return;
   const workflow = options.worker_type_definition ?? workflow_from_row(row);
@@ -234,13 +250,16 @@ export function capture_ticket_attention(
     NOTHING_WAITING;
   const flags = {
     awaiting_reply: conversation.unread_message,
-    awaiting_answer: conversation.pending_ask,
+    awaiting_answer: conversation.pending_ask && !row.is_backlogged,
     // Errored claims outrank proposals. Blockers do not affect these two status predicates.
     awaiting_approval:
       row.worker_step_claim !== 'errored' &&
       row.pending_proposal !== null &&
-      JSON.parse(row.ceiling_holder).kind === 'owner',
-    assigned: workflow.stages.find((s) => s.id === row.stage)?.ownership_mode === 'user',
+      JSON.parse(row.ceiling_holder).kind === 'owner' &&
+      !row.is_backlogged,
+    assigned:
+      !row.is_backlogged &&
+      workflow.stages.find((s) => s.id === row.stage)?.ownership_mode === 'user',
     errored: row.worker_step_claim === 'errored' || conversation.errored,
   };
   for (const [kind, active] of Object.entries(flags))
@@ -276,7 +295,7 @@ export function capture_conversation_attention(
       record_attention(sql, row.subject_kind, row.subject_id, kind, active, now);
   }
 }
-/** Imported-state reconciliation does not create approval-history gates. */
+/** Imported-state reconciliation captures newly observed gate transitions too. */
 export function reconcile_attention(
   sql: TransactionSql,
   desired: readonly {
@@ -295,6 +314,5 @@ export function reconcile_attention(
       row.notification_type,
       row.active,
       row.occurred_at,
-      false,
     );
 }
