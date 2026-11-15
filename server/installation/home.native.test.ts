@@ -206,6 +206,7 @@ test.skipIf(!admitted)(
           archive_sha256: mini_builds?.a.archive_sha256 ?? 'b'.repeat(64),
           revision: mini_builds?.a.manifest.app_sha ?? revision,
         };
+        Object.assign(record, { root, service: service_name, port: request.port });
         const inspector = process_inspector();
         const observe = async () => {
           const identity = await inspector.discover(request.port, root);
@@ -473,20 +474,27 @@ test.skipIf(!admitted)(
       report.failure = error instanceof Error ? error.stack : String(error);
       throw error;
     } finally {
-      build_processes.seal();
-      build_processes.force_kill(performance.now() / 1000 + 5);
-      expect(
-        (await observe_promise(build_processes.settled(), AbortSignal.timeout(5000))).completed,
-      ).toBe(true);
-      await mkdir(evidence, { recursive: true });
-      await writeFile(
-        join(evidence, `first-home-${system}.json`),
-        JSON.stringify(report, null, 2) + '\n',
-      );
-      // A failed native cleanup keeps its evidence paths. Successful cases leave only the empty base.
-      await rmdir(base).catch((error: NodeJS.ErrnoException) => {
-        if (error.code !== 'ENOTEMPTY') throw error;
-      });
+      try {
+        build_processes.seal();
+        build_processes.force_kill(performance.now() / 1000 + 5);
+        expect(
+          (await observe_promise(build_processes.settled(), AbortSignal.timeout(5000))).completed,
+        ).toBe(true);
+      } catch (error) {
+        report.build_cleanup_error = String(error);
+        throw error;
+      } finally {
+        report.fixture_root = base;
+        await mkdir(evidence, { recursive: true });
+        await writeFile(
+          join(evidence, `first-home-${system}.json`),
+          JSON.stringify(report, null, 2) + '\n',
+        );
+        // Failed cleanup retains fixture paths. The report records their exact root.
+        await rmdir(base).catch((error: NodeJS.ErrnoException) => {
+          if (error.code !== 'ENOTEMPTY') throw error;
+        });
+      }
     }
   },
   600_000,
