@@ -136,8 +136,15 @@ export async function home_install_comparison(
           if (operation === 'print') {
             if (value.scenario === 'loaded-conflict' && label === service)
               stdout = 'path = /another/home.plist\n';
-            else if (jobs.has(label)) stdout = `path = ${jobs.get(label)}\n`;
-            else {
+            else if (jobs.has(label)) {
+              const path = jobs.get(label)!,
+                job = JSON.parse(readFileSync(path, 'utf8'));
+              stdout = `path = ${path}\nprogram = ${job.ProgramArguments[0]}\nworking directory = ${job.WorkingDirectory}\narguments = {\n${job.ProgramArguments.join('\n')}\n}\nenvironment = {\n${Object.entries(
+                job.EnvironmentVariables,
+              )
+                .map(([key, value]) => `${key} => ${value}`)
+                .join('\n')}\n}\n`;
+            } else {
               code = 1;
               stderr = 'Could not find service';
             }

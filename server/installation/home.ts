@@ -231,8 +231,12 @@ class InstallationFiles {
       constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK,
     );
     try {
+      const info = fstatSync(fd);
       if (
-        !same_inode(fstatSync(fd), proof.info) ||
+        !info.isFile() ||
+        info.uid !== proof.info.uid ||
+        info.nlink !== 1 ||
+        !same_inode(info, proof.info) ||
         !readFileSync(fd).equals(proof.content as Buffer)
       )
         throw new Error(`Created installation file changed: ${path}`);
@@ -251,9 +255,16 @@ class InstallationFiles {
     );
     try {
       const info = fstatSync(fd);
-      if (!info.isFile() || !same_inode(info, before.info))
+      if (
+        !info.isFile() ||
+        info.uid !== before.info.uid ||
+        info.nlink !== 1 ||
+        !same_inode(info, before.info)
+      )
         throw new Error(`Converted installation plist changed: ${path}`);
       assert_release_execution(this.creation_execution);
+      if (fstatSync(fd).nlink !== 1)
+        throw new Error(`Converted installation plist lost exclusive ownership: ${path}`);
       ftruncateSync(fd, 0);
       writeFileSync(fd, content);
       fsyncSync(fd);

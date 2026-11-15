@@ -23,6 +23,7 @@ import type { HomeInstallDependencies, HomeInstallRequest, HomeServicePlan } fro
 import { HomeCleanupUnsettled } from './contracts.ts';
 import { write_home_job } from '../environments/updates/darwin/jobs.ts';
 import { create_darwin_home_io } from '../environments/updates/darwin/service.ts';
+import { create_darwin_home_service } from './darwin.ts';
 
 async function unused_port(): Promise<number> {
   const server = createServer();
@@ -143,6 +144,32 @@ test('Mac job conversion refuses pre-existing and late hard links before either 
     await assert.rejects(write_home_job(path, job, io), /replacement changed/);
     assert.equal(converted, true);
     assert.equal(readFileSync(join(f.account, 'late-link'), 'utf8'), JSON.stringify(job) + '\n');
+    const installed_plist = join(f.request.root, 'agents/home.plist'),
+      alias = join(f.account, 'installation-alias');
+    await assert.rejects(
+      install_home(f.request, {
+        ...f.deps,
+        service: async () => ({
+          ...f.service,
+          links: [],
+          files: [
+            {
+              path: installed_plist,
+              content: JSON.stringify(job) + '\n',
+              mode: 0o600,
+              format: 'plist-json',
+            },
+          ],
+        }),
+        command: async () => {
+          linkSync(installed_plist, alias);
+          return { code: 0, stdout: '<converted-plist/>', stderr: '' };
+        },
+      }),
+      /Retained/,
+    );
+    assert.equal(readFileSync(alias, 'utf8'), JSON.stringify(job) + '\n');
+    assert(existsSync(f.request.root));
   } finally {
     await f.close();
   }
@@ -207,6 +234,41 @@ test('replacement root and changed service files retain their trees before any u
     assert.equal(readFileSync(changed.unit, 'utf8'), 'foreign unit');
   } finally {
     await changed.close();
+  }
+  const darwin = await fixture(),
+    controls: string[][] = [];
+  let loaded: string | undefined;
+  try {
+    await assert.rejects(
+      install_home(darwin.request, {
+        ...darwin.deps,
+        system: 'darwin',
+        architecture: 'arm64',
+        service: create_darwin_home_service,
+        async command(argv) {
+          if (argv[0] === '/usr/bin/plutil')
+            return { code: 0, stdout: readFileSync(argv.at(-1)!, 'utf8'), stderr: '' };
+          if (argv[1] === 'print')
+            return loaded
+              ? {
+                  code: 0,
+                  stdout: `path = ${loaded}\nprogram = /foreign/idle-program\n`,
+                  stderr: '',
+                }
+              : { code: 1, stdout: '', stderr: 'Could not find service' };
+          controls.push([...argv]);
+          if (argv[1] === 'bootstrap') loaded = argv.at(-1)!;
+          return { code: 0, stdout: '', stderr: '' };
+        },
+      }),
+      /Retained/,
+    );
+    assert(loaded);
+    assert(!controls.some((argv) => argv[1] === 'bootout'));
+    assert(existsSync(join(darwin.request.root, 'app/sealed')));
+    assert(existsSync(loaded));
+  } finally {
+    await darwin.close();
   }
 });
 

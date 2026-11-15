@@ -1,10 +1,14 @@
 /** LaunchAgent descriptors and exact-label control for one new graphical home. */
 import { lstat } from 'node:fs/promises';
+import { realpathSync } from 'node:fs';
 import { join } from 'node:path';
+import { isDeepStrictEqual } from 'node:util';
 import type { ReleaseExecution } from '../environments/release/contracts.ts';
 import { home_service_environment } from './environment.ts';
 import { external_home_node } from '../environments/updates/darwin/identity.ts';
-import { darwin_schedule_jobs } from '../environments/updates/darwin/jobs.ts';
+import { darwin_schedule_jobs, read_home_job } from '../environments/updates/darwin/jobs.ts';
+import { create_darwin_home_io } from '../environments/updates/darwin/service.ts';
+import { authenticate_loaded_job } from '../environments/updates/darwin/logic/launchd.ts';
 import {
   HOME_SERVICE_COMMAND_TIMEOUT_SECONDS,
   HOME_SERVICE_OBSERVATION_TIMEOUT_SECONDS,
@@ -146,17 +150,31 @@ export async function create_darwin_home_service(
       for (const index of [1, 2, 3]) await start(index, execution);
     },
     async stop(execution, assert_owned) {
+      const io = create_darwin_home_io(execution, host.environment, {
+        command: host.command,
+        uid: host.uid,
+        account_home: host.account_home,
+      });
       for (const index of [...attempted].reverse()) {
         const label = labels[index]!,
           path = files[index]!.path;
+        await assert_owned(path);
+        const plist = await read_home_job(path, io, execution);
+        if (!isDeepStrictEqual(plist, jobs[label]))
+          throw new Error(`The LaunchAgent definition changed after creation: ${label}`);
+        await assert_owned(path);
         const result = await command(['print', domain + '/' + label], execution, true, true);
         if (missing(result)) continue;
         await assert_owned(path);
-        if (
-          result.code !== 0 ||
-          !result.stdout.split('\n').some((line) => line.trim() === `path = ${path}`)
-        )
+        if (result.code !== 0)
           throw new Error(`The LaunchAgent no longer belongs to this installation: ${label}`);
+        authenticate_loaded_job(
+          result.stdout,
+          path,
+          plist,
+          Object.keys(plist.EnvironmentVariables),
+          realpathSync,
+        );
         await command(['bootout', domain + '/' + label], execution);
         if (!missing(await command(['print', domain + '/' + label], execution, true, true)))
           throw new Error(`Cannot confirm that the new LaunchAgent stopped: ${label}`);
