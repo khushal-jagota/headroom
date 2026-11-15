@@ -10,6 +10,7 @@ import { notify_chief as notify_chief_of_integrity_faults } from '../tickets/int
 import { acquireLock } from './locks/index.ts';
 import type { OwnedAreaContext } from './authority/register.ts';
 import type { SqliteProcessConversationSystem } from '../conversation/system.ts';
+import { HOME_MACHINE_ID, ORIGINAL_MAC_MACHINE_ID } from '../execution_identity.ts';
 import { createConversationRoutes } from '../conversation/routes.ts';
 import { ConversationHttpWriteScope } from '../conversation/http/writes.ts';
 import { createBackendRoutes } from '../conversation/snapshot/routes.ts';
@@ -398,6 +399,11 @@ export class ServerServices {
       if (!core) throw new Error('Configured executor requires the invocation conversation core.');
       executor.configure(core, app);
     }
+    const destination_present = (destination: string): boolean =>
+      destination === ORIGINAL_MAC_MACHINE_ID && executor?.presence.is_present() === true;
+    core?.start_admission.configure_destinations(
+      (destination) => destination === HOME_MACHINE_ID || destination_present(destination),
+    );
     await app.ready();
     this.assert_startup_open();
     return { app, background };

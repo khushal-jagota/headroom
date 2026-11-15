@@ -93,7 +93,10 @@ export async function take_backend_event_with_receipt(
       live = false;
     }
     const agent_acted = live && token !== null;
-    if (agent_acted) state.last_touched_monotonic = host.monotonic_now();
+    if (agent_acted) {
+      await host.accept_automatic_start(state, token!);
+      state.last_touched_monotonic = host.monotonic_now();
+    }
     let interpreted: InterpretedBackendEvent = live
       ? interpret_backend_event(
           token,
