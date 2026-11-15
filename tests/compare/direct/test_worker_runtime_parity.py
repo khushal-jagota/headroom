@@ -553,10 +553,9 @@ def test_worker_decisions_parity(tmp_path: Path) -> None:
 def test_machine_admission_and_refusal_envelopes(tmp_path: Path) -> None:
     """One destination's presence must not admit or block another destination.
 
-    Reuse the populated Ticket fixture and Node evaluator without a host. Runtime
-    protocol activation remains deferred: each side uses its supported identity,
-    and both complete fixture identities remain explicit in the comparison report.
-    This proves machine admission, not a same-wire protocol-26 exchange.
+    Reuse the populated Ticket fixture and Node evaluator without a host.
+    Both sides use the same supported identity, retained explicitly in the report.
+    This proves machine admission separately from the wire exchange.
     """
     from planner.machines.contracts import HOME_MACHINE_ID
     from planner.tickets import locale_configuration
@@ -572,8 +571,7 @@ def test_machine_admission_and_refusal_envelopes(tmp_path: Path) -> None:
         "executor_incarnation": "77777777-7777-4777-8777-777777777777",
         "connection_generation": 0,
     }
-    # The runtime deviation remains recorded until the whole executor port is ready.
-    candidate_identity = {**source_identity, "protocol_version": 22}
+    candidate_identity = dict(source_identity)
     with synthetic_home_environment(create_synthetic_homes(tmp_path)):
         conn = connect(str(tmp_path / "python.sqlite"))
         try:

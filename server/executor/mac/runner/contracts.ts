@@ -40,7 +40,10 @@ export interface MacNativeChildrenOptions {
   readonly workspace_home: string;
   readonly workspace_lock: FifoLock;
   readonly workspace_git: NonNullable<WorkspaceOptions['git_execution']>;
-  readonly register_workspace: (child: ChildReference, workspace: WorkspaceIdentity) => Promise<void>;
+  readonly register_workspace: (
+    child: ChildReference,
+    workspace: WorkspaceIdentity,
+  ) => Promise<void>;
   readonly factory: (start: ResolvedConversationStart) => BackendChildFactory;
   readonly native_skill_home: (backend: ResolvedConversationStart['backend_key']) => string;
   readonly event_sink: (reference: ChildReference) => BackendEventSink;

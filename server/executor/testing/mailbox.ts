@@ -313,10 +313,15 @@ function presence_owner(): void {
     if (presence_mode !== 'sqlite') callback_error();
     if (presence_mode === 'oversized_update')
       return {
-        schema_version: 1, prefetch: null,
+        schema_version: 1,
+        prefetch: null,
         target: {
-          request_id: 'lease-budget', application_revision: 'a'.repeat(40), mode: 'idle',
-          activate: false, archive_sha256: 'b'.repeat(64), archive_size: 1,
+          request_id: 'lease-budget',
+          application_revision: 'a'.repeat(40),
+          mode: 'idle',
+          activate: false,
+          archive_sha256: 'b'.repeat(64),
+          archive_size: 1,
           archive_path: '/' + 'x'.repeat(MAX_ENVELOPE_BYTES),
         },
       };

@@ -19,24 +19,21 @@ Its user unit is `panels-executor-typescript.service`, separate from Python's un
 Role admission retains the Python marker filename and identity fields. Native admission binds the Node manifest, contract and inventory.
 Paired synthetic proofs project the interpreter, root, PATH, and unit differences explicitly. Real runtime execution remains a hosted acceptance boundary.
 
-## Pending staging port: mailbox authority and protocol
+## Executor protocol parity evidence
 
 P2 owns these boundaries. The active machine-scope comparison now proves that stale
 reports refuse before outcome writes and StartRun encoding carries `supervision_protocol=24`.
 Internal executor waits and the shared process registry now include `machine_id=null`.
 The save-retry comparison is active again with that exact field.
 
-The original populated mailbox exchange remains expected-open until runtime protocol
-admission and the rest of the executor port match Python. Its original comparisons
-remain intact. These implemented boundaries do not claim full executor parity.
-
-The native schema describes protocol 26. Runtime identities still advertise protocol 22
-until machine credentials, supervision, and workspace behavior reach parity. This is
-an incomplete staging port, not an accepted final difference.
+The schema and runtime identities use protocol 26. Machine credentials, supervision,
+workspace registration, and retirement use the shared contract. The remaining
+expected-open comparisons do not count as parity until their complete proofs pass.
 
 The active machine-admission comparison uses each runtime's supported identity
 and retains both full identities in its report. It proves destination selection,
-readiness, and refusal envelopes. It does not claim a same-wire protocol-26 exchange.
+readiness, and refusal envelopes. The dedicated wire comparisons check the shared
+protocol contract separately.
 
 ## Pending staging port: Linux host admission
 

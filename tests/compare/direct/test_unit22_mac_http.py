@@ -15,6 +15,7 @@ from typing import Any, cast
 from aiohttp import web
 from tests.support.synthetic_homes import create_synthetic_homes
 
+from planner.execution_configuration import PROTOCOL_VERSION
 from planner.executor import protocol as p
 from planner.executor.credential_file import read_credential
 from planner.executor.diagnostics import ConnectionDiagnostics, ConnectionPhase
@@ -23,7 +24,7 @@ from planner.executor.mac_http import ExecutorHttpError, MacHttpClient, failure_
 ROOT = Path(__file__).resolve().parents[3]
 INC = "00000000-0000-0000-0000-000000000001"
 IDENTITY = dict(
-    protocol_version=22,
+    protocol_version=PROTOCOL_VERSION,
     application_revision="synthetic",
     spool_format_version=5,
     executor_incarnation=INC,

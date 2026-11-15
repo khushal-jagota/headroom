@@ -240,7 +240,8 @@ export class MacLeaseLoop {
       let at_vps_ms = Infinity;
       for (let offset = 0; offset < Math.max(ids.length, 1); offset += MAX_WORKSPACE_STATE_IDS) {
         const reply = await client.workspace_states(
-          ids.slice(offset, offset + MAX_WORKSPACE_STATE_IDS), signal,
+          ids.slice(offset, offset + MAX_WORKSPACE_STATE_IDS),
+          signal,
         );
         signal.throwIfAborted();
         states.push(...reply.states);

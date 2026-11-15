@@ -5,6 +5,7 @@
     "replace-credential": null
   },
   "executor": {
+    "credential": null,
     "run": null,
     "retry": null,
     "health": null,

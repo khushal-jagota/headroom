@@ -46,6 +46,7 @@ from planner.core.clock import TestClock as FixedClock
 from planner.core.db import connect, create_schema
 from planner.environments.mac_updates import MacUpdateService
 from planner.environments.update_attempts import UpdateConflict
+from planner.execution_configuration import PROTOCOL_VERSION
 from planner.execution_identity import ChildReference
 from planner.executor import protocol as wire
 from planner.executor.registry import VpsExecutorRegistry
@@ -162,7 +163,7 @@ async def transcript(proxy: HttpsProxy, spec: dict[str, Any]) -> list[Any]:
     work = {
         **only_id,
         "X-Panels-Executor-Incarnation": IDENTITY.executor_incarnation,
-        "X-Panels-Executor-Protocol": "22",
+        "X-Panels-Executor-Protocol": str(PROTOCOL_VERSION),
     }
     result = []
     async with proxy.session_factory() as client:
@@ -276,7 +277,7 @@ async def continue_core(endpoint: VpsExecutor, path: Path, proxy: HttpsProxy) ->
             "Accept-Encoding": "identity",
             "X-Panels-Executor-ID": "test-executor",
             "X-Panels-Executor-Incarnation": identity.executor_incarnation,
-            "X-Panels-Executor-Protocol": "22",
+            "X-Panels-Executor-Protocol": str(PROTOCOL_VERSION),
         }
         async with proxy.session_factory() as client:
             async with client.post(
@@ -790,7 +791,7 @@ def test_unit22_executor_real_wire(tmp_path: Path, request: pytest.FixtureReques
                             headers={
                                 "X-Panels-Executor-ID": "test-executor",
                                 "X-Panels-Executor-Incarnation": IDENTITY.executor_incarnation,
-                                "X-Panels-Executor-Protocol": "22",
+                                "X-Panels-Executor-Protocol": str(PROTOCOL_VERSION),
                             },
                         ) as response:
                             assert response.status == 400

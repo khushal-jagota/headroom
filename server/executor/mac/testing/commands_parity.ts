@@ -1,7 +1,7 @@
 /** Real command/source/retirement custody and stores with scripted skills, files and backend. */
-import { readFileSync, mkdirSync, writeFileSync } from 'node:fs';
+import { readFileSync, mkdirSync, writeFileSync, existsSync } from 'node:fs';
 import { createHash } from 'node:crypto';
-import { fail } from 'node:assert/strict';
+import assert, { fail } from 'node:assert/strict';
 import { join } from 'node:path';
 import { setImmediate as yield_turn } from 'node:timers/promises';
 import {
@@ -31,6 +31,14 @@ import { MacMaintenance } from '../runner/maintenance.ts';
 import { MacRunner } from '../runner/index.ts';
 import { OneShotChildren } from '../../../lifecycle/one_shot_children.ts';
 import type { ChildCommand, WorkspaceIdentity } from '../../wire.generated.ts';
+import { createDatabase } from '../../../core/database/index.ts';
+import {
+  authorize_retirement,
+  has_committed_retirement,
+  register_workspace,
+} from '../../../ticket_workspaces/data.ts';
+import { RETENTION_SECONDS } from '../../../ticket_workspaces/contracts.ts';
+import type { WorkspaceState } from '../../../ticket_workspaces/contracts.ts';
 import { ConversationStartAborted } from '../../../runtime/abort.ts';
 import { ServerLifecycleError } from '../../../lifecycle/contracts.ts';
 import { ExecutorPaths } from '../configuration.ts';
@@ -57,29 +65,68 @@ const input = JSON.parse(readFileSync(join(root, 'input.json'), 'utf8')) as {
 };
 
 async function managed_workspace_phase(): Promise<unknown> {
-  const phase_root = join(root, 'managed-proof'), paths = new ExecutorPaths(join(phase_root, 'state'));
-  const commands = Object.fromEntries(Object.entries(input.workspace_commands)
-    .map(([key, raw]) => [key, decode_json(raw, 'ChildCommand')]));
-  const machine = '1'.repeat(32), calls: unknown[][] = [];
+  const phase_root = join(root, 'managed-proof'),
+    paths = new ExecutorPaths(join(phase_root, 'state'));
+  const commands = Object.fromEntries(
+    Object.entries(input.workspace_commands).map(([key, raw]) => [
+      key,
+      decode_json(raw, 'ChildCommand'),
+    ]),
+  );
+  const machine = '1'.repeat(32),
+    calls: unknown[][] = [],
+    prepared: boolean[] = [];
   let index = 0;
   for (const command of Object.values(commands)) {
     if (command.arguments.kind !== 'start') throw new Error('Managed phase expects starts');
-    const ticket = new Map(command.arguments.resolved_start.role_materials!
-      .identity_environment_variables).get('PLAN_TICKET_ID')!;
+    const ticket = new Map(
+      command.arguments.resolved_start.role_materials!.identity_environment_variables,
+    ).get('PLAN_TICKET_ID')!;
     const folder = join(paths.artifacts, ticket);
     mkdirSync(folder, { recursive: true });
-    writeFileSync(join(folder, '.panels-workspace.json'), JSON.stringify({
-      ticket_id: ticket, machine_id: machine, workspace_id: (++index).toString(16).padStart(32, '0'),
-    }));
+    writeFileSync(
+      join(folder, '.panels-workspace.json'),
+      JSON.stringify({
+        ticket_id: ticket,
+        machine_id: machine,
+        workspace_id: (++index).toString(16).padStart(32, '0'),
+      }),
+    );
   }
   writeFileSync(join(paths.root, '.workspace-machine-id'), machine);
-  const entered = gate(), release = gate(), git_children = new OneShotChildren();
+  const entered = gate(),
+    release = gate(),
+    git_children = new OneShotChildren();
+  const stop_entered = gate(),
+    stop_release = gate(),
+    source_release = gate();
+  let stops = 0,
+    grants = 0;
+  const authority = createDatabase(join(phase_root, 'authority.sqlite'));
+  const rows = (table: string) =>
+    authority.read((sql) => sql.all(`SELECT * FROM ${table} ORDER BY ticket_id`));
   const stores = await open_fixture_stores(join(phase_root, 'spool'), now, on_failure, options);
   const register = async (child: ChildCommand['child'], workspace: WorkspaceIdentity) => {
     calls.push(['register', child, workspace]);
     const key = child.child_id.replace('workspace-', '');
-    if (key === 'one') { entered.resolve(); await release.promise; }
+    const start = commands[key]!.arguments;
+    if (start.kind !== 'start') throw new Error('Registration expects start');
+    const ticket = new Map(start.resolved_start.role_materials!.identity_environment_variables).get(
+      'PLAN_TICKET_ID',
+    )!;
+    const folder = join(paths.artifacts, ticket);
+    const marker_value = JSON.parse(readFileSync(join(folder, '.panels-workspace.json'), 'utf8'));
+    prepared.push(
+      marker_value.preparing === false &&
+        marker_value.repository === null &&
+        existsSync(join(folder, 'worktree')),
+    );
     if (key === 'failure') throw new Error('scripted registration refused');
+    authority.write((sql) => register_workspace(sql, ticket, child.conversation_id, workspace));
+    if (key === 'one') {
+      entered.resolve();
+      await release.promise;
+    }
     if (key === 'swap') {
       const marker = join(paths.artifacts, 't_12345678', '.panels-workspace.json');
       const value = JSON.parse(readFileSync(marker, 'utf8'));
@@ -88,56 +135,168 @@ async function managed_workspace_phase(): Promise<unknown> {
     }
   };
   const runner = new MacRunner({
-    incarnation: 'inc', journal: stores.journal, outbox: stores.store,
+    incarnation: 'inc',
+    journal: stores.journal,
+    outbox: stores.store,
     cleanup: fixture_cleanup_dependencies(stores.journal),
     workspace_git: { children: git_children, environment: process.env },
     register_workspace: register,
-    retire_workspace: async () => { throw new Error('Retirement is not part of start admission'); },
-    retirement_is_committed: async () => { throw new Error('Replay is not part of start admission'); },
-    inputs: { download_inputs: async () => { throw new Error('No inputs in managed phase'); } },
-    live: null, now_ms: () => now, new_update_id: () => { throw new Error('No update in managed phase'); },
+    retire_workspace: async (state, workspace) => {
+      grants++;
+      return authority.write((sql) =>
+        authorize_retirement(sql, state, Math.floor(now / 1000), workspace),
+      );
+    },
+    retirement_is_committed: async (state, workspace) =>
+      authority.read((sql) => has_committed_retirement(sql, state, workspace)),
+    inputs: {
+      download_inputs: async () => {
+        throw new Error('No inputs in managed phase');
+      },
+    },
+    live: null,
+    now_ms: () => now,
+    new_update_id: () => {
+      throw new Error('No update in managed phase');
+    },
     native: native_fixture_options({
-      paths, workspace_home: phase_root, native_skill_home: () => join(phase_root, 'native'),
-      snapshot_directory: join(phase_root, 'skills'), on_failure,
+      paths,
+      workspace_home: phase_root,
+      native_skill_home: () => join(phase_root, 'native'),
+      snapshot_directory: join(phase_root, 'skills'),
+      on_failure,
       factory: (resolved) => {
-        const ticket = new Map(resolved.role_materials!.identity_environment_variables).get('PLAN_TICKET_ID')!;
+        const ticket = new Map(resolved.role_materials!.identity_environment_variables).get(
+          'PLAN_TICKET_ID',
+        )!;
         calls.push(['factory', ticket]);
-        return () => ({
-          async start() {
-            calls.push(['start', ticket, resolved.workspace_folder.slice(phase_root.length + 1)]);
-          },
-          async stop() {},
-        }) as unknown as BackendChild;
+        return () =>
+          ({
+            async start() {
+              calls.push(['start', ticket, resolved.workspace_folder.slice(phase_root.length + 1)]);
+            },
+            async stop() {
+              stops++;
+              if (stops === 1) {
+                stop_entered.resolve();
+                await stop_release.promise;
+              }
+            },
+          }) as unknown as BackendChild;
       },
     }),
   });
-  await record_commands(stores.journal, Object.values(commands).map((command, index) => ({
-    command_id: command.command_id, command_sequence: index + 1, created_at_vps_ms: now,
-    child_command: command, model_list_request: null,
-  })));
+  await record_commands(
+    stores.journal,
+    Object.values(commands).map((command, index) => ({
+      command_id: command.command_id,
+      command_sequence: index + 1,
+      created_at_vps_ms: now,
+      child_command: command,
+      model_list_request: null,
+    })),
+  );
   const first = runner.run(commands.one!, new AbortController().signal);
   try {
     await entered.promise;
     let finished = false;
-    void first.then(() => { finished = true; });
+    void first.then(() => {
+      finished = true;
+    });
     const second = await runner.run(commands.two!, new AbortController().signal);
     const concurrent = !finished && second.disposition === 'succeeded';
     release.resolve();
     const outcomes = [await first, second];
     for (const key of ['failure', 'swap'])
       outcomes.push(await runner.run(commands[key]!, new AbortController().signal));
+    const retained = runner.native_children
+      .retained_children()
+      .map((child) => child.ticket_id)
+      .sort();
+    const state: WorkspaceState = {
+      ticket_id: 't_abcdefgh',
+      ended_at: Math.floor(now / 1000) - RETENTION_SECONDS - 1,
+      deleted: false,
+    };
+    const folder = join(paths.artifacts, state.ticket_id);
+    const platform = Object.getOwnPropertyDescriptor(process, 'platform')!;
+    try {
+      Object.defineProperty(process, 'platform', { ...platform, value: 'darwin' });
+      await runner.cleanup_workspaces([state], Math.floor(now / 1000));
+      assert.equal(grants, 0, 'Darwin preservation must precede authorization');
+      assert.equal(stops, 0, 'Darwin preservation must not stop a child');
+      assert.ok(existsSync(folder));
+    } finally {
+      Object.defineProperty(process, 'platform', platform);
+    }
+    const source = runner.source_work(commands.one!.child, () => source_release.promise);
+    await runner.cleanup_workspaces([state], Math.floor(now / 1000));
+    const busy = existsSync(folder) && grants === 0 && stops === 0;
+    source_release.resolve();
+    await source;
+    const original_append = stores.store.append.bind(stores.store);
+    let fail_append = true;
+    stores.store.append = (...args) => {
+      if (fail_append && args[0].submission_id?.startsWith('stopped_')) {
+        fail_append = false;
+        throw new Error('scripted workspace output failure');
+      }
+      return original_append(...args);
+    };
+    const cleanup = runner.cleanup_workspaces([state], Math.floor(now / 1000));
+    void cleanup.catch(() => {});
+    await stop_entered.promise;
+    const held = existsSync(folder) && rows('ticket_workspace_retirements').length === 1;
+    stop_release.resolve();
+    await cleanup;
+    const retained_output =
+      existsSync(folder) && runner.native_children.get(commands.one!.child.child_id) !== null;
+    await runner.cleanup_workspaces([state], Math.floor(now / 1000));
+    const unpublished = existsSync(folder) && Number(grants) === 1 && Number(stops) === 1;
+    const stop = await runner.stop_and_publish({
+      command_id: 'workspace_stop_' + commands.one!.child.child_id,
+      child: commands.one!.child,
+      operation: 'stop',
+      turn: null,
+      arguments: { kind: 'stop' },
+    });
+    assert.equal(stop.disposition, 'succeeded');
+    await runner.cleanup_workspaces([state], Math.floor(now / 1000));
+    const cleanup_evidence = {
+      facts: [busy, held, retained_output, unpublished, !existsSync(folder)],
+      grants: rows('ticket_workspace_retirements'),
+      registered: rows('ticket_workspace_conversations'),
+      pending: pending_envelopes(stores.store),
+      stops,
+    };
     return {
-      calls: [...calls], concurrent, outcomes,
-      retained: runner.native_children.retained_children().map((child) => child.ticket_id).sort(),
+      calls: [...calls],
+      concurrent,
+      prepared,
+      outcomes,
+      retained,
+      cleanup: cleanup_evidence,
     };
   } finally {
     release.resolve();
-    await first;
-    await runner.stop(options);
-    await runner.settled();
-    git_children.seal();
-    await git_children.settled();
-    await close_fixture_stores(stores, options);
+    stop_release.resolve();
+    source_release.resolve();
+    await first.catch(() => {});
+    try {
+      await runner.stop(options);
+      await runner.settled();
+    } finally {
+      git_children.seal();
+      try {
+        await git_children.settled();
+      } finally {
+        try {
+          await close_fixture_stores(stores, options);
+        } finally {
+          authority.close();
+        }
+      }
+    }
   }
 }
 // Wire numbers remain inside canonical strings until the authoritative codec reads them.

@@ -12,7 +12,11 @@ import type {
   WorkerCleanupUncertainty,
 } from '../../wire.generated.ts';
 import type { CleanupReconciliationDependencies } from '../cleanup_contracts.ts';
-import type { WorkspaceIdentity, WorkspaceOptions, WorkspaceState } from '../../../ticket_workspaces/contracts.ts';
+import type {
+  WorkspaceIdentity,
+  WorkspaceOptions,
+  WorkspaceState,
+} from '../../../ticket_workspaces/contracts.ts';
 import type { MailboxRunner } from '../mailbox/contracts.ts';
 import type { OutboxStore } from '../storage/outbox.ts';
 import type {
@@ -53,12 +57,23 @@ export interface MacRunnerEventsContract {
 }
 export interface MacRunnerOptions {
   readonly incarnation: string;
-  readonly native: Omit<MacNativeChildrenOptions,
-    'event_sink' | 'workspace_lock' | 'workspace_git' | 'register_workspace' | 'worker_cleanup'>;
+  readonly native: Omit<
+    MacNativeChildrenOptions,
+    'event_sink' | 'workspace_lock' | 'workspace_git' | 'register_workspace' | 'worker_cleanup'
+  >;
   readonly workspace_git: NonNullable<WorkspaceOptions['git_execution']>;
-  readonly register_workspace: (child: ChildReference, workspace: WorkspaceIdentity) => Promise<void>;
-  readonly retire_workspace: (state: WorkspaceState, workspace: WorkspaceIdentity) => Promise<boolean>;
-  readonly retirement_is_committed: (state: WorkspaceState, workspace: WorkspaceIdentity) => Promise<boolean>;
+  readonly register_workspace: (
+    child: ChildReference,
+    workspace: WorkspaceIdentity,
+  ) => Promise<void>;
+  readonly retire_workspace: (
+    state: WorkspaceState,
+    workspace: WorkspaceIdentity,
+  ) => Promise<boolean>;
+  readonly retirement_is_committed: (
+    state: WorkspaceState,
+    workspace: WorkspaceIdentity,
+  ) => Promise<boolean>;
   readonly cleanup: CleanupReconciliationDependencies;
   readonly journal: MacCommandDependencies['journal'];
   readonly outbox: OutboxStore;

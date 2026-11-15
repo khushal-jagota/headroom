@@ -110,8 +110,11 @@ export async function localize_start(
   try {
     await create_directory(options, artifacts);
     if (managed) {
-      const repository = resolved.workspace_path_policy === WorkspacePathPolicy.executor_default &&
-        !input.workspace_home_relative ? null : workspace;
+      const repository =
+        resolved.workspace_path_policy === WorkspacePathPolicy.executor_default &&
+        !input.workspace_home_relative
+          ? null
+          : workspace;
       workspace = await prepare_workspace(artifacts, repository, ticket_id, {
         git_execution: options.workspace_git,
       });

@@ -166,16 +166,24 @@ export class MacNativeChildren implements MacNativeChildrenContract {
         this.assert_start(entry);
         if (this.options.worker_cleanup.uncertain(entry.ticket_id))
           throw new BackendSpawnFailed('Previous Worker cleanup is not proven for this Ticket');
-        const localized_start = await localize_start(input, entry.reference, capability, generation, {
-          ...this.options,
-          on_failure: (error) => this.record_failure(error),
-        });
+        const localized_start = await localize_start(
+          input,
+          entry.reference,
+          capability,
+          generation,
+          {
+            ...this.options,
+            on_failure: (error) => this.record_failure(error),
+          },
+        );
         this.assert_start(entry);
-        const managed = new Map(
-          input.resolved_start.role_materials?.identity_environment_variables ?? [],
-        ).get('PLAN_TICKET_WORKSPACE_MANAGED') === '1';
+        const managed =
+          new Map(input.resolved_start.role_materials?.identity_environment_variables ?? []).get(
+            'PLAN_TICKET_WORKSPACE_MANAGED',
+          ) === '1';
         const workspace = managed
-          ? workspace_identity(join(this.options.paths.artifacts, entry.ticket_id)) : null;
+          ? workspace_identity(join(this.options.paths.artifacts, entry.ticket_id))
+          : null;
         return { localized_start, workspace };
       });
       if (prepared.workspace !== null) {
@@ -189,10 +197,13 @@ export class MacNativeChildren implements MacNativeChildrenContract {
       }
       const child = await this.options.workspace_lock.run(() => {
         this.assert_start(entry);
-        if (prepared.workspace !== null && !same_workspace(
-          workspace_identity(join(this.options.paths.artifacts, entry.ticket_id)),
-          prepared.workspace,
-        ))
+        if (
+          prepared.workspace !== null &&
+          !same_workspace(
+            workspace_identity(join(this.options.paths.artifacts, entry.ticket_id)),
+            prepared.workspace,
+          )
+        )
           throw new BackendSpawnFailed('Ticket workspace changed before native start');
         const localized_start = prepared.localized_start;
         const native = this.options.factory(localized_start)({

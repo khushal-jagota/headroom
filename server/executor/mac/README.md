@@ -13,6 +13,16 @@ Startup runs the one-time legacy cleanup pass before modern reconciliation and a
 Starts serialize per Ticket before inspection, and unresolved cleanup fences only the affected Ticket.
 Explicit cleanup commands check the exact historical source. Leases copy the cached evidence.
 The slow lease maintenance task refreshes that evidence without delaying a lease request.
+It reads local Ticket states in pages of 64 and uses the earliest returned home clock for cleanup.
+Shutdown retains this task until its filesystem work settles.
+
+Managed starts use the shared Ticket workspace preparation and repository selector.
+An unmapped executor-default start creates a plain work folder.
+The runner registers the physical identity before provider creation and checks that identity again under the workspace lock.
+Registration waits release that lock so another Ticket can prepare its own folder.
+Cleanup uses the same lock and the shared `stop_and_publish` owner before physical retirement.
+Unsettled commands, source work, or unpublished outputs retain the folder.
+The existing safe-removal platform limits still apply.
 
 ## Unix CLI client
 

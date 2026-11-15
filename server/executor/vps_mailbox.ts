@@ -435,8 +435,8 @@ export class SqliteCommandMailbox {
       this.machine_id,
     );
   }
+  /** Admitted lease settlement can still read this cursor after mailbox seal. */
   high_sequence(): MailboxCounter {
-    this.admit();
     this.high ??= this.database.read((sql) => data.high_sequence(sql, this.machine_id));
     return this.high;
   }

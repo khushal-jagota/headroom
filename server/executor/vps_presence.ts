@@ -38,7 +38,6 @@ import {
   MAC_UPDATE_SCHEMA_VERSION,
 } from './configuration.ts';
 import { decode_value, encode_bounded } from './protocol.ts';
-import { high_sequence } from './data/mailbox.ts';
 import {
   accept_lease_in_transaction,
   not_current,
@@ -247,7 +246,7 @@ export class MacPresenceService {
       accepted_at_vps_ms: now,
       away_after_seconds: MAC_AWAY_AFTER_SECONDS,
       update: await this.check_update(),
-      mailbox_high_sequence: this.database.read((sql) => high_sequence(sql, this.machine_id)),
+      mailbox_high_sequence: this.mailbox.high_sequence(),
     };
     try {
       encode_bounded(reply, 'LeaseReply');

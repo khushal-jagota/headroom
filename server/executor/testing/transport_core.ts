@@ -1,5 +1,6 @@
 /** Joined executor consumers on the existing fixture-owned listener. */
 import assert from 'node:assert/strict';
+import { PROTOCOL_VERSION } from '../../execution_configuration.ts';
 import { setTimeout as pause } from 'node:timers/promises';
 import type { Database } from '../../core/database/contracts.ts';
 import { ConversationStore } from '../../conversation/record/data/store.ts';
@@ -54,7 +55,7 @@ export async function continue_core(database: Database, endpoint: VpsExecutor) {
         'tailscale-user-login': 'owner@example.com',
         'x-panels-executor-id': 'test-executor',
         'x-panels-executor-incarnation': current.executor_incarnation,
-        'x-panels-executor-protocol': '22',
+        'x-panels-executor-protocol': String(PROTOCOL_VERSION),
       },
     });
     const raw = Buffer.from(await response.arrayBuffer());

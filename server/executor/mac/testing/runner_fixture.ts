@@ -21,8 +21,10 @@ import type { MacRunnerOptions } from '../runner/lifecycle_contracts.ts';
 const unexpected_workspace_operation = (): never => {
   throw new Error('Workspace operations are outside this fixture');
 };
-export const unexpected_workspaces: Pick<MacRunnerOptions,
-  'workspace_git' | 'register_workspace' | 'retire_workspace' | 'retirement_is_committed'> = {
+export const unexpected_workspaces: Pick<
+  MacRunnerOptions,
+  'workspace_git' | 'register_workspace' | 'retire_workspace' | 'retirement_is_committed'
+> = {
   workspace_git: {
     environment: {},
     children: {

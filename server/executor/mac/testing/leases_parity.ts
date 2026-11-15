@@ -27,9 +27,13 @@ export async function leases(input: {
   let cursor = 100,
     replaced = false,
     stopped = false;
-  const refresh_entered = new Deferred<void>(), refresh_release = new Deferred<void>();
-  const cleanup_entered = new Deferred<void>(), cleanup_release = new Deferred<void>();
-  const workspace_calls: string[][] = [], cleaned: unknown[] = [], facts: boolean[] = [];
+  const refresh_entered = new Deferred<void>(),
+    refresh_release = new Deferred<void>();
+  const cleanup_entered = new Deferred<void>(),
+    cleanup_release = new Deferred<void>();
+  const workspace_calls: string[][] = [],
+    cleaned: unknown[] = [],
+    facts: boolean[] = [];
   let refreshes = 0;
   const accepted_reply = input.replies[0]!;
   const options: MacLeaseOptions = {
@@ -113,7 +117,8 @@ export async function leases(input: {
   await loop.stop({ deadline: performance.now() / 1000 + 5 });
   await loop.settled();
   const { last_lease_failure, ...status } = presence.status(stopped);
-  const stop_cleanup_entered = new Deferred<void>(), stop_cleanup_release = new Deferred<void>();
+  const stop_cleanup_entered = new Deferred<void>(),
+    stop_cleanup_release = new Deferred<void>();
   const stop_http_entered = new Deferred<void>();
   let stop_leases = 0;
   const stopping = new MacLeaseLoop({
@@ -150,19 +155,26 @@ export async function leases(input: {
   let raw_joined = false;
   const stopping_task = stopping.stop({ deadline: performance.now() / 1000 + 5 });
   void stopping_task.catch(() => {});
-  void stopping.settled().then(() => { raw_joined = true; });
+  void stopping.settled().then(() => {
+    raw_joined = true;
+  });
   await yield_turn();
   assert.equal(raw_joined, false, 'shutdown retains the actual slow cleanup after HTTP abort');
   stop_cleanup_release.resolve();
   await Promise.all([stopping_task, http.catch(() => {})]);
   await stopping.settled();
-  const fault_entered = new Deferred<void>(), fault_release = new Deferred<void>();
+  const fault_entered = new Deferred<void>(),
+    fault_release = new Deferred<void>();
   const warnings: string[] = [];
   const failing = new MacLeaseLoop({
     ...options,
     client: {
-      async lease() { return decode_json(accepted_reply, 'LeaseReply'); },
-      async workspace_states() { throw new Error('Refresh failure must prevent reads'); },
+      async lease() {
+        return decode_json(accepted_reply, 'LeaseReply');
+      },
+      async workspace_states() {
+        throw new Error('Refresh failure must prevent reads');
+      },
     },
     runner: {
       ...options.runner,
@@ -181,8 +193,11 @@ export async function leases(input: {
   fault_release.resolve();
   await failed_stopping;
   await failing.settled();
-  assert.deepEqual(warnings, ['Ticket workspace cleanup failed: Error'],
-    'an ordinary I/O failure remains visible after shutdown aborts its cleanup task');
+  assert.deepEqual(
+    warnings,
+    ['Ticket workspace cleanup failed: Error'],
+    'an ordinary I/O failure remains visible after shutdown aborts its cleanup task',
+  );
   return {
     calls,
     offers,
