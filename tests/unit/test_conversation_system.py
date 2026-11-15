@@ -4632,3 +4632,91 @@ def test_refused_kill_rechecks_messages_after_its_fence_clears(
         assert harness.backend("c").written_texts() == ("old", "arrived during stop")
 
     _run(exercise)
+
+
+@pytest.mark.parametrize("action", ["accepted", "sent back"])
+def test_decision_reconciliation_waits_for_dequeued_prompt(
+    harness: _Harness, action: str,
+) -> None:
+    """The real conversation owns a dequeued decision until its prompt is recorded."""
+    from planner.runtime.decision_message_delivery import deliver_ticket_decision_messages
+    from planner.tickets import data as ticket_data
+    from planner.tickets import decision_messages
+    from planner.tickets.contracts import WorkerStepClaim
+    from planner.worker_types.configuration import configured_worker_type_registry
+
+    async def exercise() -> None:
+        await _start(harness, "c")
+        _link_test_ticket_to_conversation(harness.db_path, "c")
+        with connect(str(harness.db_path)) as conn:
+            ticket = ticket_data.read_ticket(conn, "t_failed")
+            decision_messages.save(
+                conn, ticket, action=action,
+                field="consequences" if action == "accepted" else "implementation",
+                principal=OWNER_PRINCIPAL, message="Decision guidance",
+                decision_id="decision-test", request="{}", now=1,
+            )
+            if action == "accepted":
+                conn.execute("UPDATE tickets SET stage='done' WHERE id='t_failed'")
+            row = conn.execute(
+                "SELECT sender_message_id,model_text FROM ticket_decision_messages "
+                "WHERE decision_id='decision-test'"
+            ).fetchone()
+            sender_id, decision_text = str(row[0]), str(row[1])
+            conn.execute(
+                "UPDATE ticket_decision_messages SET delivery_status='queued', "
+                "conversation_id='c' WHERE decision_id='decision-test'"
+            )
+        await harness.system.send("c", text_message_content("incumbent"), sender_label="owner")
+        await harness.system.send(
+            "c", text_message_content(decision_text), sender_label="system",
+            sender_message_id=sender_id,
+        )
+        await harness.system.send(
+            "c", text_message_content("another message"), sender_label="owner"
+        )
+        backend = harness.backend("c")
+        backend.write_has_begun = asyncio.Event()
+        backend.writes_wait_for_release = asyncio.Event()
+        ending = asyncio.create_task(harness.complete_turn("c"))
+
+        async def reconcile() -> None:
+            await deliver_ticket_decision_messages(
+                "t_failed", connect_database=lambda: connect(str(harness.db_path)),
+                conversation_system=harness.system,
+                worker_type_registry=configured_worker_type_registry(), now=lambda: 10,
+            )
+
+        try:
+            await backend.write_has_begun.wait()
+            assert sender_id not in {
+                p.sender_message_id for p in await harness.system.held_prompts("c")
+            }
+            await reconcile()
+            with connect(str(harness.db_path)) as conn:
+                assert conn.execute(
+                    "SELECT delivery_status FROM ticket_decision_messages "
+                    "WHERE decision_id='decision-test'"
+                ).fetchone()[0] == "queued"
+                reconciled = ticket_data.read_ticket(conn, "t_failed")
+                assert reconciled.worker_step_claim is not WorkerStepClaim.errored
+                if action == "accepted":
+                    assert reconciled.stage == "done"
+            backend.writes_wait_for_release.set()
+            await ending
+            await reconcile()
+            with connect(str(harness.db_path)) as conn:
+                assert conn.execute(
+                    "SELECT delivery_status FROM ticket_decision_messages "
+                    "WHERE decision_id='decision-test'"
+                ).fetchone()[0] == "delivered"
+                reconciled = ticket_data.read_ticket(conn, "t_failed")
+                assert reconciled.worker_step_claim is not WorkerStepClaim.errored
+                if action == "accepted":
+                    assert reconciled.stage == "done"
+            assert sum(text.count(decision_text) for text in backend.written_texts()) == 1
+        finally:
+            backend.writes_wait_for_release.set()
+            await ending
+
+    _run(exercise)

@@ -7,7 +7,7 @@
   import type { AgentHoldFacts } from "../lib/workAttentionPresentation";
 
   let {
-    locale, machineId, machine = true,
+    locale, machineId, machine = true, hideHomeMachine = false,
     title,
     signal = undefined,
     conversationId = null,
@@ -24,6 +24,8 @@
     locale?: TicketLocale;
     machineId?: string;
     machine?: boolean;
+    /** The sidebar leaves the home machine's mark off; other machines keep theirs. */
+    hideHomeMachine?: boolean;
     title: string;
     signal?: Partial<ConversationSignal>;
     conversationId?: string | null;
@@ -44,7 +46,7 @@
 
 {#snippet content()}
   {#if lead}<span class="ticket-row-lead">{@render lead()}</span>{/if}
-  <span class="ticket-row-title">{#if locale && machine}<MachineIdentity {locale} {machineId} showName />{/if}<span class="ticket-row-text">{title}</span></span>
+  <span class="ticket-row-title">{#if locale && machine}<MachineIdentity {locale} {machineId} showName hideWhenHome={hideHomeMachine} />{/if}<span class="ticket-row-text">{title}</span></span>
   <!-- The mark column says what matters most about the row (owner): the Review icon in the accent
        when it waits on your approval, before an unread message's dot; the icon greyed when it
        waits on an agent's approval and nothing else is showing; otherwise the dot or the

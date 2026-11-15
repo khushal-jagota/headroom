@@ -191,8 +191,16 @@ def _unit_is_retired(unit: str) -> bool:
         return False
 
 
-def stop_recorded_child(identity: LocalChildIdentity, host: str | None) -> bool:
+def stop_recorded_child(
+    identity: LocalChildIdentity, host: str | None, *, ticket_worker: bool = False
+) -> bool:
     """Explicit Stop owns only the exact durable child or Worker service, never an inventory."""
+    if (sys.platform == "linux" and ticket_worker
+        and identity.supervision_record is None and identity.unit is None):
+        # Stop the known root when possible, but its absence cannot prove that no
+        # detached Worker descendants remain on the same boot.
+        stop_recorded_child(identity, host)
+        return recorded_boot_ended(host, identity.boot)
     if identity.supervision_record is not None:
         from planner.worker_supervision import records, stop_record
 
@@ -382,15 +390,26 @@ def write_retired(conn: sqlite3.Connection, conversation_id: str, generation: st
     )
 
 
+def is_ticket_conversation(conn: sqlite3.Connection, conversation_id: str) -> bool:
+    return conn.execute(
+        "SELECT 1 FROM ticket_conversations WHERE conversation_id=? "
+        "UNION ALL SELECT 1 FROM tickets WHERE conversation_id=? "
+        "UNION ALL SELECT 1 FROM ticket_workspace_conversations WHERE conversation_id=? LIMIT 1",
+        (conversation_id, conversation_id, conversation_id),
+    ).fetchone() is not None
+
+
 def retirement_proven(conn: sqlite3.Connection, conversation_id: str) -> bool:
     row = conn.execute(
         "SELECT * FROM conversation_child_custody WHERE conversation_id=?",
         (conversation_id,),
     ).fetchone()
-    return row is not None and retirement_row_proven(row)
+    return row is not None and retirement_row_proven(
+        row, ticket_worker=is_ticket_conversation(conn, conversation_id)
+    )
 
 
-def retirement_row_proven(row: sqlite3.Row) -> bool:
+def retirement_row_proven(row: sqlite3.Row, *, ticket_worker: bool = False) -> bool:
     """Inspect the exact snapshot that the caller will later compare under its writer lock."""
     if row["state"] == "retired":
         return True
@@ -400,6 +419,10 @@ def retirement_row_proven(row: sqlite3.Row) -> bool:
             from planner.worker_supervision import inspect_record
 
             return inspect_record(Path(path)).complete
+        return recorded_boot_ended(row["host"], row["boot"])
+    if (sys.platform == "linux" and ticket_worker
+        and row["supervision_record"] is None and row["unit"] is None):
+        # An absent root says nothing about unobserved, detached Worker children.
         return recorded_boot_ended(row["host"], row["boot"])
     if (
         not isinstance(row["pid"], int)

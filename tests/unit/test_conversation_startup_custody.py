@@ -62,9 +62,11 @@ def _wait(predicate: Callable[[], bool], process: subprocess.Popen[str]) -> None
 
 
 @pytest.mark.skipif(sys.platform != 'linux', reason='Real Linux crash and exact pidfd cleanup')
-@pytest.mark.parametrize('record_identity', [True, False])
+@pytest.mark.parametrize(
+    'record_identity,ticket_worker', [(True, False), (False, False), (True, True)]
+)
 def test_crash_before_protocol_startup_retains_process_custody(
-    tmp_path: Path, record_identity: bool,
+    tmp_path: Path, record_identity: bool, ticket_worker: bool,
 ) -> None:
     """Real spawn/DB/crash boundary: a fake child cannot prove surviving process custody."""
     (tmp_path / 'stub.py').write_text(
@@ -93,6 +95,10 @@ def test_crash_before_protocol_startup_retains_process_custody(
                         "SELECT state FROM conversation_child_custody WHERE conversation_id='c'"
                     ).fetchone() == ('started',))
             _wait(recorded, process)
+            if ticket_worker:
+                from tests.unit.test_conversation_system import _link_worker_ticket
+
+                _link_worker_ticket(tmp_path / 'home.db', 'c')
         process.send_signal(signal.SIGKILL)
         process.communicate(timeout=10)
         assert not child_custody.child_is_absent(identity, host.host)
@@ -101,7 +107,16 @@ def test_crash_before_protocol_startup_retains_process_custody(
             harness = _Harness(tmp_path / 'home.db')
             try:
                 assert 'c' in harness.store.blocked_local_conversations
-                if record_identity:
+                if ticket_worker:
+                    with pytest.raises(PlannerError):
+                        await harness.system.kill('c')
+                    assert child_custody.child_is_absent(identity, host.host)
+                    assert not await harness.store.retire_idle_recorded_source('c')
+                    await harness.system.send(
+                        'c', text_message_content('replacement'), sender_label='owner',
+                    )
+                    assert harness.spawned_conversation_ids == []
+                elif record_identity:
                     await harness.system.kill('c')
                     assert child_custody.child_is_absent(identity, host.host)
                     assert isinstance(await harness.system.send(
@@ -143,6 +158,43 @@ def test_identity_free_retirement_requires_same_host_and_new_boot(
         monkeypatch.setattr(child_custody, 'host_boot_identity',
                             lambda host=host, boot=boot: LocalHostBootIdentity(host, boot))
         assert child_custody.retirement_row_proven(row) == expected
+    conn.close()
+
+
+def test_legacy_worker_retirement_needs_new_boot_or_unit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from planner.conversation.local_child_contracts import LocalHostBootIdentity
+
+    monkeypatch.setattr(sys, 'platform', 'linux')
+    conn = sqlite3.connect(':memory:')
+    conn.row_factory = sqlite3.Row
+    conn.execute('CREATE TABLE custody(state,supervision_record,host,boot,pid,birth,unit)')
+    conn.execute("INSERT INTO custody VALUES('started',NULL,'home','old',123,'birth',NULL)")
+    row = conn.execute('SELECT * FROM custody').fetchone()
+    monkeypatch.setattr(child_custody, 'child_is_absent', lambda *_: True)
+    monkeypatch.setattr(child_custody, 'host_boot_identity',
+                        lambda: LocalHostBootIdentity('home', 'old'))
+    assert child_custody.retirement_row_proven(row)
+    assert not child_custody.retirement_row_proven(row, ticket_worker=True)
+    monkeypatch.setattr(child_custody, 'host_boot_identity',
+                        lambda: LocalHostBootIdentity('home', 'new'))
+    assert child_custody.retirement_row_proven(row, ticket_worker=True)
+    conn.execute("UPDATE custody SET unit='unit', boot='new'")
+    assert child_custody.retirement_row_proven(
+        conn.execute('SELECT * FROM custody').fetchone(), ticket_worker=True
+    )
+    conn.close()
+
+
+def test_deleted_ticket_workspace_keeps_worker_custody_classification() -> None:
+    conn = sqlite3.connect(':memory:')
+    conn.execute('CREATE TABLE tickets(conversation_id)')
+    conn.execute('CREATE TABLE ticket_conversations(conversation_id)')
+    conn.execute('CREATE TABLE ticket_workspace_conversations(conversation_id)')
+    conn.execute("INSERT INTO ticket_workspace_conversations VALUES ('old-worker')")
+    assert child_custody.is_ticket_conversation(conn, 'old-worker')
+    assert not child_custody.is_ticket_conversation(conn, 'manager')
     conn.close()
 
 
