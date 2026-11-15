@@ -19,6 +19,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, cast
 from unittest.mock import patch
+from uuid import UUID
 
 import pytest
 from tests.support.executor_presence import lease_request, mac_identity, make_current
@@ -761,8 +762,12 @@ def _machine_runs_exchange(
             retained = owners[1].recover(children[1])
             assert retained is not None
             owners[0].store.close_child(children[1], NOW + 2)
+            cleanup = await _cleanup_recheck_exchange(
+                path, registry, machines, children[1], ticket
+            )
             return dict(
                 before=before,
+                cleanup=cleanup,
                 loaded=loaded,
                 named_only=named_only,
                 unknown_present=unknown_present,
@@ -822,6 +827,22 @@ def _machine_runs_exchange(
     assert actual["refused_destinations"] == [True, True]
     assert actual["choices"] == [*machines, "local"]
     assert [wait["machine_id"] for wait in actual["tagged_stalls"]] == [machines[1]]
+    cleanup = actual["cleanup"]
+    assert cleanup["held"] == [True] * 5 and all(cleanup["budgets"])
+    assert cleanup["blocked"]["complete"] and cleanup["recent"]["complete"]
+    assert not any(cleanup[key]["complete"] for key in (
+        "wrong_ticket", "missing_source", "mailbox_refused", "refused", "incomplete",
+        "no_result", "expired", "unreachable",
+    ))
+    assert cleanup["wrong_machine"] == "agent_forbidden"
+    for command in cleanup["requests"]:
+        assert command["child"] == {
+            **wire.as_object(children[1]),
+            "executor_incarnation": replacement.identity.executor_incarnation,
+        }
+        assert command["arguments"] == {
+            "kind": "recheck_cleanup", "source": wire.as_object(children[1]), "ticket_id": ticket,
+        }
     report = request.config.getoption("--compare-report-dir", default=None)
     if report:
         target = Path(report) / "unit22-machine-runs.json"
@@ -830,3 +851,130 @@ def _machine_runs_exchange(
             dict(seconds=time.perf_counter() - began, expected=expected, actual=actual),
             indent=2,
         ))
+
+
+async def _cleanup_recheck_exchange(
+    path: Path, registry: VpsExecutorRegistry, machines: list[str],
+    source: ChildReference, ticket: str,
+) -> dict[str, Any]:
+    endpoint = registry.get(machines[1])
+    other = registry.get(machines[0])
+    assert endpoint is not None and other is not None
+    presence, mailbox = endpoint.presence, endpoint.mailbox
+    presence._clock = other.presence._clock = mailbox._clock = lambda: NOW
+    base = presence.record()
+    assert base is not None and base.lease is not None
+    requests: list[dict[str, Any]] = []
+    ids: list[str] = []
+    budgets: list[bool] = []
+    current = presence.current_identity()
+    assert current is not None
+    result: dict[str, Any] = {}
+    result["wrong_ticket"] = await registry.recheck_cleanup(source, "missing-ticket")
+    result["missing_source"] = await registry.recheck_cleanup(
+        replace(source, child_id="missing-child"), ticket
+    )
+    try:
+        await other.runs.recheck_cleanup(source, ticket)
+    except PlannerError as error:
+        result["wrong_machine"] = error.code.value
+    result["mailbox_refused"] = await endpoint.runs.recheck_cleanup(source, "missing-ticket")
+    presence._clock = lambda: NOW + 61_000
+    try:
+        result["unreachable"] = await registry.recheck_cleanup(source, ticket)
+    finally:
+        presence._clock = lambda: NOW
+    original_put, original_wait, original_drain = (
+        mailbox.put_child_command, mailbox.wait_result, presence.wait_until_drained
+    )
+
+    async def execute(mode: str) -> Any:
+        entered = asyncio.Event()
+        reply: wire.CommandResult | None = None
+
+        async def put(command: wire.ChildCommand) -> Any:
+            nonlocal reply
+            placed = await original_put(command)
+            assert isinstance(placed, wire.MailboxCommand)
+            assert str(UUID(command.command_id)) == command.command_id
+            assert command.command_id not in ids
+            ids.append(command.command_id)
+            requests.append({
+                **wire.as_object(command), "command_id": f"cleanup-command-{len(ids)}",
+            })
+            await mailbox.poll(current, 0, 0)
+            outcome = wire.CommandOutcome(
+                command.command_id, command.child,
+                wire.CommandDisposition.refused if mode == "refused"
+                else wire.CommandDisposition.succeeded,
+                {"complete": mode != "incomplete", "reason": "fixture cleanup"},
+            )
+            reply = wire.CommandResult(command.command_id, outcome)
+            await mailbox.record_results(
+                current, wire.CommandOutcomeReport((reply,))
+            )
+            row = mailbox.command_row(command.command_id)
+            assert row is not None and row.result is not None
+            assert row.command.command_id == row.result.command_id == command.command_id
+            assert row.result.child_outcome is not None
+            assert row.result.child_outcome.command_id == command.command_id
+            return placed
+
+        async def wait(command_id: str, timeout_seconds: float | None = None) -> Any:
+            assert timeout_seconds is not None
+            budgets.append(0 <= timeout_seconds <= 30)
+            if mode == "no_result":
+                return None
+            if mode == "expired":
+                return reply
+            return await original_wait(command_id, timeout_seconds)
+
+        async def drain(conversation_id: str) -> None:
+            entered.set()
+            await original_drain(conversation_id)
+
+        with (
+            patch.object(mailbox, "put_child_command", put),
+            patch.object(mailbox, "wait_result", wait),
+            patch.object(presence, "wait_until_drained", drain),
+            patch("planner.executor.vps_runs.CLEANUP_RECHECK_TIMEOUT_SECONDS",
+                  -1 if mode == "expired" else 30),
+        ):
+            if mode == "blocked":
+                presence._record = replace(base, last_lease_at_ms=NOW - 26_000)
+            task = asyncio.create_task(registry.recheck_cleanup(source, ticket))
+            if mode == "blocked":
+                await entered.wait()
+                held = [not task.done()]
+                lease = base.lease
+                assert lease is not None
+                for changed in (
+                    replace(lease, waiting_conversations_truncated=True),
+                    replace(lease, waiting_conversations=(wire.WaitingConversation(
+                        source.conversation_id, 1),)),
+                    replace(lease, cleanup_uncertainties=(wire.WorkerCleanupUncertainty(
+                        ticket, source.conversation_id, "still pending"),)),
+                    replace(lease, identity=replace(lease.identity, executor_incarnation=
+                            "99999999-9999-4999-8999-999999999999")),
+                ):
+                    presence._record = replace(base, last_lease_at_ms=NOW, lease=changed)
+                    presence._wake_drains()
+                    await asyncio.sleep(0)
+                    held.append(not task.done())
+                presence._record = base
+                presence._wake_drains()
+                result["held"] = held
+            return await task
+
+    try:
+        for mode in ("refused", "incomplete", "no_result", "blocked", "recent", "expired"):
+            result[mode] = await execute(mode)
+        result["requests"], result["budgets"] = requests, budgets
+        return result
+    finally:
+        presence._record = base
+        with closing(connect(str(path))) as conn:
+            conn.executemany(
+                "DELETE FROM executor_commands WHERE command_id=?", [(key,) for key in ids]
+            )
+            conn.commit()

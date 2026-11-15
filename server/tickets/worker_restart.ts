@@ -3,6 +3,8 @@ import { PlannerError, type Principal } from '../core/contracts.ts';
 import type { Database, ReadSql, TransactionSql } from '../core/database/contracts.ts';
 import type { ConversationSystem } from '../conversation/contracts.ts';
 import { now_ms } from '../executor/clock.ts';
+import { HOME_MACHINE_ID, ORIGINAL_MAC_MACHINE_ID } from '../execution_identity.ts';
+import { read_machine } from '../machines/data.ts';
 import type { WorkerStepStartResult } from '../runtime/worker_step_readiness_loop.ts';
 import * as conversation_start from '../runtime/conversation_start.ts';
 import * as worker_step_readiness from '../runtime/worker_step_readiness.ts';
@@ -25,12 +27,18 @@ export function require_restartable(
       stage: ticket.stage,
     });
   }
-  if (ticket.locale === 'macos' && !locale_configuration.mac_is_present(sql, now_ms())) {
-    throw new PlannerError(
-      'validation',
-      `${locale_configuration.WAITING_FOR_THE_MAC}: restart this Ticket once it is back`,
-      { ticket_id },
-    );
+  if (
+    ticket.machine_id !== HOME_MACHINE_ID &&
+    !locale_configuration.mac_is_present(sql, now_ms(), ticket.machine_id)
+  ) {
+    const destination = read_machine(sql, ticket.machine_id);
+    const waiting =
+      ticket.machine_id === ORIGINAL_MAC_MACHINE_ID && destination.name === 'Mac'
+        ? locale_configuration.WAITING_FOR_THE_MAC
+        : `Waiting for ${destination.name}`;
+    throw new PlannerError('validation', `${waiting}: restart this Ticket once it is back`, {
+      ticket_id,
+    });
   }
   return ticket;
 }
