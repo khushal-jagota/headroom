@@ -12,15 +12,24 @@ import type {
 } from '@agentclientprotocol/sdk/unstable';
 import type * as Rpc from '../../../node_modules/@agentclientprotocol/sdk/dist/core/jsonrpc.js';
 import type * as Validators from '../../../node_modules/@agentclientprotocol/sdk/dist/v1/unstable/schema/zod.gen.js';
+import type { BackendEventSink } from '../contracts.ts';
+import { WorkerSupervisor } from '../../../worker_supervision/index.ts';
+import type { WorkerSupervisionRuntime } from '../../../worker_supervision/runtime.ts';
+import { local_process_identity } from '../../../worker_supervision/identity.ts';
+import { WorkerScratch } from '../../worker_scratch.ts';
+import type { LocalChildIdentity } from '../../local_child_contracts.ts';
 import { BackendAdapterError, BackendSpawnFailed } from '../contracts.ts';
 import { spawn_codex_process } from '../codex_app_server/process.ts';
+import { STOP_SECONDS } from '../../../worker_supervision/config.ts';
+import { monotonic_seconds } from '../../../lifecycle/configuration.ts';
+import { observe_shutdown } from '../../shutdown.ts';
 import { observe_promise } from '../../../core/promise_observer.ts';
 import type { OwnedCodexProcess } from '../codex_app_server/process.ts';
 import type { ResolvedConversationStart } from '../../contracts.ts';
 import { child_environment } from './launch.ts';
 import { require_strict_session_notification } from './strict_updates.ts';
 import type { AcpChildLaunch } from './launch.ts';
-import type { OwnedChildProcesses } from '../../../lifecycle/contracts.ts';
+import type { OwnedChildProcesses, StopOptions } from '../../../lifecycle/contracts.ts';
 import {
   CHILD_OUTPUT_LINE_LIMIT_BYTES,
   STANDARD_ERROR_TAIL_MAXIMUM_CHARACTERS,
@@ -357,14 +366,29 @@ export class HermesAcpClient {
 /** Launch ownership exists before startup, so shutdown can seal an in-flight spawn. */
 export class HermesAcpLauncher {
   private readonly child_processes: OwnedChildProcesses;
-  constructor(child_processes: OwnedChildProcesses) {
+  private readonly worker_supervision: WorkerSupervisionRuntime | undefined;
+  private readonly custody_sink: BackendEventSink | undefined;
+  constructor(
+    child_processes: OwnedChildProcesses,
+    worker_supervision?: WorkerSupervisionRuntime,
+    custody_sink?: BackendEventSink,
+  ) {
     this.child_processes = child_processes;
+    this.worker_supervision = worker_supervision;
+    this.custody_sink = custody_sink;
   }
+  private supervisor: WorkerSupervisor | null = null;
+  private scratch: WorkerScratch | null = null;
+  private identity: LocalChildIdentity | null = null;
+  private registration: Promise<void> = Promise.resolve();
+  private cleanup: Promise<void> | null = null;
+  private supervision_settlement: Promise<void> = Promise.resolve();
   private sealed = false;
   private owned: OwnedCodexProcess | null = null;
   private client: HermesAcpClient | null = null;
   private starting: Promise<HermesAcpClient> | null = null;
   private stopping: Promise<void> | null = null;
+  private stop_options: StopOptions | undefined;
   private readonly error_lines: string[] = [];
   private error_line_characters = 0;
   private error_partial = '';
@@ -390,12 +414,57 @@ export class HermesAcpLauncher {
     handlers: HermesAcpHandlers,
   ): Promise<HermesAcpClient> {
     try {
-      const owned = await spawn_codex_process(launch.argv, {
+      const environment = child_environment(launch, resolved_start);
+      const identity = Object.fromEntries(
+        resolved_start.role_materials?.identity_environment_variables ?? [],
+      );
+      if (identity.PLAN_TICKET_ID) {
+        if (!this.worker_supervision) throw new Error('Worker supervision is required');
+        this.supervisor = await WorkerSupervisor.create(
+          environment,
+          resolved_start.workspace_folder,
+          {
+            runtime: this.worker_supervision,
+          },
+        );
+        if (this.supervisor !== null) Object.assign(environment, this.supervisor.environment);
+        this.scratch = await WorkerScratch.create(environment, { processes: this.child_processes });
+        Object.assign(environment, this.scratch.environment);
+        if (this.supervisor !== null) {
+          Object.assign(this.supervisor.environment, environment);
+          await this.custody_sink?.record_local_child_supervision?.(this.supervisor.path);
+        }
+      }
+      if (this.sealed) throw new Error('this child is being shut down');
+      const argv = this.supervisor?.argv(launch.argv) ?? launch.argv;
+      const owned = await spawn_codex_process(argv, {
         child_processes: this.child_processes,
-        environment: child_environment(launch, resolved_start),
+        on_created: (owned) => {
+          this.owned = owned;
+          if (owned.child.pid !== undefined && this.supervisor !== null) {
+            this.registration = this.supervisor.spawned(owned.child.pid);
+            void this.registration.catch(() => {});
+          }
+        },
+        environment,
         working_directory: resolved_start.workspace_folder,
       });
       this.owned = owned;
+      await this.registration;
+      if (owned.child.pid === undefined && this.supervisor !== null)
+        throw new Error('Worker process PID is unavailable');
+      if (owned.child.pid !== undefined) {
+        if (this.supervisor !== null) {
+          await this.supervisor.started(owned.child.pid);
+          this.identity = await this.supervisor.identity();
+        } else if (this.worker_supervision) {
+          this.identity = await local_process_identity(owned.child.pid, this.worker_supervision);
+        }
+      }
+      if (this.custody_sink?.record_local_child_custody) {
+        if (this.identity === null) throw new Error('Cannot establish the Hermes process identity');
+        await this.custody_sink.record_local_child_custody(this.identity);
+      }
       if (this.sealed) throw new Error('this child is being shut down');
       const decoder = new StringDecoder('utf8');
       const keep_stderr = (text: string, ended = false) => {
@@ -475,13 +544,18 @@ export class HermesAcpLauncher {
       this.client = client;
       // stdout can still contain a final reply when the direct child exits. Let
       // the SDK drain it in order, with a bound for pipes held by descendants.
-      void owned.exited.then(async () => {
-        if (
-          !(await observe_promise(client.closed, ANSWER_ON_THE_WIRE_TIMEOUT_SECONDS * 1000))
-            .completed
-        )
-          client.close(new Error('the backend process ended'));
-      });
+      void owned.exited
+        .then(async () => {
+          if (
+            !(await observe_promise(client.closed, ANSWER_ON_THE_WIRE_TIMEOUT_SECONDS * 1000))
+              .completed
+          )
+            client.close(new Error('the backend process ended'));
+          await this.stop_owned();
+        })
+        .catch((error: unknown) => {
+          client.close(error);
+        });
       void owned.output_failed.then((error) => {
         client.close(error);
         try {
@@ -493,6 +567,8 @@ export class HermesAcpLauncher {
       return client;
     } catch (error) {
       try {
+        await this.registration.catch(() => {});
+        if (this.owned?.child.pid === undefined) await this.supervisor?.cancel_unspawned();
         await this.stop_owned();
       } catch {
         // Cleanup reports its own failure. Startup preserves its original failure.
@@ -517,18 +593,33 @@ export class HermesAcpLauncher {
       .slice(-STANDARD_ERROR_TAIL_MAXIMUM_CHARACTERS)
       .join('');
   }
-  stop(): Promise<void> {
+  async local_child_identity(): Promise<LocalChildIdentity | null> {
+    await this.registration;
+    return this.identity;
+  }
+  async settled(): Promise<void> {
+    await this.starting?.catch(() => {});
+    await this.stopping?.catch(() => {});
+    await this.cleanup?.catch(() => {});
+    await this.supervisor?.shutdown_settled;
+    await this.supervision_settlement;
+    await this.owned?.exited;
+  }
+  stop(options?: StopOptions): Promise<void> {
     this.sealed = true;
     if (!this.stopping) {
-      const stopping = this.finish_stop();
+      this.stop_options = options ?? { deadline: monotonic_seconds() + STOP_SECONDS };
+      const stopping = this.finish_stop(this.stop_options);
       this.stopping = stopping;
       void stopping.catch(() => {
         if (this.stopping === stopping) this.stopping = null;
       });
     }
-    return this.stopping;
+    return options === undefined
+      ? this.stopping
+      : observe_shutdown(this.stopping, options, 'Hermes cleanup remains unconfirmed');
   }
-  private async finish_stop(): Promise<void> {
+  private async finish_stop(options?: StopOptions): Promise<void> {
     this.client?.close();
     try {
       await this.starting;
@@ -536,9 +627,18 @@ export class HermesAcpLauncher {
       /* Startup owns its own reported failure. */
     }
     this.client?.close();
-    await this.stop_owned();
+    await this.stop_owned(options);
   }
-  private async stop_owned(): Promise<void> {
+  private stop_owned(options?: StopOptions): Promise<void> {
+    if (this.cleanup !== null) return this.cleanup;
+    const cleanup = this.cleanup_owned(options ?? this.stop_options ?? { deadline: monotonic_seconds() + STOP_SECONDS });
+    this.cleanup = cleanup;
+    void cleanup.catch(() => {
+      if (this.cleanup === cleanup) this.cleanup = null;
+    });
+    return cleanup;
+  }
+  private async cleanup_owned(options?: StopOptions): Promise<void> {
     if (this.stderr_reader_failure !== null && !this.stderr_failure_reported) {
       this.stderr_failure_reported = true;
       try {
@@ -548,7 +648,17 @@ export class HermesAcpLauncher {
       }
     }
     try {
-      await this.owned?.stop();
+      const supervisor = this.supervisor;
+      if (supervisor !== null) {
+        const result = await supervisor.stop(async () => {
+          await this.owned?.stop(options);
+        }, options);
+        this.supervision_settlement = supervisor.shutdown_settled;
+        if (!result.complete) throw new Error(result.reason);
+        this.supervisor = null;
+      } else await this.owned?.stop(options);
+      await this.scratch?.close();
+      this.scratch = null;
     } catch (error) {
       const failure = new BackendAdapterError('the Hermes process did not stop', { cause: error });
       if (!this.cleanup_failure_reported) {

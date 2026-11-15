@@ -17,6 +17,7 @@ import type { MacHttpOptions } from '../transport/contracts.ts';
 import type { ExecutorIdentity, MacUpdateCheck } from '../../wire.generated.ts';
 import type { GatewayOutbox } from '../ipc/outbox.ts';
 import type { mac_runtime_settings } from '../../../core/config.ts';
+import type { WorkerSupervisionRuntime } from '../../../worker_supervision/runtime.ts';
 
 export interface MacOwnedService {
   stop(options: StopOptions): Promise<void>;
@@ -35,6 +36,7 @@ export interface MacAgentProcesses extends MacOwnedService {
 export interface MacInvocation {
   readonly child_processes: OwnedChildProcesses;
   readonly one_shot_children: OwnedOneShotChildren;
+  readonly worker_supervision: WorkerSupervisionRuntime;
 }
 export interface MacHostContext extends MacInvocation {
   readonly identity: import('../../../execution_identity.ts').ExecutorIdentity;

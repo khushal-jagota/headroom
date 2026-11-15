@@ -1,3 +1,4 @@
+import type { WorkerSupervisionRuntime } from '../../../worker_supervision/runtime.ts';
 import { ChildProcesses } from '../../../lifecycle/owned_processes.ts';
 import { afterEach, expect, test, vi } from 'vitest';
 import { BackendPromptAccepted } from '../contracts.ts';
@@ -41,7 +42,7 @@ test('stop after a successful prompt write cannot turn acceptance into an unwrit
       return client as unknown as HermesAcpClient;
     },
   );
-  vi.spyOn(HermesAcpLauncher.prototype, 'stop').mockResolvedValue();
+  const stop = vi.spyOn(HermesAcpLauncher.prototype, 'stop').mockResolvedValue();
   const resolved = new ResolvedConversationStart({
     conversation_id: 'synthetic',
     backend_key: ConversationBackendKey.hermes,
@@ -54,6 +55,7 @@ test('stop after a successful prompt write cannot turn acceptance into an unwrit
   const seen: string[] = [];
   const child = new HermesAcpBackendChild({
     child_processes: new ChildProcesses(),
+    worker_supervision: {} as WorkerSupervisionRuntime,
     launch: { argv: ['/synthetic'], environment_overrides: [] },
     resolved_start: resolved,
     event_sink: {
@@ -83,7 +85,9 @@ test('stop after a successful prompt write cannot turn acceptance into an unwrit
     });
     expect(seen).not.toContain('AgentMessageDelta');
     written.resolve();
-    await child.stop();
+    const options = { deadline: performance.now() / 1000 + 1 };
+    await child.detach(options);
+    expect(stop).toHaveBeenCalledWith(options);
     await expect(receipt).resolves.toBeInstanceOf(BackendPromptAccepted);
   } finally {
     written.resolve();

@@ -1,25 +1,22 @@
-/** Export-only direct proof. All process and service-manager calls stop at a fence. */
+/** Startup boundary: real owner code, synthetic custody/scratch, and no native child. */
 import { ChildProcesses } from '../../../lifecycle/owned_processes.ts';
 import childProcess from 'node:child_process';
 import { syncBuiltinESMExports } from 'node:module';
+import { fileURLToPath } from 'node:url';
+import { WorkerSupervisionRuntime } from '../../../worker_supervision/runtime.ts';
 
 interface StartupSpec {
-  operation: 'startup';
   ambient: Record<string, string>;
-  cases: {
-    name: string;
-    overrides: [string, string][];
-    identity: [string, string][];
-  }[];
+  cases: { name: string; overrides: [string, string][]; identity: [string, string][] }[];
   launches: {
     name: string;
     argv: string[];
     working_directory: string;
     worker_ticket_id: string | null;
-    unit_directory: string;
+    directory: string;
+    failure: 'spawn' | 'scratch' | 'reporter' | 'version';
   }[];
 }
-
 export async function run_part1_parity(spec: StartupSpec): Promise<unknown> {
   const original_environment = { ...process.env };
   const original_process = {
@@ -32,7 +29,7 @@ export async function run_part1_parity(spec: StartupSpec): Promise<unknown> {
     fork: childProcess.fork,
   };
   const forbidden = (): never => {
-    throw new Error('The startup comparison must not start a process');
+    throw new Error('Unexpected native launch');
   };
   Object.assign(
     childProcess,
@@ -41,10 +38,22 @@ export async function run_part1_parity(spec: StartupSpec): Promise<unknown> {
   syncBuiltinESMExports();
   for (const name of Object.keys(process.env)) delete process.env[name];
   Object.assign(process.env, spec.ambient);
+  const runtime = new WorkerSupervisionRuntime({
+    primitives: {
+      owns_isolated_session_members: false,
+      requires_containment: false,
+      host_boot: forbidden,
+      snapshot: forbidden,
+      is_absent: forbidden,
+      signal: forbidden,
+      prepare_launch: forbidden,
+    },
+  });
   try {
     const { child_environment } = await import('../../backends/codex_app_server/environment.ts');
     const { CodexAppServerClient } = await import('../../backends/codex_app_server/client.ts');
-    const { WorkerUnit } = await import('../../worker_unit/index.ts');
+    const { WorkerSupervisor } = await import('../../../worker_supervision/service.ts');
+    const { WorkerScratch } = await import('../../worker_scratch.ts');
     const cases = spec.cases.map((item) => {
       try {
         return { name: item.name, environment: child_environment(item), error: null };
@@ -55,46 +64,73 @@ export async function run_part1_parity(spec: StartupSpec): Promise<unknown> {
     });
     const launches = [];
     for (const item of spec.launches) {
-      const calls: unknown[] = [];
-      let unit_stops = 0;
-      const original_create = WorkerUnit.create;
-      WorkerUnit.create = async (environment, working_directory, ownership) => {
-        calls.push({ operation: 'unit-create', environment, working_directory });
-        const temporary = `${item.unit_directory}/t`;
-        const unit = new WorkerUnit({
-          child_processes: ownership.child_processes,
-          name: 'panels-worker-' + '1'.repeat(32) + '.service',
-          directory: item.unit_directory,
-          environment: { ...environment, TMPDIR: temporary, TMP: temporary, TEMP: temporary },
+      const calls: Record<string, unknown>[] = [];
+      const original_create = WorkerSupervisor.create,
+        original_scratch = WorkerScratch.create;
+      WorkerSupervisor.create = async (environment, working_directory) => {
+        calls.push({
+          operation: 'supervisor-create',
+          environment: { ...environment },
           working_directory,
-          slice_name: 'unit17-synthetic.slice',
         });
-        Object.assign(unit, {
-          stop: async () => {
-            unit_stops += 1;
+        const supervisor = Object.assign(
+          Object.create(WorkerSupervisor.prototype) as WorkerSupervisor,
+          {
+            path: `${item.directory}/record.json`,
+            working_directory,
+            environment: { ...environment, PLAN_WORKER_PROCESS_ROOT: item.directory },
+            cancel_unspawned: async () => {
+              calls.push({ operation: 'cancel-unspawned' });
+            },
+            stop: async () => {
+              calls.push({ operation: 'supervisor-stop' });
+              return { complete: true, reason: 'no child', scope: 'synthetic' };
+            },
+            settled: async () => {},
           },
-        });
-        return unit;
+        );
+        Object.defineProperty(supervisor, 'shutdown_settled', { value: Promise.resolve() });
+        return supervisor;
+      };
+      WorkerScratch.create = async (environment) => {
+        calls.push({ operation: 'scratch-create', environment: { ...environment } });
+        if (item.failure === 'scratch') throw new Error('synthetic scratch failure');
+        const temporary = `${item.directory}/scratch`;
+        return {
+          directory: temporary,
+          environment: { ...environment, TMPDIR: temporary, TMP: temporary, TEMP: temporary },
+          close: async () => {
+            calls.push({ operation: 'scratch-close' });
+          },
+        } as WorkerScratch;
       };
       childProcess.spawn = ((
         command: string,
         args: readonly string[],
-        options: {
-          env: Record<string, string>;
-          cwd: string;
-        },
+        options: { env: Record<string, string>; cwd: string },
       ): never => {
         calls.push({
           operation: 'spawn',
           argv: [command, ...args],
-          environment: options.env,
+          environment: { ...options.env },
           working_directory: options.cwd,
         });
+        if (item.worker_ticket_id) {
+          const expected = [
+            process.execPath,
+            fileURLToPath(new URL('../../../worker_supervision/launch.ts', import.meta.url)),
+            `${item.directory}/record.json`,
+            ...item.argv,
+          ];
+          if (JSON.stringify([command, ...args]) !== JSON.stringify(expected))
+            throw new Error('Wrong raw Node bootstrap argv');
+        }
         throw new Error('synthetic stop before spawn');
-      }) as unknown as typeof childProcess.spawn;
+      }) as typeof childProcess.spawn;
       syncBuiltinESMExports();
       const client = new CodexAppServerClient({
         child_processes: new ChildProcesses(),
+        worker_supervision: runtime,
         description: 'startup-parity',
         handler: {
           async on_notification() {},
@@ -108,23 +144,39 @@ export async function run_part1_parity(spec: StartupSpec): Promise<unknown> {
           environment: Record<string, string>,
           working_directory: string,
         ) => {
-          calls.push({ operation: 'version', executable, environment, working_directory });
+          calls.push({
+            operation: 'version',
+            executable,
+            environment: { ...environment },
+            working_directory,
+          });
+          if (item.failure === 'version') throw new Error('synthetic version failure');
         },
       });
+      let failure: string | null = null;
       try {
-        await client.start({ ...item, environment: child_environment() });
+        await client.start({
+          ...item,
+          environment: child_environment(),
+          supervision_reporter: async (path) => {
+            calls.push({ operation: 'supervision-report', path });
+            if (item.failure === 'reporter') throw new Error('synthetic reporter failure');
+          },
+        });
       } catch (error) {
-        if (!(error instanceof Error) || error.message !== 'synthetic stop before spawn')
-          throw error;
+        if (!(error instanceof Error)) throw error;
+        failure = error.message;
       } finally {
-        WorkerUnit.create = original_create;
+        WorkerSupervisor.create = original_create;
+        WorkerScratch.create = original_scratch;
         childProcess.spawn = forbidden as typeof childProcess.spawn;
         syncBuiltinESMExports();
       }
-      launches.push({ name: item.name, calls, unit_stops });
+      launches.push({ name: item.name, calls, failure });
     }
     return { cases, launches, provider_processes_started: 0, service_manager_calls: 0 };
   } finally {
+    await runtime.close();
     Object.assign(childProcess, original_process);
     syncBuiltinESMExports();
     for (const name of Object.keys(process.env)) delete process.env[name];

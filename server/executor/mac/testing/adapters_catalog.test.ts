@@ -11,6 +11,7 @@ import { ModelCatalogCleanupFailed } from '../../../conversation/backends/catalo
 import { probe_codex_model_catalog } from '../../../conversation/backends/codex_app_server/model_catalog.ts';
 import type { OwnedChildProcesses, OwnedOneShotChildren } from '../../../lifecycle/contracts.ts';
 import { OneShotChildren } from '../../../lifecycle/one_shot_children.ts';
+import { create_worker_supervision_runtime } from '../../../worker_supervision/composition.ts';
 import { RecordingBackendProbeEnvironment } from '../../../conversation/snapshot/recording_environment.ts';
 import { create_mac_catalog } from '../catalog/production.ts';
 import { create_mac_adapter_host } from '../adapters.ts';
@@ -201,6 +202,7 @@ it('distinguishes an unavailable handshake from failed query cleanup and retains
   } as never);
   const child_processes = invocation_children(),
     one_shot_children = new OneShotChildren(child_processes);
+  const worker_supervision = create_worker_supervision_runtime({ one_shot_children });
   const environment = new RecordingBackendProbeEnvironment();
   environment.executables.set('claude', '/synthetic/claude');
   environment.outcomes.set(JSON.stringify(['/synthetic/claude', '--version']), {
@@ -218,6 +220,7 @@ it('distinguishes an unavailable handshake from failed query cleanup and retains
       panels_server_url: 'http://127.0.0.1:9',
       child_processes,
       one_shot_children,
+      worker_supervision,
       environment: { HOME: '/synthetic', CODEX_HOME: '/synthetic/codex' },
       executable_path: () => '/synthetic/claude',
     }),
@@ -264,6 +267,7 @@ it('distinguishes an unavailable handshake from failed query cleanup and retains
   expect(child_processes.spawn).not.toHaveBeenCalled();
   one_shot_children.seal();
   await one_shot_children.settled();
+  await worker_supervision.close();
 });
 
 it('joins Claude direct exit without waiting for a child close event or signaling its reaped group', async () => {

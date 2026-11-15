@@ -4,6 +4,9 @@ import { PassThrough } from 'node:stream';
 import { afterEach, expect, test, vi } from 'vitest';
 import { CodexAppServerClient, CodexWireFailed } from './client.ts';
 import { stringify_numeric_json } from '../../../core/http/numeric_json.ts';
+import { WorkerSupervisor } from '../../../worker_supervision/service.ts';
+import { WorkerScratch } from '../../worker_scratch.ts';
+import type { WorkerSupervisionRuntime } from '../../../worker_supervision/runtime.ts';
 import { spawn_codex_process } from './process.ts';
 import type { OwnedCodexProcess } from './process.ts';
 
@@ -15,6 +18,7 @@ afterEach(() => vi.restoreAllMocks());
 
 function fake() {
   const child = Object.assign(new EventEmitter(), {
+    pid: 12345,
     exitCode: null as number | null,
     signalCode: null,
     stdin: new PassThrough(),
@@ -63,6 +67,7 @@ async function start() {
   const notifications: unknown[] = [];
   const warnings: string[] = [];
   const ended: string[] = [];
+  const worker_create = vi.spyOn(WorkerSupervisor, 'create');
   const client = new CodexAppServerClient({
     child_processes: new ChildProcesses(),
     description: 'synthetic',
@@ -79,9 +84,10 @@ async function start() {
   });
   await client.start({
     argv: ['/synthetic/codex', 'app-server'],
-    environment: {},
+    environment: { PLAN_TICKET_ID: 'inherited-only' },
     working_directory: '/tmp',
   });
+  expect(worker_create).not.toHaveBeenCalled();
   return { client, wire, notifications, warnings, ended };
 }
 
@@ -302,4 +308,107 @@ test('a natural exit permits a new start without an explicit stop', async () => 
   } finally {
     await client.stop();
   }
+});
+
+
+async function supervised_client() {
+  vi.mocked(spawn_codex_process).mockReset();
+  const version = fake(), wire = fake();
+  const order: string[] = [];
+  let complete = false;
+  const identity = { pid: wire.child.pid, birth: 'birth', boot: 'boot', unit: null, supervision_record: '/private/journal' };
+  const supervisor = {
+    path: '/private/journal', environment: {} as Record<string, string>,
+    argv: (argv: readonly string[]) => ['supervised', ...argv],
+    spawned: vi.fn(async () => { order.push('spawned'); }),
+    started: vi.fn(async () => { order.push('started'); }),
+    identity: vi.fn(async () => identity),
+    cancel_unspawned: vi.fn(async () => { order.push('cancel'); }),
+    stop: vi.fn(async (native_stop?: () => Promise<void>, _options?: { deadline?: number }) => {
+      order.push('stop');
+      if (complete) await native_stop?.();
+      return { complete, reason: complete ? 'complete' : 'not proven', scope: 'synthetic' };
+    }),
+    shutdown_settled: Promise.resolve(),
+  };
+  const scratch = { environment: { TMPDIR: '/private/scratch' }, close: vi.fn(async () => {}) };
+  vi.spyOn(WorkerSupervisor, 'create').mockResolvedValue(supervisor as unknown as WorkerSupervisor);
+  vi.spyOn(WorkerScratch, 'create').mockResolvedValue(scratch as unknown as WorkerScratch);
+  vi.mocked(spawn_codex_process)
+    .mockImplementationOnce(async (_argv, options) => {
+      options.on_created?.(version.owned as unknown as OwnedCodexProcess);
+      setImmediate(() => { version.child.stdout.end('codex-cli 0.166.0\n'); version.finish(); });
+      return version.owned as unknown as OwnedCodexProcess;
+    })
+    .mockImplementationOnce(async (_argv, options) => {
+      order.push('spawn');
+      options.on_created?.(wire.owned as unknown as OwnedCodexProcess);
+      return wire.owned as unknown as OwnedCodexProcess;
+    });
+  const runtime = { clock: () => 10 } as unknown as WorkerSupervisionRuntime;
+  const client = new CodexAppServerClient({ child_processes: new ChildProcesses(),
+    worker_supervision: runtime, description: 'supervised', handler: {
+      async on_notification() {}, async on_server_request() {}, async on_child_ended() {},
+    },
+  });
+  const options = { argv: ['/synthetic/codex', 'app-server'], environment: {}, working_directory: '/private', worker_ticket_id: 't_synthetic',
+    supervision_reporter: vi.fn(async () => { order.push('report'); }),
+    custody_reporter: vi.fn(async () => { order.push('custody'); }),
+  };
+  return { client, options, supervisor, scratch, wire, order, identity, prove: () => { complete = true; } };
+}
+
+test('explicit Worker admission reports custody before success and retains incomplete cleanup through retry', async () => {
+  const f = await supervised_client();
+  const removal = Promise.withResolvers<void>();
+  const native_settled = Promise.withResolvers<void>();
+  f.supervisor.shutdown_settled = native_settled.promise;
+  const deadline = performance.now() / 1000 + 5;
+  try {
+    await f.client.start(f.options);
+    expect(f.order).toEqual(['report', 'spawn', 'spawned', 'started', 'custody']);
+    expect(await f.client.local_child_identity()).toEqual(f.identity);
+    expect(f.options.custody_reporter).toHaveBeenCalledWith(f.identity);
+    await expect(f.client.stop({ deadline })).rejects.toThrow('cleanup remains unproven');
+    expect(f.supervisor.stop.mock.calls[0][1]).toEqual({ deadline });
+    let physically_settled = false;
+    const settling = f.client.settled().then(() => { physically_settled = true; });
+    await Promise.resolve();
+    expect(physically_settled).toBe(false);
+    native_settled.resolve();
+    await settling;
+    expect(f.scratch.close).not.toHaveBeenCalled();
+    await expect(f.client.start(f.options)).rejects.toThrow('cleanup handles');
+    f.prove();
+    const entered = Promise.withResolvers<void>();
+    f.scratch.close.mockImplementation(async () => { entered.resolve(); await removal.promise; });
+    let stopped = false;
+    const stopping = f.client.stop({ deadline }).then(() => { stopped = true; });
+    await entered.promise;
+    expect(stopped).toBe(false);
+    await expect(f.client.start(f.options)).rejects.toThrow('cleanup handles');
+    removal.resolve();
+    await stopping;
+    expect(f.wire.owned.stop).toHaveBeenCalledWith({ deadline });
+  } finally { native_settled.resolve(); removal.resolve(); f.prove(); await f.client.stop(); }
+});
+
+test('failed Worker registration retains its native handle and scratch until cleanup is proven', async () => {
+  const f = await supervised_client();
+  f.supervisor.started.mockRejectedValueOnce(new Error('registration refused'));
+  try {
+    await expect(f.client.start(f.options)).rejects.toThrow('cleanup remains unproven');
+    expect(f.scratch.close).not.toHaveBeenCalled();
+    expect(f.options.custody_reporter).not.toHaveBeenCalled();
+    expect(await f.client.local_child_identity()).toEqual(f.identity);
+  } finally { f.prove(); await f.client.stop(); }
+});
+
+test('an explicit Worker without supervision never starts even a version probe', async () => {
+  vi.mocked(spawn_codex_process).mockReset();
+  const client = new CodexAppServerClient({ child_processes: new ChildProcesses(), description: 'missing-runtime', handler: {
+    async on_notification() {}, async on_server_request() {}, async on_child_ended() {},
+  } });
+  await expect(client.start({ argv: ['/synthetic/codex'], environment: {}, working_directory: '/private', worker_ticket_id: 'explicit' })).rejects.toThrow('supervision is unavailable');
+  expect(spawn_codex_process).not.toHaveBeenCalled();
 });
