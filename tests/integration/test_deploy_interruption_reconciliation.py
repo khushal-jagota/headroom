@@ -310,3 +310,42 @@ def test_unresumable_ticket_recovery_keeps_conversation_status_readable(
         assert conversation.status_code == 200, conversation.text
         tickets = client.get("/api/tickets?detail=summary")
         assert tickets.status_code == 200, tickets.text
+
+
+def test_update_prepares_while_startup_recovery_waits_for_machine(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Exercise server startup, retry admission, and the real update barrier together."""
+    import threading
+
+    from fastapi.testclient import TestClient
+    from tests.unit.test_conversation_system import _FakeBackend
+
+    from planner.conversation.start_admission import AutomaticStartAdmission
+
+    attempted = threading.Event()
+
+    def unavailable(self, request):  # type: ignore[no-untyped-def]
+        attempted.set()
+        return False
+
+    monkeypatch.setattr(AutomaticStartAdmission, "try_start", unavailable)
+    backend = _FakeBackend("interrupted")
+    app, path = _interrupted_server(tmp_path, backend, ticket_owned=False)
+    with TestClient(app) as client:
+        assert attempted.wait(5)
+        system = app.state.conversation_system
+        deadline = time.monotonic() + 5
+        while system.workspace_admission.active and time.monotonic() < deadline:
+            time.sleep(0.01)
+        assert not system.workspace_admission.active
+        assert client.portal is not None
+        while not client.portal.call(system.prepare_update, "now"):
+            assert time.monotonic() < deadline
+            time.sleep(0.01)
+        assert system.workspace_admission.starts_closed
+        assert not backend.writes
+        with connect(str(path)) as conn:
+            assert conn.execute(
+                "SELECT recovery_state FROM deploy_interruptions"
+            ).fetchone()[0] == "awaiting_action"

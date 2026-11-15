@@ -420,7 +420,8 @@ def create_app(
                     )
 
                     async def recover_conversations() -> None:
-                        with conversation.system.workspace_admission.operation() as admitted:
+                        admission = conversation.system.workspace_admission
+                        with admission.operation(starts=True) as admitted:
                             if admitted:
                                 if ticket_integrity_faults:
                                     from planner.tickets.integrity import notify_chief
@@ -437,9 +438,9 @@ def create_app(
                                         notice_conn.close()
                                 system = conversation.system
                                 await system.tell_agents_of_background_tasks_lost_at_restart()
-                                await run_automatic_recovery(
-                                    conversation.system, conversation.store
-                                )
+                        await run_automatic_recovery(
+                            conversation.system, conversation.store
+                        )
 
                     recovery_task = asyncio.create_task(recover_conversations())
                     view_rebuild_task = asyncio.create_task(
