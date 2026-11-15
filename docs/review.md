@@ -31,6 +31,8 @@ On iPhone, Review and its badge share a snapshot of saved outgoing work. Only ch
 
 Review is a primary destination in the browser, with a count, and the initial tab on iPhone. The final page lets Khushal message Chief and revisit skipped items. Its composer shares Chief’s draft and keeps each send tied to its original destination. Check delivery reads the existing attempt without another send. [Notifications](notifications.md) are a separate path. They tell Khushal that something newly needs him, and link to the Ticket.
 
+A file linked from a proposal opens on its own page. At the bottom, that page shows the proposal's decision area (the note, Send back and Approve) in place of the Worker chat. The note Khushal already wrote carries over. After a decision, or on Back, he returns to Review. A reload of the file page loses the link to the proposal, and the page shows the Worker chat. The iPhone app has its own file viewer and does not show this.
+
 ## Decisions that shape it
 
 - **Review is derived, not stored.** It cannot drift from the proposals and messages it shows.
