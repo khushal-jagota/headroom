@@ -62,17 +62,26 @@ def test_machine_upload_staging_paths(tmp_path: Path) -> None:
     """Identical manifests use separate private staging paths, with the legacy path intact."""
     path = tmp_path / "state.sqlite"
     other = "44444444-4444-4444-8444-444444444444"
-    manifest = wire.FileManifest(wire.FileScope.ticket, "t_12345678", "out/result.txt",
-                                 hashlib.sha256(CONTENT).hexdigest(), len(CONTENT))
-    expected = [str(InboxStore(str(path), machine_id=machine)._staged_file(manifest))
-                for machine in (ORIGINAL_MAC_MACHINE_ID, other)]
+    manifest = wire.FileManifest(
+        wire.FileScope.ticket, "t_12345678", "out/result.txt",
+        hashlib.sha256(CONTENT).hexdigest(), len(CONTENT),
+    )
+    expected = [
+        str(InboxStore(str(path), machine_id=machine)._staged_file(manifest))
+        for machine in (ORIGINAL_MAC_MACHINE_ID, other)
+    ]
     homes = create_synthetic_homes(tmp_path)
     run = subprocess.run(
         ["node", str(ROOT / "server/executor/testing/files.ts")],
-        input=json.dumps(dict(scope_only=True, path=str(path), other_machine=other,
-                             manifest=wire.as_object(manifest))),
-        cwd=ROOT, env={**homes, "PATH": os.environ.get("PATH", "/usr/bin:/bin"),
-                       "PLAN_SERVER_URL": "http://127.0.0.1:1"},
+        input=json.dumps(dict(
+            scope_only=True, path=str(path), other_machine=other,
+            manifest=wire.as_object(manifest),
+        )),
+        cwd=ROOT,
+        env={
+            **homes, "PATH": os.environ.get("PATH", "/usr/bin:/bin"),
+            "PLAN_SERVER_URL": "http://127.0.0.1:1",
+        },
         text=True, capture_output=True, timeout=15, check=False,
     )
     assert run.returncode == 0, run.stderr

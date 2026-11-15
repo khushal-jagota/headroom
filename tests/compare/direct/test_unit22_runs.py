@@ -64,8 +64,8 @@ from planner.executor.routing import LocaleBackendChildFactory
 from planner.executor.skills import read_canonical_skill_snapshot
 from planner.executor.vps_mailbox import SqliteCommandMailbox
 from planner.executor.vps_presence import MacPresenceService
-from planner.executor.vps_runs import MacRuns
 from planner.executor.vps_presence_store import accept_lease_in_transaction
+from planner.executor.vps_runs import MacRuns
 from planner.machines.contracts import ORIGINAL_MAC_MACHINE_ID
 from planner.tickets.api import write_create_ticket
 
@@ -201,7 +201,8 @@ def _runs_exchange(
         other = "66666666-6666-4666-8666-666666666666"
         with closing(connect(str(path))) as conn:
             conn.execute(
-                "INSERT INTO machines(machine_id,name,icon,color,is_home) VALUES (?,'Other','server','cyan',0)",
+                "INSERT INTO machines(machine_id,name,icon,color,is_home) "
+                "VALUES (?,'Other','server','cyan',0)",
                 (other,),
             )
             accept_lease_in_transaction(conn, lease_request(fresh), NOW, other)
@@ -213,7 +214,9 @@ def _runs_exchange(
             path, candidate, homes, remote_ticket,
             [ORIGINAL_MAC_MACHINE_ID, other],
             [children[0], replace(children[1], executor_incarnation=fresh.executor_incarnation)],
-            lease_request(replace(fresh, executor_incarnation="33333333-3333-4333-8333-333333333333")),
+            lease_request(
+                replace(fresh, executor_incarnation="33333333-3333-4333-8333-333333333333")
+            ),
             request, began,
         )
         return
@@ -605,9 +608,15 @@ def _runs_exchange(
 
 
 def _machine_runs_exchange(
-    path: Path, candidate: Path, homes: dict[str, str], ticket: str,
-    machines: list[str], children: list[ChildReference], replacement: wire.LeaseRequest,
-    request: pytest.FixtureRequest, began: float,
+    path: Path,
+    candidate: Path,
+    homes: dict[str, str],
+    ticket: str,
+    machines: list[str],
+    children: list[ChildReference],
+    replacement: wire.LeaseRequest,
+    request: pytest.FixtureRequest,
+    began: float,
 ) -> None:
     def rows() -> dict[str, Any]:
         with closing(connect(str(path))) as conn:
@@ -615,23 +624,42 @@ def _machine_runs_exchange(
                 key: [dict(row) for row in conn.execute(query)]
                 for key, query in {
                     "runs": "SELECT * FROM mac_runs ORDER BY conversation_id",
-                    "assignments": "SELECT * FROM executor_child_assignments ORDER BY executor_incarnation,child_id",
+                    "assignments": (
+                        "SELECT * FROM executor_child_assignments "
+                        "ORDER BY executor_incarnation,child_id"
+                    ),
                     "commands": "SELECT * FROM executor_commands ORDER BY command_sequence",
                 }.items()
             }
 
     async def reference() -> dict[str, Any]:
-        mailboxes = [SqliteCommandMailbox(str(path), machine_id=machine, clock=lambda: NOW) for machine in machines]
-        presences = [MacPresenceService(str(path), mailbox, machine_id=machine, clock=lambda: NOW)
-                     for machine, mailbox in zip(machines, mailboxes, strict=True)]
-        owners = [MacRuns(str(path), presence, mailbox) for presence, mailbox in zip(presences, mailboxes, strict=True)]
+        mailboxes = [
+            SqliteCommandMailbox(str(path), machine_id=machine, clock=lambda: NOW)
+            for machine in machines
+        ]
+        presences = [
+            MacPresenceService(str(path), mailbox, machine_id=machine, clock=lambda: NOW)
+            for machine, mailbox in zip(machines, mailboxes, strict=True)
+        ]
+        owners = [
+            MacRuns(str(path), presence, mailbox)
+            for presence, mailbox in zip(presences, mailboxes, strict=True)
+        ]
 
         def snapshot() -> list[dict[str, Any]]:
             with closing(connect(str(path))) as conn:
-                return [dict(machine_id=owner.machine_id, retained=owner.retained_runs(),
-                             unresolved=owner.store.unresolved_runs_of_replaced_incarnations(),
-                             owns=[owner.owns_conversation(child.conversation_id) for child in children],
-                             stalls=owner.stall_source().tracked_waits(conn, NOW)) for owner in owners]
+                return [
+                    dict(
+                        machine_id=owner.machine_id,
+                        retained=owner.retained_runs(),
+                        unresolved=owner.store.unresolved_runs_of_replaced_incarnations(),
+                        owns=[
+                            owner.owns_conversation(child.conversation_id) for child in children
+                        ],
+                        stalls=owner.stall_source().tracked_waits(conn, NOW),
+                    )
+                    for owner in owners
+                ]
 
         def attempt(work: Any) -> str | None:
             try:
@@ -640,19 +668,22 @@ def _machine_runs_exchange(
             except Exception as error:
                 return error.code.value if isinstance(error, PlannerError) else type(error).__name__
 
+        def foreign_refusals(owner: MacRuns, foreign: ChildReference) -> list[str | None]:
+            return [
+                attempt(lambda: owner.recover(foreign)),
+                attempt(lambda: owner.authority(foreign)),
+                attempt(lambda: owner.store.has_closed_child_assignment(foreign)),
+                attempt(lambda: owner.store.register_child(foreign, "ticket", ticket, NOW)),
+            ]
+
         try:
             for owner, child in zip(owners, children, strict=True):
                 owner.store.register_child(child, "ticket", ticket, NOW)
             before, original = snapshot(), rows()
-            refused = []
-            for index, owner in enumerate(owners):
-                foreign = children[1 - index]
-                refused.append([
-                    attempt(lambda: owner.recover(foreign)),
-                    attempt(lambda: owner.authority(foreign)),
-                    attempt(lambda: owner.store.has_closed_child_assignment(foreign)),
-                    attempt(lambda: owner.store.register_child(foreign, "ticket", ticket, NOW)),
-                ])
+            refused = [
+                foreign_refusals(owner, children[1 - index])
+                for index, owner in enumerate(owners)
+            ]
             unchanged = rows() == original
             recovered = []
             for owner, child in zip(owners, children, strict=True):
@@ -666,10 +697,17 @@ def _machine_runs_exchange(
             retained = owners[1].recover(children[1])
             assert retained is not None
             owners[0].store.close_child(children[1], NOW + 2)
-            return dict(before=before, refused=refused, unchanged=unchanged, recovered=recovered,
-                        replaced=replaced, retained_recovery=retained.initial_history_complete,
-                        closed=owners[1].store.has_closed_child_assignment(children[1]),
-                        closed_recovery=owners[1].recover(children[1]) is None, rows=rows())
+            return dict(
+                before=before,
+                refused=refused,
+                unchanged=unchanged,
+                recovered=recovered,
+                replaced=replaced,
+                retained_recovery=retained.initial_history_complete,
+                closed=owners[1].store.has_closed_child_assignment(children[1]),
+                closed_recovery=owners[1].recover(children[1]) is None,
+                rows=rows(),
+            )
         finally:
             for owner in owners:
                 await owner.close()
@@ -681,13 +719,28 @@ def _machine_runs_exchange(
     with synthetic_home_environment(homes):
         expected = wire.encode_value(asyncio.run(reference()))
     run = subprocess.run(
-        ["node", str(ROOT / "server/executor/testing/runs.ts")], cwd=ROOT,
-        input=json.dumps(dict(mode="machines", path=str(candidate), now=NOW, ticket=ticket,
-                             machines=machines, children=[wire.as_object(child) for child in children],
-                             replacement=wire.as_object(replacement))),
-        env={**homes, "PATH": os.environ.get("PATH", "/usr/bin:/bin"), "TMPDIR": str(path.parent),
-             "PLAN_TEST_MODE": "1", "PLAN_SERVER_URL": "http://127.0.0.1:1"},
-        capture_output=True, text=True, timeout=15, check=False,
+        ["node", str(ROOT / "server/executor/testing/runs.ts")],
+        cwd=ROOT,
+        input=json.dumps(dict(
+            mode="machines",
+            path=str(candidate),
+            now=NOW,
+            ticket=ticket,
+            machines=machines,
+            children=[wire.as_object(child) for child in children],
+            replacement=wire.as_object(replacement),
+        )),
+        env={
+            **homes,
+            "PATH": os.environ.get("PATH", "/usr/bin:/bin"),
+            "TMPDIR": str(path.parent),
+            "PLAN_TEST_MODE": "1",
+            "PLAN_SERVER_URL": "http://127.0.0.1:1",
+        },
+        capture_output=True,
+        text=True,
+        timeout=15,
+        check=False,
     )
     assert run.returncode == 0, run.stderr
     actual = json.loads(run.stdout)
@@ -700,4 +753,7 @@ def _machine_runs_exchange(
     if report:
         target = Path(report) / "unit22-machine-runs.json"
         target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text(json.dumps(dict(seconds=time.perf_counter() - began, expected=expected, actual=actual), indent=2))
+        target.write_text(json.dumps(
+            dict(seconds=time.perf_counter() - began, expected=expected, actual=actual),
+            indent=2,
+        ))

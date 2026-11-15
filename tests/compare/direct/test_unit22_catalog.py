@@ -34,19 +34,26 @@ def test_catalog_machine_storage(tmp_path: Path) -> None:
     homes = create_synthetic_homes(tmp_path)
     path, candidate = tmp_path / "source.sqlite", tmp_path / "candidate.sqlite"
     other = "44444444-4444-4444-8444-444444444444"
-    snapshots = [BackendSnapshot(
-        Backend.codex, True, None, str(index), None, (BackendModel(name),),
-        (), name, None, None, (), True,
-    ) for index, name in enumerate(("original", "named"))]
+    snapshots = [
+        BackendSnapshot(
+            Backend.codex, True, None, str(index), None, (BackendModel(name),),
+            (), name, None, None, (), True,
+        )
+        for index, name in enumerate(("original", "named"))
+    ]
 
     async def reference() -> dict[str, Any]:
         values = []
         for machine_id, snapshot in zip((ORIGINAL_MAC_MACHINE_ID, other), snapshots, strict=True):
             mailbox = SqliteCommandMailbox(str(path), machine_id=machine_id)
             presence = MacPresenceService(str(path), mailbox, machine_id=machine_id)
-            relay = VpsCatalogRelay(cast(Any, SimpleNamespace(
-                db_path=str(path), machine_id=machine_id, owns_conversation=lambda _: False,
-            )), presence, mailbox)
+            relay = VpsCatalogRelay(
+                cast(Any, SimpleNamespace(
+                    db_path=str(path), machine_id=machine_id, owns_conversation=lambda _: False,
+                )),
+                presence,
+                mailbox,
+            )
             try:
                 values.append(wire.encode_value(relay.retained(Backend.codex)))
                 relay._keep(Backend.codex, snapshot)
@@ -56,12 +63,15 @@ def test_catalog_machine_storage(tmp_path: Path) -> None:
                 await presence.close()
                 await mailbox.close()
         with closing(connect(str(path))) as conn:
-            rows = [dict(row) for row in conn.execute(
-                "SELECT * FROM machine_backend_snapshots ORDER BY machine_id,backend_key"
-            )]
-        return dict(values=values, rows=[
-            {**row, "snapshot_json": json.loads(row["snapshot_json"])} for row in rows
-        ])
+            rows = [
+                dict(row) for row in conn.execute(
+                    "SELECT * FROM machine_backend_snapshots ORDER BY machine_id,backend_key"
+                )
+            ]
+        return dict(
+            values=values,
+            rows=[{**row, "snapshot_json": json.loads(row["snapshot_json"])} for row in rows],
+        )
 
     with synthetic_home_environment(homes), closing(connect(str(path))) as conn:
         create_schema(conn)
@@ -72,10 +82,15 @@ def test_catalog_machine_storage(tmp_path: Path) -> None:
         expected = asyncio.run(reference())
     run = subprocess.run(
         ["node", str(ROOT / "server/executor/testing/catalog.ts")],
-        input=json.dumps(dict(scope_only=True, path=str(candidate), other_machine=other,
-                             snapshots=[wire.as_object(value) for value in snapshots])),
-        cwd=ROOT, env={**homes, "PATH": os.environ.get("PATH", "/usr/bin:/bin"),
-                       "PLAN_SERVER_URL": "http://127.0.0.1:1"},
+        input=json.dumps(dict(
+            scope_only=True, path=str(candidate), other_machine=other,
+            snapshots=[wire.as_object(value) for value in snapshots],
+        )),
+        cwd=ROOT,
+        env={
+            **homes, "PATH": os.environ.get("PATH", "/usr/bin:/bin"),
+            "PLAN_SERVER_URL": "http://127.0.0.1:1",
+        },
         text=True, capture_output=True, timeout=15, check=False,
     )
     assert run.returncode == 0, run.stderr

@@ -32,12 +32,6 @@ from planner.executor.vps_presence_store import accept_lease_in_transaction
 from planner.machines.contracts import ORIGINAL_MAC_MACHINE_ID
 
 
-@pytest.mark.xfail(
-    run=False,
-    reason=(
-        "expected-open P2: #916 protocol24 identity fails TS22 inbox admission"
-    ),
-)
 def test_populated_inbox_publication_and_receipts(
     tmp_path: Path, request: pytest.FixtureRequest
 ) -> None:
@@ -86,13 +80,26 @@ def test_populated_inbox_publication_and_receipts(
                     1,
                 ),
             )
-            sql.execute("INSERT INTO machines VALUES (?,'Other','laptop','blue',0)", (other_machine,))
-            accept_lease_in_transaction(
-                sql, replace(lease_request(other_identity), mac_wall_clock_ms=100), 100, other_machine
+            sql.execute(
+                "INSERT INTO machines VALUES (?,'Other','laptop','blue',0)", (other_machine,)
             )
-            sql.execute("INSERT INTO executor_child_assignments VALUES(?,?,?,?,?,?,NULL)",
-                        (other_child.executor_incarnation, other_child.child_id,
-                         other_child.conversation_id, "ticket", "ticket", 1))
+            accept_lease_in_transaction(
+                sql,
+                replace(lease_request(other_identity), mac_wall_clock_ms=100),
+                100,
+                other_machine,
+            )
+            sql.execute(
+                "INSERT INTO executor_child_assignments VALUES(?,?,?,?,?,?,NULL)",
+                (
+                    other_child.executor_incarnation,
+                    other_child.child_id,
+                    other_child.conversation_id,
+                    "ticket",
+                    "ticket",
+                    1,
+                ),
+            )
             sql.commit()
         store = InboxStore(str(path))
         for index, manifest in enumerate(manifests):
@@ -163,17 +170,52 @@ def test_populated_inbox_publication_and_receipts(
             )
         except MissingFiles as error:
             results.append({"missing": [wire.encode_value(item) for item in error.manifests]})
-        own_other = replace(envelope, sender_id="sender-b", sequence=1, submission_id="other",
-                            conversation_id=other_child.conversation_id,
-                            payload={"child": wire.encode_value(other_child)}, file_dependencies=())
+        own_other = replace(
+            envelope,
+            sender_id="sender-b",
+            sequence=1,
+            submission_id="other",
+            conversation_id=other_child.conversation_id,
+            payload={"child": wire.encode_value(other_child)},
+            file_dependencies=(),
+        )
         owner_cases = [
             (ORIGINAL_MAC_MACHINE_ID, other_identity, envelope, False),
-            (ORIGINAL_MAC_MACHINE_ID, IDENTITY, replace(envelope, payload={"child":
-                wire.encode_value(replace(child, executor_incarnation=other_identity.executor_incarnation))}), False),
-            (ORIGINAL_MAC_MACHINE_ID, IDENTITY, replace(envelope, payload={"child":
-                wire.encode_value(replace(child, conversation_id="another"))}), False),
-            (other_machine, other_identity, replace(envelope, payload={"child":
-                wire.encode_value(replace(other_child, conversation_id=envelope.conversation_id))}), False),
+            (
+                ORIGINAL_MAC_MACHINE_ID,
+                IDENTITY,
+                replace(
+                    envelope,
+                    payload={
+                        "child": wire.encode_value(
+                            replace(child, executor_incarnation=other_identity.executor_incarnation)
+                        )
+                    },
+                ),
+                False,
+            ),
+            (
+                ORIGINAL_MAC_MACHINE_ID,
+                IDENTITY,
+                replace(
+                    envelope,
+                    payload={"child": wire.encode_value(replace(child, conversation_id="another"))},
+                ),
+                False,
+            ),
+            (
+                other_machine,
+                other_identity,
+                replace(
+                    envelope,
+                    payload={
+                        "child": wire.encode_value(
+                            replace(other_child, conversation_id=envelope.conversation_id)
+                        )
+                    },
+                ),
+                False,
+            ),
             (other_machine, other_identity, own_other, True),
             (other_machine, other_identity, own_other, False),
         ]
@@ -183,25 +225,35 @@ def test_populated_inbox_publication_and_receipts(
                 before = [tuple(row) for row in sql.execute("SELECT * FROM mac_inbox_positions")]
 
             def owner_write(
-                connection: sqlite3.Connection, item: wire.QueuedEnvelope
+                connection: sqlite3.Connection,
+                envelope: wire.QueuedEnvelope,
+                machine_id: str = machine,
             ) -> wire.JsonObject:
-                return {"machine": machine}
+                return {"machine": machine_id}
 
             try:
-                result = owner.accept(item, owner_write if write else no_replay,
-                                      107, identity=sender, check_files=False)
-                results.append(wire.encode_value(result))
+                owner_receipt = owner.accept(
+                    item,
+                    owner_write if write else no_replay,
+                    107,
+                    identity=sender,
+                    check_files=False,
+                )
+                results.append(wire.encode_value(owner_receipt))
             except PlannerError as error:
                 results.append(error.to_payload())
             if not write:
                 with closing(connect(str(path))) as sql:
-                    assert [tuple(row) for row in sql.execute("SELECT * FROM mac_inbox_positions")] == before
+                    assert [
+                        tuple(row) for row in sql.execute("SELECT * FROM mac_inbox_positions")
+                    ] == before
         forbidden = replace(manifests[0], relative_path="forbidden.txt")
         staged = store._staged_file(forbidden)
         staged.write_bytes(b"payload-0")
         try:
-            store.publish_file_dependencies(replace(envelope, sequence=4, file_dependencies=(forbidden,)),
-                                            other_identity)
+            store.publish_file_dependencies(
+                replace(envelope, sequence=4, file_dependencies=(forbidden,)), other_identity
+            )
         except PlannerError as error:
             results.append(error.to_payload())
         assert staged.read_bytes() == b"payload-0" and not store.file_target(forbidden).exists()
@@ -213,7 +265,8 @@ def test_populated_inbox_publication_and_receipts(
                     dict(row)
                     for row in sql.execute(
                         "SELECT sender_id,conversation_id,sequence,submission_id,disposition,"
-                        "result_json,machine_id FROM mac_inbox_positions ORDER BY sender_id,conversation_id"
+                        "result_json,machine_id FROM mac_inbox_positions "
+                        "ORDER BY sender_id,conversation_id"
                     )
                 ],
                 "assignments": [
@@ -247,9 +300,15 @@ def test_populated_inbox_publication_and_receipts(
                 "missing": wire.encode_value(missing),
                 "forbidden": wire.encode_value(forbidden),
                 "other_identity": wire.encode_value(other_identity),
-                "owner_cases": [{"machine": machine, "identity": wire.encode_value(sender),
-                                 "envelope": wire.encode_value(item), "write": write}
-                                for machine, sender, item, write in owner_cases],
+                "owner_cases": [
+                    {
+                        "machine": machine,
+                        "identity": wire.encode_value(sender),
+                        "envelope": wire.encode_value(item),
+                        "write": write,
+                    }
+                    for machine, sender, item, write in owner_cases
+                ],
             }
         ),
         cwd=ROOT,
@@ -261,8 +320,8 @@ def test_populated_inbox_publication_and_receipts(
     )
     assert run.returncode == 0, run.stderr
     actual = json.loads(run.stdout)
-    for result in (actual, expected):
-        for position in result["positions"]:
+    for outcome_set in (actual, expected):
+        for position in outcome_set["positions"]:
             position["result_json"] = json.loads(position["result_json"])
     assert actual == expected
     assert len(actual["files"]) == 34
