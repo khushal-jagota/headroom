@@ -14,6 +14,16 @@ exchange remains expected-open P2 with its original comparisons intact.
 
 No field projection hides these differences. The retained proof must pass after the port.
 
+## Pending staging port: Linux host admission
+
+P5 owns the Linux host admission Node version policy. Python accepts Node majors at or
+above the required major. TypeScript requires the declared major. Python reports
+`runtime requires Node 22.18.0 or newer`, while TypeScript reports
+`runtime requires Node 22.18.0 or a later Node 22` for the observed minimum-version refusal.
+The exact host comparison remains expected-open P5. Release identity, archive, frontier,
+and native probe report checks stay active. Their report records both host results.
+This is an open port boundary, not accepted final parity.
+
 ## Native TypeScript presentation
 
 The owner accepts native diagnostics, CLI human text and help layout, and HTTP JSON number spelling.

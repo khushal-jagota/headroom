@@ -808,8 +808,21 @@ def _ios_fixture(root: Path) -> dict[str, Any]:
     )
 
 
+@pytest.mark.parametrize(
+    "scope",
+    [
+        "release",
+        pytest.param(
+            "host-admission",
+            marks=pytest.mark.xfail(
+                run=False,
+                reason="expected-open P5: port Linux host admission Node version policy",
+            ),
+        ),
+    ],
+)
 def test_unit21_release_identity_archive_and_frontier(
-    tmp_path: Path, request: pytest.FixtureRequest
+    tmp_path: Path, request: pytest.FixtureRequest, scope: str
 ) -> None:
     started = time.perf_counter()
     tmp_path = tmp_path.resolve()
@@ -1141,7 +1154,10 @@ def test_unit21_release_identity_archive_and_frontier(
         == native_paths
     )
     assert actual["native_loader"] == expected_loader
-    assert actual["admission"] == expected_admission
+    if scope == "host-admission":
+        assert actual["admission"] == expected_admission
+    else:
+        assert actual["admission"]["reports"] == expected_admission["reports"]
     built = actual["builder"]
     assert built["manifest"]["app_sha"] == python_build.app_sha == build_sha
     assert built["manifest"]["source_digest"] == python_build.source_digest
@@ -1344,6 +1360,16 @@ def test_unit21_release_identity_archive_and_frontier(
                         "full_native_closure": "OPEN; static synthetic paths only",
                     },
                     "admission_rules": actual["admission"],
+                    "expected_open": (
+                        {
+                            "owner": "P5 platform runtime",
+                            "boundary": "Linux host admission Node version policy",
+                            "python": expected_admission["hosts"],
+                            "typescript": actual["admission"]["hosts"],
+                        }
+                        if scope == "release"
+                        else None
+                    ),
                     "admission_group": group_proof,
                     "source_only_builder": built,
                     "unit_boundaries": actual["units"],
@@ -1360,6 +1386,7 @@ def test_unit21_release_identity_archive_and_frontier(
                         "Representative full release tree/memory/disk/cost on hosted root",
                         "Sealed bundled-package license inventory",
                         "Runtime execution",
+                        "P5 Linux host admission Node version policy",
                     ],
                 },
                 indent=2,

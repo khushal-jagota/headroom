@@ -32,6 +32,12 @@ Python also emits `StartRun.arguments.supervision_protocol=24`, while TypeScript
 Its internal stall waits include `machine_id=null`, which the P3 TypeScript port still lacks.
 The full original proof remains intact. No field projection counts these gaps as parity.
 
+The release identity, archive, and frontier parameter remains active. Its native probe
+report checks also remain active. The `host-admission` parameter retains the exact Linux
+host comparison as expected-open P5. Python accepts later Node majors, while TypeScript
+requires Node 22. Their minimum-version refusal text also differs. The release report
+records both host results. The deferred parameter adds no active host or fixture run.
+
 ## Add an area
 
 Add two files with the same name:
