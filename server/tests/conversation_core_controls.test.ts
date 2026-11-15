@@ -9,8 +9,10 @@ import {
   PromptDeliveryInjected,
   PromptDeliveryQueued,
   PromptDeliveryStarted,
+  PromptDeliveryRefused,
+  PromptDeliveryUncertain,
 } from '../conversation/contracts.ts';
-import { TurnEnded } from '../conversation/backends/contracts.ts';
+import { AgentMessageDelta, TurnEnded } from '../conversation/backends/contracts.ts';
 import { text_message_content } from '../conversation/message_content.ts';
 import { Deferred } from '../conversation/runtime/state.ts';
 import { save_attempt } from '../conversation/runtime/save_attempt.ts';
@@ -88,6 +90,48 @@ test('two promotions of one held id have one winner', async () => {
         (row) => row.payload.kind === 'prompt' && row.payload.sender_message_id === 'promoted',
       ),
   ).toHaveLength(1);
+  const child = await f.child;
+  for (const fate of ['accepted', 'refused', 'uncertain'] as const) {
+    const id = `${fate}-promotion`;
+    f.core.start_admission.try_start(await f.core.automatic_start_request(id, 'core'));
+    expect(await f.send('promote steer', id)).toBeInstanceOf(PromptDeliveryQueued);
+    const held = (await f.core.held_prompts('core'))[0];
+    await child.configure('steer', {
+      result: { fate, ...(fate === 'refused' ? { refusal_reason: 'backend_cannot_steer' } : {}) },
+    });
+    expect(await f.core.promote_held_prompt('core', held.held_prompt_id, 'steer')).toBeInstanceOf(
+      fate === 'refused'
+        ? PromptDeliveryRefused
+        : fate === 'uncertain'
+          ? PromptDeliveryUncertain
+          : PromptDeliveryInjected,
+    );
+    expect(f.core.start_admission.has_requests([id])).toBe(fate === 'uncertain');
+    expect(
+      f.database.read((sql) =>
+        sql.all('SELECT identity FROM automatic_start_bindings WHERE identity=?', [id]),
+      ),
+    ).toEqual(fate === 'uncertain' ? [{ identity: id }] : []);
+    if (fate === 'uncertain') {
+      await child.emit(new AgentMessageDelta({ text_delta: 'later activity' }));
+      await child.flush_events();
+      // Python caches acceptance per turn. A later uncertain steer stays bound
+      // until the exact child retires, even when that turn emits more activity.
+      expect(f.core.start_admission.has_requests([id])).toBe(true);
+      expect(
+        f.database.read((sql) =>
+          sql.all('SELECT identity FROM automatic_start_bindings WHERE identity=?', [id]),
+        ),
+      ).toEqual([{ identity: id }]);
+      await f.core.kill('core');
+      expect(f.core.start_admission.has_requests([id])).toBe(false);
+      expect(
+        f.database.read((sql) =>
+          sql.all('SELECT identity FROM automatic_start_bindings WHERE identity=?', [id]),
+        ),
+      ).toEqual([]);
+    }
+  }
   await f.core.shutdown({ deadline: performance.now() / 1000 + SHUTDOWN_GRACE_SECONDS });
 });
 
@@ -500,4 +544,68 @@ test('an aborted update observation cannot close writes after its retirement set
   expect(f.core.workspace_admission.closed).toBe(true);
   f.core.cancel_update();
   await f.core.shutdown({ deadline: performance.now() / 1000 + SHUTDOWN_GRACE_SECONDS });
+});
+
+// A deferred replacement must preserve its incumbent before either destructive control.
+// The same existing scripted child proves eventual queue drain after admission opens.
+test('unadmitted send_now and promotion preserve the running turn then drain once', async () => {
+  let now = 0;
+  const f = setup({ core: { monotonic_now: () => now } });
+  try {
+    await f.start();
+    await f.send();
+    const child = await f.child;
+    const running = f.core.runtime_turn('core');
+    expect(
+      f.core.start_admission.try_start(await f.core.automatic_start_request('other-start', 'core')),
+    ).toBe(true);
+    expect(
+      f.core.start_admission.try_start(await f.core.automatic_start_request('later', 'core')),
+    ).toBe(false);
+    expect(
+      await f.core.send('core', text_message_content('later'), {
+        sender_label: 'loop',
+        sender_message_id: 'later',
+        mode: 'send_now',
+      }),
+    ).toBeInstanceOf(PromptDeliveryQueued);
+    const held = (await f.core.held_prompts('core'))[0];
+    expect(
+      await f.core.promote_held_prompt('core', held.held_prompt_id, 'send_now'),
+    ).toBeInstanceOf(PromptDeliveryQueued);
+    expect(f.core.runtime_turn('core')).toBe(running);
+    expect(f.core.conversations.get('core')!.phase).toBe('running');
+    expect(
+      (await child.inspect()).calls.filter((call) => call.command === 'cancel_running_turn'),
+    ).toEqual([]);
+    await f.core.drain_held_prompts(f.core.conversations.get('core')!);
+    expect(
+      f.core.start_admission.snapshots().find((entry) => entry.request.identity === 'later')?.state,
+    ).toBe('queued');
+    await child.finish();
+    await f.core.wait_until_quiescent();
+    expect(f.core.conversations.get('core')!.phase).toBe('idle');
+    expect(
+      await f.core.send('core', text_message_content('manual work'), {
+        sender_label: 'owner',
+        sender_message_id: 'manual',
+        mode: 'send_now',
+      }),
+    ).toBeInstanceOf(PromptDeliveryStarted);
+    // Entering a manual turn immediately removes the deferred head's eligibility.
+    expect(
+      f.core.start_admission.snapshots().find((entry) => entry.request.identity === 'later')?.state,
+    ).toBe('queued');
+    now = 1;
+    f.core.start_admission.finish('other-start');
+    await child.finish();
+    await f.core.wait_until_quiescent();
+    expect((await child.inspect()).delivered_text.at(-1)).toBe('later');
+    expect(
+      (await child.inspect()).calls.filter((call) => call.command === 'write_prompt'),
+    ).toHaveLength(3);
+    expect(await f.core.held_prompts('core')).toEqual([]);
+  } finally {
+    await f.core.shutdown({ deadline: performance.now() / 1000 + SHUTDOWN_GRACE_SECONDS });
+  }
 });

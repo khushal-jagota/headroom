@@ -381,7 +381,10 @@ export class CodexAppServerBackendChild implements B.BackendChild {
       this.model = model;
       this.reasoning_effort = effort;
     }
-    return new B.BackendPromptAccepted({ composed_content_delivered: !native });
+    return new B.BackendPromptAccepted({
+      composed_content_delivered: !native,
+      agent_acceptance_proven: true,
+    });
   }
   async steer(
     token: B.TurnToken,

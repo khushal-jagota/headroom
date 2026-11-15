@@ -117,6 +117,12 @@ export function initialize_retained_runs(
   )) {
     const state = new ConversationState(record),
       run = open.get(record.conversation_id);
+    for (const retained_run of retained.filter(
+      (entry) => entry.reference.conversation_id === record.conversation_id,
+    ))
+      host.options.store.start_admission_database.read((sql) =>
+        host.start_admission.restore_bindings(sql, retained_run.turn),
+      );
     restore_retained_run(host, state);
     if (run !== undefined) {
       const facts = host.options.store.lifecycle_facts(record.conversation_id);
@@ -321,6 +327,15 @@ export function schedule_child_retirement(
           !retained.retirement_confirmed
         )
           return false;
+        await host.persist(state, () =>
+          host.start_admission.retire_remote(
+            host.options.store.start_admission_database,
+            reference,
+          ),
+        );
+        await host.persist(state, () =>
+          host.start_admission.retire_source(host.options.store.start_admission_database, child),
+        );
         await child.detach();
         if (state.child === child) {
           state.child = null;
@@ -377,6 +392,9 @@ async function confirm_termination(
     )
       throw new TypeError('Remote child termination was not committed');
     if (replaced_by !== undefined) await recovery(host).retire_replaced(reference, replaced_by);
+    await host.persist(state, () =>
+      host.start_admission.retire_remote(host.options.store.start_admission_database, reference),
+    );
     if (state.running_turn !== null)
       await host.end_turn(state, state.running_turn, 'interrupted', null);
     if (state.child?.stop_outside_lock) await state.child.detach();

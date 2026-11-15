@@ -1,3 +1,6 @@
+import { HOME_MACHINE_ID } from '../../../execution_identity.ts';
+import { write_bindings } from '../../start_admission/index.ts';
+import type { AdmissionDatabase, StartRequest } from '../../start_admission/contracts.ts';
 /** Durable record primitives. Event append is completed with its projection in PR2. */
 import { randomUUID } from 'node:crypto';
 import { HOME_MACHINE_ID } from '../../../execution_identity.ts';
@@ -208,7 +211,23 @@ export class ConversationStorePrimitives {
         .map(record),
     );
   }
-  reserve_turn(conversation_id: string): number {
+  get start_admission_database(): AdmissionDatabase {
+    return this.database;
+  }
+  automatic_start_request(identity: string, conversation_id: string): StartRequest {
+    return this.database.read((sql) => {
+      const row = sql.get<{ machine_id: string }>(
+        'SELECT machine_id FROM tickets WHERE conversation_id=?',
+        [conversation_id],
+      );
+      return {
+        identity,
+        work_class: row ? 'worker' : 'supervisor',
+        destination: row?.machine_id ?? HOME_MACHINE_ID,
+      };
+    });
+  }
+  reserve_turn(conversation_id: string, requests: readonly StartRequest[] = []): number {
     return this.database.write(
       (tx) => {
         const facts = tx.get<{ maximum: number }>(
@@ -234,6 +253,7 @@ export class ConversationStorePrimitives {
           randomUUID().replaceAll('-', ''),
           epoch.epoch,
         ]);
+        write_bindings(tx, { conversation_id, turn_number: number }, requests);
         apply_facts(tx, conversation_id, [
           {
             kind: K.turn,

@@ -1,3 +1,4 @@
+import type { AdmissionDatabase, StartRequest } from '../start_admission/contracts.ts';
 /** The durable record boundary used by the conversation core. */
 import type { ReadSql, TransactionSql } from '../../core/database/contracts.ts';
 import { ConversationRoleMaterials, ResolvedConversationStart } from '../contracts.ts';
@@ -280,6 +281,8 @@ export type RecordCommitParticipant<T> = (
 
 /** One append owner, synchronous source effects, and publication after successful return. */
 export interface ConversationRecordStore {
+  readonly start_admission_database: AdmissionDatabase;
+  automatic_start_request(identity: string, conversation_id: string): StartRequest;
   bind_interruption_delivery(
     conversation_id: string,
     turn_number: number,
@@ -314,7 +317,7 @@ export interface ConversationRecordStore {
   latest_turn_ended_sequences(conversation_ids: readonly string[]): ReadonlyMap<string, number>;
   owner_read_through_sequences(conversation_ids: readonly string[]): ReadonlyMap<string, number>;
   has_delivered_prompt(conversation_id: string): boolean;
-  reserve_turn(conversation_id: string): number;
+  reserve_turn(conversation_id: string, requests?: readonly StartRequest[]): number;
   lifecycle_facts(conversation_id: string): readonly LifecycleFact[];
   append_events(
     conversation_id: string,
