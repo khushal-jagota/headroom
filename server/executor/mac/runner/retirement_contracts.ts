@@ -1,6 +1,10 @@
 /** Source custody and exact command retirement are shared with the event host. */
 import type { ChildCommand, ChildReference, CommandOutcome } from '../../wire.generated.ts';
-import type { MacChildStateContract, MacCommandWork } from './command_contracts.ts';
+import type {
+  MacChildStateContract,
+  MacCommandWork,
+  MacCommandServiceContract,
+} from './command_contracts.ts';
 import type { MacNativeChildrenContract } from './contracts.ts';
 import type { StopOptions } from '../../../lifecycle/contracts.ts';
 
@@ -35,5 +39,9 @@ export interface MacRetirementContract {
     command: ChildCommand,
     work: MacCommandWork,
     invoking: () => void,
+  ): Promise<CommandOutcome>;
+  stop_and_publish(
+    command: ChildCommand,
+    commands: MacCommandServiceContract,
   ): Promise<CommandOutcome>;
 }

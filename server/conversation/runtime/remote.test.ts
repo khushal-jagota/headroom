@@ -24,7 +24,16 @@ import { retained_open_runs } from './remote.ts';
 // An acknowledgement must wait for receipt and steer settlement, then recheck its exact source.
 test('remote prompt acceptance releases only the matching live source after its barriers', async () => {
   let now = 100;
-  const f = setup({ behavior: { barrier: 'receipt' }, core: { monotonic_now: () => now } });
+  let owned = true;
+  const f = setup({
+    behavior: { barrier: 'receipt' },
+    core: {
+      monotonic_now: () => now,
+      require_runtime_ownership: () => {
+        if (!owned) throw new Error('Runtime ownership revoked');
+      },
+    },
+  });
   const reference = {
     conversation_id: 'core',
     executor_incarnation: 'remote',
@@ -33,6 +42,9 @@ test('remote prompt acceptance releases only the matching live source after its 
   let acknowledgement: Promise<void> | undefined;
   let child: Awaited<typeof f.child> | undefined;
   const steering = new Deferred<void>();
+  const detach_entered = new Deferred<void>();
+  const detach_released = new Deferred<void>();
+  let closing: Promise<void> | undefined;
   try {
     await f.start();
     expect(
@@ -72,19 +84,49 @@ test('remote prompt acceptance releases only the matching live source after its 
     await new Promise<void>((resolve) => setImmediate(resolve));
     expect(accepted).toBe(false);
     expect(bindings()).toEqual([{ identity: 'sender' }]);
+    const final_source = { ...replacement, child_id: 'final-source' };
+    state.retained_child_reference = final_source;
     now = 101;
     state.steer_settlements.delete(steering);
     steering.resolve();
     await acknowledgement;
+    expect(bindings()).toEqual([{ identity: 'sender' }]);
+    const detach = child.detach.bind(child);
+    vi.spyOn(child, 'detach').mockImplementation(async () => {
+      detach_entered.resolve();
+      await detach_released.promise;
+      await detach();
+    });
+    closing = f.core.shutdown({ deadline: performance.now() / 1000 + 5 });
+    await detach_entered.promise;
+    expect(f.core.shutting_down).toBe(true);
+    expect(state.closing).toBe(true);
+    expect(() => f.core.conversation_state('core')).toThrow('runtime is shut down');
+    await expect(f.core.acquire_after_steers(state)).rejects.toMatchObject({ name: 'AbortError' });
+    await f.core.confirm_remote_prompt_accepted(replacement, token);
+    await f.core.confirm_remote_prompt_accepted(final_source, {
+      ...token,
+      turn_number: token.turn_number + 1,
+    });
+    expect(bindings()).toEqual([{ identity: 'sender' }]);
+    await f.core.confirm_remote_prompt_accepted(final_source, token);
     expect(bindings()).toEqual([]);
     expect(f.core.start_admission.snapshots()).toEqual([]);
     expect(state.last_touched_monotonic).toBe(101);
+    detach_released.resolve();
+    await closing;
+    owned = false;
+    await expect(f.core.confirm_remote_prompt_accepted(final_source, token)).rejects.toThrow(
+      'Runtime ownership revoked',
+    );
   } finally {
     steering.resolve();
     const state = f.core.conversations.get('core');
     state?.steer_settlements.delete(steering);
     await child?.release('receipt').catch(() => {});
     await acknowledgement;
+    detach_released.resolve();
+    await closing;
     await f.core.shutdown({ deadline: performance.now() / 1000 + 5 });
   }
 });

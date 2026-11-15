@@ -149,8 +149,9 @@ const options = {
       } as BackendChild;
     };
   },
-  async record_children() {
-    calls.push(['record_children']);
+  worker_cleanup: {
+    async refresh() {},
+    uncertain: () => false,
   },
   on_failure: (error: Error) => faults.push(error),
 };

@@ -3,6 +3,10 @@ import { randomUUID } from 'node:crypto';
 import { ChildProcesses } from '../../../lifecycle/owned_processes.ts';
 import { OneShotChildren } from '../../../lifecycle/one_shot_children.ts';
 import { create_worker_supervision_runtime } from '../../../worker_supervision/composition.ts';
+import { reconcile } from '../../../worker_supervision/inspection.ts';
+import { join } from 'node:path';
+import { migrate_once } from '../legacy_worker_cleanup.ts';
+import { read_cleanup_commands } from '../cleanup_reconciliation.ts';
 import { SHUTDOWN_GRACE_SECONDS } from '../../../lifecycle/configuration.ts';
 import { ServerLifecycleError, ShutdownDeadlineExceeded } from '../../../lifecycle/contracts.ts';
 import type { StopOptions } from '../../../lifecycle/contracts.ts';
@@ -14,12 +18,17 @@ import { ConversationMessageFiles } from '../../../conversation/record/message_f
 import { PROTOCOL_VERSION, SPOOL_FORMAT_VERSION } from '../../../execution_configuration.ts';
 import { parse_identity } from '../../protocol.ts';
 import { credential_path } from '../../credential_file.ts';
+import { ExecutorValidationError } from '../../protocol_errors.ts';
 import { mac_runtime_settings } from '../../../core/config.ts';
 import { handoff_identity } from '../runtime/handoff.ts';
 import { read_record } from '../runtime/records.ts';
 import type { ExecutorIdentity } from '../../../execution_identity.ts';
 import { validate_executor_launch } from '../configuration.ts';
-import { expand_executor_path } from '../platform.ts';
+import {
+  expand_executor_path,
+  legacy_process_inspector,
+  mac_agent_process_platform,
+} from '../platform.ts';
 import { FilesService } from '../files.ts';
 import { MacSkillsPublisher } from '../skills/index.ts';
 import { OutboxStore } from '../storage/outbox.ts';
@@ -42,7 +51,6 @@ import type {
   MacHostContext,
   MacOwnedService,
   MacHostUpdates,
-  MacAgentProcesses,
 } from './contracts.ts';
 
 export class MacService {
@@ -72,7 +80,6 @@ export class MacService {
   readonly lease: MacLeaseLoop;
   readonly sender: MacOutboxSender;
   readonly updates: MacHostUpdates;
-  readonly processes: MacAgentProcesses | null;
   private readonly controller = new AbortController();
   private starting: Promise<void> | undefined;
   private cleanup: Promise<void> | undefined;
@@ -108,13 +115,6 @@ export class MacService {
     this.identity = identity;
     const on_failure = (error: unknown) => this.failed(error);
     this.skills = new MacSkillsPublisher(on_failure);
-    this.processes = bindings.processes({
-      child_processes: this.child_processes,
-      one_shot_children: this.one_shot_children,
-      worker_supervision: this.worker_supervision,
-      files: this.files,
-      paths: configuration.paths,
-    });
     this.presence = new MacPresence(identity);
     this.client =
       bindings.client?.(
@@ -141,6 +141,12 @@ export class MacService {
       inputs: new MacInputs(this.transfer, this.files, configuration.paths, on_failure),
       now_ms: Date.now,
       new_update_id: () => randomUUID().replaceAll('-', ''),
+      cleanup: {
+        runtime: this.worker_supervision,
+        read_commands: read_cleanup_commands(journal),
+        files: this.files,
+        inspect_legacy: legacy_process_inspector(this.one_shot_children),
+      },
       native: {
         paths: configuration.paths,
         workspace_home: expand_executor_path('~', adapters.environment),
@@ -149,7 +155,6 @@ export class MacService {
         files: this.files,
         skills: this.skills,
         message_files: new ConversationMessageFiles(configuration.paths.message_files_anchor),
-        record_children: () => this.record_children(),
         on_failure,
       },
     });
@@ -207,7 +212,6 @@ export class MacService {
       journal,
       runner: this.runner,
       updates: this.updates,
-      record_children: () => this.record_children(),
       replaced: () => this.request_exit(1),
       on_failure: (error) => on_failure(error instanceof Error ? error : new Error(String(error))),
       warn: console.warn,
@@ -297,9 +301,6 @@ export class MacService {
       throw error;
     }
   }
-  private record_children(): Promise<void> {
-    return this.processes?.record_children() ?? Promise.resolve();
-  }
   private failed(error: unknown): void {
     this.failures.add(error);
     this.request_exit(1);
@@ -309,7 +310,43 @@ export class MacService {
     this.starting ??= (async () => {
       await this.client.ensure_credential(credential_path(this.configuration.paths.root));
       this.controller.signal.throwIfAborted();
-      await this.processes?.end_orphans(this.controller.signal);
+      try {
+        await migrate_once(
+          this.configuration.paths.run,
+          {
+            runtime: this.worker_supervision,
+            files: this.files,
+            inspect_legacy: legacy_process_inspector(this.one_shot_children),
+            platform: {
+              snapshot: (signal) =>
+                mac_agent_process_platform(this.one_shot_children).snapshot(signal),
+              signal: (target, signum, signal) =>
+                mac_agent_process_platform(this.one_shot_children).signal(target, signum, signal),
+            },
+            warn: console.warn,
+          },
+          this.controller.signal,
+        );
+      } catch (error) {
+        this.controller.signal.throwIfAborted();
+        if (
+          !(error instanceof SyntaxError) &&
+          !(error instanceof ExecutorValidationError) &&
+          !(error instanceof Error && 'code' in error)
+        )
+          throw error;
+        console.warn('Legacy cleanup compatibility pass:', error);
+      }
+      const reconciliation = await reconcile(
+        join(this.configuration.paths.run, 'worker-processes'),
+        { runtime: this.worker_supervision },
+      );
+      for (const owned of reconciliation.records)
+        if (!owned.result.complete)
+          console.warn(
+            `Worker cleanup remains unproven ticket=${owned.ticket_id} conversation=${owned.conversation_id} record=${owned.record_path}: ${owned.result.reason}`,
+          );
+      await this.runner.refresh_worker_cleanup({ revoke_pending: true });
       this.controller.signal.throwIfAborted();
       await this.gateway.start(this.configuration.paths.ipc_socket);
       this.controller.signal.throwIfAborted();
@@ -377,7 +414,6 @@ export class MacService {
         this.catalog,
         this.runner,
         this.client,
-        ...(this.processes === null ? [] : [this.processes]),
       ])
         this.begin_stop(owner);
     } else for (const owner of this.stopping) this.begin_stop(owner);

@@ -6,6 +6,7 @@ import { CodexAppServerClient, CodexWireFailed } from './client.ts';
 import { stringify_numeric_json } from '../../../core/http/numeric_json.ts';
 import { WorkerSupervisor } from '../../../worker_supervision/service.ts';
 import { WorkerScratch } from '../../worker_scratch.ts';
+import { worker_supervision_fixture } from '../testing/worker_supervision_fixture.ts';
 import type { WorkerSupervisionRuntime } from '../../../worker_supervision/runtime.ts';
 import { spawn_codex_process } from './process.ts';
 import type { OwnedCodexProcess } from './process.ts';
@@ -50,26 +51,31 @@ function fake() {
     },
   };
 }
-async function start() {
+function client_fixture(worker_supervision?: WorkerSupervisionRuntime, wire = fake()) {
   const version = fake();
-  const wire = fake();
+  const wire_spawned = vi.fn();
   vi.mocked(spawn_codex_process)
     .mockImplementationOnce(async (_argv, options) => {
       expect(options.environment.HOME).toBe(process.env.HOME);
       expect(options.close_stdin).toBe(true);
+      options.on_created?.(version.owned as unknown as OwnedCodexProcess);
       setImmediate(() => {
         version.child.stdout.end('codex-cli 0.166.0\n');
         version.finish();
       });
       return version.owned as unknown as OwnedCodexProcess;
     })
-    .mockResolvedValueOnce(wire.owned as unknown as OwnedCodexProcess);
+    .mockImplementationOnce(async (_argv, options) => {
+      wire_spawned();
+      options.on_created?.(wire.owned as unknown as OwnedCodexProcess);
+      return wire.owned as unknown as OwnedCodexProcess;
+    });
   const notifications: unknown[] = [];
   const warnings: string[] = [];
   const ended: string[] = [];
-  const worker_create = vi.spyOn(WorkerSupervisor, 'create');
   const client = new CodexAppServerClient({
     child_processes: new ChildProcesses(),
+    worker_supervision,
     description: 'synthetic',
     warning: (message) => warnings.push(message),
     handler: {
@@ -82,13 +88,19 @@ async function start() {
       },
     },
   });
-  await client.start({
+  const launch_options = {
     argv: ['/synthetic/codex', 'app-server'],
     environment: { PLAN_TICKET_ID: 'inherited-only' },
     working_directory: '/tmp',
-  });
+  };
+  return { client, wire, notifications, warnings, ended, launch_options, wire_spawned };
+}
+async function start() {
+  const fixture = client_fixture();
+  const worker_create = vi.spyOn(WorkerSupervisor, 'create');
+  await fixture.client.start(fixture.launch_options);
   expect(worker_create).not.toHaveBeenCalled();
-  return { client, wire, notifications, warnings, ended };
+  return fixture;
 }
 
 test('malformed consumed notification drops while a valid delta and reply still pass', async () => {
@@ -312,68 +324,19 @@ test('a natural exit permits a new start without an explicit stop', async () => 
 
 async function supervised_client() {
   vi.mocked(spawn_codex_process).mockReset();
-  const version = fake(),
-    wire = fake();
-  const order: string[] = [];
-  let complete = false;
-  const identity = {
-    pid: wire.child.pid,
-    birth: 'birth',
-    boot: 'boot',
-    unit: null,
-    supervision_record: '/private/journal',
-  };
-  const supervisor = {
-    path: '/private/journal',
-    environment: {} as Record<string, string>,
-    argv: (argv: readonly string[]) => ['supervised', ...argv],
-    spawned: vi.fn(async () => {
-      order.push('spawned');
-    }),
-    started: vi.fn(async () => {
-      order.push('started');
-    }),
-    identity: vi.fn(async () => identity),
-    cancel_unspawned: vi.fn(async () => {
-      order.push('cancel');
-    }),
-    stop: vi.fn(async (native_stop?: () => Promise<void>, _options?: { deadline?: number }) => {
-      order.push('stop');
-      if (complete) await native_stop?.();
-      return { complete, reason: complete ? 'complete' : 'not proven', scope: 'synthetic' };
-    }),
-    shutdown_settled: Promise.resolve(),
-  };
-  const scratch = { environment: { TMPDIR: '/private/scratch' }, close: vi.fn(async () => {}) };
+  const wire = fake();
+  const { identity, order, result, supervisor, scratch, runtime } = worker_supervision_fixture(
+    wire.child.pid,
+  );
+  result.complete = false;
   vi.spyOn(WorkerSupervisor, 'create').mockResolvedValue(supervisor as unknown as WorkerSupervisor);
   vi.spyOn(WorkerScratch, 'create').mockResolvedValue(scratch as unknown as WorkerScratch);
-  vi.mocked(spawn_codex_process)
-    .mockImplementationOnce(async (_argv, options) => {
-      options.on_created?.(version.owned as unknown as OwnedCodexProcess);
-      setImmediate(() => {
-        version.child.stdout.end('codex-cli 0.166.0\n');
-        version.finish();
-      });
-      return version.owned as unknown as OwnedCodexProcess;
-    })
-    .mockImplementationOnce(async (_argv, options) => {
-      order.push('spawn');
-      options.on_created?.(wire.owned as unknown as OwnedCodexProcess);
-      return wire.owned as unknown as OwnedCodexProcess;
-    });
-  const runtime = { clock: () => 10 } as unknown as WorkerSupervisionRuntime;
-  const client = new CodexAppServerClient({
-    child_processes: new ChildProcesses(),
-    worker_supervision: runtime,
-    description: 'supervised',
-    handler: {
-      async on_notification() {},
-      async on_server_request() {},
-      async on_child_ended() {},
-    },
+  const { client, launch_options, wire_spawned } = client_fixture(runtime, wire);
+  wire_spawned.mockImplementation(() => {
+    order.push('spawn');
   });
   const options = {
-    argv: ['/synthetic/codex', 'app-server'],
+    ...launch_options,
     environment: {},
     working_directory: '/private',
     worker_ticket_id: 't_synthetic',
@@ -393,7 +356,7 @@ async function supervised_client() {
     order,
     identity,
     prove: () => {
-      complete = true;
+      result.complete = true;
     },
   };
 }

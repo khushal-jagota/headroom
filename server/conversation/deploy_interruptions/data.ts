@@ -36,7 +36,7 @@ interface InterruptionRow {
   detail: string;
   exact_match: number;
 }
-function runtime_epoch(sql: ReadSql): string | null {
+export function runtime_epoch(sql: ReadSql): string | null {
   const row = sql.get<{ epoch: string }>(
     'SELECT epoch FROM conversation_runtime_epoch WHERE singleton=1',
   );

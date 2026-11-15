@@ -8,5 +8,9 @@
     "navigation_view_meta.ordering_generation": "Manager-approved comparator-generation metadata: Python uses ICU and TypeScript uses Intl. Compare generation changes while retaining exact semantic rows, source content hashes, and response bytes."
   },
   "response_tokens": {},
-  "derived_tables": {}
+  "derived_tables": {},
+  "process_identity_tokens": {
+    "conversation_child_custody.pid": "Independent comparison hosts own different native children. One run-wide typed identity map preserves every repeated process reference. Exact native identity and custody reporter guards are proved by the focused production reporter, core, and native process checks. See tests/compare/README.md process_identity_tokens for the bounded rule and linked proofs.",
+    "conversation_child_custody.birth": "Independent native children have different kernel birth evidence. The same run-wide typed identity map retains equality, distinct values, nulls, and types. Focused production reporter, core, and native process checks prove the raw birth identity. See tests/compare/README.md process_identity_tokens for the bounded rule and linked proofs."
+  }
 }

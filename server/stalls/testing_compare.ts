@@ -26,7 +26,6 @@ const input = JSON.parse(readFileSync(0, 'utf8')) as {
   db_path: string;
   state_dir: string;
   steps: Scenario[];
-  checker_only?: boolean;
 };
 if (!input.db_path || !input.state_dir) throw new Error('comparison requires explicit test paths');
 const database = createDatabase(input.db_path);
@@ -60,7 +59,6 @@ try {
             record.machine_id,
           ],
         );
-      if (input.checker_only) return;
       sql.run(
         `UPDATE notification_preferences SET enabled=?
         WHERE subject_key='panels' AND notification_type='stall_alarm'`,
@@ -68,16 +66,6 @@ try {
       );
     });
     if (step.check) checker.check_once();
-    if (input.checker_only) {
-      results.push({
-        name: step.name,
-        rows: database.read((sql) => ({
-          findings: sql.all('SELECT * FROM stall_findings ORDER BY finding_key'),
-          heartbeat: sql.all('SELECT * FROM stall_checker_heartbeat ORDER BY singleton'),
-        })),
-      });
-      continue;
-    }
     const sends: unknown[] = [];
     const chief: string[] = [];
     const web_push: WebPushAdapter = {
