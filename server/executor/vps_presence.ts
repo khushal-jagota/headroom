@@ -37,7 +37,7 @@ import {
   MAC_AWAY_AFTER_SECONDS,
   MAC_UPDATE_SCHEMA_VERSION,
 } from './configuration.ts';
-import { decode_value } from './protocol.ts';
+import { decode_value, encode_bounded } from './protocol.ts';
 import { high_sequence } from './data/mailbox.ts';
 import {
   accept_lease_in_transaction,
@@ -243,12 +243,21 @@ export class MacPresenceService {
       }
     }
     if (!this.closed && returned && this.returned !== null) this.returned();
-    return {
+    let reply: WireValue<'LeaseReply'> = {
       accepted_at_vps_ms: now,
       away_after_seconds: MAC_AWAY_AFTER_SECONDS,
       update: await this.check_update(),
       mailbox_high_sequence: this.database.read((sql) => high_sequence(sql, this.machine_id)),
     };
+    try {
+      encode_bounded(reply, 'LeaseReply');
+    } catch (error) {
+      if (!(error instanceof ProtocolRefused)) throw error;
+      console.warn('The Mac update offer exceeds the lease response budget');
+      reply = { ...reply, update: no_update_check() };
+      encode_bounded(reply, 'LeaseReply');
+    }
+    return reply;
   }
   private write_lease(request: WireValue<'LeaseRequest'>) {
     return this.database.write(

@@ -44,6 +44,7 @@ from planner.core import change_signal
 from planner.core.db import connect, create_schema
 from planner.environments.update_attempts import UpdateConflict
 from planner.executor import protocol as wire
+from planner.executor.configuration import MAX_ENVELOPE_BYTES
 from planner.executor.contracts import CommandSettlementReason
 from planner.executor.store import ExecutorStore
 from planner.executor.vps_mailbox import SqliteCommandMailbox
@@ -590,6 +591,15 @@ class _Source:
             self.callback_trace.append(["update"])
             if self.presence_mode != "sqlite":
                 self._callback_error()
+            if self.presence_mode == "oversized_update":
+                return _typed("MacUpdateCheck", {
+                    "schema_version": 1, "prefetch": None,
+                    "target": {
+                        "request_id": "lease-budget", "application_revision": "a" * 40,
+                        "mode": "idle", "activate": False, "archive_sha256": "b" * 64,
+                        "archive_size": 1, "archive_path": "/" + "x" * MAX_ENVELOPE_BYTES,
+                    },
+                })
             return no_update_check()
 
         async def replaced(old: str, current: str) -> None:
@@ -2026,7 +2036,19 @@ async def _machine_phases(paired: Any, paths: list[Path], errors: list[Any]) -> 
     assert all(row["state"] == "waiting" for row in final["rows"]
                if row["command_id"] in ("scope-a1", "scope-a2"))
     admission = await _admission_phases(paired, paths, other, replacement)
-    return {"errors": errors, "global_sequences": sequences, "admission": admission}
+    await p("presence", method="open")
+    await p("presence", method="mode", mode="oversized_update")
+    reply = await p("presence", method="lease", args=[lease(OLD)])
+    assert reply["update"] == wire.encode_value(no_update_check())
+    assert len(wire.encode_bounded(_typed("LeaseReply", reply))) < MAX_ENVELOPE_BYTES
+    stored = await p("presence", method="stored")
+    assert stored["executor_incarnation"] == OLD
+    assert stored["last_lease_at_ms"] == NOW and stored["lease"]["identity"] == IDENTITY
+    callbacks = await p("presence", method="callbacks")
+    assert callbacks == [["update"]]
+    await p("presence", method="stop")
+    return {"errors": errors, "global_sequences": sequences, "admission": admission,
+            "lease_budget": {"reply": reply, "stored": stored, "callbacks": callbacks}}
 
 
 async def _admission_phases(
