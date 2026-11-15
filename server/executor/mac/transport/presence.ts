@@ -24,12 +24,13 @@ import {
   LEASE_INTERVAL_SECONDS,
   MAX_LEASE_WAITING_CONVERSATIONS,
   MAX_WORKSPACE_STATE_IDS,
-  WORKSPACE_CLEANUP_INTERVAL_SECONDS,
 } from '../configuration.ts';
 import { TICKET_ID_PATTERN } from '../../../ticket_workspaces/contracts.ts';
 import type { MacHttpClient } from './http.ts';
 import { failure_name } from './errors.ts';
 import { ConnectionDiagnostics } from './diagnostics.ts';
+
+const WORKSPACE_CLEANUP_INTERVAL_SECONDS = 600;
 
 async function local_workspace_ticket_ids(root: string): Promise<string[]> {
   let names: string[];
