@@ -60,6 +60,9 @@ test('backend news waits for the accepted prompt receipt and prose stays transie
   const child = await f.child;
   await child.wait_for_barrier('receipt');
   expect(f.store.read_events_after('core', 0)).toEqual([]);
+  // Admission remains visible before the prompt receipt reaches durable storage.
+  expect(await f.core.sender_message_ids_awaiting_outcome('core')).toEqual(new Set(['sender']));
+  expect(await f.core.sender_message_ids_awaiting_outcome('unknown')).toEqual(new Set());
   const release = await f.core.conversations.get('core')!.lock.acquire();
   try {
     expect(await f.core.is_running('core')).toBe(false);
@@ -72,6 +75,7 @@ test('backend news waits for the accepted prompt receipt and prose stays transie
   }
   await child.release('receipt');
   expect(await sent).toBeInstanceOf(PromptDeliveryStarted);
+  expect(await f.core.sender_message_ids_awaiting_outcome('core')).toEqual(new Set());
   await child.flush_events();
   await f.core.wait_until_quiescent();
   expect(f.store.read_events_after('core', 0).map((row) => row.kind)).toEqual([
@@ -280,11 +284,17 @@ test('dequeued sender identity waits for the receipt instead of crossing the wir
   await f.start();
   await f.send();
   expect(await f.send('held', 'held-sender')).toBeInstanceOf(PromptDeliveryQueued);
+  expect(await f.core.sender_message_ids_awaiting_outcome('core')).toEqual(
+    new Set(['held-sender']),
+  );
   const child = await f.child;
   await child.configure('write_prompt', { barrier: 'queued-receipt' });
   await child.finish();
   await child.wait_for_barrier('queued-receipt');
   expect(await f.core.held_prompts('core')).toEqual([]);
+  expect(await f.core.sender_message_ids_awaiting_outcome('core')).toEqual(
+    new Set(['held-sender']),
+  );
   const duplicate = f.send('held', 'held-sender');
   await child.release('queued-receipt');
   expect(await duplicate).toBeInstanceOf(PromptDeliveryStarted);

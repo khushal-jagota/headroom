@@ -150,6 +150,11 @@ export async function take_backend_event_with_receipt(
     }
     const prediction = new RemoteEventPrediction(mutations);
     let ended_task_description: string | null = null;
+    const compaction_confirmed =
+      interpreted.compacted ||
+      (event instanceof TurnEnded && running?.compaction_confirmed === true);
+    const working_turn_compaction_confirmed =
+      compaction_confirmed && running !== null && !running.automatic_compaction;
     const result = await host.persist(
       state,
       () =>
@@ -167,9 +172,8 @@ export async function take_backend_event_with_receipt(
                   !interpreted.compacted &&
                   running !== null &&
                   !turn_is_maintenance(running),
-                automatic_compaction_confirmed:
-                  interpreted.compacted ||
-                  (event instanceof TurnEnded && running?.compaction_confirmed === true),
+                automatic_compaction_confirmed: compaction_confirmed,
+                working_turn_compaction_confirmed,
                 automatic_compaction_result: interpreted.compaction_result,
                 create_failure_notice: interpreted.failure_notice,
               },
@@ -257,6 +261,12 @@ export async function take_backend_event_with_receipt(
           ...state.record,
           latest_agent_activity_at: last.created_at,
           latest_agent_activity_sequence: last.sequence,
+        });
+      }
+      if (working_turn_compaction_confirmed) {
+        state.record = new ConversationRecord({
+          ...state.record,
+          working_turn_compacted_through_sequence: state.record.latest_agent_activity_sequence,
         });
       }
       if (interpreted.compacted) {

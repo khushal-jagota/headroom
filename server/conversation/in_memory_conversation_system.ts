@@ -406,6 +406,14 @@ export class InMemoryConversationSystem implements ConversationSystem {
         }),
     );
   }
+  async sender_message_ids_awaiting_outcome(conversation_id: string): Promise<ReadonlySet<string>> {
+    const state = this._conversations.get(conversation_id);
+    return new Set(
+      state?.held_prompts.flatMap((message) =>
+        message.sender_message_id ? [message.sender_message_id] : [],
+      ) ?? [],
+    );
+  }
   async promote_held_prompt(
     conversation_id: string,
     held_prompt_id: string,
