@@ -19,7 +19,7 @@ import { InboxStore } from '../../executor/data/inbox.ts';
 import { FileStaging } from '../../executor/vps_files.ts';
 import { VpsExecutor } from '../../executor/vps_transport.ts';
 import { VpsExecutorRegistry } from '../../executor/registry.ts';
-import { ORIGINAL_MAC_MACHINE_ID } from '../../execution_identity.ts';
+import { HOME_MACHINE_ID, ORIGINAL_MAC_MACHINE_ID } from '../../execution_identity.ts';
 import { accept_lease_in_transaction } from '../../executor/vps_presence_store.ts';
 import { as_object, parse_identity } from '../../executor/protocol.ts';
 import type { WireValue } from '../../executor/contracts.ts';
@@ -90,6 +90,11 @@ async function cycle() {
       return [];
     },
   });
+  // Match Python _present_harness's retained-factory bench premise. Keep the stale
+  // presence rows intact; production admission still uses registry.is_present.
+  core.start_admission.configure_destinations(
+    (destination) => destination === HOME_MACHINE_ID || destination === ORIGINAL_MAC_MACHINE_ID,
+  );
 }
 async function close() {
   await server.close({ deadline: performance.now() / 1000 + 5 });
