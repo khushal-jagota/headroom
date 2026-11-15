@@ -13,6 +13,7 @@ import {
 import { ConversationMessageFiles } from '../../../conversation/record/message_files.ts';
 import { PROTOCOL_VERSION, SPOOL_FORMAT_VERSION } from '../../../execution_configuration.ts';
 import { parse_identity } from '../../protocol.ts';
+import { credential_path } from '../../credential_file.ts';
 import { mac_runtime_settings } from '../../../core/config.ts';
 import { handoff_identity } from '../runtime/handoff.ts';
 import { read_record } from '../runtime/records.ts';
@@ -306,6 +307,8 @@ export class MacService {
   start(): Promise<void> {
     if (this.options) return Promise.reject(new ServerLifecycleError('Mac host is shutting down.'));
     this.starting ??= (async () => {
+      await this.client.ensure_credential(credential_path(this.configuration.paths.root));
+      this.controller.signal.throwIfAborted();
       await this.processes?.end_orphans(this.controller.signal);
       this.controller.signal.throwIfAborted();
       await this.gateway.start(this.configuration.paths.ipc_socket);

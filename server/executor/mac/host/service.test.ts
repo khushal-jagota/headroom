@@ -18,6 +18,8 @@ import { observe_shutdown } from '../../../conversation/shutdown.ts';
 import type { CanonicalReader } from '../storage/journal_contracts.ts';
 import { read_canonical_body } from '../mailbox/poll.ts';
 import { PROTOCOL_VERSION } from '../../../execution_configuration.ts';
+import { credential_path } from '../../credential_file.ts';
+import type { MacUpdateController } from '../updates/controller.ts';
 
 test('quiesce cancels a catalog probe before native dispatch and joins HTTP before root reuse', async () => {
   const root = await mkdtemp(join(tmpdir(), 'mac-host-'));
@@ -59,7 +61,9 @@ test('quiesce cancels a catalog probe before native dispatch and joins HTTP befo
     'MailboxPollReply',
   );
   const reported = new Deferred<void>(),
-    catalog_entered = new Deferred<void>();
+    catalog_entered = new Deferred<void>(),
+    credential_entered = new Deferred<void>(),
+    credential_release = new Deferred<void>();
   let catalog_outcome: unknown;
   let http_closed = false,
     catalog_cancelled = false,
@@ -67,6 +71,11 @@ test('quiesce cancels a catalog probe before native dispatch and joins HTTP befo
   let invocation!: MacInvocation, context!: MacHostContext;
   class ScriptedClient extends MacHttpClient {
     private polled = false;
+    override async ensure_credential(path: string) {
+      expect(path).toBe(credential_path(configuration.paths.root));
+      credential_entered.resolve();
+      await credential_release.promise;
+    }
     async lease() {
       assert.equal(http_closed, false);
       return decode_value(
@@ -156,7 +165,9 @@ test('quiesce cancels a catalog probe before native dispatch and joins HTTP befo
     },
     updates(value) {
       context = value;
-      return production.updates(value);
+      const updates = production.updates(value);
+      vi.spyOn(updates as MacUpdateController, 'close_handover_once_kept').mockResolvedValue();
+      return updates;
     },
   };
   let service: MacService | undefined;
@@ -169,7 +180,22 @@ test('quiesce cancels a catalog probe before native dispatch and joins HTTP befo
     expect(context.outbox).toBe(service.outbox);
     expect(context.update_files).not.toBe(service.files);
     const native_probe = vi.spyOn(service.child_processes, 'spawn');
-    await service.start();
+    const gateway_start = vi.spyOn(service.gateway, 'start'),
+      mailbox_start = vi.spyOn(service.mailbox, 'start'),
+      update_start = vi.spyOn(service.updates, 'start'),
+      sender_start = vi.spyOn(service.sender, 'start'),
+      lease_start = vi.spyOn(service.lease, 'start');
+    const starting = service.start();
+    await credential_entered.promise;
+    expect([
+      gateway_start.mock.calls.length,
+      mailbox_start.mock.calls.length,
+      update_start.mock.calls.length,
+      sender_start.mock.calls.length,
+      lease_start.mock.calls.length,
+    ]).toEqual([0, 0, 0, 0, 0]);
+    credential_release.resolve();
+    await starting;
     await observe_shutdown(
       catalog_entered.promise,
       options(),
@@ -197,6 +223,7 @@ test('quiesce cancels a catalog probe before native dispatch and joins HTTP befo
     await replacement.stop(options());
     await replacement.settled();
   } finally {
+    credential_release.resolve();
     if (service) {
       await service.stop(options()).catch(() => {});
       await service.settled().catch(() => {});
