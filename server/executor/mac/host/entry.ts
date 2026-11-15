@@ -39,7 +39,7 @@ export function production_bindings(
         presence: { identity: context.identity, leased: () => context.presence.leased() },
         outbox: context.outbox,
         files: context.update_files,
-        executor_id: configuration.executor_id,
+        authentication_headers: () => context.client.authentication_headers(),
         runtime: context.runtime,
         session_factory: () =>
           create_update_session(configuration.panels_server_url, configuration.http),

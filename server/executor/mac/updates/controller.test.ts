@@ -42,6 +42,8 @@ function fixture(replay = false, trial = false) {
     exit = resolve;
   });
   const download_paths: string[] = [];
+  let credential = 'a'.repeat(43);
+  const authentication_trace: [string, string][] = [];
   class Peer extends HttpSessions {
     constructor() {
       super('https://fixture.invalid', CONNECTORS);
@@ -51,7 +53,13 @@ function fixture(replay = false, trial = false) {
       headers: Readonly<Record<string, string>>,
       consume: ReplyReader<T>,
     ): Promise<T> {
-      expect(headers).toEqual({ 'X-Panels-Executor-ID': 'scripted-mac' });
+      expect(headers).toEqual({
+        'X-Panels-Executor-ID': 'scripted-mac',
+        'X-Panels-Executor-Credential': credential,
+        'X-Panels-Executor-Platform': process.platform,
+      });
+      authentication_trace.push([input.method, credential]);
+      credential = 'c'.repeat(43);
       let body: Buffer;
       if (input.method === 'POST') {
         expect(input.path).toBe('/api/executor/update');
@@ -97,7 +105,11 @@ function fixture(replay = false, trial = false) {
     runner,
     presence: { identity, leased: () => true },
     outbox: { pending_count: () => 1 },
-    executor_id: 'scripted-mac',
+    authentication_headers: () => ({
+      'X-Panels-Executor-ID': 'scripted-mac',
+      'X-Panels-Executor-Credential': credential,
+      'X-Panels-Executor-Platform': process.platform,
+    }),
     runtime,
     session_factory: () => new Peer(),
     request_exit: exit,
@@ -133,6 +145,10 @@ function fixture(replay = false, trial = false) {
     exit_requested,
     downloads: () => download_paths.length,
     download_paths,
+    authentication_trace,
+    authenticate: () => {
+      credential = 'b'.repeat(43);
+    },
   };
 }
 afterEach(async () => {
@@ -148,6 +164,7 @@ afterEach(async () => {
 });
 test('prefetch supplies an offered activation and records handoff before exit', async () => {
   const f = fixture();
+  f.authenticate();
   f.controller.start();
   const prefetch_path = `/api/executor/update/prefetch/${f.target.archive_sha256}`;
   f.controller.offer({
@@ -163,6 +180,8 @@ test('prefetch supplies an offered activation and records handoff before exit', 
   f.controller.offer(f.check({ ...f.target, activate: true }));
   await f.exit_requested;
   expect(f.download_paths).toEqual([prefetch_path]);
+  expect(f.authentication_trace[0]![1]).toBe('b'.repeat(43));
+  expect(f.authentication_trace.slice(1).every((entry) => entry[1] === 'c'.repeat(43))).toBe(true);
   expect(f.runner.prepare_update).toHaveBeenCalledTimes(1);
   expect(f.phases).toEqual([
     'ready_to_restart',
