@@ -8,6 +8,7 @@ import { observe_shutdown } from '../conversation/shutdown.ts';
 import { canonical_server_origin } from './apns.ts';
 import * as data from './data.ts';
 import * as apns_data from './apns_data.ts';
+import { task_alert_is_current } from './attention.ts';
 export interface NotificationLoopOptions {
   database: Database;
   clock: Clock;
@@ -53,27 +54,32 @@ export class NotificationLoop {
       database.write((sql) => data.queue_deliveries(sql, now));
       const identity = database.read((sql) => data.read_web_push_identity(sql));
       const deliveries = database.read((sql) => data.pending_deliveries(sql, now));
+      let sent = 0;
       for (const delivery of deliveries) {
-        if (this.stop_requested) return 0;
+        if (this.stop_requested) return sent;
+        if (!database.read((sql) => task_alert_is_current(sql, delivery.edge))) continue;
+        sent++;
         const result = await adapter.send(delivery.subscription, delivery.intent, identity, {
           subject: this.options.canonical_origin || 'https://localhost',
         });
-        if (this.expired) return 0;
+        if (this.expired) return sent;
         database.write((sql) => data.record_delivery_result(sql, delivery, { ...result, now }));
       }
-      if (this.stop_requested) return deliveries.length;
+      if (this.stop_requested) return sent;
       const native = database.write((sql) => apns_data.pending_deliveries(sql, now));
       const origin = canonical_server_origin(this.options.canonical_origin);
       if (apns_adapter && origin) {
         for (const delivery of native) {
-          if (this.stop_requested) return deliveries.length;
+          if (this.stop_requested) return sent;
+          if (!database.read((sql) => task_alert_is_current(sql, delivery.edge))) continue;
+          sent++;
           const result = await apns_adapter.send(delivery, { server_url: origin, now });
-          if (this.expired) return deliveries.length;
+          if (this.expired) return sent;
           database.write((sql) => apns_data.record_result(sql, delivery, result, now));
         }
-        return deliveries.length + native.length;
+        return sent;
       }
-      return deliveries.length;
+      return sent;
     } finally {
       admission?.release();
     }

@@ -773,12 +773,14 @@ export function set_ticket_backlog(
   const t = load_ticket_for_write(tx, id);
   if (terminal(t))
     throw new PlannerError('validation', 'terminal Tickets cannot change backlog state');
-  if (t.is_backlogged !== o.is_backlogged)
+  if (t.is_backlogged !== o.is_backlogged) {
     tx.run('UPDATE tickets SET is_backlogged=?,updated_at=? WHERE id=?', [
       Number(o.is_backlogged),
       o.now,
       id,
     ]);
+    capture_ticket_attention(tx, id, o.now);
+  }
   return load_ticket_for_write(tx, id);
 }
 function name(sql: ReadSql, p: Principal): string {
