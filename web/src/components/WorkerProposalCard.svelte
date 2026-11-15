@@ -6,16 +6,16 @@
   import ErrorLine from "./ErrorLine.svelte";
   import ComposerField from "./conversation/ComposerField.svelte";
   import { advanceTargetFor, fieldLabelFor, preferredScopeCeilingFor, type Lifecycle } from "../lib/lifecycle";
-  import { decisionIdentity, decisionId, recallReviewDecision, submitReviewDecision, type ReviewDecisionBody } from "../lib/review/decision";
+  import { decisionIdentity, recallReviewDecision, submitReviewDecision } from "../lib/review/decision";
   import type { PendingTicketProposal, Principal } from "../lib/types";
 
   let { ticketId, proposal, lifecycle, stage, ceiling, holder, manager, onAccept, onScope, onReturn, canReturn = true, returnUnavailableReason = "No existing Worker conversation to send a revision to.", disabled = false, revisionEditor, revisionText = $bindable(""), holdDecisions = false, initialEditedBody, onEditedBodyChange, contextRow, utilityActions }: {
     ticketId: string;
     proposal: PendingTicketProposal; lifecycle: Lifecycle; stage: string; ceiling: string; holder: Principal;
     manager: { id: string; title: string } | null;
-    onAccept: (body: Record<string, unknown>) => Promise<unknown>;
+    onAccept: () => Promise<unknown>;
     onScope: (body: Record<string,unknown>) => Promise<void>;
-    onReturn: (body: ReviewDecisionBody) => Promise<unknown>;
+    onReturn: () => Promise<unknown>;
     canReturn?: boolean;
     disabled?: boolean;
     /** The Review screen's voice-enabled note field beside the decision controls.
@@ -57,8 +57,8 @@
     try {
       const pending = recallReviewDecision(decisionKey);
       if (pending) {
-        revisionText = pending.body.message ?? "";
-        draft = pending.body.edited_body ?? proposal.body;
+        revisionText = pending.command.message ?? "";
+        draft = pending.command.edited_body ?? proposal.body;
       }
     } catch (recoveryError) { error = recoveryError; }
   });
@@ -75,12 +75,13 @@
     busy = true; error = null;
     try {
       if (change.approval && change.ceiling) {
-        await submitReviewDecision(key, { action: "approve", body: {
-          decision_id: decisionId(key, "approve"), message: text || null,
+        await submitReviewDecision(ticketId, proposal.field, { action: "approve", body: {
+          message: text || null,
           next_ceiling: change.ceiling, next_holder: change.holder, expected_proposal_revision: revision,
           ...(editedBody !== proposal.body ? { edited_body: editedBody } : {})
-        } }, onAccept);
+        } });
         if (!mounted || decisionKey !== key) return;
+        await onAccept();
         revisionText = "";
         resolved = true;
       } else {
@@ -95,10 +96,11 @@
     const key = decisionKey;
     const revision = proposal.revision;
     try {
-      await submitReviewDecision(key, { action: "send_back", body: {
-        decision_id: decisionId(key, "send_back"), message, expected_proposal_revision: revision
-      } }, onReturn);
+      await submitReviewDecision(ticketId, proposal.field, { action: "send_back", body: {
+        message, expected_proposal_revision: revision
+      } });
       if (!mounted || decisionKey !== key) return;
+      await onReturn();
       revisionText = "";
       resolved = true;
     }
