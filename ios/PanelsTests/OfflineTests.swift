@@ -1,7 +1,6 @@
 import Foundation
 import SwiftData
 import Observation
-import SwiftData
 import os
 import XCTest
 @testable import Panels
@@ -539,6 +538,160 @@ import XCTest
         PendingWork(id: id, created: Date(timeIntervalSinceNow: at - 60), kind: .message, owner: .ticket("ticket"),
             message: ConversationSend(conversationId: "conversation", content: [.init(text: id)], senderMessageId: id, sentAtUnixMilliseconds: Int64(at * 1000), ownerReadThroughSequence: readThrough))
     }
+    private var tinyPhoto: ConversationSend.Piece {
+        .init(piece: "image", data: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==", mediaType: "image/png", fileName: "photo.png")
+    }
+    private func enqueuePhoto(_ id: String, draftID: String) throws -> PendingWork {
+        store.saveDraft("  Original words  ", server: server, id: draftID)
+        try store.put(server: server, kind: "attachments", id: draftID, data: JSONEncoder().encode([tinyPhoto]))
+        let work = PendingWork(id: id, created: .now, kind: .message, owner: .ticket("ticket"),
+            message: ConversationSend(conversationId: "conversation", content: [.init(text: "Original words"), tinyPhoto], senderMessageId: id, sentAtUnixMilliseconds: 123))
+        try store.outgoing.enqueue(work, server: server, capturedDraft: store.outgoing.captureDraft(server: server, id: draftID))
+        return work
+    }
+    func testPhoto422RestoresDraftDurablyAndExplicitRetryClearsOnlyThatDraft() async throws {
+        let original = try enqueuePhoto("photo-rejected", draftID: "photo-draft")
+        let originalBytes = try XCTUnwrap(store.record(server: server, kind: "outbox", id: original.id)?.payload)
+        OfflineProtocol.state.messageStatus = 422
+        let outbox = Outbox(store: store)
+        await outbox.drain(api: api)
+        let reopened = LocalStore(url: directory.appendingPathComponent("test.store"))
+        let failed = try XCTUnwrap(reopened.outgoing.work(server: server, id: original.id))
+        XCTAssertEqual(failed.state, .failed)
+        XCTAssertTrue(failed.note.lowercased().contains("photo"))
+        XCTAssertEqual(failed.message?.senderMessageId, original.id)
+        XCTAssertEqual(failed.message?.sentAtUnixMilliseconds, 123)
+        XCTAssertEqual(reopened.draft(server: server, id: "photo-draft"), "  Original words  ")
+        let restored = try XCTUnwrap(reopened.record(server: server, kind: "attachments", id: "photo-draft")?.payload)
+        XCTAssertEqual(try JSONDecoder().decode([ConversationSend.Piece].self, from: restored), [tinyPhoto])
+        let restoredCapture = try reopened.outgoing.captureDraft(server: server, id: "photo-draft")
+        XCTAssertEqual(restoredCapture.text?.updated, failed.completed)
+        XCTAssertEqual(restoredCapture.attachments?.updated, failed.completed)
+        XCTAssertEqual(try reopened.record(server: server, kind: "outbox", id: original.id)?.payload, originalBytes)
+        OfflineProtocol.state.messageStatus = 200
+        let nextID = try XCTUnwrap(outbox.retry(original.id, api: api))
+        XCTAssertNotEqual(nextID, original.id)
+        XCTAssertEqual(outbox.work(server, id: nextID)?.priorMessageIDs, [original.id])
+        XCTAssertEqual(store.draft(server: server, id: "photo-draft"), "")
+        await outbox.drain(api: api)
+        XCTAssertEqual(outbox.work(server, id: nextID)?.state, .sent)
+        XCTAssertEqual(OfflineProtocol.state.writes, [original.id, nextID])
+
+        // Identical words saved later are still a newer draft, not the restored version.
+        let newerOriginal = try enqueuePhoto("photo-newer-identical", draftID: "photo-newer-draft")
+        OfflineProtocol.state.messageStatus = 422
+        await outbox.drain(api: api)
+        store.saveDraft("  Original words  ", server: server, id: "photo-newer-draft")
+        let newerCapture = try store.outgoing.captureDraft(server: server, id: "photo-newer-draft")
+        XCTAssertNotEqual(newerCapture.text?.updated, outbox.work(server, id: newerOriginal.id)?.completed)
+        OfflineProtocol.state.messageStatus = 200
+        let newerRetry = try XCTUnwrap(outbox.retry(newerOriginal.id, api: api))
+        XCTAssertNil(outbox.work(server, id: newerRetry)?.rejectedPhotoDraft)
+        XCTAssertEqual(try store.outgoing.captureDraft(server: server, id: "photo-newer-draft"), newerCapture)
+        await outbox.drain(api: api)
+        XCTAssertEqual(outbox.work(server, id: newerRetry)?.state, .sent)
+        XCTAssertEqual(try store.outgoing.captureDraft(server: server, id: "photo-newer-draft"), newerCapture)
+    }
+    func testPhoto422CannotRestoreOverEitherNewerComposerVersion() async throws {
+        OfflineProtocol.state.messageStatus = 422
+        for edit in ["text", "type-delete", "attachments"] {
+            let draftID = "draft-" + edit
+            _ = try enqueuePhoto("photo-" + edit, draftID: draftID)
+            if edit == "attachments" {
+                try store.put(server: server, kind: "attachments", id: draftID, data: Data("[]".utf8))
+            } else {
+                store.saveDraft("New words", server: server, id: draftID)
+                if edit == "type-delete" { store.saveDraft("", server: server, id: draftID) }
+            }
+            let newer = try store.outgoing.captureDraft(server: server, id: draftID)
+            await Outbox(store: store).drain(api: api)
+            XCTAssertEqual(try store.outgoing.captureDraft(server: server, id: draftID), newer,
+                "A newer \(edit) version protects both composer records")
+        }
+    }
+    func testFailedPhotoRetryPreparesBytesWhileUncertainRetryKeepsOriginalBytes() async throws {
+        #if SWIFT_PACKAGE
+        let fixture = Bundle.module.url(forResource: "photo", withExtension: "heic", subdirectory: "Fixtures")
+        #else
+        let fixture = Bundle(for: Self.self).url(forResource: "photo", withExtension: "heic")
+        #endif
+        let heic = try Data(contentsOf: XCTUnwrap(fixture)).base64EncodedString()
+        let photo = ConversationSend.Piece(piece: "image", data: heic, mediaType: "image/heic", fileName: "saved.heic")
+        let outbox = Outbox(store: store)
+        OfflineProtocol.state.offline = true
+        for state in [PendingWork.State.failed, .uncertain] {
+            let id = "retry-" + state.rawValue
+            let work = PendingWork(id: id, created: .now, kind: .message, state: state, owner: .ticket(id),
+                message: ConversationSend(conversationId: id, content: [photo], senderMessageId: id, sentAtUnixMilliseconds: 123))
+            try outbox.save(work, server: server)
+            let before = try store.record(server: server, kind: "outbox", id: id)?.payload
+            let replacementID = try XCTUnwrap(outbox.retry(id, api: api))
+            let replacement = try XCTUnwrap(outbox.work(server, id: replacementID)?.message?.content.first)
+            if state == .failed {
+                XCTAssertEqual(replacement.mediaType, "image/jpeg")
+                XCTAssertNotEqual(replacement.data, heic)
+                XCTAssertEqual(outbox.work(server, id: replacementID)?.priorMessageIDs, [id])
+            } else {
+                XCTAssertEqual(replacement, photo)
+                XCTAssertNil(outbox.work(server, id: replacementID)?.priorMessageIDs)
+            }
+            XCTAssertEqual(try store.record(server: server, kind: "outbox", id: id)?.payload, before)
+        }
+        await outbox.drain(api: api)
+    }
+    func testDeferredPhoto422RefreshesOnlyTheUntouchedVisibleComposer() async throws {
+        for newerEdit in [false, true] {
+            let configuration = URLSessionConfiguration.ephemeral
+            configuration.protocolClasses = [OfflineProtocol.self]
+            let api = APIClient(baseURL: URL(string: "https://offline-test-\(UUID().uuidString.lowercased()).invalid")!, session: URLSession(configuration: configuration))
+            let server = LocalStore.server(api.baseURL)
+            defer {
+                for kind in ["outbox", "draft", "attachments", "cache"] {
+                    for record in (try? LocalStore.shared.records(server: server, kind: kind)) ?? [] {
+                        if let id = record.key.components(separatedBy: "\u{1f}").last { try? LocalStore.shared.remove(server: server, kind: kind, id: id) }
+                    }
+                }
+            }
+            OfflineProtocol.state.offline = true
+            let model = ConversationModel()
+            model.conversationID = "conversation"
+            model.restore(owner: .chief, api: api)
+            model.draft = "  Deferred photo  "
+            model.attachments = [tinyPhoto]
+            _ = await model.send(to: .chief, using: api)
+            let identity = try XCTUnwrap(try LocalStore.shared.outgoing.summaries(server: server, owner: .chief).first?.id)
+            await Outbox.shared.drain(api: api)
+            // Await the durable failure notification, rather than guessing how many actor turns it takes.
+            let (changes, continuation) = AsyncStream<Void>.makeStream(bufferingPolicy: .bufferingNewest(1))
+            var change = changes.makeAsyncIterator()
+            while true {
+                withObservationTracking { _ = LocalStore.shared.outgoingRevision(server) } onChange: { continuation.yield(()) }
+                let failed = OfflineProtocol.state.failedOffline(try api.url("/api/chief/conversation/send"))
+                if failed, try LocalStore.shared.outgoing.summary(server: server, id: identity)?.state == "waiting" { break }
+                _ = await change.next()
+            }
+            continuation.finish()
+            XCTAssertEqual(try LocalStore.shared.outgoing.summary(server: server, id: identity)?.state, "waiting")
+            if newerEdit { model.draft = "New words"; model.draft = "" }
+            OfflineProtocol.state.offline = false
+            OfflineProtocol.state.messageStatus = 422
+            // A fresh drainer models foreground recovery/relaunch without the earlier backoff clock.
+            await Outbox(store: .shared).drain(api: api)
+            model.syncOutbox()
+            XCTAssertEqual(try LocalStore.shared.outgoing.summary(server: server, id: identity)?.state, "failed")
+            XCTAssertTrue(model.error?.lowercased().contains("photo") == true)
+            XCTAssertEqual(model.draft, newerEdit ? "" : "  Deferred photo  ")
+            XCTAssertEqual(model.attachments, newerEdit ? [] : [tinyPhoto])
+            if !newerEdit {
+                let recreated = ConversationModel()
+                recreated.conversationID = "conversation"
+                recreated.restore(owner: .chief, api: api)
+                XCTAssertEqual(recreated.draft, model.draft)
+                XCTAssertEqual(recreated.attachments, model.attachments)
+            }
+            OfflineProtocol.state.messageStatus = 200
+        }
+    }
     func testWaitingMessagePostsWithoutReceiptOrHeldMessageReads() async throws {
         let outbox = Outbox(store: store)
         try outbox.save(message("new", readThrough: 12), server: server)
@@ -990,6 +1143,8 @@ import XCTest
 private final class OfflineState: @unchecked Sendable {
     private let lock = NSLock()
     private var _offline = false
+    private var offlineFailures: Set<URL> = []
+    func failedOffline(_ url: URL) -> Bool { lock.withLock { offlineFailures.contains(url) } }
     private var _offlineError: URLError.Code = .notConnectedToInternet
     private var _responseError: URLError.Code = .networkConnectionLost
     var offlineError: URLError.Code { get { lock.withLock { _offlineError } } set { lock.withLock { _offlineError = newValue } } }
@@ -1008,6 +1163,8 @@ private final class OfflineState: @unchecked Sendable {
     private var _decisionPost: Data?
     private var _decisionStatus = 200
     private var _lookupStatus = 200
+    private var _messageStatus = 200
+    var messageStatus: Int { get { lock.withLock { _messageStatus } } set { lock.withLock { _messageStatus = newValue } } }
     private var _loseDecisionBeforeCommit = false
     private var _loseDecisionAfterCommit = false
     var decisionBodies: [(String, Data)] { lock.withLock { recordedDecisions } }
@@ -1018,7 +1175,10 @@ private final class OfflineState: @unchecked Sendable {
     var lookupStatus: Int { get { lock.withLock { _lookupStatus } } set { lock.withLock { _lookupStatus = newValue } } }
     var loseDecisionBeforeCommit: Bool { get { lock.withLock { _loseDecisionBeforeCommit } } set { lock.withLock { _loseDecisionBeforeCommit = newValue } } }
     var loseDecisionAfterCommit: Bool { get { lock.withLock { _loseDecisionAfterCommit } } set { lock.withLock { _loseDecisionAfterCommit = newValue } } }
-    func status(_ request: URLRequest) -> Int { lock.withLock { request.url!.path.contains("/decision-operations/") ? (request.httpMethod == "POST" ? _decisionStatus : _lookupStatus) : 200 } }
+    func status(_ request: URLRequest) -> Int { lock.withLock {
+        if request.url!.path.hasSuffix("/send") { return _messageStatus }
+        return request.url!.path.contains("/decision-operations/") ? (request.httpMethod == "POST" ? _decisionStatus : _lookupStatus) : 200
+    } }
     private var _holdLanes = false
     private var held: [@Sendable () -> Void] = []
     private var active = 0, peak = 0, lanePeak = 0
@@ -1053,7 +1213,7 @@ private final class OfflineState: @unchecked Sendable {
     var requests: [String] { lock.withLock { _requests } }
     var ticket: Data { lock.withLock { _ticket } }
     var writes: [String] { lock.withLock { _writes } }
-    func reset(ticket: Data) { lock.withLock { _ticket = ticket; _offline = false; _offlineError = .notConnectedToInternet; _responseError = .networkConnectionLost; _loseResponse = false; _writes = []; _requests = []; _heldMessageID = nil; receipts = []; decisionReceipts = [:]; recordedDecisions = []; _decisionOutcomes = 0; _decisionLookup = nil; _decisionPost = nil; _decisionStatus = 200; _lookupStatus = 200; _loseDecisionBeforeCommit = false; _loseDecisionAfterCommit = false } }
+    func reset(ticket: Data) { lock.withLock { _ticket = ticket; _offline = false; offlineFailures = []; _offlineError = .notConnectedToInternet; _responseError = .networkConnectionLost; _loseResponse = false; _writes = []; _requests = []; _heldMessageID = nil; receipts = []; decisionReceipts = [:]; recordedDecisions = []; _decisionOutcomes = 0; _decisionLookup = nil; _decisionPost = nil; _decisionStatus = 200; _lookupStatus = 200; _messageStatus = 200; _loseDecisionBeforeCommit = false; _loseDecisionAfterCommit = false } }
     func bumpRevision() {
         lock.withLock {
             var value = try! JSONSerialization.jsonObject(with: _ticket) as! [String: Any]
@@ -1076,7 +1236,7 @@ private final class OfflineState: @unchecked Sendable {
         try lock.withLock {
             let path = request.url!.path
             _requests.append("\(request.httpMethod ?? "GET") \(path)")
-            if _offline { throw URLError(_offlineError) }
+            if _offline { offlineFailures.insert(request.url!); throw URLError(_offlineError) }
             if path.contains("/decision-operations/") {
                 let operationID = request.url!.lastPathComponent
                 if request.httpMethod != "POST" {
@@ -1120,7 +1280,9 @@ private final class OfflineState: @unchecked Sendable {
             }
             let body = try JSONSerialization.jsonObject(with: data) as! [String: Any]
             let id = body["sender_message_id"] as? String ?? (path.hasSuffix("voice-transcriptions") ? "voice" : "decision")
-            _writes.append(id); if id != "queued" { receipts.insert(id) }
+            _writes.append(id)
+            if path.hasSuffix("/send"), _messageStatus == 422 { return Data(#"{"detail":"unsupported or invalid conversation image"}"#.utf8) }
+            if id != "queued" { receipts.insert(id) }
             if _loseResponse { _loseResponse = false; throw URLError(_responseError) }
             if id == "voice" { return Data(#"{"transcript":"Recorded words"}"#.utf8) }
             return try JSONSerialization.data(withJSONObject: ["conversation_id": body["conversation_id"] as? String ?? "conversation", "fate": id == "queued" ? "queued" : "started"])
@@ -1129,7 +1291,7 @@ private final class OfflineState: @unchecked Sendable {
 }
 private final class OfflineProtocol: URLProtocol, @unchecked Sendable {
     static let state = OfflineState()
-    override class func canInit(with request: URLRequest) -> Bool { request.url?.host == "offline-test.invalid" }
+    override class func canInit(with request: URLRequest) -> Bool { request.url?.host?.hasPrefix("offline-test") == true }
     override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
     override func startLoading() { Self.state.begin(request) { [self] in respond() } }
     private func respond() {

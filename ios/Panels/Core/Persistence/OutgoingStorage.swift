@@ -164,8 +164,8 @@ enum PhoneStoreMigration: SchemaMigrationPlan {
 /// Main-actor ownership serializes outgoing payload, metadata and composer transactions.
 /// Payload bytes are immutable after insertion. Mutable delivery facts live in metadata.
 @MainActor final class OutgoingStore {
-    struct DraftCapture {
-        struct Value {
+    struct DraftCapture: Equatable {
+        struct Value: Equatable {
             let payload: Data
             let updated: Date
         }
@@ -396,10 +396,29 @@ enum PhoneStoreMigration: SchemaMigrationPlan {
         context.insert(row); context.insert(metadata)
         return metadata
     }
+    private func capturePhotoDraft(_ work: PendingWork, server: String, capturedDraft: DraftCapture?) throws -> PendingWork {
+        var frozen = work
+        if let capturedDraft {
+            let capturedStillCurrent = try captureDraft(server: server, id: capturedDraft.id) == capturedDraft
+            try clearCaptured(capturedDraft, server: server)
+            if capturedStillCurrent, work.message?.content.contains(where: { $0.piece == "image" }) == true {
+                let cleared = try captureDraft(server: server, id: capturedDraft.id)
+                // Only versions that were cleared by this transaction can be restored.
+                if cleared.text?.payload.isEmpty ?? true,
+                   cleared.attachments?.payload == nil || cleared.attachments?.payload == Data("[]".utf8) {
+                    frozen.rejectedPhotoDraft = RejectedPhotoDraft(id: capturedDraft.id,
+                        originalText: capturedDraft.text.flatMap { String(data: $0.payload, encoding: .utf8) },
+                        clearedTextUpdatedAt: cleared.text?.updated,
+                        clearedAttachmentsUpdatedAt: cleared.attachments?.updated)
+                }
+            }
+        }
+        return frozen
+    }
     func enqueue(_ work: PendingWork, server: String, capturedDraft: DraftCapture? = nil) throws {
         try transaction(server) {
-            _ = try insert(work, server: server)
-            if let capturedDraft { try clearCaptured(capturedDraft, server: server) }
+            let frozen = try capturePhotoDraft(work, server: server, capturedDraft: capturedDraft)
+            _ = try insert(frozen, server: server)
         }
     }
     func canSubmit(server: String, id: String) throws -> Bool {
@@ -419,9 +438,12 @@ enum PhoneStoreMigration: SchemaMigrationPlan {
         }
     }
     /// Receipts update their exact operation even after a replacement retires its schedule.
-    func settle(server: String, id: String, state: PendingWork.State, note: String, conversationID: String? = nil, now: Date = .now, decisionDraft: (id: String, text: String, updated: Date)? = nil) throws {
+    func settle(server: String, id: String, state: PendingWork.State, note: String, conversationID: String? = nil, now: Date = .now, decisionDraft: (id: String, text: String, updated: Date)? = nil, restoreRejectedPhotoDraft: Bool = false) throws {
         try transaction(server) {
             guard let row = try metadata(server, id) else { throw StoreError.missingWork }
+            if restoreRejectedPhotoDraft, let work = try work(server: server, id: id) {
+                try restorePhotoDraft(work, server: server, restoredAt: row.completed ?? now)
+            }
             if state == .sent, let decisionDraft,
                let draft = try raw(server, "draft", decisionDraft.id), draft.payload == Data(decisionDraft.text.utf8), draft.updatedAt == decisionDraft.updated {
                 draft.payload = Data(); draft.updatedAt = .now
@@ -464,12 +486,31 @@ enum PhoneStoreMigration: SchemaMigrationPlan {
             }
         }
     }
+    private func restorePhotoDraft(_ work: PendingWork, server: String, restoredAt: Date) throws {
+        guard let recovery = work.rejectedPhotoDraft, let message = work.message else { return }
+        let current = try captureDraft(server: server, id: recovery.id)
+        func matches(_ value: DraftCapture.Value?, updated: Date?, empty: Data) -> Bool {
+            if let updated { return value?.updated == updated && value?.payload == empty }
+            return value == nil
+        }
+        guard matches(current.text, updated: recovery.clearedTextUpdatedAt, empty: Data()),
+              matches(current.attachments, updated: recovery.clearedAttachmentsUpdatedAt, empty: Data("[]".utf8)) else { return }
+        try writeDraft(recovery.originalText ?? message.content.compactMap(\.text).joined(separator: "\n"), server: server, id: recovery.id, updated: restoredAt)
+        let payload = try JSONEncoder().encode(message.content.filter { $0.piece != "text" })
+        if let row = try raw(server, "attachments", recovery.id) {
+            row.payload = payload; row.updatedAt = restoredAt
+        } else {
+            context.insert(LocalRecord(key: LocalStore.key(server, "attachments", recovery.id), server: server,
+                kind: "attachments", payload: payload, updated: restoredAt))
+        }
+    }
     /// An explicit resend occupies the old logical position; the original keeps its own receipt.
-    func replace(server: String, id: String, with replacement: PendingWork, now: Date = .now) throws {
+    func replace(server: String, id: String, with replacement: PendingWork, now: Date = .now, capturedDraft: DraftCapture? = nil) throws {
         try transaction(server) {
             guard let original = try metadata(server, id), original.scheduled, (["uncertain", "failed"].contains(original.state) || (original.state == "waiting" && original.provenance == "unknown")), replacement.state == .waiting else { throw StoreError.invalidTransition }
             guard original.state == "failed" || !(replacement.priorMessageIDs ?? []).contains(id) else { throw StoreError.invalidTransition }
-            let next = try insert(replacement, server: server)
+            let frozen = try capturePhotoDraft(replacement, server: server, capturedDraft: capturedDraft)
+            let next = try insert(frozen, server: server)
             next.sequence = original.sequence; next.lane = original.lane; next.predecessorID = original.predecessorID
             next.conversationID = original.conversationID; next.omitCreationSettings = original.omitCreationSettings; next.omitModel = original.omitModel; next.omitEffort = original.omitEffort
             if original.conversationID == nil {
@@ -575,11 +616,11 @@ enum PhoneStoreMigration: SchemaMigrationPlan {
             if let (draftID, text) = draft { try writeDraft(text, server: server, id: draftID) }
         }
     }
-    private func writeDraft(_ text: String, server: String, id: String) throws {
+    private func writeDraft(_ text: String, server: String, id: String, updated: Date = .now) throws {
         if let row = try raw(server, "draft", id) {
-            row.payload = Data(text.utf8); row.updatedAt = .now
+            row.payload = Data(text.utf8); row.updatedAt = updated
         } else {
-            context.insert(LocalRecord(key: LocalStore.key(server, "draft", id), server: server, kind: "draft", payload: Data(text.utf8), updated: .now))
+            context.insert(LocalRecord(key: LocalStore.key(server, "draft", id), server: server, kind: "draft", payload: Data(text.utf8), updated: updated))
         }
     }
     func finishVoice(server: String, id: String, transcript: String, now: Date = .now) throws {

@@ -162,7 +162,9 @@ extension APIClient {
               loaded, through > 0, !historical, !busy, !pending else { return false }
         let text = composer.draft.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty || !composer.attachments.isEmpty else { return false }
-        let content: [ConversationSend.Piece] = (text.isEmpty ? [] : [.init(text: text)]) + composer.attachments
+        let content: [ConversationSend.Piece]
+        do { content = try composer.preparedContent() }
+        catch { self.error = error.localizedDescription; return false }
         if let attempt, attempt.state == .failed {
             // Replace a terminal refusal with the current draft, retaining its read boundary.
             guard let replacement = Outbox.shared.retry(attempt.id, api: api, content: content) else {
@@ -172,6 +174,7 @@ extension APIClient {
             attemptID = replacement
             await Outbox.shared.drain(api: api)
             refreshSavedWork(LocalStore.server(api.baseURL)); refreshAttempt()
+            if self.attempt?.state == .failed { error = self.attempt?.note }
             return accepted
         }
         let messageID = UUID().uuidString
@@ -184,6 +187,7 @@ extension APIClient {
             attemptID = messageID
             await Outbox.shared.drain(api: api)
             refreshSavedWork(LocalStore.server(api.baseURL)); refreshAttempt()
+            if attempt?.state == .failed { error = attempt?.note }
             return accepted
         } catch { self.error = error.localizedDescription; return false }
     }

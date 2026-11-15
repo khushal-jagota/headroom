@@ -79,8 +79,9 @@ import Observation
         guard let api else { return false }
         refreshAttempt()
         guard !blocked else { return false }
-        let text = composer.draft.trimmingCharacters(in: .whitespacesAndNewlines)
-        let content: [ConversationSend.Piece] = (text.isEmpty ? [] : [.init(text: text)]) + composer.attachments
+        let content: [ConversationSend.Piece]
+        do { content = try composer.preparedContent() }
+        catch { self.error = error.localizedDescription; return false }
         guard !content.isEmpty else { return false }
         let created = Date.now
         let server = LocalStore.server(api.baseURL)
@@ -108,6 +109,7 @@ import Observation
             await Outbox.shared.drain(api: api)
             guard generation == self.generation else { return false }
             refreshAttempt()
+            if attempt?.state == .failed { error = attempt?.note }
             return attempt.map { [.sent, .serverQueued].contains($0.state) } ?? false
         } catch { if generation == self.generation { self.error = error.localizedDescription }; return false }
     }

@@ -1,4 +1,7 @@
 import XCTest
+import CoreGraphics
+import ImageIO
+import UniformTypeIdentifiers
 @testable import Panels
 
 @MainActor final class ConversationTests: XCTestCase {
@@ -285,7 +288,11 @@ import XCTest
         let configuration = URLSessionConfiguration.ephemeral
         configuration.protocolClasses = [ConversationRequestStub.self]
         let api = APIClient(baseURL: URL(string: "https://conversation.invalid")!, session: URLSession(configuration: configuration))
-        let message = ConversationSend(conversationId: "conv_1", content: [.init(text: "Hello")], senderMessageId: "message-1", sentAtUnixMilliseconds: 123)
+        let content = try ConversationImagePreparation.prepare([
+            .init(text: "Hello"),
+            .init(piece: "image", data: try Self.heicPhoto().base64EncodedString(), mediaType: "image/heic", fileName: "Picture.heic")
+        ])
+        let message = ConversationSend(conversationId: "conv_1", content: content, senderMessageId: "message-1", sentAtUnixMilliseconds: 123)
         let delivery = try await api.sendConversation(.manager("si_1"), message: message)
         XCTAssertEqual(delivery.fate, "queued")
         let request = try XCTUnwrap(ConversationRequestStub.request)
@@ -300,7 +307,99 @@ import XCTest
         XCTAssertEqual(json["sender_message_id"] as? String, "message-1")
         XCTAssertEqual(json["mode"] as? String, "steer")
         XCTAssertEqual(json["sent_at_unix_milliseconds"] as? Int, 123)
-        XCTAssertEqual((json["content"] as? [[String: String]])?.first, ["piece": "text", "text": "Hello"])
+        let sent = try XCTUnwrap(json["content"] as? [[String: String]])
+        XCTAssertEqual(sent.first, ["piece": "text", "text": "Hello"])
+        XCTAssertEqual(sent.last?["media_type"], "image/jpeg")
+        XCTAssertEqual(sent.last?["file_name"], "Picture.jpg")
+        XCTAssertEqual(sent.last?["data"], content.last?.data)
+        XCTAssertNil(sent.last?["mediaType"])
+    }
+
+    func testHEICPhotoBecomesReadableJPEGBeforeItJoinsTheMessage() throws {
+        let source = try Self.heicPhoto()
+        let model = ConversationModel()
+        XCTAssertTrue(model.attach(source, type: .heic, fileName: "Picture.heic"))
+        let picture = try XCTUnwrap(model.attachments.first)
+        XCTAssertEqual(picture.mediaType, "image/jpeg")
+        XCTAssertEqual(picture.fileName, "Picture.jpg")
+        XCTAssertNotEqual(picture.data, source.base64EncodedString())
+        _ = try Self.readJPEG(picture)
+        model.draft = "Keep these words with the prepared photo"
+        let prepared = model.attachments
+        XCTAssertFalse(model.attach(Data("not a photo".utf8), type: .heic, fileName: "Corrupt.heic"))
+        XCTAssertEqual(model.draft, "Keep these words with the prepared photo")
+        XCTAssertEqual(model.attachments, prepared)
+        XCTAssertTrue(model.error?.lowercased().contains("photo") == true)
+    }
+
+    func testOversizedJPEGAndMultiplePhotosFitTheSharedImageBudget() throws {
+        let original = try Self.jpegPhoto(size: 2048)
+        let limit = 3 * 1024 * 1024
+        XCTAssertGreaterThan(original.count, limit, "The source must exercise actual JPEG compression, not padding")
+        let model = ConversationModel()
+        XCTAssertTrue(model.attach(original, type: .jpeg, fileName: "Large.jpg"))
+        let first = try XCTUnwrap(model.attachments.first)
+        XCTAssertLessThanOrEqual(try XCTUnwrap(Data(base64Encoded: try XCTUnwrap(first.data))).count, limit)
+        _ = try Self.readJPEG(first)
+
+        XCTAssertTrue(model.attach(original, type: .jpeg, fileName: "Another.jpg"))
+        XCTAssertEqual(model.attachments.count, 2)
+        let bytes = try model.attachments.map { piece in
+            _ = try Self.readJPEG(piece)
+            return try XCTUnwrap(Data(base64Encoded: try XCTUnwrap(piece.data))).count
+        }
+        XCTAssertLessThanOrEqual(bytes.reduce(0, +), limit, "The server limits the whole message, not each photo")
+    }
+
+    func testNormalJPEGPhotoKeepsItsBytesAndFilename() throws {
+        let original = try Self.jpegPhoto(size: 16)
+        let model = ConversationModel()
+        XCTAssertTrue(model.attach(original, type: .jpeg, fileName: "Normal.jpg"))
+        let picture = try XCTUnwrap(model.attachments.first)
+        XCTAssertEqual(picture.data, original.base64EncodedString())
+        XCTAssertEqual(picture.mediaType, "image/jpeg")
+        XCTAssertEqual(picture.fileName, "Normal.jpg")
+        _ = try Self.readJPEG(picture)
+    }
+
+    private static func heicPhoto() throws -> Data {
+        #if SWIFT_PACKAGE
+        let url = Bundle.module.url(forResource: "photo", withExtension: "heic", subdirectory: "Fixtures")
+        #else
+        let url = Bundle(for: Self.self).url(forResource: "photo", withExtension: "heic")
+        #endif
+        return try Data(contentsOf: XCTUnwrap(url))
+    }
+
+    /// Real deterministic pixel noise prevents a flat-color JPEG from missing the size boundary.
+    private static func jpegPhoto(size: Int) throws -> Data {
+        var pixels = [UInt32](repeating: 0, count: size * size)
+        var noise: UInt32 = 0x6a09e667
+        for index in pixels.indices {
+            noise ^= noise << 13; noise ^= noise >> 17; noise ^= noise << 5
+            pixels[index] = noise
+        }
+        let data = pixels.withUnsafeBytes { Data($0) }
+        let provider = try XCTUnwrap(CGDataProvider(data: data as CFData))
+        let image = try XCTUnwrap(CGImage(width: size, height: size, bitsPerComponent: 8, bitsPerPixel: 32,
+            bytesPerRow: size * 4, space: CGColorSpaceCreateDeviceRGB(),
+            bitmapInfo: CGBitmapInfo(rawValue: CGImageAlphaInfo.noneSkipLast.rawValue),
+            provider: provider, decode: nil, shouldInterpolate: false, intent: .defaultIntent))
+        let encoded = NSMutableData()
+        let destination = try XCTUnwrap(CGImageDestinationCreateWithData(encoded as CFMutableData, UTType.jpeg.identifier as CFString, 1, nil))
+        CGImageDestinationAddImage(destination, image, [kCGImageDestinationLossyCompressionQuality: 1] as CFDictionary)
+        XCTAssertTrue(CGImageDestinationFinalize(destination))
+        return encoded as Data
+    }
+
+    private static func readJPEG(_ piece: ConversationSend.Piece) throws -> CGImage {
+        let data = try XCTUnwrap(Data(base64Encoded: try XCTUnwrap(piece.data)))
+        let source = try XCTUnwrap(CGImageSourceCreateWithData(data as CFData, nil))
+        XCTAssertEqual(try XCTUnwrap(CGImageSourceGetType(source)) as String, UTType.jpeg.identifier)
+        let image = try XCTUnwrap(CGImageSourceCreateImageAtIndex(source, 0, nil))
+        XCTAssertGreaterThan(image.width, 0)
+        XCTAssertGreaterThan(image.height, 0)
+        return image
     }
     func testQueueKeepsOneVisualIdentityThroughDeliveryAndLatestLine() async throws {
         let model = ConversationModel()

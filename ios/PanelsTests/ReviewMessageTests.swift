@@ -83,20 +83,30 @@ import XCTest
         let api = makeAPI()
         ReviewMessageProtocol.state.reset()
         ReviewMessageProtocol.state.refuse = true
+        ReviewMessageProtocol.state.postStatus = 422
         defer { clean(api) }
         let decision = ReviewMessageDecision()
         await decision.load(item: item(), api: api)
         decision.composer.draft = "Keep this reply"
-        decision.composer.attachments = [.init(piece: "file", data: "YWJj", mediaType: "text/plain", fileName: "note.txt")]
+        #if SWIFT_PACKAGE
+        let fixture = Bundle.module.url(forResource: "photo", withExtension: "heic", subdirectory: "Fixtures")
+        #else
+        let fixture = Bundle(for: Self.self).url(forResource: "photo", withExtension: "heic")
+        #endif
+        let heic = try Data(contentsOf: XCTUnwrap(fixture)).base64EncodedString()
+        decision.composer.attachments = [.init(piece: "image", data: heic, mediaType: "image/heic", fileName: "note.heic")]
         _ = await decision.send()
         await Outbox.shared.drain(api: api)
         XCTAssertEqual(decision.attempt?.state, .failed)
+        XCTAssertTrue(decision.error?.lowercased().contains("photo") == true)
+        XCTAssertEqual(decision.attempt?.message?.content.last?.mediaType, "image/jpeg")
+        let preparedPhoto = decision.composer.attachments.first
         let originalID = try XCTUnwrap(decision.attemptID)
         ReviewMessageProtocol.state.newMessage = true
         let restored = ReviewMessageDecision()
         await restored.load(item: item(), api: api)
         XCTAssertEqual(restored.composer.draft, "Keep this reply")
-        XCTAssertEqual(restored.composer.attachments.first?.data, "YWJj")
+        XCTAssertEqual(restored.composer.attachments.first, preparedPhoto)
         restored.composer.draft = "Corrected reply"
         restored.composer.attachments = [.init(piece: "file", data: "ZGVm", mediaType: "text/plain", fileName: "corrected.txt")]
         let edited = ReviewMessageDecision()
@@ -104,6 +114,7 @@ import XCTest
         XCTAssertEqual(edited.composer.draft, "Corrected reply")
         XCTAssertEqual(edited.composer.attachments.first?.fileName, "corrected.txt")
         ReviewMessageProtocol.state.refuse = false
+        ReviewMessageProtocol.state.postStatus = 200
         ReviewMessageProtocol.state.newMessage = true
         _ = await restored.send()
         await Outbox.shared.drain(api: api)
@@ -201,13 +212,16 @@ private final class ReviewMessageState: @unchecked Sendable {
     private var _newMessage = false
     private var _loseResponse = false
     private var _eventReads = 0
+    private var _postStatus = 200
+    var postStatus: Int { get { lock.withLock { _postStatus } } set { lock.withLock { _postStatus = newValue } } }
+    func status(_ request: URLRequest) -> Int { lock.withLock { request.url?.path.hasSuffix("/send") == true ? _postStatus : 200 } }
     private var held: Set<String> = []
     var loseResponse: Bool { get { lock.withLock { _loseResponse } } set { lock.withLock { _loseResponse = newValue } } }
     var bodies: [[String: Any]] { lock.withLock { _bodies } }
     var eventReads: Int { lock.withLock { _eventReads } }
     var refuse: Bool { get { lock.withLock { _refuse } } set { lock.withLock { _refuse = newValue } } }
     var newMessage: Bool { get { lock.withLock { _newMessage } } set { lock.withLock { _newMessage = newValue } } }
-    func reset() { lock.withLock { _bodies = []; _refuse = false; _newMessage = false; _loseResponse = false; _eventReads = 0; held = [] } }
+    func reset() { lock.withLock { _bodies = []; _refuse = false; _newMessage = false; _loseResponse = false; _eventReads = 0; _postStatus = 200; held = [] } }
     func response(_ request: URLRequest) throws -> Data {
         try lock.withLock {
             let path = request.url!.path
@@ -220,6 +234,7 @@ private final class ReviewMessageState: @unchecked Sendable {
                 }
                 let body = try JSONSerialization.jsonObject(with: data) as! [String: Any]
                 _bodies.append(body)
+                if _postStatus == 422 { return Data(#"{"detail":"unsupported or invalid conversation image"}"#.utf8) }
                 if !_refuse, let id = body["sender_message_id"] as? String { held.insert(id) }
                 if _loseResponse { _loseResponse = false; throw URLError(.networkConnectionLost) }
                 return Data((_refuse ? #"{"conversation_id":"c","fate":"refused"}"# : #"{"conversation_id":"c","fate":"queued","owner_read_through_sequence":66}"#).utf8)
@@ -242,7 +257,7 @@ private final class ReviewMessageProtocol: URLProtocol, @unchecked Sendable {
     override func startLoading() {
         do {
             let data = try Self.state.response(request)
-            client?.urlProtocol(self, didReceive: HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!, cacheStoragePolicy: .notAllowed)
+            client?.urlProtocol(self, didReceive: HTTPURLResponse(url: request.url!, statusCode: Self.state.status(request), httpVersion: nil, headerFields: nil)!, cacheStoragePolicy: .notAllowed)
             client?.urlProtocol(self, didLoad: data); client?.urlProtocolDidFinishLoading(self)
         } catch { client?.urlProtocol(self, didFailWithError: error) }
     }
