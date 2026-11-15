@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -118,7 +119,7 @@ def test_managed_ticket_checkout_admission_preserves_storage_protection(
     web = tree / "web"
     web.mkdir()
     monkeypatch.setattr(launcher, "node_environment", lambda *_: None)
-    monkeypatch.setattr(launcher.shutil, "which", lambda *_args, **_kwargs: "/usr/bin/node")
+    monkeypatch.setattr(shutil, "which", lambda *_args, **_kwargs: "/usr/bin/node")
     monkeypatch.setattr(
         launcher, "check_paths", lambda paths, **_kwargs: _check_paths(paths, [deployed], mounts)
     )
