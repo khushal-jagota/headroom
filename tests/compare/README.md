@@ -6,7 +6,7 @@ Source-row sort keys retain known normalized identities and use generic placehol
 
 ## Expected-open staging ports
 
-Retained proofs, staging reasons, and package counts: [P2](expected_open/P2.md), [P3](expected_open/P3.md), [P4](expected_open/P4.md), [P5](expected_open/P5.md), [P6](expected_open/P6.md).
+Retained proofs, staging reasons, and package counts: [P2](expected_open/P2.md), [P3](expected_open/P3.md), [P4](expected_open/P4.md), [P5](expected_open/P5.md), [P6](expected_open/P6.md), [P7](expected_open/P7.md).
 
 ## Add an area
 

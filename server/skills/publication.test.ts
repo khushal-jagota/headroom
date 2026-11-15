@@ -20,6 +20,21 @@ import { save_worker_type_definition } from '../worker_settings/service.ts';
 import { definition_from_json } from '../worker_types/store.ts';
 import { shipped_worker_types } from '../worker_types/shipped.ts';
 import { configured_worker_type_registry } from '../worker_types/configuration.ts';
+import {
+  close_native_descriptor,
+  decode_native_path,
+  mkdir_relative,
+  native_path_bytes,
+  open_directory_descriptor,
+  open_relative,
+  read_directory_names,
+  readlink_relative,
+  rename_relative,
+  rmdir_relative,
+  symlink_relative,
+  unlink_relative,
+} from '../executor/mac/platform.ts';
+import { resolve_native_skill_path } from './native_publication.ts';
 const cleanup: (() => void)[] = [];
 afterEach(() => {
   for (const action of cleanup.splice(0).reverse()) action();
@@ -29,6 +44,53 @@ function root(): string {
   cleanup.push(() => rmSync(path, { recursive: true, force: true }));
   return path;
 }
+
+test.skipIf(process.platform !== 'linux')(
+  'native skill filenames retain undecodable bytes without conflating replacement-character siblings',
+  () => {
+    const path = root(),
+      name = '\udc80',
+      link = '\udc81',
+      renamed = '\udc82',
+      directory = '\udc83';
+    const target = join(path, 'source', link);
+    writeFileSync(native_path_bytes(join(path, name)), 'raw foreign entry');
+    writeFileSync(join(path, '\ufffd'), 'Unicode sibling');
+    const fd = open_directory_descriptor(path);
+    try {
+      symlink_relative(fd, link, target);
+      expect(new Set(read_directory_names(fd))).toEqual(new Set([name, link, '\ufffd']));
+      expect(readlink_relative(fd, name)).toBeNull();
+      expect(readlink_relative(fd, link)).toBe(target);
+      expect(resolve_native_skill_path(join(path, link))).toBe(target);
+      rename_relative(fd, name, fd, renamed);
+      const file = open_relative(fd, renamed, 0);
+      try {
+        expect(readFileSync(file, 'utf8')).toBe('raw foreign entry');
+      } finally {
+        close_native_descriptor(file);
+      }
+      unlink_relative(fd, renamed);
+      unlink_relative(fd, link);
+      mkdir_relative(fd, directory);
+      const child = open_directory_descriptor(join(path, directory));
+      close_native_descriptor(child);
+      rmdir_relative(fd, directory);
+      expect(read_directory_names(fd)).toEqual(['\ufffd']);
+      expect(readFileSync(join(path, '\ufffd'), 'utf8')).toBe('Unicode sibling');
+      const bytes = Buffer.concat([
+        Buffer.from('\ufeff\ufffd\u{10080}'),
+        Buffer.from([
+          0xff, 0xc0, 0x80, 0xe0, 0x80, 0x80, 0xed, 0xa0, 0x80, 0xf0, 0x80, 0x80, 0x80, 0xf4, 0x90,
+          0x80, 0x80, 0xe2, 0x82,
+        ]),
+      ]);
+      expect(native_path_bytes(decode_native_path(bytes))).toEqual(bytes);
+    } finally {
+      close_native_descriptor(fd);
+    }
+  },
+);
 
 test('synthetic skill links refuse a symlink ancestor outside the owned home before any mutation', () => {
   const path = root(),

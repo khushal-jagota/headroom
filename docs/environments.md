@@ -94,6 +94,7 @@ Renaming the account, moving host state, or changing Tailscale Serve is operator
 - `src/planner/environments/`: the registry, launch environments, status, and cleanup. `logic/validation.py` and `logic/launch_env.py` hold the rules.
 - `src/planner/core/config.py`: configuration and `PLAN_*` overrides. `src/planner/skill_sources.py`: the workspace skills link.
 - `src/planner/server_lifecycle/`: who may stop a server.
+- `server/lifecycle/`, `server/skills/account.ts`, and `server/environments/vps_status/`: TypeScript home custody, account publication, and cleanup.
 - `ops/panels-environments/`: user units, timers, and the host wrapper.
 
 Named execution destinations and physical workspace identity are separate. A Ticket’s `machine_id` selects home execution or the original executor. `WorkspaceIdentity.machine_id` identifies one local physical data tree. Workspace registration binds its folder to the conversation on that destination. A display edit never rotates either identity.

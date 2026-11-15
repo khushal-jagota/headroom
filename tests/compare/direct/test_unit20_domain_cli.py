@@ -947,6 +947,26 @@ def test_unit20_real_preview_cli(tmp_path: Path, request: pytest.FixtureRequest)
                 results.append(modes)
                 assert child.poll() is None
         assert results[0] == results[1] == results[2], evidence
+        # Reuse these populated hosts to prove exact integers through SQLite and the real route.
+        exact = 2**62 + 567
+        integer_responses = []
+        for handle in (reference, candidate):
+            with closing(sqlite3.connect(handle.db_path)) as connection:
+                connection.execute(
+                    "UPDATE ticket_application_previews SET start_ticks=?,listener_inode=? "
+                    "WHERE ticket_id=?",
+                    (exact, exact, ticket["id"]),
+                )
+                connection.commit()
+            current = fixtures.api(
+                handle, "GET", "/api/previews", identity={"ticket_id": ticket["id"]}
+            )
+            assert current["process"]["start_ticks"] == exact
+            assert current["process"]["listener_inode"] == exact
+            assert type(current["process"]["start_ticks"]) is int
+            integer_responses.append(current["process"])
+        assert integer_responses[0] == integer_responses[1]
+        evidence["exact_preview_integers"] = integer_responses
     finally:
         for handle in reversed(handles):
             _stop_server(handle)

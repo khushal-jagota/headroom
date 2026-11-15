@@ -7,8 +7,9 @@ import type { Database, TransactionSql } from '../core/database/contracts.ts';
 import * as config from './config.ts';
 import * as data from './data.ts';
 import { PreviewError, type PreviewRecord } from './contracts.ts';
-import { require_eligible, require_port, require_vps } from './logic/eligibility.ts';
-import { LinuxProcessInspector, validate_worktree } from './process.ts';
+import { require_eligible, require_port, require_home } from './logic/eligibility.ts';
+import { validate_worktree } from './process.ts';
+import { process_inspector } from './platform.ts';
 import type { StopOptions } from '../lifecycle/contracts.ts';
 import { observe_shutdown } from '../conversation/shutdown.ts';
 export class PreviewService {
@@ -16,7 +17,7 @@ export class PreviewService {
   readonly public_origin: string;
   readonly panels_port: number;
   readonly server_epoch = randomBytes(16).toString('hex');
-  readonly inspector = new LinuxProcessInspector();
+  readonly inspector = process_inspector();
   private outstanding = 0;
   private closed = false;
   private rechecks_sealed = false;
@@ -179,7 +180,7 @@ export class PreviewService {
         throw new PreviewError('Another preview registration is being inspected.', 503);
       this.registering = true;
       try {
-        require_vps(this.database.read((sql) => data.eligibility(sql, ticket_id)));
+        require_home(this.database.read((sql) => data.eligibility(sql, ticket_id)));
         const current = this.database.read((sql) => data.get(sql, ticket_id));
         if (!current || current.state !== 'prepared')
           throw new PreviewError('Prepare a new preview address before registration.');
@@ -196,7 +197,7 @@ export class PreviewService {
   }
   async show(ticket_id: string): Promise<PreviewRecord | null> {
     return this.run(async () => {
-      require_vps(this.database.read((sql) => data.eligibility(sql, ticket_id)));
+      require_home(this.database.read((sql) => data.eligibility(sql, ticket_id)));
       const record = this.database.read((sql) => data.get(sql, ticket_id));
       if (record && record.state !== 'ended') {
         try {
@@ -211,7 +212,7 @@ export class PreviewService {
   async stop(ticket_id: string): Promise<PreviewRecord | null> {
     return this.run(async () =>
       this.write((tx) => {
-        require_vps(data.eligibility(tx, ticket_id));
+        require_home(data.eligibility(tx, ticket_id));
         const record = data.get(tx, ticket_id);
         if (record) data.end(tx, record.generation, 'The preview was stopped.');
         return data.get(tx, ticket_id);

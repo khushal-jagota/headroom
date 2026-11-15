@@ -486,7 +486,7 @@ TypeScript validates the live payload through the shared wire boundary before th
 ## Mac canonical skill publication ownership and durability
 
 The Manager accepted these Mac-only safety differences during PR 817 source review on November 13, 2026.
-The shared server publisher keeps Python behavior, including legacy `skills` symlink conversion and replacement of existing entries.
+The private workspace projection keeps legacy publication behavior. Account publication now follows staging ownership checks and never replaces foreign entries.
 The Mac uses an explicit owned-link policy in that same shared module. It never recursively removes provider entries.
 Before any publication or derived-state write, the Mac requires an absolute existing provider home and an existing real `skills` directory.
 The trusted adapter host supplies that home separately from the snapshot. Its real path must equal its configured normalized path.
