@@ -211,7 +211,7 @@ export async function readTranscriptRecords(
       (provider !== 'codex' || resumeFrom.codexState !== null) &&
       (await guardMatches(handle, resumeFrom))
     ) {
-      if (resumeFrom.codexState !== null) codexState = { ...resumeFrom.codexState };
+      if (resumeFrom.codexState !== null) codexState = structuredClone(resumeFrom.codexState);
       start = resumeFrom.resumeOffset;
       resumed = true;
     }
@@ -283,7 +283,8 @@ export async function readTranscriptRecords(
     const tailRecords: UsageRecord[] = [];
     if (pendingChunks.length > 0) {
       const pending = pendingChunks.length === 1 ? pendingChunks[0]! : Buffer.concat(pendingChunks);
-      if (pending.length > 0) parseLine(toLineString(pending), { ...codexState }, tailRecords);
+      if (pending.length > 0)
+        parseLine(toLineString(pending), structuredClone(codexState), tailRecords);
     }
 
     const guardLength = Math.min(GUARD_LENGTH, resumeOffset);
