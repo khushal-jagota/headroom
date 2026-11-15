@@ -558,6 +558,19 @@ def main() -> int:
                     "backward_overlap": None,
                 }
             )
+        review_context = []
+        for conversation_id in request["review_conversation_ids"]:
+            candidates = [
+                row for row in records.values()
+                if row["kind"] == "address"
+                and row["value"]["conversation_id"] == conversation_id
+                and (row["value"]["owner_kind"], row["value"]["owner_id"]) in records
+            ]
+            candidates.sort(key=lambda row: (-int(row["value"]["current"]), row["id"]))
+            review_context.append({
+                "conversation_id": conversation_id,
+                "canonical_address_id": candidates[0]["id"] if candidates else None,
+            })
         content = {
             "records": list(records.values()),
             "windows": windows,
@@ -568,7 +581,7 @@ def main() -> int:
                 "unread": 0,
                 "settled": 0,
             },
-            "review_context": [],
+            "review_context": review_context,
             "review_summary": {"skipped": 0, "new": len(order)},
         }
         version = hashlib.sha256(json.dumps(content, sort_keys=True).encode()).hexdigest()

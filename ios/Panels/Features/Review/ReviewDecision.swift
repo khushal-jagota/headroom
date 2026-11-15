@@ -276,6 +276,42 @@ struct ReviewQueue {
     /// Skipped part identities, each with its card's identity.
     private(set) var skipped: [String: String] = [:]
     private(set) var resolved: Set<String> = []
+    /// Retain a painted message only while its canonical owner remains eligible.
+    /// A proposal decided here stays until its local exit finishes.
+    func parts(of card: ReviewCard, in cards: [ReviewCard], holdingProposals: Set<String> = [], view: ViewSnapshot?) -> [ReviewItem] {
+        let held = card.parts.filter { part in
+            !resolved.contains(part.id) && (part.isMessage ? Self.messageEligible(part, in: view) : holdingProposals.contains(part.id))
+        }
+        let live = (cards.first { $0.id == card.id }?.parts ?? []).filter { part in
+            !resolved.contains(part.id) && !held.contains { $0.id == part.id || ($0.isMessage && $0.conversationId == part.conversationId) }
+        }
+        let all = live + held
+        return all.filter { !$0.isMessage } + all.filter(\.isMessage)
+    }
+    private static func messageEligible(_ item: ReviewItem, in view: ViewSnapshot?) -> Bool {
+        guard let view else { return true }
+        let context = view.content.reviewContext.first { $0.conversationId == item.conversationId }
+        if let context {
+            guard let canonical = context.canonicalAddressId, canonical == item.addressId else { return false }
+        } else {
+            // Until the held scope arrives, the admitted canonical address governs.
+            let addresses = view.content.records.compactMap { record -> (String, ViewAddressValue)? in
+                if case .address(let id, let value) = record, value.conversationId == item.conversationId { return (id, value) }
+                return nil
+            }.sorted { ($0.1.current ? 0 : 1, $0.0) < ($1.1.current ? 0 : 1, $1.0) }
+            if let canonical = addresses.first?.0, canonical != item.addressId { return false }
+        }
+        let owner = view.content.records.first { $0.key.kind == item.ownerKind && $0.key.id == item.ownerId }
+        switch item.ownerKind {
+        case "ticket":
+            if case .ticket(_, let value) = owner { return value.stage != "done" && !value.isBacklogged }
+            return context == nil
+        case "manager":
+            if case .manager(_, let value) = owner { return !value.settled }
+            return context == nil
+        default: return true
+        }
+    }
     func pending(_ card: ReviewCard) -> [ReviewItem] { card.parts.filter { !resolved.contains($0.id) } }
     func isSkipped(_ card: ReviewCard) -> Bool {
         let parts = pending(card)
