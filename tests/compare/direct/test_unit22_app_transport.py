@@ -20,6 +20,7 @@ from types import SimpleNamespace
 from typing import Any, cast
 from unittest.mock import patch
 from urllib.parse import urlsplit
+from uuid import UUID
 
 import pytest
 from tests.integration.test_executor_app_transport import _Core, _reads_app, _transport_app
@@ -57,12 +58,15 @@ from planner.executor.update_contracts import (
 from planner.executor.vps_remote_child import MacRemoteChild
 from planner.executor.vps_transport import VpsExecutor
 from planner.machines.contracts import ORIGINAL_MAC_MACHINE_ID
+from planner.machines.credential_api import router as machine_credential_router
 from planner.tickets.data import claim_ticket_for_worker_step, write_ticket_conversation_start
 
 ROOT = Path(__file__).resolve().parents[3]
 NOW = 1_760_000_000_000
 IDENTITY = mac_identity("11111111-1111-4111-8111-111111111111")
 OWNED_ORIGINS: set[str] = set()
+ENROLLED_MACHINE = "77777777-7777-4777-8777-777777777777"
+ENROLLED_CREDENTIAL = base64.urlsafe_b64encode(b"c" * 32).decode().rstrip("=")
 
 
 def owned_url(origin: str, path: str) -> str:
@@ -905,6 +909,8 @@ async def credential_transcript(
          {**legacy, "Origin": "https://owner.invalid"}, {}),
         *((name, method, "/api/executor/update", headers, body)
           for name, method, headers, body in operations),
+        ("enrollment", "POST", "/api/machines", {},
+         {"name": "Enrolled Linux", "platform": "linux"}),
     ]
     answers = []
     async with proxy.session_factory() as client:
@@ -912,22 +918,45 @@ async def credential_transcript(
             pairs = list(headers.items()) if isinstance(headers, dict) else headers
             origin = proxy.upstream if name == "bootstrap_login" else proxy.origin
             assert origin is not None
-            async with client.request(
-                method, owned_url(origin, route),
-                headers=[("Accept-Encoding", "identity"), *pairs],
-                json=body, allow_redirects=False,
-            ) as response:
-                answers.append({
-                    "name": name, "status": response.status,
-                    "body": await response.json(), "credentials": credential_rows(path),
-                })
+
+            async def call(
+                method: str = method, origin: str = origin, route: str = route,
+                pairs: list[tuple[str, str]] = pairs, body: dict[str, str] | None = body,
+                name: str = name,
+            ) -> dict[str, Any]:
+                async with client.request(
+                    method, owned_url(origin, route),
+                    headers=[("Accept-Encoding", "identity"), *pairs],
+                    json=body, allow_redirects=False,
+                ) as response:
+                    return {
+                        "name": name, "status": response.status,
+                        "body": await response.json(), "credentials": credential_rows(path),
+                    }
+
+            if name == "enrollment":
+                pending = asyncio.create_task(call())
+                release = Path(str(path) + ".ensure-release")
+                try:
+                    async with asyncio.timeout(5):
+                        while not Path(str(path) + ".ensure-started.json").exists():
+                            assert not pending.done(), "grant returned without registry admission"
+                            await asyncio.sleep(0.001)
+                    assert not pending.done(), "grant response did not wait for registry admission"
+                finally:
+                    release.touch()
+                    answer = await pending
+                answer["waited_for_ensure"] = True
+                answers.append(answer)
+            else:
+                answers.append(await call())
     assert [answer["status"] for answer in answers] == [
-        403, 403, 403, 200, 200, 403, 403, 409, 200, 200, 200, 200, 403, 200,
+        403, 403, 403, 200, 200, 403, 403, 409, 200, 200, 200, 200, 403, 200, 200,
     ]
     for answer in answers:
         rows = {row["machine_id"]: row for row in answer["credentials"]}
         original_row = rows[ORIGINAL_MAC_MACHINE_ID]
-        closed = answer["name"] in {"confirmed", "legacy_closed", "credential_kept"}
+        closed = answer["name"] in {"confirmed", "legacy_closed", "credential_kept", "enrollment"}
         assert original_row["legacy_closed_at_ms"] == (NOW if closed else None)
         assert original_row["pending_credential"] == (None if closed else "a" * 43)
         assert original_row["platform"] == "darwin"
@@ -943,6 +972,9 @@ async def credential_transcript(
     )
     assert by_name["authenticate"]["body"]["prefetch"]["application_revision"] == "a" * 40
     assert by_name["platform"]["body"]["prefetch"]["application_revision"] == "b" * 40
+    assert by_name["enrollment"]["body"] == {
+        "machine_id": ENROLLED_MACHINE, "credential": ENROLLED_CREDENTIAL, "issued_at_ms": NOW,
+    }
     return answers
 
 
@@ -1004,6 +1036,45 @@ def test_executor_credentialed_update_handover(
         updates = CredentialUpdates(archive, path)
         app = _transport_app(endpoint, updates)
         app.state.executor_registry = registry
+        app.state.conn_factory = lambda: connect(str(path))
+        app.include_router(machine_credential_router, prefix="/api")
+        enrollment: list[dict[str, Any]] = []
+        enrollment_responses: list[dict[str, bool]] = []
+        original_ensure = registry.ensure
+
+        @app.middleware("http")
+        async def observe_enrollment_response(request: Any, call_next: Any) -> Any:
+            response = await call_next(request)
+            if request.method == "POST" and request.url.path == "/api/machines":
+                enrollment_responses.append({
+                    "released": Path(str(path) + ".ensure-release").exists(),
+                    "owner_published": registry.get(ENROLLED_MACHINE) is not None,
+                })
+            return response
+
+        async def observe_ensure(machine_id: str) -> VpsExecutor:
+            if machine_id != ENROLLED_MACHINE:
+                return await original_ensure(machine_id)
+            with closing(connect(str(path))) as fresh:
+                row = fresh.execute(
+                    "SELECT m.name,m.icon,m.color,m.is_home,c.* FROM machines m "
+                    "JOIN machine_executor_credentials c USING(machine_id) WHERE machine_id=?",
+                    (machine_id,),
+                ).fetchone()
+            assert row is not None, "registry admission preceded the registration commit"
+            evidence: dict[str, Any] = {
+                "machine_id": machine_id, "committed": dict(row),
+                "owner_before": registry.get(machine_id) is not None,
+            }
+            enrollment.append(evidence)
+            Path(str(path) + ".ensure-started.json").write_text(json.dumps(evidence))
+            while not Path(str(path) + ".ensure-release").exists():
+                await asyncio.sleep(0.001)
+            owner = await original_ensure(machine_id)
+            evidence["owner_after"] = registry.get(machine_id) is owner
+            return owner
+
+        registry.ensure = observe_ensure  # type: ignore[method-assign]
         try:
             async with serve_executor_app(app, tmp_path / "source-tls") as proxy:
                 assert proxy.upstream is not None
@@ -1053,7 +1124,13 @@ def test_executor_credentialed_update_handover(
             assert process.returncode == 0, stdout + stderr
             final = json.loads(Path(host["state"]).read_text())
             assert actual == expected
-            assert final == {"reports": updates.reports, "credentials": credential_rows(path)}
+            assert final == {
+                "reports": updates.reports, "credentials": credential_rows(path),
+                "enrollment": enrollment, "enrollment_responses": enrollment_responses,
+            }
+            assert len(enrollment) == 1
+            assert not enrollment[0]["owner_before"] and enrollment[0]["owner_after"]
+            assert enrollment_responses == [{"released": True, "owner_published": True}]
             assert [report[0] for report in updates.reports] == [
                 ORIGINAL_MAC_MACHINE_ID, ORIGINAL_MAC_MACHINE_ID, ORIGINAL_MAC_MACHINE_ID,
                 named_machine, ORIGINAL_MAC_MACHINE_ID,
@@ -1078,6 +1155,9 @@ def test_executor_credentialed_update_handover(
         synthetic_home_environment(homes),
         patch("planner.executor.vps_presence.now_ms", return_value=NOW),
         patch("planner.machines.executor_credentials.time.time_ns", return_value=NOW * 1_000_000),
+        patch("planner.machines.executor_credentials.uuid4", return_value=UUID(ENROLLED_MACHINE)),
+        patch("planner.machines.executor_credentials.secrets.token_urlsafe",
+              return_value=ENROLLED_CREDENTIAL),
     ):
         evidence = asyncio.run(asyncio.wait_for(run(), 35))
     if directory := request.config.getoption("--compare-report-dir"):

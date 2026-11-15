@@ -2,7 +2,7 @@
 
 `registry.ts::VpsExecutorRegistry` owns the invocation's executor destinations. Each `vps_transport.ts::VpsExecutor` owns one destination's mailbox, presence, inbox, file transfers, retained runs, and catalog relay. They share the application's database, clock, change signal, and media cutoff. `app_transport.ts::create_executor_routes` supplies the HTTP and obsolete-WebSocket boundary.
 
-Production loads credentialed destinations before retained adoption. A configured executor ID also enables the original Mac's legacy endpoint. `LocaleBackendChildFactory` selects remote children by the canonical Ticket's `machine_id` and keeps Home work local. A remote Ticket with absent or conflicting Worker identity hints refuses before child creation. Recovery selects the persisted incarnation and assignment, even after the Ticket changes destination. Unknown destinations and Home cannot create an executor through `ensure`.
+Production loads credentialed destinations before retained adoption. Enrollment commits the machine grant, then awaits the same registry's `ensure(machine_id)` before it returns the grant. A configured executor ID also enables the original Mac's legacy endpoint. `LocaleBackendChildFactory` selects remote children by the canonical Ticket's `machine_id` and keeps Home work local. A remote Ticket with absent or conflicting Worker identity hints refuses before child creation. Recovery selects the persisted incarnation and assignment, even after the Ticket changes destination. Unknown destinations and Home cannot create an executor through `ensure`.
 
 Each endpoint accepts one `machine_id`, with the original Mac as the default. Its mailbox, presence, run custody, inbox, catalog relay, and upload staging share that destination. Each owner scopes presence, commands, cursors, retained recovery, replacement stalls, receipts, and catalog rows to that machine. Command sequences remain global. Public command-ID and child-authority reads check machine ownership. Trusted exact-child transaction participants retain their existing caller authority. The registry tags aggregate stalls with their machine. Its `is_present(machine_id)` reads existing owners and never allocates one.
 
@@ -59,11 +59,13 @@ The invocation registers the endpoint through the existing producer lifecycle. E
 
 Catalog cancellation withdraws its waiting command and completes that cleanup before the mailbox seals. A caller's cancelled observation does not cancel the shared catalog read. Endpoint shutdown seals new work and joins admitted saves, file cleanup, catalog withdrawal, and run/presence work before database closure. During shutdown, the catalog's short cleanup signal is capped by the original deadline.
 
-## Shared wire
+## Linux launch
 
 The shared executor entrypoint also serves Linux. Linux default data paths use P5's `default_linux_executor_root` helper, with explicit `PLAN_EXECUTOR_ROOT` precedence. Relative nonempty XDG paths refuse. The supervisor uses admitted host Node for every Linux runtime and P5's exact PATH and entrypoint helpers. Retained runtime reads use `LINUX_EXECUTOR` target admission. Darwin installation assets keep their Mac paths even when the build host is Linux.
 
-This launch slice preserves ready-marker promotion, failed-trial rollback, and handoff custody. Worker cleanup, lease composition, enrollment, and final protocol activation remain port work.
+This launch slice preserves ready-marker promotion, failed-trial rollback, and handoff custody. Worker cleanup, lease composition, and final protocol activation remain port work.
+
+## Shared wire
 
 Both TypeScript peers use `wire.schema.json` as the message contract. The same schemas generate `wire.generated.ts` and supply Ajv validation. The schema now describes Python wire protocol 26, including supervision protocol 24 inside start commands, cleanup evidence, and workspace messages. The spool format is 5 and the command journal format is 1.
 
