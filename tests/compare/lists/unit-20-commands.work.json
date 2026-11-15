@@ -1046,36 +1046,37 @@
     },
     {
       "kind": "cli",
-      "area": "cli-worker",
+      "area": "cli-send-message",
       "argv": [
-        "worker",
-        "request-help",
-        "--owner"
+        "send-message",
+        "--owner",
+        "--body-file",
+        "-"
       ],
       "identity": {
         "actor": "worker",
         "ticket_id": "${ticket}"
       },
       "exit_code": 0,
-      "proof": "Records and delivers a Worker help request.",
+      "proof": "Delivers the Worker message to its explicit owner recipient.",
       "stdin": "Synthetic request for input.\n"
     },
     {
       "kind": "cli",
-      "area": "cli-ticket",
+      "area": "cli-send-message",
       "argv": [
-        "ticket",
-        "request-help",
-        "${ticket}",
+        "send-message",
         "--manager",
-        "${manager}"
+        "${manager}",
+        "--body-file",
+        "-"
       ],
       "identity": {
         "actor": "worker",
         "ticket_id": "${ticket}"
       },
       "exit_code": 0,
-      "proof": "Routes the actor-neutral help command as the assigned Worker to the named Manager.",
+      "proof": "Delivers the Worker message to its explicit Manager recipient.",
       "stdin": "Synthetic owner request for input.\n"
     },
     {

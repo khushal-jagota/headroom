@@ -23,10 +23,9 @@ import { start_ready_worker_step } from '../runtime/worker_step_readiness_loop.t
 import { configured_worker_type_registry } from '../worker_types/configuration.ts';
 import { CHIEF_SETTINGS_KEY } from '../worker_settings/service.ts';
 import { send_message } from '../message_delivery/service.ts';
-import { MessageRecordedToOwner } from '../message_delivery/contracts.ts';
 import * as data from './data/index.ts';
 import { ticket_detail, ticket_json } from './views.ts';
-import { body_str, body_opt_str, parse_principal } from './routes.ts';
+import { body_str, body_opt_str } from './routes.ts';
 import { restart_worker } from './worker_restart.ts';
 import type { EmployeeLaunchConfiguration } from './contracts.ts';
 function conversations(services: AreaServices): ConversationSystem {
@@ -61,7 +60,7 @@ function resolve_configuration(
 ): EmployeeLaunchConfiguration {
   const employee_backend = require_conversation_backend_key(backend);
   services.database.read((sql) => {
-    require_usable_model(sql, employee_backend, model, data.read_ticket(sql, ticket_id).locale);
+    require_usable_model(sql, employee_backend, model, data.read_ticket(sql, ticket_id).machine_id);
   });
   return {
     employee_backend,
@@ -282,34 +281,4 @@ export const conversation_routes: FastifyPluginAsync<AreaServices> = async (app,
       return { conversation_id: delivered.conversation_id, ...delivery_fate_json(delivered.fate) };
     });
   }
-  app.post<{
-    Params: {
-      ticket_id: string;
-    };
-  }>('/tickets/:ticket_id/request-help', async (request, reply) => {
-    if (!dictionaryBody(request.body, reply)) return;
-    const body = request.body;
-    if (Object.keys(body).some((key) => key !== 'message' && key !== 'recipient')) {
-      throw new PlannerError('validation', 'unknown help request field');
-    }
-    const message = body_str(body, 'message');
-    if (!message.trim()) throw new PlannerError('validation', 'help message must not be empty');
-    const ticket = services.database.read((sql) => data.read_ticket(sql, request.params.ticket_id));
-    const recipient = parse_principal(body.recipient, 'recipient', true) ?? ticket.ceiling_holder;
-    const delivered = await send_message(
-      conversations(services),
-      services.database,
-      services.clock,
-      services.identity(request),
-      recipient,
-      message,
-    );
-    return {
-      target: recipient,
-      conversation_id: delivered.conversation_id,
-      ...(delivered.fate instanceof MessageRecordedToOwner
-        ? { fate: 'recorded' }
-        : delivery_fate_json(delivered.fate)),
-    };
-  });
 };

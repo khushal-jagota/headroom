@@ -285,16 +285,15 @@ def compare_cli_sequence(
     [
         pytest.param(
             "tests.compare.host",
-            marks=pytest.mark.xfail(
-                run=False,
-                reason="expected-open P6: #885 request-help removed from Python, still in TS",
-            ),
         ),
         pytest.param(
             "tests.compare.ts_launcher",
             marks=pytest.mark.xfail(
                 run=False,
-                reason="expected-open P6: #885 request-help removed from Python, still in TS",
+                reason=(
+                    "expected-open P3/P4/P5 (#916): P5 machine CLI catalog; "
+                    "P3 supervision state and recap fate; P4 workspace artifacts"
+                ),
             ),
         ),
     ],

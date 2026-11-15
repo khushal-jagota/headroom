@@ -42,6 +42,8 @@ test('usage failures retain recovery and help omits false flag defaults', () => 
     [['day'], 'No replacement panels command can be inferred for "day".'],
     [['manager', 'page'], 'Use: panels page --help'],
     [['ticket', '--bogus'], 'No panels call can be named until an action is selected.'],
+    [['ticket', 'request-help'], '"request-help" is not a command under panels ticket.'],
+    [['worker', 'request-help'], '"request-help" is not a command under panels worker.'],
     [
       ['attention', 'setup-collection', '--bogus'],
       'Use: panels attention setup-collection --project TEXT --database-path PATH [OPTIONS]',

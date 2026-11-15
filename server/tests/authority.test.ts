@@ -6,6 +6,7 @@ import { expect, test } from 'vitest';
 import Fastify from 'fastify';
 import { createDatabase } from '../core/database/index.ts';
 import { registerArea } from '../core/authority/register.ts';
+import { conversation_routes } from '../tickets/conversation_routes.ts';
 import { PlannerError } from '../core/contracts.ts';
 import { loadConfig } from '../core/config.ts';
 import { buildClock } from '../core/clock.ts';
@@ -40,7 +41,7 @@ c=sqlite3.connect(sys.argv[1]);c.executescript("CREATE TABLE managers(id TEXT PR
           principal: services.identity(request).principal,
         }));
         scope.post('/projects', async () => ({ ok: true }));
-        scope.post('/tickets/:ticket_id/request-help', async () => ({ ok: true }));
+        await scope.register(conversation_routes, services);
       },
     },
     { database: db, config, clock: buildClock(config) },
@@ -104,8 +105,8 @@ c=sqlite3.connect(sys.argv[1]);c.executescript("CREATE TABLE managers(id TEXT PR
         })
       ).statusCode,
     ).toBe(400);
-    // Above the Ticket is not the Ticket itself: even owner and Chief cannot ask as it.
-    for (const headers of [{}, { 'x-plan-actor': 'chief' }])
+    // Register the real conversation plugin: the retired endpoint must stay absent.
+    for (const headers of [{}, { 'x-plan-actor': 'worker', 'x-plan-ticket-id': 't' }])
       expect(
         (
           await app.inject({
@@ -115,7 +116,7 @@ c=sqlite3.connect(sys.argv[1]);c.executescript("CREATE TABLE managers(id TEXT PR
             payload: {},
           })
         ).statusCode,
-      ).toBe(400);
+      ).toBe(404);
     expect(
       (
         await app.inject({
