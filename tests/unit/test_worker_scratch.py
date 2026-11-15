@@ -1,0 +1,170 @@
+"""Short paths and Ticket-scoped cleanup keep Worker scratch on disk."""
+
+from __future__ import annotations
+
+import json
+import os
+import shutil
+import subprocess
+import sys
+from pathlib import Path
+
+import pytest
+
+from planner.conversation import worker_scratch
+from planner.conversation.worker_scratch import WorkerScratch, prune_ticket_scratch
+
+
+@pytest.mark.parametrize(("home", "capacity", "length"), [
+    ("/home/vps", 108, 31),
+    ("/Users/khushaljagota", 104, 42),
+])
+def test_short_real_root_leaves_room_for_socket_names(
+    home: str, capacity: int, length: int, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(Path, "home", lambda: Path(home))
+    directory = worker_scratch._scratch_root() / "t_1kru2ezr-123456"
+    assert len(os.fsencode(directory)) == length
+    # The terminating NUL and the slash also occupy the sockaddr capacity.
+    assert capacity - 1 - length - 1 >= 60
+
+
+def test_child_tempfile_defaults_follow_real_scratch_across_cwd(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(worker_scratch, "_scratch_root", lambda: tmp_path / "runs")
+    scratch = WorkerScratch({**os.environ, "PLAN_TICKET_ID": "ticket"})
+    try:
+        result = subprocess.run(
+            [sys.executable, "-c", "import tempfile,json; "
+             "print(json.dumps([tempfile.gettempdir(), tempfile.mkstemp()[1]]))"],
+            env=scratch.environment, cwd=tmp_path, text=True, capture_output=True, check=True,
+        )
+        default, file = json.loads(result.stdout)
+        assert Path(default) == scratch.directory
+        assert Path(file).parent == scratch.directory
+        assert not scratch.directory.is_symlink()
+        assert scratch.directory.stat().st_mode & 0o777 == 0o700
+        assert scratch.environment["TMP"] == scratch.environment["TEMP"] == default
+    finally:
+        scratch.close()
+    assert not scratch.directory.exists()
+
+
+def test_start_and_retirement_prune_only_other_same_ticket_folders(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(worker_scratch, "_scratch_root", lambda: tmp_path / "runs")
+    stale = WorkerScratch({"PLAN_TICKET_ID": "ticket"})
+    other = WorkerScratch({"PLAN_TICKET_ID": "other"})
+    current = WorkerScratch({"PLAN_TICKET_ID": "ticket"})
+    assert not stale.directory.exists()
+    assert current.directory.exists() and other.directory.exists()
+    assert prune_ticket_scratch("ticket", [])
+    assert current.directory.exists()  # Older retirement records have no captured names.
+    assert prune_ticket_scratch("ticket", [current.directory.name])
+    assert not current.directory.exists() and other.directory.exists()
+    other.close()
+
+
+def test_same_ticket_symlink_never_authorizes_deletion(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = tmp_path / "runs"
+    root.mkdir(mode=0o700)
+    monkeypatch.setattr(worker_scratch, "_scratch_root", lambda: root)
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (root / "ticket-abcdef").symlink_to(outside, target_is_directory=True)
+    assert not prune_ticket_scratch("ticket", ["ticket-abcdef"])
+    assert outside.exists()
+    assert (root / "ticket-abcdef").is_symlink()
+
+
+@pytest.mark.parametrize("platform", ["linux", "darwin"])
+def test_memory_filesystem_cannot_receive_worker_scratch(
+    platform: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(sys, "platform", platform)
+    if platform == "linux":
+        monkeypatch.setattr(Path, "read_text", lambda self: "25 1 0:1 / / rw - tmpfs tmpfs rw")
+    else:
+        monkeypatch.setattr(subprocess, "run", lambda *args, **kwargs: subprocess.CompletedProcess(
+            args[0], 0, "ram on / (tmpfs, local)\n",
+        ))
+    with pytest.raises(worker_scratch.WorkerScratchError, match="must use disk"):
+        worker_scratch._disk_directory(tmp_path)
+
+
+def test_close_shares_physical_removal_and_joins_it_after_cancellation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Natural exit and Stop can overlap after removal moves off the event loop."""
+    import asyncio
+    import threading
+
+    monkeypatch.setattr(worker_scratch, "_scratch_root", lambda: tmp_path / "runs")
+    entered, release = threading.Event(), threading.Event()
+    remove = shutil.rmtree
+    removals = []
+
+    def slow_remove(path: Path) -> None:
+        removals.append(path)
+        entered.set()
+        assert release.wait(5), "The event loop stalled behind scratch removal"
+        remove(path)
+
+    async def exercise() -> None:
+        scratch = await WorkerScratch.create({"PLAN_TICKET_ID": "ticket"})
+        monkeypatch.setattr(shutil, "rmtree", slow_remove)
+        first = asyncio.create_task(scratch.aclose())
+        assert await asyncio.to_thread(entered.wait, 5)
+        second = asyncio.create_task(scratch.aclose())
+        first.cancel()
+        await asyncio.sleep(0)
+        await asyncio.sleep(0)
+        assert not first.done() and not second.done()
+        release.set()
+        with pytest.raises(asyncio.CancelledError):
+            await first
+        await second
+        assert removals == [scratch.directory]
+        assert not scratch.directory.exists()
+
+    asyncio.run(exercise())
+
+
+def test_cancel_during_creation_survives_failed_cleanup(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Creation cancellation must survive the cleanup error that previously replaced it."""
+    import asyncio
+    import threading
+
+    monkeypatch.setattr(worker_scratch, "_scratch_root", lambda: tmp_path / "runs")
+    entered, release = threading.Event(), threading.Event()
+    construct = WorkerScratch.__init__
+    scratch_paths = []
+
+    def slow_create(self, environment):  # type: ignore[no-untyped-def]
+        construct(self, environment)
+        scratch_paths.append(self.directory)
+        entered.set()
+        assert release.wait(5), "Creation stayed on the event loop"
+
+    def fail_remove(path):  # type: ignore[no-untyped-def]
+        raise OSError("cleanup failed")
+
+    async def exercise() -> None:
+        monkeypatch.setattr(WorkerScratch, "__init__", slow_create)
+        creation = asyncio.create_task(WorkerScratch.create({"PLAN_TICKET_ID": "ticket"}))
+        assert await asyncio.to_thread(entered.wait, 5)
+        creation.cancel()
+        monkeypatch.setattr(shutil, "rmtree", fail_remove)
+        release.set()
+        with pytest.raises(asyncio.CancelledError):
+            await creation
+        assert "cleanup failed" in caplog.text
+        assert scratch_paths[0].exists()
+
+    asyncio.run(exercise())

@@ -53,3 +53,20 @@ extension APIClient {
         try Self.validate(response, data: data)
     }
 }
+
+enum ManagerResources {
+    // The broader workspace has no provider. Its active fallback stays explicit.
+    static func detail(_ id: String) -> ResourceRegistration<ManagerDetail> {
+        ResourceRegistration(key: "/api/managers/\(id)/workspace", versioned: false)
+    }
+}
+
+struct ManagerDocumentContent: Decodable, Sendable {
+    let goal: String
+    let recap: String
+}
+extension ManagerResources {
+    static func content(_ id: String) -> ResourceRegistration<ManagerDocumentContent> {
+        ResourceRegistration(key: "/api/managers/\(id)/workspace-content")
+    }
+}

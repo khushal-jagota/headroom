@@ -20,7 +20,7 @@
  let checklist=$derived(resolveGoalPrimaryDisplay(goal).checklist);
  setContext<PageContext>(PAGE_CONTEXT,createGoalPageContext({
   goalId:()=>goalId,goal:()=>goal,readings:()=>undefined,narrow:()=>true,sessions:()=>sessions,
- },{updateBlock:editor.updateBlock}));
+ },{subscribeWriting:editor.subscribeWriting,updateBlock:editor.updateBlock}));
  $effect(()=>refreshAtBoundary(goal.next_refresh_at,()=>void detail.refetch()));
 </script>
 {#if checklist}

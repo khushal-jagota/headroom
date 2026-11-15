@@ -15,6 +15,41 @@ final class SystemScreenTests: XCTestCase {
         XCTAssertEqual(UsagePresentation.cost(nil), "—")
         XCTAssertNotEqual(UsagePresentation.number(0), "—")
     }
+    // Gap: the usage API test does not exercise cached resource identity or day rollover.
+    @MainActor func testUsageRegistrationReusesSelectionAndRollsAtLocalMidnightAcrossDST() throws {
+        let format = ISO8601DateFormatter()
+        func date(_ value: String) throws -> Date { try XCTUnwrap(format.date(from: value)) }
+        let london = try XCTUnwrap(TimeZone(identifier: "Europe/London"))
+        for (start, next, hours) in [("2026-03-29T00:00:00Z", "2026-03-29T23:00:00Z", 23.0),
+                                      ("2026-10-24T23:00:00Z", "2026-10-26T00:00:00Z", 25.0)] {
+            let start = try date(start), next = try date(next)
+            let registration = UsageResources.summary(days: 7, now: start, timeZone: london)
+            let cached = try XCTUnwrap(UsageResources.cachedSummary)
+            XCTAssertEqual(cached.day.duration, hours * 3600)
+            for offset in [1.0, hours * 3600 - 1] {
+                XCTAssertEqual(UsageResources.summary(days: 7, now: start.addingTimeInterval(offset), timeZone: london).key, registration.key)
+                XCTAssertTrue(UsageResources.cachedSummary === cached, "Repeated view reads must reuse the prepared request")
+            }
+            let rolled = UsageResources.summary(days: 7, now: next, timeZone: london)
+            XCTAssertFalse(UsageResources.cachedSummary === cached)
+            XCTAssertNotEqual(rolled.key, registration.key, "The exact end of a day belongs to the next request")
+            let query = try XCTUnwrap(URLComponents(string: rolled.key)?.queryItems)
+            let until = hours == 23 ? "2026-03-30" : "2026-10-26"
+            let since = hours == 23 ? "2026-03-24" : "2026-10-20"
+            XCTAssertEqual(query.first { $0.name == "untilDay" }?.value, until)
+            XCTAssertEqual(query.first { $0.name == "sinceDay" }?.value, since)
+            let current = try XCTUnwrap(UsageResources.cachedSummary)
+            let oneDay = UsageResources.summary(days: 1, now: next, timeZone: london)
+            XCTAssertEqual(URLComponents(string: oneDay.key)?.queryItems?.first { $0.name == "sinceDay" }?.value, until)
+            XCTAssertFalse(UsageResources.cachedSummary === current, "Range changes replace the single retained request")
+            let changedRange = try XCTUnwrap(UsageResources.cachedSummary)
+            let utc = TimeZone(secondsFromGMT: 0)!
+            let changedZone = UsageResources.summary(days: 1, now: next, timeZone: utc)
+            XCTAssertFalse(UsageResources.cachedSummary === changedRange)
+            XCTAssertEqual(URLComponents(string: changedZone.key)?.queryItems?.first { $0.name == "timeZone" }?.value, utc.identifier)
+            XCTAssertEqual(URLComponents(string: changedZone.key)?.queryItems?.first { $0.name == "untilDay" }?.value, hours == 23 ? "2026-03-29" : "2026-10-26")
+        }
+    }
     // New boundary: model catalogues must follow the Ticket, never the phone or VPS.
     func testTicketCatalogueAndUsageUseCurrentServerContracts() async throws {
         let config = URLSessionConfiguration.ephemeral
@@ -86,6 +121,40 @@ final class SystemScreenTests: XCTestCase {
         let latest = try APIClient.decoder().decode(VPSLatest.self, from: data)
         XCTAssertTrue(VPSPresentation.stale(latest, now: 0))
     }
+    // Gap: read-only settings checks do not prove preference writes or confirmed-value recovery.
+    // One in-memory transport also holds a write to prove overlapping edits cannot race.
+    @MainActor func testNotificationPreferenceSaveRetainsConfirmedValueAndRetries() async throws {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [NotificationPreferenceStub.self]
+        let session = URLSession(configuration: configuration)
+        defer { session.invalidateAndCancel() }
+        let client = APIClient(baseURL: URL(string: "https://preferences.invalid")!, session: session)
+        let resources = ResourceOwner(api: client)
+        defer { resources.stop() }
+        let handle = resources.handle(SettingsResources.notifications)
+        handle.accept(try APIClient.decoder().decode(SettingsNotifications.self, from: Data(notificationPreferencesJSON.utf8)))
+        let editor = NotificationPreferenceEditor()
+        NotificationPreferenceStub.state.reset()
+        await editor.save(subjectKey: "chief", type: "message", enabled: false, using: client, resources: resources)
+        XCTAssertEqual(handle.value?.subjects.first?.types.first?.enabled, true)
+        XCTAssertNotNil(editor.error)
+        XCTAssertFalse(editor.isSaving)
+
+        let started = expectation(description: "Retry reaches held transport")
+        NotificationPreferenceStub.state.hold(started)
+        let task = Task { await editor.retry(using: client, resources: resources) }
+        await fulfillment(of: [started], timeout: 2)
+        XCTAssertTrue(editor.isSaving)
+        await editor.save(subjectKey: "chief", type: "message", enabled: true, using: client, resources: resources)
+        XCTAssertEqual(NotificationPreferenceStub.state.count, 2, "A second edit cannot overwrite the in-flight catalogue")
+        NotificationPreferenceStub.state.finish()
+        await task.value
+        XCTAssertNil(editor.error)
+        XCTAssertFalse(editor.isSaving)
+        XCTAssertEqual(handle.value?.subjects.first?.types.first?.enabled, false)
+        XCTAssertEqual(handle.value?.subjects.first?.types.last?.enabled, false, "The complete returned catalogue is authoritative")
+    }
+
     func testServerAddressRejectsCredentialAndPathInjection() {
         XCTAssertEqual(SettingsServerAddress.validated(" https://panels.example.com/ ")?.host, "panels.example.com")
         for address in ["http://panels.example.com", "https://user:secret@panels.example.com", "https://panels.example.com/api", "https://panels.example.com?secret=x", "https://panels.example.com#fragment", "https://"] {
@@ -146,6 +215,50 @@ private final class MachineContractStub: URLProtocol, @unchecked Sendable {
         default: XCTFail("Unexpected contract request"); body = "{}"
         }
         client?.urlProtocol(self, didReceive: HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!, cacheStoragePolicy: .notAllowed)
+        client?.urlProtocol(self, didLoad: Data(body.utf8)); client?.urlProtocolDidFinishLoading(self)
+    }
+    override func stopLoading() {}
+}
+
+private let notificationPreferencesJSON = #"{"subjects":[{"key":"chief","label":"Chief","types":[{"id":"message","label":"Messages","description":"New messages","enabled":true},{"id":"stalled","label":"Stalled work","description":"Work stops","enabled":true}]}]}"#
+
+private final class NotificationPreferenceStub: URLProtocol, @unchecked Sendable {
+    final class State: @unchecked Sendable {
+        private let lock = NSLock()
+        private var requests = 0
+        private var held: NotificationPreferenceStub?
+        private var started: XCTestExpectation?
+        var count: Int { lock.lock(); defer { lock.unlock() }; return requests }
+        func reset() { lock.lock(); defer { lock.unlock() }; requests = 0; held = nil; started = nil }
+        func hold(_ expectation: XCTestExpectation) { lock.lock(); defer { lock.unlock() }; started = expectation }
+        func accept(_ stub: NotificationPreferenceStub) {
+            lock.lock(); requests += 1
+            if requests == 1 { lock.unlock(); stub.respond(status: 503); return }
+            held = stub; let expectation = started; lock.unlock()
+            expectation?.fulfill()
+        }
+        func finish() { lock.lock(); let stub = held; held = nil; lock.unlock(); stub?.respond(status: 200) }
+    }
+    static let state = State()
+    override class func canInit(with request: URLRequest) -> Bool { request.url?.host == "preferences.invalid" }
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+    override func startLoading() {
+        XCTAssertEqual(request.httpMethod, "PUT")
+        XCTAssertEqual(request.url?.path, "/api/notifications/preferences/chief/message")
+        let data = request.httpBody ?? request.httpBodyStream.map { stream in
+            stream.open(); defer { stream.close() }
+            var bytes = [UInt8](repeating: 0, count: 1024)
+            let count = stream.read(&bytes, maxLength: bytes.count)
+            return Data(bytes.prefix(max(0, count)))
+        } ?? Data()
+        let body = try? JSONSerialization.jsonObject(with: data) as? [String: Bool]
+        XCTAssertEqual(body, ["enabled": false])
+        Self.state.accept(self)
+    }
+    func respond(status: Int) {
+        let body = status == 200 ? notificationPreferencesJSON.replacingOccurrences(of: "true", with: "false")
+            : #"{"error":{"message":"Preference service unavailable"}}"#
+        client?.urlProtocol(self, didReceive: HTTPURLResponse(url: request.url!, statusCode: status, httpVersion: nil, headerFields: nil)!, cacheStoragePolicy: .notAllowed)
         client?.urlProtocol(self, didLoad: Data(body.utf8)); client?.urlProtocolDidFinishLoading(self)
     }
     override func stopLoading() {}

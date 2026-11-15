@@ -11,6 +11,7 @@ from planner.core.config import Config, load_config
 from planner.environments.backup import create_database_backup
 from planner.environments.vps_status import (
     VpsStatusDependencies,
+    VpsStatusPolicy,
     apply_cleanup_inventory,
     collect_cleanup_inventory,
     collect_vps_status,
@@ -114,3 +115,53 @@ def test_symlinked_snapshot_evidence_is_absent_from_status_and_cleanup(tmp_path:
     assert apply_cleanup_inventory(inventory).removed == []
     assert external.exists()
     assert (Path(config.backup_dir) / "snapshot-external-link").is_symlink()
+
+
+def test_native_log_cleanup_preserves_live_writer_and_refuses_changed_links(tmp_path: Path) -> None:
+    # Rename cannot reclaim a log that launchd still writes through its original descriptor.
+    # Existing cleanup tests cover backup evidence, not retained native log writers.
+    config = _config(tmp_path)
+    logs = Path(config.logs_dir)
+    logs.mkdir()
+    log = logs / "home.stderr.log"
+    outside = tmp_path / "outside.log"
+    outside.write_bytes(b"outside evidence")
+    policy = VpsStatusPolicy(log_warning_bytes=8)
+    dependencies = VpsStatusDependencies(platform_name=lambda: "Darwin")
+    with log.open("ab", buffering=0) as writer:
+        writer.write(b"native log evidence")
+        original = os.fstat(writer.fileno())
+        inventory = collect_cleanup_inventory(config, dependencies=dependencies, policy=policy)
+        result = apply_cleanup_inventory(inventory)
+        assert result.rotated == [str(log)] and result.review_needed == []
+        assert log.stat().st_ino == original.st_ino
+        assert os.fstat(writer.fileno()).st_size == 0
+        assert not log.with_name(log.name + ".1").exists()
+        writer.write(b"new native output")
+        assert log.read_bytes() == b"new native output"
+
+    # A regular inventory entry cannot authorize a later link into another folder.
+    inventory = collect_cleanup_inventory(config, dependencies=dependencies, policy=policy)
+    log.unlink()
+    log.symlink_to(outside)
+    result = apply_cleanup_inventory(inventory)
+    assert result.rotated == [] and result.review_needed == [str(log)]
+    assert outside.read_bytes() == b"outside evidence"
+    log.unlink()
+    os.link(outside, log)
+    inventory = collect_cleanup_inventory(config, dependencies=dependencies, policy=policy)
+    result = apply_cleanup_inventory(inventory)
+    assert result.rotated == [] and result.review_needed == [str(log)]
+    assert outside.read_bytes() == b"outside evidence"
+    log.unlink()
+
+    # Linux keeps the established rename behavior and the original inode as .1.
+    log.write_bytes(b"Linux log evidence")
+    original_inode = log.stat().st_ino
+    inventory = collect_cleanup_inventory(
+        config, dependencies=VpsStatusDependencies(platform_name=lambda: "Linux"), policy=policy,
+    )
+    result = apply_cleanup_inventory(inventory)
+    assert result.rotated == [str(log)] and result.review_needed == []
+    assert not log.exists()
+    assert log.with_name(log.name + ".1").stat().st_ino == original_inode

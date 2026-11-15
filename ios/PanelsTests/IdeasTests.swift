@@ -1,4 +1,5 @@
 import XCTest
+import os
 @testable import Panels
 
 @MainActor final class IdeasTests: XCTestCase {
@@ -61,6 +62,32 @@ import XCTest
         let payload = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(bytes.prefix(count))) as? [String: String])
         XCTAssertEqual(payload, ["title": "New idea", "project_id": "project-1"])
     }
+
+    // Gap: a successful capture's delayed list refresh must not erase the next draft.
+    func testDraftTypedDuringAcknowledgedCaptureRefreshSurvives() async throws {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [IdeaRequestStub.self]
+        let api = APIClient(baseURL: URL(string: "https://ideas-refresh.invalid")!, session: URLSession(configuration: configuration))
+        let model = IdeasModel()
+        model.connect(ResourceOwner(api: api), api: api)
+        model.title = "Submitted"
+        let capture = Task { await model.capture(using: api) }
+        for _ in 0..<300 {
+            if IdeaRequestStub.heldRead.withLock({ $0 != nil }) { break }
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        let read = try XCTUnwrap(IdeaRequestStub.heldRead.withLock { value in
+            defer { value = nil }; return value
+        })
+        XCTAssertEqual(model.title, "", "Acknowledgment clears only the submitted draft before the list read")
+        model.title = "Next idea"; model.detail = "Keep this new text"; model.projectID = "next-project"
+        read.finish(#"{"ideas":[]}"#)
+        let accepted = await capture.value
+        XCTAssertTrue(accepted)
+        XCTAssertEqual(model.title, "Next idea")
+        XCTAssertEqual(model.detail, "Keep this new text")
+        XCTAssertEqual(model.projectID, "next-project")
+    }
 }
 
 private actor IdeasStub: IdeasServing {
@@ -78,11 +105,19 @@ private actor IdeasStub: IdeasServing {
 
 private final class IdeaRequestStub: URLProtocol, @unchecked Sendable {
     nonisolated(unsafe) static var lastRequest: URLRequest?
+    static let heldRead = OSAllocatedUnfairLock<IdeaRequestStub?>(initialState: nil)
     override class func canInit(with request: URLRequest) -> Bool { true }
     override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
     override func startLoading() {
         Self.lastRequest = request
-        let data = Data(#"{"id":"server-id","title":"New idea","body":"","project_id":"project-1","project":"Panels","created_at":1,"updated_at":1}"#.utf8)
+        if request.url?.host == "ideas-refresh.invalid", request.httpMethod == "GET" {
+            Self.heldRead.withLock { $0 = self }
+            return
+        }
+        finish(#"{"id":"server-id","title":"New idea","body":"","project_id":"project-1","project":"Panels","created_at":1,"updated_at":1}"#)
+    }
+    func finish(_ body: String) {
+        let data = Data(body.utf8)
         client?.urlProtocol(self, didReceive: HTTPURLResponse(url: request.url!, statusCode: 201, httpVersion: nil, headerFields: nil)!, cacheStoragePolicy: .notAllowed)
         client?.urlProtocol(self, didLoad: data)
         client?.urlProtocolDidFinishLoading(self)

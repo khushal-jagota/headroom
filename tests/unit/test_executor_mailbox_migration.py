@@ -30,6 +30,7 @@ from planner.core.db import (
     schema_migration_transaction,
     upgrade_schema_connection,
 )
+from planner.execution_configuration import PROTOCOL_VERSION
 from planner.execution_identity import MAC_NEEDS_UPDATE, ExecutorIdentity
 from planner.executor.logic.presence import judge_presence
 from planner.executor.protocol import LeaseRequest, as_object
@@ -38,6 +39,7 @@ from planner.executor.vps_presence_store import (
     read_presence,
     require_current_incarnation,
 )
+from planner.machines.contracts import ORIGINAL_MAC_MACHINE_ID
 
 NEW_TABLES = (
     "executor_incarnations",
@@ -98,8 +100,9 @@ def test_fresh_database_has_the_mailbox_tables_and_no_presence(tmp_path: Path) -
         assert judge_presence(read_presence(conn), 1).presence == "never"
         # The stored lease is diagnostic: an unreadable one reads as none, never an error.
         conn.execute(
-            "INSERT INTO mac_executor_presence(singleton,last_lease_at_ms,lease_json) "
-            'VALUES (1,5,\'{"older":"shape"}\')'
+            "INSERT INTO mac_executor_presence(machine_id,last_lease_at_ms,lease_json) "
+            'VALUES (?,5,\'{"older":"shape"}\')',
+            (ORIGINAL_MAC_MACHINE_ID,),
         )
         presence = read_presence(conn)
         assert presence is not None
@@ -160,12 +163,12 @@ def test_the_migrated_incarnation_passes_the_fence_until_a_new_process_leases(
     path = _staging_database(tmp_path, None)
     with closing(connect(path)) as conn:
         create_schema(conn)
-    require_current_incarnation(path, CURRENT)
+    require_current_incarnation(path, CURRENT, ORIGINAL_MAC_MACHINE_ID)
     with pytest.raises(PlannerError) as refused:
-        require_current_incarnation(path, REPLACED)
+        require_current_incarnation(path, REPLACED, ORIGINAL_MAC_MACHINE_ID)
     assert refused.value.code is ErrorCode.executor_incarnation_not_current
 
-    successor = ExecutorIdentity(22, "new-release", 5, str(uuid4()))
+    successor = ExecutorIdentity(PROTOCOL_VERSION, "new-release", 5, str(uuid4()))
     lease = LeaseRequest(successor, 1, 0, 0, None, (), False, (), False)
     with closing(connect(path)) as conn:
         conn.execute("BEGIN IMMEDIATE")
@@ -182,9 +185,9 @@ def test_the_migrated_incarnation_passes_the_fence_until_a_new_process_leases(
                 "WHERE replaced_at_ms IS NULL"
             )
         ] == [successor.executor_incarnation]
-    require_current_incarnation(path, successor)
+    require_current_incarnation(path, successor, ORIGINAL_MAC_MACHINE_ID)
     with pytest.raises(PlannerError):
-        require_current_incarnation(path, CURRENT)
+        require_current_incarnation(path, CURRENT, ORIGINAL_MAC_MACHINE_ID)
     # The replaced process may not lease its way back in; it must exit.
     with closing(connect(path)) as conn:
         conn.execute("BEGIN IMMEDIATE")
@@ -194,3 +197,51 @@ def test_the_migrated_incarnation_passes_the_fence_until_a_new_process_leases(
             )
         conn.rollback()
     assert replaced.value.code is ErrorCode.executor_incarnation_not_current
+
+
+def test_cleanup_recheck_upgrade_preserves_mailbox_rows_and_deleted_cursor(tmp_path: Path) -> None:
+    """The new operation must not lose a result or reuse a pruned mailbox sequence."""
+    path = str(tmp_path / "cleanup-recheck.db")
+    with schema_migration_transaction(path) as migration:
+        upgrade_schema_connection(migration, "worker_supervision")
+    with closing(connect(path)) as conn:
+        conn.execute("INSERT INTO executor_incarnations VALUES ('old',1,2)")
+        conn.execute(
+            "INSERT INTO executor_commands(command_sequence,command_id,executor_incarnation,"
+            "operation,conversation_id,child_id,command_json,state,created_at_ms,finished_at_ms,"
+            "outcome_json) VALUES(7,'old-stop','old','stop','conversation','child',"
+            "'exact-command','finished',1,2,'exact-outcome')"
+        )
+        conn.execute(
+            "INSERT INTO executor_commands(command_sequence,command_id,executor_incarnation,"
+            "operation,command_json,state,created_at_ms) "
+            "VALUES(99,'deleted','old','read_model_list','{}','withdrawn',1)"
+        )
+        conn.execute("DELETE FROM executor_commands WHERE command_sequence=99")
+        old_columns = ",".join(
+            row[1] for row in conn.execute("PRAGMA table_info(executor_commands)")
+        )
+        before = tuple(conn.execute(f"SELECT {old_columns} FROM executor_commands").fetchone())
+        conn.commit()
+        create_schema(conn)
+        assert (
+            tuple(conn.execute(f"SELECT {old_columns} FROM executor_commands").fetchone()) == before
+        )
+        assert conn.execute("SELECT machine_id FROM executor_commands").fetchone()[0] == (
+            ORIGINAL_MAC_MACHINE_ID
+        )
+        conn.execute(
+            "INSERT INTO executor_incarnations(executor_incarnation,first_leased_at_ms) "
+            "VALUES ('new',3)"
+        )
+        conn.execute(
+            "INSERT INTO executor_commands(command_id,executor_incarnation,operation,command_json,"
+            "state,created_at_ms) VALUES('recheck','new','recheck_cleanup','{}','waiting',3)"
+        )
+        assert conn.execute(
+            "SELECT command_sequence FROM executor_commands WHERE command_id='recheck'"
+        ).fetchone()[0] == 100
+        indexes = {row[0] for row in conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='executor_commands'"
+        )}
+        assert {"executor_commands_open", "executor_commands_conversation"} <= indexes

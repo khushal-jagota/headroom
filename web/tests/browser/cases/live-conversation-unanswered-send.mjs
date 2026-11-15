@@ -47,7 +47,14 @@ const indexPath = join(scratchRoot, `unanswered-send-index-${process.pid}.html`)
     }
     const delivery = (window as any).__delivery;
     if (delivery) {
-      await new Promise<void>(resolve => {(window as any).__resolveDelivery = resolve;});
+      await new Promise<void>(resolve => {
+        (window as any).__resolveDelivery = resolve;
+        if ((window as any).__nativeResolveOnSend) {
+          (window as any).__nativeResolveOnSend = false;
+          (window as any).__retirementSupersedingSendId = body.sender_message_id;
+          resolve();
+        }
+      });
       // This is the actual deferred HTTP acceptance return, before LiveConversation
       // consumes it. The case checks the receipt instead of an earlier phase guess.
       if ((window as any).__nativeRequireAcceptance) {

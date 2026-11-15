@@ -33,6 +33,7 @@ from types import SimpleNamespace
 from typing import Any, cast
 
 import pytest
+from tests.support.executor_catalog import SingleMachineCatalog
 from tests.support.executor_https import HttpsProxy, serve_executor_app
 from tests.support.executor_inbox import lookup_receipt
 
@@ -112,6 +113,8 @@ from planner.executor.protocol import (
 )
 from planner.executor.vps_files import InputFile
 from planner.executor.vps_transport import VpsExecutor
+from planner.worker_supervision import WorkerSupervisor
+from planner.worker_supervision.config import RECORD_ROOT_ENV
 
 pytestmark = pytest.mark.usefixtures("executor_transport_home")
 
@@ -138,7 +141,17 @@ class ScriptedNativeChild:
         *,
         vendor_session_cursor: str | None,
     ) -> None:
-        del resolved_start, vendor_session_cursor
+        del vendor_session_cursor
+        assert resolved_start.role_materials is not None
+        environment = dict(resolved_start.role_materials.identity_environment_variables)
+        environment["PLAN_CONVERSATION_ID"] = resolved_start.conversation_id
+        assert RECORD_ROOT_ENV in environment
+        # This adapter scripts transport effects in the test process. It never
+        # spawns an external native process. Record that exact boundary through
+        # the shared owner so restart tests do not invent missing process proof.
+        receipt = await WorkerSupervisor.create(environment, resolved_start.workspace_folder)
+        assert receipt is not None
+        await receipt.cancel_unspawned()
         self.start_count += 1
 
     async def write_prompt(
@@ -623,7 +636,11 @@ def make_core(endpoint: VpsExecutor) -> SqliteProcessConversationSystem:
         message_files=ConversationMessageFiles(endpoint.db_path),
     )
     # All transport fixtures are native. Local discovery is never called here.
-    system.configure_machine_catalog(endpoint.catalog)
+    system.configure_machine_catalog(SingleMachineCatalog(endpoint.catalog))
+    system.start_admission.configure_destinations(
+        lambda destination: destination == "home" or endpoint.presence.is_present()
+    )
+    endpoint.mailbox.start_admission = system.start_admission
     return system
 
 
@@ -1339,6 +1356,7 @@ def test_kill_withdraws_a_stalled_delivery_without_a_round_trip(
     """Gap: a kill while a prompt's delivery is still committing withdraws its waiting
     row on the VPS alone, with no Mac request in between; the Mac never runs it."""
     from planner.conversation.contracts import ConversationBackendKey
+    from planner.core.errors import PlannerError
     from planner.executor.protocol import ChildCommand, ChildOperation
 
     async def run() -> None:
@@ -1382,7 +1400,9 @@ def test_kill_withdraws_a_stalled_delivery_without_a_round_trip(
             await asyncio.sleep(0.1)
             release.set()
             fate = await asyncio.wait_for(sending, 5)
-            await asyncio.wait_for(killing, 5)
+            # Withdrawal proves no prompt delivery, but not native process retirement.
+            with pytest.raises(PlannerError, match="Recheck Worker cleanup"):
+                await asyncio.wait_for(killing, 5)
             assert isinstance(fate, PromptDeliverySuppressed), repr(fate)
             # Withdrawn on the VPS while the Mac's poll was still held on the Mac.
             assert not polls_released.is_set()
@@ -2125,10 +2145,11 @@ def test_shutdown_waits_for_admitted_outcome_application_and_final_event_receipt
 def test_old_websocket_is_refused_needs_update_while_update_route_serves_it(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Gap: a protocol-21 Mac dials the old WebSocket. It must be refused and shown as
-    "Mac needs update", its update route must still answer it with only the ID header,
-    and the current Mac's work must go on: nothing it saved changes, and its next lease
-    shows it present again."""
+    """After handover, missing credentials cannot change presence or read updates.
+
+    An authenticated old transport still receives the version refusal and recovery
+    update. The current executor retains its work and its next lease clears refusal.
+    """
     import aiohttp
 
     from planner.environments.mac_updates import MacUpdateService
@@ -2151,6 +2172,7 @@ def test_old_websocket_is_refused_needs_update_while_update_route_serves_it(
             )
             origin = harness.proxy.origin
             only_id = {"X-Panels-Executor-ID": EXECUTOR_ID}
+            authenticated = harness.mac.client.authentication_headers()
 
             def positions() -> list[tuple[Any, ...]]:
                 with contextlib.closing(connect(harness.endpoint.db_path)) as connection:
@@ -2170,12 +2192,28 @@ def test_old_websocket_is_refused_needs_update_while_update_route_serves_it(
                         raise AssertionError("the old WebSocket was accepted")
                 except aiohttp.WSServerHandshakeError as refused:
                     assert refused.status == 403
+                # Issuance permanently closed the original ID-only authority. A
+                # refused unauthenticated peer cannot mark the real machine refused.
+                health = harness.endpoint.health()
+                assert health.presence == "present" and health.refusal is None
+                assert health.identity == harness.mac.identity
+                async with session.get(origin + "/api/executor/update", headers=only_id) as answer:
+                    assert answer.status == 403
+                try:
+                    async with session.ws_connect(
+                        "wss" + origin[5:] + "/api/executor/connect", headers=authenticated
+                    ):
+                        raise AssertionError("the authenticated old WebSocket was accepted")
+                except aiohttp.WSServerHandshakeError as refused:
+                    assert refused.status == 403
                 health = harness.endpoint.health()
                 assert health.presence == "refused"
                 assert health.refusal is not None
                 assert health.refusal.reason == MAC_NEEDS_UPDATE
                 assert health.refusal.peer_identity is None
-                async with session.get(origin + "/api/executor/update", headers=only_id) as answer:
+                async with session.get(
+                    origin + "/api/executor/update", headers=authenticated
+                ) as answer:
                     assert answer.status == 200
                     check = decode_bounded(await answer.read(), MacUpdateCheck)
                 assert check.target is None
@@ -2900,7 +2938,11 @@ def test_authenticated_catalog_exchange_timeout_preserves_active_child(
             mailbox = SqliteCommandMailbox(db_path)
             presence = MacPresenceService(db_path, mailbox)
             runs = MacRuns(db_path, presence, mailbox)
-            offline = VpsCatalogRelay(runs, presence, mailbox)
+            another_mac = VpsCatalogRelay(runs, presence, mailbox, machine_id="other-mac")
+            assert another_mac.retained(ConversationBackendKey.codex) is None
+            offline = VpsCatalogRelay(
+                runs, presence, mailbox, machine_id=harness.endpoint.machine_id
+            )
             saved = offline.retained(ConversationBackendKey.codex)
             assert saved is not None
             assert saved.available_models == first.available_models

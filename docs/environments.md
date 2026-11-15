@@ -15,10 +15,28 @@ All of them run as one Unix user, the existing `vps` account. They are separated
 
 - **Live.** The installed release from [Deployment](deployment.md), run by a systemd user service on loopback port 8767 behind the existing Tailscale Serve route. Only the verified service manager can stop it by signal. Workers never stop the server that hosts them. The interactive `panels` command on the host follows the installed app.
 - **Staging.** A foreground server from the source checkout with fake data that persists between runs. It runs only while someone needs it and has no service. `panels environment prepare`, `run`, and `reset` manage it.
-- **Ticket servers.** A Worker's own `panels serve` from its isolated git worktree, with every `PLAN_*` path pointing into that worktree. Headroom never publishes one through the live app. Work Khushal must see is a file in the live Ticket tree or a [preview](previews.md). The Worker stops its server when active work ends and removes its state at Consequences. Anything left behind is removed after the Ticket is done, as [Ticket scratch](#ticket-scratch) describes.
+- **Ticket servers.** A Worker's own `panels serve` from its isolated git worktree, with every `PLAN_*` path pointing into that worktree. Headroom never publishes one through the live app. Work Khushal must see is a file in the live Ticket tree or a [preview](previews.md). The Worker stops its server when active work ends. Panels owns the worktree and its later removal, as [Ticket scratch](#ticket-scratch) describes.
 - **A local checkout.** One source checkout, one Python environment, one loopback server, and one SQLite file under `data/`. It runs the source, not a sealed release. The install steps are in the repository README.
 
 Live and staging are registered environments. Headroom validates them together: one live environment, distinct ports, and no staging root inside the live tree. Ticket servers and local checkouts are outside that registry. Their isolation is the worktree and its `PLAN_*` paths. [`AGENTS.md`](../AGENTS.md) holds the setup rules agents follow. A second isolated server on one machine is set up with [ops/runbooks/isolated-server.md](../ops/runbooks/isolated-server.md).
+
+## The operating-system boundary
+
+The home uses one platform contract for service identity, app-child launch, process evidence, private sockets, locks, and resource collection. The Linux adapter preserves the existing systemd and kernel operations. Shared installation paths keep explicit configuration and current defaults. Runtime selection separates the operating system, architecture, and home or executor role. Existing archive formats and integrity checks stay the same. A Mac executor archive cannot become a home release.
+
+An Apple Silicon Mac can run a home from source in the owner's login session. Its launchd job owns the supervisor and app process group, so a hard supervisor crash does not leave the app behind. Private short sockets support long installation paths. Separate launchd jobs run verified backups, proof-bound maintenance, and stall alarms through the existing commands. Logout stops the home, and sleep makes it unreachable. A sealed release uses the same custody and account skill guard. Its app stays separate from data, logs, and Ticket files. See the [Mac installation procedures](../ops/mac-home/installation.md).
+
+A real home provisions its managed skills in the provider account folders. One operating system account supports one Panels instance. If another instance owns the Panels skill links, the second home starts but leaves those links unchanged. Setup output and the server log explain the conflict and the account limit. Its Workers cannot receive their own home's skills through that account. Use a separate operating system account for a second instance.
+
+The home provisions workspace and account skill files on awaited worker threads, so file removal does not block the event loop. Startup waits for provisioning before normal work starts.
+
+The disposable test option disables provisioning and can read the existing instance's skills. That exception is for tests only.
+
+A release-installed Mac home updates through an independent LaunchAgent. Its installer and external Python remain outside the app that it replaces. A failed health trial returns to the previous app and snapshot record. This rollback can discard later record writes. It does not prove preservation of active work. The Mac home uses native process evidence for local previews and metrics. Its jobs run only during the graphical login session. Other POSIX source servers retain their existing foreground lifecycle. The Mac executor remains separate. Linux checks do not prove Mac behavior.
+
+Worker supervision is one subsystem for home and executor processes. It uses exact identities and durable custody for bounded shutdown and scoped cleanup proof. Unknown cleanup retains a fence. Linux Workers share the home service resource domain, but the adapter removes its protected OOM score before the backend starts. Separate Worker units and slices no longer apply. A missing observation never proves that all descendants stopped.
+
+The contracts and OS adapters live in `platform_runtime/`. Domain policy stays in lifecycle, preview, conversation, and environment code.
 
 ## How a server is configured
 
@@ -35,13 +53,27 @@ Live and staging launches rebuild the process environment from a fixed allowlist
 The user units in `ops/panels-environments/` cover the live service, the deployment runner (kept for one release, only for the [update bridge](deployment.md#the-one-release-bridge)), and two daily timers:
 
 - **Backup.** Takes a verified snapshot of live data with the installed app. See [Backups](backups.md).
-- **Cleanup.** Runs `panels environment cleanup --apply`: rotates oversized logs, removes expired backup temporaries, prunes old verified backups, and removes [Ticket scratch](#ticket-scratch) that the server pass left. It re-proves every target when it runs and never stops a process or removes an environment or the installed app.
+- **Cleanup.** Runs `panels environment cleanup --apply`: rotates oversized Linux logs, truncates live Mac logs in place, removes expired backup temporaries, prunes old verified backups, and runs the [Ticket file clock](#ticket-scratch). It re-proves every target when it runs and never stops a process or removes an environment or the installed app.
 
 ## Ticket scratch
 
-Each Ticket keeps its worktrees in `repository-worktrees/<ticket-id>[-name]` and every other file that must outlive one Worker run in `task-tmp/<ticket-id>/`. Both sit under the folder named by `ticket_scratch_root`, which on the VPS is `~/projects/panels`. Older Workers also used `~/pct/<ticket-id>/`, `~/panels-session-evidence/<ticket-id>/`, and `worktrees/`. Each Worker run also gets its own temporary directory, which is removed when the run ends.
+Panels owns each Ticket's workspace. Before repository work starts, it creates the branch and the `worktree/` folder inside that machine's Ticket files folder. The sibling `artifacts/` folder holds documents and evidence. Workers use the same workspace on later turns. They install dependencies, commit, push, open pull requests, and perform approved merges. They do not create worktrees or remove Ticket files.
 
-When `ticket_scratch_root` and `ticket_scratch_database` are set, and the server's own database is that database, the server checks every ten minutes for Tickets that are deleted, or done for at least ten minutes. It removes their entries in those folders, their worktrees anywhere else, and their branches that `origin/staging` already contains. It never removes work. It keeps an entry, and logs why, when a checkout inside it has uncommitted changes, has commits that no remote has, or belongs to a live Ticket. Unmerged branches stay. The daily cleanup does the same pass, and it checks kept entries again. The database check matters because a Ticket server can inherit the live configuration, and its own database counts every live Ticket as deleted.
+Codex, Claude, and Hermes use real disk scratch at `~/.pw/<ticket-id>-<six hex characters>` on Linux and macOS. This short path leaves room for Unix sockets. `TMPDIR`, `TMP`, and `TEMP` point there, and the launcher removes it when the backend process ends, including failed startup. A fresh backend folder replaces other scratch folders for the same Ticket. Retirement removes the scratch recorded before that workspace detached, so a later retry preserves fresh backend scratch.
+
+Scratch belongs to one backend process. Panels can remove scratch of a process that is no longer current. Scratch preparation and removal run on awaited worker threads. A cancelled start waits for preparation and removes its exact new directory before it releases ownership.
+
+Tools that follow the temporary environment use this scratch. Commands that name `/tmp` or `/var/tmp` still use those host paths. Workers must use `TMPDIR` or a tool's explicit temporary-folder setting. Chief and Managers retain the server's private `/tmp` on the VPS, which shares the host's memory-backed filesystem. Host storage and age cleanup remain operator policy.
+
+The checkout stays private. File access and artifact transfers exclude it, and backups already exclude the files tree. Development checks admit only the managed checkout while they continue to reject storage shared with the installed app. Projects without a repository use an ordinary Ticket workspace.
+
+Panels clears the complete Ticket folder seven days after the Ticket ends. The database keeps the end time and ownership after Ticket deletion. A reopened Ticket no longer qualifies. New activity on a Done Ticket starts a fresh seven-day wait. Grants belong to one physical workspace on one machine. Removal of a server mirror cannot displace the Mac checkout.
+
+Attached checkouts keep their local changes on resume. Server and CLI cleanup share exclusive access to each cleanup pass. Cleanup adopts existing artifact folders without recreating absent paths. It detaches only the exact expired folder before slow deletion. File preparation precedes the short database transaction that authorizes detach. Stop and backlog do not start the clock. Stage text and proposals survive, but links to deleted documents and evidence no longer work. Existing ended Tickets receive a full week from adoption because their historical end dates are unknown.
+
+Before removal, Panels checks that the Ticket is still ended and the work is safe on a remote. It never commits or pushes on a Worker's behalf. Uncommitted files, unpublished commits, or failed Git inspection preserve the folder and produce a report. Legacy scratch outside the Ticket files root remains in its original location for owner review. Worktrees with submodules also remain with an explicit reason. Ignored files, including environment files and local databases, expire with the folder.
+
+Tickets deleted before migration have no reliable end record, so their old folders remain for review. The Mac uses authoritative lifecycle state from the VPS, not absence from a local cache. See [Executor](executor.md).
 
 Renaming the account, moving host state, or changing Tailscale Serve is operator work outside this code.
 
@@ -58,9 +90,12 @@ Renaming the account, moving host state, or changing Tailscale Serve is operator
 
 ## Code
 
+- `src/planner/ticket_workspaces/`: local workspace ownership, activity clocks, and safe removal.
 - `src/planner/environments/`: the registry, launch environments, status, and cleanup. `logic/validation.py` and `logic/launch_env.py` hold the rules.
 - `src/planner/core/config.py`: configuration and `PLAN_*` overrides. `src/planner/skill_sources.py`: the workspace skills link.
 - `src/planner/server_lifecycle/`: who may stop a server.
 - `ops/panels-environments/`: user units, timers, and the host wrapper.
 
-_Last verified: 2026-11-04._
+Named execution destinations and physical workspace identity are separate. A Ticket’s `machine_id` selects home execution or the original executor. `WorkspaceIdentity.machine_id` identifies one local physical data tree. Workspace registration binds its folder to the conversation on that destination. A display edit never rotates either identity.
+
+_Last verified: 2026-11-13._

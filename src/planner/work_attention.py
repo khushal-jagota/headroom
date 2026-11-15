@@ -175,7 +175,8 @@ def _read_stored_attention(
     if item_ids:
         placeholders = ",".join("?" for _ in item_ids)
         for row in conn.execute(
-            f"SELECT id, manager_id FROM tickets WHERE manager_id IN ({placeholders})",
+            f"SELECT id, manager_id FROM tickets WHERE manager_id IN ({placeholders}) "
+            "AND is_backlogged = 0",
             tuple(sorted(item_ids)),
         ).fetchall():
             child_ids_by_item[str(row["manager_id"])].append(str(row["id"]))

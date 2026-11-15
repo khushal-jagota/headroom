@@ -9,11 +9,12 @@ export const holderPagePath=(holder:ManagerPrincipal)=>holder.kind==='chief'?'/a
 export const holderPageQuery=(holder:ManagerPrincipal)=>jsonQuery<HolderPage>(['holder-page',holder.kind,holder.id],holderPagePath(holder));
 export function createHolderEditor(holder:ManagerPrincipal){
  const path=holderPagePath(holder);
- return createPageEditor<HolderPage,{page:PageDocument}>(path,{
+ return createPageEditor<HolderPage,{page:PageDocument;expected_revision?:number}>(path,{
   read:async()=>(await queryClient.fetchQuery(holderPageQuery(holder))).body,
   write:patch=>fetchJson<HolderPage>(path,{method:'PATCH',body:patch}),
   page:document=>document.page,
-  pagePatch:page=>({page}),
+  pagePatch:(page,expected_revision)=>({page,expected_revision}),
+  revision:document=>document.page_revision,
   refresh:()=>queryClient.invalidateQueries(),
  });
 }

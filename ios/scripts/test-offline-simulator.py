@@ -6,6 +6,8 @@ import hashlib
 import http.server
 import json
 import os
+import plistlib
+import sqlite3
 import signal
 import socket
 import subprocess
@@ -31,20 +33,28 @@ LANE_LOCK = (
 )
 BUNDLE = os.environ.get("PANELS_OFFLINE_BUNDLE", "app.panels.ios.pios-offline")
 GOALS_SMOKE = os.environ.get("PANELS_GOALS_SMOKE") == "1"
-REVIEW_MESSAGES = os.environ.get("PANELS_REVIEW_MESSAGES") == "1" or GOALS_SMOKE
+REPLACEMENT_SMOKE = os.environ.get("PANELS_REPLACEMENT_SMOKE") == "1"
+REVIEW_MESSAGES = os.environ.get("PANELS_REVIEW_MESSAGES") == "1" or GOALS_SMOKE or REPLACEMENT_SMOKE
 
 
 def main() -> int:
-    if "--locked" not in sys.argv:
-        return subprocess.call(["lockf", LANE_LOCK, sys.executable, __file__, "--locked"])
+    server_only = "--server-only" in sys.argv
+    review = "--review" in sys.argv
+    if review and not server_only and "/" not in os.environ.get("PANELS_OFFLINE_TEST", ""):
+        raise SystemExit("--review requires one explicit class/method in PANELS_OFFLINE_TEST")
+    if not server_only and "--locked" not in sys.argv:
+        return subprocess.call(["lockf", LANE_LOCK, sys.executable, __file__, *sys.argv[1:], "--locked"])
     output = Path(os.environ["PANELS_OFFLINE_OUTPUT"]).resolve()
     output.mkdir(parents=True, exist_ok=True)
-    devices = json.loads(subprocess.check_output(["xcrun", "simctl", "list", "devices", "--json"]))
-    assert any(
-        d["udid"] == DEVICE and d["state"] == "Booted"
-        for group in devices["devices"].values()
-        for d in group
-    )
+    if not server_only:
+        devices = json.loads(
+            subprocess.check_output(["xcrun", "simctl", "list", "devices", "--json"])
+        )
+        assert any(
+            d["udid"] == DEVICE and d["state"] == "Booted"
+            for group in devices["devices"].values()
+            for d in group
+        )
     base_ticket = json.loads((ROOT / "ios/PanelsTests/Fixtures/ticket-full.json").read_text())
     tickets = {}
     for index in range(1, 4):
@@ -253,12 +263,16 @@ def main() -> int:
         latest_observation=dict(value=400),
     )
     manual_receipts: dict[str, Any] = {}
+    decision_receipts: dict[str, dict[str, Any]] = {}
     state: dict[str, Any] = {
         "offline": False,
         "slow": not REVIEW_COMPLETION and not GOALS_SMOKE and not REACHABILITY_SMOKE,
         "writes": [],
         "messages": [],
         "recording": None,
+        "goal_patch_attempts": 0,
+        "chief_conversation": "stub",
+        "tail_requests": [],
     }
     state.update(
         read_through=1,
@@ -272,6 +286,46 @@ def main() -> int:
         tickets = {"offline-1": tickets["offline-1"]}
         tickets["offline-1"]["pending_proposal"]["created_at"] = 2
     lock = threading.RLock()
+
+    def native_control_allowed() -> bool:
+        if not server_only:
+            return True
+        try:
+            return os.environ.get("PANELS_OWNED_UDID") == DEVICE and time.time() < float(
+                os.environ["PANELS_WORK_END"]
+            )
+        except (KeyError, ValueError):
+            return False
+
+    def saved_replacement_reference() -> dict[str, Any]:
+        """Read the owned test app's actual saved view, without modifying its store."""
+        device = os.environ.get("PANELS_REPLACEMENT_DEVICE_ID")
+        if not device or "PANELS_OFFLINE_BUNDLE" not in os.environ:
+            raise ValueError("Replacement disk proof requires an explicit test device and bundle")
+        containers = Path.home() / "Library/Developer/CoreSimulator/Devices" / device / "data/Containers/Data/Application"
+        matches = [
+            path.parent
+            for path in containers.glob("*/.com.apple.mobile_container_manager.metadata.plist")
+            if plistlib.loads(path.read_bytes()).get("MCMMetadataIdentifier") == BUNDLE
+        ]
+        if len(matches) != 1:
+            raise ValueError("The owned replacement app has no unique data container")
+        store = matches[0] / "Library/Application Support/PanelsPhone/phone.store"
+        with sqlite3.connect("file:" + str(store) + "?mode=ro", uri=True) as connection:
+            rows = connection.execute("SELECT ZKEY, ZPAYLOAD FROM ZLOCALRECORD WHERE ZKIND = 'cache' AND ZSERVER = ?", (url,)).fetchall()
+        saved = {}
+        for key, payload in rows:
+            if "/api/navigation/view/snapshot#" not in key:
+                continue
+            snapshot = json.loads(payload)
+            chief = next((record["value"] for record in snapshot["content"]["records"] if record["kind"] == "chief"), None)
+            if chief is not None:
+                saved[key.rsplit("#", 1)[-1]] = chief.get("conversation_id")
+        if saved.get("latest") != "stub" or saved.get("workspace") != "stub":
+            raise ValueError("The app did not persist its old Chief reference before relaunch")
+        proof = {"device": device, "bundle": BUNDLE, "saved_chief_references": saved, "store_open_mode": "read-only"}
+        (output / "replacement-saved-reference.json").write_text(json.dumps(proof, indent=2))
+        return proof
 
     def stop_clip() -> None:
         recording = state["recording"]
@@ -288,6 +342,9 @@ def main() -> int:
                 "title": ticket["title"],
                 "recap": ticket["recap"],
                 "recap_preview": ticket["recap"],
+                "recap_updated_at": None,
+                "recap_stage_changed": False,
+                "machine_id": "75a49e78-97de-4e28-8dc5-79646761c46f",
                 "recap_reference": None,
                 "worker_type": ticket["worker_type"],
                 "stage_label": "Current",
@@ -342,7 +399,7 @@ def main() -> int:
             ("chief", "chief"): {
                 "kind": "chief",
                 "id": "chief",
-                "value": {"label": "Chief of Staff", "conversation_id": "stub"},
+                "value": {"label": "Chief of Staff", "conversation_id": state["chief_conversation"]},
             }
         }
         cards: dict[tuple[str, str], int] = {}
@@ -372,7 +429,7 @@ def main() -> int:
                     "ticket" if owner == "ticket-stacked" else owner,
                     stub_owner[owner],
                     "stub",
-                    True,
+                    state["chief_conversation"] == "stub",
                     (1 if state["read_through"] < 3 else 3) if unread else None,
                 ),
                 (
@@ -470,8 +527,8 @@ def main() -> int:
             "ordering_generation": "fixture",
             "coverage": {
                 "scope": "fixture",
-                "schema_version": 10,
-                "semantics": "attention-knowledge-v10-ticket-workflows",
+                "schema_version": 11,
+                "semantics": "attention-knowledge-v11-recap-freshness",
                 "epoch": "fixture",
                 "revision": "1",
             },
@@ -508,6 +565,20 @@ def main() -> int:
                 "rest": {"plan_progress": {}},
             },
         }
+        if REPLACEMENT_SMOKE and "/conversations/" in path:
+            identity = path.split("/conversations/", 1)[1].split("/", 1)[0]
+            text = "New Chief transcript" if identity == "replacement" else "Old Chief transcript"
+            value["page"]["items"] = [
+                {
+                    "kind": "row",
+                    "key": identity + "-message",
+                    "body": {"kind": "inline", "value": {
+                        "kind": "agent_message", "content": [{"piece": "text", "text": text}],
+                    }},
+                }
+            ]
+            value["coverage"]["through_sequence"] = 8
+            value["status"]["rest"]["latest_happened"] = {"kind": "agent_message", "excerpt": text}
         if REVIEW_MESSAGES and "/conversations/history/" in path:
             value["page"]["items"] = [
                 {
@@ -556,8 +627,47 @@ def main() -> int:
             query = parse_qs(urlparse(self.path).query)
             if path.startswith("/proof/"):
                 name = path.removeprefix("/proof/")
+                if REPLACEMENT_SMOKE and name.startswith("replacement/"):
+                    action = name.split("/", 1)[1]
+                    with lock:
+                        if action == "old":
+                            state["chief_conversation"] = "stub"
+                        elif action == "clear":
+                            state["chief_conversation"] = None
+                        elif action == "new":
+                            state["chief_conversation"] = "replacement"
+                        elif action == "relaunch-new":
+                            try:
+                                saved_replacement_reference()
+                            except (ValueError, OSError, sqlite3.Error) as error:
+                                self.respond({"error": str(error)}, 409)
+                                return
+                            state["chief_conversation"] = "replacement"
+                        elif action == "unread":
+                            state["read_through"] = 1
+                        elif action == "state":
+                            self.respond({
+                                "current": state["chief_conversation"],
+                                "tails": state["tail_requests"],
+                            })
+                            return
+                        elif action == "review-observation":
+                            (output / "replacement-review-observation.json").write_text(json.dumps(query))
+                        else:
+                            self.respond({"error": "Unknown replacement action"}, 400)
+                            return
+                    self.respond({})
+                    return
                 if name.startswith("review-owner/"):
                     state["review_owner"] = name.split("/")[-1]
+                elif name == "review-final":
+                    # A local fixture transition clears the queue after Revisit.
+                    # It does not issue any product mutation or real conversation send.
+                    with lock:
+                        state["read_through"] = 4
+                        state["historical_read"] = True
+                        for ticket in tickets.values():
+                            ticket["pending_proposal"] = None
                 elif name == "new-message":
                     state["new_message"] = True
                 elif name == "offline":
@@ -567,10 +677,23 @@ def main() -> int:
                     state["slow"] = False
                 elif name == "fast":
                     state["slow"] = False
+                elif name == "goal-conflict" and GOALS_SMOKE:
+                    with lock:
+                        goals["words"]["revision"] += 1
+                        goals["words"]["why"] = "Newer server explanation."
+                elif name == "goal-state" and GOALS_SMOKE:
+                    self.respond(dict(goal=goals["words"], attempts=state["goal_patch_attempts"]))
+                    return
                 elif name == "writes":
                     self.respond(state["writes"])
                     return
-                elif name.startswith("start/"):
+                elif name.startswith("start/") and (
+                    os.environ.get("PANELS_OFFLINE_RECORD_CLIPS", "0" if server_only else "1")
+                    == "1"
+                ):
+                    if not native_control_allowed():
+                        self.respond({"error": "An owned device and active turn are required"}, 409)
+                        return
                     stop_clip()
                     state["recording"] = subprocess.Popen(
                         [
@@ -606,9 +729,14 @@ def main() -> int:
                 # The navigation view and conversation tail send a fresh snapshot frame each
                 # second, so the app follows fixture changes without a change-driven read.
                 view = json.loads(query["view"][0]) if "view" in query else None
+                if REPLACEMENT_SMOKE and path.endswith("/view/tail"):
+                    state["tail_requests"].append(path.split("/conversations/", 1)[1].split("/", 1)[0])
+                    (output / "replacement-tail-requests.json").write_text(json.dumps(state["tail_requests"]))
                 # A cold slow load holds the view's first frame as it held the snapshot read.
-                while view is not None and state["slow"]:
+                while view is not None and state["slow"] and not state["offline"]:
                     time.sleep(0.1)
+                if state["offline"]:
+                    return
                 self.send_response(200)
                 self.send_header("Content-Type", "text/event-stream")
                 self.end_headers()
@@ -699,10 +827,24 @@ def main() -> int:
                 self.end_headers()
                 self.wfile.write(content)
                 return
-            if path == "/api/managers":
+            if REPLACEMENT_SMOKE and path == "/api/goals":
+                value = {"goals": [], "status_date": "2026-11-14", "next_refresh_at": time.time() + 3600}
+            elif REPLACEMENT_SMOKE and path.endswith("/page"):
+                value = {"page": {"blocks": []}, "page_revision": 1}
+            elif REPLACEMENT_SMOKE and path.endswith("/page/readings"):
+                value = {"values": [], "sources": []}
+            elif path == "/api/managers":
                 value = {"managers": [], "page": page}
             elif path == "/api/tickets":
                 value = tickets[query["id"][0]] if "id" in query else {"tickets": [], "page": page}
+            elif (
+                path.startswith("/api/tickets/")
+                and path.endswith("/workspace")
+                and path.split("/")[3] in tickets
+            ):
+                # TicketResources uses the selected workspace document, not the CLI detail read.
+                # Both decode the same Ticket controls from this fixture's retained state.
+                value = tickets[path.split("/")[3]]
             elif path == "/files/tickets/offline-1/proof.html" and REVIEW_MESSAGES:
                 content = b"<!doctype html><html><body><h1>Inline artifact proof</h1></body></html>"
                 self.send_response(200)
@@ -751,6 +893,9 @@ def main() -> int:
                         "conversation_signal": {"working": False, "message_for_owner": False},
                     }
                 }
+            elif path == "/api/managers/review-manager/workspace-content":
+                manager = json.loads((ROOT / "ios/PanelsTests/Fixtures/manager.json").read_text())
+                value = {"goal": manager["goal"], "recap": manager["recap"]}
             elif path == "/api/managers/review-manager/workspace":
                 value = json.loads((ROOT / "ios/PanelsTests/Fixtures/manager.json").read_text())
                 value.update(
@@ -758,11 +903,14 @@ def main() -> int:
                 )
                 value["manager"]["conversation_id"] = "stub"
             elif path == "/api/chief/conversation":
-                value = {"conversation_id": "stub"}
+                value = {"conversation_id": state["chief_conversation"]}
             elif path == "/api/deployment-status":
                 value = {"state": "idle"}
             elif path.endswith("/manifest"):
                 value = manifest
+            elif "/decision-operations/" in path:
+                self.respond({"receipt_contract": 1, "receipt": decision_receipts.get(path)})
+                return
             elif path.endswith("/view/receipts"):
                 ids = json.loads(query["message_ids"][0])
                 value = {
@@ -776,6 +924,7 @@ def main() -> int:
                 value = conversation_view(path)
             elif (
                 path.endswith("/conversations/stub")
+                or (REPLACEMENT_SMOKE and path.endswith("/conversations/replacement"))
                 or path.endswith("/conversations/history")
                 or path.endswith("/start-values")
             ):
@@ -802,6 +951,7 @@ def main() -> int:
                 return
             with lock:
                 goal = goals[path.split("/")[3]]
+                state["goal_patch_attempts"] += 1
                 if body.pop("expected_revision") != goal["revision"]:
                     self.respond(dict(error=dict(message="This goal changed.")), 409)
                     return
@@ -859,6 +1009,19 @@ def main() -> int:
                     else:
                         state["read_through"] = body["through_sequence"]
                     value = {"owner_read_through_sequence": body["through_sequence"]}
+                elif (
+                    REVIEW_MESSAGES
+                    and path.endswith("/send")
+                    and "owner_read_through_sequence" not in body
+                ):
+                    # Final-page Chief messages use the ordinary conversation path,
+                    # without the unread-run boundary that belongs to a Review reply.
+                    state["writes"].append(body)
+                    state["messages"].append(body)
+                    value = {
+                        "conversation_id": body.get("conversation_id") or state["chief_conversation"] or "stub",
+                        "fate": "started",
+                    }
                 elif REVIEW_MESSAGES and path.endswith("/send"):
                     state["writes"].append(body)
                     if not state["refused"]:
@@ -874,6 +1037,51 @@ def main() -> int:
                         state["messages"].append(body)
                         state["writes"].append("message")
                     value = {"conversation_id": "stub", "fate": "started"}
+                elif "/decision-operations/" in path:
+                    if path in decision_receipts:
+                        self.respond({"receipt_contract": 1, "receipt": decision_receipts[path]})
+                        return
+                    ticket = tickets[path.split("/")[3]]
+                    proposal = ticket["pending_proposal"]
+                    refused = (
+                        not proposal
+                        or body["expected_proposal_revision"] != proposal["revision"]
+                        or body["field"] != proposal["field"]
+                    )
+                    receipt = dict(
+                        operation_id=path.rsplit("/", 1)[-1],
+                        ticket_id=ticket["id"],
+                        decision=body["decision"],
+                        field=body["field"],
+                        expected_proposal_revision=body["expected_proposal_revision"],
+                        outcome="refused" if refused else "applied",
+                        created_at=int(time.time()),
+                        transition=(
+                            None
+                            if refused
+                            else dict(
+                                stage=(
+                                    ticket["stage"] if body["decision"] == "send_back" else "done"
+                                ),
+                                ceiling=body.get("next_ceiling", ticket["ceiling"]),
+                                ceiling_holder=body.get("next_holder", ticket["ceiling_holder"]),
+                                ticket_status="ready",
+                                pending_proposal_revision=body["expected_proposal_revision"] + 1,
+                            )
+                        ),
+                        error=(
+                            dict(code="validation", message="This changed, review again", detail={})
+                            if refused
+                            else None
+                        ),
+                    )
+                    decision_receipts[path] = receipt
+                    if not refused:
+                        ticket["pending_proposal"] = None
+                        state["writes"].append(
+                            "approve" if body["decision"] == "approve" else "sendBack"
+                        )
+                    value = {"receipt_contract": 1, "receipt": receipt}
                 elif "/accept/" in path:
                     ticket = tickets[path.split("/")[3]]
                     if (
@@ -939,13 +1147,25 @@ def main() -> int:
         threading.Thread(target=control.serve_forever, daemon=True).start()
         env["TEST_RUNNER_PANELS_REACHABILITY_CONTROL_URL"] = f"http://127.0.0.1:{control.server_port}"
     try:
+        if server_only:
+            # The caller owns build, test, device and deadline. This mode starts
+            # only the existing loopback fixture, with no native preflight.
+            ready = {"PANELS_OFFLINE_STUB_URL": url}
+            if control:
+                ready["PANELS_REACHABILITY_CONTROL_URL"] = f"http://127.0.0.1:{control.server_port}"
+            stopped = threading.Event()
+            signal.signal(signal.SIGTERM, lambda *_: stopped.set())
+            signal.signal(signal.SIGINT, lambda *_: stopped.set())
+            (output / "fixture-ready.json").write_text(json.dumps(ready))
+            stopped.wait()
+            return 0
         return subprocess.call(
             [
                 "xcodebuild",
                 "-project",
                 str(ROOT / "ios/Panels.xcodeproj"),
                 "-scheme",
-                "PanelsNotifications",
+                "PanelsReview" if review else "PanelsNotifications",
                 "-configuration",
                 "Debug",
                 "-destination",
@@ -962,23 +1182,14 @@ def main() -> int:
                 "never",
                 "PANELS_APP_BUNDLE_IDENTIFIER=" + BUNDLE,
                 "CODE_SIGNING_ALLOWED=NO",
-                "-only-testing:PanelsNotificationUITests/"
+                ("-only-testing:PanelsReviewUITests/" if review else "-only-testing:PanelsNotificationUITests/")
                 + (
                     os.environ.get("PANELS_OFFLINE_TEST")
                     or (
-                        "ReviewMessagesTests/testCompletionAndRevisit"
-                        if REVIEW_COMPLETION
-                        else "ReviewMessagesTests"
+                        "ReviewMessagesTests"
                         if REVIEW_MESSAGES
                         else "OfflineOperationTests"
                     )
-                ),
-                *(
-                    [
-                        "-only-testing:PanelsTests/ReviewDecisionTests/testSkipIsLocalAndNewProposalIdentityReturns"
-                    ]
-                    if REVIEW_COMPLETION
-                    else []
                 ),
                 "test",
             ],
@@ -986,7 +1197,9 @@ def main() -> int:
         )
     finally:
         stop_clip()
-        subprocess.run(["xcrun", "simctl", "terminate", DEVICE, BUNDLE], check=False)
+        if not server_only:
+            subprocess.run(["xcrun", "simctl", "terminate", DEVICE, BUNDLE], check=False)
+        state["offline"] = True
         server.shutdown()
         server.server_close()
         if control:

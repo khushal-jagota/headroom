@@ -31,6 +31,7 @@ Deployment's own recovery uses a snapshot only before the new app is proven. Aft
 
 - `src/planner/environments/backup.py`: capture, verification, retention, and restore.
 - The `environment backup`, `backup-current`, and `restore` commands in `src/planner/environments/cli.py`.
-- `ops/panels-environments/panels-db-backup.*`: the nightly unit.
+- `ops/panels-environments/panels-db-backup.*`: the Linux nightly unit.
+- [Mac source installation](../ops/mac-home/installation.md): the login-session backup schedule and isolated restore procedure.
 
 _Last verified: 2026-11-04._

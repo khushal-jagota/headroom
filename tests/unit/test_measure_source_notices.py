@@ -37,7 +37,10 @@ def test_source_failure_reaches_real_prompt_then_reassignment_notifies_new_princ
     database = Path(tmp_db.execute("PRAGMA database_list").fetchone()[2])
 
     async def exercise() -> None:
-        async with open_conversation_system_under_test(database_path=database) as subject:
+        current_time = float(NOW + 2)
+        async with open_conversation_system_under_test(
+            database_path=database, clock=lambda: current_time
+        ) as subject:
             assert await deliver_batch(
                 batch,
                 connect_database=lambda: connect(str(database)),
@@ -77,6 +80,7 @@ def test_source_failure_reaches_real_prompt_then_reassignment_notifies_new_princ
             )
             new_batch = wakes.claim_next_batch(tmp_db, process_token="chief-proof", now=NOW + 4)
             assert new_batch is not None and new_batch.target == CHIEF_PRINCIPAL
+            current_time = float(NOW + 5)
             assert await deliver_batch(
                 new_batch,
                 connect_database=lambda: connect(str(database)),
@@ -110,6 +114,7 @@ def test_source_failure_reaches_real_prompt_then_reassignment_notifies_new_princ
             )
             goal_batch = wakes.claim_next_batch(tmp_db, process_token="goal-proof", now=NOW + 7)
             assert goal_batch is not None and goal_batch.target == CHIEF_PRINCIPAL
+            current_time = float(NOW + 8)
             assert await deliver_batch(
                 goal_batch,
                 connect_database=lambda: connect(str(database)),

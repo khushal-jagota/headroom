@@ -63,6 +63,7 @@ class ValidWorkspaceTicket(TypedDict):
     worker_type: str | None
     workflow: WorkflowControlsManifest
     locale: TicketLocale
+    machine_id: str
     employee_backend: str
     employee_launch_model: str | None
     employee_launch_reasoning_effort: str | None

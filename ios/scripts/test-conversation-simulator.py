@@ -133,7 +133,11 @@ class Stub:
 
 
 def main() -> int:
-    if "--locked" not in sys.argv:
+    server_only = "--server-only" in sys.argv
+    review = "--review" in sys.argv
+    if review and not server_only and "/" not in os.environ.get("PANELS_CONVERSATION_TEST", ""):
+        raise SystemExit("--review requires one explicit class/method in PANELS_CONVERSATION_TEST")
+    if not server_only and "--locked" not in sys.argv:
         return subprocess.call(
             [
                 "lockf",
@@ -152,15 +156,29 @@ def main() -> int:
     assert BUNDLE.startswith("app.panels.ios.pios-"), "Use a separate task bundle"
     output = Path(os.environ["PANELS_CONVERSATION_OUTPUT"]).resolve()
     output.mkdir(parents=True, exist_ok=True)
-    devices = json.loads(subprocess.check_output(["xcrun", "simctl", "list", "devices", "--json"]))
-    assert any(
-        d["udid"] == DEVICE and d["name"] == LANE and d["state"] == "Booted"
-        for group in devices["devices"].values()
-        for d in group
-    ), f"{LANE} must already be booted"
-    original_appearance = subprocess.check_output(
-        ["xcrun", "simctl", "ui", DEVICE, "appearance"], text=True
-    ).strip()
+    if not server_only:
+        devices = json.loads(
+            subprocess.check_output(["xcrun", "simctl", "list", "devices", "--json"])
+        )
+        assert any(
+            d["udid"] == DEVICE and d["name"] == LANE and d["state"] == "Booted"
+            for group in devices["devices"].values()
+            for d in group
+        ), f"{LANE} must already be booted"
+        original_appearance = subprocess.check_output(
+            ["xcrun", "simctl", "ui", DEVICE, "appearance"], text=True
+        ).strip()
+
+    def native_control_allowed() -> bool:
+        if not server_only:
+            return True
+        try:
+            return os.environ.get("PANELS_OWNED_UDID") == DEVICE and time.time() < float(
+                os.environ["PANELS_WORK_END"]
+            )
+        except (KeyError, ValueError):
+            return False
+
     stub = Stub(output)
     fixtures = ROOT / "ios/PanelsTests/Fixtures"
     ticket = json.loads((fixtures / "ticket-full.json").read_text())
@@ -197,6 +215,38 @@ def main() -> int:
         ]
     }
 
+    def navigation_snapshot(request: dict[str, Any]) -> dict[str, Any]:
+        # Same scoped snapshot envelope as the offline Review host. The detail host
+        # needs Chief's current address, while its page fixtures own their content.
+        content = {
+            "records": [{"kind": "chief", "id": "chief", "value": {
+                "label": "Chief of Staff", "conversation_id": "stub",
+            }}],
+            "windows": [{
+                "window_id": json.dumps([window["section"], window["owner"]]),
+                "request": window, "members": [], "total": 0,
+                "previous": None, "next": None,
+            } for window in request["windows"]],
+            "counts": {
+                "running_conversations": 0, "out_claims": 0,
+                "review": 0, "unread": 0, "settled": 0,
+            },
+        }
+        return {
+            "event": "snapshot", "wire_version": 3, "projection_version": 7,
+            "view_id": "fixture", "scope_generation": request["scope_generation"],
+            "ordering_generation": "fixture", "content_version": "detail-fixture",
+            "coverage": {"scope": "fixture", "schema_version": 11,
+                "semantics": "attention-knowledge-v11-recap-freshness",
+                "epoch": "fixture", "revision": "1"},
+            "mode": "current", "authority": {
+                "delivery_session_id": "fixture",
+                "availability": {"state": "current", "generation": "1", "reason": None},
+                "permit": {"scope": "fixture", "runtime_epoch": "fixture",
+                    "installation_id": "fixture", "generation": "1"},
+            }, "content": content,
+        }
+
     class Handler(http.server.BaseHTTPRequestHandler):
         def log_message(self, fmt: str, *args: object) -> None:
             with (output / "stub-requests.log").open("a") as log:
@@ -228,6 +278,7 @@ def main() -> int:
                     "rest": {
                         "latest_happened": {
                             "kind": latest["kind"],
+                            "sender_label": latest.get("sender_label"),
                             "excerpt": latest["content"][0]["text"],
                         },
                         "latest_tool": None,
@@ -247,8 +298,52 @@ def main() -> int:
 
         def do_GET(self) -> None:
             path = urlparse(self.path).path
+            if path in {"/api/navigation/view/snapshot", "/api/navigation/view/events"}:
+                request = json.loads(parse_qs(urlparse(self.path).query)["view"][0])
+                snapshot = navigation_snapshot(request)
+                if path.endswith("/snapshot"):
+                    self.respond(snapshot)
+                    return
+                self.send_response(200)
+                self.send_header("Content-Type", "text/event-stream")
+                self.end_headers()
+                try:
+                    while not stub.offline:
+                        self.wfile.write(
+                            b"event: snapshot\ndata: " + json.dumps(snapshot).encode() + b"\n\n"
+                        )
+                        self.wfile.flush()
+                        time.sleep(1)
+                except (BrokenPipeError, ConnectionResetError):
+                    pass
+                return
+            if path == "/api/goals":
+                self.respond({
+                    "goals": [], "status_date": "2026-11-15",
+                    "next_refresh_at": time.time() + 3600,
+                })
+                return
+            if path == "/api/projects":
+                self.respond({"projects": []})
+                return
+            holder_pages = {"/api/chief/page", "/api/managers/si_4chgag3w/page"}
+            if path in holder_pages:
+                self.respond({"page": {"blocks": []}, "page_revision": 1})
+                return
+            if path.removesuffix("/readings") in holder_pages and path.endswith("/readings"):
+                self.respond({"goal_id": "fixture", "revision": 1, "status": "neutral",
+                    "status_date": "2026-11-15", "next_refresh_at": time.time() + 3600,
+                    "values": [], "sources": [], "charts": {}})
+                return
             if path == "/api/managers/si_4chgag3w/workspace":
                 self.respond(manager)
+                return
+            if path == "/api/managers/si_4chgag3w/workspace-content":
+                self.respond({"goal": manager["goal"], "recap": manager["recap"]})
+                return
+            if path == f"/api/tickets/{ticket['id']}/workspace":
+                # Native detail reads the scoped workspace; retain the same fixture controls.
+                self.respond(ticket)
                 return
             if path == "/api/tickets":
                 query = parse_qs(urlparse(self.path).query)
@@ -289,7 +384,14 @@ def main() -> int:
                 )
                 return
             if path.startswith("/proof/start/"):
-                stub.start_clip(path.rsplit("/", 1)[-1])
+                if (
+                    os.environ.get("PANELS_CONVERSATION_RECORD_CLIPS", "0" if server_only else "1")
+                    == "1"
+                ):
+                    if not native_control_allowed():
+                        self.respond({"error": "An owned device and active turn are required"}, 409)
+                        return
+                    stub.start_clip(path.rsplit("/", 1)[-1])
                 self.respond({})
                 return
             if path == "/proof/stop":
@@ -328,6 +430,9 @@ def main() -> int:
                 self.respond({})
                 return
             if path in {"/proof/appearance/light", "/proof/appearance/dark"}:
+                if not native_control_allowed():
+                    self.respond({"error": "An owned device and active turn are required"}, 409)
+                    return
                 subprocess.run(
                     ["xcrun", "simctl", "ui", DEVICE, "appearance", path.rsplit("/", 1)[-1]],
                     check=True,
@@ -532,13 +637,24 @@ def main() -> int:
         "PANELS_LATEST_BASELINE", "0"
     )
     try:
+        if server_only:
+            # The caller owns build, test, device and deadline. Startup starts
+            # only the existing loopback fixture, without native preflight.
+            stopped = threading.Event()
+            signal.signal(signal.SIGTERM, lambda *_: stopped.set())
+            signal.signal(signal.SIGINT, lambda *_: stopped.set())
+            (output / "fixture-ready.json").write_text(
+                json.dumps({"PANELS_CONVERSATION_STUB_URL": url})
+            )
+            stopped.wait()
+            return 0
         return subprocess.call(
             [
                 "xcodebuild",
                 "-project",
                 str(ROOT / "ios/Panels.xcodeproj"),
                 "-scheme",
-                "PanelsNotifications",
+                "PanelsReview" if review else "PanelsNotifications",
                 "-configuration",
                 "Debug",
                 "-destination",
@@ -557,7 +673,10 @@ def main() -> int:
                 "1",
                 "PANELS_APP_BUNDLE_IDENTIFIER=" + BUNDLE,
                 "CODE_SIGNING_ALLOWED=NO",
-                "-only-testing:PanelsNotificationUITests/"
+                (
+                    "-only-testing:PanelsReviewUITests/"
+                    if review else "-only-testing:PanelsNotificationUITests/"
+                )
                 + os.environ.get("PANELS_CONVERSATION_TEST", "ConversationOperationTests"),
                 "test",
             ],
@@ -565,10 +684,12 @@ def main() -> int:
         )
     finally:
         stub.stop_clip()
-        subprocess.run(
-            ["xcrun", "simctl", "ui", DEVICE, "appearance", original_appearance], check=True
-        )
-        subprocess.run(["xcrun", "simctl", "terminate", DEVICE, BUNDLE], check=False)
+        if not server_only:
+            subprocess.run(
+                ["xcrun", "simctl", "ui", DEVICE, "appearance", original_appearance], check=True
+            )
+            subprocess.run(["xcrun", "simctl", "terminate", DEVICE, BUNDLE], check=False)
+        stub.offline = True
         server.shutdown()
         server.server_close()
 

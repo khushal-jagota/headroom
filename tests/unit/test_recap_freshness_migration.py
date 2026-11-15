@@ -5,6 +5,7 @@ checks retained text, null timestamps, and the fresh stage-change flag on upgrad
 """
 
 import json
+import sqlite3
 from contextlib import closing
 from pathlib import Path
 
@@ -26,7 +27,9 @@ def test_historical_recaps_keep_unknown_age_after_upgrade(tmp_path: Path) -> Non
     workflow = workflow_to_json(workflow_from_preset(definition_from_json(json.dumps(coding))))
     with schema_migration_transaction(path) as migration:
         upgrade_schema_connection(migration, "ticket_decision_messages")
-    with closing(connect(path)) as conn:
+    # Historical fixtures use the historical schema, without current commit hooks.
+    with closing(sqlite3.connect(path)) as conn:
+        conn.execute("PRAGMA foreign_keys=ON")
         with conn:
             conn.execute(
                 "INSERT INTO projects(id,name,created_at,updated_at) VALUES('p','Project',1,2)"
@@ -46,6 +49,7 @@ def test_historical_recaps_keep_unknown_age_after_upgrade(tmp_path: Path) -> Non
         # The deployed previous build uses the installed v10 navigation projection.
         with conn:
             conn.execute("UPDATE navigation_meta SET schema_version=10")
+    with closing(connect(path)) as conn:
         create_schema(conn)
         assert conn.execute("SELECT schema_version FROM navigation_meta").fetchone()[0] == 11
         assert conn.execute("SELECT version_num FROM alembic_version").fetchone()[0] == (

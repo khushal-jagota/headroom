@@ -115,14 +115,14 @@ _NOT_LATEST = "()=>document.querySelector('[data-conversation-thread]')?.dataset
 def _settle(page, until=None, arg=None, *, label=""):
     """Wait for the end state a step needs, then for the pane to settle.
 
-    A timeout proceeds to the step's own assertions, which report the state.
+    A timeout reports the unsettled state before another action can hide it.
     """
     from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
     page.evaluate("window.__settled={stable:0,key:null}")
     try:
         page.wait_for_function(_SETTLED, arg={"frames": _SETTLED_FRAMES, "until": until, "arg": arg}, polling="raf", timeout=5_000)
-    except PlaywrightTimeoutError:
-        print("SETTLE_TIMEOUT", label, until, page.evaluate("window.__settled"), flush=True)
+    except PlaywrightTimeoutError as error:
+        raise AssertionError(("SETTLE_TIMEOUT", label, until, page.evaluate("window.__settled"))) from error
 
 
 def _frames(page, count):
@@ -464,11 +464,15 @@ def run_retirement(browser, urls, *, control=""):
         native_events.append({"kind": "gesture-setup", "barrier": establish_scrollback(page, lambda: page.mouse.wheel(0, -900), min_clearance=0)})
         cancel_setup = sample('latest-before-cancel')
         assert cancel_setup['totalTail'] == 0 and cancel_setup['latest'] and cancel_setup['owner'] == 'manual', ('SETUP_LATEST_GEOMETRY', cancel_setup)
-        _arm_motion(page, 'latest', suppress_wheel=control == 'broken-wheel')
+        latest_button = page.get_by_role('button', name='Jump to latest message')
+        latest_button.focus()
         cancel_box = page.locator('[data-conversation-thread]').bounding_box()
-        page.get_by_role('button', name='Jump to latest message').click()
         page.mouse.move(cancel_box['x'] + cancel_box['width'] / 2, cancel_box['y'] + cancel_box['height'] / 2)
         page.evaluate("window.__retirementPhase='latest-cancel-gesture'")
+        _arm_motion(page, 'latest', suppress_wheel=control == 'broken-wheel')
+        # Activate the real button with trusted Enter after pointer placement. Moving
+        # the pointer after click can consume this short motion before observation.
+        page.keyboard.press('Enter')
         delta = -100000 if control == 'zero-tail' else -120
         # Capture and emit together inside the admission callback. Python keeps
         # the original observations and checks after this atomic baseline task.
@@ -521,16 +525,19 @@ def run_retirement(browser, urls, *, control=""):
         _arm_motion(page, 'latest')
         page.get_by_role('button', name='Jump to latest message').click()
         _await_motion(page, 'SETUP_LATEST_ACCEPTANCE')
-        page.evaluate("window.__nativeRequireAcceptance=true")
+        # Keep the real Enter and its fast HTTP receipt in the browser. Python
+        # roundtrips after Enter can consume the entire Latest motion interval.
+        page.evaluate("late=>{window.__nativeRequireAcceptance=true;window.__nativeResolveOnSend=!late;}", control == 'late-acceptance')
         if control == 'broken-supersession':
             page.evaluate('window.__nativeDisableSupersession=true')
         page.locator('[data-conversation-input]').press('Enter')
-        page.wait_for_function('n=>window.__sends.length===n+1&&!!window.__resolveDelivery', arg=count)
-        superseding_send_id = page.evaluate('n=>window.__retirementSupersedingSendId=window.__sends[n].sender_message_id', count)
         if control == 'late-acceptance':
+            page.wait_for_function('n=>window.__sends.length===n+1&&!!window.__resolveDelivery', arg=count)
             page.wait_for_function("!window.__nativeMotion.capture('late').motion")
-        page.evaluate('window.__resolveDelivery()')
+            page.evaluate('n=>window.__retirementSupersedingSendId=window.__sends[n].sender_message_id', count)
+            page.evaluate('window.__resolveDelivery()')
         page.wait_for_function('window.__nativeAcceptance.length===1')
+        superseding_send_id = page.evaluate('n=>window.__retirementSupersedingSendId=window.__sends[n].sender_message_id', count)
         acceptance = page.evaluate('window.__nativeAcceptance[0]')
         native_events.append(acceptance)
         assert acceptance['valid'], ('SETUP_LATEST_ACCEPTANCE', acceptance)
@@ -1017,12 +1024,12 @@ def run(browser, urls):
         case.evaluate("""() => {
           window.__deliveryFrames=[];window.__deliveryStop=false;window.__sentBubble=null;
           const start=performance.now();
-          const sample=()=>{
+          const sample=frameTime=>{
             const thread=document.querySelector('[data-conversation-thread]');
             const nodes=[...document.querySelectorAll('[data-conversation-outgoing]')];
             const bubble=nodes.find(n=>n.closest('[data-conversation-thread]'));
             if(bubble&&!window.__sentBubble)window.__sentBubble=bubble;
-            window.__deliveryFrames.push({ms:performance.now()-start,count:nodes.length,
+            window.__deliveryFrames.push({ms:performance.now()-start,frameMs:frameTime-start,count:nodes.length,
               queue:!!document.querySelector('[data-conversation-held-stack]'),
               top:bubble?bubble.getBoundingClientRect().top-thread.getBoundingClientRect().top:null,
               scrollTop:thread?.scrollTop??null,same:!bubble||bubble===window.__sentBubble});
@@ -1074,7 +1081,10 @@ def run(browser, urls):
             visible=[row for row in frames if row['top'] is not None]
             moving=[row for a,row in zip(visible,visible[1:],strict=False) if abs(row['scrollTop']-a['scrollTop'])>.5]
             assert len(moving)>3, (outcome, visible)
-            duration=moving[-1]['ms']-visible[0]['ms']
+            # Bubble visibility precedes placement readiness. Measure actual
+            # movement on the same RAF timeline that drives the production move,
+            # rather than include the wait before the first moving frame.
+            duration=moving[-1]['frameMs']-moving[0]['frameMs']
             assert 150 <= duration <= 340, (outcome, duration, moving)
             assert all(b['scrollTop'] >= a['scrollTop']-1 for a,b in zip(visible,visible[1:],strict=False)), (outcome, visible)
             # Late browser-owned layout cannot start another animated chase.

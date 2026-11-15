@@ -35,15 +35,8 @@ extension APIClient {
         let (data, _) = try await responseData("/api/resource-body", query: [.init(name: "key", value: key)])
         let result = try Self.decoder().decode(ResourceBody<T>.self, from: data)
         guard result.key == key else { throw URLError(.badServerResponse) }
-        if Self.cacheable(key) {
-            // Preserve the full wire body, including fields this app does not
-            // decode yet, exactly as an ordinary cached GET does.
-            let envelope = try JSONSerialization.jsonObject(with: data) as? [String: Any]
-            if let body = envelope?["body"] {
-                let cached = try JSONSerialization.data(withJSONObject: body, options: .fragmentsAllowed)
-                try? await LocalStore.shared.cacheResponse(server: LocalStore.server(baseURL), id: try url(key).absoluteString, data: cached)
-            }
-        }
+        // Shared ordinary ownership persists admitted envelopes. This low-level read
+        // never creates a second raw cache entry with independent freshness.
         return result
     }
 }

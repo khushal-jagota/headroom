@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import asyncio
 import sqlite3
+from contextlib import closing
 from pathlib import Path
 
 import pytest
@@ -24,6 +25,7 @@ from planner.core.db import connect, create_schema
 from planner.execution_identity import ExecutorIdentity
 from planner.executor.protocol import LeaseRequest, WaitingConversation
 from planner.executor.vps_presence_store import accept_lease_in_transaction
+from planner.machines.contracts import ORIGINAL_MAC_MACHINE_ID
 from planner.stalls import configuration
 from planner.stalls.checker import StallChecker
 from planner.stalls.contracts import StallSource, TrackedWait, TrackedWaitKind
@@ -51,6 +53,9 @@ def _database(tmp_path: Path) -> str:
             "VALUES ('t_login','Fix the login bug','coding','claude','needs_brief','{}','out',"
             "'needs_brief',1,1,?,'c1')",
             (preset_workflow_json(conn),),
+        )
+        conn.execute(
+            "UPDATE tickets SET machine_id=? WHERE id='t_login'", (ORIGINAL_MAC_MACHINE_ID,),
         )
     finally:
         conn.close()
@@ -257,3 +262,45 @@ def test_a_vps_save_that_keeps_failing_is_tracked_until_it_succeeds(
         (TrackedWaitKind.vps_save_retrying, "c-save", "Stuck at write 2")
     ]
     assert not [w for w in WAITS.snapshot() if w.conversation_id == "c-save"]
+
+
+def test_an_awake_machine_does_not_advance_another_machines_stall_clock(tmp_path: Path) -> None:
+    """Gap: one presence clock let an awake peer alarm an asleep peer."""
+    extra = "11111111-1111-1111-1111-111111111111"
+    db_path = _database(tmp_path)
+    with closing(connect(db_path)) as conn:
+        conn.execute("INSERT INTO machines VALUES (?, 'Extra','desktop','cyan',0)", (extra,))
+
+    class Waits:
+        def tracked_waits(self, conn: sqlite3.Connection, now_ms: int) -> tuple[TrackedWait, ...]:
+            return tuple(TrackedWait(
+                TrackedWaitKind.mac_command_unfetched, "waiting", None,
+                "pending command", 0, machine,
+            ) for machine in (ORIGINAL_MAC_MACHINE_ID, extra))
+
+    clock = _Clock()
+    checker = StallChecker(db_path, ProcessWaitRegistry(clock), lambda: (Waits(),), clock)
+
+    async def run() -> None:
+        for now in range(0, 401 * S, 10 * S):
+            clock.now_ms = now
+            lease = LeaseRequest(
+                identity=ExecutorIdentity(22, "rev", 5, "extra-incarnation"),
+                process_id=1, mac_wall_clock_ms=now, queue_depth=0, oldest_item_age_ms=None,
+                waiting_conversations=(), waiting_conversations_truncated=False,
+                working_turns=(), admission_stopped=False,
+            )
+            with closing(connect(db_path)) as conn:
+                conn.execute("BEGIN IMMEDIATE")
+                accept_lease_in_transaction(conn, lease, now, extra)
+                conn.commit()
+            found = await checker.check_once()
+        assert {item.finding_key for item in found} == {
+            f"mac_command_unfetched:machine={extra}:waiting",
+        }
+        restarted = StallChecker(db_path, ProcessWaitRegistry(clock), lambda: (Waits(),), clock)
+        assert {item.finding_key for item in await restarted.check_once()} == {
+            f"mac_command_unfetched:machine={extra}:waiting",
+        }
+
+    asyncio.run(run())

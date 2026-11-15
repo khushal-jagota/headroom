@@ -1,4 +1,4 @@
-"""The Mac's loops against a scripted VPS that follows the protocol-22 routes.
+"""The Mac's loops against a scripted VPS that follows the protocol-23 routes.
 
 Risks: one child's slow command stalls another child, or the poll; a prompt runs before
 its child's start; a replaced process keeps working; the cursor stays above a restored
@@ -83,6 +83,11 @@ from planner.executor.protocol import (
     MailboxPollReply,
     ReceiptDisposition,
     StopRun,
+    WorkspaceRegistrationRequest,
+    WorkspaceRetirementReply,
+    WorkspaceRetirementRequest,
+    WorkspaceStatesReply,
+    WorkspaceStatesRequest,
     WritePrompt,
     decode_bounded,
     decode_command_arguments,
@@ -90,6 +95,7 @@ from planner.executor.protocol import (
     encode_value,
 )
 from planner.executor.update_contracts import MacUpdateCheck, MacUpdateTarget
+from planner.ticket_workspaces.contracts import RETENTION_SECONDS, WorkspaceState
 
 EXECUTOR_ID = "test-mac"
 
@@ -133,6 +139,9 @@ class VpsStub:
 
     mailbox: list[MailboxCommand] = field(default_factory=list)
     high_sequence: int | None = None  # None: the highest command in the mailbox.
+    workspace_states: tuple[WorkspaceState, ...] = ()
+    workspace_queries: list[tuple[str, ...]] = field(default_factory=list)
+    lease_time_ms: int = 1
     lease_refusal: LeaseRefused | None = None
     update: MacUpdateCheck = field(default_factory=lambda: MacUpdateCheck(1, None))
     poll_hold_seconds: float = 0.2
@@ -156,7 +165,7 @@ class VpsStub:
 
     def _check(self, request: web.Request) -> None:
         assert request.headers[EXECUTOR_ID_HEADER] == EXECUTOR_ID
-        assert request.headers[EXECUTOR_PROTOCOL_HEADER] == "22"
+        assert request.headers[EXECUTOR_PROTOCOL_HEADER] == str(PROTOCOL_VERSION)
         assert request.headers[EXECUTOR_INCARNATION_HEADER]
 
     async def lease(self, request: web.Request) -> web.Response:
@@ -168,8 +177,30 @@ class VpsStub:
         high = self.high_sequence
         if high is None:
             high = max((command.command_sequence for command in self.mailbox), default=0)
-        reply = LeaseReply(1, 60.0, self.update, high)
+        reply = LeaseReply(self.lease_time_ms, 60.0, self.update, high)
         return web.Response(body=encode_bounded(reply), content_type="application/json")
+
+    async def query_workspaces(self, request: web.Request) -> web.Response:
+        self._check(request)
+        query = decode_bounded(await request.read(), WorkspaceStatesRequest)
+        self.workspace_queries.append(query.ticket_ids)
+        states = tuple(
+            state for state in self.workspace_states if state.ticket_id in query.ticket_ids
+        )
+        return web.Response(body=encode_bounded(WorkspaceStatesReply(states, self.lease_time_ms)))
+
+    async def register_workspace(self, request: web.Request) -> web.Response:
+        self._check(request)
+        decode_bounded(await request.read(), WorkspaceRegistrationRequest)
+        return web.Response(status=204)
+
+    async def retire_workspace(self, request: web.Request) -> web.Response:
+        self._check(request)
+        requested = decode_bounded(await request.read(), WorkspaceRetirementRequest)
+        allowed = requested.state in self.workspace_states and requested.state.ended_at is not None
+        return web.Response(
+            body=encode_bounded(WorkspaceRetirementReply(allowed)), content_type="application/json"
+        )
 
     async def commands(self, request: web.Request) -> web.Response:
         self._check(request)
@@ -260,6 +291,9 @@ class VpsStub:
     def app(self) -> web.Application:
         app = web.Application()
         app.router.add_post("/api/executor/lease", self.lease)
+        app.router.add_post("/api/executor/workspaces/states", self.query_workspaces)
+        app.router.add_post("/api/executor/workspaces/retire", self.retire_workspace)
+        app.router.add_post("/api/executor/workspaces/register", self.register_workspace)
         app.router.add_get("/api/executor/commands", self.commands)
         app.router.add_post("/api/executor/commands/outcomes", self.outcomes)
         app.router.add_post("/api/executor/conversations/{conversation_id}/items", self.post_items)
@@ -297,6 +331,10 @@ def paths(executor_transport_home: Path) -> Iterator[ExecutorPaths]:
 
 
 def service(paths: ExecutorPaths, origin: str, client_tls: ssl.SSLContext) -> MacService:
+    from planner.executor.credential_file import credential_path, write_credential
+
+    # This scripted HTTP home qualifies the loops, not credential issuance.
+    write_credential(credential_path(paths.root), "a" * 43)
     return MacService(
         paths=paths,
         revision="a" * 40,
@@ -335,7 +373,13 @@ def start_command(child: ChildReference, workspace: Path, ticket_id: str) -> Chi
         ConversationBackendKey.codex,
         "test",
         None,
-        ConversationRoleMaterials("worker", (("PLAN_TICKET_ID", ticket_id),)),
+        ConversationRoleMaterials(
+            "worker",
+            (
+                ("PLAN_TICKET_ID", ticket_id),
+                ("PLAN_TICKET_WORKSPACE_MANAGED", "1"),
+            ),
+        ),
         workspace,
         ConversationAccess.full,
     )
@@ -379,7 +423,21 @@ def test_each_child_runs_in_order_and_no_child_or_the_poll_waits_on_another(
     tmp_path: Path,
 ) -> None:
     async def run() -> None:
-        stub = VpsStub()
+        stub = VpsStub(
+            workspace_states=(
+                WorkspaceState("t_01234567", 1, True),
+                WorkspaceState("t_11234567", None, False),
+            ),
+            lease_time_ms=(RETENTION_SECONDS + 2) * 1000,
+        )
+        # Reuse this real HTTPS host to prove the canonical state reaches local
+        # cleanup: a tombstone expires, a live owner and an absent owner remain.
+        retained = tuple(f"t_3{n:07d}" for n in range(64))
+        owners = ("t_01234567", "t_11234567", "t_21234567", *retained)
+        for ticket_id in owners:
+            folder = paths.artifacts / ticket_id
+            folder.mkdir(parents=True)
+            (folder / "proof.txt").write_text("Ticket content")
         async with serving(stub, tls[0]) as origin:
             mac = service(paths, origin, tls[1])
             calls: list[str] = []
@@ -412,11 +470,20 @@ def test_each_child_runs_in_order_and_no_child_or_the_poll_waits_on_another(
             running = asyncio.create_task(mac.run())
             try:
                 await until(lambda: f"prompt_{b.child_id}" in stub.results)
+                await until(lambda: not (paths.artifacts / "t_01234567").exists())
+                assert (paths.artifacts / "t_11234567" / "proof.txt").exists()
+                assert (paths.artifacts / "t_21234567" / "proof.txt").exists()
+                assert len(stub.workspace_queries) == 2
+                assert all(len(page) <= 64 for page in stub.workspace_queries)
+                assert {owner for page in stub.workspace_queries for owner in page} == set(owners)
+                assert all((paths.artifacts / owner / "proof.txt").exists() for owner in retained)
                 # A's start is still held: its prompt has not run, B's has, and the poll
                 # went on from the recorded cursor.
                 assert calls.count("a:prompt") == 0 and "b:prompt" in calls
                 await until(lambda: 4 in stub.polls)
-                assert f"start_{a.child_id}" not in stub.results
+                assert f"start_{a.child_id}" not in stub.results, stub.results.get(
+                    f"start_{a.child_id}"
+                )
                 held.set()
                 await until(lambda: f"prompt_{a.child_id}" in stub.results)
                 a_calls = [call for call in calls if call.startswith("a:")]
@@ -562,6 +629,16 @@ def test_output_an_earlier_process_owed_is_queued_before_the_first_lease(
 
     async def run() -> None:
         stub = VpsStub()
+        receipt_release = asyncio.Event()
+        post_items = stub.post_items
+
+        async def held_receipts(request: web.Request) -> web.Response:
+            # Publication precedes startup, but sending and leasing then race.
+            # Keep the output owed until the first lease observes its backlog.
+            await receipt_release.wait()
+            return await post_items(request)
+
+        monkeypatch.setattr(stub, "post_items", held_receipts)
         async with serving(stub, tls[0]) as origin:
             mac = service(paths, origin, tls[1])
             child = ChildReference(mac.identity.executor_incarnation, str(uuid4()), "c_one")
@@ -580,26 +657,23 @@ def test_output_an_earlier_process_owed_is_queued_before_the_first_lease(
                 CommandResult(command.command_id, child_outcome=refused),
                 outputs_owed=True,
             )
-            publish = mac.runner.publish_owed_outputs
-
-            async def slow_publish(*args: object) -> None:
-                await asyncio.sleep(0.3)
-                await publish(*args)  # type: ignore[arg-type]
-
-            monkeypatch.setattr(mac.runner, "publish_owed_outputs", slow_publish)
             running = asyncio.create_task(mac.run())
             try:
                 await until(lambda: bool(stub.leases))
                 assert [w.conversation_id for w in stub.leases[0].waiting_conversations] == [
                     "c_one"
                 ]
+                receipt_release.set()
+                await until(lambda: bool(stub.items))
+                await until(lambda: mac.outbox.lease_backlog().queue_depth == 0)
             finally:
+                receipt_release.set()
                 await stopped(mac, running)
 
     asyncio.run(run())
 
 
-def test_lease_reports_the_backlog_and_update_work_never_holds_it(
+def test_lease_reports_backlog_while_update_and_cleanup_work_wait(
     tls: tuple[ssl.SSLContext, ssl.SSLContext],
     paths: ExecutorPaths,
     monkeypatch: pytest.MonkeyPatch,
@@ -621,6 +695,18 @@ def test_lease_reports_the_backlog_and_update_work_never_holds_it(
             mac = service(paths, origin, tls[1])
             applying, release = asyncio.Event(), asyncio.Event()
             applied: list[MacUpdateCheck] = []
+            cleanup_entered, cleanup_release = asyncio.Event(), asyncio.Event()
+            cleanup_calls: list[bool] = []
+            refresh_cleanup = mac.runner.refresh_worker_cleanup
+
+            async def cleanup(*, revoke_pending: bool = False) -> None:
+                cleanup_calls.append(revoke_pending)
+                if not revoke_pending:
+                    cleanup_entered.set()
+                    await cleanup_release.wait()
+                await refresh_cleanup(revoke_pending=revoke_pending)
+
+            monkeypatch.setattr(mac.runner, "refresh_worker_cleanup", cleanup)
 
             async def apply(check: MacUpdateCheck) -> None:
                 applied.append(check)
@@ -635,9 +721,13 @@ def test_lease_reports_the_backlog_and_update_work_never_holds_it(
             running = asyncio.create_task(mac.run())
             try:
                 await applying.wait()
+                await cleanup_entered.wait()
                 count = len(stub.leases)
                 await until(lambda: len(stub.leases) >= count + 3)
                 assert len(applied) == 1  # The lease loop never waited on the update.
+                # Startup proves cleanup before the first lease; only one slow sweep
+                # follows while subsequent leases avoid the full retained history.
+                assert cleanup_calls == [True, False]
                 lease = stub.leases[-1]
                 assert lease.queue_depth == 2 and lease.oldest_item_age_ms is not None
                 assert [w.conversation_id for w in lease.waiting_conversations] == [
@@ -649,6 +739,7 @@ def test_lease_reports_the_backlog_and_update_work_never_holds_it(
                 assert mac.presence.leased()
                 release.set()
             finally:
+                cleanup_release.set()
                 release.set()
                 await stopped(mac, running)
 

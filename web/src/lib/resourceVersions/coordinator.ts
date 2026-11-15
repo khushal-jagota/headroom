@@ -12,7 +12,8 @@ export function createResourceCoordinator(client: QueryClient) {
   let controller: AbortController | null = null;
 
   async function reconcile(expectedGeneration: number): Promise<void> {
-    const observed = client.getQueryCache().getAll().filter(query => query.isActive());
+    const observed = client.getQueryCache().getAll().filter(query =>
+      query.isActive() && query.meta?.followsChangeStream !== false);
     const keys = [...new Set(observed.flatMap(query =>
       typeof query.meta?.resourceKey === 'string' ? [query.meta.resourceKey] : []))];
     const versions = new Map<string, { epoch: string; revision: string | null }>();

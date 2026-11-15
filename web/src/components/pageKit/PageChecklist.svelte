@@ -8,6 +8,8 @@
 
   import { PAGE_CONTEXT, type PageContext } from "../../lib/pageKit/context";
   const context = getContext<PageContext | undefined>(PAGE_CONTEXT);
+  let writing = $state(false);
+  $effect(() => context?.subscribeWriting?.(value => writing = value));
   let pending = $state<Record<string, { state: "done" | "open"; request: number }>>({});
   let failed = $state<Record<string, { state: "done" | "open"; error: unknown }>>({});
   let demoStates = $state<Record<string, "done" | "open">>({});
@@ -16,8 +18,10 @@
   let disposed = false;
   let saveError = $derived(Object.values(failed)[0]?.error);
   async function persist(id: string, state: "done" | "open") {
+    if (writing) return;
     const request = ++requestSequence;
     const blockId = block.id;
+    const revision = context?.revision;
     const session = context?.checklistSession?.(blockId, id);
     localRequests.set(id, request);
     pending = { ...pending, [id]: { state, request } };
@@ -30,7 +34,7 @@
         const write = () => context.updateBlock!(blockId, old => {
           if (old.type !== "checklist" || !old.items.some(item => item.id === id)) throw new Error("This checklist item no longer exists.");
           return { ...old, items: old.items.map(item => item.id === id ? { ...item, state } : item) };
-        });
+        }, revision);
         await (session ? session.run({ state }, write) : write());
       } else {
         // The component gallery has no writer. Its interactions accept local state.
@@ -187,6 +191,7 @@
   }
 
   function check(id: string): void {
+    if (writing) return;
     if (done.includes(id)) return;
     const next = order([...done, id]);
     done = next;
@@ -211,6 +216,7 @@
   }
 
   async function uncheck(id: string, fromGroup: boolean): Promise<void> {
+    if (writing) return;
     void persist(id, "open");
     const timer = timers.get(id);
     if (timer) window.clearTimeout(timer);
@@ -258,7 +264,7 @@
     </ChecklistSummary>
     <button bind:this={headerToggle} type="button" class="header-toggle" data-checklist-toggle aria-label={bodyOpen ? "Hide checklist" : "Show checklist"} aria-expanded={bodyOpen} aria-controls="{uid}-body" onclick={toggleChecklist}></button>
   </div>
-  {#if Object.keys(failed).length}<p class="save-feedback" role="alert">Checklist change was not saved. {String(saveError)} <button type="button" onclick={() => { for (const [id, { state }] of Object.entries(failed)) void persist(id, state); }}>Retry save</button></p>{/if}
+  {#if Object.keys(failed).length}<p class="save-feedback" role="alert">Checklist change was not saved. {String(saveError)} <button type="button" disabled={writing} onclick={() => { for (const [id, { state }] of Object.entries(failed)) void persist(id, state); }}>Retry save</button></p>{/if}
   <div id="{uid}-body" data-checklist-body bind:this={body} inert={!bodyOpen} aria-hidden={!bodyOpen}>
   {#if bodyOpen}
     <div class="body" transition:grow>
@@ -267,7 +273,7 @@
           {#each openSteps as step (step.id)}
             <li class="step" class:current={expanded === step.id} class:struck={done.includes(step.id)} data-step={step.id} transition:grow={{ duration: 280 }}>
               <div class="step-inner">
-                <button type="button" class="check" data-check role="checkbox" aria-checked={done.includes(step.id)} aria-labelledby="{uid}-{step.id}-title" onclick={() => done.includes(step.id) ? uncheck(step.id, false) : check(step.id)}>
+                <button type="button" class="check" data-check disabled={writing} role="checkbox" aria-checked={done.includes(step.id)} aria-labelledby="{uid}-{step.id}-title" onclick={() => done.includes(step.id) ? uncheck(step.id, false) : check(step.id)}>
                   <span class="check-visual" aria-hidden="true">
                     <span class="check-fill"></span>
                     <svg class="check-mark" viewBox="0 0 22 22"><path d="M6.75 11.25 9.75 14.25 15.25 8.25" pathLength="1" /></svg>
@@ -278,7 +284,7 @@
                     <button type="button" class="step-title" data-title aria-expanded={expanded === step.id} aria-controls="{uid}-{step.id}-panel" onclick={() => toggleStep(step.id)}>
                       <span id="{uid}-{step.id}-title" class="title-text"><span class="strike-mark">{step.title}</span></span>
                     </button>
-                    <ChecklistDeadline blockId={block.id} item={step.item}/>
+                    <ChecklistDeadline blockId={block.id} item={step.item} disabled={writing}/>
                   </div>
                   {#if expanded === step.id}
                     <div id="{uid}-{step.id}-panel" class="step-panel" role="region" aria-labelledby="{uid}-{step.id}-title" transition:grow={{ duration: 260 }}>
@@ -287,7 +293,7 @@
                           {#if step.detail?.trim()}<div class="detail">{step.detail}</div>{/if}
                           {#if step.blocked && !done.includes(step.id)}<p class="blocked">Blocked</p>{/if}
                           {#if step.action?.trim()}
-                              <button type="button" class="action" data-action onclick={() => check(step.id)}>
+                              <button type="button" class="action" data-action disabled={writing} onclick={() => check(step.id)}>
                                 {step.action}
                                 <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3 8h10M9 4l4 4-4 4" /></svg>
                               </button>
@@ -313,7 +319,7 @@
                 {#each completedSteps as step (step.id)}
                   <li class="step struck" transition:grow={{ duration: 240 }}>
                     <div class="step-inner">
-                      <button type="button" class="check" data-check role="checkbox" aria-checked="true" aria-labelledby="{uid}-{step.id}-done" onclick={() => uncheck(step.id, true)}>
+                      <button type="button" class="check" data-check disabled={writing} role="checkbox" aria-checked="true" aria-labelledby="{uid}-{step.id}-done" onclick={() => uncheck(step.id, true)}>
                         <span class="check-visual" aria-hidden="true">
                           <span class="check-fill"></span>
                           <svg class="check-mark" viewBox="0 0 22 22"><path d="M6.75 11.25 9.75 14.25 15.25 8.25" pathLength="1" /></svg>
@@ -321,7 +327,7 @@
                       </button>
                       <div class="step-heading">
                         <div class="completed-title"><div id="{uid}-{step.id}-done" class="title-text"><span class="strike-mark">{step.title}</span></div></div>
-                        <ChecklistDeadline blockId={block.id} item={step.item}/>
+                        <ChecklistDeadline blockId={block.id} item={step.item} disabled={writing}/>
                       </div>
                     </div>
                   </li>

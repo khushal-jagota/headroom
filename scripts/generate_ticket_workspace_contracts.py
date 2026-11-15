@@ -9,6 +9,7 @@ import json
 import types
 from pathlib import Path
 from typing import (
+    Any,
     Literal,
     NotRequired,
     TypeAliasType,
@@ -19,6 +20,7 @@ from typing import (
     is_typeddict,
 )
 
+from planner.tickets import contracts as ticket_contracts
 from planner.tickets.workspace import contracts
 
 
@@ -70,13 +72,128 @@ def generate() -> str:
     )
 
 
-if __name__ == "__main__":
+JSON_VALUE = """// Error detail retains its structured JSON rather than only its message.
+indirect enum DecisionJSONValue: Codable, Sendable, Equatable {
+    case null, bool(Bool), integer(Int64), number(Double), string(String)
+    case array([DecisionJSONValue]), object([String: DecisionJSONValue])
+
+    init(from decoder: Decoder) throws {
+        let value = try decoder.singleValueContainer()
+        if value.decodeNil() { self = .null }
+        else if let decoded = try? value.decode(Bool.self) { self = .bool(decoded) }
+        else if let decoded = try? value.decode(Int64.self) { self = .integer(decoded) }
+        else if let decoded = try? value.decode(Double.self) { self = .number(decoded) }
+        else if let decoded = try? value.decode(String.self) { self = .string(decoded) }
+        else if let decoded = try? value.decode([DecisionJSONValue].self) { self = .array(decoded) }
+        else { self = .object(try value.decode([String: DecisionJSONValue].self)) }
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var value = encoder.singleValueContainer()
+        switch self {
+        case .null: try value.encodeNil()
+        case .bool(let decoded): try value.encode(decoded)
+        case .integer(let decoded): try value.encode(decoded)
+        case .number(let decoded): try value.encode(decoded)
+        case .string(let decoded): try value.encode(decoded)
+        case .array(let decoded): try value.encode(decoded)
+        case .object(let decoded): try value.encode(decoded)
+        }
+    }
+}
+"""
+
+
+def generate_native_decision_operations() -> str:
+    """Select only the protected receipt DTOs from the canonical Ticket contract."""
+    def describe(value: object) -> str:
+        origin, args = get_origin(value), get_args(value)
+        if origin in (types.UnionType, Union):
+            members = [member for member in args if member is not type(None)]
+            if len(members) != 1 or type(None) not in args:
+                raise TypeError(value)
+            return describe(members[0]) + "?"
+        if origin is Literal:
+            return "Int" if all(type(arg) is int for arg in args) else "String"
+        if is_typeddict(value):
+            return str(getattr(value, "__name__", ""))
+        if origin is dict and args == (str, Any):
+            return "[String: DecisionJSONValue]"
+        assert isinstance(value, type)
+        return {str: "String", int: "Int", bool: "Bool"}[value]
+
+    declarations = []
+    for value in (
+        ticket_contracts.DecisionHolder, ticket_contracts.DecisionCommand,
+        ticket_contracts.DecisionTransition,
+        ticket_contracts.DecisionError, ticket_contracts.DecisionReceipt,
+        ticket_contracts.DecisionOperationResponse,
+    ):
+        fields, decodes, encodes, names, parameters, assignments = [], [], [], [], [], []
+        for field, annotation in get_type_hints(value, include_extras=True).items():
+            optional = get_origin(annotation) is NotRequired
+            annotation = get_args(annotation)[0] if optional else annotation
+            name = field.split("_")[0] + "".join(part.title() for part in field.split("_")[1:])
+            native_type = describe(annotation)
+            if optional and not native_type.endswith("?"):
+                native_type += "?"
+            names.append(name)
+            fields.append(f"    let {name}: {native_type}")
+            parameters.append(f"{name}: {native_type}" + (" = nil" if optional else ""))
+            assignments.append(f"        self.{name} = {name}")
+            encoding = "encodeIfPresent" if optional else "encode"
+            encodes.append(f"        try values.{encoding}({name}, forKey: .{name})")
+            decoding = "decodeIfPresent" if optional else "decode"
+            decode_type = native_type.removesuffix("?") if optional else native_type
+            decodes.append(
+                f"        {name} = try values.{decoding}({decode_type}.self, forKey: .{name})"
+            )
+            if get_origin(annotation) is Literal:
+                valid = " || ".join(f"{name} == {json.dumps(arg)}" for arg in get_args(annotation))
+                decodes.extend([
+                    f"        guard {valid} else {{",
+                    "            throw DecodingError.dataCorruptedError(",
+                    f"                forKey: .{name}, in: values, "
+                    f"debugDescription: \"Unsupported {field}\")",
+                    "        }",
+                ])
+        declarations.append(
+            f"struct {value.__name__}: Codable, Sendable, Equatable {{\n"
+            + "\n".join(fields)
+            + "\n\n    private enum CodingKeys: String, CodingKey {\n        case "
+            + ", ".join(names) + "\n    }\n\n"
+            + "    init(" + ", ".join(parameters) + ") {\n"
+            + "\n".join(assignments) + "\n    }\n\n"
+            + "    init(from decoder: Decoder) throws {\n"
+            + "        let values = try decoder.container(keyedBy: CodingKeys.self)\n"
+            + "\n".join(decodes) + "\n    }\n\n"
+            + "    func encode(to encoder: Encoder) throws {\n"
+            + "        var values = encoder.container(keyedBy: CodingKeys.self)\n"
+            + "\n".join(encodes) + "\n    }\n}\n"
+        )
+    return (
+        "// Generated by scripts/generate_ticket_workspace_contracts.py. Do not edit.\n"
+        "import Foundation\n\n" + "\n".join(declarations) + "\n" + JSON_VALUE
+    )
+
+
+def main() -> None:
     parser = argparse.ArgumentParser(__doc__)
     parser.add_argument("--check", action="store_true")
-    path = Path(__file__).resolve().parents[1] / "web/src/lib/ticketWorkspace/contracts.ts"
-    result = generate()
-    if parser.parse_args().check:
-        if path.read_text() != result:
-            raise SystemExit("Selected Ticket contracts drifted. Regenerate contracts.ts.")
-    else:
-        path.write_text(result)
+    check = parser.parse_args().check
+    root = Path(__file__).resolve().parents[1]
+    outputs = {
+        root / "web/src/lib/ticketWorkspace/contracts.ts": generate(),
+        root / "ios/Panels/Models/DecisionOperationContracts.swift":
+            generate_native_decision_operations(),
+    }
+    for path, result in outputs.items():
+        if check:
+            if path.read_text() != result:
+                raise SystemExit(f"Selected Ticket contracts drifted: {path.name}")
+        else:
+            path.write_text(result)
+
+
+if __name__ == "__main__":
+    main()

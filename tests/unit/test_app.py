@@ -44,6 +44,7 @@ def test_app_launcher_carries_identity_and_scrubs_unrelated_environment(tmp_path
             "PLAN_CLAUDE_EXECUTABLE": "/operator/claude",
             "PLAN_UPDATE_REPOSITORY": "owner/panels",
             "PLAN_UPDATE_TOKEN_FILE": "/operator/update-token",
+            "PYTHONDONTWRITEBYTECODE": "0",
             "SECRET": "no",
         },
     )
@@ -57,6 +58,7 @@ def test_app_launcher_carries_identity_and_scrubs_unrelated_environment(tmp_path
         "PLAN_UPDATE_TOKEN_FILE": "/operator/update-token",
         "PLAN_APP_SHA": SHA,
         "PLAN_APP_ROOT": str(app),
+        "PYTHONDONTWRITEBYTECODE": "1",
     }
 
 
@@ -109,6 +111,7 @@ def test_exported_cli_is_relocatable_and_preserves_caller_context(
         "worker",
         "/ambient/package",
         "-I",
+        "-B",
         "-m",
         "planner",
         "worker",

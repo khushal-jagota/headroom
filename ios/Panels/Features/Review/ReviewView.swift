@@ -1,8 +1,13 @@
 import SwiftUI
 
 struct ReviewView: View {
+    let savedWork: ReviewSavedWork
+    var isActive = true
+    @State private var appeared = false
+    private var active: Bool { isActive && appeared && scenePhase == .active && !store.serverUnreachable }
     var openTicket: ((String) -> Void)? = nil
     @Environment(AppStore.self) private var store
+    @Environment(\.scenePhase) private var scenePhase
     @State private var queue = ReviewQueue()
     /// The card on screen, held while its parts finish their exits.
     @State private var displayedCard: ReviewCard?
@@ -11,18 +16,11 @@ struct ReviewView: View {
     @State private var reviewPage: String?
     @State private var cardHeight: CGFloat = 180
     @State private var emptyVisible = false
-    private var savedDecisions: [PendingWork] {
-        Outbox.shared.entries(LocalStore.server(store.baseURL)).filter { $0.kind == .approval || $0.kind == .sendBack }
-    }
+    private var server: String { LocalStore.server(store.baseURL) }
+    private var snapshotCurrent: Bool { savedWork.key == ReviewSavedWork.Key(server: server, revision: LocalStore.shared.outgoingRevision(server)) }
+    private var savedDecisions: [OutgoingStore.Summary] { savedWork.decisions(server) }
     /// Live cards without the proposals a saved decision will clear.
-    private var queueCards: [ReviewCard] {
-        (store.review?.cards ?? []).compactMap { card in
-            let parts = card.parts.filter { item in
-                !savedDecisions.contains { $0.ticketID == item.ticketId && $0.proposal?.field == item.field && $0.proposal?.createdAt == item.waitingSince && [.waiting, .sending, .uncertain, .sent].contains($0.state) }
-            }
-            return parts.isEmpty ? nil : ReviewCard(id: card.id, ticketId: card.ticketId, parts: parts)
-        }
-    }
+    private var queueCards: [ReviewCard] { ReviewSavedWork.cards(store.review?.cards ?? [], decisions: savedDecisions) }
     /// On a later page the skipped cards of earlier pages are not loaded; they still count.
     private var skippedCount: Int { reviewPage == nil ? queue.skippedCount(in: queueCards) : queue.skippedCardCount }
     /// As on the web, only a page whose every loaded card was skipped moves on;
@@ -49,52 +47,48 @@ struct ReviewView: View {
 
     var body: some View {
         Group {
-            if let card = shownCard {
+            if savedWork.key?.server != server { Color.clear }
+            else if let card = shownCard {
                 let parts = parts(of: card)
-                ReviewCardView(card: card, parts: parts, decision: parts.first { !$0.isMessage }.map { decisions[$0.id] ?? ReviewDecision() },
-                               messageDecision: messageDecisions.decision(for:), cardHeight: $cardHeight,
+                ReviewCardView(card: card, parts: parts, isActive: active, savedWork: savedWork, decision: parts.first { !$0.isMessage }.map { decisions[$0.id] ?? ReviewDecision() },
+                               messageDecision: { messageDecisions.decision(for: $0, savedWork: savedWork) }, cardHeight: $cardHeight,
                                openTicket: openTicket, onSkip: { skip(card) }, onResolved: { resolve($0, in: card) })
                     .id(card.id).transition(.identity)
             } else if store.review != nil {
                 GeometryReader { geometry in
                     ScrollView {
-                        VStack(spacing: PanelsTheme.Space.sm) {
-                            Text("You’re caught up.").font(ReviewStyle.empty).foregroundStyle(PanelsTheme.strong)
-                            Text("All done for now.").font(PanelsTheme.TypeScale.body).foregroundStyle(PanelsTheme.faint)
+                        VStack(spacing: PanelsTheme.Space.xl) {
+                            VStack(spacing: PanelsTheme.Space.sm) {
+                                Text("You’re caught up.").font(ReviewStyle.empty).foregroundStyle(PanelsTheme.strong)
+                                Text("All done for now.").font(PanelsTheme.TypeScale.body).foregroundStyle(PanelsTheme.faint)
+                            }
+                            .multilineTextAlignment(.center)
+                            ReviewChiefMessage(isActive: active)
+                            if skippedCount > 0 {
+                                Button("Revisit \(skippedCount) skipped \(skippedCount == 1 ? "item" : "items")") {
+                                    Haptics.selection()
+                                    withAnimation(ReviewStyle.entrance) { queue.revisit(); reviewPage = nil }
+                                }
+                                .buttonStyle(ReviewActionStyle())
+                                .accessibilityIdentifier("review.revisitSkipped")
+                            }
                         }
-                        .multilineTextAlignment(.center)
-                        .frame(maxWidth: .infinity, minHeight: geometry.size.height)
-                        .padding(.horizontal, ReviewStyle.gutter)
-                    }.panelsRefreshable { await store.refresh() }
-                }
-                .safeAreaInset(edge: .bottom, spacing: 0) {
-                    if skippedCount > 0 {
-                        Button("Revisit \(skippedCount) skipped \(skippedCount == 1 ? "item" : "items")") {
-                            Haptics.selection()
-                            withAnimation(ReviewStyle.entrance) { queue.revisit(); reviewPage = nil }
-                        }
-                        .buttonStyle(ReviewActionStyle())
-                        .accessibilityIdentifier("review.revisitSkipped")
                         .padding(.horizontal, ReviewStyle.gutter)
                         .padding(.vertical, PanelsTheme.Space.xl)
+                        .frame(maxWidth: .infinity, minHeight: geometry.size.height)
                     }
+                    .scrollDismissesKeyboard(.interactively)
+                    .panelsRefreshable { await store.refresh() }
                 }
                 .opacity(emptyVisible ? 1 : 0)
                 .task { withAnimation(.easeOut(duration: ReviewStyle.fadeOut)) { emptyVisible = true } }
                 .onDisappear { emptyVisible = false }
             } else { ScrollView { Color.clear.frame(height: 1) }.panelsRefreshable { await store.refresh() } }
         }
-        .onChange(of: LocalStore.shared.workRevision) { _, _ in
-            for decision in decisions.values { decision.refreshVoiceDraft() }
-            for work in savedDecisions where work.state == .changed {
-                if let card = queueCards.first(where: { $0.ticketId == work.ticketID }), let item = card.parts.first(where: { !$0.isMessage }) {
-                    queue.restore(item)
-                    if decisions[item.id]?.resolved == true { decisions[item.id] = nil }
-                    if displayedCard == nil { displayedCard = card }
-                }
-            }
-            holdShownCard()
-        }
+        .onAppear { appeared = true }
+        .onDisappear { appeared = false }
+        .onChange(of: savedWork.key) { _, _ in restoreSavedWork() }
+        .onChange(of: active) { _, active in if active { restoreSavedWork() } }
         .screenLoadState("review", hasContent: store.review != nil, error: store.errors["Navigation"]?.message) { await store.refresh() }
         .navigationTitle("").navigationBarTitleDisplayMode(.inline).panelsScreen()
         .onChange(of: store.baseURL) { _, _ in queue = ReviewQueue(); displayedCard = nil; decisions = [:]; messageDecisions = ReviewMessageDecisions(); reviewPage = nil }
@@ -102,10 +96,28 @@ struct ReviewView: View {
         // the next page replaces it; Revisit returns to the first.
         .onChange(of: reviewPage, initial: true) { _, page in demandReview(page) }
         .onChange(of: pageSkipped) { _, skipped in if skipped { advancePage() } }
-        .task(id: "\(store.baseURL):\(pending.prefix(30).map(\.id).joined(separator: ","))") {
+        .task(id: "\(store.baseURL):\(active):\(savedWork.key?.revision ?? -1):\(pending.prefix(30).map(\.id).joined(separator: ","))") {
+            guard active, snapshotCurrent else { return }
             holdShownCard()
             await prefetch()
         }
+    }
+
+    private func restoreSavedWork() {
+        guard active, snapshotCurrent else { return }
+        for decision in decisions.values { decision.refreshVoiceDraft() }
+        messageDecisions.refreshAttempts()
+        for work in savedDecisions where work.state == "changed" {
+            if let card = queueCards.first(where: { $0.ticketId == work.ticketID }),
+               let item = card.parts.first(where: { !$0.isMessage && $0.field == work.proposalField && $0.waitingSince == work.proposalCreatedAt && $0.proposalRevision != nil && $0.proposalRevision == work.proposalRevision }),
+               let proposal = decisions[item.id]?.proposal,
+               proposal.field == work.proposalField, proposal.revision == work.proposalRevision, proposal.createdAt == work.proposalCreatedAt {
+                queue.restore(item)
+                if decisions[item.id]?.resolved == true { decisions[item.id] = nil }
+                if displayedCard == nil { displayedCard = card }
+            }
+        }
+        holdShownCard()
     }
 
     /// Keep the shown card on screen, with its current parts, until every part is
@@ -130,7 +142,7 @@ struct ReviewView: View {
         var loads: [@MainActor @Sendable () async -> Void] = []
         for item in pending.prefix(30) {
             if item.isMessage {
-                let decision = messageDecisions.decision(for: item)
+                let decision = messageDecisions.decision(for: item, savedWork: savedWork)
                 if !decision.isCurrent(for: item) { loads.append { await decision.load(item: item, api: api) } }
             } else {
                 let decision = decisions[item.id] ?? ReviewDecision()
@@ -180,12 +192,13 @@ struct ReviewView: View {
 /// Plain storage: creating one while the view renders publishes nothing.
 @MainActor private final class ReviewMessageDecisions {
     private var decisions: [String: ReviewMessageDecision] = [:]
-    func decision(for item: ReviewItem) -> ReviewMessageDecision {
+    func decision(for item: ReviewItem, savedWork: ReviewSavedWork) -> ReviewMessageDecision {
         if let existing = decisions[item.id] { return existing }
-        let decision = ReviewMessageDecision()
+        let decision = ReviewMessageDecision(refreshSavedWork: savedWork.refresh)
         decisions[item.id] = decision
         return decision
     }
+    func refreshAttempts() { for decision in decisions.values { decision.refreshAttempt() } }
     func retain(_ ids: Set<String>) { decisions = decisions.filter { ids.contains($0.key) } }
     func drop(_ id: String) { decisions[id] = nil }
 }
@@ -199,6 +212,8 @@ private extension ReviewDecision {
 private struct ReviewCardView: View {
     let card: ReviewCard
     let parts: [ReviewItem]
+    let isActive: Bool
+    let savedWork: ReviewSavedWork
     /// The proposal's decision, when the card holds a proposal.
     let decision: ReviewDecision?
     let messageDecision: (ReviewItem) -> ReviewMessageDecision
@@ -223,6 +238,7 @@ private struct ReviewCardView: View {
     @State private var resolvedAfterDismiss = false
     @State private var renaming = false
     @State private var titleDraft = ""
+    @State private var approvalGuidance: DecisionGuidance?
     /// Parts fading out while the rest of the card stays.
     @State private var exiting: Set<String> = []
     @State private var messageStates: [String: ReviewMessageSection.Activity] = [:]
@@ -239,14 +255,14 @@ private struct ReviewCardView: View {
                 VStack(alignment: .leading, spacing: PanelsTheme.Space.xl) {
                     header
                     if let proposal, let decision {
-                        ReviewProposalSection(item: proposal, decision: decision, cardHeight: $cardHeight, editing: $editing, editorFocused: $editorFocused,
+                        ReviewProposalSection(isActive: isActive, item: proposal, decision: decision, cardHeight: $cardHeight, editing: $editing, editorFocused: $editorFocused,
                                               returning: returning, actionsVisible: actionsVisible, actionsLocked: leaving || changingActions,
                                               canReload: sheet == nil && !returning && drag == 0,
                                               onApprove: openApproval, onSendBack: { changeActions(returning: true) }, onSkip: { skip(width: 12, button: true) })
                             .opacity(exiting.contains(proposal.id) ? 0 : 1)
                     }
                     ForEach(messages) { message in
-                        ReviewMessageSection(item: message, decision: messageDecision(message), locked: leaving || exiting.contains(message.id),
+                        ReviewMessageSection(item: message, isActive: isActive, decision: messageDecision(message), locked: leaving || exiting.contains(message.id),
                                              onActivity: { messageStates[message.id] = $0 },
                                              onResolved: { afterExit in resolve(message, afterExit: afterExit) })
                             .opacity(exiting.contains(message.id) ? 0 : 1)
@@ -276,7 +292,7 @@ private struct ReviewCardView: View {
             .scrollDisabled(leaving || messages.contains { messageStates[$0.id]?.sending == true })
             .safeAreaInset(edge: .bottom, spacing: 0) {
                 if returning, let proposal, let decision {
-                    ReviewReturnComposer(decision: decision, fieldLabel: decision.fieldLabel(proposal.field), api: store.client, onCancel: { changeActions(returning: false) }) {
+                    ReviewReturnComposer(isActive: isActive, savedWork: savedWork, decision: decision, fieldLabel: decision.fieldLabel(proposal.field), api: store.client, onCancel: { changeActions(returning: false) }) {
                         if await decision.sendBack(api: store.client, message: decision.revisionDraft) { complete() }
                         else { ReviewStyle.error() }
                     }
@@ -304,8 +320,8 @@ private struct ReviewCardView: View {
             switch selected {
             case .approve:
                 if let decision {
-                    ReviewApprovalSheet(decision: decision) { ceiling, holder in
-                        if await decision.approve(api: store.client, ceiling: ceiling, holder: holder) { complete() }
+                    ReviewApprovalSheet(decision: decision, guidance: approvalGuidance) { ceiling, holder in
+                        if await decision.approve(api: store.client, ceiling: ceiling, holder: holder, guidance: approvalGuidance) { complete() }
                         else { ReviewStyle.error() }
                     }
                 }
@@ -383,7 +399,7 @@ private struct ReviewCardView: View {
             changingActions = false
         }
     }
-    private func openApproval() { guard decision?.ready == true else { return }; Haptics.light(); editorFocused = false; editing = false; sheet = .approve }
+    private func openApproval() { guard decision?.ready == true else { return }; approvalGuidance = decision?.approvalGuidance(api: store.client); Haptics.light(); editorFocused = false; editing = false; sheet = .approve }
     private func complete() {
         Haptics.light()
         if sheet != nil { resolvedAfterDismiss = true; sheet = nil }
@@ -431,6 +447,7 @@ private struct ReviewCardView: View {
 
 /// A proposal inside its card: the field, the editable text, its links and its actions.
 private struct ReviewProposalSection: View {
+    let isActive: Bool
     let item: ReviewItem
     @Bindable var decision: ReviewDecision
     @Binding var cardHeight: CGFloat
@@ -475,18 +492,19 @@ private struct ReviewProposalSection: View {
             }
             if !returning { actionBar }
         }
-        .task(id: "\(store.baseURL)|\(store.connectionSession)") {
+        .task(id: "\(store.baseURL)|\(store.connectionSession)|\(isActive)") {
+            guard isActive else { return }
             let firstAppearance = !appeared
             appeared = true
             // A prefetched ask is ready to reveal; do not immediately dim its actions
             // with a redundant load, unless its Ticket changed after the read-ahead. A later
             // change, a return to the foreground or a recovered connection reloads it.
             if firstAppearance, decision.proposal != nil, decision.loadedStamp == store.ticketStamp(item.ticketId) { return }
-            guard canReload, !editing else { return }
+            guard isActive, canReload, !editing else { return }
             await loadProposal()
         }
         .reload(onChangeOf: store.ticketStamp(item.ticketId)) {
-            guard canReload, !editing else { return }
+            guard isActive, canReload, !editing else { return }
             await loadProposal()
         }
     }
@@ -550,6 +568,7 @@ private struct ReviewProse: View {
 
 private struct ReviewApprovalSheet: View {
     @Bindable var decision: ReviewDecision
+    let guidance: DecisionGuidance?
     let onApprove: (String, Principal) async -> Void
     @State private var ceiling = ""
     @State private var holder = Principal(kind: "owner", id: "owner")
@@ -579,6 +598,14 @@ private struct ReviewApprovalSheet: View {
                 Picker("Who reviews", selection: $holder) {
                     ForEach(holders, id: \.1) { Text($0.0).tag($0.1) }
                 }.accessibleSegmentedPicker()
+                if let guidance {
+                    VStack(alignment: .leading, spacing: PanelsTheme.Space.sm) {
+                        Text("Note to Worker").reviewEyebrow()
+                        Text(guidance.text).font(.body).foregroundStyle(PanelsTheme.text)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .accessibilityIdentifier("review.approvalNote")
+                    }
+                }
                 Button {
                     Haptics.light(); Task { await onApprove(ceiling, holder) }
                 } label: {
@@ -597,6 +624,8 @@ private struct ReviewApprovalSheet: View {
 }
 
 private struct ReviewReturnComposer: View {
+    let isActive: Bool
+    let savedWork: ReviewSavedWork
     @Bindable var decision: ReviewDecision
     let fieldLabel: String
     let api: APIClient
@@ -636,8 +665,18 @@ private struct ReviewReturnComposer: View {
             }
             if let error = decision.error ?? voice.error { Text(error).font(.footnote).foregroundStyle(PanelsTheme.error) }
         }.padding(.bottom, PanelsTheme.Space.md)
-            .onAppear { decision.refreshVoiceDraft(); focused = true; voice.restore(api: api, draftID: decision.revisionDraftID) }
-            .onChange(of: LocalStore.shared.workRevision) { _, _ in decision.refreshVoiceDraft(); voice.restore(api: api, draftID: decision.revisionDraftID) }
+            .onChange(of: isActive, initial: true) { _, active in
+                guard active else { voice.preserve(); return }
+                savedWork.refresh(LocalStore.server(api.baseURL))
+                decision.refreshVoiceDraft(); focused = true
+                voice.restore(api: api, draftID: decision.revisionDraftID, savedWork: decision.revisionDraftID.map { savedWork.voice(LocalStore.server(api.baseURL), draftID: $0) } ?? [])
+            }
+            .onChange(of: savedWork.key) { _, _ in
+                let server = LocalStore.server(api.baseURL)
+                guard isActive, savedWork.key == ReviewSavedWork.Key(server: server, revision: LocalStore.shared.outgoingRevision(server)) else { return }
+                decision.refreshVoiceDraft()
+                voice.restore(api: api, draftID: decision.revisionDraftID, savedWork: decision.revisionDraftID.map { savedWork.voice(LocalStore.server(api.baseURL), draftID: $0) } ?? [])
+            }
             .onDisappear { voice.preserve() }
     }
     @ViewBuilder private var voiceStatus: some View {
