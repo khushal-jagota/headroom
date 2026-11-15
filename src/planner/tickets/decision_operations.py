@@ -23,7 +23,7 @@ from planner.tickets.contracts import (
     Ticket,
 )
 from planner.tickets.integrity import TicketIntegrityError
-from planner.tickets.logic import admission
+from planner.tickets.logic import admission, machine
 from planner.worker_types.contracts import WorkflowDefinition
 
 # Only these canonical decision refusals become terminal receipts. Operational,
@@ -141,9 +141,14 @@ def _apply(
     actor: Principal, now: int,
 ) -> DecisionTransition:
     field = command["field"]
+    if command["expected_proposal_revision"] != current_ticket.pending_proposal_revision:
+        raise _validation("the visible proposal changed; read it again before deciding")
     if command["decision"] == "approve":
         holder = _holder(command.get("next_holder"))
-        if holder is None:
+        completing = machine.completion_follows(
+            current_ticket.stage, worker_type_definition=definition
+        )
+        if holder is None and not completing:
             raise PlannerError(
                 ErrorCode.scope_missing, "approval requires next_holder",
                 {"missing": ["next_holder"]},
@@ -151,7 +156,9 @@ def _apply(
         ticket = data.accept_proposal(
             conn, ticket_id, field=field, principal=actor, now=now,
             edited_body=command.get("edited_body"),
-            next_ceiling=admission.parse_next_ceiling(command.get("next_ceiling"), definition),
+            next_ceiling=admission.parse_next_ceiling(
+                command.get("next_ceiling"), definition, current_stage=current_ticket.stage
+            ),
             next_holder=holder, expected_proposal_revision=command["expected_proposal_revision"],
             message=command.get("message"), decision_id=operation_id,
         )

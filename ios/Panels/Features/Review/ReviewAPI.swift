@@ -2,7 +2,7 @@ import Foundation
 
 /// The served lifecycle determines approval gates; Review never assumes coding stages.
 struct ReviewWorkerManifest: Decodable, Sendable {
-    struct Stage: Decodable, Identifiable, Sendable { let id: String; let label: String }
+    struct Stage: Decodable, Identifiable, Sendable { let id: String; let label: String; var gatingField: String? = nil }
     struct Field: Decodable, Sendable { let id: String; let label: String }
     let workerType: String?
     let stages: [Stage]
@@ -12,11 +12,19 @@ struct ReviewWorkerManifest: Decodable, Sendable {
 
     init(workflow: TicketWorkerType) {
         workerType = workflow.workerType
-        stages = workflow.stages.map { Stage(id: $0.id, label: $0.label) }
+        stages = workflow.stages.map { Stage(id: $0.id, label: $0.label, gatingField: $0.gatingField) }
         advance = workflow.advance ?? [:]
         fields = workflow.fields.map { Field(id: $0.id, label: $0.label) }
         ceilingRange = workflow.ceilingRange ?? []
     }
+
+    func isFinalApproval(at stage: String) -> Bool {
+        guard let next = advance[stage] else { return false }
+        return next == "done" || (stages.first(where: { $0.id == next })?.gatingField == "consequences"
+            && advance[next] == "done")
+    }
+
+    var approvalBoundaries: [Stage] { stages.filter { ceilingRange.contains($0.id) } }
 
     /// The web keeps current and earlier choices as scope edits, not proposal approval.
     func selectionApprovesPending(ceiling: String, waitingStage: String) -> Bool {
@@ -34,8 +42,8 @@ struct ReviewWorkerManifest: Decodable, Sendable {
 struct ReviewApproval: Codable, Sendable {
     let expectedProposalRevision: Int
     let editedBody: String?
-    let nextCeiling: String
-    let nextHolder: Principal
+    let nextCeiling: String?
+    let nextHolder: Principal?
 }
 
 enum DecisionResponseError: Error, Equatable {

@@ -147,10 +147,18 @@ export function ceilingOptionsFor(
   // Leash option labels are the Worker type's own Stage labels, so the control reads
   // "Until What Changes" and follows a Stage rename without a code change. This
   // replaces the earlier lowercase stageLabel(id) wording ("needs approach").
-  return lc.stageOrder.slice(start).map((stage) => ({
+  return lc.stageOrder.slice(start).filter((stage) => lc.ceilingRange.includes(stage)).map((stage) => ({
     value: stage,
     label: stageLabelFor(lc, stage)
   }));
+}
+
+/** The last decision grants its follow-through without another reviewer choice. */
+export function finalApprovalFor(lc: Lifecycle | null, stage: string): boolean {
+  if (!lc) return false;
+  const next = lc.advance[stage];
+  return !!next && (lc.stageIsTerminal[next] === true || (lc.gatingField[next] === "consequences"
+    && lc.stageIsTerminal[lc.advance[next]] === true));
 }
 
 export function preferredScopeCeilingFor(

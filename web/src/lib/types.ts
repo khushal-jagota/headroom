@@ -34,7 +34,6 @@ export type TicketSummary = WorkAttention & {
   machine_id?: string;
   locale?: import("./ticketMachines").TicketLocale;
   is_backlogged: boolean;
-  waiting_to_closeout: boolean;
   manager?: Principal;
   id: string;
   title: string;
@@ -275,7 +274,6 @@ export type ManagerWorkspaceTicket = WorkAttention & {
   stage: string;
   activity_at: number;
   ticket_status: string;
-  waiting_to_closeout: boolean;
   has_pending_proposal: boolean;
   gating_field: string | null;
   blocked: boolean;
@@ -370,7 +368,6 @@ export type BoardCard = WorkAttention & {
   is_done: boolean;
   blocked: boolean;
   conversation_id: string | null;
-  waiting_to_closeout: boolean;
   manager_id: string | null;
   manager_title: string | null;
 };

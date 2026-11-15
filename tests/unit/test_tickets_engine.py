@@ -153,7 +153,7 @@ def test_a02_gating_chain_one_state_per_accept(
 ) -> None:
     now = fake_clock.now_unix()
     t = _create(tmp_db, cfg, fake_clock)
-    _scope(tmp_db, t, "needs_consequences", fake_clock)
+    _scope(tmp_db, t, "done", fake_clock)
 
     t = data.file_current_proposal(
         tmp_db,
@@ -244,11 +244,10 @@ def test_a06_edit_accept_stores_edited_text(
 def test_a07_closeout_routing(tmp_db: Connection, cfg: Config, fake_clock: TestClock) -> None:
     now = fake_clock.now_unix()
 
-    # Ceiling stops exactly at needs_closeout: implementation auto-accepts up to
-    # needs_closeout, and closeout then routes to done through the ordinary
-    # accept machinery (no special-cased manual review step).
+    # Implementation remains the final review. Its approval authorizes follow-through
+    # and the verified Consequences report finishes without a second decision.
     t1 = _create(tmp_db, cfg, fake_clock)
-    _scope(tmp_db, t1, "needs_consequences", fake_clock)
+    _scope(tmp_db, t1, "needs_implementation", fake_clock)
     for _field, body in [
         ("what_changes", "a"),
         ("implementation", "i"),
@@ -260,6 +259,11 @@ def test_a07_closeout_routing(tmp_db: Connection, cfg: Config, fake_clock: TestC
             principal=Principal(PrincipalKind.ticket, t1.id),
             now=now,
         )
+    assert t1.stage == "needs_implementation"
+    assert t1.pending_proposal is not None
+    t1 = data.accept_proposal(
+        tmp_db, t1.id, field="implementation", principal=OWNER_PRINCIPAL, now=now,
+    )
     assert t1.stage == "needs_consequences"
     t1 = data.file_current_proposal(
         tmp_db,
@@ -268,19 +272,7 @@ def test_a07_closeout_routing(tmp_db: Connection, cfg: Config, fake_clock: TestC
         principal=Principal(PrincipalKind.ticket, t1.id),
         now=now,
     )
-    assert t1.stage == "needs_consequences"
-    assert t1.pending_proposal is not None
-    assert t1.field_values.get("consequences") is None
-
-    t1 = data.accept_proposal(
-        tmp_db,
-        t1.id,
-        field="consequences",
-        principal=OWNER_PRINCIPAL,
-        now=now,
-        next_ceiling=NO_FURTHER,
-        next_holder=OWNER_PRINCIPAL,
-    )
+    assert t1.pending_proposal is None
     assert t1.stage == "done"
     assert t1.field_values.get("consequences") == "c"
     assert t1.ceiling == "done"
@@ -311,39 +303,6 @@ def test_a07_closeout_routing(tmp_db: Connection, cfg: Config, fake_clock: TestC
         ]
     )
 
-    # Ceiling below needs_closeout: the closeout proposal stays pending until the
-    # ceiling is raised and it is explicitly accepted.
-    t3 = _create(tmp_db, cfg, fake_clock)
-    _scope(tmp_db, t3, "needs_implementation", fake_clock)
-    for _field, body in [("what_changes", "a")]:
-        t3 = data.file_current_proposal(
-            tmp_db,
-            t3.id,
-            body=body,
-            principal=Principal(PrincipalKind.ticket, t3.id),
-            now=now,
-        )
-    assert t3.stage == "needs_implementation"
-    t3 = data.file_current_proposal(
-        tmp_db,
-        t3.id,
-        body="i",
-        principal=Principal(PrincipalKind.ticket, t3.id),
-        now=now,
-    )
-    assert t3.stage == "needs_implementation"
-    assert t3.pending_proposal is not None
-
-    t3 = data.accept_proposal(
-        tmp_db,
-        t3.id,
-        field="implementation",
-        principal=OWNER_PRINCIPAL,
-        now=now,
-        next_ceiling="done",
-        next_holder=OWNER_PRINCIPAL,
-    )
-    assert t3.stage == "needs_consequences"
 
 
 def test_a36_onward_scope(tmp_db: Connection, cfg: Config, fake_clock: TestClock) -> None:
@@ -488,10 +447,10 @@ def test_a36_onward_scope(tmp_db: Connection, cfg: Config, fake_clock: TestClock
         field="what_changes",
         principal=OWNER_PRINCIPAL,
         now=now,
-        next_ceiling="needs_consequences",
+        next_ceiling="done",
         next_holder=OWNER_PRINCIPAL,
     )
-    assert t3.ceiling == "needs_consequences"
+    assert t3.ceiling == "done"
     t3 = data.file_current_proposal(
         tmp_db,
         t3.id,
@@ -500,7 +459,7 @@ def test_a36_onward_scope(tmp_db: Connection, cfg: Config, fake_clock: TestClock
         now=now,
     )
     assert t3.stage == "needs_consequences"
-    assert t3.ceiling == "needs_consequences"
+    assert t3.ceiling == "done"
     assert t3.field_values["implementation"] == "a"
     assert t3.pending_proposal is None
 

@@ -426,7 +426,7 @@
                   {/key}
                 {:else}
                   <h2>{ticketSectionHeading(section,currentView)} {fieldLabelFor(lc, currentField)}</h2>
-                  {#if detail.stage !== "needs_brief"}
+                  {#if detail.stage !== "needs_brief" && currentField !== "consequences"}
                     <div class="worker-ceiling-line" data-leash>
                       <CeilingPicker document newStage={detail.stage} lifecycle={lc} ceiling={detail.ceiling} holder={detail.ceiling_holder}
                         triggerLabel={`Approved until ${detail.ceiling === "none" ? "No further" : stageLabelFor(lc, detail.ceiling)}, then ${pageHolderLabel(detail.ceiling_holder)} reviews`}
