@@ -53,6 +53,8 @@ Presence comes from leases, judged by the home clock. A silent machine becomes a
 
 A lease reads pending work and the current cleanup evidence. The slower workspace maintenance pass refreshes retained history. Startup and explicit Worker actions still refresh their cleanup evidence directly.
 
+On the Mac, background and start-time cleanup refreshes run in order. A start checks its Ticket after any older refresh has finished, so an older scan cannot replace its newer evidence. Native child starts and mailbox polling remain independent of that reconciliation.
+
 Each machine has one current process incarnation. A restart replaces only that machine's old incarnation. The home refuses stale process requests. The new process can replay its own machine's retained output under the existing assignments. It cannot replay another machine's output.
 
 ## Commands and output
