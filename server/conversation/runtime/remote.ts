@@ -333,6 +333,9 @@ export function schedule_child_retirement(
             reference,
           ),
         );
+        await host.persist(state, () =>
+          host.start_admission.retire_source(host.options.store.start_admission_database, child),
+        );
         await child.detach();
         if (state.child === child) {
           state.child = null;

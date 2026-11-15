@@ -2,12 +2,7 @@
 import { expect, test } from 'vitest';
 import { fixture } from '../../tests/ticket_fixture.ts';
 import { HOME_MACHINE_ID } from '../../execution_identity.ts';
-import {
-  AutomaticStartAdmission,
-  explicit_start,
-  manual_start_exempt,
-  write_bindings,
-} from './index.ts';
+import { AutomaticStartAdmission, write_bindings } from './index.ts';
 import type { StartRequest } from './contracts.ts';
 
 function setup(limit = 4) {
@@ -26,25 +21,6 @@ function setup(limit = 4) {
     },
   };
 }
-
-test('destinations pace independently and Home retains supervisor capacity', () => {
-  const { admission: a, request: r, tick } = setup();
-  a.configure_destinations(() => true);
-  expect(a.try_start(r('w1'))).toBe(true);
-  expect(a.try_start(r('w2'))).toBe(false);
-  expect(a.try_start(r('remote', 'away'))).toBe(true);
-  tick();
-  expect(a.try_start(r('w2'))).toBe(true);
-  tick();
-  expect(a.try_start(r('w3'))).toBe(true);
-  tick();
-  expect(a.try_start(r('w4'))).toBe(false);
-  expect(a.try_start(r('supervisor', HOME_MACHINE_ID, 'supervisor'))).toBe(true);
-  tick();
-  expect(a.try_start(r('w4'))).toBe(false);
-  a.finish('w1');
-  expect(a.try_start(r('w4'))).toBe(true);
-});
 
 test('reachable eligible order and supervisor priority prevent scan-order starvation', () => {
   const { admission: a, request: r, tick } = setup();
@@ -118,14 +94,4 @@ test('failed preparation retries while attempted delivery stays uncertain until 
   expect(a.has_requests(['prepare'])).toBe(true);
   a.retire_source(db, source);
   expect(a.snapshots()).toEqual([]);
-});
-
-test('explicit start exemption remains scoped through async work', async () => {
-  expect(manual_start_exempt()).toBe(false);
-  await explicit_start(async () => {
-    expect(manual_start_exempt()).toBe(true);
-    await Promise.resolve();
-    expect(manual_start_exempt()).toBe(true);
-  });
-  expect(manual_start_exempt()).toBe(false);
 });

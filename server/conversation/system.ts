@@ -974,6 +974,11 @@ export class SqliteProcessConversationSystem implements DeliveryServices, Conver
       admission?.settled.resolve();
     }
   }
+  private deprioritize_held(state: ConversationState): void {
+    for (const message of state.held_prompts)
+      if (!message.delivery_uncertain)
+        this.start_admission.wait_if_unadmitted(message.sender_message_id);
+  }
   private mark_eligible_held(state: ConversationState): void {
     if (
       !['idle', 'draining'].includes(state.phase) ||
@@ -981,9 +986,7 @@ export class SqliteProcessConversationSystem implements DeliveryServices, Conver
       state.late_steers.size ||
       state.held_prompts.some((message) => message.delivery_uncertain)
     ) {
-      for (const message of state.held_prompts)
-        if (!message.delivery_uncertain)
-          this.start_admission.wait_if_unadmitted(message.sender_message_id);
+      this.deprioritize_held(state);
       return;
     }
     const head = leading_run_that_can_share_a_turn(state.held_prompts);
@@ -1014,37 +1017,46 @@ export class SqliteProcessConversationSystem implements DeliveryServices, Conver
           );
           return a[0] - b[0] || a[1] - b[1];
         });
-        for (const current of pending) this.schedule_drain(current);
+        for (const current of pending) {
+          const identity = current.record.conversation_id;
+          if (
+            this.deferred_start_preparing.has(identity) ||
+            this.deferred_start_preparing.size >= this.start_admission.limit
+          ) {
+            this.defer_start_drain(current);
+            continue;
+          }
+          this.deferred_start_preparing.add(identity);
+          void own_settlement(current, this.drain_held_prompts(current))
+            .finally(() => {
+              this.deferred_start_preparing.delete(identity);
+            })
+            .catch((error) =>
+              console.error(`conversation ${identity} could not retry its deferred start`, error),
+            );
+        }
       },
       this.start_admission.poll_delay(1) * 1000,
     );
   }
   schedule_drain(state: ConversationState): void {
     if (this.shutting_down) return;
-    const identity = state.record.conversation_id;
-    if (this.deferred_start_preparing.has(identity)) return;
-    if (this.deferred_start_preparing.size >= this.start_admission.limit) {
-      this.defer_start_drain(state);
-      return;
-    }
-    this.deferred_start_conversations.delete(identity);
+    this.deferred_start_conversations.delete(state.record.conversation_id);
     this.mark_eligible_held(state);
-    this.deferred_start_preparing.add(identity);
-    void own_settlement(state, this.drain_held_prompts(state))
-      .finally(() => {
-        this.deferred_start_preparing.delete(identity);
-      })
-      .catch((error) =>
-        console.error(
-          `conversation ${state.record.conversation_id} could not drain held prompts`,
-          error,
-        ),
-      );
+    void own_settlement(state, this.drain_held_prompts(state)).catch((error) =>
+      console.error(
+        `conversation ${state.record.conversation_id} could not drain held prompts`,
+        error,
+      ),
+    );
   }
   async drain_held_prompts(state: ConversationState): Promise<void> {
     if (this.shutting_down) return;
     this.require_runtime_ownership();
-    if (this.options.execution_refusal(state.record.conversation_id) !== null) return;
+    if (this.options.execution_refusal(state.record.conversation_id) !== null) {
+      this.deprioritize_held(state);
+      return;
+    }
     const taken = await state.lock.run(() => {
       if (
         state.child_is_quarantined ||
@@ -1057,7 +1069,10 @@ export class SqliteProcessConversationSystem implements DeliveryServices, Conver
       set_phase(state, 'draining');
       return true;
     });
-    if (!taken) return;
+    if (!taken) {
+      if (state.phase !== 'draining') this.deprioritize_held(state);
+      return;
+    }
     while (true) {
       const next = await state.lock.run(async () => {
         if (
@@ -1065,10 +1080,12 @@ export class SqliteProcessConversationSystem implements DeliveryServices, Conver
           this.options.execution_refusal(state.record.conversation_id) !== null
         ) {
           set_phase(state, 'idle');
+          this.deprioritize_held(state);
           return null;
         }
         if (state.child_is_quarantined || state.held_prompts.length === 0) {
           set_phase(state, 'idle');
+          this.mark_eligible_held(state);
           return null;
         }
         const batch = leading_run_that_can_share_a_turn(state.held_prompts);
@@ -1078,31 +1095,43 @@ export class SqliteProcessConversationSystem implements DeliveryServices, Conver
           this.defer_start_drain(state);
           return null;
         }
-        await this.persist(state, () =>
-          this.options.store.mark_held_sender_messages_leaving_queue(
-            state.record.conversation_id,
-            batch.flatMap((message) =>
-              message.sender_message_id ? [message.sender_message_id] : [],
+        try {
+          await this.persist(state, () =>
+            this.options.store.mark_held_sender_messages_leaving_queue(
+              state.record.conversation_id,
+              batch.flatMap((message) =>
+                message.sender_message_id ? [message.sender_message_id] : [],
+              ),
             ),
-          ),
-        );
-        for (const message of batch) {
-          if (message.sender_message_id !== null)
-            state.sender_messages_being_delivered.set(message.sender_message_id, {
-              message,
-              settled: new Deferred<void>(),
-            });
+          );
+          for (const message of batch) {
+            if (message.sender_message_id !== null)
+              state.sender_messages_being_delivered.set(message.sender_message_id, {
+                message,
+                settled: new Deferred<void>(),
+              });
+          }
+          state.held_prompts.splice(0, batch.length);
+          this.publish_held_prompts_changed(state);
+          return {
+            batch,
+            reservation: await this.reserve_turn(
+              state,
+              false,
+              batch.map((message) => message.sender_message_id),
+            ),
+          };
+        } catch (error) {
+          this.finish_held_deliveries(state, batch);
+          for (const message of [...batch].reverse()) {
+            this.start_admission.queue(message.sender_message_id);
+            if (!state.held_prompts.includes(message)) state.held_prompts.unshift(message);
+          }
+          set_phase(state, 'idle');
+          this.mark_eligible_held(state);
+          this.defer_start_drain(state);
+          throw error;
         }
-        state.held_prompts.splice(0, batch.length);
-        this.publish_held_prompts_changed(state);
-        return {
-          batch,
-          reservation: await this.reserve_turn(
-            state,
-            false,
-            batch.map((message) => message.sender_message_id),
-          ),
-        };
       });
       if (!next) return;
       const fate = await this.deliver_and_finalize(state, next.reservation, next.batch, true);

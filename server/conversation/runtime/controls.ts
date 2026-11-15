@@ -271,6 +271,8 @@ async function attempt_steer(
         state.record.latest_sequence,
       ),
     );
+    if (result[0].suppression_reason !== null)
+      await host.settle_automatic_ids(state, [message.sender_message_id]);
     return result;
   });
   if (decisions[0].suppression_reason !== null)
@@ -283,7 +285,13 @@ async function attempt_steer(
     };
   let outcome: BackendSteerOutcome;
   let adapter_error: unknown = null;
+  host.start_admission.queue(message.sender_message_id);
+  host.start_admission.bind([message.sender_message_id], token);
+  await host.persist(state, () =>
+    host.start_admission.persist_bindings(host.options.store.start_admission_database, token),
+  );
   try {
+    host.start_admission.bind_source(token, child);
     outcome = await host.native_operation(() =>
       child.steer(token, message.content, {
         sender_content: message.content,
@@ -375,8 +383,6 @@ async function record_steer_outcome(
     : refused
       ? refused_row(message, PromptDeliveryMode.steer, outcome.refusal_reason)
       : uncertain_row(message, PromptDeliveryMode.steer);
-  if (accepted && token !== null) await host.accept_automatic_start(state, token);
-  if (accepted || refused) await host.settle_automatic_ids(state, [message.sender_message_id]);
   const rows = await host.persist(state, () =>
     host.options.store.append_events(state.record.conversation_id, [payload], {
       lifecycle: attempt
@@ -400,6 +406,8 @@ async function record_steer_outcome(
       ...state.record,
       owner_read_through_sequence: Math.max(state.record.owner_read_through_sequence, boundary),
     });
+  if (accepted || refused) await host.settle_automatic_ids(state, [message.sender_message_id]);
+  if (accepted && token !== null) await host.accept_automatic_start(state, token);
   if (outcome instanceof BackendSteerUncertain && outcome.not_delivered !== null)
     watch_late_steer(host, state, outcome.not_delivered, message, held_before);
   if (accepted || !refused) {

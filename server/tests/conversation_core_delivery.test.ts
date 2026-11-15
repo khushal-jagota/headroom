@@ -381,6 +381,22 @@ test('automatic capacity waits for exact agent activity and queued messages shar
     await child.flush_events();
     expect(f.core.start_admission.snapshots()).toEqual([]);
     expect(f.database.read((sql) => sql.all('SELECT * FROM automatic_start_bindings'))).toEqual([]);
+    // A model rebind replaces the child without surrendering the new turn's permit.
+    now = 2;
+    expect(await offer('rebind')).toBe(true);
+    expect(await f.send('rebind', 'rebind')).toBeInstanceOf(PromptDeliveryQueued);
+    await child.configure('write_prompt', {
+      error: { name: 'NeedsRebind', message: 'fresh configuration required' },
+    });
+    await child.finish();
+    await f.core.wait_until_quiescent();
+    expect(f.children).toHaveLength(2);
+    expect(f.core.start_admission.snapshots()).toMatchObject([
+      { request: { identity: 'rebind' }, state: 'active', turn: { turn_number: 3 } },
+    ]);
+    await f.children[1].emit(new AgentMessageDelta({ text_delta: 'replacement accepted' }));
+    await f.children[1].flush_events();
+    expect(f.core.start_admission.snapshots()).toEqual([]);
   } finally {
     await f.core.shutdown({ deadline: performance.now() / 1000 + SHUTDOWN_GRACE_SECONDS });
   }
@@ -413,6 +429,36 @@ test('a failed admission save releases preparation before any provider starts', 
     ).toBe(true);
     expect(await f.send()).toBeInstanceOf(PromptDeliveryStarted);
     expect(f.children).toHaveLength(1);
+    const child = await f.child;
+    for (const method of ['mark_held_sender_messages_leaving_queue', 'reserve_turn'] as const) {
+      const identity = `queued-${method}`;
+      f.core.start_admission.try_start(await f.core.automatic_start_request(identity, 'core'));
+      expect(await f.send('queued after preparation failure', identity)).toBeInstanceOf(
+        PromptDeliveryQueued,
+      );
+      const injected = vi.spyOn(f.store, method).mockImplementationOnce(() => {
+        throw failure;
+      });
+      // Allow this dequeue grant before the injected failure, rather than fail
+      // the later explicit retry after pacing prevented the first preparation.
+      now += 1;
+      await child.finish();
+      await f.core.wait_until_quiescent();
+      expect(injected).toHaveBeenCalledOnce();
+      expect(state.phase).toBe('idle');
+      expect(state.reserved_turn).toBeNull();
+      expect(state.sender_messages_being_delivered.size).toBe(0);
+      expect((await f.core.held_prompts('core')).map((held) => held.sender_message_id)).toEqual([
+        identity,
+      ]);
+      expect(f.core.start_admission.snapshots()).toMatchObject([
+        { request: { identity }, permit_identity: null, turn: null },
+      ]);
+      now += 1;
+      await f.core.drain_held_prompts(state);
+      expect(await f.core.held_prompts('core')).toEqual([]);
+      expect(state.phase).toBe('running');
+    }
   } finally {
     await f.core.shutdown({ deadline: performance.now() / 1000 + SHUTDOWN_GRACE_SECONDS });
   }

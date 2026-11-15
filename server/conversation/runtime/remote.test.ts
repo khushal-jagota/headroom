@@ -187,9 +187,11 @@ test('a remote event that times out behind earlier work leaves the retry its loc
 // Reuse the existing real core/record/process fixture; hold only its native replay reply.
 // Earlier receipt tests do not kill an already-recorded turn during a replay write.
 test('kill during replay ends its turn and asks before a late successful reply', async () => {
+  let now = 0;
   const close_rewritten = vi.fn();
   const f = setup({
     core: {
+      monotonic_now: () => now,
       remote_recovery: {
         retire_replaced() {},
         close_rewritten,
@@ -204,15 +206,35 @@ test('kill during replay ends its turn and asks before a late successful reply',
     await f.start();
     await f.send();
     const child = await f.child,
-      state = f.core.conversation_state('core')!,
-      token = state.running_turn!.token;
+      state = f.core.conversation_state('core')!;
     const reference = {
       conversation_id: 'core',
       executor_incarnation: 'remote',
       child_id: 'replaying',
     };
+    await child.finish();
+    await f.core.wait_until_quiescent();
+    const before_reused_turn = f.store.read_conversation('core')!.latest_sequence;
     state.retained_child_reference = reference;
     Object.defineProperty(child, 'stop_outside_lock', { value: true });
+    expect(
+      f.core.start_admission.try_start(
+        await f.core.automatic_start_request('reused-remote', 'core'),
+      ),
+    ).toBe(true);
+    await f.send('second write on retained child', 'reused-remote');
+    const token = state.running_turn!.token;
+    expect(
+      f.database.read((sql) =>
+        sql.get(
+          'SELECT executor_incarnation,child_id FROM automatic_start_bindings WHERE identity=?',
+          ['reused-remote'],
+        ),
+      ),
+    ).toEqual({
+      executor_incarnation: reference.executor_incarnation,
+      child_id: reference.child_id,
+    });
     vi.spyOn(child, 'withdraw_delivery').mockResolvedValue(false);
     vi.spyOn(child, 'stop').mockResolvedValue();
     const write = vi.spyOn(child, 'write_prompt').mockImplementation(async () => {
@@ -256,17 +278,23 @@ test('kill during replay ends its turn and asks before a late successful reply',
     );
     await entered.promise;
     expect(state.reserved_turn?.token).toEqual(token);
-    const prompt_fact = f.store.lifecycle_facts('core').find((fact) => fact.operation === 'prompt');
+    const prompt_fact = f.store
+      .lifecycle_facts('core')
+      .find((fact) => fact.operation === 'prompt' && fact.turn_number === token.turn_number);
     await f.core.kill('core');
     expect(state.running_turn).toBeNull();
     const requests = f.store.lifecycle_facts('core').filter((fact) => fact.kind === 'request');
     expect(requests.map((fact) => fact.status)).toEqual(['unavailable', 'unavailable']);
-    const endings = f.store.read_events_after('core', 0).filter((row) => row.kind === 'turn_ended');
+    const endings = f.store
+      .read_events_after('core', before_reused_turn)
+      .filter((row) => row.kind === 'turn_ended');
     expect(endings).toHaveLength(1);
     expect(endings[0]!.payload).toMatchObject({ ending: 'interrupted' });
-    expect(f.store.lifecycle_facts('core').find((fact) => fact.operation === 'prompt')).toEqual(
-      prompt_fact,
-    );
+    expect(
+      f.store
+        .lifecycle_facts('core')
+        .find((fact) => fact.operation === 'prompt' && fact.turn_number === token.turn_number),
+    ).toEqual(prompt_fact);
     release.resolve();
     await replay;
     expect(close_rewritten).toHaveBeenCalledExactlyOnceWith(
@@ -276,6 +304,30 @@ test('kill during replay ends its turn and asks before a late successful reply',
     );
     expect(write).toHaveBeenCalledTimes(1);
     expect(f.children).toHaveLength(1);
+    // Source-bound reservations can lack a transport child column during preparation.
+    now = 1;
+    expect(
+      f.core.start_admission.try_start(await f.core.automatic_start_request('source-only', 'core')),
+    ).toBe(true);
+    const source_turn = { conversation_id: 'core', turn_number: token.turn_number + 1 };
+    f.core.start_admission.bind(['source-only'], source_turn);
+    f.core.start_admission.persist_bindings(f.store.start_admission_database, source_turn);
+    f.core.start_admission.bind_source(source_turn, child);
+    Object.assign(f.core.options.backend_child_factories.codex, {
+      recover: () => child,
+      retained_runs: () => [
+        new RetainedBackendRun({
+          reference,
+          turn: token,
+          delivery_uncertain: false,
+          retirement_confirmed: true,
+        }),
+      ],
+    });
+    await f.core.wait_until_quiescent();
+    expect(await f.core.retire_child_for_rebind(state, child)).toBe(true);
+    expect(f.core.start_admission.snapshots()).toEqual([]);
+    expect(f.database.read((sql) => sql.all('SELECT * FROM automatic_start_bindings'))).toEqual([]);
   } finally {
     release.resolve();
     await replay;

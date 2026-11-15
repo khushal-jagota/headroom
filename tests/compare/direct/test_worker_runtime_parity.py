@@ -672,3 +672,190 @@ def test_automatic_start_admission_populated_lifecycle(tmp_path: Path) -> None:
         finally:
             conn.close()
     print(f"populated admission lifecycle proof: {time.monotonic() - began:.3f}s")
+
+
+def test_automatic_start_core_steer_receipts(tmp_path: Path) -> None:
+    """Engine parity cannot prove that core steering binds before wire or releases after save.
+
+    Reuse the existing scripted child and its receipt barrier. No provider or host starts.
+    """
+    import os
+
+    from tests.compare.direct.test_unit18_adapter import environment
+    from tests.compare.scripted.scripted_registry import ScriptedBackendRegistry
+    from tests.unit.test_conversation_system import _link_worker_ticket
+
+    from planner.conversation.api import delivery_fate_json
+    from planner.conversation.contracts import (
+        ConversationBackendKey,
+        PromptDeliveryMode,
+    )
+    from planner.conversation.live_tail import ConversationLiveTail
+    from planner.conversation.logic.conversation_start_resolution import (
+        resolve_conversation_start_request,
+    )
+    from planner.conversation.message_files import ConversationMessageFiles
+    from planner.conversation.storage import ConversationStore
+    from planner.conversation.system import SqliteProcessConversationSystem
+
+    async def exercise(path: Path, outcome: str) -> dict[str, Any]:
+        now, available = 0, False
+        saving = asyncio.Event()
+        registry = ScriptedBackendRegistry()
+        store = ConversationStore(str(path), integer_now=lambda: 100)
+        core = SqliteProcessConversationSystem(
+            store=store,
+            backend_child_factories={key: registry.make_child for key in ConversationBackendKey},
+            message_files=ConversationMessageFiles(str(path)),
+            live_tail=ConversationLiveTail(),
+            unix_time_now=lambda: 100,
+            monotonic_now=lambda: now,
+        )
+        checkpoints: list[dict[str, Any]] = []
+        grants, fates = [], []
+
+        async def capture(name: str) -> None:
+            with sqlite3.connect(path) as conn:
+                conn.row_factory = sqlite3.Row
+                binding_rows = [
+                    dict(row)
+                    for row in conn.execute(
+                        "SELECT * FROM automatic_start_bindings ORDER BY identity"
+                    )
+                ]
+                receipts = [
+                    {**dict(row), "payload": json.loads(row["payload"])}
+                    for row in conn.execute(
+                        "SELECT sequence,kind,payload FROM conversation_events "
+                        "WHERE conversation_id='c' AND kind IN "
+                        "('prompt','prompt_delivery_uncertain','prompt_delivery_refused') "
+                        "ORDER BY sequence"
+                    )
+                ]
+            checkpoints.append(
+                {
+                    "name": name,
+                    "snapshots": sorted(
+                        plain(core.start_admission.snapshots()),
+                        key=lambda row: row["request"]["identity"],
+                    ),
+                    "rows": binding_rows,
+                    "receipts": receipts,
+                    "delivered": (await registry.current["c"].inspect())["delivered_text"],
+                }
+            )
+
+        async def send(identity: str, mode: PromptDeliveryMode) -> PromptDeliveryFate:
+            return await core.send(
+                "c",
+                text_message_content(identity),
+                sender_label="loop",
+                sender_message_id=identity,
+                mode=mode,
+            )
+
+        original = store.append_events
+
+        async def append(*args: Any, **kwargs: Any) -> Any:
+            if (
+                any(
+                    getattr(payload, "sender_message_id", None) == "followup" for payload in args[1]
+                )
+                and not available
+            ):
+                saving.set()
+                raise RuntimeError("receipt save held")
+            return await original(*args, **kwargs)
+
+        store.append_events = append  # type: ignore[method-assign]
+        try:
+            grants.append(
+                core.start_admission.try_start(await core.automatic_start_request("initial", "c"))
+            )
+            fates.append(delivery_fate_json(await send("initial", PromptDeliveryMode.queue)))
+            await capture("initial")
+            now = 1
+            grants.append(
+                core.start_admission.try_start(await core.automatic_start_request("followup", "c"))
+            )
+            child = registry.current["c"]
+            await child.configure(
+                "steer",
+                {
+                    "barrier": "steer-receipt",
+                    "result": {"fate": outcome, "composed_content_delivered": True},
+                },
+            )
+            steering = asyncio.create_task(send("followup", PromptDeliveryMode.steer))
+            await child.wait_for_barrier("steer-receipt")
+            await capture("wire-pending")
+            await child.release("steer-receipt")
+            await saving.wait()
+            await capture("save-pending")
+            available = True
+            fates.append(delivery_fate_json(await steering))
+            await capture("settled")
+            return {"grants": grants, "fates": fates, "checkpoints": checkpoints}
+        finally:
+            available = True
+            await core.shutdown()
+            await registry.close()
+
+    began = time.monotonic()
+    for outcome in ("accepted", "uncertain"):
+        root = tmp_path / outcome
+        root.mkdir()
+        selected = environment(root)
+        py_path, ts_path = root / "python.sqlite", root / "typescript.sqlite"
+        with patch.dict(os.environ, selected, clear=True):
+            conn = connect(str(py_path))
+            create_schema(conn)
+            conn.commit()
+            conn.close()
+            store = ConversationStore(str(py_path), integer_now=lambda: 100)
+            asyncio.run(
+                store.create_conversation(
+                    resolve_conversation_start_request(
+                        ConversationStartRequest(
+                            conversation_id="c",
+                            model="model",
+                            workspace_folder=Path("/tmp"),
+                        )
+                    )
+                )
+            )
+            _link_worker_ticket(py_path, "c")
+            with sqlite3.connect(py_path) as source, sqlite3.connect(ts_path) as target:
+                source.backup(target)
+            expected = asyncio.run(asyncio.wait_for(exercise(py_path, outcome), 30))
+        completed = subprocess.run(
+            [
+                "node",
+                "--input-type=module",
+                "-e",
+                "import {run} from './server/conversation/testing/start_admission_core.ts';"
+                "process.stdout.write(JSON.stringify(await run(process.argv[1],process.argv[2])));",
+                str(ts_path),
+                outcome,
+            ],
+            cwd=ROOT,
+            env=selected,
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        assert completed.returncode == 0, completed.stderr
+        actual = json.loads(completed.stdout)
+        (root / "comparison.json").write_text(
+            json.dumps({"python": expected, "typescript": actual}, indent=2)
+        )
+        assert actual == expected
+        assert expected["grants"] == [True, True]
+        assert [len(point["rows"]) for point in expected["checkpoints"]] == [
+            1,
+            2,
+            2,
+            0 if outcome == "accepted" else 2,
+        ]
+        assert len(expected["checkpoints"][-1]["receipts"]) == 2
+    print(f"core steer receipt parity: {time.monotonic() - began:.3f}s")
