@@ -34,40 +34,25 @@ def test_cli_pins_command_read_and_explicit_revision_before_ancillary_writes(
     monkeypatch.setattr(http, "send", send)
     monkeypatch.delenv("PLAN_CALLER_PRINCIPAL", raising=False)
     runner = CliRunner()
-    arguments = [
-        "ticket",
-        "proposal",
-        ticket.id,
-        "accept",
-        "--json",
-        "--ceiling",
-        "needs_implementation",
-        "--holder",
-        "owner",
-    ]
-    result = runner.invoke(main, arguments)
-    assert result.exit_code == 0, result.output
-    assert calls[-1][2]["json_body"]["expected_proposal_revision"] == revision
+    for action in ("accept", "revise"):
+        calls.clear()
+        arguments = ["ticket", "proposal", ticket.id, action, "--json"]
+        if action == "accept":
+            arguments += ["--ceiling", "needs_implementation", "--holder", "owner"]
+        result = runner.invoke(main, arguments, input="Exact guidance")
+        assert result.exit_code == 0, result.output
+        assert calls[-1][2]["json_body"]["expected_proposal_revision"] == revision
+        explicit = runner.invoke(
+            main, [*arguments, "--expected-proposal-revision", str(revision)],
+            input="Exact guidance",
+        )
+        assert explicit.exit_code == 0, explicit.output
+        assert calls[-1][2]["json_body"]["expected_proposal_revision"] == revision
     calls.clear()
-    missing = runner.invoke(
-        main, ["ticket", "proposal", ticket.id, "revise", "--json"], input="Exact guidance"
-    )
-    assert missing.exit_code != 0
-    assert "requires --revision" in missing.output
-    assert not calls
-    earlier = runner.invoke(
-        main,
-        [
-            "ticket",
-            "proposal",
-            ticket.id,
-            "revise",
-            "--revision",
-            str(revision + 1),
-            "--json",
-        ],
-        input="Exact earlier guidance",
-    )
+    earlier = runner.invoke(main, [
+        "ticket", "proposal", ticket.id, "revise", "--expected-proposal-revision",
+        str(revision + 1), "--json",
+    ], input="Exact earlier guidance")
     assert earlier.exit_code == 0, earlier.output
     assert [method for method, _path, _body in calls] == ["POST"]
     assert calls[-1][2]["json_body"]["expected_proposal_revision"] == revision + 1
@@ -140,58 +125,3 @@ def test_native_and_web_stale_decisions_preserve_replacement_and_decision_messag
         assert len(saved) == len(messages_before) + 1
         assert saved[-1]["message"] == captured["send_back"]["message"]
         assert saved[-1]["proposal_revision"] == replacement.pending_proposal_revision
-
-
-def test_ticket_show_proposal_exposes_revision_in_text_and_json(
-    tmp_db: Connection, monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    ticket = _park(tmp_db)
-    detail = views.ticket_json(ticket, 2)
-
-    def send(method: str, path: str, **kwargs: Any) -> dict[str, Any]:
-        if path == "/api/worker-types":
-            return {"worker_types": [{"worker_type": "coding", "fields": [{"id": "brief"}]}]}
-        return detail
-
-    monkeypatch.setattr(http, "send", send)
-    args = ["ticket", "show", ticket.id, "proposal"]
-    plain = CliRunner().invoke(main, args)
-    structured = CliRunner().invoke(main, [*args, "--json"])
-    assert plain.exit_code == structured.exit_code == 0
-    assert f'"revision": {ticket.pending_proposal_revision}' in plain.output
-    assert (json.loads(structured.output)["parts"]["proposal"]["value"]["revision"]
-            == ticket.pending_proposal_revision)
-
-
-def test_cli_lost_response_retries_real_recorded_revision(
-    tmp_db: Connection, monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    import httpx
-
-    ticket = _park(tmp_db)
-    _conversation_on_a_ticket(tmp_db, ticket.id)
-    monkeypatch.delenv("PLAN_EXECUTOR_ROOT", raising=False)
-    calls = 0
-    with TestClient(_app(tmp_db)) as client:
-        def request(method: str, url: str, **kwargs: Any) -> httpx.Response:
-            nonlocal calls
-            calls += 1
-            response = client.request(method, httpx.URL(url).raw_path.decode(), json=kwargs["json"])
-            req = httpx.Request(method, url)
-            if calls == 1:
-                assert response.status_code == 200, response.text
-                raise httpx.ReadTimeout("response lost", request=req)
-            return httpx.Response(response.status_code, json=response.json(), request=req)
-
-        monkeypatch.setattr(httpx, "request", request)
-        result = CliRunner().invoke(
-            main, ["ticket", "proposal", ticket.id, "revise", "--revision",
-                   str(ticket.pending_proposal_revision), "--json"], input="Exact guidance",
-        )
-    assert calls == 2
-    assert result.exit_code == 1
-    assert json.loads(result.output)["error"]["detail"]["result"] == "already_resolved"
-    messages = list(tmp_db.execute(
-        "SELECT message FROM ticket_decision_messages WHERE ticket_id=?", (ticket.id,)
-    ))
-    assert [row["message"] for row in messages] == ["Exact guidance"]

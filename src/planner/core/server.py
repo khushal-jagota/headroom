@@ -183,10 +183,7 @@ def http_status_for(code: ErrorCode) -> int:
 
 async def handle_planner_error(request: Request, exc: Exception) -> JSONResponse:
     error = cast(PlannerError, exc)
-    status = http_status_for(error.code)
-    if error.code is ErrorCode.retry_later and error.detail.get("retryable") is True:
-        status = 503
-    return JSONResponse(status_code=status, content=error.to_payload())
+    return JSONResponse(status_code=http_status_for(error.code), content=error.to_payload())
 
 
 async def _stop_runtime_with_deadline(runtime: Any, deadline: float) -> None:
