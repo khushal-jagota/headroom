@@ -200,6 +200,11 @@ jobs:
                   cp "$home_output/proof-work/$log" "$home_evidence/$log"
                 fi
               done
+              for log in boot.phase.log boot.supervisor.stdout.log boot.supervisor.stderr.log; do
+                if [[ -f "$home_output/proof-work/$log" ]]; then
+                  cp "$home_output/proof-work/$log" "$home_evidence/$log"
+                fi
+              done
             fi
             printf 'seconds=%s\nexit_code=%s\n' "$SECONDS" "$native_status" > "$NATIVE_EVIDENCE/job-time.txt"
             exit "$native_status"

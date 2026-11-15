@@ -1,5 +1,7 @@
 /** Boot the exact sealed payload through its real foreground launcher, then stop it. */
-import { mkdir, writeFile } from 'node:fs/promises';
+import { writeSync } from 'node:fs';
+import { mkdir, open, writeFile } from 'node:fs/promises';
+import type { FileHandle } from 'node:fs/promises';
 import { isAbsolute, dirname, join } from 'node:path';
 import { createServer } from 'node:net';
 import type { ChildProcess } from 'node:child_process';
@@ -70,9 +72,31 @@ try {
       result: Outcome | undefined,
       closed: Promise<Outcome> | undefined,
       stop_flight: Promise<Outcome | undefined> | undefined;
+    let output: FileHandle | undefined,
+      errors: FileHandle | undefined,
+      phase_log: FileHandle | undefined;
+    const phase = (name: string, detail?: unknown) => {
+      if (!phase_log) return;
+      try {
+        writeSync(
+          phase_log.fd,
+          JSON.stringify({ phase: name, seconds: (performance.now() - began) / 1000, detail }) +
+            '\n',
+        );
+      } catch (error) {
+        console.error('Boot diagnostic write failed', error);
+      }
+    };
+    const close_output = async () => {
+      const handles = [output, errors];
+      output = undefined;
+      errors = undefined;
+      await Promise.all(handles.map((file) => file?.close()));
+    };
     const child_stopped = new AbortController();
     const stop = () =>
       (stop_flight ??= (async () => {
+        phase('stop');
         stopping = true;
         if (
           child &&
@@ -96,6 +120,13 @@ try {
         }
       })());
     try {
+      if (process.platform === 'darwin') {
+        // Siblings survive boot-root cleanup and the outer command's temporary capture cleanup.
+        phase_log = await open(join(dirname(work), 'boot.phase.log'), 'wx', 0o600);
+        output = await open(join(dirname(work), 'boot.supervisor.stdout.log'), 'wx', 0o600);
+        errors = await open(join(dirname(work), 'boot.supervisor.stderr.log'), 'wx', 0o600);
+      }
+      phase('extract');
       const manifest = await extract_app_archive(
         archive,
         app,
@@ -109,6 +140,7 @@ try {
       if (manifest.runtime_contract?.version !== 2)
         throw new Error('Boot requires the sealed Node runtime');
       require_host_node(process.version, manifest.runtime_contract);
+      phase('state');
       for (const name of [
         '',
         'config',
@@ -149,6 +181,7 @@ try {
         PLAN_REFUSE_UNIDENTIFIED_AGENT_CALLS: '1',
         PLAN_TEST_MODE: '0',
       };
+      phase('initialize');
       await initialize_candidate_home_database(
         app,
         join(state, 'data/probe.sqlite'),
@@ -156,22 +189,24 @@ try {
         process.execPath,
       );
       assert_release_execution(execution);
+      phase('launch');
       child = execution.child_processes.spawn(
         process.execPath,
         [join(app, 'server/environments/release/launcher_main.ts'), 'serve'],
         {
           cwd: app,
           env: environment,
-          stdio: 'inherit',
+          stdio: output && errors ? ['inherit', output.fd, errors.fd] : 'inherit',
           ...(process.platform === 'darwin' ? { detached: false } : {}),
         },
       );
-      closed = new Promise((resolve) => {
+      closed = new Promise<Outcome>((resolve) => {
         child!.once('exit', () => {
           exited = true;
         });
         child!.once('error', (error) => child_stopped.abort(error));
         child!.once('close', (code, signal) => {
+          phase('supervisor_close', { code, signal });
           if (!stopping)
             child_stopped.abort(
               new Error(`Foreground supervisor closed before health: ${code}/${signal}`),
@@ -179,6 +214,8 @@ try {
           resolve({ code, signal });
         });
       });
+      if (output && errors) closed = closed.finally(close_output);
+      phase('health', { pid: child.pid, port });
       const remaining = Math.min(
         UPDATE_HEALTH_TIMEOUT_SECONDS,
         deadline - performance.now() / 1000,
@@ -203,6 +240,7 @@ try {
       result = await stop();
       if (!result || result.code !== 0 || result.signal !== null)
         throw new Error('Foreground supervisor did not complete an ordinary clean stop');
+      phase('validate');
       await validate_app_manifest(join(app, 'manifest.json'), {
         expected_sha: sha,
         require_runtime: true,
@@ -217,8 +255,10 @@ try {
         supervisor_exit: result,
         seconds: (performance.now() - began) / 1000,
       });
+      phase('passed');
       register_output(work);
     } catch (error) {
+      phase('failed', error instanceof Error ? error.stack : String(error));
       let failure = error;
       try {
         result = await stop();
@@ -239,6 +279,12 @@ try {
         }
       } else console.error(`Boot cleanup is not confirmed; retain owned state at ${work}`);
       throw failure;
+    } finally {
+      // A stop observer can finish before the actual child. Its close owns these descriptors.
+      if (!child) await close_output();
+      const log = phase_log;
+      phase_log = undefined;
+      await log?.close();
     }
   });
 } catch (error) {
