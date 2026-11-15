@@ -1,8 +1,7 @@
-# Environment port, Part 2
+# Environment runtime
 
-This package ports update state, retained VPS metrics, and VPS status behind an explicit per-server runtime.
-[main.ts](../main.ts) requires the real production composition in normal mode and fails before startup until it exists.
-Its existing test-mode path remains bare. Part 4 must supply the real staging, installer, and Mac adapters first.
+This package owns update state, retained VPS metrics, and VPS status behind an explicit per-server runtime.
+Production composition supplies the staging, installer, and Mac adapters. Tests supply isolated external operations.
 
 Implementation differences that the Manager accepted as implementation details:
 
@@ -22,8 +21,12 @@ Disk writes consume no read deadline. Proof ZIP reads check size and CRC.
 The direct provider comparison includes runtime metadata's exact-match and Unicode decimal patch-version boundaries.
 Credentials stay outside records and public errors. Installation requires a running SHA, canonical installed app root, and this server's own unit.
 
-Workspace admission audits current definitions, skills, and Tickets through the existing write door and a temporary registry.
-Commit steps finish before the guarded file transition to `preparing`; refusal keeps work open. The application registry stays unchanged.
+Update preparation first closes new starts while accepted work can still save its results.
+Local child retirement retains final callbacks until their writes settle. Cancel invalidates that preparation before it reopens work.
+The final save barrier lives outside SQLite and rollback snapshots. It retains accepted executor saves through actual settlement.
+The installer holds a separate lifetime lock through installation and rollback. Startup with that lock and a durable barrier admits health checks while normal producers wait.
+An abandoned attempt releases only its own admission generation. Bounded probes retry recovery even when no file changes.
+Preparation audits current definitions, skills, and Tickets through the existing write door before the transition to `preparing`.
 All six routes require the owner and retain configured Mac health/update reads. Deployment body and revision share one captured read.
 
 The updater follows Python: startup and owner actions can schedule advancement; the readiness hook supplies later polls.
@@ -31,7 +34,15 @@ TS adds a 250 ms external-file observer; Python has no matching observer at this
 There is no separate advancement timer. Shutdown fences continuations synchronously and joins only until the shared absolute deadline.
 A standalone stop without that deadline uses the existing 30-second grace. Python does not join its daemon prefetch thread.
 Late stage, backup, and installer settlements cannot write records or publish readiness after ownership ends.
-The Node release admission bridge belongs to Part 4.
+Node releases retain exact schema-frontier admission. Python remains the migration owner.
+
+Startup recovery scopes workspace admission to each pass and retains pending recoveries through bounded backoff.
+A denied starts lease ends that boot pass without deleting its durable recovery rows. Recovery uses the shared P3 admission owner for supervisor priority, pacing, and outcome settlement.
+P3 also owns the recorded custody proofs that block idle updates, skip already retired children, and confirm local retirement.
+Until those custody proofs land, TypeScript retains native child stop and final-event drainage. The custody difference remains expected-open.
+Executor update reads select a cached service for each machine through the registered platform.
+Each machine keeps separate request IDs and reports. Darwin machines share archive bytes, and Linux storage stays separate.
+First-home installation, enrollment, Linux executor archive production and offers, and Darwin home support remain later P5 slices.
 
 The real-core proofs now cover idle-update admission after a native turn completes, HTTP write refusal without database mutation,
 continued reads, and admission reopening after installer launch failure. They use ordinary routes and scripted external operations.

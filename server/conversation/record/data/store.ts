@@ -1067,6 +1067,21 @@ export class ConversationStore
     });
   }
 
+  update_work_metadata(): ReadonlyMap<string, readonly [string, string]> {
+    return this.database.read((sql) => {
+      const result = new Map<string, readonly [string, string]>();
+      for (const row of sql.all<{ conversation_id: string; title: string; machine_id: string }>(
+        'SELECT conversation_id,title,machine_id FROM tickets WHERE conversation_id IS NOT NULL',
+      ))
+        result.set(row.conversation_id, [row.title, row.machine_id]);
+      for (const row of sql.all<{ conversation_id: string; title: string }>(
+        "SELECT a.conversation_id,m.title FROM agents a JOIN managers m ON a.agent_key='manager_' || m.id WHERE a.conversation_id IS NOT NULL",
+      ))
+        result.set(row.conversation_id, [row.title, HOME_MACHINE_ID]);
+      return result;
+    });
+  }
+
   read_live_background_task_ids(): ReadonlyMap<string, readonly string[]> {
     return this.database.read((sql) => {
       const result = new Map<string, string[]>();

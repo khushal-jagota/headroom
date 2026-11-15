@@ -1,5 +1,6 @@
 /** Invocation-owned VPS executor. Request disconnects do not cancel admitted saves. */
 import type { FastifyInstance } from 'fastify';
+import type { UpdateBarrier } from '../environments/update_barrier.ts';
 import type { Clock } from '../core/clock.ts';
 import type { Database } from '../core/database/contracts.ts';
 import type { ChangeSignal } from '../core/changes/index.ts';
@@ -70,6 +71,7 @@ export class VpsExecutor {
   readonly files: VpsFiles;
   app!: FastifyInstance;
   updates: MacUpdateServiceContract | null = null;
+  update_barrier: UpdateBarrier | undefined;
   private readonly owned = new Set<Promise<unknown>>();
   private closed = false;
   private actual_stop: Promise<void> | null = null;
@@ -114,9 +116,15 @@ export class VpsExecutor {
     this.inbox.agent_writes.conversations = conversations;
     this.runs.conversations = conversations;
   }
-  configure(conversations: SqliteProcessConversationSystem, app: FastifyInstance): void {
+  configure(
+    conversations: SqliteProcessConversationSystem,
+    app: FastifyInstance,
+    update_barrier?: UpdateBarrier,
+  ): void {
     this.bind_conversations(conversations);
     this.app = app;
+    this.update_barrier = update_barrier;
+    this.mailbox.start_admission = conversations.start_admission;
   }
   bind_updates(service: MacUpdateServiceContract): void {
     this.updates = service;
@@ -136,11 +144,19 @@ export class VpsExecutor {
     this.mailbox.high_sequence();
     await this.runs.resume_replacement_drains();
   }
-  private async owned_work<T>(work: () => Promise<T>, answer_within?: number): Promise<T> {
+  private async owned_work<T>(
+    work: () => Promise<T>,
+    answer_within?: number,
+    protect_update = false,
+  ): Promise<T> {
     this.admit();
     const task = Promise.resolve().then(() => {
       this.admit();
-      return work();
+      if (!protect_update || !this.update_barrier) return work();
+      return this.update_barrier.operation((admitted) => {
+        if (!admitted) throw new PlannerError('retry_later', 'Home update in progress.');
+        return work();
+      });
     });
     this.owned.add(task);
     void task.then(
@@ -190,7 +206,11 @@ export class VpsExecutor {
     this.admit();
     if (after < 0 || !(wait_seconds >= 0 && wait_seconds <= COMMAND_POLL_HOLD_SECONDS))
       throw new PlannerError('validation', 'invalid poll cursor or wait');
-    return this.mailbox.poll(identity, after, wait_seconds, options);
+    if (!this.update_barrier) return this.mailbox.poll(identity, after, wait_seconds, options);
+    return this.update_barrier.operation((admitted) => {
+      if (!admitted) throw new PlannerError('retry_later', 'Home update in progress.');
+      return this.mailbox.poll(identity, after, wait_seconds, options);
+    });
   }
   record_outcomes(
     identity: ExecutorIdentity,
@@ -201,6 +221,7 @@ export class VpsExecutor {
     return this.owned_work(
       () => this.mailbox.record_results(identity, report),
       COMMAND_OUTCOME_SERVER_LIMIT_SECONDS,
+      true,
     );
   }
   async accept_items(
@@ -208,8 +229,10 @@ export class VpsExecutor {
     conversation_id: string,
     batch: WireValue<'ItemBatch'>,
   ): Promise<WireValue<'ItemBatchReply'>> {
-    const reply = await this.owned_work(() =>
-      this.inbox.accept_batch(conversation_id, batch, identity),
+    const reply = await this.owned_work(
+      () => this.inbox.accept_batch(conversation_id, batch, identity),
+      undefined,
+      true,
     );
     if (reply.receipts.length) this.presence.note_conversation_activity(conversation_id);
     return reply;
@@ -221,8 +244,10 @@ export class VpsExecutor {
     content_length: WireValue<'FileManifest'>['byte_count'] | null,
     chunks: UploadSource,
   ): Promise<void> {
-    return this.owned_work(() =>
-      this.files.upload(identity, sha256, upload, content_length, chunks),
+    return this.owned_work(
+      () => this.files.upload(identity, sha256, upload, content_length, chunks),
+      undefined,
+      true,
     );
   }
   input_file(

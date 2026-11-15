@@ -82,55 +82,60 @@ export async function deliver_automatic_compaction(
 }
 
 export async function sweep_idle_children(host: SqliteProcessConversationSystem): Promise<void> {
-  await host.workspace_admission.operation(async (admitted) => {
-    if (!admitted || host.shutting_down) return;
-    const due = host.options.store.conversations_due_for_automatic_compaction({
-      due_at_or_before: Math.floor(host.unix_time_now()) - AUTOMATIC_COMPACTION_AFTER_SECONDS,
-      activity_after: Math.floor(host.unix_time_now()) - AUTOMATIC_COMPACTION_BEFORE_SECONDS,
-    });
-    for (const conversation_id of due) {
-      const state = host.conversation_state(conversation_id);
-      if (state === null || state.lock.locked) continue;
-      const reservation = await state.lock.run(async () => {
-        if (
-          state.phase === 'idle' &&
-          state.held_prompts.length === 0 &&
-          automatic_compaction_is_due(host, state)
-        ) {
-          return await host.reserve_turn(state, true);
-        }
-        return null;
+  await host.workspace_admission.operation(
+    async (admitted) => {
+      if (!admitted || host.shutting_down) return;
+      const due = host.options.store.conversations_due_for_automatic_compaction({
+        due_at_or_before: Math.floor(host.unix_time_now()) - AUTOMATIC_COMPACTION_AFTER_SECONDS,
+        activity_after: Math.floor(host.unix_time_now()) - AUTOMATIC_COMPACTION_BEFORE_SECONDS,
       });
-      if (reservation !== null) {
-        void own_settlement(state, deliver_automatic_compaction(host, state, reservation)).catch(
-          (error: unknown) => console.error('the idle conversation compaction failed', error),
-        );
-      }
-    }
-    const with_background_tasks = host.options.store.conversation_ids_with_live_background_tasks();
-    const recovered: ConversationState[] = [];
-    for (const state of host.conversations.values()) {
-      if (state.child === null || state.lock.locked) continue;
-      await state.lock.run(async () => {
-        const child = state.child;
-        if (child === null || state.phase !== 'idle') return;
-        const was_quarantined = state.child_is_quarantined;
-        if (!was_quarantined) {
-          if (with_background_tasks.has(state.record.conversation_id)) return;
-          const idle_for = host.monotonic_now() - state.last_touched_monotonic;
+      for (const conversation_id of due) {
+        const state = host.conversation_state(conversation_id);
+        if (state === null || state.lock.locked) continue;
+        const reservation = await state.lock.run(async () => {
           if (
-            idle_for < (host.options.idle_child_stop_after_seconds ?? IDLE_CHILD_STOP_AFTER_SECONDS)
-          )
-            return;
+            state.phase === 'idle' &&
+            state.held_prompts.length === 0 &&
+            automatic_compaction_is_due(host, state)
+          ) {
+            return await host.reserve_turn(state, true);
+          }
+          return null;
+        });
+        if (reservation !== null) {
+          void own_settlement(state, deliver_automatic_compaction(host, state, reservation)).catch(
+            (error: unknown) => console.error('the idle conversation compaction failed', error),
+          );
         }
-        if (!(await host.discard_child(state, child))) return;
-        if (was_quarantined && state.held_prompts.length > 0) recovered.push(state);
-      });
-    }
-    for (const state of recovered) {
-      await host.drain_held_prompts(state);
-    }
-  });
+      }
+      const with_background_tasks =
+        host.options.store.conversation_ids_with_live_background_tasks();
+      const recovered: ConversationState[] = [];
+      for (const state of host.conversations.values()) {
+        if (state.child === null || state.lock.locked) continue;
+        await state.lock.run(async () => {
+          const child = state.child;
+          if (child === null || state.phase !== 'idle') return;
+          const was_quarantined = state.child_is_quarantined;
+          if (!was_quarantined) {
+            if (with_background_tasks.has(state.record.conversation_id)) return;
+            const idle_for = host.monotonic_now() - state.last_touched_monotonic;
+            if (
+              idle_for <
+              (host.options.idle_child_stop_after_seconds ?? IDLE_CHILD_STOP_AFTER_SECONDS)
+            )
+              return;
+          }
+          if (!(await host.discard_child(state, child))) return;
+          if (was_quarantined && state.held_prompts.length > 0) recovered.push(state);
+        });
+      }
+      for (const state of recovered) {
+        await host.drain_held_prompts(state);
+      }
+    },
+    { starts: true },
+  );
 }
 
 /** Own only the timer. The core owns settlement cancellation and shutdown ordering. */

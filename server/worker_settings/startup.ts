@@ -21,6 +21,10 @@ export function initialize_worker_settings(database: Database, config: Config): 
   database.read(load_worker_runtime_definitions);
   const parent = dirname(resolve(config.db_path));
   write_skill_home(database, parent);
+}
+/** External provider and workspace effects start only after an update trial releases work. */
+export function publish_worker_skills(config: Config): void {
+  const parent = dirname(resolve(config.db_path));
   if (config.workspace_root !== null) provision_workspace_skills(config.workspace_root, parent);
   const root = fileURLToPath(new URL('../../', import.meta.url));
   const installed = !!config.app_sha && resolve(root) === join(dirname(parent), 'app');

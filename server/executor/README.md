@@ -94,6 +94,8 @@ Hashing and copying use asynchronous file operations with 256 KiB blocks and saf
 
 FileStaging is constructed before the inbox. An upload's held source parent and checked leaf pass through the inbox's second authorization into staging installation. The parent remains owned through cleanup, even if its former pathname changes. A later authorized inbox item publishes staged bytes through bounded synchronous rename groups inside the writer, after authority and version rechecks. Every source and destination parent opens before that writer. Exclusive hold links are created in retained destination parents before publication, then removed asynchronously with directory flushes after success or partial failure. Destination parents remain held through the receipt's unchanged-version check.
 
+Executor uploads refuse private Ticket names at the first path segment. Mac capture skips those names only at the Ticket root. Both boundaries use the file system's shared `PRIVATE_TICKET_NAMES` set. Nested artifact names remain valid.
+
 Hard-link holds defer overwritten-inode cleanup until after the publication writer.
 A same-user destination swap after the check inside the writer and before rename is undetected. It can release large data on the event loop.
 Hard crashes can leave `.hold-*`, `.incoming-*`, and `.tmp-*` files. No startup sweeper removes them.
@@ -111,6 +113,8 @@ Uploads require an `UploadSource` with a real `destroy` capability. The HTTP rou
 `vps_mailbox.ts::SqliteCommandMailbox` takes the application's Database and an optional millisecond clock. The existing synchronous write door owns command admission, run custody and result persistence. Polls capture raw rows, then decode commands and prepare settlement text outside the writer. The final writer checks every selected row against that preparation before any effect, reads current expiry facts and applies changes atomically. A changed selection retries preparation. Stored decoding errors surface only at Python's corresponding row visit and roll the writer back. In-memory waits observe committed rows. A canceled put observer leaves the admitted commit and its wake intact.
 
 Accepted poll and large-replacement latency measurements remain in DEVIATIONS. Gate 3 must compare them with the real table and backlog sizes on a copy of live data before further performance machinery is considered.
+
+The mailbox uses the core's shared automatic-start admission owner. It restores the exact turn binding before dispatch admission and holds a refused start or prompt. Stop and Cancel can withdraw that waiting turn across poll pages. Unrelated controls can move a waiting conversation suffix behind them, while a delivered row prevents that move. Withdrawn turns release their in-memory reservations after commit. Held polls cap their admission wait at one second, so a released slot needs no new mailbox write.
 
 Replacement withdraws waiting commands in the lease transaction. Delivered commands settle from the successor's journal cursor. A successful stop result stays delivered until `finish_by_proof` supplies actual child-stop evidence. `publish_settlements` wakes one command's waiters before its listener, then advances to the next command. A listener failure leaves the whole committed batch durable.
 

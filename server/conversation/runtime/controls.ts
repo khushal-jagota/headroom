@@ -124,7 +124,7 @@ export async function discard_held_prompt(
     return true;
   });
 }
-async function discard_all(
+export async function discard_all(
   host: SqliteProcessConversationSystem,
   state: ConversationState,
 ): Promise<void> {
@@ -174,7 +174,6 @@ export async function kill(
       lease.release();
     }
     await state.retirement_task;
-    await host.drain_held_prompts(state);
   } finally {
     try {
       if (!host.shutting_down)
@@ -183,6 +182,7 @@ export async function kill(
         );
     } finally {
       state.being_killed = false;
+      await host.drain_held_prompts(state);
     }
   }
 }
@@ -198,6 +198,7 @@ export async function send_now(
   try {
     try {
       if (
+        state.being_killed ||
         state.child_is_quarantined ||
         state.held_prompts.some((entry) => entry.delivery_uncertain) ||
         state.running_turn?.automatic_compaction
@@ -436,7 +437,8 @@ export async function steer(
   let barrier: Deferred<void> | null = null;
   let held_before: readonly string[] = [];
   try {
-    if (
+    if (state.being_killed) queued = host.hold_prompt(state, message);
+    else if (
       !state.child_is_quarantined &&
       state.phase === 'idle' &&
       state.held_prompts.length === 0 &&

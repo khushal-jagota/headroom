@@ -1,3 +1,4 @@
+import type { UpdateBarrier } from '../../environments/update_barrier.ts';
 import { gzipSync, createGzip } from 'node:zlib';
 import { Transform, Readable } from 'node:stream';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
@@ -65,6 +66,7 @@ export function installMiddleware(
   workspace?: WorkspaceAdmission,
   unidentifiedLookup: PeerLookup = resolve_loopback_peer,
   lifetime?: HttpRequestScope,
+  update_barrier?: UpdateBarrier,
 ): void {
   app.addHook('onRequest', async (request, reply) => {
     const operation = async () => {
@@ -79,6 +81,14 @@ export function installMiddleware(
               detail: {},
             },
           });
+          return;
+        }
+        if (
+          update_barrier?.frozen &&
+          !path.startsWith('/api/updates') &&
+          !path.startsWith('/api/executor/')
+        ) {
+          reply.code(503).send({ detail: 'Owner update in progress.' });
           return;
         }
         if (workspace && !path.startsWith('/api/updates') && !path.startsWith('/api/executor/')) {

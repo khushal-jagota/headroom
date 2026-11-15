@@ -108,6 +108,8 @@ Set `PANELS_TEST_SERVER_BACKEND=typescript` to select TypeScript in the existing
 
 Registered areas supply their domain routes and projections. The conversation test host supplies a scripted backend through the real core. Python still owns schema creation/migration. Real production binding and packaged supervision remain later gates. Embedded `startServer` has unavailable catalog/sign-in providers by default, while an explicit normal-mode embedding still permits generic machine probes. It is not a claim that all machine I/O is disabled.
 
+`worker_supervision` supplies durable process journals, shared observations, bounded cleanup, and the pre-execution bootstrap. Its runtime receives platform primitives and the invocation's existing process owner. Linux uses pidfds and delegated cgroup identities. macOS uses the existing native bridge for immediate PID and microsecond birth checks. Journals preserve device and inode integers exactly. Backend launch owners and durable conversation custody still need these bindings before the TypeScript port can claim the Worker behavior in [Conversations](../docs/conversations.md#worker-processes).
+
 ## Known follow-ups
 
 The write door prepares each statement on every call. Measure this cost at gate 3 before any statement cache is added.

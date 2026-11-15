@@ -72,8 +72,8 @@ export function resolve(
     available !== null ? ['available', ['update'], null, null] : ['up_to_date', [], null, null];
   if (attempt === null) return idle;
   if (attempt.state === 'waiting')
-    return attempt.mode === 'idle'
-      ? ['waiting', ['cancel', 'update_now'], null, null]
+    return attempt.mode === 'idle' || attempt.detail
+      ? ['waiting', ['cancel', 'update_now'], attempt.detail, attempt.deadline_at]
       : ['updating', [], null, attempt.deadline_at];
   if (attempt.state === 'preparing' || attempt.state === 'installing')
     return ['updating', [], null, attempt.deadline_at];

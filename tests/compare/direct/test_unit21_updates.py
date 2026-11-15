@@ -222,10 +222,6 @@ def _compare_store(
     return actual
 
 
-@pytest.mark.xfail(
-    run=False,
-    reason="expected-open P5: #916 publication records add Linux executor metadata",
-)
 def test_attempt_store_preserves_versions_and_compare_and_swap(
     tmp_path: Path,
     request: pytest.FixtureRequest,
@@ -494,10 +490,6 @@ def test_attempt_store_waits_for_python_lock_and_rechecks_state(
             child.wait(timeout=10)
 
 
-@pytest.mark.xfail(
-    run=False,
-    reason="expected-open P5: #916 update experience carries Linux executor metadata",
-)
 def test_update_experience_and_microsecond_boundaries_match_python(
     tmp_path: Path,
     request: pytest.FixtureRequest,
@@ -1018,7 +1010,7 @@ def test_service_continuations_fence_stop_and_observe_external_attempts(
         "backup": 1,
         "prepare": 0,
         "launch": 0,
-        "state": "preparing",
+        "state": "installing",
         "closed": True,
         "poll": False,
         "unchanged_after_ownership": True,
@@ -1044,6 +1036,12 @@ def test_service_continuations_fence_stop_and_observe_external_attempts(
         "holds_worker_pass": True,
         "state": "installing",
         "launches": 1,
+    }
+    assert actual["stopped_waits"] == {
+        phase: {
+            "updates_settled": True, "original_pending": True, "starts_closed": True,
+            "state": "waiting", "launches": 0,
+        } for phase in ("preparation", "save")
     }
     _report(
         request,
@@ -1584,3 +1582,90 @@ def test_provider_trust_evidence_and_streamed_download_match_python(
             ),
         },
     )
+
+
+def test_preparation_save_cut_cancel_and_stale_recovery_match_python(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, request: pytest.FixtureRequest
+) -> None:
+    """Risk: Cancel or stale recovery admits a snapshot before accepted saves settle.
+
+    Reuses the populated service/database fixture and native attempt and barrier files.
+    Existing owner-action cases do not retain an admitted save across cancellation.
+    """
+    import asyncio
+    from datetime import datetime
+
+    from planner.environments.update_barrier import UpdateBarrier
+
+    started = time.perf_counter()
+    host, value = _service_fixture(tmp_path, monkeypatch, seed_callers=True)
+    barrier = UpdateBarrier(host.root / "data" / "update-barrier.json")
+    host.service._update_barrier = barrier
+    monkeypatch.setattr(host.service, "schedule_advance", lambda: None)
+    answers: list[dict[str, Any]] = []
+
+    def snapshot() -> None:
+        status = host.service.status()
+        attempt = host.store.read()
+        answers.append({
+            "state": status.state, "actions": list(status.allowed_actions),
+            "activity": status.activity, "detail": status.detail, "deadline": status.deadline_at,
+            "attempt": None if attempt is None else {
+                "state": attempt.state, "mode": attempt.mode, "detail": attempt.detail,
+            },
+            "closed": host.system.workspace_admission.closed,
+            "starts_closed": host.system.workspace_admission.starts_closed,
+            "frozen": barrier.frozen, "launches": len(host.launched),
+        })
+
+    async def sequence() -> None:
+        host.system.activity = "busy"
+        first = host.service.install(host.release.manifest.app_sha, "idle", confirm_activity=False)
+        await host.service.advance()
+        snapshot()
+        epoch = datetime.fromisoformat(NOW).timestamp() + 301
+        host.service._now = lambda: epoch
+        await host.service.advance()
+        snapshot()
+        host.service.update_now(first.attempt_id, confirm_activity=True)
+        snapshot()
+        host.service.cancel(first.attempt_id)
+        snapshot()
+
+        with barrier.operation() as admitted:
+            assert admitted
+            second = host.service.install(
+                host.release.manifest.app_sha, "now", confirm_activity=True
+            )
+            advance = asyncio.create_task(host.service.advance())
+            for _ in range(5000):
+                attempt = host.store.read()
+                if attempt is not None and attempt.state == "preparing" and barrier.frozen:
+                    break
+                await asyncio.sleep(0.001)
+            else:
+                raise AssertionError("Preparation did not reach the save cut")
+            snapshot()
+            host.service.cancel(second.attempt_id)
+        await asyncio.gather(advance, return_exceptions=True)
+        snapshot()
+
+        third = host.service.install(host.release.manifest.app_sha, "idle", confirm_activity=False)
+        old_generation = barrier.generation
+        barrier.freeze(third.attempt_id)
+        stale_generation = host.service.recover_orphaned_attempt(third.attempt_id, old_generation)
+        stale_attempt = host.service.recover_orphaned_attempt(second.attempt_id, barrier.generation)
+        answers.append({
+            "stale_generation": stale_generation, "stale_attempt": stale_attempt,
+            "frozen": barrier.frozen, "preserved": host.store.read().attempt_id == third.attempt_id,
+        })
+        host.service.cancel(third.attempt_id)
+        host.service.stop()
+
+    asyncio.run(sequence())
+    actual = _node(tmp_path, value, "probe_preparation")
+    assert actual == answers
+    _report(request, "unit21-preparation-save-cut.json", {
+        "complete": True, "answers": actual, "seconds": time.perf_counter() - started,
+        "new_browser_hosts": 0, "new_service_hosts": 0,
+    })

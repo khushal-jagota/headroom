@@ -86,6 +86,7 @@ export class ConversationState {
   readonly settlement_tasks = new Set<Promise<unknown>>();
   readonly backend_events: (() => Promise<void>)[] = [];
   backend_event_pump: Promise<void> | null = null;
+  backend_event_failures = 0;
   reserved_turn: ReservedTurn | null = null;
   running_turn: RunningTurn | null = null;
   last_ended_turn_token: TurnToken | null = null;

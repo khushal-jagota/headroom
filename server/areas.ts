@@ -96,6 +96,12 @@ export function createAreasRuntime(
     startRecordReplay(admission?: { readonly closed: boolean }): void {
       conversation.start_rebuild(admission);
     },
+    async startNavigationServices(): Promise<void> {
+      await navigation!.start();
+    },
+    async startPreviewServices(): Promise<void> {
+      await previews.start();
+    },
     async startRouteServices(): Promise<void> {
       await navigation!.start();
       await previews.start();

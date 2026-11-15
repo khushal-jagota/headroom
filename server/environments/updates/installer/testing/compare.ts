@@ -8,6 +8,7 @@ import type { SpawnOptions } from 'node:child_process';
 import { ChildProcesses } from '../../../../lifecycle/owned_processes.ts';
 import { INSTALLED_RUNTIME_CLASSIFIER_SOURCE } from '../../../release/units.ts';
 import { install } from '../install.ts';
+import { UpdateBarrier } from '../../../update_barrier.ts';
 import { create_installer_effects } from '../commands.ts';
 import type { InstallerEffects, InstallerRequest } from '../contracts.ts';
 
@@ -258,7 +259,9 @@ export async function installer_probe(input: Input) {
           snapshot,
           value.database,
         ]);
-        assert.deepEqual(options.stdio, ['ignore', 'inherit', 'inherit']);
+        assert(Array.isArray(options.stdio));
+        assert.deepEqual(options.stdio.slice(0, 3), ['ignore', 'inherit', 'inherit']);
+        assert.equal(typeof options.stdio[3], 'number');
         assert.equal(
           JSON.parse(fs.readFileSync(join(current, 'app/manifest.json'), 'utf8')).app_sha,
           FROM,
@@ -266,7 +269,7 @@ export async function installer_probe(input: Input) {
         counts.restore_witnesses++;
         witness = [
           '-e',
-          "require('node:fs').writeFileSync(process.argv[1],'ready');setInterval(()=>{},1000)",
+          "require('node:fs').fstatSync(3);require('node:fs').writeFileSync(process.argv[1],'ready');setInterval(()=>{},1000)",
           ready,
         ];
       }
@@ -286,6 +289,11 @@ export async function installer_probe(input: Input) {
               assert(performance.now() < deadline, 'restore witness did not become ready');
               await delay(5);
             }
+            assert(
+              new UpdateBarrier(join(value.data_directory, 'update-barrier.json')).installer_active(
+                ATTEMPT,
+              ),
+            );
             owner.seal();
             controller.abort(abort_reason);
           } catch (error) {
@@ -328,6 +336,12 @@ export async function installer_probe(input: Input) {
         (error) => {
           assert.equal(error, abort_reason);
           assert(restore_closed, 'installer returned before the exact restore child closed');
+          assert.equal(
+            new UpdateBarrier(join(value.data_directory, 'update-barrier.json')).installer_active(
+              ATTEMPT,
+            ),
+            false,
+          );
           return true;
         },
       );

@@ -3,8 +3,10 @@ import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { setTimeout as pause } from 'node:timers/promises';
 import { createDatabase } from '../../../core/database/index.ts';
+import { observe_promise } from '../../../core/promise_observer.ts';
 import { register_test_root } from '../../../core/test_paths.ts';
 import { ChangeSignal } from '../../../core/changes/index.ts';
+import { UpdateBarrier } from '../../update_barrier.ts';
 import { WorkspaceAdmission } from '../../../conversation/workspace_admission.ts';
 import type { ConversationSystem } from '../../../conversation/contracts.ts';
 import { FileUpdateAttemptStore } from '../attempts.ts';
@@ -41,6 +43,7 @@ interface Hooks {
   migrate?: boolean;
   schema?: () => Promise<boolean>;
   commit_fault?: boolean;
+  update_barrier?: UpdateBarrier;
 }
 function deferred() {
   let release!: () => void;
@@ -75,11 +78,29 @@ function harness(request: ServiceProbeRequest, hooks: Hooks = {}) {
   const system = {
     workspace_admission: barrier,
     workspace_activity: () => (barrier.closed ? 'unknown' : activity),
+    prepare_update: async (mode: 'idle' | 'now', _signal?: AbortSignal) => {
+      barrier.close_starts();
+      if (barrier.active || (mode === 'idle' && activity !== 'idle')) return false;
+      return barrier.closed || barrier.claim(() => {}, { idle: () => true, require_idle: true });
+    },
+    cancel_update: () => {
+      barrier.reopen();
+      return true;
+    },
+    update_waiting_work: () => (activity !== 'idle' ? ['Example Worker'] : []),
     run_with_workspace_admission: async (
       operation: () => void,
       options: { require_idle: boolean },
     ) => barrier.claim(operation, { ...options, idle: () => activity === 'idle' }),
-  } as ConversationSystem;
+  } satisfies Pick<
+    ConversationSystem,
+    | 'workspace_admission'
+    | 'workspace_activity'
+    | 'prepare_update'
+    | 'cancel_update'
+    | 'update_waiting_work'
+    | 'run_with_workspace_admission'
+  >;
   const release = parse_release(request.release),
     staged = staged_app_path(request.root, release.manifest.app_sha);
   mkdirSync(staged, { recursive: true });
@@ -89,6 +110,7 @@ function harness(request: ServiceProbeRequest, hooks: Hooks = {}) {
     () => request.now,
   );
   const service = new UpdateService({
+    update_barrier: hooks.update_barrier,
     provider: {
       available: async () => {
         counts.provider++;
@@ -101,7 +123,8 @@ function harness(request: ServiceProbeRequest, hooks: Hooks = {}) {
     attempts,
     runtime: {
       database,
-      conversation: () => system,
+      // This scripted host supplies exactly the service-consumed conversation contract.
+      conversation: () => system as unknown as ConversationSystem,
       assert_database_owned: () => {
         if (!owned) throw new Error('ownership ended');
       },
@@ -615,6 +638,56 @@ export async function probe_continuations(request: ServiceProbeRequest) {
   } finally {
     await timer.close();
   }
+  // A timed-out observer owns no retirement or accepted save after its wait ends.
+  const stopped_waits: Record<string, unknown> = {};
+  for (const phase of ['preparation', 'save'] as const) {
+    const root = join(request.root, `timed-out-${phase}`);
+    mkdirSync(root, { recursive: true });
+    const durable = new UpdateBarrier(join(root, 'update-barrier.json'));
+    const host = harness({ ...request, root }, { update_barrier: durable });
+    const retirement = deferred();
+    let original_pending = true;
+    void retirement.promise.then(() => {
+      original_pending = false;
+    });
+    const save = phase === 'save' ? durable.operation() : null;
+    if (phase === 'preparation') {
+      host.system.prepare_update = async (_mode, signal) => {
+        host.barrier.close_starts();
+        const observed = await observe_promise(retirement.promise, signal!);
+        return observed.completed;
+      };
+    }
+    host.service.schedule_advance = () => {};
+    try {
+      host.service.start();
+      await host.service.prefetch();
+      const attempt = host.service.install(host.release.manifest.app_sha, 'now', {
+        confirm_activity: true,
+      });
+      host.attempts.change(attempt.attempt_id, new Set(['waiting']), (current) => ({
+        ...current,
+        deadline_at: new Date(
+          Number(instant(request.now).epochMicroseconds) / 1000 + 20,
+        ).toISOString(),
+      }));
+      await host.service.advance();
+      await host.service.stop({ deadline: performance.now() / 1000 + 0.1 });
+      await host.service.settled();
+      stopped_waits[phase] = {
+        updates_settled: true,
+        original_pending: phase === 'save' ? !durable.drained : original_pending,
+        starts_closed: host.barrier.starts_closed,
+        state: host.attempts.read()?.state,
+        launches: host.counts.launch,
+      };
+    } finally {
+      retirement.release();
+      save?.release();
+      await host.close();
+    }
+  }
+  result.stopped_waits = stopped_waits;
   return result;
 }
 
@@ -719,6 +792,90 @@ export async function probe_update_routes(request: RouteRequest) {
     };
   } finally {
     await app.close();
+    await host.close();
+  }
+}
+
+/** Retained service fixture: save-cut cancellation and stale recovery without native services. */
+export async function probe_preparation(request: ServiceProbeRequest) {
+  const durable = new UpdateBarrier(join(request.root, 'update-barrier.json'));
+  const host = harness(request, { update_barrier: durable });
+  host.service.schedule_advance = () => {};
+  host.service.start();
+  await host.service.prefetch();
+  const answers: unknown[] = [];
+  const snapshot = () => {
+    const status = host.service.status(),
+      attempt = host.attempts.read();
+    answers.push({
+      state: status.state,
+      actions: status.allowed_actions,
+      activity: status.activity,
+      detail: status.detail,
+      deadline: status.deadline_at,
+      attempt:
+        attempt === null
+          ? null
+          : { state: attempt.state, mode: attempt.mode, detail: attempt.detail },
+      closed: host.barrier.closed,
+      starts_closed: host.barrier.starts_closed,
+      frozen: durable.frozen,
+      launches: host.counts.launch,
+    });
+  };
+  try {
+    host.activity('busy');
+    const first = host.service.install(host.release.manifest.app_sha, 'idle', {
+      confirm_activity: false,
+    });
+    await host.service.advance();
+    snapshot();
+    host.now(Number(instant(request.now).epochMicroseconds) / 1_000_000 + 301);
+    await host.service.advance();
+    snapshot();
+    host.service.update_now(first.attempt_id, { confirm_activity: true });
+    snapshot();
+    host.service.cancel(first.attempt_id);
+    snapshot();
+
+    const save = durable.operation();
+    if (!save.admitted) throw new Error('Synthetic save was refused');
+    const second = host.service.install(host.release.manifest.app_sha, 'now', {
+      confirm_activity: true,
+    });
+    const advance = host.service.advance();
+    for (let i = 0; host.attempts.read()?.state !== 'preparing'; i++) {
+      if (i > 5000) throw new Error('Preparation did not reach the save cut');
+      await pause(1);
+    }
+    snapshot();
+    host.service.cancel(second.attempt_id);
+    await advance;
+    snapshot();
+    save.release();
+
+    const third = host.service.install(host.release.manifest.app_sha, 'idle', {
+      confirm_activity: false,
+    });
+    const old_generation = durable.generation;
+    durable.freeze(third.attempt_id);
+    const stale_generation = host.service.recover_orphaned_attempt(
+      third.attempt_id,
+      old_generation,
+    );
+    const stale_attempt = host.service.recover_orphaned_attempt(
+      second.attempt_id,
+      durable.generation,
+    );
+    answers.push({
+      stale_generation,
+      stale_attempt,
+      frozen: durable.frozen,
+      preserved: host.attempts.read()?.attempt_id === third.attempt_id,
+    });
+    host.service.cancel(third.attempt_id);
+    return answers;
+  } finally {
     await host.close();
   }
 }

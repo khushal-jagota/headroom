@@ -10,7 +10,8 @@ import {
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { it } from 'vitest';
+import { it, vi } from 'vitest';
+import { UpdateBarrier } from '../../update_barrier.ts';
 import { ChildProcesses } from '../../../lifecycle/owned_processes.ts';
 import { create_installer_effects } from './commands.ts';
 import { assert_installer_path } from './configuration.ts';
@@ -147,6 +148,88 @@ it('refuses non-loopback health URLs despite a supplied normal-mode environment'
     owner.seal();
     controller.abort();
     await owner.settled();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+it('releases the barrier before healthy records on success and rollback as Python does', async () => {
+  // Final-row parity cannot prove the release point. Python releases after the
+  // health result, before its healthy record and terminal state on both paths.
+  const root = mkdtempSync(join(tmpdir(), 'panels-installer-terminal-'));
+  const original = InstallationRecord.prototype.record;
+  try {
+    for (const rollback of [false, true]) {
+      const current = join(root, rollback ? 'rollback' : 'success');
+      const data = join(current, 'records');
+      const from = 'a'.repeat(40),
+        to = 'b'.repeat(40);
+      mkdirSync(data, { recursive: true });
+      mkdirSync(join(current, 'app'));
+      mkdirSync(join(current, '.app-next-' + to));
+      writeFileSync(join(current, 'app/manifest.json'), JSON.stringify({ app_sha: from }));
+      writeFileSync(
+        join(data, 'update-attempt.json'),
+        JSON.stringify({
+          attempt_id: 'terminal',
+          state: 'installing',
+          from_sha: from,
+          to_sha: to,
+          steps: {},
+        }),
+      );
+      const barrier = new UpdateBarrier(join(data, 'update-barrier.json'));
+      barrier.freeze('terminal');
+      const writes: string[] = [];
+      let healthy_recorded = false;
+      const record = vi.spyOn(InstallationRecord.prototype, 'record').mockImplementation(function (
+        this: InstallationRecord,
+        step,
+        state,
+        detail,
+      ) {
+        if (step === 'healthy' || step === 'rollback_healthy') healthy_recorded = true;
+        assert.equal(existsSync(barrier.path), !healthy_recorded, 'Python health-release order');
+        original.call(this, step, state, detail);
+        if (state === 'done' || state === 'failed') writes.push(state);
+      });
+      try {
+        const code = await install(
+          {
+            current_root: current,
+            database: join(data, 'database.sqlite'),
+            data_directory: data,
+            attempt_id: 'terminal',
+            node_executable: process.execPath,
+            service_unit: 'never-start.service',
+            health_url: 'http://127.0.0.1:0',
+            health_timeout_seconds: 1,
+            admitted_legacy_null_sha: null,
+          },
+          {
+            async service() {},
+            async capture() {
+              return { kind: 'returned', returncode: 0 };
+            },
+            async restore() {
+              assert.fail('this scenario does not restore a snapshot');
+            },
+            async healthy(sha) {
+              assert(existsSync(barrier.path), 'barrier released before health finished');
+              return !rollback || sha === from;
+            },
+          },
+          { stderr() {} },
+          new AbortController().signal,
+        );
+        assert.equal(code, rollback ? 1 : 0);
+        assert.deepEqual(writes, [rollback ? 'failed' : 'done']);
+        assert(healthy_recorded);
+        assert(!existsSync(barrier.path));
+      } finally {
+        record.mockRestore();
+      }
+    }
+  } finally {
     rmSync(root, { recursive: true, force: true });
   }
 });

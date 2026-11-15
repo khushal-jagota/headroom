@@ -28,6 +28,7 @@ from planner.executor.protocol import (
     encode_bounded,
     type_adapter,
 )
+from planner.files.logic.paths import PRIVATE_TICKET_NAMES
 
 ROOT = Path(__file__).resolve().parents[3]
 NOW_NS = 1_700_000_010_000_000_000
@@ -277,13 +278,17 @@ def test_unit22_mac_spool_rows_capture_receipts_and_crash(
         for root in (py, ts):
             shutil.copytree(seed, root)
             folder = root / "artifacts/tickets/ticket"
-            folder.mkdir(parents=True)
-            (folder / "old.txt").write_bytes("stable bytes 🦉\n".encode())
+            (folder / "out").mkdir(parents=True)
+            (folder / "out/.panels-workspace.json").write_bytes("stable bytes 🦉\n".encode())
             (folder / "recent.txt").write_bytes(b"recent-A\n")
-            os.utime(folder / "old.txt", ns=(NOW_NS, NOW_NS - 10_000_000_001))
+            os.utime(folder / "out/.panels-workspace.json", ns=(NOW_NS, NOW_NS - 10_000_000_001))
             os.utime(folder / "recent.txt", ns=(NOW_NS, NOW_NS - 500_000_123))
             (root / "outside").write_bytes(b"do not capture symlink targets")
             (folder / "link.txt").symlink_to(root / "outside")
+            (folder / "worktree").mkdir()
+            (folder / "worktree/private").write_bytes(b"private")
+            for name in PRIVATE_TICKET_NAMES - {"worktree"}:
+                (folder / name).write_bytes(b"private")
 
         def paired(steps: list[dict[str, Any]], opened: float) -> None:
             expected = _reference(py, steps, opened, opened + 0.375, monkeypatch)

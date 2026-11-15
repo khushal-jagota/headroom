@@ -21,6 +21,8 @@ interface Inspection {
 
 interface Operation {
   action: string;
+  machine_id?: string;
+  platform?: string;
   key?: string | null;
   sha?: string;
   provider?: boolean;
@@ -208,9 +210,11 @@ syncBuiltinESMExports();\n`,
       },
     };
     const root = join(request.root, 'mac-updates');
+    const platforms = new Map<string, string>();
     const make = (sha: string, available: boolean) =>
       new MacUpdateService({
         root,
+        platform_for: (id) => platforms.get(id) ?? 'darwin',
         attempts,
         provider: available ? provider : null,
         current_app_sha: sha,
@@ -219,13 +223,27 @@ syncBuiltinESMExports();\n`,
         ready_release: () => ready,
         emit_change: () => emitted++,
       });
-    let service = make('a'.repeat(40), true);
+    let primary = make('a'.repeat(40), true);
     const output: unknown[] = [];
     for (const operation of request.operations) {
       if (stopping) throw new Error('Mac fixture terminated');
       try {
         let result: unknown = null;
+        const service = (
+          operation.machine_id ? primary.for_machine(operation.machine_id) : primary
+        ) as MacUpdateService;
         switch (operation.action) {
+          case 'platform':
+            platforms.set(operation.machine_id!, operation.platform!);
+            break;
+          case 'machine':
+            result = {
+              cached: service === primary.for_machine(operation.machine_id!),
+              root: relative(root, service.root),
+              archive_root: relative(root, service.archive_root),
+              platform: service.platform,
+            };
+            break;
           case 'prepare':
             await service.prepare(releases[operation.key!]!);
             break;
@@ -239,7 +257,7 @@ syncBuiltinESMExports();\n`,
             ready = operation.key == null ? null : releases[operation.key]!;
             break;
           case 'restart':
-            service = make(operation.sha!, operation.provider!);
+            primary = make(operation.sha!, operation.provider!);
             break;
           case 'check':
             result = service.check();
@@ -255,7 +273,7 @@ syncBuiltinESMExports();\n`,
             break;
           case 'report_evidence': {
             const path = join(
-              root,
+              service.root,
               'reports',
               createHash('sha256').update(operation.id!).digest('hex') + '.json',
             );
@@ -277,7 +295,7 @@ syncBuiltinESMExports();\n`,
               .digest('hex');
             break;
           case 'expire_applied': {
-            const path = join(root, 'applied.json');
+            const path = join(service.root, 'applied.json');
             const value = JSON.parse(await readFile(path, 'utf8')) as {
               release: { expires_at: string };
             };
@@ -286,7 +304,7 @@ syncBuiltinESMExports();\n`,
             break;
           }
           case 'archives':
-            result = (await readdir(join(root, 'archives'))).sort();
+            result = (await readdir(join(service.archive_root, 'archives'))).sort();
             break;
           default:
             throw new Error('unknown Mac comparison operation');

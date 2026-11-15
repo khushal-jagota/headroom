@@ -3,6 +3,7 @@ export const INSTALLER_RECIPE_PATH = 'runtime/installer-files.json';
 export const INSTALLER_ENTRY = 'server/environments/updates/installer/main.ts';
 export const INSTALLER_SOURCE_FILES = [
   INSTALLER_ENTRY,
+  'server/environments/update_barrier.ts',
   'server/environments/updates/installer/install.ts',
   'server/environments/updates/installer/commands.ts',
   'server/environments/updates/installer/health.ts',

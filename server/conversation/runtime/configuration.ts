@@ -13,3 +13,7 @@ export const STANDARD_ERROR_TAIL_MAXIMUM_CHARACTERS = 2048;
 
 /** Python CONVERSATION_WRITE_LOCK_RETRY_SECONDS, in the Node timer unit. */
 export const WRITE_LOCK_RETRY_MILLISECONDS = 50;
+
+/** Startup recovery retries release workspace admission during every pause. */
+export const DEPLOY_RECOVERY_FIRST_RETRY_SECONDS = 1;
+export const DEPLOY_RECOVERY_MAX_RETRY_SECONDS = 60;
