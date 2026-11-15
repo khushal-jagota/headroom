@@ -153,6 +153,7 @@ async def start_peer(
     catalog_model: str | None = None,
     catalog_complete: bool = True,
     claude_cleanup: bool = False,
+    entrypoint: str | Path | None = None,
 ) -> NodePeer:
     source = root / f"node-{sequence}.json"
     source.write_text(
@@ -178,10 +179,13 @@ async def start_peer(
         )
     )
     log = root / f"node-{sequence}.log"
+    script = (
+        str(entrypoint) if entrypoint is not None else "server/executor/mac/testing/end_to_end.ts"
+    )
     with log.open("wb") as output:
         process = await asyncio.create_subprocess_exec(
             "node",
-            "server/executor/mac/testing/end_to_end.ts",
+            script,
             str(source),
             cwd=ROOT,
             env=environment,
@@ -242,6 +246,7 @@ class Harness:
         handoff_path: str | Path | None = None,
         catalog_model: str | None = None,
         catalog_complete: bool = True,
+        entrypoint: str | Path | None = None,
     ) -> None:
         self.mac_sequence += 1
         self.revision = revision or self.revision
@@ -257,6 +262,7 @@ class Harness:
             catalog_model=catalog_model,
             catalog_complete=catalog_complete,
             claude_cleanup=self.claude_cleanup,
+            entrypoint=entrypoint,
         )
 
         async def leased() -> bool:

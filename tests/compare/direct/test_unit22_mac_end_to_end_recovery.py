@@ -114,13 +114,6 @@ async def owner_answer(harness: Harness, ask: AskReference) -> dict[str, str]:
     return await post_owner_answer(cast(ExecutorHarness, harness), ask)
 
 
-@pytest.mark.xfail(
-    run=False,
-    reason=(
-        "expected-open P2: #916 staging protocol24 machine credentials and cleanup "
-        "leases leave the TS22 Mac unleased"
-    ),
-)
 def test_live_events_bypass_storage_and_completed_message_survives_link_loss(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -185,13 +178,6 @@ def test_live_events_bypass_storage_and_completed_message_survives_link_loss(
     asyncio.run(run())
 
 
-@pytest.mark.xfail(
-    run=False,
-    reason=(
-        "expected-open P2: #916 staging protocol24 machine credentials and cleanup "
-        "leases leave the TS22 Mac unleased"
-    ),
-)
 def test_permanent_refusals_receive_durable_receipts_and_release_conversation_queue(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -254,13 +240,6 @@ def test_permanent_refusals_receive_durable_receipts_and_release_conversation_qu
 
 
 @pytest.mark.parametrize("invalid_descriptor", ["mismatched", "traversal"])
-@pytest.mark.xfail(
-    run=False,
-    reason=(
-        "expected-open P2: #916 staging protocol24 machine credentials and cleanup "
-        "leases leave the TS22 Mac unleased"
-    ),
-)
 def test_artifact_descriptor_must_validate_before_publication_and_backend_row(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, invalid_descriptor: str
 ) -> None:
@@ -334,13 +313,6 @@ def test_artifact_descriptor_must_validate_before_publication_and_backend_row(
     asyncio.run(run())
 
 
-@pytest.mark.xfail(
-    run=False,
-    reason=(
-        "expected-open P2: #916 staging protocol24 machine credentials and cleanup "
-        "leases leave the TS22 Mac unleased"
-    ),
-)
 def test_authenticated_catalog_exchange_timeout_preserves_active_child(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -413,13 +385,6 @@ def test_authenticated_catalog_exchange_timeout_preserves_active_child(
     asyncio.run(run())
 
 
-@pytest.mark.xfail(
-    run=False,
-    reason=(
-        "expected-open P2: #916 staging protocol24 machine credentials and cleanup "
-        "leases leave the TS22 Mac unleased"
-    ),
-)
 def test_vps_core_recreation_keeps_mac_run_live(tmp_path: Path) -> None:
     async def run() -> None:
         async with boot(tmp_path) as harness:
@@ -455,13 +420,6 @@ def test_vps_core_recreation_keeps_mac_run_live(tmp_path: Path) -> None:
 
 
 @pytest.mark.parametrize("kind", [AskKind.permission, AskKind.user_input])
-@pytest.mark.xfail(
-    run=False,
-    reason=(
-        "expected-open P2: #916 staging protocol24 machine credentials and cleanup "
-        "leases leave the TS22 Mac unleased"
-    ),
-)
 def test_durable_answer_saved_while_the_mac_is_unreachable_is_delivered_after_vps_restart(
     tmp_path: Path, kind: AskKind
 ) -> None:
@@ -509,13 +467,6 @@ def test_durable_answer_saved_while_the_mac_is_unreachable_is_delivered_after_vp
 
 
 @pytest.mark.parametrize("kind", [AskKind.permission, AskKind.user_input])
-@pytest.mark.xfail(
-    run=False,
-    reason=(
-        "expected-open P2: #916 staging protocol24 machine credentials and cleanup "
-        "leases leave the TS22 Mac unleased"
-    ),
-)
 def test_local_cancel_revokes_saved_answer_before_native_wait_across_restart(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, kind: AskKind
 ) -> None:
