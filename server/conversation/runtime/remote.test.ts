@@ -304,7 +304,28 @@ test('kill during replay ends its turn and asks before a late successful reply',
       child_id: reference.child_id,
     });
     vi.spyOn(child, 'withdraw_delivery').mockResolvedValue(false);
-    vi.spyOn(child, 'stop').mockResolvedValue();
+    let retirement_confirmed = false;
+    Object.assign(f.core.options.backend_child_factories.codex, {
+      recover: () => child,
+      retained_runs: () => [
+        new RetainedBackendRun({
+          reference,
+          turn: token,
+          delivery_uncertain: false,
+          retirement_confirmed,
+        }),
+      ],
+    });
+    vi.spyOn(child, 'stop').mockImplementation(async () => {
+      retirement_confirmed = true;
+    });
+    const detach = child.detach.bind(child);
+    let detached = false;
+    vi.spyOn(child, 'detach').mockImplementation(async () => {
+      if (detached) return;
+      await detach();
+      detached = true;
+    });
     const write = vi.spyOn(child, 'write_prompt').mockImplementation(async () => {
       entered.resolve();
       await release.promise;
@@ -393,6 +414,9 @@ test('kill during replay ends its turn and asks before a late successful reply',
       ],
     });
     await f.core.wait_until_quiescent();
+    // The earlier confirmed Stop cleared the active source. This separate retirement
+    // names the same retained historical receipt for its source-only binding.
+    state.retained_child_reference = reference;
     expect(await f.core.retire_child_for_rebind(state, child)).toBe(true);
     expect(f.core.start_admission.snapshots()).toEqual([]);
     expect(f.database.read((sql) => sql.all('SELECT * FROM automatic_start_bindings'))).toEqual([]);
