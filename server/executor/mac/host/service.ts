@@ -399,13 +399,15 @@ export class MacService {
       this.child_processes.settled(),
       this.one_shot_children.settled(),
     ]);
-    await this.join([(async () => {
-      try {
-        await this.worker_supervision.close(this.options!);
-      } finally {
-        await this.worker_supervision.shutdown_settled;
-      }
-    })()]);
+    await this.join([
+      (async () => {
+        try {
+          await this.worker_supervision.close(this.options!);
+        } finally {
+          await this.worker_supervision.shutdown_settled;
+        }
+      })(),
+    ]);
     for (const owner of [this.update_files, this.files, this.journal, this.outbox]) {
       this.begin_stop(owner);
       await this.join([owner.settled()]);

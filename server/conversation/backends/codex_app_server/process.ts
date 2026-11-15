@@ -18,12 +18,21 @@ export interface CodexProcessOptions {
 /** Provider policy around the shared native lifetime owner. */
 export class OwnedCodexProcess extends OwnedProcess {
   override stop(options: Partial<ProcessStopOptions> & Partial<StopOptions> = {}): Promise<void> {
-    const remaining = options.deadline === undefined ? Infinity : Math.max(0, options.deadline - monotonic_seconds());
-    const grace_seconds = Math.min(options.grace_seconds ?? CHILD_SHUTDOWN_GRACE_SECONDS, remaining);
+    const remaining =
+      options.deadline === undefined
+        ? Infinity
+        : Math.max(0, options.deadline - monotonic_seconds());
+    const grace_seconds = Math.min(
+      options.grace_seconds ?? CHILD_SHUTDOWN_GRACE_SECONDS,
+      remaining,
+    );
     return super.stop({
       ...options,
       grace_seconds,
-      kill_wait_seconds: Math.min(options.kill_wait_seconds ?? CHILD_KILL_WAIT_SECONDS, Math.max(0, remaining - grace_seconds)),
+      kill_wait_seconds: Math.min(
+        options.kill_wait_seconds ?? CHILD_KILL_WAIT_SECONDS,
+        Math.max(0, remaining - grace_seconds),
+      ),
     });
   }
 }

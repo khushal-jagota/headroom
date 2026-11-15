@@ -76,7 +76,9 @@ it('clears a failed reader and disconnects once across repeated stop calls', asy
     expect(disconnect).toHaveBeenCalledTimes(1);
     expect(disconnect).toHaveBeenCalledWith(options);
     let actually_settled = false;
-    const joined = child.settled().then(() => { actually_settled = true; });
+    const joined = child.settled().then(() => {
+      actually_settled = true;
+    });
     await Promise.resolve();
     expect(actually_settled).toBe(false);
     native_settled.resolve();

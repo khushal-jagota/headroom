@@ -173,7 +173,9 @@ test('an uncertain Worker stop retains scratch and retries custody cleanup while
   supervisor.shutdown_settled = actual.promise;
   await launcher.stop({ deadline });
   let actually_settled = false;
-  const joined = launcher.settled().then(() => { actually_settled = true; });
+  const joined = launcher.settled().then(() => {
+    actually_settled = true;
+  });
   await Promise.resolve();
   expect(actually_settled).toBe(false);
   actual.resolve();
