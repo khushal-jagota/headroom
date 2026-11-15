@@ -103,7 +103,10 @@ export type CodexClient = Pick<
   | 'standard_error_bytes_so_far'
   | 'standard_error_since'
   | 'settle_standard_error'
-> & { local_child_identity?: () => Promise<LocalChildIdentity | null>; settled?: () => Promise<void> };
+> & {
+  local_child_identity?: () => Promise<LocalChildIdentity | null>;
+  settled?: () => Promise<void>;
+};
 type ClientFactory = (
   options: ConstructorParameters<typeof CodexAppServerClient>[0],
 ) => CodexClient;
@@ -560,7 +563,9 @@ export class CodexAppServerBackendChild implements B.BackendChild {
     const task = this.stop_owned(options);
     this.stop_operations.add(task);
     void task.finally(() => this.stop_operations.delete(task)).catch(() => {});
-    return options ? observe_shutdown(task, options, 'Codex adapter stop exceeded its deadline') : task;
+    return options
+      ? observe_shutdown(task, options, 'Codex adapter stop exceeded its deadline')
+      : task;
   }
   async settled(): Promise<void> {
     while (this.stop_operations.size) await Promise.allSettled([...this.stop_operations]);

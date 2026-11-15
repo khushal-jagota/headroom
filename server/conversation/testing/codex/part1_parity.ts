@@ -4,6 +4,8 @@ import childProcess from 'node:child_process';
 import { syncBuiltinESMExports } from 'node:module';
 import { fileURLToPath } from 'node:url';
 import { WorkerSupervisionRuntime } from '../../../worker_supervision/runtime.ts';
+import type { WorkerSupervisor as Supervisor } from '../../../worker_supervision/service.ts';
+import type { WorkerScratch as Scratch } from '../../worker_scratch.ts';
 
 interface StartupSpec {
   ambient: Record<string, string>;
@@ -73,22 +75,19 @@ export async function run_part1_parity(spec: StartupSpec): Promise<unknown> {
           environment: { ...environment },
           working_directory,
         });
-        const supervisor = Object.assign(
-          Object.create(WorkerSupervisor.prototype) as WorkerSupervisor,
-          {
-            path: `${item.directory}/record.json`,
-            working_directory,
-            environment: { ...environment, PLAN_WORKER_PROCESS_ROOT: item.directory },
-            cancel_unspawned: async () => {
-              calls.push({ operation: 'cancel-unspawned' });
-            },
-            stop: async () => {
-              calls.push({ operation: 'supervisor-stop' });
-              return { complete: true, reason: 'no child', scope: 'synthetic' };
-            },
-            settled: async () => {},
+        const supervisor = Object.assign(Object.create(WorkerSupervisor.prototype) as Supervisor, {
+          path: `${item.directory}/record.json`,
+          working_directory,
+          environment: { ...environment, PLAN_WORKER_PROCESS_ROOT: item.directory },
+          cancel_unspawned: async () => {
+            calls.push({ operation: 'cancel-unspawned' });
           },
-        );
+          stop: async () => {
+            calls.push({ operation: 'supervisor-stop' });
+            return { complete: true, reason: 'no child', scope: 'synthetic' };
+          },
+          settled: async () => {},
+        });
         Object.defineProperty(supervisor, 'shutdown_settled', { value: Promise.resolve() });
         return supervisor;
       };
@@ -102,7 +101,7 @@ export async function run_part1_parity(spec: StartupSpec): Promise<unknown> {
           close: async () => {
             calls.push({ operation: 'scratch-close' });
           },
-        } as WorkerScratch;
+        } as unknown as Scratch;
       };
       childProcess.spawn = ((
         command: string,
@@ -126,7 +125,7 @@ export async function run_part1_parity(spec: StartupSpec): Promise<unknown> {
             throw new Error('Wrong raw Node bootstrap argv');
         }
         throw new Error('synthetic stop before spawn');
-      }) as typeof childProcess.spawn;
+      }) as unknown as typeof childProcess.spawn;
       syncBuiltinESMExports();
       const client = new CodexAppServerClient({
         child_processes: new ChildProcesses(),

@@ -211,7 +211,11 @@ class ObservedClaudeSdkClient implements ClaudeSdkClient {
     if (this.connecting) return this.connecting;
     const task = this.connect_owned();
     this.connecting = task;
-    void task.finally(() => { if (this.connecting === task) this.connecting = null; }).catch(() => {});
+    void task
+      .finally(() => {
+        if (this.connecting === task) this.connecting = null;
+      })
+      .catch(() => {});
     return task;
   }
   private async connect_owned(): Promise<void> {
@@ -288,7 +292,9 @@ class ObservedClaudeSdkClient implements ClaudeSdkClient {
     if (this.revocation === null) {
       const pending = this.supervisor.cancel_unspawned();
       this.revocation = pending;
-      void pending.catch(() => { if (this.revocation === pending) this.revocation = null; });
+      void pending.catch(() => {
+        if (this.revocation === pending) this.revocation = null;
+      });
     }
     return this.revocation;
   }
@@ -306,7 +312,9 @@ class ObservedClaudeSdkClient implements ClaudeSdkClient {
         },
       );
       if (this.supervisor !== null) Object.assign(environment, this.supervisor.environment);
-      this.scratch = await WorkerScratch.create(environment, { processes: this.options.child_processes });
+      this.scratch = await WorkerScratch.create(environment, {
+        processes: this.options.child_processes,
+      });
       Object.assign(environment, this.scratch.environment);
       if (this.supervisor !== null) {
         Object.assign(this.supervisor.environment, environment);
@@ -763,7 +771,8 @@ class ObservedClaudeSdkClient implements ClaudeSdkClient {
     this.stderr = null;
   }
   private async stop_native(options?: StopOptions): Promise<void> {
-    const deadline = options?.deadline ?? this.stop_options?.deadline ?? monotonic_seconds() + STOP_SECONDS;
+    const deadline =
+      options?.deadline ?? this.stop_options?.deadline ?? monotonic_seconds() + STOP_SECONDS;
     let close_failure: unknown;
     try {
       this.cli?.close();
@@ -778,7 +787,10 @@ class ObservedClaudeSdkClient implements ClaudeSdkClient {
       if (!owned.child.stdin.writableEnded) owned.child.stdin.end();
       const exited = await observe_promise(
         owned.exited,
-        Math.max(0, Math.min(CLAUDE_PROCESS_CLOSE_TIMEOUT_SECONDS, deadline - monotonic_seconds())) * 1000,
+        Math.max(
+          0,
+          Math.min(CLAUDE_PROCESS_CLOSE_TIMEOUT_SECONDS, deadline - monotonic_seconds()),
+        ) * 1000,
       );
       if (!exited.completed)
         await owned.stop({
@@ -790,7 +802,10 @@ class ObservedClaudeSdkClient implements ClaudeSdkClient {
       if (this.stream_closed !== null) {
         const drained = await observe_promise(
           this.stream_closed.promise,
-          Math.max(0, Math.min(CLAUDE_PROCESS_CLOSE_TIMEOUT_SECONDS, deadline - monotonic_seconds())) * 1000,
+          Math.max(
+            0,
+            Math.min(CLAUDE_PROCESS_CLOSE_TIMEOUT_SECONDS, deadline - monotonic_seconds()),
+          ) * 1000,
         );
         if (!drained.completed) {
           owned.child.stdout.destroy();

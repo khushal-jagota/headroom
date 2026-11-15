@@ -736,7 +736,11 @@ it('revokes an unspawned Worker when its supervision reporter fails and closes s
     environment: {},
     path: '/synthetic/supervision.json',
     cancel_unspawned: vi.fn(async () => {}),
-    stop: vi.fn(async (_native?: () => Promise<void>, _options?: { deadline: number }) => ({ complete: true, reason: 'never launched', scope: 'ticket' })),
+    stop: vi.fn(async (_native?: () => Promise<void>, _options?: { deadline: number }) => ({
+      complete: true,
+      reason: 'never launched',
+      scope: 'ticket',
+    })),
     shutdown_settled: Promise.resolve(),
   };
   const scratch = { environment: {}, close: vi.fn(async () => {}) };
@@ -770,18 +774,23 @@ it('revokes an unspawned Worker when its supervision reporter fails and closes s
   expect(scratch.close).toHaveBeenCalledTimes(1);
 });
 
-
 it('disconnect during SDK import prevents late Query construction and retains the connect settlement', async () => {
   const original = claude_sdk.load_claude_sdk;
   const delayed = Promise.withResolvers<Awaited<ReturnType<typeof original>>>();
-  const loader = vi.spyOn(claude_sdk, 'load_claude_sdk').mockImplementationOnce(() => delayed.promise);
+  const loader = vi
+    .spyOn(claude_sdk, 'load_claude_sdk')
+    .mockImplementationOnce(() => delayed.promise);
   const { client } = setup();
-  const connecting = expect(client.connect()).rejects.toThrow('startup stopped before SDK construction');
+  const connecting = expect(client.connect()).rejects.toThrow(
+    'startup stopped before SDK construction',
+  );
   try {
     await vi.waitFor(() => expect(loader).toHaveBeenCalled());
     await client.disconnect();
     let settled = false;
-    const actual = client.settled!().then(() => { settled = true; });
+    const actual = client.settled!().then(() => {
+      settled = true;
+    });
     await Promise.resolve();
     expect(settled).toBe(false);
     delayed.resolve(await original());
@@ -789,5 +798,9 @@ it('disconnect during SDK import prevents late Query construction and retains th
     await actual;
     expect(query).not.toHaveBeenCalled();
     expect(spawn).not.toHaveBeenCalled();
-  } finally { delayed.resolve(await original()); loader.mockRestore(); await client.disconnect(); }
+  } finally {
+    delayed.resolve(await original());
+    loader.mockRestore();
+    await client.disconnect();
+  }
 });

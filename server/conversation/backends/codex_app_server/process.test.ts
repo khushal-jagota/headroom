@@ -140,14 +140,17 @@ test.skipIf(process.platform !== 'linux')(
   },
 );
 
-
 test('spawn transfers the native handle synchronously before the spawn event wait', async () => {
   const child = fake_child();
   const owner = new ChildProcesses();
   vi.spyOn(owner, 'spawn').mockReturnValue(child as unknown as ChildProcessWithoutNullStreams);
   const created = vi.fn();
-  const pending = spawn_codex_process(['/synthetic/codex'], { child_processes: owner,
-    environment: {}, working_directory: '/private', on_created: created });
+  const pending = spawn_codex_process(['/synthetic/codex'], {
+    child_processes: owner,
+    environment: {},
+    working_directory: '/private',
+    on_created: created,
+  });
   expect(created).toHaveBeenCalledTimes(1);
   expect(created.mock.calls[0][0].child).toBe(child);
   child.emit('spawn');

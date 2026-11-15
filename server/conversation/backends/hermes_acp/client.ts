@@ -631,7 +631,9 @@ export class HermesAcpLauncher {
   }
   private stop_owned(options?: StopOptions): Promise<void> {
     if (this.cleanup !== null) return this.cleanup;
-    const cleanup = this.cleanup_owned(options ?? this.stop_options ?? { deadline: monotonic_seconds() + STOP_SECONDS });
+    const cleanup = this.cleanup_owned(
+      options ?? this.stop_options ?? { deadline: monotonic_seconds() + STOP_SECONDS },
+    );
     this.cleanup = cleanup;
     void cleanup.catch(() => {
       if (this.cleanup === cleanup) this.cleanup = null;
