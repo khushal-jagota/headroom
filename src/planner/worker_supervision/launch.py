@@ -29,6 +29,19 @@ def _launch(path: Path, arguments: list[str]) -> None:
             state="registered",
         )
         records.write(path, record)
+        if sys.platform == "linux":
+            from planner.platform_runtime.linux import worker_cgroups
+
+            try:
+                record["cgroup"] = worker_cgroups.create(path.stem)
+                # Persist ownership before the first process enters the group.
+                records.write(path, record)
+                worker_cgroups.join(record["cgroup"])
+                record["cgroup_joined"] = True
+            except (OSError, ValueError, StopIteration) as error:
+                # Missing delegation must not prevent ordinary Worker execution.
+                record["cgroup_error"] = f"Worker cgroup custody unavailable: {error}"
+            records.write(path, record)
         primitives.prepare_launch()
         process = primitives.snapshot(deadline)[os.getpid()]
         record.update(
