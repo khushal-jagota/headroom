@@ -713,10 +713,6 @@ def _identities(value: Any) -> Any:
     return visit(json.loads(json.dumps(value)))
 
 
-@pytest.mark.xfail(
-    run=False,
-    reason="expected-open P5: #916 update barrier changes pause and deadline transitions",
-)
 def test_service_owner_actions_and_synchronous_poll_match_python(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -1064,10 +1060,6 @@ def test_service_continuations_fence_stop_and_observe_external_attempts(
     )
 
 
-@pytest.mark.xfail(
-    run=False,
-    reason="expected-open P5: #916 deployment snapshots include the update barrier",
-)
 def test_owner_routes_populated_mac_reads_and_deployment_snapshot_match_python(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
