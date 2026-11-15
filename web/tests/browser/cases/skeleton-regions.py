@@ -573,6 +573,12 @@ def run(browser, urls):
           </body></html>""")
     page.route("**/files/tickets/t_owner/**", serve_html)
     original_url = page.url
+    # Embedded, an HTML artifact is a link in its sentence and nothing is framed.
+    page.evaluate("window.__html('link')")
+    html = page.locator('[data-html-fixture]')
+    expect(html.locator('a.file-preview-artifact-link')).to_have_text('index.html')
+    assert html.locator('iframe').count() == 0
+    page.evaluate("window.__html('')")
     for mode in ["full", "embedded"]:
         page.evaluate("mode => window.__html(mode)", mode)
         html = page.locator('[data-html-fixture]')
@@ -702,7 +708,7 @@ def run(browser, urls):
         expect(html.locator('[data-html-navigation-notice]')).to_have_text('file fetch failed: 404')
         page.evaluate("window.__html('')")
 
-    # --- The embedded preview holds one box from first paint --------------------
+    # --- The framed HTML preview holds one box from first paint --------------------
     # Risk: the box changes size between mount, skeleton, drawn frame and settled
     # state, so the text under the preview moves. The cases above prove frame
     # identity, navigation and failure retention. None of them measures the box.
@@ -803,16 +809,10 @@ def run(browser, urls):
 
     page.evaluate("window.__waitClock.restore()")
 
-    # An embedded failure names the file and collapses to a line.
+    # A failure is held in the box the reader already sees.
     assert page.evaluate("path => window.__mountHeld(path)", 'site/missing.html')['height'] == 288
-    expect(html.locator('[data-html-fetch-notice]')).to_have_text(
-        'missing.html — file fetch failed: 404'
-    )
+    expect(html.locator('[data-html-fetch-notice]')).to_have_text('file fetch failed: 404')
     assert html.locator('[data-html-navigation-notice]').count() == 0
-    assert html.locator('[data-shape=frame]').count() == 0
-    assert html.locator('[data-file-preview]').evaluate(
-        'node => node.getBoundingClientRect().height'
-    ) < 60
     page.evaluate("window.__html('full','site/missing.html')")
     expect(html.locator('[data-html-fetch-notice]')).to_have_text('file fetch failed: 404')
     page.evaluate("window.__html('')")
@@ -829,22 +829,6 @@ def _preview_cards(page):
     import io
     import wave
 
-    page.route(
-        "**/files/tickets/t_card/proof.md",
-        lambda route: route.fulfill(
-            content_type="text/markdown",
-            body="[Inner link](https://example.test) " + "Readable words " * 60,
-        ),
-    )
-    page.route(
-        "**/files/tickets/t_card/proof-long.md",
-        lambda route: route.fulfill(
-            content_type="text/markdown",
-            body="# The preview card\n\n"
-            + "A document is a card with its identity at the floor. " * 200,
-        ),
-    )
-    page.route("**/files/tickets/t_card/missing.md", lambda route: route.fulfill(status=404))
     page.route(
         "**/api/conversation/conversations/proof/files/proof.txt",
         lambda route: route.fulfill(content_type="text/plain", body="Small attachment"),
@@ -906,63 +890,41 @@ def _preview_cards(page):
         lambda route: route.fulfill(content_type="audio/wav", body=b"not an audio resource"),
     )
     page.set_viewport_size({"width": 1100, "height": 900})
-    page.evaluate("window.__preview('proof.md')")
     fixture = page.locator("[data-card-fixture]")
-    fixture.scroll_into_view_if_needed()
-    expect(fixture.locator(".markdown-block")).to_contain_text("Readable words")
-    clip = fixture.locator(".file-preview-clip")
-    expect(clip).not_to_have_class(re.compile("file-preview-clip--cut"))
-    fixture.evaluate("node => node.style.width='240px'")
-    expect(clip).to_have_class(re.compile("file-preview-clip--cut"))
-    fixture.evaluate("node => node.style.width='800px'")
-    page.evaluate("window.__preview('proof-long.md')")
-    expect(fixture.locator(".markdown-block")).to_contain_text("A document is a card")
-    expect(clip).to_have_class(re.compile("file-preview-clip--cut"))
-    screenshot("preview-markdown-clipped-desktop.png")
-    assert clip.evaluate("node => getComputedStyle(node).overflowY") in ("hidden", "clip")
-    fixture.evaluate("node => node.style.width='1000px'")
+    # Embedded, a Markdown artifact is a link to its full preview, with nothing fetched.
     page.evaluate("window.__preview('proof.md')")
-    expect(clip).not_to_have_class(re.compile("file-preview-clip--cut"))
-    screenshot("preview-markdown-desktop.png")
-    name = fixture.locator(".pv-name")
-    name.focus()
-    expect(name).to_be_focused()
-    assert (
-        fixture.locator(".file-preview-card").evaluate(
-            "node => getComputedStyle(node).outlineStyle"
-        )
-        == "solid"
-    )
-    name.press("Tab")
-    assert not fixture.locator(".markdown-block a").evaluate_all(
-        "nodes=>nodes.includes(document.activeElement)"
-    )
+    link = fixture.locator("a.file-preview-artifact-link")
+    expect(link).to_have_text("proof.md")
+    expect(fixture.locator(".file-preview-clip")).to_have_count(0)
+    expect(fixture.locator(".markdown-block")).to_have_count(0)
+    link.focus()
+    expect(link).to_be_focused()
+    screenshot("preview-markdown-link-desktop.png")
+    page.evaluate("window.__preview('proof.txt',false,true)")
+    expect(fixture.locator(".pv-name")).to_have_text("proof.txt")
+    expect(fixture.locator(".file-preview-kind")).to_contain_text("1.0 KiB")
     assert (
         fixture.locator(".file-preview-card").evaluate(
             "node => getComputedStyle(node).borderTopWidth"
         )
         == "1px"
     )
-    page.evaluate("window.__preview('proof.txt',false,true)")
-    expect(fixture.locator(".pv-name")).to_have_text("proof.txt")
-    expect(fixture.locator(".file-preview-kind")).to_contain_text("1.0 KiB")
     fixture.locator(".pv-name").focus()
     page.keyboard.press("Tab")
     expect(fixture.locator(".pv-act")).to_be_focused()
     assert fixture.locator(".pv-act").evaluate("node => !node.closest('a a')")
     page.set_viewport_size({"width": 390, "height": 900})
-    fixture.evaluate("node => node.style.width=''")
     expect(fixture.locator(".file-preview-clip")).to_be_visible()
     screenshot("preview-attachment-phone.png")
     page.evaluate("window.__preview('proof.png')")
-    expect(fixture.locator("img")).to_be_visible()
-    expect(fixture.get_by_role("link", name="Download", exact=True)).to_be_visible()
-    assert fixture.locator("img").evaluate("node => node.getBoundingClientRect().height") <= 160
+    expect(fixture.locator("[data-media-open] img")).to_be_visible()
+    assert fixture.locator("img").evaluate("node => node.getBoundingClientRect().height") <= 280
     page.evaluate("window.__preview('missing.md')")
-    expect(fixture.locator(".quiet-line")).to_contain_text("missing.md — file fetch failed: 404")
+    expect(fixture.locator("a.file-preview-artifact-link")).to_have_text("missing.md")
     expect(fixture.get_by_role("link", name="Download", exact=True)).to_be_visible()
     page.evaluate("window.__preview('proof.mp4')")
-    expect(fixture.locator("[data-media-play]")).to_be_visible()
+    play = fixture.locator('[data-media-open="video"]')
+    expect(play).to_be_visible()
     screenshot("preview-video-phone.png")
     page.set_viewport_size({"width": 1100, "height": 900})
     screenshot("preview-video-desktop.png")
@@ -971,14 +933,18 @@ def _preview_cards(page):
     expect(poster).to_have_attribute("preload", "metadata")
     assert poster.evaluate("node => node.paused")
     expect(fixture.locator("video[controls]")).to_have_count(0)
-    # The native media stack receives keyboard activation and focus after replacement.
-    fixture.locator("[data-media-play]").focus()
+    expect(play.locator(".file-preview-media-duration")).to_be_visible()
+    # Keyboard activation opens the expanded view, where the video plays natively.
+    play.focus()
     page.keyboard.press("Enter")
-    expect(fixture.locator("video[controls]")).to_be_focused()
-    expect(poster).to_have_count(0)
+    viewer = page.locator("[data-media-viewer]")
+    expect(viewer.locator("video[controls]")).to_be_visible()
+    page.keyboard.press("Escape")
+    expect(viewer).to_have_count(0)
+    expect(play).to_be_focused()
     page.evaluate("window.__preview('proof.mp4',true)")
     expect(fixture.locator("video[controls]")).to_be_visible()
-    assert fixture.locator("[data-media-play]").count() == 0
+    assert fixture.locator("[data-media-open]").count() == 0
     page.evaluate("window.__preview('proof.wav')")
     expect(fixture.locator("[data-media-play]")).to_be_visible()
     assert fixture.locator("audio").count() == 0 and audio_requests == []

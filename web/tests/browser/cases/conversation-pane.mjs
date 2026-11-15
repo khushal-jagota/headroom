@@ -871,7 +871,7 @@ const indexPath = join(scratchRoot, `conversation-layer-index-${process.pid}.htm
   {:else if previewMode === "retained"}
     <section data-retention-content>
       {#if retainedKind === 'preview' || retainedKind === 'nested'}
-        <FilePreview target={targetFromHref(retainedTarget)} />
+        <FilePreview target={targetFromHref(retainedTarget)} mode="full" />
       {:else if retainedKind === 'document'}
         <div style="height:500px"><FileDocument target={targetFromHref(retainedTarget)} reloadSignal={retainedReload} /></div>
       {:else if retainedKind === 'image'}
@@ -884,7 +884,7 @@ const indexPath = join(scratchRoot, `conversation-layer-index-${process.pid}.htm
   {:else if previewMode === "media"}
     {#each Array.from({length:24},(_,index)=>index) as index}
       <div style="min-height:340px" data-preview-index={index}>
-        <FilePreview target={targetFromHref('/files/tickets/t_preview/preview'+index+'.html')} />
+        <FilePreview target={targetFromHref('/files/tickets/t_preview/preview'+index+'.html')} mode="full" />
         <FilePreview target={targetFromHref('/files/tickets/t_preview/image'+index+'.png')} />
       </div>
     {/each}

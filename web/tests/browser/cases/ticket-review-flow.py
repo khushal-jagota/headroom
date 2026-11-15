@@ -1705,7 +1705,7 @@ def run(browser, urls):
     saved_artifacts = page.locator('[data-stage-fold] [data-field="brief"]')
     # A Manager file link is a preview card like a Ticket or goal file link (staging, PR 613).
     # The HTML plan's card names it with a link that opens the Manager file in place.
-    html_link = saved_artifacts.locator(".pv-name").filter(has_text="plan.html")
+    html_link = saved_artifacts.locator(".file-preview-artifact-link").filter(has_text="HTML plan")
     assert html_link.get_attribute("href").startswith("#/preview?source=manager&")
     original_url = page.url
 
@@ -1758,7 +1758,7 @@ def run(browser, urls):
         page.screenshot(path=os.environ["PANELS_ARTIFACT_SCREENSHOT"], full_page=True)
     viewer.get_by_role("button", name="Close", exact=True).click()
     # The proposal's Manager file link is its card; the card's name opens it in place.
-    page.locator("[data-approval-block] .pv-name").filter(has_text="plan.md").click()
+    page.locator("[data-approval-block] .file-preview-artifact-link").filter(has_text="Markdown plan").click()
     expect(viewer).to_have_attribute("aria-label", "plan.md")
     # The document's own Manager image link is its image, shown in the document (PR 613).
     nested = viewer.locator('[data-file-preview-kind="image"] img')
@@ -1772,7 +1772,7 @@ def run(browser, urls):
     # on a raw Markdown link in a field leaves the field holding the focus. This link
     # lives in the mounted preview slot, which is contenteditable="false", so it is a real
     # focusable anchor. Do not move this proof back onto one of the raw links.
-    open_link = saved_artifacts.locator(".pv-name").filter(has_text="plan.md")
+    open_link = saved_artifacts.locator(".file-preview-artifact-link").filter(has_text="Ticket document")
     open_link.click()
     expect(viewer).to_have_attribute("aria-label", "plan.md")
     expect(viewer).to_be_focused()
@@ -1938,7 +1938,9 @@ def run(browser, urls):
         "Unread message 121"
     )
     message_card.locator('[data-review-message-sequence="121"]').scroll_into_view_if_needed()
-    expect(message_card.locator('[data-review-message-sequence="121"] iframe')).to_have_count(1)
+    latest = message_card.locator('[data-review-message-sequence="121"]')
+    expect(latest.locator('a.file-preview-artifact-link')).to_have_text('HTML plan')
+    expect(latest.locator('iframe')).to_have_count(0)
     assert review_read == 0, "Showing review must not mark messages read"
     reply = message_card.locator("[data-review-reply]")
     assert_enter_rules_leave_a_draft(reply, "Keep these words", lambda: len(review_message_sends))
