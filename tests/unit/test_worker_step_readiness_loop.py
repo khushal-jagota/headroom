@@ -8,6 +8,7 @@ with ``asyncio.run`` and no threads at all.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import sqlite3
 import threading
@@ -43,6 +44,7 @@ from planner.core.errors import ErrorCode, PlannerError
 from planner.database_modules import attach
 from planner.machines.contracts import HOME_MACHINE_ID, ORIGINAL_MAC_MACHINE_ID
 from planner.runtime import conversation_start, worker_step_readiness
+from planner.runtime.decision_message_delivery import deliver_ticket_decision_messages
 from planner.runtime.logic.worker_step_prompt import (
     MEMORY_LOSS_NOTICE,
 )
@@ -1962,3 +1964,64 @@ def test_ambiguous_decision_survives_restart_without_automatic_replay(world: _Wo
     fresh = world.ticket(ticket_id).conversation_id
     assert fresh is not None
     assert "Retain ambiguous\nnote" in world.conversations.backend_prompt_writes(fresh)[0].text
+
+
+@pytest.mark.parametrize(
+    ("event_kind", "expected_status"),
+    [("prompt", "delivered"), ("prompt_delivery_refused", "refused"),
+     ("prompt_discarded", "discarded")],
+)
+def test_decision_outcome_recorded_during_ownership_check_is_not_lost(
+    world: _World, monkeypatch: pytest.MonkeyPatch, event_kind: str, expected_status: str
+) -> None:
+    """Settlement between the two reads must win over apparent loss of ownership."""
+    conversation_id = "conv-outcome-race"
+    ticket_id = world.ready_ticket(conversation_id=conversation_id)
+    world.start_conversation(conversation_id)
+    world.add_revision_feedback(ticket_id, "Decision")
+    with closing(world.connect()) as conn:
+        conn.execute(
+            "INSERT INTO conversations "
+            "(conversation_id,backend_key,workspace_folder,access,created_at) "
+            "VALUES (?, 'codex', '/tmp', 'full', 0)", (conversation_id,)
+        )
+        row = conn.execute(
+            "SELECT sender_message_id FROM ticket_decision_messages "
+            "WHERE ticket_id=? AND delivery_status='pending'", (ticket_id,)
+        ).fetchone()
+        sender_id = str(row[0])
+        conn.execute(
+            "UPDATE ticket_decision_messages SET delivery_status='queued',conversation_id=? "
+            "WHERE sender_message_id=?", (conversation_id, sender_id)
+        )
+        conn.commit()
+
+    async def settle_before_ownership_read(_conversation_id: str) -> frozenset[str]:
+        with closing(connect(world.db_path)) as conn:
+            conn.execute(
+                "INSERT INTO conversation_events "
+                "(conversation_id,sequence,kind,payload,created_at) VALUES (?,1,?,?,0)",
+                (conversation_id, event_kind, json.dumps({"sender_message_id": sender_id})),
+            )
+            conn.commit()
+        return frozenset()
+
+    monkeypatch.setattr(
+        world.conversations, "sender_message_ids_awaiting_outcome", settle_before_ownership_read
+    )
+    asyncio.run(deliver_ticket_decision_messages(
+        ticket_id, connect_database=world.connect,
+        conversation_system=cast(ConversationSystem, world.conversations),
+        worker_type_registry=configured_worker_type_registry(), now=world.clock.now_unix,
+    ))
+    with closing(world.connect()) as conn:
+        status = conn.execute(
+            "SELECT delivery_status FROM ticket_decision_messages WHERE sender_message_id=?",
+            (sender_id,),
+        ).fetchone()[0]
+    assert status == expected_status
+    assert world.conversations.backend_prompt_writes(conversation_id) == ()
+    if expected_status == "delivered":
+        assert world.ticket(ticket_id).ticket_status is not TicketStatus.errored
+    else:
+        assert world.ticket(ticket_id).worker_step_claim is WorkerStepClaim.errored
