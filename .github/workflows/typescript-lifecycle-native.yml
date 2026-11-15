@@ -183,7 +183,7 @@ jobs:
             PLAN_SERVER_LIFECYCLE_LEASE_PATH="$native_tmp/lifecycle.lock" \
             PLAN_SERVER_URL=http://127.0.0.1:0 PLAN_PORT=0 \
             PLAN_DISPATCH_ENABLED=false PLAN_TEST_MODE=1 \
-            NATIVE_EVIDENCE="$native_evidence" \
+            NATIVE_EVIDENCE="$native_evidence" PANELS_NATIVE_HOME_TEST=1 \
             bash --noprofile --norc -euo pipefail <<'NATIVE' 2>&1 | tee "$native_evidence/job.log"
           trap 'native_status=$?; printf "seconds=%s\nexit_code=%s\n" "$SECONDS" "$native_status" > "$NATIVE_EVIDENCE/job-time.txt"' EXIT
           node -e '
@@ -191,7 +191,7 @@ jobs:
             fs.writeFileSync(process.env.NATIVE_EVIDENCE + "/platform.json", JSON.stringify({
               platform: process.platform, architecture: process.arch, node: process.version,
               executable: process.execPath, os_release: os.release(),
-              boundary: "Existing registry/archive sequences, Worker libproc identity and signals, home APP custody and control socket restart, and owned preview listener/connection with native resource samples. No browser, provider, executor or service.",
+              boundary: "Existing registry/archive sequences, Worker identity, home APP custody, preview/metrics ABI, and first-home installation against owned synthetic LaunchAgents. No browser, provider, executor or live installation.",
               hosted_cost: "OPEN until this job completes; each existing case and job elapsed time are preserved separately."
             }, null, 2) + "\n");
             if (process.platform !== "darwin" || process.arch !== "arm64")
@@ -206,7 +206,7 @@ jobs:
           # Reuse this hosted Darwin job for the real libproc boundary; synthetic tests cannot prove its ABI.
           python -I -S -B scripts/development_safety/bootstrap.py npm --prefix server run test -- \
             platform_runtime/worker_processes.native.test.ts lifecycle/paths.native.test.ts \
-            previews/darwin.native.test.ts --reporter=junit \
+            previews/darwin.native.test.ts installation/home.native.test.ts --reporter=junit \
             --outputFile "$NATIVE_EVIDENCE/process-home-preview-abi.xml"
           # No web build: this registry fixture uses synthetic app roots and no UI assets.
           python -I -S -B scripts/development_safety/bootstrap.py pytest \
