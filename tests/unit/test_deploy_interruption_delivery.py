@@ -1179,6 +1179,7 @@ def test_live_source_keeps_exact_claim_and_prevents_replacement(tmp_path: Path) 
 
     from planner.conversation.child_custody import process_identity, write_pending, write_started
     from planner.conversation.deploy_interruptions.coordinator import run_automatic_recovery
+    from planner.core.contracts import PlannerError
 
     if sys.platform != "linux":
         pytest.skip("Linux process birth evidence")
@@ -1219,11 +1220,13 @@ def test_live_source_keeps_exact_claim_and_prevents_replacement(tmp_path: Path) 
                             "FROM tickets WHERE id='t'"
                         ).fetchone()
                     ) == ("out", 7)
-                # The same ordinary Stop action can now end only this exact
-                # recorded source after the no-false-release assertion above.
-                await restarted.system.kill("c")
+                # Legacy custody can stop the known root, but cannot prove that
+                # detached descendants ended. Stop must retain the fence.
+                with pytest.raises(PlannerError, match="Recheck Worker cleanup"):
+                    await restarted.system.kill("c")
                 source.wait(timeout=5)
                 assert source.returncode is not None
+                assert restarted.system.workspace_activity() == "unknown"
             finally:
                 await restarted.system.shutdown()
         finally:

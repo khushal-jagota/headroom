@@ -97,6 +97,8 @@ def test_worker_launch_preserves_sdk_arguments_and_keeps_unit_across_messages(
         scratch = Path(options.env["TMPDIR"])
         assert scratch.parent == tmp_path / "runs"
         assert scratch.is_dir()
+        assert options.env["TMUX_TMPDIR"] == str(scratch)
+        assert options.env["SCREENDIR"] == str(scratch / "screen")
         process = AsyncMock()
         process.returncode = 0
         transport._process = process
