@@ -1128,6 +1128,22 @@ export function create_commands(environment: NodeJS.ProcessEnv = {}): CliCommand
       }),
     ],
   );
+  command('machine', 'Read named execution destinations.');
+  command('machine list', 'List stable destination identities and their current availability.', [
+    option('as_json', '--json', boolean, { default: false }),
+  ]);
+  command('machine register', 'Register an extra machine and print its credential once.', [
+    argument('name', '<NAME>', text, {}),
+    option('as_json', '--json', boolean, { default: false }),
+  ]);
+  command(
+    'machine replace-credential',
+    'Revoke the old credential and print its replacement once.',
+    [
+      argument('machine_id', '<MACHINE_ID>', text, {}),
+      option('as_json', '--json', boolean, { default: false }),
+    ],
+  );
   command('ticket', 'Create, inspect, organize, and approve tickets.');
   command(
     'ticket assign',
@@ -1180,7 +1196,12 @@ export function create_commands(environment: NodeJS.ProcessEnv = {}): CliCommand
         description: 'Read one Ticket create object from this file, or - for standard input.',
         required: true,
       }),
-      option('locale', '--locale <CHOICE>', choice(['vps', 'macos']), {}),
+      option('machine_id', '--machine-id <TEXT>', text, {
+        description: 'Destination identity from panels machine list. Defaults to the home.',
+      }),
+      option('locale', '--locale <CHOICE>', choice(['vps', 'macos']), {
+        description: 'Legacy alias for the original home or Mac.',
+      }),
       option('as_json', '--json', boolean, {
         default: false,
         description: 'Print machine-readable JSON. Errors are printed as JSON on stderr.',
@@ -1313,20 +1334,6 @@ export function create_commands(environment: NodeJS.ProcessEnv = {}): CliCommand
       description: 'Print machine-readable JSON. Errors are printed as JSON on stderr.',
     }),
   ]);
-  command('ticket request-help', 'Record and send one Ticket help request from standard input.', [
-    argument('ticket_id', '[TICKET_ID]', text, {}),
-    option('owner', '--owner', boolean, { default: false, description: 'Ask Khushal for help.' }),
-    option('chief', '--chief', boolean, {
-      default: false,
-      description: 'Ask the Chief of Staff for help.',
-    }),
-    option('recipient_ticket_id', '--ticket <TEXT>', text, { description: 'Ask another Worker.' }),
-    option('recipient_manager_id', '--manager <TEXT>', text, { description: 'Ask a Manager.' }),
-    option('as_json', '--json', boolean, {
-      default: false,
-      description: 'Print machine-readable JSON. Errors are printed as JSON on stderr.',
-    }),
-  ]);
   command('ticket request-recap', 'Ask a Ticket below you for a fresh recap.', [
     argument('ticket_id', '<TICKET_ID>', text, {}),
     option('as_json', '--json', boolean, {
@@ -1409,22 +1416,6 @@ export function create_commands(environment: NodeJS.ProcessEnv = {}): CliCommand
     option('body_file', '--body-file <TEXT>', text, {
       description: 'Removed: pipe recap text on stdin instead.',
     }),
-    option('as_json', '--json', boolean, {
-      default: false,
-      description: 'Print machine-readable JSON. Errors are printed as JSON on stderr.',
-    }),
-  ]);
-  command('worker request-help', '', [
-    argument('ticket_id', '[TICKET_ID]', text, { envNames: ['PLAN_TICKET_ID'] }),
-    option('owner', '--owner', boolean, { default: false, description: 'Ask Khushal for help.' }),
-    option('chief', '--chief', boolean, {
-      default: false,
-      description: 'Ask the Chief of Staff for help.',
-    }),
-    option('recipient_ticket_id', '--ticket <TEXT>', text, {
-      description: 'Ask another Ticket worker.',
-    }),
-    option('recipient_manager_id', '--manager <TEXT>', text, { description: 'Ask a Manager.' }),
     option('as_json', '--json', boolean, {
       default: false,
       description: 'Print machine-readable JSON. Errors are printed as JSON on stderr.',

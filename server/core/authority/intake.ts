@@ -8,7 +8,6 @@ import {
   isAbove,
   requireAbove,
   requireAboveOrSelf,
-  requireSelf,
   requireInChain,
   refuse,
   refuseManagerReparenting,
@@ -126,11 +125,6 @@ export function admitCommand(
       return;
     }
     if (!writing || route.endsWith('/propose')) return;
-    if (route.endsWith('/request-help')) {
-      requireSelf(sql, caller, { kind: 'ticket', id });
-      if (body.recipient != null) admitMessage(sql, caller, principal(body.recipient));
-      return;
-    }
     target = { kind: 'ticket', id };
     own =
       method === 'PATCH' &&

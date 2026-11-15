@@ -282,7 +282,7 @@ export function worker_resolve(
   });
   if (ticket.employee_launch_model === null || overrides.model != null)
     database.read((sql) =>
-      require_usable_model(sql, values.backend_key, values.model, ticket.locale),
+      require_usable_model(sql, values.backend_key, values.model, ticket.machine_id),
     );
   return values;
 }

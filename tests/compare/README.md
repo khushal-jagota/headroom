@@ -10,7 +10,15 @@ The foundation fixes schema, machine keys, and stale fixtures. The cases below r
 They remain collected with `xfail(run=False)` and do not count as parity. Remove each mark when its package restores the proof.
 No comparison field is hidden. Deferred parameters add no active host or runtime cost.
 
-Collected case counts: P2 43, P3 8, P4 0, P5 11, P6 6.
+Collected case counts: P2 43, P3 8, P4 0, P5 11, P6 4, shared P3/P4/P5 1.
+
+### Shared P3/P4/P5 — Populated CLI sequence
+
+| Retained case | Staging changes and owners |
+| --- | --- |
+| [`test_unit20_cli.py::test_unit20_same_python_host_populated_sequence[typescript]`](direct/test_unit20_cli.py) | expected-open P3/P4/P5 (#916): P5 owns the machine CLI catalog used by skill-check; P3 owns supervision state and Manager recap fate; P4 owns Ticket workspace artifact visibility |
+
+This exact case reopens after the last of those packages lands. Its comparison retains every field. The Python-host parameter runs and checks the P6 CLI and help-request removal.
 
 ### P2 — Executor protocol and custody
 
@@ -102,8 +110,6 @@ The synthetic-root guard rejects outside paths and symlink escapes before cleanu
 
 | Retained case | Staging change |
 | --- | --- |
-| [`test_unit20_cli.py::test_unit20_same_python_host_populated_sequence[python]`](direct/test_unit20_cli.py) | expected-open P6: #885 request-help removed from Python, still in TS |
-| [`test_unit20_cli.py::test_unit20_same_python_host_populated_sequence[typescript]`](direct/test_unit20_cli.py) | expected-open P6: #885 request-help removed from Python, still in TS |
 | [`test_unit20_domain_cli.py::test_unit20_retained_dataset_cli[goal-page]`](direct/test_unit20_domain_cli.py) | expected-open P6: #928 goal/page schemas add expected_revision |
 | [`test_unit20_domain_cli.py::test_unit20_domain_same_python_host[python]`](direct/test_unit20_domain_cli.py) | expected-open P6: #928 goal/page CLI schemas now include expected_revision |
 | [`test_unit20_domain_cli.py::test_unit20_domain_same_python_host[typescript]`](direct/test_unit20_domain_cli.py) | expected-open P6: #928 goal/page CLI schemas now include expected_revision |
