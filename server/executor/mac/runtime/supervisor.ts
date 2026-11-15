@@ -1,6 +1,6 @@
 /** The fixed installation supervises versioned runtimes without replacing itself. */
 import { randomUUID } from 'node:crypto';
-import { constants as os_constants } from 'node:os';
+import { constants as os_constants, homedir } from 'node:os';
 import { delimiter, join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { OwnedCodexProcess } from '../../../conversation/backends/codex_app_server/process.ts';
@@ -9,8 +9,12 @@ import { SUPERVISOR_APP_STOP_SECONDS } from '../../../lifecycle/configuration.ts
 import type { OwnedChildProcesses, OwnedOneShotChildren } from '../../../lifecycle/contracts.ts';
 import type { MacRuntimeSelection } from '../../wire.generated.ts';
 import type { FilesService } from '../files.ts';
+import { LINUX_EXECUTOR } from '../../../environments/release/contracts.ts';
+import { LINUX_EXECUTOR_ENTRYPOINT } from '../../../environments/linux_executor/configuration.ts';
+import { linux_executor_path } from '../../../environments/linux_executor/logic/paths.ts';
 import {
   ExecutorPaths,
+  LINUX_UPDATE_TERMINATE_SECONDS,
   MAC_RUNTIME_CHILD_ENV,
   MAC_RUNTIME_HANDOFF_ENV,
   MAC_RUNTIME_READY_ENV,
@@ -24,6 +28,7 @@ import { atomic_record, read_record } from './records.ts';
 export interface MacRuntimeSupervisorOptions {
   paths: ExecutorPaths;
   baseline_root: string;
+  /** The absolute admitted host Node also runs selected Linux releases. */
   baseline_node: string;
   environment: Readonly<NodeJS.ProcessEnv>;
   child_processes: OwnedChildProcesses;
@@ -88,17 +93,23 @@ export async function supervise(
     saved: string | null,
   ): Promise<OwnedCodexProcess> => {
     options.signal.throwIfAborted();
-    if (runtime !== null) await files.read_runtime_revision(runtime, app_revision);
+    const linux = process.platform === 'linux';
+    if (runtime !== null)
+      await files.read_runtime_revision(runtime, app_revision, linux ? LINUX_EXECUTOR : undefined);
     options.signal.throwIfAborted();
     const directory = runtime ?? options.baseline_root;
-    const node = runtime === null ? options.baseline_node : join(directory, 'node/bin/node');
+    const node =
+      linux || runtime === null ? options.baseline_node : join(directory, 'node/bin/node');
     const environment = copy_environment(options.environment);
     environment[MAC_RUNTIME_CHILD_ENV] = '1';
     delete environment[MAC_RUNTIME_READY_ENV];
     delete environment[MAC_RUNTIME_HANDOFF_ENV];
     environment.PLAN_EXECUTOR_ROOT = options.paths.root;
     environment.PLAN_APP_ROOT = directory;
-    environment.PATH = join(directory, 'bin') + delimiter + (environment.PATH ?? '');
+    environment.PLAN_APP_SHA = app_revision;
+    environment.PATH = linux
+      ? linux_executor_path(directory, node, environment.HOME ?? homedir())
+      : join(directory, 'bin') + delimiter + (environment.PATH ?? '');
     if (ready !== null) environment[MAC_RUNTIME_READY_ENV] = ready;
     if (saved !== null) environment[MAC_RUNTIME_HANDOFF_ENV] = saved;
     const forwarded = [...args];
@@ -106,7 +117,10 @@ export async function supervise(
     else forwarded[revision.index + 1] = app_revision;
     const child = options.child_processes.spawn(
       node,
-      [join(directory, 'server/executor/mac/entrypoint.ts'), ...forwarded],
+      [
+        join(directory, linux ? LINUX_EXECUTOR_ENTRYPOINT : 'server/executor/mac/entrypoint.ts'),
+        ...forwarded,
+      ],
       { cwd: directory, env: environment },
     );
     const owned = new OwnedCodexProcess(child);
@@ -202,7 +216,12 @@ export async function supervise(
         await files.remove_runtime_record(join(root, 'pending.json'));
         continue;
       }
-      await current.stop({ grace_seconds: MAC_UPDATE_TERMINATE_SECONDS });
+      await current.stop({
+        grace_seconds:
+          process.platform === 'linux'
+            ? LINUX_UPDATE_TERMINATE_SECONDS
+            : MAC_UPDATE_TERMINATE_SECONDS,
+      });
       await atomic_record(files, join(root, 'failure.json'), {
         request_id: pending.request_id,
         phase: 'reverted',

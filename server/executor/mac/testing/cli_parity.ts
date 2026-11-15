@@ -1,5 +1,6 @@
 /** Export-only CLI companion. The Python driver owns its scripted Unix listener. */
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync, statSync } from 'node:fs';
+import { join } from 'node:path';
 import { run } from '../../../cli/main.ts';
 import { request } from '../ipc_client.ts';
 const input = JSON.parse(readFileSync(process.argv[2], 'utf8'));
@@ -8,8 +9,9 @@ const results = [];
 for (const scenario of input.scenarios) {
   const environment = {
     ...input.environment,
-    PLAN_EXECUTOR_ROOT:
-      input.environment.PLAN_EXECUTOR_ROOT + (scenario.mode === 'missing' ? '/absent' : ''),
+    PLAN_EXECUTOR_ROOT: scenario.local
+      ? input.credential_root
+      : input.environment.PLAN_EXECUTOR_ROOT + (scenario.mode === 'missing' ? '/absent' : ''),
   };
   if (scenario.direct) {
     try {
@@ -22,10 +24,25 @@ for (const scenario of input.scenarios) {
     } catch (error) {
       results.push({ error: (error as Error).message });
     }
-  } else
-    results.push(
-      await run(scenario.argv, environment, async () => Buffer.from(scenario.stdin ?? '')),
+  } else {
+    const result = await run(scenario.argv, environment, async () =>
+      Buffer.from(scenario.stdin ?? ''),
     );
+    results.push(
+      scenario.local
+        ? {
+            ...result,
+            credential: {
+              document: JSON.parse(
+                readFileSync(join(input.credential_root, 'machine-credential.json'), 'utf8'),
+              ),
+              mode: statSync(join(input.credential_root, 'machine-credential.json')).mode & 0o777,
+              files: readdirSync(input.credential_root).sort(),
+            },
+          }
+        : result,
+    );
+  }
 }
 process.stdout.write(
   JSON.stringify({ results, elapsed_seconds: (performance.now() - started) / 1000 }),

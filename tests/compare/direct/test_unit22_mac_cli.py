@@ -2,6 +2,7 @@
 
 Risk/gap: existing CLI checks do not cross the executor socket. This proof compares
 framing, authority, output/exit status, and uncertainty after lost/malformed replies.
+Local credential installation also proves private replacement without an IPC request.
 No application server, database, provider, or TCP destination is involved.
 """
 
@@ -75,7 +76,7 @@ class Peer:
     def serve(self) -> None:
         try:
             for case in self.cases:
-                if case["mode"] in ("missing", "unsupported"):
+                if case.get("local") or case["mode"] in ("missing", "unsupported"):
                     continue
                 with self.socket.accept()[0] as stream:
                     stream.settimeout(5)
@@ -182,7 +183,7 @@ def output_fields(result: dict[str, Any]) -> dict[str, Any]:
 def normalize_human_usage(text: str) -> str:
     """Only the native usage layout differs for these retained executor commands."""
     return re.sub(
-        r"(?m)^(Use: panels executor (?:health|quiesce|permissions))(?: [^\n]*)?$",
+        r"(?m)^(Use: panels executor (?:health|quiesce|permissions|credential))(?: [^\n]*)?$",
         r"\1 <usage>",
         text,
     )
@@ -197,6 +198,23 @@ def test_mac_cli_socket_parity(
     # A short, newly created canonical root also fits Darwin's Unix socket limit.
     with tempfile.TemporaryDirectory(prefix="mac-cli-") as temporary:
         root = Path(temporary).resolve()
+        first, replacement, invalid = (root / name for name in (
+            "first-credential.json", "replacement-credential.json", "invalid-credential.json"
+        ))
+        first.write_text(json.dumps({"credential": "a" * 43}))
+        replacement.write_text(json.dumps({"credential": "b" * 43}))
+        invalid.write_text("{")
+        cases.extend([
+            dict(mode="credential_install", local=True,
+                 argv=["executor", "credential", "--file", str(first)]),
+            dict(mode="credential_replace", local=True,
+                 argv=["executor", "credential", "--file", str(replacement)]),
+            dict(mode="credential_required", local=True, argv=["executor", "credential"]),
+            dict(mode="credential_missing", local=True,
+                 argv=["executor", "credential", "--file", str(root / "not-present.json")]),
+            dict(mode="credential_invalid", local=True,
+                 argv=["executor", "credential", "--file", str(invalid)]),
+        ])
         environment = {
             key: value
             for key, value in os.environ.items()
@@ -221,6 +239,7 @@ def test_mac_cli_socket_parity(
             for case in cases:
                 patch.setenv(
                     "PLAN_EXECUTOR_ROOT",
+                    str(root / "python-credential") if case.get("local") else
                     str(root / "absent") if case["mode"] == "missing" else str(root),
                 )
                 if case.get("direct"):
@@ -235,11 +254,21 @@ def test_mac_cli_socket_parity(
                     result = CliRunner().invoke(
                         main, case["argv"], input=case.get("stdin", ""), prog_name="panels"
                     )
-                    expected.append(
-                        dict(exit_code=result.exit_code, stdout=result.stdout, stderr=result.stderr)
+                    fields: dict[str, Any] = dict(
+                        exit_code=result.exit_code, stdout=result.stdout, stderr=result.stderr
                     )
+                    if case.get("local"):
+                        target = root / "python-credential" / "machine-credential.json"
+                        fields["credential"] = dict(
+                            document=json.loads(target.read_text()),
+                            mode=target.stat().st_mode & 0o777,
+                            files=sorted(path.name for path in target.parent.iterdir()),
+                        )
+                    expected.append(fields)
         source = root / "input.json"
-        source.write_text(json.dumps(dict(environment=environment, scenarios=cases)))
+        source.write_text(json.dumps(dict(
+            environment=environment, scenarios=cases, credential_root=str(root / "node-credential")
+        )))
         with Peer(root, cases) as typescript:
             observed = run_node(
                 "server/executor/mac/testing/cli_parity.ts", source, homes, timeout=40
@@ -301,7 +330,48 @@ def test_mac_cli_socket_parity(
                     )
                 )
                 candidate["stderr"]["error"]["message"] = python_message
-        assert len(accepted_native_errors) == 3
+            elif case["mode"] in {
+                "credential_required", "credential_missing", "credential_invalid"
+            }:
+                messages = {
+                    "credential_required": (
+                        "Missing option '--file'.", "required option '--file <FILE>' not specified"
+                    ),
+                    "credential_missing": (
+                        "Invalid value for '--file': "
+                        f"File '{root / 'not-present.json'}' does not exist.",
+                        f"The file does not exist: {root / 'not-present.json'}",
+                    ),
+                    "credential_invalid": (
+                        "Expecting property name enclosed in double quotes: "
+                        "line 1 column 2 (char 1)",
+                        "The machine credential file is invalid",
+                    ),
+                }
+                python_message, native_message = messages[case["mode"]]
+                assert reference["stderr"].splitlines()[0] == f"error: {python_message}"
+                assert candidate["stderr"].splitlines()[0] == f"error: {native_message}"
+                accepted_native_errors.append(dict(
+                    case=index, field="stderr", python=reference["stderr"],
+                    typescript=candidate["stderr"],
+                    reason="Native local parser diagnostics and bounded credential JSON failure",
+                ))
+                candidate["stderr"] = candidate["stderr"].replace(native_message, python_message, 1)
+            if case.get("local"):
+                installed = "a" if case["mode"] == "credential_install" else "b"
+                for fields in (reference, candidate):
+                    assert fields["credential"] == dict(
+                        document={"credential": installed * 43}, mode=0o600,
+                        files=["machine-credential.json"],
+                    )
+                    assert fields["exit_code"] == (
+                        0 if case["mode"] in {"credential_install", "credential_replace"} else
+                        1 if case["mode"] == "credential_invalid" else 2
+                    )
+                    assert fields["stdout"] == (
+                        "Machine credential installed.\n" if fields["exit_code"] == 0 else ""
+                    )
+        assert len(accepted_native_errors) == 6
         for fields in [*expected_fields, *observed_fields]:
             if isinstance(fields.get("stderr"), str):
                 fields["stderr"] = normalize_human_usage(fields["stderr"])
@@ -311,7 +381,10 @@ def test_mac_cli_socket_parity(
         assert normalize(python.requests, python.requests) == normalize(
             typescript.requests, typescript.requests
         )
-        assert len(python.requests) == len(cases) - 2
+        assert len(python.requests) == sum(
+            not case.get("local") and case["mode"] not in {"missing", "unsupported"}
+            for case in cases
+        )
         report_direct(
             request,
             "unit22-mac-cli.json",

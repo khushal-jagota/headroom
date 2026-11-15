@@ -47,7 +47,7 @@ const CERTIFICATE_ERRORS = new Set([
   'UNABLE_TO_GET_ISSUER_CERT_LOCALLY',
   'UNABLE_TO_VERIFY_LEAF_SIGNATURE',
 ]);
-function credential_failure(error: unknown): boolean {
+export function executor_request_failure(error: unknown): boolean {
   if (
     error instanceof ExecutorHttpError ||
     error instanceof HttpTimeout ||
@@ -57,7 +57,11 @@ function credential_failure(error: unknown): boolean {
     return true;
   if (!(error instanceof Error) || !('code' in error) || typeof error.code !== 'string')
     return false;
-  return /^(?:ERR_TLS_|ERR_SSL_|HPE_)/u.test(error.code) || CERTIFICATE_ERRORS.has(error.code);
+  return (
+    /^(?:ERR_TLS_|ERR_SSL_|HPE_)/u.test(error.code) ||
+    error.code === 'ERR_STREAM_PREMATURE_CLOSE' ||
+    CERTIFICATE_ERRORS.has(error.code)
+  );
 }
 function granted_credential(body: Uint8Array): string {
   let value: unknown;
@@ -143,7 +147,7 @@ export class MacHttpClient {
         if (granted !== saved) await write_credential(path, granted);
         credential = granted;
       } catch (error) {
-        if (saved === null || !credential_failure(error)) throw error;
+        if (saved === null || !executor_request_failure(error)) throw error;
         require_open();
         credential = saved;
       }

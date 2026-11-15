@@ -14,6 +14,10 @@ import { monotonic_seconds } from '../../lifecycle/configuration.ts';
 import { MAC_AGENT_PROCESS_PROBE_TIMEOUT_SECONDS } from '../configuration.ts';
 import { shell_quote } from '../../conversation/worker_unit/logic.ts';
 import { flock } from '../../core/locks/flock.ts';
+import {
+  absolute_executor_path,
+  default_linux_executor_root,
+} from '../../environments/linux_executor/logic/paths.ts';
 
 for (const name of ['O_NOFOLLOW', 'O_DIRECTORY', 'O_CREAT', 'O_EXCL', 'O_NONBLOCK'] as const) {
   if (typeof constants[name] !== 'number' || constants[name] <= 0)
@@ -397,10 +401,20 @@ export function acquire_process_lock(root: string): { close(): void } {
   };
 }
 
-export function default_executor_root(home: string): string {
+function darwin_executor_root(home: string): string {
   return join(home, 'Library', 'Application Support', 'Panels', 'executor-typescript');
 }
-export function python_executor_root(home: string): string {
+export function default_executor_root(home: string, xdg_data_home?: string): string {
+  return process.platform === 'linux'
+    ? default_linux_executor_root(home, xdg_data_home)
+    : darwin_executor_root(home);
+}
+export function python_executor_root(home: string, xdg_data_home?: string): string {
+  if (process.platform === 'linux')
+    return join(
+      absolute_executor_path(xdg_data_home || join(home, '.local/share')),
+      'panels/executor',
+    );
   return join(home, 'Library', 'Application Support', 'Panels', 'executor');
 }
 export function executor_socket_path(root: string): string {
@@ -534,7 +548,7 @@ export function mac_installation_paths(home: string) {
     throw new Error('Mac installation HOME must be absolute.');
   const install = join(home, 'Deployments/PanelsExecutorTypeScript');
   const supervisor = join(install, 'supervisor'),
-    state = default_executor_root(home);
+    state = darwin_executor_root(home);
   const app = join(home, 'Applications/Panels TypeScript.app');
   return {
     home,

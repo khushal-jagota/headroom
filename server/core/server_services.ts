@@ -13,7 +13,7 @@ import { notify_chief as notify_chief_of_integrity_faults } from '../tickets/int
 import { acquireLock } from './locks/index.ts';
 import type { OwnedAreaContext } from './authority/register.ts';
 import type { SqliteProcessConversationSystem } from '../conversation/system.ts';
-import { HOME_MACHINE_ID, ORIGINAL_MAC_MACHINE_ID } from '../execution_identity.ts';
+import { HOME_MACHINE_ID } from '../execution_identity.ts';
 import { createConversationRoutes } from '../conversation/routes.ts';
 import { ConversationHttpWriteScope } from '../conversation/http/writes.ts';
 import { createBackendRoutes } from '../conversation/snapshot/routes.ts';
@@ -401,7 +401,7 @@ export class ServerServices {
       conversationSystem,
       workspaceAdmission: conversationSystem?.workspace_admission,
       updateBarrier: this.update_barrier,
-      executor: executor?.get(ORIGINAL_MAC_MACHINE_ID) ?? null,
+      executor,
     });
     this.app.own(app);
     this.assert_startup_open();

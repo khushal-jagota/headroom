@@ -6,6 +6,7 @@ import { dirname, isAbsolute, join } from 'node:path';
 import { path_is_within } from '../../core/path_containment.ts';
 import { homedir } from 'node:os';
 import { resolve_path_sync } from '../../core/path_resolution.ts';
+import { STOP_SECONDS } from '../../worker_supervision/config.ts';
 import {
   default_executor_root,
   executor_socket_path,
@@ -87,8 +88,10 @@ export const MAC_RUNTIME_CHILD_ENV = 'PLAN_EXECUTOR_RUNTIME_CHILD';
 export const MAC_RUNTIME_READY_ENV = 'PLAN_EXECUTOR_RUNTIME_READY';
 export const MAC_RUNTIME_HANDOFF_ENV = 'PLAN_EXECUTOR_RUNTIME_HANDOFF';
 export const MAC_UPDATE_POLL_SECONDS = 1;
+export const MAC_HANDOVER_CLOSE_RETRY_MAX_SECONDS = 60;
 export const MAC_RUNTIME_READY_TIMEOUT_SECONDS = 60;
 export const MAC_UPDATE_TERMINATE_SECONDS = 10;
+export const LINUX_UPDATE_TERMINATE_SECONDS = STOP_SECONDS + 10;
 export const MAX_MAC_RUNTIME_ARCHIVE_BYTES = 2 * 1024 ** 3;
 export const MAX_MAC_RUNTIME_EXPANDED_BYTES = 4 * 1024 ** 3;
 export const MAX_MAC_UPDATE_RESPONSE_BYTES = 64 * 1024;
@@ -143,9 +146,9 @@ export function executor_paths(environment: NodeJS.ProcessEnv = process.env): Ex
   const configured = (environment[EXECUTOR_ROOT_ENV] ?? '').trim();
   const root = configured
     ? expand_executor_path(configured, environment)
-    : default_executor_root(home);
+    : default_executor_root(home, environment.XDG_DATA_HOME);
   const resolved = resolve_path_sync(root);
-  const legacy = resolve_path_sync(python_executor_root(home));
+  const legacy = resolve_path_sync(python_executor_root(home, environment.XDG_DATA_HOME));
   if (path_is_within(legacy, resolved))
     refuse_configuration('TypeScript executor root must be separate from the Python executor root');
   const legacy_inode = inode(legacy);

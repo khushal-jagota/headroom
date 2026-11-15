@@ -2,7 +2,7 @@
 
 `registry.ts::VpsExecutorRegistry` owns the invocation's executor destinations. Each `vps_transport.ts::VpsExecutor` owns one destination's mailbox, presence, inbox, file transfers, retained runs, and catalog relay. They share the application's database, clock, change signal, and media cutoff. `app_transport.ts::create_executor_routes` supplies the HTTP and obsolete-WebSocket boundary.
 
-Production loads credentialed destinations before retained adoption. A configured executor ID also enables the original Mac's legacy endpoint. `LocaleBackendChildFactory` selects remote children by the canonical Ticket's `machine_id` and keeps Home work local. A remote Ticket with absent or conflicting Worker identity hints refuses before child creation. Recovery selects the persisted incarnation and assignment, even after the Ticket changes destination. Unknown destinations and Home cannot create an executor through `ensure`.
+Production loads credentialed destinations before retained adoption. Enrollment commits the machine grant, then awaits the same registry's `ensure(machine_id)` before it returns the grant. A configured executor ID also enables the original Mac's legacy endpoint. `LocaleBackendChildFactory` selects remote children by the canonical Ticket's `machine_id` and keeps Home work local. A remote Ticket with absent or conflicting Worker identity hints refuses before child creation. Recovery selects the persisted incarnation and assignment, even after the Ticket changes destination. Unknown destinations and Home cannot create an executor through `ensure`.
 
 Each endpoint accepts one `machine_id`, with the original Mac as the default. Its mailbox, presence, run custody, inbox, catalog relay, and upload staging share that destination. Each owner scopes presence, commands, cursors, retained recovery, replacement stalls, receipts, and catalog rows to that machine. Command sequences remain global. Public command-ID and child-authority reads check machine ownership. Trusted exact-child transaction participants retain their existing caller authority. The registry tags aggregate stalls with their machine. Its `is_present(machine_id)` reads existing owners and never allocates one.
 
@@ -26,10 +26,14 @@ The Mac runner's `prompt_accepted` result carries the native provider's `agent_a
 
 ## Routes and authority
 
-All thirteen executor endpoints require trusted Tailscale login, the configured executor ID, no browser Origin, and no duplicate security headers. There is no executor bearer token. Work requests carrying incarnation headers check the supported protocol and current identity before reading the body; a lease admits identity from its payload. Incarnation is a row fence, not a credential. Transaction participants compare affected row incarnations and relevant assignments with the admitted request. Updates remain reachable before work-version admission.
+Executor ingress requires trusted Tailscale login, a claimed executor ID, no browser Origin, and no duplicate security headers. The shared machine credential helper authenticates the destination before the registry selects or creates an endpoint. The original configured ID retains legacy authority until credential handover closes. Work requests then check the supported protocol and current identity before reading the body; a lease admits identity from its payload. Incarnation is a row fence, separate from the credential. Transaction participants compare affected row incarnations and relevant assignments with the admitted request. Updates remain reachable before work-version admission.
+
+Only the original configured executor can request bootstrap credentials, with no credential header and a supported identity. The shared helper owns its database write. Authentication and update reports keep legacy authority open. After the supervisor keeps the runtime, its explicit credentialed close request closes handover through the shared helper. The close route needs neither a work protocol nor a current incarnation and accepts repeat requests.
 
 | Method | Path | Boundary |
 | --- | --- | --- |
+| POST | `/api/executor/credential` | Original executor credential bootstrap before handover closes |
+| POST | `/api/executor/credential/handover/close` | Credentialed handover closure after the supervisor keeps the runtime |
 | POST | `/api/executor/lease` | Admit identity and versions, update presence, settle replacement custody |
 | GET | `/api/executor/commands` | Current executor's bounded mailbox poll |
 | POST | `/api/executor/commands/outcomes` | Current executor's typed command outcomes; stop success still needs exact proof |
@@ -44,7 +48,7 @@ All thirteen executor endpoints require trusted Tailscale login, the configured 
 | POST | `/api/executor/update` | Strict typed update report with current health |
 | WebSocket | `/api/executor/connect` | Refuse the obsolete transport before upgrade |
 
-`ComposedEnvironmentRuntime.mac_updates` supplies `for_machine(machine_id)` for each current or later endpoint's presence checks. The legacy HTTP and health routes still receive only the original endpoint until credential routes land. Update reports pass strict generated decoding before the current health snapshot and synchronous service call. The default production backend/environment dependency table remains a supplier-owned gate.
+`ComposedEnvironmentRuntime.mac_updates` supplies `for_machine(machine_id)` for each current or later endpoint's presence checks and update routes. Update reports pass strict generated decoding before the current health snapshot and synchronous service call. The health route selects the requested destination and keeps the original Mac's native-build generation adjustment exclusive to that destination. The default production backend/environment dependency table remains a supplier-owned gate.
 
 ## Stop and recovery ownership
 
@@ -55,6 +59,12 @@ Registry `recheck_cleanup(source, ticket_id)` resolves the historical exact assi
 The invocation registers the endpoint through the existing producer lifecycle. Every stop observer receives the original absolute monotonic shutdown deadline. `settled()` retains raw completion after an observer expires. VPS shutdown detaches an active retained Mac child without starting a stop command; an already-running stop remains owned. Failed actual stop attempts remain retryable.
 
 Catalog cancellation withdraws its waiting command and completes that cleanup before the mailbox seals. A caller's cancelled observation does not cancel the shared catalog read. Endpoint shutdown seals new work and joins admitted saves, file cleanup, catalog withdrawal, and run/presence work before database closure. During shutdown, the catalog's short cleanup signal is capped by the original deadline.
+
+## Linux launch
+
+The shared executor entrypoint also serves Linux. Linux default data paths use P5's `default_linux_executor_root` helper, with explicit `PLAN_EXECUTOR_ROOT` precedence. Relative nonempty XDG paths refuse. The supervisor uses admitted host Node for every Linux runtime and P5's exact PATH and entrypoint helpers. Retained runtime reads use `LINUX_EXECUTOR` target admission. Darwin installation assets keep their Mac paths even when the build host is Linux.
+
+This launch slice preserves ready-marker promotion, failed-trial rollback, and handoff custody. Worker cleanup, lease composition, and final protocol activation remain port work.
 
 ## Shared wire
 
