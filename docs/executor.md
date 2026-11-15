@@ -43,7 +43,7 @@ Until the handover closes, the old trust proves the owner login and the claimed 
 
 After the handover closes, every executor request needs the credential, including update requests. A previous runtime that lacks credential support cannot regain the old authority after rollback.
 
-The home closes the handover just before the trial runtime confirms to the supervisor. If the runtime dies in that short gap, the supervisor restores a runtime that the home refuses. The Mac installation runbook gives the [manual recovery](../ops/mac-executor/installation.md#recover-a-mac-locked-out-after-its-credential-handover).
+The home closes the handover just before the trial runtime confirms to the supervisor. If the runtime dies in that short gap, or its confirmation reaches the supervisor after the deadline, the supervisor restores a runtime that the home refuses. The supervisor checks for the confirmation about once a second, so the second case needs a "current" report near the end of the window. The Mac installation runbook gives the [manual recovery](../ops/mac-executor/installation.md#recover-a-mac-locked-out-after-its-credential-handover).
 
 ## Starts and presence
 
