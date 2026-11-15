@@ -42,7 +42,7 @@ permissions:
 
 jobs:
   darwin-locks:
-    name: Darwin arm64 lifecycle and archive metadata ABI (Node 22)
+    name: Darwin arm64 lifecycle, archive, and Worker process ABI (Node 22)
     runs-on: macos-15
     timeout-minutes: 45
     steps:
@@ -103,7 +103,7 @@ jobs:
             fs.writeFileSync(process.env.NATIVE_EVIDENCE + "/platform.json", JSON.stringify({
               platform: process.platform, architecture: process.arch, node: process.version,
               executable: process.execPath, os_release: os.release(),
-              boundary: "Existing registry and archive sequences: Darwin fcntl/flock and descriptor-based futimens with exact Python nanoseconds. No browser, provider, executor or service.",
+              boundary: "Existing registry/archive sequences plus exact Worker libproc identity and signals against one owned synthetic child. No browser, provider, executor or service.",
               hosted_cost: "OPEN until this job completes; each existing case and job elapsed time are preserved separately."
             }, null, 2) + "\n");
             if (process.platform !== "darwin" || process.arch !== "arm64")
@@ -115,6 +115,10 @@ jobs:
           .venv/bin/python -m pip install -r requirements.txt
           .venv/bin/python -m pip install --editable . --config-settings editable_mode=compat
           python -I -S -B scripts/development_safety/bootstrap.py npm --prefix server ci
+          # Reuse this hosted Darwin job for the real libproc boundary; synthetic tests cannot prove its ABI.
+          python -I -S -B scripts/development_safety/bootstrap.py npm --prefix server run test -- \
+            platform_runtime/worker_processes.native.test.ts --reporter=junit \
+            --outputFile "$NATIVE_EVIDENCE/worker-process-abi.xml"
           # No web build: this registry fixture uses synthetic app roots and no UI assets.
           python -I -S -B scripts/development_safety/bootstrap.py pytest \
             tests/compare/direct/test_unit21_registry.py::test_unit21_registry_fixture_and_lifecycle_parity \

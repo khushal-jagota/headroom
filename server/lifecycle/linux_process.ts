@@ -80,3 +80,67 @@ export function managed_process_support(): { pin(pid: number): PinnedSupervisor 
   }
   return { pin };
 }
+
+/** Worker signals pin a process before a fresh birth check. Managed stopping stays separate. */
+export interface LinuxWorkerProcessSupport {
+  signal_exact(
+    pid: number,
+    birth: string,
+    signum: number,
+    read_current: () => { birth: string; zombie: boolean } | null,
+  ): boolean;
+  session(pid: number): number;
+  group(): number;
+  prepare_session(): void;
+}
+let worker_support: LinuxWorkerProcessSupport | undefined;
+export function linux_worker_process_support(): LinuxWorkerProcessSupport {
+  if (worker_support) return worker_support;
+  if (process.platform !== 'linux') throw new Error('Worker pidfd support requires Linux');
+  const library = koffi.load('libc.so.6');
+  const open = library.func('int pidfd_open(int pid, unsigned int flags)');
+  const send = library.func(
+    'int pidfd_send_signal(int fd, int signum, void *info, unsigned int flags)',
+  );
+  const getsid = library.func('int getsid(int pid)');
+  const getpgrp = library.func('int getpgrp(void)');
+  const setsid = library.func('int setsid(void)');
+  const failure = (operation: string, errno = koffi.errno()) =>
+    Object.assign(new Error(`${operation} failed (errno ${errno})`), {
+      errno,
+      code: errno === 3 ? 'ESRCH' : 'EIO',
+    });
+  worker_support = {
+    signal_exact(pid, birth, signum, read_current) {
+      const descriptor = open(pid, 0);
+      if (descriptor < 0) {
+        if (koffi.errno() === 3) return true;
+        throw failure('Open Worker process handle');
+      }
+      try {
+        const current = read_current();
+        if (current === null || current.birth !== birth || current.zombie) return true;
+        if (send(descriptor, signum, null, 0) !== 0 && koffi.errno() !== 3)
+          throw failure('Signal Worker process handle');
+        return true;
+      } finally {
+        closeSync(descriptor);
+      }
+    },
+    session(pid) {
+      const result = getsid(pid);
+      if (result < 0) throw failure('Read Worker session');
+      return result;
+    },
+    group() {
+      const result = getpgrp();
+      if (result < 0) throw failure('Read Worker process group');
+      return result;
+    },
+    prepare_session() {
+      if (this.session(0) !== process.pid || this.group() !== process.pid)
+        if (setsid() < 0) throw failure('Isolate Worker session');
+    },
+  };
+  return worker_support;
+}
