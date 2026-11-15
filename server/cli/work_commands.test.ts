@@ -131,3 +131,42 @@ test('CLI validates missing native values and skips an absent optional page cont
     request.mockRestore();
   }
 });
+
+// Gap: HTTP comparisons cannot prove CLI option merging or the credential output policy.
+// Reuse the wire stub and stdin seam. No server or external credential store participates.
+test('machine commands preserve credential JSON and ticket destination inputs', async () => {
+  const remote = 'ad1f66de-bcaa-45b7-918a-8d0e7a018ae1';
+  const grant = { machine_id: remote, credential: 'synthetic-secret', issued_at_ms: 100 };
+  const request = vi.spyOn(http, 'send').mockResolvedValue(grant);
+  const environment = { PLAN_SERVER_URL: 'http://127.0.0.1:19020', PLAN_ACTOR: '' };
+  try {
+    const registered = await run(['machine', 'register', 'Build host'], environment);
+    expect(JSON.parse(registered.stdout)).toEqual(grant);
+    expect(request.mock.lastCall?.slice(1)).toEqual([
+      'POST', '/api/machines', { json_body: { name: 'Build host' } },
+    ]);
+    const replaced = await run(['machine', 'replace-credential', remote], environment);
+    expect(JSON.parse(replaced.stdout)).toEqual(grant);
+    expect(request.mock.lastCall?.slice(1)).toEqual([
+      'POST', `/api/machines/${remote}/credential`,
+    ]);
+    request.mockResolvedValue({ machines: [{ machine_id: remote, name: 'Build host', available: false }] });
+    const listed = await run(['machine', 'list'], environment);
+    expect(listed.stdout.trim()).toBe(`${remote} Build host Away`);
+
+    request.mockResolvedValue({ id: 't_created', stage: 'needs_brief', supervision_receipt: 'Owner review' });
+    const args = ['ticket', 'create', '--input-json', '-', '--machine-id', remote];
+    const created = await run(args, environment, async () => Buffer.from('{"title":"Remote"}'));
+    expect(created.exit_code).toBe(0);
+    expect(request.mock.lastCall?.slice(1)).toEqual([
+      'POST', '/api/tickets', { json_body: { title: 'Remote', machine_id: remote } },
+    ]);
+    request.mockClear();
+    const duplicate = await run(args, environment, async () => Buffer.from(JSON.stringify({ machine_id: remote })));
+    expect(duplicate.exit_code).toBe(1);
+    expect(duplicate.stderr).toContain('machine_id accepts one input source');
+    expect(request).not.toHaveBeenCalled();
+  } finally {
+    request.mockRestore();
+  }
+});

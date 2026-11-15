@@ -27,6 +27,7 @@ export interface EmployeeLaunchConfiguration {
   employee_launch_reasoning_effort: string | null;
 }
 export interface ResolvedTicketCreationContext {
+  machine_id: string;
   locale: TicketLocale;
   launch_configuration: EmployeeLaunchConfiguration;
   project_id: string | null;
@@ -58,6 +59,7 @@ export interface Ticket extends EmployeeLaunchConfiguration {
   created_at: number;
   updated_at: number;
   locale: TicketLocale;
+  machine_id: string;
   is_backlogged: boolean;
   pending_proposal_revision: number;
 }

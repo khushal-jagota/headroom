@@ -1,5 +1,5 @@
 import type { ReadSql } from '../core/database/contracts.ts';
-import { supports_executor_versions } from '../execution_identity.ts';
+import { ORIGINAL_MAC_MACHINE_ID, supports_executor_versions } from '../execution_identity.ts';
 import { judge_presence } from '../executor/logic/presence.ts';
 import { read_presence } from '../executor/vps_presence_store.ts';
 import type { ExecutorRefusal } from '../executor/contracts.ts';
@@ -21,8 +21,8 @@ export function can_execute_locale(sql: ReadSql, locale: TicketLocale): boolean 
     )
   );
 }
-export function mac_is_present(sql: ReadSql, now_ms: number): boolean {
-  return judge_presence(read_presence(sql), now_ms).presence === 'present';
+export function mac_is_present(sql: ReadSql, now_ms: number, machine_id = ORIGINAL_MAC_MACHINE_ID): boolean {
+  return judge_presence(read_presence(sql, machine_id), now_ms).presence === 'present';
 }
 function _render_refusal(refusal: ExecutorRefusal): string {
   const server = refusal.server_identity;

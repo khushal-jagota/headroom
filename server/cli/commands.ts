@@ -1128,6 +1128,18 @@ export function create_commands(environment: NodeJS.ProcessEnv = {}): CliCommand
       }),
     ],
   );
+  command('machine', 'Read named execution destinations.');
+  command('machine list', 'List stable destination identities and their current availability.', [
+    option('as_json', '--json', boolean, { default: false }),
+  ]);
+  command('machine register', 'Register an extra machine and print its credential once.', [
+    argument('name', '<NAME>', text, {}),
+    option('as_json', '--json', boolean, { default: false }),
+  ]);
+  command('machine replace-credential', 'Revoke the old credential and print its replacement once.', [
+    argument('machine_id', '<MACHINE_ID>', text, {}),
+    option('as_json', '--json', boolean, { default: false }),
+  ]);
   command('ticket', 'Create, inspect, organize, and approve tickets.');
   command(
     'ticket assign',
@@ -1180,7 +1192,12 @@ export function create_commands(environment: NodeJS.ProcessEnv = {}): CliCommand
         description: 'Read one Ticket create object from this file, or - for standard input.',
         required: true,
       }),
-      option('locale', '--locale <CHOICE>', choice(['vps', 'macos']), {}),
+      option('machine_id', '--machine-id <TEXT>', text, {
+        description: 'Destination identity from panels machine list. Defaults to the home.',
+      }),
+      option('locale', '--locale <CHOICE>', choice(['vps', 'macos']), {
+        description: 'Legacy alias for the original home or Mac.',
+      }),
       option('as_json', '--json', boolean, {
         default: false,
         description: 'Print machine-readable JSON. Errors are printed as JSON on stderr.',
