@@ -380,3 +380,47 @@ def test_ticket_list_active_reaches_api_without_changing_inventory_default(
         assert result.exit_code == 0, result.output
     assert "active" not in calls[0]
     assert calls[1]["active"] is True
+
+
+def test_final_proposal_accept_omits_onward_scope_but_earlier_gate_requires_it(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The CLI must reach the new final API path without its old client-side refusal.
+
+    Existing API proofs cannot exercise this parser check. Reuse the HTTP stub;
+    no server or browser host is needed.
+    """
+    posts: list[dict[str, Any]] = []
+    record: dict[str, Any] = {
+        "id": "t_final", "stage": "review", "pending_proposal": {"field": "result", "revision": 7},
+        "workflow": {
+            "stages": [
+                {"id": "brief", "gating_field": "brief"},
+                {"id": "review", "gating_field": "result"},
+                {"id": "land", "gating_field": "consequences"},
+                {"id": "done", "gating_field": None},
+            ],
+            "advance": {"brief": "review", "review": "land", "land": "done"},
+        },
+    }
+
+    def send(method: str, path: str, **kwargs: Any) -> dict[str, Any]:
+        if method == "GET":
+            assert path == "/api/tickets"
+            return record
+        assert (method, path) == ("POST", "/api/tickets/t_final/accept/result")
+        posts.append(kwargs["json_body"])
+        return {"id": "t_final"}
+
+    monkeypatch.setattr(http, "send", send)
+    runner = CliRunner()
+    accepted = runner.invoke(cli_main.main, ["ticket", "proposal", "t_final", "accept", "--json"])
+    assert accepted.exit_code == 0, accepted.output
+    assert posts == [{"expected_proposal_revision": 7, "decision_id": "t_final:7:accept"}]
+
+    record["stage"] = "brief"
+    record["pending_proposal"] = {"field": "brief", "revision": 8}
+    refused = runner.invoke(cli_main.main, ["ticket", "proposal", "t_final", "accept", "--json"])
+    assert refused.exit_code != 0
+    assert "approval requires --ceiling" in refused.output
+    assert len(posts) == 1

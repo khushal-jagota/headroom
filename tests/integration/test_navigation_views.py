@@ -1422,3 +1422,13 @@ def test_review_priority_order_binds_all_cursor_paths_but_not_live_history(tmp_p
         fallback = page(first["next"])
         assert [item["id"] for item in fallback["windows"][0]["members"]] == list("cdef")
         assert fallback["review_summary"] == {"skipped": 1, "new": 3}
+
+
+def test_removed_consequences_group_restores_as_ordinary_resting_work() -> None:
+    # An older saved phone scope must reconnect without preserving the removed group.
+    query = descriptor()
+    query["windows"][0]["group"] = "waiting_to_closeout"  # type: ignore[typeddict-item]
+    query["windows"][0]["anchor"] = "old-membership-cursor"
+    checked = request(query)
+    assert checked["windows"][0]["group"] == "empty"
+    assert checked["windows"][0]["anchor"] is None

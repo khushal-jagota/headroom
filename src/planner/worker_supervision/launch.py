@@ -63,6 +63,8 @@ def main() -> None:
     arguments = sys.argv[2:]
     with records.locked(path, time.monotonic() + config.START_SECONDS):
         _launch(path, arguments)
+    os.environ.pop("TMUX", None)
+    os.environ.pop("STY", None)
     os.execvpe(arguments[0], arguments, os.environ)
 
 

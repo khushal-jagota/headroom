@@ -22,7 +22,7 @@ from enum import StrEnum
 
 from planner.core import ticket_blocks
 from planner.tickets.contracts import TicketStatus, WorkerStepClaim
-from planner.worker_types.contracts import CONSEQUENCES_FIELD_ID, WorkflowDefinition
+from planner.worker_types.contracts import WorkflowDefinition
 from planner.worker_types.store import workflow_from_row
 
 
@@ -46,7 +46,6 @@ class TicketFacts:
     ticket_id: str
     ticket_status: TicketStatus
     blocked: bool
-    waiting_to_closeout: bool
 
 
 class AgentState(StrEnum):
@@ -86,17 +85,10 @@ def derive_ticket_facts(
     stored: StoredTicketFacts, *, worker_type_definition: WorkflowDefinition | None = None
 ) -> TicketFacts:
     ticket_status = derive_ticket_status(stored)
-    definition = worker_type_definition or stored.workflow
-    if definition is None:
-        raise ValueError("Ticket facts require the saved workflow")
-    gating_field = definition.gating_field(stored.stage)
     return TicketFacts(
         ticket_id=stored.ticket_id,
         ticket_status=ticket_status,
         blocked=stored.has_live_blocker,
-        waiting_to_closeout=(
-            gating_field == CONSEQUENCES_FIELD_ID and ticket_status is TicketStatus.empty
-        ),
     )
 
 

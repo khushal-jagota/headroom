@@ -30,7 +30,7 @@ Waits addressed to Chief or a Manager arrive in that agent's conversation.
 
 An [Idea](ideas.md) is a remembered possibility. It never becomes work by itself. A [Ticket](tickets.md) is the committed unit: one piece of work for one Worker, with a ladder of stages that its [Worker type](worker-types.md) declares. People, Chief, and Managers create Tickets.
 
-When a Ticket is ready, the [worker-step loop](worker-steps.md) sends the Worker one prompt and stops watching. The Worker answers by filing a proposal for the current stage. The Ticket's ceiling decides whether that proposal settles on its own or waits for a person. [Review](review.md) is Khushal's queue of the waits addressed to him, together with messages that need him. Consequences is where merges, follow-up Tickets, and a verified report happen. Installing a release stays Khushal's action. Done ends the ladder.
+When a Ticket is ready, the [worker-step loop](worker-steps.md) sends the Worker one prompt and stops watching. The Worker answers by filing a proposal for the current stage. The Ticket's ceiling decides whether that proposal settles on its own or waits for a person. [Review](review.md) is Khushal's queue of the waits addressed to him, together with messages that need him. The last approved decision authorizes Consequences: merges, follow-up Tickets, and a verified report. That report finishes the Ticket without another approval. Installing a release stays Khushal's action. Done ends the ladder.
 
 ## Where it runs
 
@@ -54,4 +54,4 @@ The cross-cutting rules are listed in [Decisions that must stay put](invariants.
 - `web/`: the browser app.
 - `src/planner/cli/`: the `panels` command.
 
-_Last verified: 2026-11-04._
+_Last verified: 2026-11-15._

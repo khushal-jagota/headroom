@@ -19,7 +19,8 @@ final class TicketTests: XCTestCase {
             .init(id: "needs_brief", label: "Kickoff", gatingField: "brief", isTerminal: false, ownershipMode: "worker"),
             .init(id: "needs_wireframe", label: "Draw it", gatingField: "wireframe", isTerminal: false, ownershipMode: "worker"),
             .init(id: "done", label: "Finished", gatingField: nil, isTerminal: true, ownershipMode: nil)
-        ], fields: [.init(id: "brief", label: "Kickoff"), .init(id: "wireframe", label: "Drawing")])
+        ], fields: [.init(id: "brief", label: "Kickoff"), .init(id: "wireframe", label: "Drawing")],
+            ceilingRange: ["needs_brief", "needs_wireframe", "done"])
         let presentation = TicketPresentation(ticket: try ticket(), manifest: manifest)
         XCTAssertEqual(presentation.completedCount, 1)
         XCTAssertEqual(presentation.ceilingOptions.map(\.id), ["needs_wireframe", "done"])
@@ -41,6 +42,20 @@ final class TicketTests: XCTestCase {
         try await client.setTicketApprovalLimit(ticket.id, ceiling: "done", holder: Principal(kind: "owner", id: "owner"))
         let delivery = try await client.requestTicketRecap(ticket.id)
         XCTAssertEqual(delivery.note, "Delivery uncertain · do not resend")
+    }
+
+    func testLastDecisionRecognizesFollowThroughByItsFieldAndUsesServedBoundaries() throws {
+        let manifest = TicketWorkerType(workerType: nil, label: "Custom workflow", stages: [
+            .init(id: "needs_wireframe", label: "Review design", gatingField: "design", isTerminal: false, ownershipMode: "worker"),
+            .init(id: "land", label: "Land it", gatingField: "consequences", isTerminal: false, ownershipMode: "worker"),
+            .init(id: "done", label: "Done", gatingField: nil, isTerminal: true, ownershipMode: nil)
+        ], fields: [.init(id: "design", label: "Design"), .init(id: "consequences", label: "Consequences")],
+            ceilingRange: ["needs_wireframe", "done"], advance: ["needs_wireframe": "land", "land": "done"])
+        let presentation = TicketPresentation(ticket: try ticket(), manifest: manifest)
+        XCTAssertTrue(presentation.finalApproval)
+        XCTAssertEqual(presentation.ceilingOptions.map(\.id), ["needs_wireframe", "done"])
+        XCTAssertEqual(manifest.stages.map(\.id), ["needs_wireframe", "land", "done"])
+        XCTAssertFalse(ReviewWorkerManifest(workflow: manifest).approvalBoundaries.contains { $0.id == "land" })
     }
 
     func testRetainedEditsUseNarrowBodies() async throws {

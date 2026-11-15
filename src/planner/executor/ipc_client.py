@@ -44,6 +44,9 @@ def cli_mutation(method: str, path: str, body: Any) -> tuple[str, JsonObject]:
     if method == "POST" and path == "/api/tickets":
         return "ticket.create", {"body": body}
     proposal = re.fullmatch(r"/api/tickets/([^/]+)/propose", path)
+    rejection = re.fullmatch(r"/api/tickets/([^/]+)/reject", path)
+    if method == "POST" and rejection:
+        return "ticket.send_back", {"ticket_id": rejection[1], "body": body}
     patch = re.fullmatch(r"/api/tickets/([^/]+)", path)
     if method == "POST" and proposal:
         return "ticket.propose", {"ticket_id": proposal[1], "body": body}

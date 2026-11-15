@@ -1324,7 +1324,13 @@ def _approve_ticket_proposal(
         http.fail_validation(
             "the visible proposal changed; read it again before accepting", as_json
         )
-    if ceiling is None:
+    next_stage = manifest["advance"].get(stage)
+    final_approval = next_stage == "done" or (
+        isinstance(next_stage, str)
+        and _gating_field_for_stage(manifest, next_stage) == "consequences"
+        and manifest["advance"].get(next_stage) == "done"
+    )
+    if ceiling is None and not final_approval:
         http.fail_validation("approval requires --ceiling", as_json)
     if kickoff_title is not None:
         if field != BRIEF_FIELD_ID:
@@ -1338,11 +1344,12 @@ def _approve_ticket_proposal(
     field_payload: dict[str, Any] = {
         "expected_proposal_revision": revision,
         "decision_id": f"{tid}:{revision}:accept",
-        "next_ceiling": ceiling,
-        "next_holder": (
-            resolve_holder(holder, as_json) if holder is not None else caller_principal()
-        ),
     }
+    if not final_approval:
+        field_payload["next_ceiling"] = ceiling
+        field_payload["next_holder"] = (
+            resolve_holder(holder, as_json) if holder is not None else caller_principal()
+        )
     if edit_file is not None:
         field_payload["edited_body"] = _read_source(edit_file, as_json)
     if kickoff_note_file is not None:
@@ -2040,6 +2047,10 @@ def worker_recap(ticket_id: str | None, body_file: str | None, as_json: bool) ->
 @click.option("--edit-file", default=None, help="Edited accepted body, or - for stdin.")
 @click.option("--kickoff-title", default=None, help="Edited Kickoff title.")
 @click.option("--kickoff-note-file", default=None, help="Edited Kickoff note, or - for stdin.")
+@click.option("--message", default=None, help="Revision guidance for revise.")
+@click.option(
+    "--body-file", default=None, help="Revision guidance file for revise, or - for stdin."
+)
 @click.option(
     "--expected-proposal-revision", type=click.IntRange(1), default=None,
     help="The revision of the proposal you inspected. Omission pins the command-time read.",
@@ -2053,6 +2064,8 @@ def ticket_proposal(
     kickoff_title: str | None,
     kickoff_note_file: str | None,
     expected_proposal_revision: int | None,
+    message: str | None,
+    body_file: str | None,
     as_json: bool,
 ) -> None:
     """Submit, accept, or revise the current Ticket proposal."""
@@ -2069,14 +2082,21 @@ def ticket_proposal(
     accept_options = (ceiling, holder, edit_file, kickoff_title, kickoff_note_file)
     if action != "accept" and any(value is not None for value in accept_options):
         http.fail_validation(f"{action} does not accept proposal approval options", as_json)
+    if action != "revise" and (message is not None or body_file is not None):
+        http.fail_validation(f"{action} does not accept revision guidance options", as_json)
     if action == "submit" and expected_proposal_revision is not None:
         http.fail_validation("submit does not accept --expected-proposal-revision", as_json)
     if action == "submit":
         _submit_ticket_proposal(ticket_id, None, None, None, as_json)
         return
     if action == "revise":
+        if (message is None) == (body_file is None):
+            http.fail_validation(
+                "revise requires exactly one of --message or --body-file "
+                "(use --body-file - for stdin)", as_json,
+            )
         _revise_ticket_proposal(
-            ticket_id, None, "-", as_json, expected_proposal_revision
+            ticket_id, message, body_file, as_json, expected_proposal_revision
         )
         return
     _approve_ticket_proposal(

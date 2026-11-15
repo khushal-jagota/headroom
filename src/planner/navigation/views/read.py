@@ -110,6 +110,11 @@ def request(value: object, config: ViewConfig = DEFAULT_CONFIG) -> ViewRequest:
             "limit",
         }:
             raise ValueError("invalid window fields")
+        # Older saved clients can still ask for the removed resting-work group.
+        # Its old cursor belongs to another membership, so start the ordinary group anew.
+        if window["group"] == "waiting_to_closeout":
+            window["group"] = "empty"
+            window["anchor"] = None
         if (
             window["section"] not in get_args(ViewSection)
             or window["group"] not in get_args(ViewGroup)

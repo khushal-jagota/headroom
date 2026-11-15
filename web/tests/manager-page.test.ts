@@ -4,7 +4,7 @@ import { workspaceUnreadConversationCount } from "../src/lib/workspaceMessageDis
 import type { ManagerWorkspaceTicket } from "../src/lib/types";
 const ticket = (id:string, overrides:Partial<ManagerWorkspaceTicket> = {}): ManagerWorkspaceTicket => ({
   id, title:id, recap:"",recap_preview:"", is_backlogged:false, stage:"needs_implementation", activity_at:1,
-  ticket_status:"agent", waiting_to_closeout:false, has_pending_proposal:false,
+  ticket_status:"agent", has_pending_proposal:false,
   gating_field:null, blocked:false, worker_type:"coding", awaiting_reply:false, awaiting_answer:false, awaiting_approval:false, awaiting_agent_approval:false, assigned:false, agent_state:"idle", conversation_id:`conversation-${id}`,
   ...overrides
 });
@@ -48,7 +48,7 @@ describe("complete manager page groups", () => {
         conversation_signal:{working:true,message_for_owner:true}}),
       ticket("idle", {blocked:true, agent_state:"idle", conversation_signal:{working:false,message_for_owner:false}}),
       ticket("failed", {blocked:true, agent_state:"errored"}),
-      ticket("closeout", {ticket_status:"blocked", waiting_to_closeout:true, awaiting_agent_approval:true})
+      ticket("closeout", {ticket_status:"blocked", gating_field:"consequences", awaiting_agent_approval:true})
     ];
     const groups = managerPageGroups(rows);
     expect(groups.map((group) => [group.key, group.label, group.quiet]))

@@ -83,8 +83,8 @@ def close_original_handover(
     conn: sqlite3.Connection, machine_id: str, credential: str,
     authenticated_incarnation: str | None,
 ) -> None:
-    """Close the old authority once the trial runtime's credentialed "current" report
-    is accepted. Earlier, the Mac supervisor can still fall back to the old runtime."""
+    """Close the old authority once the Mac supervisor's decision to keep the
+    credentialed runtime is final. Earlier, it can still fall back to the old runtime."""
     # Serialize acknowledgment against bootstrap retry and operator replacement.
     try:
         conn.execute("BEGIN IMMEDIATE")

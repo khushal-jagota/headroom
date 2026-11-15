@@ -1122,6 +1122,107 @@ def test_commit_before_ack_replay_returns_first_receipt_and_one_domain_event(
     asyncio.run(run())
 
 
+def test_executor_send_back_replays_lost_receipt_and_delivers_guidance_once(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Gap: component receipts do not prove a remote decision and its actual prompt
+    survive a lost HTTPS reply together. Reuse the one TLS host, native child and
+    receipt-cut fixture; no provider or browser is added.
+    """
+    from planner.conversation.message_content import message_content_text
+    from planner.runtime.decision_message_delivery import deliver_ticket_decision_messages
+    from planner.tickets import data as ticket_data
+    from planner.worker_types.configuration import configured_worker_type_registry
+
+    async def run() -> None:
+        harness = await boot(tmp_path, monkeypatch)
+        try:
+            child = harness.child
+            # Model an authorized supervisor child using the existing transport
+            # fixture. An ordinary Worker cannot decide even its own proposal.
+            with contextlib.closing(connect(harness.endpoint.db_path)) as connection:
+                connection.execute(
+                    "UPDATE executor_child_assignments SET principal_kind='chief',"
+                    "principal_id='chief' WHERE executor_incarnation=? AND child_id=?",
+                    (child.reference.executor_incarnation, child.reference.child_id),
+                )
+                connection.commit()
+                parked = ticket_data.file_current_proposal(
+                    connection, harness.ticket_id, body="Please review this brief",
+                    principal=Principal(PrincipalKind.ticket, harness.ticket_id), now=3,
+                )
+            guidance = "Preserve this exact revision guidance café\nSecond line"
+            submission_id = "send-back-lost-reply"
+            harness.endpoint.cut_submission = submission_id
+            response = await asyncio.wait_for(
+                harness.mac.gateway.handle(IpcRequest(
+                    submission_id, IpcOperation.write,
+                    child.reference.child_id, child.capability,
+                    {"operation": "ticket.send_back", "arguments": {
+                        "ticket_id": harness.ticket_id,
+                        "body": {"message": guidance,
+                                 "expected_proposal_revision": parked.pending_proposal_revision},
+                    }},
+                )),
+                8,
+            )
+            assert response.error is None and response.unconfirmed is None
+            await harness.wait_settled("Send-back receipt did not replay")
+            assert harness.endpoint.cut_count == 1
+            assert harness.endpoint.seen_submissions[submission_id] >= 2
+            with contextlib.closing(connect(harness.endpoint.db_path)) as connection:
+                changed = ticket_data.read_ticket(connection, harness.ticket_id)
+                assert changed.pending_proposal is None
+                assert changed.stage == parked.stage
+                notes = connection.execute(
+                    "SELECT message FROM ticket_decision_messages WHERE ticket_id=?",
+                    (harness.ticket_id,),
+                ).fetchall()
+                assert [row["message"] for row in notes] == [guidance]
+            retry = await harness.mac.gateway.handle(IpcRequest(
+                "send-back-retry", IpcOperation.retry,
+                child.reference.child_id, child.capability,
+                {"submission_id": submission_id},
+            ))
+            assert retry.result == response.result and retry.error is None
+
+            received_prompts: list[str] = []
+            original_prompt = harness.native.write_prompt
+
+            async def capture_prompt(
+                turn_token: TurnToken, content: MessageContent, **arguments: object
+            ) -> BackendPromptAccepted:
+                received_prompts.append(message_content_text(content))
+                return await original_prompt(turn_token, content, **arguments)
+
+            monkeypatch.setattr(harness.native, "write_prompt", capture_prompt)
+            await harness.end_turn()
+            await deliver_ticket_decision_messages(
+                harness.ticket_id,
+                connect_database=lambda: connect(harness.endpoint.db_path),
+                conversation_system=harness.system,
+                worker_type_registry=configured_worker_type_registry(),
+                now=RealClock().now_unix,
+            )
+            await eventually(
+                lambda: sum(guidance in prompt for prompt in received_prompts) == 1,
+                "Exact send-back guidance never reached the native Worker prompt",
+            )
+            await deliver_ticket_decision_messages(
+                harness.ticket_id,
+                connect_database=lambda: connect(harness.endpoint.db_path),
+                conversation_system=harness.system,
+                worker_type_registry=configured_worker_type_registry(),
+                now=RealClock().now_unix,
+            )
+            await harness.wait_settled("Decision prompt did not settle")
+            assert sum(guidance in prompt for prompt in received_prompts) == 1
+        finally:
+            await harness.close()
+
+    asyncio.run(run())
+
+
 INPUT_ANSWERS = (UserInputAnswer("q_two", ("Red", "Blue")), UserInputAnswer("q_one", ("Yes",)))
 
 
@@ -2175,7 +2276,7 @@ def test_old_websocket_is_refused_needs_update_while_update_route_serves_it(
             origin = harness.proxy.origin
             only_id = {"X-Panels-Executor-ID": EXECUTOR_ID}
             authenticated = harness.mac.client.authentication_headers()
-            # The trial runtime's accepted "current" report closes the handover.
+            # A kept runtime's close request closes the handover. A repeat does nothing.
             with contextlib.closing(connect(harness.endpoint.db_path)) as connection:
                 close_original_handover(
                     connection, ORIGINAL_MAC_MACHINE_ID,

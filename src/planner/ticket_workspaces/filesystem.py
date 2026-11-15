@@ -26,6 +26,7 @@ from planner.ticket_workspaces.contracts import (
 _TICKET_ID = re.compile(rf"^({TICKET_ID_PATTERN})(?:-|$)")
 _SKIP_DIRECTORIES = frozenset({".git", ".venv", "node_modules"})
 _CHECKOUT_TIMEOUT_SECONDS = 30 * 60
+_PANELS_ORIGIN = "https://github.com/khushal-jagota/panels.git"
 
 
 def _git(repository: Path, *args: str) -> subprocess.CompletedProcess[str]:
@@ -37,9 +38,36 @@ def _git(repository: Path, *args: str) -> subprocess.CompletedProcess[str]:
         text=True,
         capture_output=True,
         check=False,
-        timeout=_CHECKOUT_TIMEOUT_SECONDS if args[:2] == ("worktree", "add") else 60,
+        timeout=_CHECKOUT_TIMEOUT_SECONDS
+        if args[:2] == ("worktree", "add") or args[:1] == ("clone",)
+        else 60,
         env=environment,
     )
+
+
+def _clone_source(repository: Path | None, panels_project: bool) -> tuple[str, str | None]:
+    if panels_project:
+        return _PANELS_ORIGIN, "staging"
+    assert repository is not None
+    remote = _git(repository, "remote", "get-url", "origin")
+    if remote.returncode or not remote.stdout.strip():
+        raise RuntimeError("Cannot find the Project repository's origin remote")
+    source = remote.stdout.strip()
+    # A relative local Git remote is relative to its source checkout, not to the Ticket.
+    if not re.match(r"(?:[a-zA-Z][a-zA-Z0-9+.-]*://|[^/]+:|/)", source):
+        source = str((repository / source).resolve())
+    return source, None
+
+
+def _validate_clone(destination: Path, branch: str | None = None) -> None:
+    if not (destination / ".git").is_dir() or (destination / ".git").is_symlink():
+        raise RuntimeError("Ticket workspace is not its independent Git checkout")
+    actual = _git(destination, "rev-parse", "--show-toplevel")
+    current = _git(destination, "symbolic-ref", "--short", "HEAD")
+    if actual.returncode or Path(actual.stdout.strip()).resolve() != destination:
+        raise RuntimeError("Ticket workspace belongs to another repository or path")
+    if branch is not None and (current.returncode or current.stdout.strip() != branch):
+        raise RuntimeError("Interrupted Ticket checkout branch changed; owner review required")
 
 
 def _write_json(path: Path, value: Any) -> None:
@@ -61,10 +89,15 @@ def repository_root(folder: Path | None) -> Path | None:
             return Path(result.stdout.strip()).resolve()
     # Do not choose among multiple repositories hidden below a Project folder.
     children = [child for child in folder.iterdir() if child.is_dir() and (child / ".git").exists()]
-    if children:
+    if len(children) > 1:
         raise RuntimeError(
             "Project folder contains repositories; select the repository folder explicitly"
         )
+    if children:
+        result = _git(children[0], "rev-parse", "--show-toplevel")
+        if result.returncode:
+            raise RuntimeError(f"Cannot inspect Project repository: {children[0]}")
+        return Path(result.stdout.strip()).resolve()
     return None
 
 
@@ -235,6 +268,8 @@ def prepare_workspace(
     ticket_root: Path,
     repository: Path | None,
     ticket_id: str,
+    *,
+    panels_project: bool = False,
 ) -> Path:
     """Resume the same locally owned checkout, including interrupted preparation."""
     identity = workspace_identity(ticket_root)
@@ -246,69 +281,112 @@ def prepare_workspace(
     marker = json.loads(marker_path.read_text())
     if marker.get("ticket_id") != ticket_id:
         raise RuntimeError("Ticket workspace ownership does not match")
-    selected = repository_root(repository)
+    selected = (
+        repository_root(repository)
+        if not panels_project or ("worktree" in marker and marker.get("checkout_kind") != "clone")
+        else None
+    )
     if "worktree" in marker:
-        if marker["worktree"] != str(destination) or marker.get("repository") != (
-            str(selected) if selected else None
-        ):
-            raise RuntimeError("Ticket workspace repository or path changed; owner review required")
-        if not marker.get("preparing", False):
+        if marker["worktree"] != str(destination):
+            raise RuntimeError("Ticket workspace path changed; owner review required")
+        if marker.get("checkout_kind") == "clone":
+            if not destination.exists() and marker.get("preparing"):
+                temporary = ticket_root / marker.get("temporary", "")
+                if temporary.parent != ticket_root or not temporary.name.startswith(".clone-"):
+                    raise RuntimeError("Interrupted Ticket clone ownership is invalid")
+                _validate_clone(temporary, marker["branch"])
+                _prove_checkout_complete(temporary)
+                temporary.rename(destination)
             if not destination.is_dir():
-                raise RuntimeError("The managed Ticket workspace is missing")
-            if selected is not None:
-                _validate_checkout(selected, destination)
-            return destination
+                raise RuntimeError("The managed Ticket workspace is missing or incomplete")
+            _validate_clone(destination, marker["branch"] if marker.get("preparing") else None)
+            if marker.get("preparing"):
+                _prove_checkout_complete(destination)
+        else:
+            # Legacy linked worktrees remain attached to their original repository.
+            recorded_repository = marker.get("repository")
+            if recorded_repository != (str(selected) if selected else None):
+                raise RuntimeError("Ticket workspace repository changed; owner review required")
+            if not marker.get("preparing", False):
+                if not destination.is_dir():
+                    raise RuntimeError("The managed Ticket workspace is missing")
+                if selected is not None:
+                    _validate_checkout(selected, destination)
+                return destination
+            if selected is None:
+                destination.mkdir(exist_ok=True)
+            elif destination.exists():
+                _validate_checkout(selected, destination, marker["branch"])
+                _prove_checkout_complete(destination)
+            else:
+                _repair_previous_worktree(ticket_root, selected, ticket_id)
+                branch = marker["branch"]
+                existing = _git(
+                    selected, "rev-parse", "--verify", "--quiet", f"refs/heads/{branch}"
+                )
+                if existing.returncode == 0:
+                    if existing.stdout.strip() != marker["initial_commit"]:
+                        raise RuntimeError(
+                            "Interrupted Ticket branch changed; owner review required"
+                        )
+                    result = _git(selected, "worktree", "add", str(destination), branch)
+                elif existing.returncode == 1:
+                    result = _git(
+                        selected,
+                        "worktree",
+                        "add",
+                        "-b",
+                        branch,
+                        str(destination),
+                        marker["initial_commit"],
+                    )
+                else:
+                    raise RuntimeError("Cannot inspect the interrupted Ticket branch")
+                if result.returncode:
+                    raise RuntimeError(f"Cannot prepare Ticket worktree: {result.stderr.strip()}")
+                _validate_checkout(selected, destination, branch)
     else:
         if destination.exists():
             raise RuntimeError("Ticket worktree exists without preparation ownership evidence")
-        branch = f"ticket/{ticket_id}-workspace-{identity.workspace_id[:12]}" if selected else None
-        initial_commit = None
-        if selected:
-            existing = _git(selected, "show-ref", "--verify", "--quiet", f"refs/heads/{branch}")
-            if existing.returncode == 0:
-                raise RuntimeError("Ticket branch exists without preparation ownership evidence")
-            if existing.returncode != 1:
-                raise RuntimeError("Cannot inspect the Ticket branch")
-            head = _git(selected, "rev-parse", "--verify", "HEAD")
-            if head.returncode:
-                raise RuntimeError("Cannot resolve the repository's initial commit")
-            initial_commit = head.stdout.strip()
-        marker.update(
-            repository=str(selected) if selected else None,
-            branch=branch,
-            worktree=str(destination),
-            preparing=True,
-            initial_commit=initial_commit,
-        )
-        _write_json(marker_path, marker)
-    if selected is None:
-        destination.mkdir(exist_ok=True)
-    elif destination.exists():
-        _validate_checkout(selected, destination, marker["branch"])
-        _prove_checkout_complete(destination)
-    else:
-        _repair_previous_worktree(ticket_root, selected, ticket_id)
-        branch = marker["branch"]
-        existing = _git(selected, "rev-parse", "--verify", "--quiet", f"refs/heads/{branch}")
-        if existing.returncode == 0:
-            if existing.stdout.strip() != marker["initial_commit"]:
-                raise RuntimeError("Interrupted Ticket branch changed; owner review required")
-            result = _git(selected, "worktree", "add", str(destination), branch)
-        elif existing.returncode == 1:
-            result = _git(
-                selected,
-                "worktree",
-                "add",
-                "-b",
-                branch,
-                str(destination),
-                marker["initial_commit"],
-            )
+        if panels_project or selected is not None:
+            source, base = _clone_source(selected, panels_project)
+            branch = f"ticket/{ticket_id}-workspace-{identity.workspace_id[:12]}"
+            # Clone into a temporary sibling; an interrupted clone is never exposed as
+            # a usable checkout and cannot be mistaken for user work on retry.
+            temporary = ticket_root / f".clone-{uuid4().hex}"
+            args = ["clone", "--filter=blob:none", "--single-branch", "--no-local"]
+            if base:
+                args.extend(["--branch", base])
+            args.extend(["--", source, str(temporary)])
+            recorded = False
+            try:
+                result = _git(ticket_root, *args)
+                if result.returncode:
+                    raise RuntimeError(
+                        "Cannot clone the Project origin; check remote access and branch"
+                    )
+                switched = _git(temporary, "switch", "-c", branch)
+                if switched.returncode:
+                    raise RuntimeError("Cannot create the Ticket branch")
+                _validate_clone(temporary, branch)
+                marker.update(
+                    repository=str(selected) if selected else None,
+                    branch=branch,
+                    worktree=str(destination),
+                    preparing=True,
+                    checkout_kind="clone",
+                    temporary=temporary.name,
+                )
+                _write_json(marker_path, marker)
+                recorded = True
+                temporary.rename(destination)
+            finally:
+                if not recorded and temporary.exists():
+                    shutil.rmtree(temporary)
         else:
-            raise RuntimeError("Cannot inspect the interrupted Ticket branch")
-        if result.returncode:
-            raise RuntimeError(f"Cannot prepare Ticket worktree: {result.stderr.strip()}")
-        _validate_checkout(selected, destination, branch)
+            marker.update(repository=None, branch=None, worktree=str(destination), preparing=True)
+            _write_json(marker_path, marker)
+            destination.mkdir()
     (ticket_root / "artifacts").mkdir(exist_ok=True)
     marker["preparing"] = False
     _write_json(marker_path, marker)
@@ -331,13 +409,37 @@ def _checkouts(root: Path) -> list[Path]:
 def workspace_ticket_owners(root: Path) -> tuple[str, ...]:
     owners: set[str] = set()
     for checkout in _checkouts(root):
-        for part in checkout.parts:
+        for part in (root.name, *checkout.relative_to(root).parts):
             match = _TICKET_ID.match(part)
             if match:
                 owners.add(match.group(1))
         branch = _git(checkout, "symbolic-ref", "--short", "HEAD")
         owners.update(re.findall(r"t_[0-9abcdefghjkmnpqrstuvwxyz]{8}(?![a-z0-9])", branch.stdout))
     return tuple(sorted(owners))
+
+
+def _recorded_checkout_problem(ticket_root: Path) -> str | None:
+    """A recorded Git checkout cannot become a plain folder if its metadata disappears."""
+    marker_path = ticket_root / OWNERSHIP_FILE
+    if not os.path.lexists(marker_path):
+        return None  # Artifact-only and legacy folders can lack a workspace marker.
+    try:
+        if marker_path.is_symlink() or not marker_path.is_file():
+            return "workspace ownership evidence is invalid"
+        marker = json.loads(marker_path.read_text())
+        is_git = marker.get("checkout_kind") == "clone" or marker.get("repository") is not None
+        if not is_git or "worktree" not in marker:
+            return None
+        checkout = ticket_root / WORKTREE_DIRECTORY
+        metadata = checkout / ".git"
+        if checkout.is_symlink() or metadata.is_symlink() or not metadata.exists():
+            return "recorded Git checkout or its metadata is missing or invalid"
+        result = _git(checkout, "rev-parse", "--show-toplevel")
+        if result.returncode or Path(result.stdout.strip()).resolve() != checkout.resolve():
+            return "recorded Git checkout or its metadata is missing or invalid"
+    except (OSError, ValueError, AttributeError, subprocess.TimeoutExpired):
+        return "cannot inspect recorded Git checkout ownership"
+    return None
 
 
 def reason_to_keep(
@@ -347,6 +449,9 @@ def reason_to_keep(
 ) -> str | None:
     if root.is_symlink() or root.parent.is_symlink():
         return "workspace path is a symlink"
+    recorded_problem = _recorded_checkout_problem(root)
+    if recorded_problem:
+        return recorded_problem
     try:
         checkouts = _checkouts(root)
     except OSError as exc:
@@ -367,7 +472,7 @@ def reason_to_keep(
                 return f"submodules require owner review before cleanup: {checkout}"
             if states is not None:
                 owners = []
-                for part in checkout.parts:
+                for part in (root.name, *checkout.relative_to(root).parts):
                     match = _TICKET_ID.match(part)
                     if match:
                         owners.append(match.group(1))
@@ -402,27 +507,38 @@ def reason_to_keep(
                         if not linked_path.is_relative_to(root):
                             return f"repository still owns an external worktree: {linked_path}"
             remotes = _git(checkout, "remote")
-            if remotes.returncode or not remotes.stdout.strip():
-                return f"no remote copy can be verified for {checkout}"
-            # Only refs advertised by the actual remotes can prove preservation.
+            if remotes.returncode or "origin" not in remotes.stdout.splitlines():
+                return f"no origin copy can be verified for {checkout}"
+            # Only refs advertised by origin can prove preservation.
             remote_hashes: set[str] = set()
-            for remote in remotes.stdout.splitlines():
-                fetched = _git(checkout, "fetch", "--prune", remote)
-                advertised = _git(checkout, "ls-remote", "--heads", "--tags", remote)
-                if fetched.returncode or advertised.returncode:
-                    return f"remote verification failed for {checkout}"
-                remote_hashes.update(line.split()[0] for line in advertised.stdout.splitlines())
+            fetched = _git(checkout, "fetch", "--prune", "origin")
+            advertised = _git(checkout, "ls-remote", "--heads", "--tags", "origin")
+            if fetched.returncode or advertised.returncode:
+                return f"remote verification failed for {checkout}"
+            for line in advertised.stdout.splitlines():
+                commit = line.split()[0]
+                # Single-branch clones need not have objects from other advertised
+                # branches. Only commits present locally can prove preservation.
+                if _git(checkout, "cat-file", "-e", f"{commit}^{{commit}}").returncode == 0:
+                    remote_hashes.add(commit)
             if not remote_hashes:
                 return f"no remote copy can be verified for {checkout}"
-            refs = "--all" if (checkout / ".git").is_dir() else "HEAD"
+            refs = ["HEAD"]
+            marker_root = root.parent if root.name == WORKTREE_DIRECTORY else root
+            marker_path = marker_root / OWNERSHIP_FILE
+            if checkout == marker_root / WORKTREE_DIRECTORY and marker_path.is_file():
+                marker = json.loads(marker_path.read_text())
+                branch = marker.get("branch")
+                if branch:
+                    refs.append(f"refs/heads/{branch}")
             unpublished = _git(
-                checkout, "rev-list", "-n", "1", refs, "--not", *sorted(remote_hashes)
+                checkout, "rev-list", "-n", "1", *refs, "--not", *sorted(remote_hashes)
             )
             if unpublished.returncode:
                 return f"Git cannot compare remote work for {checkout}"
             if unpublished.stdout.strip():
                 return f"unpushed work in {checkout}"
-        except (OSError, subprocess.TimeoutExpired) as exc:
+        except (OSError, ValueError, subprocess.TimeoutExpired) as exc:
             return f"Git inspection failed for {checkout}: {exc}"
     return None
 
@@ -481,9 +597,10 @@ def cleanup_local_workspaces(
     extra_roots: tuple[Path, ...] = (),
     active_ticket_ids: frozenset[str] = frozenset(),
     apply: bool = True,
+    measure_size: bool = False,
     before_remove: Callable[[Path], str | None] | None = None,
     authorize_retirement: Callable[[WorkspaceState, WorkspaceIdentity], bool] | None = None,
-    retire: Callable[[Path, WorkspaceState, WorkspaceIdentity], Path | str] | None = None,
+    retire: Callable[[Path, WorkspaceState, WorkspaceIdentity, bool], Path | str] | None = None,
     retirement_is_committed: Callable[[WorkspaceState, WorkspaceIdentity], bool] | None = None,
 ) -> CleanupResult:
     """Serialize server and CLI passes without locking unrelated workspace starts."""
@@ -499,6 +616,7 @@ def cleanup_local_workspaces(
             extra_roots=extra_roots,
             active_ticket_ids=active_ticket_ids,
             apply=apply,
+            measure_size=measure_size,
             before_remove=before_remove,
             authorize_retirement=authorize_retirement,
             retire=retire,
@@ -516,9 +634,10 @@ def _cleanup_local_workspaces(
     extra_roots: tuple[Path, ...] = (),
     active_ticket_ids: frozenset[str] = frozenset(),
     apply: bool = True,
+    measure_size: bool = False,
     before_remove: Callable[[Path], str | None] | None = None,
     authorize_retirement: Callable[[WorkspaceState, WorkspaceIdentity], bool] | None = None,
-    retire: Callable[[Path, WorkspaceState, WorkspaceIdentity], Path | str] | None = None,
+    retire: Callable[[Path, WorkspaceState, WorkspaceIdentity, bool], Path | str] | None = None,
     retirement_is_committed: Callable[[WorkspaceState, WorkspaceIdentity], bool] | None = None,
 ) -> CleanupResult:
     """Inventory before removal; unknown ownership and active Tickets always stay."""
@@ -533,7 +652,7 @@ def _cleanup_local_workspaces(
             match = _TICKET_ID.match(child.name)
             candidates.append((child, match.group(1) if match else None))
     manifest = []
-    eligible: list[Path] = []
+    eligible: list[tuple[Path, bool]] = []
     reason: str | None
     for path, ticket_id in candidates:
         state = states.get(ticket_id or "")
@@ -543,10 +662,26 @@ def _cleanup_local_workspaces(
             reason = "Ticket owner or end date is unknown; owner review required"
         elif ticket_id in active_ticket_ids or state.ended_at is None:
             reason = "Ticket is active"
-        elif now < state.ended_at + RETENTION_SECONDS:
-            reason = "seven-day retention period has not ended"
         else:
-            reason = reason_to_keep(path, states, active_ticket_ids)
+            checkout = path / WORKTREE_DIRECTORY
+            checkout_only = now < state.ended_at + RETENTION_SECONDS
+            recorded_problem = _recorded_checkout_problem(path)
+            if recorded_problem:
+                reason = recorded_problem
+            elif checkout_only and not (checkout / ".git").exists():
+                reason = "Ticket artifacts remain for seven days"
+            else:
+                reason = None
+                if checkout_only and reason is None:
+                    try:
+                        if set(workspace_ticket_owners(checkout)) - {ticket_id}:
+                            reason = "mixed Ticket ownership requires owner review"
+                    except (OSError, subprocess.TimeoutExpired) as exc:
+                        reason = f"cannot inspect workspace ownership: {exc}"
+                if reason is None:
+                    reason = reason_to_keep(
+                        checkout if checkout_only else path, states, active_ticket_ids
+                    )
         manifest.append(
             {
                 "path": str(path),
@@ -555,14 +690,14 @@ def _cleanup_local_workspaces(
                 "eligible_at": state.ended_at + RETENTION_SECONDS
                 if state and state.ended_at is not None
                 else None,
-                "allocated_bytes": _allocated_bytes(path),
+                "allocated_bytes": _allocated_bytes(path) if measure_size else None,
                 "preservation_reason": reason,
             }
         )
         if reason:
             result.skipped.append({"path": str(path), "reason": reason})
         else:
-            eligible.append(path)
+            eligible.append((path, checkout_only))
     tickets_root.parent.mkdir(parents=True, exist_ok=True)
     _write_json(
         tickets_root.parent / "ticket-workspaces-cleanup.json", {"at": now, "folders": manifest}
@@ -575,7 +710,7 @@ def _cleanup_local_workspaces(
     )
     result.removed.extend(retried.removed)
     result.skipped.extend(retried.skipped)
-    for path in eligible:
+    for path, checkout_only in eligible:
         try:
             match = _TICKET_ID.match(path.name)
             assert match is not None
@@ -592,13 +727,14 @@ def _cleanup_local_workspaces(
                 )
                 continue
             target = (
-                retire(path, state, identity)
+                retire(path, state, identity, checkout_only)
                 if retire is not None
                 else retire_workspace(
                     path,
                     state,
                     identity=identity,
                     retired_root=tickets_root.parent / ".ticket-retired",
+                    checkout_only=checkout_only,
                 )
             )
             if isinstance(target, str):
@@ -608,7 +744,9 @@ def _cleanup_local_workspaces(
             if reason:
                 result.skipped.append({"path": str(target), "reason": reason})
             else:
-                result.removed.append(str(path))
+                result.removed.append(
+                    str(path / WORKTREE_DIRECTORY) if checkout_only else str(path)
+                )
         except (OSError, RuntimeError, ValueError, subprocess.TimeoutExpired) as exc:
             result.skipped.append({"path": str(path), "reason": f"cleanup failed: {exc}"})
     return result
@@ -620,15 +758,25 @@ def retire_workspace(
     *,
     retired_root: Path | None = None,
     identity: WorkspaceIdentity | None = None,
+    checkout_only: bool = False,
 ) -> Path | str:
     """Detach this exact physical workspace before any destructive operation.
 
     The caller holds either the server's short write transaction or the executor's
     local start lock after canonical retirement authorization.
     """
-    target = prepare_workspace_retirement(path, state, retired_root=retired_root, identity=identity)
+    target = prepare_workspace_retirement(
+        path, state, retired_root=retired_root, identity=identity, checkout_only=checkout_only
+    )
     if isinstance(target, Path):
-        path.rename(target)
+        try:
+            detach_workspace(path, target, checkout_only=checkout_only)
+        except BaseException:
+            if checkout_only and target.is_dir() and not (target / WORKTREE_DIRECTORY).exists():
+                (target / OWNERSHIP_FILE).unlink(missing_ok=True)
+                target.rmdir()
+            (target.parent / f"{target.name.rsplit('-', 1)[1]}.json").unlink(missing_ok=True)
+            raise
     return target
 
 
@@ -638,6 +786,7 @@ def prepare_workspace_retirement(
     *,
     retired_root: Path | None = None,
     identity: WorkspaceIdentity | None = None,
+    checkout_only: bool = False,
 ) -> Path | str:
     """Prepare the exact retirement record before acquiring the database writer."""
     if path.is_symlink() or path.parent.is_symlink():
@@ -658,6 +807,9 @@ def prepare_workspace_retirement(
 
     scratch_names = snapshot_ticket_scratch(state.ticket_id)
     # Write ahead: a crash after rename still leaves an exact owned target to retry.
+    if checkout_only:
+        target.mkdir()
+        _write_json(target / OWNERSHIP_FILE, json.loads((path / OWNERSHIP_FILE).read_text()))
     _write_json(
         record_path,
         {
@@ -669,9 +821,35 @@ def prepare_workspace_retirement(
             "ended_at": state.ended_at,
             "deleted": state.deleted,
             "scratch_names": scratch_names,
+            "checkout_only": checkout_only,
         },
     )
     return target
+
+
+def detach_workspace(path: Path, target: Path, *, checkout_only: bool) -> None:
+    if not checkout_only:
+        path.rename(target)
+        return
+    (path / WORKTREE_DIRECTORY).rename(target / WORKTREE_DIRECTORY)
+    try:
+        marker_path = path / OWNERSHIP_FILE
+        marker = json.loads(marker_path.read_text())
+        for key in (
+            "worktree",
+            "repository",
+            "branch",
+            "preparing",
+            "initial_commit",
+            "checkout_kind",
+            "temporary",
+        ):
+            marker.pop(key, None)
+        marker["workspace_id"] = uuid4().hex
+        _write_json(marker_path, marker)
+    except BaseException:
+        (target / WORKTREE_DIRECTORY).rename(path / WORKTREE_DIRECTORY)
+        raise
 
 
 def _remove_retired(path: Path) -> str | None:
@@ -687,6 +865,28 @@ def _remove_retired(path: Path) -> str | None:
     record = json.loads((path.parent / f"{token}.json").read_text())
     if record["target"] != str(path):
         return "retirement target differs from its record"
+    if record.get("checkout_only"):
+        source = Path(record["source"])
+        marker_path = source / OWNERSHIP_FILE
+        if source.is_dir() and not (source / WORKTREE_DIRECTORY).exists():
+            try:
+                identity = read_workspace_identity(source)
+                if identity == WorkspaceIdentity(record["machine_id"], record["workspace_id"]):
+                    marker = json.loads(marker_path.read_text())
+                    for key in (
+                        "worktree",
+                        "repository",
+                        "branch",
+                        "preparing",
+                        "initial_commit",
+                        "checkout_kind",
+                        "temporary",
+                    ):
+                        marker.pop(key, None)
+                    marker["workspace_id"] = uuid4().hex
+                    _write_json(marker_path, marker)
+            except (OSError, ValueError, KeyError):
+                return "cannot recover retained Ticket folder ownership"
     names = record.get("scratch_names", [])
     if not isinstance(names, list) or any(not isinstance(name, str) for name in names):
         return "invalid retirement scratch snapshot"

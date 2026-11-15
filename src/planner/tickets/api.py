@@ -1108,7 +1108,9 @@ def accept_field(
     _ticket, worker_type_definition = _ticket_and_worker_type_definition(conn, ticket_id)
     _validate_field(worker_type_definition, field)
     now = clk.now_unix()
-    next_ceiling = admission.parse_next_ceiling(body["next_ceiling"], worker_type_definition)
+    next_ceiling = admission.parse_next_ceiling(
+        body["next_ceiling"], worker_type_definition, current_stage=_ticket.stage
+    )
     ticket = tickets_data.accept_proposal(
         conn,
         ticket_id,
@@ -1120,7 +1122,10 @@ def accept_field(
         expected_proposal_revision=body["expected_proposal_revision"],
         message=body["message"],
         decision_id=body["decision_id"],
-        next_holder=_parse_required_principal(body["next_holder"], "next_holder"),
+        next_holder=(
+            None if body["next_holder"] is None
+            else _parse_required_principal(body["next_holder"], "next_holder")
+        ),
     )
     return tickets_views.ticket_json(ticket, now)
 
@@ -1135,6 +1140,14 @@ def reject_ticket_proposal(
     clk: Clk,
 ) -> JsonDict:
     """Send a parked proposal back, with guidance for the executing agent or without."""
+    return write_reject_ticket_proposal(ticket_id, raw, conn, ctx, clk)
+
+
+def write_reject_ticket_proposal(
+    ticket_id: str, raw: dict[str, Any], conn: sqlite3.Connection,
+    ctx: RequestContext, clk: Clock,
+) -> JsonDict:
+    """Shared send-back validation and canonical write for HTTP and executor callers."""
     body = RejectionBody(
         message=body_opt_str(raw, "message"),
         decision_id=body_opt_str(raw, "decision_id"),

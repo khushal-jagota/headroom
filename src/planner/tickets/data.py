@@ -73,7 +73,11 @@ from planner.worker_types.contracts import (
     TicketWorkflowDefinition,
     WorkflowDefinition,
 )
-from planner.worker_types.registry import WorkerTypeRegistry, validate_workflow
+from planner.worker_types.registry import (
+    WorkerTypeRegistry,
+    validate_completion_stage,
+    validate_workflow,
+)
 from planner.worker_types.store import workflow_from_preset, workflow_from_row, workflow_to_json
 
 
@@ -1069,6 +1073,7 @@ def create_ticket(
             raise PlannerError(
                 ErrorCode.validation, "a custom workflow cannot select a specialist skill"
             )
+    validate_completion_stage(workflow)
     worker_type_definition = workflow
     initial_stage = worker_type_definition.default_ceiling()
     default_ceiling = worker_type_definition.default_ceiling()
@@ -1544,7 +1549,7 @@ def accept_proposal(
     now: int,
     edited_body: str | None = None,
     next_ceiling: NextCeiling | None = None,
-    next_holder: Principal,
+    next_holder: Principal | None = None,
     expected_proposal_revision: int | None = None,
     message: str | None = None,
     decision_id: str | None = None,
@@ -1569,7 +1574,11 @@ def accept_proposal(
             expected_proposal_revision=expected_proposal_revision,
             edited_body=edited_body,
             next_ceiling=next_ceiling,
-            next_holder={"kind": next_holder.kind.value, "id": next_holder.id},
+            next_holder=(
+                None
+                if next_holder is None
+                else {"kind": next_holder.kind.value, "id": next_holder.id}
+            ),
         )
         if decision_messages.is_replay(conn, decision_id, request):
             return ticket
@@ -1593,7 +1602,7 @@ def accept_proposal(
         )
         _validate_review_holder(
             conn,
-            next_holder,
+            decision.ceiling_holder,
             ticket_id=ticket.id,
             manager_kind=ticket.manager_kind,
             manager_id=ticket.manager_id,

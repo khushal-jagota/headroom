@@ -24,7 +24,6 @@ export type WorkItemTicketFacts = WorkItemAttentionFacts & {
   conversation_id?: string | null;
   ticket_status: string;
   is_backlogged?: boolean;
-  waiting_to_closeout?: boolean | null;
   gating_field?: string | null;
   activity_at?: number;
 };
@@ -37,7 +36,6 @@ export type WorkItemTicketGroupKey =
   | "errored"
   | "backlog"
   | "agent"
-  | "waiting_to_closeout"
   | "status_awaiting_approval"
   | "empty"
   | "blocked"
@@ -57,7 +55,6 @@ export const WORK_ITEM_TICKET_GROUPS: readonly WorkItemTicketGroupDefinition[] =
   { key: "errored", label: "Errored", quiet: false },
   { key: "backlog", label: "Backlog", quiet: false },
   { key: "agent", label: "Agent", quiet: false },
-  { key: "waiting_to_closeout", label: "Waiting on Consequences", quiet: true },
   {
     key: "status_awaiting_approval",
     label: "Awaiting an agent's approval",
@@ -81,7 +78,6 @@ export function workItemTicketGroupKey(
   if (ticket.blocked || ticket.ticket_status === "blocked") return "blocked";
   if (ticket.agent_state === "errored") return "errored";
   if (agentHoldsTicket(ticket)) return "agent";
-  if (ticket.waiting_to_closeout) return "waiting_to_closeout";
   if (ticket.awaiting_agent_approval) return "status_awaiting_approval";
   if (ticket.stage === "done") return "done";
   return "empty";

@@ -161,7 +161,16 @@ class WorkerScratch:
         except BaseException:
             self.close()
             raise
+        try:
+            (self.directory / "screen").mkdir(mode=0o700)
+        except BaseException:
+            self.close()
+            raise
         self.environment = dict(environment)
+        self.environment.pop("TMUX", None)
+        self.environment.pop("STY", None)
+        self.environment["TMUX_TMPDIR"] = str(self.directory)
+        self.environment["SCREENDIR"] = str(self.directory / "screen")
         self.environment.update(dict.fromkeys(("TMPDIR", "TMP", "TEMP"), str(self.directory)))
 
     def close(self) -> None:

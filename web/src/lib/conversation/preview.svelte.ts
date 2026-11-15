@@ -5,7 +5,7 @@ import { macActivityKnown, type TicketLocale } from "../ticketMachines";
 import { ConversationViewReader } from "./view/reader.svelte";
 import type { ConversationView } from "./wire";
 import { resolveModelPicker } from "./modelPicker";
-import { backgroundTasksAfterTheTurn, backgroundWorkSentence } from "./transcript";
+import { hasBackgroundTaskAfterTheTurn } from "./transcript";
 import { preselectedValue } from "./composer";
 
 export type ConversationPreviewSource = {
@@ -87,9 +87,7 @@ export function conversationPreview(source: () => ConversationPreviewSource) {
     if (!status) return reader?.trouble ? "Activity unknown" : null;
     if (status.authority !== "current") return "Activity unknown";
     if (status.pending_permission || status.pending_user_input) return "Waiting for you";
-    if (running) return "Working";
-    const background = backgroundTasksAfterTheTurn(status);
-    if (background.length > 0) return backgroundWorkSentence(background.map(task => task.task_description));
+    if (running || hasBackgroundTaskAfterTheTurn(status)) return "Working";
     return "Idle";
   });
   return {

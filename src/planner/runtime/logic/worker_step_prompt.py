@@ -12,7 +12,7 @@ from typing import Final
 
 from planner.tickets.contracts import StageOwnershipMode, Ticket
 from planner.tickets.logic import machine
-from planner.worker_types.contracts import WorkflowDefinition
+from planner.worker_types.contracts import CONSEQUENCES_FIELD_ID, WorkflowDefinition
 from planner.worker_types.guidance import render_workflow_guide
 
 READ_YOUR_TICKET_COMMAND: Final = "panels worker my-ticket brief"
@@ -58,7 +58,6 @@ def compose_worker_step_prompt(
     ticket: Ticket,
     *,
     worker_type_definition: WorkflowDefinition,
-    memory_was_lost: bool,
 ) -> WorkerStepPrompt:
     """Compose every Panels-owned input for one Ticket worker step.
 
@@ -66,9 +65,6 @@ def compose_worker_step_prompt(
     requirements also remain in the conversation system, where their own trust rules
     apply. The gated field is resolved against the Ticket's own Worker type definition.
 
-    ``memory_was_lost`` is the caller's answer to whether this conversation was compacted
-    since Panels last spoke into it. Only Panels holds that fact, so only Panels can put
-    it in the message.
     """
     gating = worker_type_definition.gating_field(ticket.stage)
     field = str(gating) if gating is not None else "the next step"
@@ -78,15 +74,29 @@ def compose_worker_step_prompt(
         worker_type_definition=worker_type_definition,
     )
     ownership_wire = ownership_mode.value if ownership_mode is not None else "terminal"
-    if ownership_mode is StageOwnershipMode.user:
+    if gating == CONSEQUENCES_FIELD_ID and ownership_mode is not StageOwnershipMode.user:
+        step_instruction = (
+            f"Work ticket {ticket.id} — {ticket.title}. It is at Stage '{str(ticket.stage)}'; "
+            "complete the authorized Consequences work and submit its verified report. "
+            "Consequences has no further approval gate. Its report settles automatically. "
+            "Preserve actual blockers and required human work. "
+            "Do not repeat completed side effects. "
+            f"Stage owner: {ownership_wire}."
+        )
+    elif ownership_mode is StageOwnershipMode.user:
         step_instruction = (
             f"Work ticket {ticket.id} — {ticket.title}. It is at Stage '{str(ticket.stage)}'; "
             f"open the collaborative discussion for the '{field}' field. "
             "Ask bounded questions or resume the Stage conversation, and do not file a "
             "proposal until the discussion has enough shared understanding. "
-            "Once filed, the answer settles below the ceiling and waits for approval "
-            "at or beyond it. "
-            f"Stage owner: {ownership_wire}."
+            + (
+                "Once the required human work is complete, the Consequences report settles "
+                "automatically without another approval. "
+                if gating == CONSEQUENCES_FIELD_ID
+                else "Once filed, the answer settles below the ceiling and waits for approval "
+                "at or beyond it. "
+            )
+            + f"Stage owner: {ownership_wire}."
         )
     else:
         step_instruction = (
@@ -99,15 +109,27 @@ def compose_worker_step_prompt(
         f"{FOLLOW_YOUR_WORKFLOW_GUIDE}"
     )
 
-    inputs: list[WorkerStepInput] = []
-    if memory_was_lost:
-        inputs.append(WorkerStepInput("memory loss", MEMORY_LOSS_NOTICE, quoted=False))
-    if memory_was_lost:
+    inputs = [WorkerStepInput("stage instruction", step_instruction, quoted=False)]
+    if gating == CONSEQUENCES_FIELD_ID:
+        # A saved workflow may predate this completion rule. Send its actual work
+        # and any recovered parked report into existing conversations as well.
         inputs.append(
-            WorkerStepInput("Ticket workflow guidance", render_workflow_guide(ticket.workflow))
+            WorkerStepInput(
+                "Consequences work and recovery",
+                worker_type_definition.stage_definition(ticket.stage).instructions,
+            )
         )
-    inputs.append(WorkerStepInput("stage instruction", step_instruction, quoted=False))
     return WorkerStepPrompt(inputs=tuple(inputs))
+
+
+def worker_step_memory_loss_prompt(ticket: Ticket) -> str:
+    """Panels' separate dispatch-time input for a worker-step wake."""
+    return (
+        MEMORY_LOSS_NOTICE
+        + "\n\n[Ticket workflow guidance]\n"
+        + render_workflow_guide(ticket.workflow)
+        + "\n[/Ticket workflow guidance]"
+    )
 
 
 def mid_step_memory_loss_prompt(ticket: Ticket) -> str:

@@ -93,22 +93,73 @@ def main() -> int:
         ]
     }
     if DESIGN_REVIEW:
-        workflow = dict(worker_type="coding", label="Coding", stages=[
-            dict(id="needs_brief", label="Brief", is_terminal=False, gating_field="brief"),
-            dict(id="needs_what_changes", label="What Changes", is_terminal=False, gating_field="what_changes"),
-            dict(id="needs_implementation", label="Implementation", is_terminal=False, gating_field="implementation"),
-            dict(id="needs_consequences", label="Consequences", is_terminal=False, gating_field="consequences"),
-            dict(id="done", label="Done", is_terminal=True)],
-            advance=dict(needs_brief="needs_what_changes", needs_what_changes="needs_implementation", needs_implementation="needs_consequences", needs_consequences="done"),
-            fields=[dict(id=x, label=y) for x,y in [("brief","Brief"),("what_changes","What Changes"),("implementation","Implementation"),("consequences","Consequences")]],
-            ceiling_range=["needs_brief","needs_what_changes","needs_implementation","needs_consequences","done"])
+        workflow = dict(
+            worker_type="coding",
+            label="Coding",
+            stages=[
+                dict(id="needs_brief", label="Brief", is_terminal=False, gating_field="brief"),
+                dict(
+                    id="needs_what_changes", label="What Changes", is_terminal=False,
+                    gating_field="what_changes",
+                ),
+                dict(
+                    id="needs_implementation", label="Implementation", is_terminal=False,
+                    gating_field="implementation",
+                ),
+                dict(
+                    id="needs_consequences", label="Consequences", is_terminal=False,
+                    gating_field="consequences",
+                ),
+                dict(id="done", label="Done", is_terminal=True),
+            ],
+            advance=dict(
+                needs_brief="needs_what_changes",
+                needs_what_changes="needs_implementation",
+                needs_implementation="needs_consequences",
+                needs_consequences="done",
+            ),
+            fields=[
+                dict(id=x, label=y)
+                for x, y in [
+                    ("brief", "Brief"), ("what_changes", "What Changes"),
+                    ("implementation", "Implementation"), ("consequences", "Consequences"),
+                ]
+            ],
+            ceiling_range=[
+                "needs_brief", "needs_what_changes", "needs_implementation",
+                "needs_consequences", "done",
+            ],
+        )
         manifest = {"worker_types": [workflow]}
         for ticket in tickets.values():
-            ticket.update(worker_type="coding", workflow=workflow, stage="needs_what_changes", ceiling="needs_what_changes", manager_id=None,
-                title="Match the iPhone app to the web", recap="The approved design brings the web sidebar cards, focused work and one decision area to the phone. Every proposal keeps its own note until its decision lands. The existing protected route carries each decision.",
-                field_values={"brief":"Match the phone to the approved web design."},
-                field_approvals={"brief":dict(method="owner", principal=dict(kind="owner",id="owner"), display_label="Approved by User")})
-            ticket["pending_proposal"].update(field="what_changes", body="Make the work that needs your attention easy to read.\n\n## One decision area\n\nRead the proposal, add an optional note, then choose **Approve**. Use `Send it back` with a note when the work needs a revision.\n\n| Surface | Change |\n| --- | --- |\n| Workspace | Focused sidebar cards |\n| Review | Pinned decisions |\n\n```swift\nlet focus = true\n```")
+            ticket.update(
+                worker_type="coding", workflow=workflow, stage="needs_what_changes",
+                ceiling="needs_what_changes", manager_id=None,
+                title="Match the iPhone app to the web",
+                recap=(
+                    "The approved design brings the web sidebar cards, focused work and one "
+                    "decision area to the phone. Every proposal keeps its own note until its "
+                    "decision lands. The existing protected route carries each decision."
+                ),
+                field_values={"brief": "Match the phone to the approved web design."},
+                field_approvals={
+                    "brief": dict(
+                        method="owner", principal=dict(kind="owner", id="owner"),
+                        display_label="Approved by User",
+                    )
+                },
+            )
+            ticket["pending_proposal"].update(
+                field="what_changes",
+                body=(
+                    "Make the work that needs your attention easy to read.\n\n"
+                    "## One decision area\n\nRead the proposal, add an optional note, then "
+                    "choose **Approve**. Use `Send it back` with a note when the work needs "
+                    "a revision.\n\n| Surface | Change |\n| --- | --- |\n"
+                    "| Workspace | Focused sidebar cards |\n| Review | Pinned decisions |\n\n"
+                    "```swift\nlet focus = true\n```"
+                ),
+            )
 
     # Goals reuse this host and the exact authored chart catalogue from the web.
     catalogue_source = (ROOT / "ios/scripts/goal-component-examples.ts").read_text()
@@ -289,7 +340,10 @@ def main() -> int:
     decision_receipts: dict[str, dict[str, Any]] = {}
     state: dict[str, Any] = {
         "offline": False,
-        "slow": not REVIEW_COMPLETION and not GOALS_SMOKE and not REACHABILITY_SMOKE and not DESIGN_REVIEW,
+        "slow": (
+            not REVIEW_COMPLETION and not GOALS_SMOKE
+            and not REACHABILITY_SMOKE and not DESIGN_REVIEW
+        ),
         "writes": [],
         "messages": [],
         "recording": None,
@@ -405,7 +459,9 @@ def main() -> int:
                 "conversation_id": ticket["conversation_id"],
                 "is_backlogged": False,
                 "ceiling": ticket["ceiling"] if DESIGN_REVIEW else ticket["stage"],
-                "ceiling_holder": ticket["ceiling_holder"] if DESIGN_REVIEW else {"kind": "owner", "id": "owner"},
+                "ceiling_holder": (
+                    ticket["ceiling_holder"] if DESIGN_REVIEW else {"kind": "owner", "id": "owner"}
+                ),
                 "gating_field": "what_changes" if DESIGN_REVIEW else "wireframe",
                 "proposal_field": proposal["field"] if proposal else None,
                 "proposal_revision": proposal["revision"] if proposal else 0,
@@ -449,9 +505,20 @@ def main() -> int:
             }
         }
         if DESIGN_REVIEW:
-            for key, project, title in [("design-panels", "Panels", "Get Panels ready for the phone"), ("design-wren", "Wren", "Ship Wren to the App Store"), ("design-write", "Write", "Write 1,000 words a day")]:
+            for key, project, title in [
+                ("design-panels", "Panels", "Get Panels ready for the phone"),
+                ("design-wren", "Wren", "Ship Wren to the App Store"),
+                ("design-write", "Write", "Write 1,000 words a day"),
+            ]:
                 records[("project", key)] = dict(kind="project", id=key, value=dict(name=project))
-                records[("manager", key)] = dict(kind="manager", id=key, value=dict(title=title, recap="", recap_preview="", recap_reference=None, created_at=1, updated_at=1, project_id=key, settled=False, conversation_id=None))
+                records[("manager", key)] = dict(
+                    kind="manager", id=key,
+                    value=dict(
+                        title=title, recap="", recap_preview="", recap_reference=None,
+                        created_at=1, updated_at=1, project_id=key, settled=False,
+                        conversation_id=None,
+                    ),
+                )
         cards: dict[tuple[str, str], int] = {}
         owner = state["review_owner"] if REVIEW_MESSAGES else None
         for ticket in tickets.values():
@@ -542,16 +609,24 @@ def main() -> int:
         windows = []
         for window in request["windows"]:
             members = order[: window["limit"]] if window["section"] == "review" else []
-            if DESIGN_REVIEW and window["section"] == "rail_tickets" and window["owner"]["kind"] == "chief":
+            if (
+                DESIGN_REVIEW and window["section"] == "rail_tickets"
+                and window["owner"]["kind"] == "chief"
+            ):
                 members = [("ticket", key) for key in tickets][:window["limit"]]
             if DESIGN_REVIEW and window["section"] == "rail_parents":
-                members = [("manager", key) for key in ["design-panels", "design-wren", "design-write"]]
+                members = [
+                    ("manager", key) for key in ["design-panels", "design-wren", "design-write"]
+                ]
             windows.append(
                 {
                     "window_id": json.dumps([window["section"], window["owner"]]),
                     "request": window,
                     "members": [{"kind": kind, "id": identity} for kind, identity in members],
-                    "total": len(members) if DESIGN_REVIEW else (len(order) if window["section"] == "review" else 0),
+                    "total": (
+                        len(members) if DESIGN_REVIEW
+                        else (len(order) if window["section"] == "review" else 0)
+                    ),
                     "previous": None,
                     "next": None,
                     "forward_overlap": None,
@@ -872,7 +947,12 @@ def main() -> int:
                     goal = goal_record(key, "Reach the next milestone", "binary")
                     goal.update(holder_kind="manager", holder_id=key, status=status, deadline=None)
                     design_goals.append(goal)
-                self.respond(dict(goals=design_goals, status_date="2026-11-15", next_refresh_at=time.time()+3600))
+                self.respond(
+                    dict(
+                        goals=design_goals, status_date="2026-11-15",
+                        next_refresh_at=time.time()+3600,
+                    )
+                )
                 return
             if GOALS_SMOKE and path == "/api/goals":
                 self.respond(

@@ -33,9 +33,9 @@ Settings → Machines shows availability, current Worker activity, and Tickets t
 
 The owner registers an extra destination and obtains one join command and its private credential. The command installs a new executor and checks an accepted lease. The owner supplies the trusted HTTPS origin of the same home that issues the credential. A credential permits executor requests for one destination. Replacing it invalidates the old credential. The home normally stores only a verifier. During the original Mac handover, it also keeps the pending credential until the handover closes.
 
-The original Mac has a one-time transition from its existing authority. The first upgraded runtime requests its credential automatically and saves it privately before its work loops start. That runtime is an update trial, and the Mac supervisor keeps it only if it confirms in time. So the old authority stays open until the trial runtime sends a "current" update report with the credential. That report closes the handover: the old authority closes permanently, and the pending secret is removed. That closure survives home restarts and migration replay.
+The original Mac has a one-time transition from its existing authority. The first upgraded runtime requests its credential automatically and saves it privately before its work loops start. That runtime is an update trial, and the Mac supervisor keeps it only if it confirms in time. So the old authority stays open until the supervisor's decision to keep it is final: the supervisor's saved selection names this trial, and no attempt is pending. The runtime then sends a credentialed close request, and retries with backoff until the home accepts. That request closes the handover: the old authority closes permanently, and the pending secret is removed. That closure survives home restarts and migration replay.
 
-Until the handover closes, the home accepts both the credential and the old authority. A trial that crashes or misses its window falls back to a runtime that can still lease and report the revert. Each start of an upgraded runtime asks for its credential before it uses its saved file. While the handover is open, the home returns its pending credential, or a new one after a home database restore. After closure, or when the home is unreachable, the Mac uses its saved file.
+Until the handover closes, the home accepts both the credential and the old authority. Every supervisor reverts only before its saved selection names the trial. So a trial that crashes, or whose confirmation misses the supervisor's window, falls back to a runtime that can still lease and report the revert. The fixed supervisor needed no change for this. Each start of an upgraded runtime asks for its credential before it uses its saved file. While the handover is open, the home returns its pending credential, or a new one after a home database restore. After closure, or when the home is unreachable, the Mac uses its saved file.
 
 The home log records issuance and closure times with the executor incarnation.
 
@@ -43,7 +43,7 @@ Until the handover closes, the old trust proves the owner login and the claimed 
 
 After the handover closes, every executor request needs the credential, including update requests. A previous runtime that lacks credential support cannot regain the old authority after rollback.
 
-The home closes the handover just before the trial runtime confirms to the supervisor. If the runtime dies in that short gap, or its confirmation reaches the supervisor after the deadline, the supervisor restores a runtime that the home refuses. The supervisor checks for the confirmation about once a second, so the second case needs a "current" report near the end of the window. The Mac installation runbook gives the [manual recovery](../ops/mac-executor/installation.md#recover-a-mac-locked-out-after-its-credential-handover).
+A home from before this rule closed the handover at the trial's credentialed "current" report, before the supervisor kept the trial. If that trial died or missed its window, the supervisor restored a runtime that the home refuses. A current home with a runtime from before the close request keeps the handover open until the Mac keeps a runtime that sends it. The Mac installation runbook gives the [manual recovery](../ops/mac-executor/installation.md#recover-a-mac-locked-out-after-its-credential-handover).
 
 ## Starts and presence
 
@@ -68,6 +68,18 @@ Live text and tool progress remain lossy. Finished messages and durable events w
 Files reach the home before an item that refers to them. Uploads wait privately until the home accepts their item. The home checks file ownership before publication and publishes in small groups so other writers can proceed. A matching digest does not grant another machine access.
 
 Each Worker uses its own local Ticket workspace. The executor transfers prompts, skills, and Ticket artifacts. It does not transfer the private worktree or its dependencies. The home grants workspace retirement only for the exact registered folder and its owning destination. See [Ticket workspaces](environments.md#ticket-scratch).
+
+Agents can send a proposal back with `panels ticket proposal ID revise` and guidance
+from `--message TEXT` or `--body-file PATH`. Use `--body-file -` for stdin. The executor
+checks Home support before it saves the submission. An older Home returns an update
+request without queued work. An older executor still refuses the command locally.
+
+Home checks the sender's current assignment and ordinary Ticket authority, then uses
+the same send-back resolver as the direct CLI. Guidance enters the Worker's prompt
+through the existing delivery path. The decision and receipt commit together. A lost
+reply can return the original receipt through `panels executor retry SUBMISSION_ID`.
+Mac and Linux receive this support through their versioned runtime update channel,
+which preserves their journals and outboxes.
 
 ## Restarts and recovery
 

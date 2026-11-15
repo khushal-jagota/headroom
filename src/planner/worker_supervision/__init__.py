@@ -540,6 +540,8 @@ _fresh_stop_observations = FreshProcessObservations()
 class WorkerSupervisor:
     def __init__(self, environment: Mapping[str, str], working_directory: Path) -> None:
         self.environment = dict(environment)
+        self.environment.pop("TMUX", None)
+        self.environment.pop("STY", None)
         self.working_directory = Path(working_directory)
         root_value = environment.get(config.RECORD_ROOT_ENV) or os.environ.get(
             config.RECORD_ROOT_ENV
