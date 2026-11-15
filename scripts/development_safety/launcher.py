@@ -147,7 +147,17 @@ def node_safety(tree: Path, package: str, env: Mapping[str, str]) -> Path:
     node_environment(tree, destination, env)
     check_tree(tree, environment=env)
     check_tree(destination, environment=env)
-    lookups = [base / "node_modules" for base in (destination, *destination.parents)]
+    # The package destination can be created by npm, so always inspect it. Ancestor
+    # lookup locations are read-only: inspect them only when a directory entry exists.
+    # lstat retains dangling links for the scanner to inspect as well.
+    lookups = [destination / "node_modules"]
+    for base in destination.parents:
+        candidate = base / "node_modules"
+        try:
+            candidate.lstat()
+        except FileNotFoundError:
+            continue
+        lookups.append(candidate)
     node = shutil.which("node", path=env.get("PATH", os.defpath))
     if not node:
         refuse(destination, "executable lookup", "node is absent from PATH.")

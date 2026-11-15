@@ -379,6 +379,7 @@ class ConversationStore:
         # Process and service inspections never hold SQLite's writer lock. The
         # writer accepts a proof only if the entire recorded source still matches.
         proofs: dict[str, tuple[object, ...]] = {}
+        proof_ticket_workers: dict[str, bool] = {}
         for candidate in read_unresolved_turns(conn, include_custody_unavailable=True):
             if candidate.conversation_id in open_runs:
                 continue
@@ -386,8 +387,12 @@ class ConversationStore:
                 "SELECT * FROM conversation_child_custody WHERE conversation_id=?",
                 (candidate.conversation_id,),
             ).fetchone()
-            if snapshot is not None and child_custody.retirement_row_proven(snapshot):
+            ticket_worker = child_custody.is_ticket_conversation(conn, candidate.conversation_id)
+            if snapshot is not None and child_custody.retirement_row_proven(
+                snapshot, ticket_worker=ticket_worker
+            ):
                 proofs[candidate.conversation_id] = tuple(snapshot)
+                proof_ticket_workers[candidate.conversation_id] = ticket_worker
         conn.execute("BEGIN IMMEDIATE")
         from planner.conversation.deploy_interruptions.contracts import (
             CapturedTurn,
@@ -434,6 +439,8 @@ class ConversationStore:
                 ).fetchone()
             )
             != proofs[turn.conversation_id]
+            or child_custody.is_ticket_conversation(conn, turn.conversation_id)
+            != proof_ticket_workers[turn.conversation_id]
             or not child_custody.occurrence_matches(
                 conn, turn.conversation_id, turn.occurrence_id, turn.runtime_epoch
             )
@@ -648,14 +655,15 @@ class ConversationStore:
                     "SELECT * FROM conversation_child_custody WHERE conversation_id=?",
                     (conversation_id,),
                 ).fetchone()
+                ticket_worker = child_custody.is_ticket_conversation(conn, conversation_id)
             if source is None:
                 return False
-            proven = child_custody.retirement_row_proven(source)
+            proven = child_custody.retirement_row_proven(source, ticket_worker=ticket_worker)
             if not proven and not inspect_only and source["state"] == "started":
                 proven = child_custody.stop_recorded_child(LocalChildIdentity(
                     source["pid"], source["birth"], source["boot"], source["unit"],
                     source["supervision_record"],
-                ), source["host"])
+                ), source["host"], ticket_worker=ticket_worker)
             if not proven:
                 return False
             with self._publication_connection() as (conn, admission):
@@ -671,7 +679,9 @@ class ConversationStore:
                     "OR (kind='request' AND status IN ('pending','answering'))) LIMIT 1",
                     (conversation_id,),
                 ).fetchone()
-                if current is None or tuple(current) != tuple(source) or active is not None:
+                if (current is None or tuple(current) != tuple(source) or active is not None
+                    or child_custody.is_ticket_conversation(conn, conversation_id)
+                    != ticket_worker):
                     conn.rollback()
                     return False
                 child_custody.write_retired(conn, conversation_id, str(source["generation"]))
@@ -728,6 +738,7 @@ class ConversationStore:
                 "SELECT * FROM conversation_child_custody WHERE conversation_id=?",
                 (conversation_id,),
             ).fetchone()
+            ticket_worker = child_custody.is_ticket_conversation(conn, conversation_id)
         if source is None:
             return None
         result: RecordedSourceSettlement
@@ -752,8 +763,10 @@ class ConversationStore:
                 source["supervision_record"],
             )
             proven = (
-                child_custody.retirement_row_proven(source) if inspect_only
-                else child_custody.stop_recorded_child(identity, source["host"])
+                child_custody.retirement_row_proven(source, ticket_worker=ticket_worker)
+                if inspect_only else child_custody.stop_recorded_child(
+                    identity, source["host"], ticket_worker=ticket_worker
+                )
             )
             if not proven:
                 return None
@@ -764,7 +777,8 @@ class ConversationStore:
                 "SELECT * FROM conversation_child_custody WHERE conversation_id=?",
                 (conversation_id,),
             ).fetchone()
-            if current is None or tuple(current) != tuple(source):
+            if (current is None or tuple(current) != tuple(source)
+                or child_custody.is_ticket_conversation(conn, conversation_id) != ticket_worker):
                 conn.rollback()
                 return None
             occurrence = conn.execute(

@@ -453,8 +453,11 @@ def test_recheck_retires_idle_custody_after_parent_crash_without_a_turn(
             assert conn.execute(
                 "SELECT state FROM conversation_child_custody WHERE conversation_id='idle_child'"
             ).fetchone()[0] == "started"
-        # A crashed parent loses its in-memory adapter, while the exact source row
-        # survives. The fake child names an impossible PID, so fresh absence is real.
+        # A crashed parent loses its in-memory adapter. Simulate the recorded host
+        # having rebooted, which proves even unobserved legacy descendants ended.
+        from planner.conversation import child_custody
+
+        monkeypatch.setattr(child_custody, "recorded_boot_ended", lambda *_: True)
         state = await harness.system._conversation_state("idle_child")
         assert state is not None
         state.child = None
@@ -482,7 +485,7 @@ def test_recheck_retires_idle_custody_after_parent_crash_without_a_turn(
             conn.commit()
         harness.store.blocked_local_conversations.add("idle_child")
         gone = False
-        monkeypatch.setattr(child_custody, "retirement_row_proven", lambda row: gone)
+        monkeypatch.setattr(child_custody, "retirement_row_proven", lambda row, **kwargs: gone)
 
         def cannot_signal(*args: object) -> bool:
             raise AssertionError("An observational recheck attempted a signal")
@@ -748,6 +751,9 @@ def test_refused_kill_recheck_keeps_held_work_until_an_ordinary_send(
             with pytest.raises(PlannerError, match="not proven ended"):
                 await harness.system.kill("old")
             backend.stop_raises_something_unnamed = False
+            from planner.conversation import child_custody
+
+            monkeypatch.setattr(child_custody, "recorded_boot_ended", lambda *_: True)
             assert (await harness.system.recheck_worker_cleanup(ticket.id)).complete
             harness.clock.advance(2)
             await asyncio.wait_for(deferred_retry, 3)

@@ -1135,6 +1135,14 @@ def reject_ticket_proposal(
     clk: Clk,
 ) -> JsonDict:
     """Send a parked proposal back, with guidance for the executing agent or without."""
+    return write_reject_ticket_proposal(ticket_id, raw, conn, ctx, clk)
+
+
+def write_reject_ticket_proposal(
+    ticket_id: str, raw: dict[str, Any], conn: sqlite3.Connection,
+    ctx: RequestContext, clk: Clock,
+) -> JsonDict:
+    """Shared send-back validation and canonical write for HTTP and executor callers."""
     body = RejectionBody(
         message=body_opt_str(raw, "message"),
         decision_id=body_opt_str(raw, "decision_id"),

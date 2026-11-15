@@ -69,6 +69,18 @@ Files reach the home before an item that refers to them. Uploads wait privately 
 
 Each Worker uses its own local Ticket workspace. The executor transfers prompts, skills, and Ticket artifacts. It does not transfer the private worktree or its dependencies. The home grants workspace retirement only for the exact registered folder and its owning destination. See [Ticket workspaces](environments.md#ticket-scratch).
 
+Agents can send a proposal back with `panels ticket proposal ID revise` and guidance
+from `--message TEXT` or `--body-file PATH`. Use `--body-file -` for stdin. The executor
+checks Home support before it saves the submission. An older Home returns an update
+request without queued work. An older executor still refuses the command locally.
+
+Home checks the sender's current assignment and ordinary Ticket authority, then uses
+the same send-back resolver as the direct CLI. Guidance enters the Worker's prompt
+through the existing delivery path. The decision and receipt commit together. A lost
+reply can return the original receipt through `panels executor retry SUBMISSION_ID`.
+Mac and Linux receive this support through their versioned runtime update channel,
+which preserves their journals and outboxes.
+
 ## Restarts and recovery
 
 A home restart preserves mailboxes, assignments, results, and receipts. The conversation system adopts retained remote runs instead of starting another provider call.
