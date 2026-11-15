@@ -45,6 +45,7 @@ export type UpdateCheck = () => WireTypes['MacUpdateCheck'] | Promise<WireTypes[
 export type IncarnationReplaced = (replaced: string, current: string) => Promise<void>;
 export interface MacPresenceOptions {
   changes: ChangeSignal;
+  machine_id?: string;
   application_revision?: string;
   clock?: () => number;
 }

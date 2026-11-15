@@ -4,15 +4,14 @@ This file records intentional differences that the migration Manager accepted. N
 
 ## Pending staging port: mailbox authority and protocol
 
-These are open P2/P3 boundaries, not accepted final parity. The populated mailbox
-exchange remains expected-open P2 with its original comparisons intact.
+P2 owns these boundaries. The active machine-scope comparison now proves that stale
+reports refuse before outcome writes and StartRun encoding carries `supervision_protocol=24`.
+Internal executor waits and the shared process registry now include `machine_id=null`.
+The save-retry comparison is active again with that exact field.
 
-- Python refuses reports from a successor incarnation while the old process remains current.
-  TypeScript returns a batch receipt with `command_of_another_executor_process` instead.
-- StartRun encoding now includes `supervision_protocol=24`. The populated mailbox exchange remains open until report authority matches Python.
-- Python includes `machine_id=null` on internal mailbox stall waits. TypeScript omits it. P3 owns this metadata gap.
-
-No field projection hides these differences. The retained proof must pass after the port.
+The original populated mailbox exchange remains expected-open until runtime protocol
+admission and the rest of the executor port match Python. Its original comparisons
+remain intact. These implemented boundaries do not claim full executor parity.
 
 The native schema describes protocol 26. Runtime identities still advertise protocol 22
 until machine credentials, supervision, and workspace behavior reach parity. This is

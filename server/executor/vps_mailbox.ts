@@ -1,5 +1,6 @@
 /** Durable rows own commands. This owner supplies only waits and commit announcements. */
 import type { Database, ReadSql, TransactionSql } from '../core/database/contracts.ts';
+import { ORIGINAL_MAC_MACHINE_ID } from '../execution_identity.ts';
 import { observe_shutdown, is_shutdown_business_cancellation } from '../conversation/shutdown.ts';
 import { ServerLifecycleError } from '../lifecycle/contracts.ts';
 import type { StopOptions } from '../lifecycle/contracts.ts';
@@ -129,10 +130,12 @@ export class SqliteCommandMailbox {
   private closed = false;
   private readonly clock: () => number;
   private readonly database: Database;
+  readonly machine_id: string;
 
-  constructor(database: Database, options: { clock?: () => number } = {}) {
+  constructor(database: Database, options: { clock?: () => number; machine_id?: string } = {}) {
     this.database = database;
     this.clock = options.clock ?? now_ms;
+    this.machine_id = options.machine_id ?? ORIGINAL_MAC_MACHINE_ID;
     // Retain the raw rejection even when a bounded stop observer already expired.
     void this.resource_join.promise.catch(() => {});
   }
@@ -199,7 +202,10 @@ export class SqliteCommandMailbox {
           const placed = insert(tx, this.clock());
           return {
             placed,
-            high: 'command_sequence' in placed ? (this.high ?? data.high_sequence(tx)) : null,
+            high:
+              'command_sequence' in placed
+                ? (this.high ?? data.high_sequence(tx, this.machine_id))
+                : null,
           };
         },
         silent ? { changeSignal: 'silent' } : undefined,
@@ -221,13 +227,21 @@ export class SqliteCommandMailbox {
     command: WireValue<'ChildCommand'>,
     options: { signal?: AbortSignal } = {},
   ): Promise<WireValue<'MailboxCommand'> | WireValue<'CommandOutcome'>> {
-    return this.put((tx, now) => data.insert_child_command(tx, command, now), false, options);
+    return this.put(
+      (tx, now) => data.insert_child_command(tx, command, now, this.machine_id),
+      false,
+      options,
+    );
   }
   async put_model_list_request(
     request: WireValue<'ModelListRequest'>,
     options: { signal?: AbortSignal } = {},
   ): Promise<WireValue<'MailboxCommand'>> {
-    return this.put((tx, now) => data.insert_model_list_request(tx, request, now), true, options);
+    return this.put(
+      (tx, now) => data.insert_model_list_request(tx, request, now, this.machine_id),
+      true,
+      options,
+    );
   }
   /** Requires an authenticated executor whose identity the presence owner accepted as current. */
   async poll(
@@ -248,7 +262,8 @@ export class SqliteCommandMailbox {
         this.poll_waits.add(wake);
         try {
           const rows = this.database.write(
-            (sql) => data.read_fetch_rows(sql, identity.executor_incarnation, cursor),
+            (sql) =>
+              data.read_fetch_rows(sql, identity.executor_incarnation, cursor, this.machine_id),
             { changeSignal: 'silent' },
           );
           if (this.closed) break;
@@ -265,6 +280,7 @@ export class SqliteCommandMailbox {
                 this.clock(),
                 arrived,
                 prepared,
+                this.machine_id,
               ),
             { changeSignal: 'silent' },
           );
@@ -292,7 +308,13 @@ export class SqliteCommandMailbox {
     this.admit(options.signal);
     const operation = this.own(async () => {
       const { reply, settled } = this.database.write((tx) =>
-        data.record(tx, identity.executor_incarnation, report.outcomes, this.clock()),
+        data.record(
+          tx,
+          identity.executor_incarnation,
+          report.outcomes,
+          this.clock(),
+          this.machine_id,
+        ),
       );
       await Promise.resolve();
       this.publish_settlements(settled);
@@ -377,11 +399,12 @@ export class SqliteCommandMailbox {
       options.replaced,
       options.current,
       options.now_ms,
+      this.machine_id,
     );
   }
   high_sequence(): MailboxCounter {
     this.admit();
-    this.high ??= this.database.read(data.high_sequence);
+    this.high ??= this.database.read((sql) => data.high_sequence(sql, this.machine_id));
     return this.high;
   }
   private read<T>(work: (sql: ReadSql) => T): T {
@@ -389,7 +412,7 @@ export class SqliteCommandMailbox {
     return this.database.read(work);
   }
   command_row(command_id: string): MailboxRow | null {
-    return this.read((sql) => data.command_row(sql, command_id));
+    return this.read((sql) => data.command_row(sql, command_id, this.machine_id));
   }
   open_command_ids_of(child: WireValue<'ChildReference'>): readonly string[] {
     return this.read((sql) => data.open_command_ids_of(sql, child));
@@ -401,20 +424,20 @@ export class SqliteCommandMailbox {
     return this.read((sql) => data.prompt_withdrawn_at_replacement(sql, child, turn));
   }
   prompts_written_again(): readonly PromptWrittenAgain[] {
-    return this.read(data.prompts_written_again);
+    return this.read((sql) => data.prompts_written_again(sql, this.machine_id));
   }
   late_steers_left_by_a_restart(): readonly LateSteerAfterRestart[] {
-    return this.read(data.late_steers_left_by_a_restart);
+    return this.read((sql) => data.late_steers_left_by_a_restart(sql, this.machine_id));
   }
   start_of(child: WireValue<'ChildReference'>): WireValue<'ResolvedConversationStart'> | null {
     return this.read((sql) => data.start_of(sql, child));
   }
   command_for_input(command_id: string): WireValue<'ChildCommand'> | null {
-    return this.read((sql) => data.command_for_input(sql, command_id));
+    return this.read((sql) => data.command_for_input(sql, command_id, this.machine_id));
   }
   /** Stateless after stop too: the caller supplies a live SQL capability for each read. */
   stall_source(): StallSource {
-    return new data.MailboxStallSource();
+    return new data.MailboxStallSource(this.machine_id);
   }
   stop(options: StopOptions): Promise<void> {
     if (!this.closed) {
