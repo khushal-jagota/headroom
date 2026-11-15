@@ -30,7 +30,8 @@ import type { CodexScanState, UsageRecord } from './usageTranscripts.ts';
 // entries would keep serving double-counted records forever.
 // v3: entries carry the parse position and reducer state so a grown file
 // re-parses only its appended bytes instead of starting over.
-const USAGE_SCAN_CACHE_VERSION = 3 as const;
+// v5: one-hour cache writes and resumable compaction identities.
+const USAGE_SCAN_CACHE_VERSION = 5 as const;
 
 export interface CachedFile {
   readonly size: number;
@@ -65,6 +66,8 @@ type SerializedRecord = readonly [
   reasoningTokens: number,
   dedupeKey: string | null,
   reportedCostUsd: number | null,
+  cacheCreation1hTokens: number,
+  metadata?: { serviceTier?: string | null; compactionCovered?: boolean },
 ];
 
 interface SerializedFile {
@@ -116,6 +119,11 @@ export function encodeScanCache(cache: ScanCache): SerializedCache {
     record.totals.reasoningTokens,
     record.dedupeKey,
     record.reportedCostUsd,
+    record.cacheCreation1hTokens ?? 0,
+    {
+      ...('serviceTier' in record ? { serviceTier: record.serviceTier } : {}),
+      ...('compactionCovered' in record ? { compactionCovered: record.compactionCovered } : {}),
+    },
   ];
 
   const files: Record<string, SerializedFile> = {};
@@ -172,7 +180,7 @@ export function decodeScanCache(document: unknown): ScanCache {
   ): UsageRecord[] | null => {
     const records: UsageRecord[] = [];
     for (const row of rows) {
-      if (!isRecordArray(row) || row.length < 10) return null;
+      if (!isRecordArray(row) || row.length < 11) return null;
       const [
         timestampMs,
         modelIndex,
@@ -184,10 +192,15 @@ export function decodeScanCache(document: unknown): ScanCache {
         reasoning,
         dedupeKey,
         reportedCostUsd,
+        cacheCreation1hTokens,
+        metadata = {},
       ] = row as SerializedRecord;
 
       const model = typeof modelIndex === 'number' ? models[modelIndex] : undefined;
       if (
+        !Number.isSafeInteger(cacheCreation1hTokens) ||
+        cacheCreation1hTokens < 0 ||
+        cacheCreation1hTokens > cacheCreation ||
         typeof timestampMs !== 'number' ||
         !Number.isFinite(timestampMs) ||
         model === undefined ||
@@ -200,7 +213,18 @@ export function decodeScanCache(document: unknown): ScanCache {
         return null;
       }
 
+      if (
+        !is_record(metadata) ||
+        Object.keys(metadata).some((key) => !['serviceTier', 'compactionCovered'].includes(key)) ||
+        ('serviceTier' in metadata &&
+          metadata.serviceTier !== null &&
+          typeof metadata.serviceTier !== 'string') ||
+        ('compactionCovered' in metadata && typeof metadata.compactionCovered !== 'boolean')
+      )
+        return null;
       records.push({
+        ...(cacheCreation1hTokens ? { cacheCreation1hTokens } : {}),
+        ...metadata,
         provider,
         timestampMs,
         model,
@@ -289,6 +313,65 @@ function decodeCodexState(value: unknown): CodexScanState | null | undefined {
   ) {
     return undefined;
   }
+  const counters = (item: unknown): item is Record<string, number> =>
+    is_record(item) &&
+    Object.values(item).every(
+      (value) => typeof value === 'number' && Number.isSafeInteger(value) && value >= 0,
+    );
+  if (
+    !('serviceTier' in state) ||
+    (state.serviceTier !== null && typeof state.serviceTier !== 'string') ||
+    !('cumulativeUsage' in state) ||
+    (state.cumulativeUsage !== null && !counters(state.cumulativeUsage)) ||
+    !is_record(state.compactions) ||
+    !is_record(state.compactionMarkers) ||
+    !Array.isArray(state.completedCompactions) ||
+    !state.completedCompactions.every((item) => typeof item === 'string')
+  )
+    return undefined;
+  for (const snapshots of Object.values(state.compactionMarkers)) {
+    if (
+      !Array.isArray(snapshots) ||
+      !snapshots.every(
+        (snapshot: unknown) =>
+          is_record(snapshot) &&
+          counters(snapshot.current) &&
+          counters(snapshot.last) &&
+          'previous' in snapshot &&
+          (snapshot.previous === null || counters(snapshot.previous)),
+      )
+    )
+      return undefined;
+  }
+  for (const candidate of Object.values(state.compactions)) {
+    if (
+      !is_record(candidate) ||
+      !counters(candidate.usage) ||
+      !counters(candidate.cumulative) ||
+      typeof candidate.covered !== 'boolean' ||
+      !is_record(candidate.record)
+    )
+      return undefined;
+    const record = candidate.record;
+    if (
+      record.provider !== 'codex' ||
+      typeof record.model !== 'string' ||
+      typeof record.sessionId !== 'string' ||
+      typeof record.timestampMs !== 'number' ||
+      !Number.isFinite(record.timestampMs) ||
+      typeof record.dedupeKey !== 'string' ||
+      !('reportedCostUsd' in record) ||
+      !counters(record.totals) ||
+      ![
+        'uncachedInputTokens',
+        'cachedInputTokens',
+        'cacheCreationTokens',
+        'outputTokens',
+        'reasoningTokens',
+      ].every((key) => Object.hasOwn(record.totals as object, key))
+    )
+      return undefined;
+  }
   return {
     model: state.model,
     sessionId: state.sessionId,
@@ -296,6 +379,11 @@ function decodeCodexState(value: unknown): CodexScanState | null | undefined {
     sawSessionMeta: state.sawSessionMeta,
     suppressingForkCopies: state.suppressingForkCopies,
     forkCopyAnchorMs: state.forkCopyAnchorMs,
+    serviceTier: state.serviceTier,
+    compactions: state.compactions,
+    compactionMarkers: state.compactionMarkers,
+    completedCompactions: state.completedCompactions,
+    cumulativeUsage: state.cumulativeUsage,
   };
 }
 

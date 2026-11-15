@@ -167,6 +167,7 @@ export class UsageAggregator {
       record.totals,
       record.reportedCostUsd,
       this.#options.priceOverrides,
+      record.cacheCreation1hTokens ?? 0,
     );
 
     bucket.totals = addTotals(bucket.totals, record.totals);
