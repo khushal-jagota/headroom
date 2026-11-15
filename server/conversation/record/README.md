@@ -5,6 +5,10 @@ lifecycle facts, projection, and synchronous participants through one write door
 The caller publishes the returned rows to the tail only after the method returns.
 Transient frames never enter the durable event record.
 
+A turn reservation also writes its automatic-start bindings in the same transaction.
+The shared admission engine borrows the store's read/write capability and owns no
+connection. Positive acceptance or exact source retirement settles those bindings.
+
 Every synchronous method makes one transaction attempt. The core wraps writes in
 `settle_recording` to retain Python's contention and save retry policy:
 

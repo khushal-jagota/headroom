@@ -17,7 +17,6 @@ import tempfile
 import time
 from contextlib import ExitStack, redirect_stderr, redirect_stdout
 from datetime import datetime
-from importlib import import_module
 from pathlib import Path
 from typing import Any, cast
 
@@ -63,6 +62,7 @@ def _python(root: Path, calls: list[dict[str, Any]], monkeypatch: pytest.MonkeyP
         ),
     )
     results: list[Any] = []
+    monkeypatch.setattr(time, "time", lambda: 1_800_000_000)
     for call in calls:
         if "manifest" in call:
             (root / "app/manifest.json").write_text(call["manifest"])
@@ -135,12 +135,7 @@ def _python(root: Path, calls: list[dict[str, Any]], monkeypatch: pytest.MonkeyP
     "scope",
     [
         "operators",
-        pytest.param(
-            "scratch",
-            marks=pytest.mark.xfail(
-                run=False, reason="expected-open P4: #916 workspaces replace scratch cleanup"
-            ),
-        ),
+        "scratch",
     ],
 )
 def test_unit21_environment_command_function_parity(
@@ -170,8 +165,7 @@ def test_unit21_environment_command_function_parity(
         snapshot = _legacy_snapshot(source, root / "restore-snapshot")
         (root / "git/panels").mkdir(parents=True)
         if scope == "scratch":
-            # P4 replaces this retired fixture when the scratch case returns.
-            _layout = import_module("tests.unit.test_ticket_scratch")._layout
+            from tests.support.ticket_workspace_git import _layout
 
             with monkeypatch.context() as private_git:
                 for key in list(os.environ):
@@ -182,9 +176,39 @@ def test_unit21_environment_command_function_parity(
             scratch = layout.folders[0] / "t_12345678"
             scratch.mkdir()
             (scratch / ".git").write_text("gitdir: missing\n")
+            workspace = source.parent / "files/tickets/t_12345678"
+            workspace.mkdir(parents=True)
+            eligible_workspace = source.parent / "files/tickets/t_abcdefgh"
+            eligible_workspace.mkdir()
+            (workspace / ".git").write_text("gitdir: missing\n")
             with sqlite3.connect(source) as connection:
-                connection.execute("CREATE TABLE tickets(id TEXT,stage TEXT,updated_at INTEGER)")
-                connection.execute("INSERT INTO tickets VALUES('t_12345678','done',0)")
+                connection.execute("CREATE TABLE tickets(id TEXT,worker_step_claim TEXT)")
+                connection.execute(
+                    "CREATE TABLE ticket_workspace_lifecycle"
+                    "(ticket_id TEXT,ended_at INTEGER,deleted INTEGER)"
+                )
+                connection.execute("INSERT INTO tickets VALUES('t_abcdefgh',NULL)")
+                connection.execute(
+                    "INSERT INTO ticket_workspace_lifecycle VALUES('t_abcdefgh',0,0)"
+                )
+                for ddl in (
+                    "CREATE TABLE ticket_workspace_conversations"
+                    "(conversation_id TEXT,ticket_id TEXT,machine_id TEXT,workspace_id TEXT)",
+                    "CREATE TABLE conversation_child_custody(conversation_id TEXT,state TEXT)",
+                    "CREATE TABLE ticket_workspace_retirements"
+                    "(ticket_id TEXT,machine_id TEXT,workspace_id TEXT,authorized_at INTEGER,"
+                    "UNIQUE(ticket_id,machine_id,workspace_id))",
+                    "CREATE TABLE conversations"
+                    "(conversation_id TEXT,identity_environment_variables TEXT)",
+                    "CREATE TABLE conversation_lifecycle_facts"
+                    "(conversation_id TEXT,kind TEXT,status TEXT)",
+                    "CREATE TABLE conversation_background_tasks(conversation_id TEXT)",
+                ):
+                    connection.execute(ddl)
+                connection.execute("INSERT INTO tickets VALUES('t_12345678',NULL)")
+                connection.execute(
+                    "INSERT INTO ticket_workspace_lifecycle VALUES('t_12345678',0,0)"
+                )
         for key, path in {
             "PLAN_CONFIG_PATH": root / "config.yaml",
             "PLAN_DB_PATH": source,
@@ -225,11 +249,11 @@ def test_unit21_environment_command_function_parity(
         cleanup.callback(denied.chmod, 0o700)
         denied.chmod(0)
         (root / "corrupt.sqlite").write_bytes(b"not a SQLite database\n")
-        calls = [
+        calls: list[dict[str, Any]] = [
             dict(command="status", args=dict(json=True)),
             dict(command="status", args=dict(json=False)),
             dict(command="cleanup", args=dict(apply=False, json=True)),
-            dict(command="cleanup", args=dict(apply=True, json=False)),
+            dict(command="cleanup", args=dict(apply=True, json=True)),
             dict(
                 command="backup",
                 args=dict(
@@ -304,6 +328,11 @@ def test_unit21_environment_command_function_parity(
             for key, value in environment.items():
                 private.setenv(key, value)
             expected = _python(root, calls, monkeypatch)
+            if scope == "scratch":
+                assert not eligible_workspace.exists(), (
+                    "Python must exercise real synthetic removal"
+                )
+                eligible_workspace.mkdir()
             # Both functions see the same original app/status state and private paths.
             (root / "app/manifest.json").unlink()
             bindings = json.loads(
@@ -420,6 +449,31 @@ def test_unit21_environment_command_function_parity(
                 assert result["stdout"] == "" and result["stderr"]
                 native_manifest_failures.append({"case": index, "python": expected[index]})
                 expected_commands[index] = dict(exit_code=1, stdout="", stderr="")
+        retirement_fence_difference = None
+        if scope == "scratch":
+            index = next(
+                i
+                for i, call in enumerate(calls)
+                if call["command"] == "cleanup" and call["args"]["apply"]
+            )
+            python_cleanup = json.loads(expected_commands[index]["stdout"])
+            native_cleanup = json.loads(actual["results"][index]["stdout"])
+            python_result = python_cleanup["ticket_workspaces_result"]
+            native_result = native_cleanup["ticket_workspaces_result"]
+            retained = {
+                "path": str(eligible_workspace),
+                "reason": "Conversation runtime is unavailable",
+            }
+            assert python_result["removed"] == [str(eligible_workspace)]
+            assert native_result["removed"] == []
+            assert native_result["skipped"] == [*python_result["skipped"], retained]
+            assert eligible_workspace.is_dir()
+            retirement_fence_difference = {"python": python_result, "typescript": native_result}
+            python_cleanup["ticket_workspaces_result"] = native_result
+            expected_commands[index] = {
+                **expected_commands[index],
+                "stdout": json.dumps(python_cleanup) + "\n",
+            }
         assert stable(actual["results"][:-1]) == stable(expected_commands[:-1])
         assert expected[-1] == {"thrown": "DatabaseError"}
         assert actual["results"][-1] == {"thrown": "SqliteError"}
@@ -514,6 +568,7 @@ def test_unit21_environment_command_function_parity(
                     "results": actual["results"],
                     "raw_results": actual["raw_results"],
                     "native_manifest_failures": native_manifest_failures,
+                    "pending_custody_retirement_fence": retirement_fence_difference,
                     "operators": actual["operators"],
                     "scratch_owned": actual["scratch_owned"],
                     "cold_imports": actual["cold"],

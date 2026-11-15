@@ -1,3 +1,4 @@
+import type { AutomaticStartAdmission } from '../start_admission/index.ts';
 /** Process-local state and injected effects for the local conversation core. */
 import type { Principal } from '../../core/contracts.ts';
 import type {
@@ -132,6 +133,15 @@ export interface ConversationCoreOptions {
 
 /** Only synchronous persistence effects enter a retry. Provider calls never do. */
 export interface DeliveryServices {
+  readonly start_admission: AutomaticStartAdmission;
+  accept_automatic_start(
+    state: import('./state.ts').ConversationState,
+    turn: TurnToken,
+  ): Promise<void>;
+  settle_automatic_ids(
+    state: import('./state.ts').ConversationState,
+    identities: Iterable<string | null>,
+  ): Promise<void>;
   readonly options: ConversationCoreOptions;
   readonly shutting_down: boolean;
   make_sink(

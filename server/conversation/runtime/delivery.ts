@@ -95,6 +95,13 @@ async function ensure_child(
     state.retained_child_reference = retained.reference;
     state.delivery_uncertain = false;
     state.child = child;
+    await host.persist(state, () =>
+      host.start_admission.bind_child(
+        host.options.store.start_admission_database,
+        reservation.token,
+        retained.reference,
+      ),
+    );
   }
   state.preparing_child = child;
   try {
@@ -208,6 +215,12 @@ export async function deliver_prompt(
           state.record.latest_sequence,
         ),
       );
+      await host.settle_automatic_ids(
+        state,
+        batch.flatMap((message, index) =>
+          decisions[index].suppression_reason !== null ? [message.sender_message_id] : [],
+        ),
+      );
       return decisions;
     });
   if (
@@ -265,6 +278,16 @@ export async function deliver_prompt(
   if (interruption_notice !== null)
     wire_content = prefix_message_content_text(wire_content, interruption_notice, '\n\n');
   const write = async (target: BackendChild) => {
+    const reference = state.retained_child_reference;
+    if (target.stop_outside_lock && reference !== null)
+      await host.persist(state, () =>
+        host.start_admission.bind_child(
+          host.options.store.start_admission_database,
+          reservation.token,
+          reference,
+        ),
+      );
+    host.start_admission.bind_source(reservation.token, target);
     const accepted = await host.native_operation(() =>
       target.write_prompt(reservation.token, wire_content, {
         sender_label: survivors[0].sender_label,
@@ -278,6 +301,8 @@ export async function deliver_prompt(
       }),
     );
     reservation.prompt_accepted = true;
+    if (accepted.agent_acceptance_proven && state.child === target)
+      await host.accept_automatic_start(state, reservation.token);
     return result({
       messages: survivors,
       automatic_notice,
@@ -298,6 +323,7 @@ export async function deliver_prompt(
     return await write(child);
   } catch (error) {
     if (!(error instanceof NeedsRebind)) return refusal_or_throw(error);
+    host.start_admission.bind_source(reservation.token, null);
     rebound = true;
     await state.lock.run(() => {
       owned(host, state, reservation);
@@ -402,8 +428,8 @@ export async function write_replayed_prompt(
   } finally {
     release();
   }
+  let child = state.child;
   try {
-    let child = state.child;
     if (child === null) {
       const message: Message = {
         held_prompt_id: '',
@@ -428,7 +454,17 @@ export async function write_replayed_prompt(
       child = await ensure_child(host, state, reservation, message);
     }
     check_owner();
-    await host.native_operation(() =>
+    const reference = state.retained_child_reference;
+    if (child.stop_outside_lock && reference !== null)
+      await host.persist(state, () =>
+        host.start_admission.bind_child(
+          host.options.store.start_admission_database,
+          token,
+          reference,
+        ),
+      );
+    host.start_admission.bind_source(token, child);
+    const accepted = await host.native_operation(() =>
       child!.write_prompt(token, prompt.content, {
         sender_label: prompt.sender_label,
         sender_content: prompt.sender_content,
@@ -440,8 +476,14 @@ export async function write_replayed_prompt(
         automatic_compaction: prompt.automatic_compaction,
       }),
     );
+    if (accepted.agent_acceptance_proven && state.child === child)
+      await host.accept_automatic_start(state, token);
     check_owner();
   } catch (error) {
+    if (error instanceof NeedsRebind) {
+      host.start_admission.bind_source(token, null);
+      if (child !== null) await host.discard_child(state, child);
+    }
     check_owner();
     throw error;
   } finally {

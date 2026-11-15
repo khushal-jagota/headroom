@@ -1,32 +1,46 @@
 /** Export-only proofs over synthetic paths supplied by the direct driver. */
-import { lstat, readFile, unlink, writeFile } from 'node:fs/promises';
+import { lstat, readFile, writeFile } from 'node:fs/promises';
 import { setTimeout as pause } from 'node:timers/promises';
 import { register_test_root } from '../../../core/test_paths.ts';
-import { clean_finished_ticket_scratch, remove_ticket_scratch } from '../apply.ts';
+import { entry_stat, git, layout_for, layout_under } from '../collect.ts';
+import { read_workspace_states } from '../../../ticket_workspaces/data.ts';
+import { cleanup_local_workspaces } from '../../../ticket_workspaces/filesystem.ts';
+import { createReadAccess } from '../../../core/database/index.ts';
 import {
-  collect_ticket_scratch,
-  entry_stat,
-  git,
-  layout_for,
-  layout_under,
-  read_ticket_states_from,
-} from '../collect.ts';
-import { finished, ticket_id_of_branch, ticket_id_of_name } from '../logic.ts';
+  snapshot_ticket_scratch,
+  prune_ticket_scratch,
+} from '../../../conversation/worker_scratch.ts';
+import { path_is_within } from '../../../core/path_containment.ts';
+import { lstatSync, realpathSync } from 'node:fs';
+import { join, dirname } from 'node:path';
+function guard(root: string, path: string): string {
+  const canonical = realpathSync(root);
+  let ancestor = path;
+  while (true) {
+    try {
+      lstatSync(ancestor);
+      break;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+      ancestor = dirname(ancestor);
+    }
+  }
+  if (!path_is_within(canonical, path) || !path_is_within(canonical, realpathSync(ancestor)))
+    throw new Error('outside synthetic root');
+  return path;
+}
 import { create_ticket_scratch_runtime } from '../runtime.ts';
-import type { ScratchResult, ScratchRuntimeOptions } from '../contracts.ts';
+import type { ScratchRuntimeOptions } from '../contracts.ts';
 import type { ScratchProbeRequest } from './contracts.ts';
 import { ShutdownDeadlineExceeded } from '../../../lifecycle/contracts.ts';
 
-const empty = (): ScratchResult => ({
-  removed: [],
-  deleted_branches: [],
-  kept_branches: [],
-  skipped: [],
-});
+const empty = () => ({ removed: [], skipped: [] });
 export async function probe_scratch_rules(request: ScratchProbeRequest) {
   const unregister = register_test_root(request.root);
   try {
-    const states = new Map(request.states);
+    const reader = createReadAccess(request.database);
+    const states = reader.read(read_workspace_states);
+    reader.close();
     return {
       layout: await layout_under(request.root, request.home),
       gates: await Promise.all(
@@ -35,13 +49,7 @@ export async function probe_scratch_rules(request: ScratchProbeRequest) {
             (await layout_for(gate.root, gate.database, gate.db_path))?.repository ?? null,
         ),
       ),
-      states: [...(await read_ticket_states_from(request.database))],
-      names: (request.names ?? []).map(ticket_id_of_name),
-      branches: (request.branches ?? []).map(ticket_id_of_branch),
-      finished: [...states.keys(), 't_zzzzzzzz'].map((id) => [
-        id,
-        finished(id, states, request.now),
-      ]),
+      states: [...states],
     };
   } finally {
     unregister();
@@ -50,50 +58,25 @@ export async function probe_scratch_rules(request: ScratchProbeRequest) {
 export async function probe_scratch_git(request: ScratchProbeRequest) {
   const unregister = register_test_root(request.root);
   try {
-    const layout = request.layout!,
-      states = new Map(request.states);
-    const inventory = await collect_ticket_scratch(layout, states, request.now);
-    await writeFile(request.late_dirty!, 'changed after inventory\n');
-    const applied = await remove_ticket_scratch(layout, inventory, states, request.now);
-    for (const path of request.later_clean ?? []) await unlink(path);
-    const already_kept = new Set(applied.skipped.map((item) => item.path));
-    const remembered = await clean_finished_ticket_scratch(
-      layout,
-      request.database,
-      request.now,
-      already_kept,
+    const root = request.root,
+      tickets = guard(root, request.tickets!);
+    const result = await cleanup_local_workspaces(tickets, new Map(request.states), request.now, {
+      admit_path: (path) => guard(root, path),
+      snapshot_ticket_scratch: (id) => snapshot_ticket_scratch(id, request.home),
+      prune_ticket_scratch: (id, names) => prune_ticket_scratch(id, names, request.home),
+      before_remove: async (path) => {
+        if (path === request.paths!['late-dirty'])
+          await writeFile(guard(root, join(path, 'worktree/late.txt')), 'fresh change');
+        return null;
+      },
+    });
+    const manifest = JSON.parse(
+      await readFile(join(dirname(tickets), 'ticket-workspaces-cleanup.json'), 'utf8'),
     );
-    const daily = await remove_ticket_scratch(
-      layout,
-      await collect_ticket_scratch(layout, states, request.now),
-      states,
-      request.now,
-    );
-    const remaining: Record<string, string | null> = {};
-    for (const path of request.watch_paths ?? []) {
-      const info = await entry_stat(path);
-      remaining[path] =
-        info === null
-          ? null
-          : info.isSymbolicLink()
-            ? 'link'
-            : info.isDirectory()
-              ? 'directory'
-              : 'file';
-    }
-    return {
-      inventory,
-      applied,
-      remembered,
-      daily,
-      already_kept: [...already_kept].sort(),
-      remaining,
-      branches: (
-        await git(layout.repository, ['for-each-ref', '--format=%(refname:short)', 'refs/heads'])
-      ).stdout
-        .split('\n')
-        .filter(Boolean),
-    };
+    const remaining: Record<string, boolean> = {};
+    for (const [kind, path] of Object.entries(request.paths!))
+      remaining[kind] = (await entry_stat(path)) !== null;
+    return { result, manifest, remaining };
   } finally {
     unregister();
   }
@@ -132,7 +115,10 @@ export async function probe_scratch_runtime(request: ScratchProbeRequest) {
     test_mode: false,
     now_unix: () => request.now,
     assert_database_owned: () => {},
-    clean_finished_ticket_scratch,
+    clean_workspaces: async (_db, _now, options) => {
+      await git(request.layout!.repository, ['status', '--porcelain'], options);
+      return empty();
+    },
   };
   const held = deferred();
   const seen: string[][] = [];
@@ -142,10 +128,9 @@ export async function probe_scratch_runtime(request: ScratchProbeRequest) {
     assert_database_owned: () => {
       if (!owned) throw new Error('ownership ended');
     },
-    clean_finished_ticket_scratch: async (_layout, _db, _now, already_kept, options) => {
-      seen.push([...already_kept]);
+    clean_workspaces: async (_db, _now, options) => {
+      seen.push([]);
       if (seen.length === 1) {
-        already_kept.add('kept-on-first-pass');
         return empty();
       }
       await held.promise;
@@ -181,10 +166,7 @@ export async function probe_scratch_runtime(request: ScratchProbeRequest) {
     owned = false;
     const after_stop = scheduled.size;
     const before_disabled = timers.length;
-    for (const options of [
-      { ...base, test_mode: true },
-      { ...base, layout: null },
-    ]) {
+    for (const options of [{ ...base, test_mode: true }]) {
       const disabled = create_ticket_scratch_runtime(options);
       disabled.start();
       await disabled.close({ deadline: performance.now() / 1000 + 1 });

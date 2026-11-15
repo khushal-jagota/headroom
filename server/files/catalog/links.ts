@@ -1,3 +1,4 @@
+import { is_private_ticket_name } from '../logic/paths.ts';
 import MarkdownIt, { type Token } from 'markdown-it';
 import type { TransactionSql } from '../../core/database/contracts.ts';
 const parser = new MarkdownIt({ html: true, linkify: true })
@@ -118,6 +119,7 @@ export function managed_href(href: string, origin: string): string | null {
     path.split('/').some((p) => ['', '.', '..'].includes(p))
   )
     return null;
+  if (kind === 'tickets' && is_private_ticket_name(path.split('/')[0]!)) return null;
   return `/files/${kind}/${owner}/` + path.split('/').map(encodeURIComponent).join('/');
 }
 export function finalize(sql: TransactionSql): void {

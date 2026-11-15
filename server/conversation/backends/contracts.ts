@@ -46,8 +46,10 @@ export class NeedsRebind extends BackendAdapterError {
 }
 export class BackendPromptAccepted {
   readonly composed_content_delivered: boolean;
-  constructor(values: { composed_content_delivered: boolean }) {
+  readonly agent_acceptance_proven: boolean;
+  constructor(values: { composed_content_delivered: boolean; agent_acceptance_proven?: boolean }) {
     this.composed_content_delivered = values.composed_content_delivered;
+    this.agent_acceptance_proven = values.agent_acceptance_proven ?? false;
   }
 }
 export class BackendSteerAccepted {
