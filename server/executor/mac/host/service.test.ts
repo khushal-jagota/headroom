@@ -121,7 +121,6 @@ test('quiesce cancels a catalog probe before native dispatch and joins HTTP befo
   const bindings: MacHostBindings = {
     client: (url, executor, who, options) =>
       new ScriptedClient(url, executor, parse_identity(who), options),
-    processes: () => null,
     adapters(owners) {
       invocation = owners;
       return create_mac_adapter_host({

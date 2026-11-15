@@ -7,7 +7,7 @@ import type { ResolvedConversationStart } from '../../contracts.ts';
 import { spawn_codex_process } from '../codex_app_server/process.ts';
 import type { OwnedCodexProcess } from '../codex_app_server/process.ts';
 import { WorkerSupervisor } from '../../../worker_supervision/index.ts';
-import type { WorkerSupervisionRuntime } from '../../../worker_supervision/runtime.ts';
+import { worker_supervision_fixture } from '../testing/worker_supervision_fixture.ts';
 import { WorkerScratch } from '../../worker_scratch.ts';
 import { HermesAcpLauncher } from './client.ts';
 
@@ -99,37 +99,12 @@ test('stdin error settles a write whose callback never returns', async () => {
 test('an uncertain Worker stop retains scratch and retries custody cleanup while later starts stay sealed', async () => {
   const owned = fake();
   Object.assign(owned.child, { pid: 4321 });
-  const identity = {
-    pid: 4321,
-    birth: 'birth',
-    boot: 'boot',
-    unit: null,
-    supervision_record: '/synthetic/supervision.json',
-  };
-  const order: string[] = [];
-  const supervisor = {
-    environment: { PLAN_WORKER_PROCESS_ROOT: '/synthetic/records' },
-    path: '/synthetic/supervision.json',
-    argv: (argv: readonly string[]) => ['/synthetic/bootstrap', ...argv],
-    spawned: vi.fn(async () => {
-      order.push('spawned');
-    }),
-    started: vi.fn(async () => {
-      order.push('started');
-    }),
-    identity: vi.fn(async () => identity),
-    shutdown_settled: Promise.resolve(),
-    stop: vi.fn(async (native_stop: () => Promise<void>, _options?: { deadline: number }) => {
-      await native_stop();
-      return { complete: true, reason: 'gone', scope: 'ticket' };
-    }),
-  };
+  const { identity, order, supervisor, scratch, runtime } = worker_supervision_fixture();
   supervisor.stop.mockResolvedValueOnce({
     complete: false,
     reason: 'descendant unknown',
     scope: 'ticket',
   });
-  const scratch = { environment: { TMPDIR: '/synthetic/scratch' }, close: vi.fn(async () => {}) };
   vi.mocked(WorkerSupervisor.create).mockResolvedValueOnce(supervisor as never);
   vi.mocked(WorkerScratch.create).mockResolvedValueOnce(scratch as never);
   vi.mocked(spawn_codex_process).mockImplementationOnce(async (argv, options) => {
@@ -140,7 +115,7 @@ test('an uncertain Worker stop retains scratch and retries custody cleanup while
     return owned as unknown as OwnedCodexProcess;
   });
   const errors: unknown[] = [];
-  const launcher = new HermesAcpLauncher(new ChildProcesses(), {} as WorkerSupervisionRuntime, {
+  const launcher = new HermesAcpLauncher(new ChildProcesses(), runtime, {
     report: async () => {},
     record_local_child_supervision: async () => {
       order.push('record');

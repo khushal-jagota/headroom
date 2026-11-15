@@ -112,7 +112,6 @@ export interface MacLeaseOptions {
     seal(): void;
   };
   readonly updates: { offer(update: MacUpdateCheck): void };
-  readonly record_children: () => Promise<void>;
   readonly replaced: () => void;
   readonly on_failure: (error: unknown) => void;
   readonly warn: (message: string) => void;
@@ -249,7 +248,8 @@ export class MacLeaseLoop {
       }
       await runner.cleanup_workspaces(states, Math.floor(at_vps_ms / 1000));
     } catch (error) {
-      if (!signal.aborted) warn(`Ticket workspace cleanup failed: ${failure_name(error)}`);
+      if (!(signal.aborted && is_shutdown_business_cancellation(error)))
+        warn(`Ticket workspace cleanup failed: ${failure_name(error)}`);
     }
   }
   start(): void {
@@ -264,11 +264,6 @@ export class MacLeaseLoop {
         const started = performance.now();
         if (!(await this.lease_once())) return;
         if (this.closed) return;
-        try {
-          await this.options.record_children();
-        } catch (error) {
-          this.options.warn(`Agent process record failed: ${failure_name(error)}`);
-        }
         await sleep(
           Math.max(0, started + LEASE_INTERVAL_SECONDS * 1000 - performance.now()),
           undefined,
@@ -295,7 +290,8 @@ export class MacLeaseLoop {
     return observe_shutdown(this.settled(), options, 'Mac lease loop remains unfinished.');
   }
   async settled(): Promise<void> {
-    const results = await Promise.allSettled([this.task, this.lease, this.workspace_cleanup]);
+    const results = await Promise.allSettled([this.task, this.lease]);
+    results.push(...(await Promise.allSettled([this.workspace_cleanup])));
     const failures = new Set<unknown>();
     for (const result of results) {
       if (result.status === 'fulfilled') continue;

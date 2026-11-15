@@ -1,5 +1,9 @@
 /** Shared synthetic native setup and real-store custody for the Mac direct proofs. */
 import { mkdirSync } from 'node:fs';
+import { readFile } from 'node:fs/promises';
+import { WorkerSupervisionRuntime } from '../../../worker_supervision/runtime.ts';
+import { read_cleanup_commands } from '../cleanup_reconciliation.ts';
+import type { CleanupReconciliationDependencies } from '../cleanup_contracts.ts';
 import assert from 'node:assert/strict';
 import type { StopOptions } from '../../../lifecycle/contracts.ts';
 import type { ConversationMessageFiles } from '../../../conversation/message_files.ts';
@@ -65,7 +69,46 @@ export function native_fixture_options(
       async stop() {},
       async settled() {},
     },
-    record_children: async () => {},
+    worker_cleanup: {
+      async refresh() {},
+      uncertain: () => false,
+    },
+  };
+}
+
+/** Synthetic natives grant no signal authority. The real journal still supplies source history. */
+export function fixture_cleanup_dependencies(
+  journal: AsyncCommandJournal,
+): CleanupReconciliationDependencies {
+  const unexpected = (): never => {
+    throw new Error('Synthetic cleanup cannot inspect or signal a real process');
+  };
+  return {
+    runtime: new WorkerSupervisionRuntime({
+      primitives: {
+        owns_isolated_session_members: false,
+        requires_containment: false,
+        host_boot: unexpected,
+        snapshot: unexpected,
+        is_absent: unexpected,
+        signal: unexpected,
+        prepare_launch: unexpected,
+      },
+    }),
+    read_commands: read_cleanup_commands(journal),
+    inspect_legacy: unexpected,
+    files: {
+      async read_runtime_record(path) {
+        try {
+          return await readFile(path, 'utf8');
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null;
+          throw error;
+        }
+      },
+      atomic_runtime_record: unexpected,
+      remove_runtime_record: unexpected,
+    },
   };
 }
 

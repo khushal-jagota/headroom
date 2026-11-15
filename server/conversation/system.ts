@@ -285,6 +285,16 @@ export class SqliteProcessConversationSystem implements DeliveryServices, Conver
   }
   conversation_state(conversation_id: string): ConversationState | null {
     this.require_runtime_ownership();
+    return this.read_conversation_state(conversation_id);
+  }
+  /** An admitted executor outcome can settle until actual runtime ownership ends. */
+  conversation_state_for_admitted_remote_acknowledgement(
+    conversation_id: string,
+  ): ConversationState | null {
+    this.options.require_runtime_ownership?.();
+    return this.read_conversation_state(conversation_id);
+  }
+  private read_conversation_state(conversation_id: string): ConversationState | null {
     const existing = this.conversations.get(conversation_id);
     if (existing) return existing;
     const record = this.options.store.read_conversation(conversation_id);

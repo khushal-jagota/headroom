@@ -37,7 +37,7 @@ import { RemoteTurnRejected, admit_remote_turn } from './remote_turn.ts';
 import type { SqliteProcessConversationSystem } from '../system.ts';
 import { ConversationState, own_settlement, same_turn, set_phase } from './state.ts';
 import { background_tasks_ended_with_child } from './maintenance.ts';
-import { acquire_after_steers } from './synchronization.ts';
+import { acquire_after_steers, contention_only_write } from './synchronization.ts';
 import { write_replayed_prompt } from './delivery.ts';
 
 export function retained_factory(factory: BackendChildFactory): RetainedBackendChildFactory | null {
@@ -91,18 +91,25 @@ export async function confirm_remote_prompt_accepted(
   reference: ChildReference,
   turn: TurnToken,
 ): Promise<void> {
-  const state = host.conversation_state(reference.conversation_id);
+  const state = host.conversation_state_for_admitted_remote_acknowledgement(
+    reference.conversation_id,
+  );
   if (state === null || !same_reference(state.retained_child_reference, reference)) return;
   await own_settlement(
     state,
     (async () => {
       await host.wait_for_reservation(state, turn);
-      const lease = await acquire_after_steers(state);
+      host.options.require_runtime_ownership?.();
+      const lease = await acquire_after_steers(state, undefined, { admitted_settlement: true });
       try {
+        host.options.require_runtime_ownership?.();
         if (!same_turn(state.running_turn?.token ?? null, turn)) return;
         state.last_touched_monotonic = host.monotonic_now();
         if (same_reference(state.retained_child_reference, reference))
-          await host.accept_automatic_start(state, turn);
+          await contention_only_write(() => {
+            host.options.require_runtime_ownership?.();
+            host.start_admission.accept(host.options.store.start_admission_database, turn);
+          });
       } finally {
         lease.release();
       }

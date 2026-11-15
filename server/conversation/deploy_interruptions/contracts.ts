@@ -16,7 +16,7 @@ export interface CapturedTurn {
   readonly turn_number: number;
   readonly occurrence_id: string | null;
   readonly runtime_epoch: string | null;
-  readonly original_status: 'running' | 'intent';
+  readonly original_status: 'running' | 'intent' | 'unavailable';
   readonly display_name: string;
   readonly owner_kind: OwnerKind;
   readonly owner_id: string | null;

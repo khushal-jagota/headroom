@@ -2,13 +2,9 @@
 import { createDatabase } from '../../core/database/index.ts';
 import { ConversationStore } from '../record/data/store.ts';
 import { deployment_participants } from '../deploy_interruptions/participants.ts';
-import { read_facts } from '../record/data/lifecycle.ts';
-import type {
-  LocalChildCustodyInspection,
-  LocalChildCustodyRow,
-} from '../local_child_custody_contracts.ts';
+import type { LocalChildCustodyInspection } from '../local_child_custody_contracts.ts';
 
-export async function run(path: string, journal: string): Promise<unknown> {
+export async function run(path: string, journal: string): Promise<Record<string, unknown>> {
   const database = createDatabase(path);
   let absent = false;
   let change_during_inspection = false;
@@ -44,24 +40,24 @@ export async function run(path: string, journal: string): Promise<unknown> {
   });
   const identity = { pid: 42, birth: 'birth', boot: 'boot', unit: null, supervision_record: null };
   const points: unknown[] = [];
-  function capture(label: string, result: unknown = null): void {
-    points.push(
-      database.read((sql) => ({
-        label,
-        result,
-        custody: sql.all<LocalChildCustodyRow>(
-          'SELECT * FROM conversation_child_custody ORDER BY conversation_id',
-        ),
-        facts: sql.all(
-          'SELECT * FROM conversation_lifecycle_facts ORDER BY conversation_id,kind,identity',
-        ),
-        bindings: sql.all(
-          'SELECT * FROM automatic_start_bindings ORDER BY conversation_id,identity',
-        ),
-        settled: store.settled_recorded_turn('pending'),
-      })),
-    );
+  const queries = {
+    custody: 'SELECT * FROM conversation_child_custody ORDER BY conversation_id',
+    facts: 'SELECT * FROM conversation_lifecycle_facts ORDER BY conversation_id,kind,identity',
+    bindings: 'SELECT * FROM automatic_start_bindings ORDER BY conversation_id,identity',
+    accounts: 'SELECT * FROM deploy_interruption_accounts ORDER BY capture_id',
+    interruptions: 'SELECT * FROM deploy_interruptions ORDER BY interruption_id',
+  };
+  const snapshot = (names: readonly (keyof typeof queries)[]) =>
+    database.read((sql) => Object.fromEntries(names.map((name) => [name, sql.all(queries[name])])));
+  function capture(label: string, result: unknown): void {
+    points.push({
+      label,
+      result,
+      ...snapshot(['custody', 'facts', 'bindings']),
+      settled: store.settled_recorded_turn('pending'),
+    });
   }
+
   try {
     await store.record_child_custody('started', 'old');
     await store.record_child_custody('started', 'new');
@@ -86,9 +82,10 @@ export async function run(path: string, journal: string): Promise<unknown> {
       ),
     );
     await store.record_child_custody('pending', 'pending-generation');
+    await store.record_child_custody('quiet', 'quiet-generation');
     let wrong_owner = false;
     try {
-      await store.record_child_supervision('started', 'new', journal);
+      await store.record_child_supervision('quiet', 'quiet-generation', journal);
     } catch {
       wrong_owner = true;
     }
@@ -103,9 +100,6 @@ export async function run(path: string, journal: string): Promise<unknown> {
       'pending-undelivered',
       await store.settle_recorded_source('pending', { inspect_only: true }),
     );
-    await store.record_child_custody('quiet', 'quiet-generation', identity).catch(() => {});
-    // Quiet source has no active facts. Its inspection proof still needs a full-row compare.
-    await store.record_child_custody('quiet', 'quiet-generation');
     await store.record_child_custody('quiet', 'quiet-generation', identity);
     change_during_inspection = true;
     capture(
@@ -122,8 +116,14 @@ export async function run(path: string, journal: string): Promise<unknown> {
       await store.settle_recorded_source('started', { inspect_only: true }),
     );
     capture('retirement-proof', await store.recorded_source_retirement_proven('started'));
-    const started_facts = database.read((sql) => read_facts(sql, 'started'));
-    for (const id of ['startup-blocked', 'startup-proven', 'startup-changed', 'startup-mismatch']) {
+    for (const id of [
+      'startup-blocked',
+      'startup-proven',
+      'startup-changed',
+      'startup-mismatch',
+      'startup-manifest',
+      'startup-unavailable',
+    ]) {
       await store.record_child_custody(id, id);
       await store.record_child_custody(id, id, identity);
     }
@@ -132,6 +132,12 @@ export async function run(path: string, journal: string): Promise<unknown> {
         "UPDATE conversation_child_custody SET occurrence_id='wrong' WHERE conversation_id='startup-mismatch'",
       );
       tx.run("DELETE FROM conversation_child_custody WHERE conversation_id='startup-legacy'");
+      tx.run(
+        "UPDATE conversation_lifecycle_facts SET status='unavailable' WHERE conversation_id='startup-unavailable' AND kind='turn'",
+      );
+      tx.run(
+        "UPDATE conversation_lifecycle_facts SET status='unknown' WHERE conversation_id IN ('startup-unavailable','pending') AND kind='attempt' AND operation='prompt'",
+      );
     });
     startup = true;
     const restored = new ConversationStore(database, {
@@ -143,19 +149,17 @@ export async function run(path: string, journal: string): Promise<unknown> {
     database.write((tx) => restored.reconcile_in_transaction(tx, new Map()), {
       changeSignal: 'silent',
     });
-    const restart = database.read((sql) => ({
+    const restart = {
       blocked: [...restored.blocked_local_conversations].sort(),
-      facts: sql.all(
-        'SELECT * FROM conversation_lifecycle_facts ORDER BY conversation_id,kind,identity',
+      ...snapshot(['facts', 'custody', 'accounts', 'interruptions']),
+      epoch_changed: database.read(
+        (sql) =>
+          sql.get<{ epoch: string }>(
+            'SELECT epoch FROM conversation_runtime_epoch WHERE singleton=1',
+          )!.epoch !== 'epoch',
       ),
-      custody: sql.all('SELECT * FROM conversation_child_custody ORDER BY conversation_id'),
-      interruptions: sql.all('SELECT * FROM deploy_interruptions ORDER BY interruption_id'),
-      epoch_changed:
-        sql.get<{ epoch: string }>(
-          'SELECT epoch FROM conversation_runtime_epoch WHERE singleton=1',
-        )!.epoch !== 'epoch',
-    }));
-    return { points, started_facts, restart };
+    };
+    return { points, restart };
   } finally {
     await store.finish_writes();
     database.close();

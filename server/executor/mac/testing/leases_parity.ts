@@ -92,7 +92,6 @@ export async function leases(input: {
         offers.push(Buffer.from(encode_bounded(update, 'MacUpdateCheck')).toString());
       },
     },
-    async record_children() {},
     replaced() {
       replaced = true;
     },
@@ -111,6 +110,8 @@ export async function leases(input: {
   cleanup_release.resolve();
   await yield_turn();
   keep_running.push(await loop.lease_once());
+  await loop.stop({ deadline: performance.now() / 1000 + 5 });
+  await loop.settled();
   const { last_lease_failure, ...status } = presence.status(stopped);
   const stop_cleanup_entered = new Deferred<void>(), stop_cleanup_release = new Deferred<void>();
   const stop_http_entered = new Deferred<void>();

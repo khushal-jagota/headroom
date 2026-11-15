@@ -314,10 +314,6 @@ async def reference(root: Path, patch: pytest.MonkeyPatch) -> dict[str, Any]:
     )
 
 
-@pytest.mark.xfail(
-    run=False,
-    reason="expected-open P2: #916 replaces agent_processes custody with supervision",
-)
 def test_unit22_mac_adapters(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, request: pytest.FixtureRequest
 ) -> None:
@@ -338,9 +334,7 @@ def test_unit22_mac_adapters(
     assert all(call[0] == "skills" for call in observed["non_directory_workspace"]["calls"])
     if sys.version_info < (3, 13):
         assert python_directory["error"] is None
-        assert {"factory", "start", "stop", "record_children"} <= {
-            call[0] for call in python_directory["calls"]
-        }
+        assert {"factory", "start", "stop"} <= {call[0] for call in python_directory["calls"]}
     else:
         assert python_directory["calls"] == observed["non_directory_workspace"]["calls"]
         assert "[Errno 20] Not a directory" in python_directory["error"]

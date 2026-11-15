@@ -264,7 +264,7 @@ export interface RecordParticipants {
   readonly reconcile_deployment?: (
     tx: TransactionSql,
     now: number,
-    custody?: {
+    context?: {
       readonly blocked: readonly CapturedTurn[];
       readonly proven: readonly CapturedTurn[];
     },

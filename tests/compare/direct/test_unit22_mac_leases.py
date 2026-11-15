@@ -21,10 +21,6 @@ from planner.executor.protocol import WaitingConversation
 ROOT = Path(__file__).resolve().parents[3]
 
 
-@pytest.mark.xfail(
-    run=False,
-    reason="expected-open P2: #916 port lease cleanup after retired agent_processes custody",
-)
 def test_unit22_mac_leases(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     update = dict(schema_version=1, target=None, prefetch=None)
     refusal = dict(
@@ -149,6 +145,7 @@ def test_unit22_mac_leases(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> N
             refresh_release.set()
             await cleanup_entered.wait()
             values.append(await loop.lease_once())
+            assert loop._workspace_cleanup_task is not None
             cleanup_facts.append(not loop._workspace_cleanup_task.done())
             cleanup_release.set()
             await loop._workspace_cleanup_task
@@ -359,6 +356,7 @@ def test_mac_cleanup_snapshot_populated(
         )
         return dict(
             commands=commands,
+            runner_start=start_inputs(_root)[0],
             records=found,
             processes=processes,
             steps=[
@@ -442,7 +440,146 @@ def test_mac_cleanup_snapshot_populated(
                     notice=snapshot.notice,
                 )
             )
-        return dict(points=points)
+        # The snapshot proof cannot prove the runner's exemptions, command routing,
+        # cache replacement, or the Ticket lock before a slow refresh.
+        from dataclasses import replace
+
+        from planner.executor import mac_runner
+        from planner.executor.protocol import (
+            ChildCommand,
+            ChildOperation,
+            RecheckCleanup,
+            StartRun,
+            type_adapter,
+        )
+
+        patch.setattr(
+            mac_runner, "install_native_skill_snapshot", lambda *args, **kwargs: root / "skills"
+        )
+        native_starts: list[str] = []
+
+        class Native:
+            async def start(self, resolved: Any, **_: Any) -> None:
+                native_starts.append(resolved.conversation_id)
+
+            async def stop(self) -> None:
+                pass
+
+        runner = mac_runner.MacRunner(
+            incarnation="new",
+            outbox=cast(Any, None),
+            factory=cast(Any, lambda _: lambda **_: Native()),
+            message_files=cast(Any, None),
+            paths=paths,
+            workspace_home=root,
+        )
+        template = type_adapter(StartRun).validate_python(data["runner_start"])
+
+        def start_command(name: str, ticket: str) -> ChildCommand:
+            role = template.resolved_start.role_materials
+            assert role is not None
+            resolved = replace(
+                template.resolved_start,
+                conversation_id=name,
+                role_materials=replace(
+                    role, identity_environment_variables=(("PLAN_TICKET_ID", ticket),)
+                ),
+            )
+            return ChildCommand(
+                name,
+                ChildReference("new", name, name),
+                ChildOperation.start,
+                None,
+                replace(template, resolved_start=resolved),
+            )
+
+        async def recheck(name: str, source: ChildReference, ticket: str) -> dict[str, Any]:
+            command = ChildCommand(
+                name,
+                ChildReference("new", "controller", "controller"),
+                ChildOperation.recheck_cleanup,
+                None,
+                RecheckCleanup(source=source, ticket_id=ticket),
+            )
+            outcome = await runner.run(command)
+            return dict(disposition=outcome.disposition.value, result=outcome.result)
+
+        def cached() -> list[dict[str, Any]]:
+            return [dataclasses.asdict(item) for item in runner.cleanup_uncertainties]
+
+        await runner.refresh_worker_cleanup()
+        initial = cached()
+        blocked = await runner.run(start_command("blocked", "one"))
+        clean = start_command("clean", "clean-ticket")
+        accepted = await runner.run(clean)
+        process = WorkerProcess(40, "40", 1, 40, 40, False)
+        table[40] = process
+        live_record = dict(
+            data["records"][0]["record"],
+            ticket_id="clean-ticket",
+            conversation_id="clean",
+            source_incarnation="new",
+            source_child_id="clean",
+            root=dataclasses.asdict(process),
+            processes=[dataclasses.asdict(process)],
+        )
+        records.write(journals / ("e" * 32 + ".json"), live_record)
+        await runner.refresh_worker_cleanup()
+        healthy = cached()
+        active = await recheck("active-recheck", clean.child, "clean-ticket")
+        active_cache = cached()
+        table.pop(40)
+        complete = await recheck("complete-recheck", clean.child, "clean-ticket")
+        missing = await recheck(
+            "missing-recheck", ChildReference("old", "missing", "missing"), "two"
+        )
+        complete_cache = cached()
+        refresh = runner.refresh_worker_cleanup
+        entered, release = asyncio.Event(), asyncio.Event()
+        refreshes: list[str | None] = []
+
+        async def slow_refresh(**options: Any) -> None:
+            refreshes.append(options.get("ticket_id"))
+            if options.get("ticket_id") == "slow-ticket" and not entered.is_set():
+                entered.set()
+                await release.wait()
+            await refresh(**options)
+
+        patch.setattr(runner, "refresh_worker_cleanup", slow_refresh)
+        slow = asyncio.create_task(runner.run(start_command("slow-first", "slow-ticket")))
+        await entered.wait()
+        second = asyncio.create_task(runner.run(start_command("slow-second", "slow-ticket")))
+        await runner.run(start_command("fast", "fast-ticket"))
+        serialized = (
+            refreshes.count("slow-ticket") == 1
+            and "fast" in native_starts
+            and "slow-first" not in native_starts
+        )
+        release.set()
+        first, duplicate = await asyncio.gather(slow, second)
+        runner_evidence = dict(
+            initial=initial,
+            blocked=blocked.disposition.value,
+            accepted=accepted.disposition.value,
+            healthy=healthy,
+            active=active,
+            active_cache=active_cache,
+            complete=complete,
+            missing=missing,
+            complete_cache=complete_cache,
+            serialized=serialized,
+            first=first.disposition.value,
+            duplicate=duplicate.disposition.value,
+            native_starts=native_starts,
+        )
+        assert (
+            serialized
+            and blocked.disposition.value == "refused"
+            and duplicate.disposition.value == "refused"
+        )
+        for child in runner._children.values():
+            await child.native.stop()
+        return dict(points=points, runner=runner_evidence)
 
     began = time.perf_counter()
     expected, observed, _ = paired_fixture(
@@ -460,5 +597,7 @@ def test_mac_cleanup_snapshot_populated(
         "mac-cleanup-snapshot.json",
         observed,
         began,
-        "Private snapshot logic and real journal bytes. Journal API bridge remains open.",
+        "Private snapshots and populated runner admission, exemptions, exact historical "
+        "rechecks, cache replacement, and per-Ticket start serialization. "
+        "The same host retains all seven snapshot points and real journal settlement.",
     )

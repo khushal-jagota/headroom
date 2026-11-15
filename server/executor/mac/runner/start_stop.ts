@@ -23,6 +23,7 @@ interface Entry {
   ticket_id: string;
   retiring: boolean;
   stopped: boolean;
+  started: boolean;
   child: MacRunningChild | null;
   start: Promise<MacRunningChild> | undefined;
   stop: Promise<void> | undefined;
@@ -31,6 +32,8 @@ interface Entry {
 export class MacNativeChildren implements MacNativeChildrenContract {
   private readonly options: MacNativeChildrenOptions;
   private readonly entries = new Map<string, Entry>();
+  private readonly ticket_start_locks = new Map<string, { lock: FifoLock; users: number }>();
+  private readonly starts = new Set<Promise<MacRunningChild>>();
   private closed = false;
   private cleanup: Promise<void> | undefined;
   private readonly logged_failures = new Set<unknown>();
@@ -52,6 +55,11 @@ export class MacNativeChildren implements MacNativeChildrenContract {
     return [...this.entries.values()].flatMap((entry) =>
       entry.child === null ? [] : [entry.child],
     );
+  }
+  healthy_sources(): readonly ChildReference[] {
+    return [...this.entries.values()]
+      .filter((entry) => entry.started && !entry.retiring)
+      .map((entry) => entry.reference);
   }
   is_retiring(child_id: string): boolean {
     return this.entries.get(child_id)?.retiring ?? false;
@@ -77,15 +85,42 @@ export class MacNativeChildren implements MacNativeChildrenContract {
     invoking: () => void,
   ): Promise<MacRunningChild> {
     if (this.closed) return Promise.reject(new MacChildAdmissionRefused('executor is quiescing'));
-    if (this.entries.has(reference.child_id))
-      return Promise.reject(new BackendSpawnFailed('child identity already has a native start'));
-    if (input.resolved_start.conversation_id !== reference.conversation_id)
-      return Promise.reject(new Error('child conversation mismatch'));
     const ticket_id = new Map(
       input.resolved_start.role_materials?.identity_environment_variables ?? [],
     ).get('PLAN_TICKET_ID');
     if (!ticket_id)
       return Promise.reject(new BackendSpawnFailed('Mac runs require a Ticket identity'));
+    let holder = this.ticket_start_locks.get(ticket_id);
+    if (!holder) {
+      holder = { lock: new FifoLock(), users: 0 };
+      this.ticket_start_locks.set(ticket_id, holder);
+    }
+    holder.users++;
+    const acquired = holder;
+    const task = acquired.lock
+      .run(async () => {
+        await this.options.worker_cleanup.refresh(ticket_id);
+        return this.start_admitted(reference, input, invoking, ticket_id);
+      })
+      .finally(() => {
+        if (--acquired.users === 0 && this.ticket_start_locks.get(ticket_id) === acquired)
+          this.ticket_start_locks.delete(ticket_id);
+        this.starts.delete(task);
+      });
+    this.starts.add(task);
+    return task;
+  }
+  private start_admitted(
+    reference: ChildReference,
+    input: StartRun,
+    invoking: () => void,
+    ticket_id: string,
+  ): Promise<MacRunningChild> {
+    if (this.closed) return Promise.reject(new MacChildAdmissionRefused('executor is quiescing'));
+    if (this.entries.has(reference.child_id))
+      return Promise.reject(new BackendSpawnFailed('child identity already has a native start'));
+    if (input.resolved_start.conversation_id !== reference.conversation_id)
+      return Promise.reject(new Error('child conversation mismatch'));
     if ([...this.entries.values()].some((entry) => entry.ticket_id === ticket_id))
       return Promise.reject(new BackendSpawnFailed('Ticket already has a retained source child'));
     const entry: Entry = {
@@ -93,6 +128,7 @@ export class MacNativeChildren implements MacNativeChildrenContract {
       ticket_id,
       retiring: false,
       stopped: false,
+      started: false,
       child: null,
       start: undefined,
       stop: undefined,
@@ -128,6 +164,8 @@ export class MacNativeChildren implements MacNativeChildrenContract {
       }
       const prepared = await this.options.workspace_lock.run(async () => {
         this.assert_start(entry);
+        if (this.options.worker_cleanup.uncertain(entry.ticket_id))
+          throw new BackendSpawnFailed('Previous Worker cleanup is not proven for this Ticket');
         const localized_start = await localize_start(input, entry.reference, capability, generation, {
           ...this.options,
           on_failure: (error) => this.record_failure(error),
@@ -186,6 +224,7 @@ export class MacNativeChildren implements MacNativeChildrenContract {
         await child.native.start(child.localized_start, {
           vendor_session_cursor: input.vendor_session_cursor ?? null,
         });
+        entry.started = true;
       });
       return child;
     } catch (error) {
@@ -201,17 +240,6 @@ export class MacNativeChildren implements MacNativeChildrenContract {
       if (this.entries.get(entry.reference.child_id) === entry)
         this.entries.delete(entry.reference.child_id);
       throw error;
-    } finally {
-      if (entry.child !== null) {
-        try {
-          await this.options.record_children();
-        } catch (error) {
-          console.warn(
-            'agent processes were not recorded error=',
-            error instanceof Error ? error.constructor.name : typeof error,
-          );
-        }
-      }
     }
   }
   private assert_start(entry: Entry): void {
@@ -344,6 +372,7 @@ export class MacNativeChildren implements MacNativeChildrenContract {
           if (result.status === 'rejected') this.record_failure(result.reason, false);
         const skills_actual = this.options.skills.settled();
         void skills_actual.catch(() => {});
+        await Promise.allSettled([...this.starts]);
         await Promise.allSettled(entries.map((entry) => entry.start));
         const children = await Promise.allSettled(entries.map((entry) => this.stop_process(entry)));
         const skills = await Promise.allSettled([skills_actual]);

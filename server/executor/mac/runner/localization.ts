@@ -129,18 +129,21 @@ export async function localize_start(
   identity.set('PLAN_EXECUTOR_SOURCE_INCARNATION', reference.executor_incarnation);
   identity.set(NATIVE_SKILLS_DIR_ENV, join(generation, 'skills'));
   let role_text = resolved.role_materials?.role_text ?? '';
-  if (managed)
-    role_text += '\n\nPanels owns this Ticket workspace. ' +
+  if (managed) {
+    role_text +=
+      '\n\nPanels owns this Ticket workspace. ' +
       `Use the supplied worktree at ${workspace}. ` +
       'Do not create or remove worktrees. Keep scratch and dependencies inside it. ' +
       `Write reviewable artifacts and evidence under ${join(artifacts, 'artifacts')}. ` +
       'Follow repository setup instructions. Workers commit, push, open PRs, and merge. ' +
       'Panels removes the complete Ticket folder seven days after the Ticket ends, ' +
       'unless unpublished or uncommitted work prevents safe removal.';
-  else
-    role_text += `\n\nThis existing conversation keeps its original workspace at ${workspace}. ` +
+  } else {
+    role_text +=
+      `\n\nThis existing conversation keeps its original workspace at ${workspace}. ` +
       'Continue the work there, including any unpublished changes. ' +
       `Write reviewable output under ${join(artifacts, 'artifacts')}.`;
+  }
   return new ResolvedConversationStart({
     ...resolved,
     workspace_folder: workspace,

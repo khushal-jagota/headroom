@@ -11,6 +11,7 @@ import { WorkerSupervisor } from '../../../worker_supervision/index.ts';
 import type { WorkerSupervisionRuntime } from '../../../worker_supervision/runtime.ts';
 import type { BackendEventSink } from '../contracts.ts';
 import { WorkerScratch } from '../../worker_scratch.ts';
+import { worker_supervision_fixture } from '../testing/worker_supervision_fixture.ts';
 import { CLAUDE_PERMISSION_ORDER, claude_sdk_client } from './query.ts';
 import { CLAUDE_AGENT_SDK_VERSION } from '../claude_sdk.ts';
 import * as claude_sdk from '../claude_sdk.ts';
@@ -329,37 +330,22 @@ it('joins supervision stop when EOF and disconnect overlap and retains scratch u
   const began = new Promise<void>((resolve) => {
     announce_stop = resolve;
   });
-  const identity = {
-    pid: 4321,
-    birth: 'birth',
-    boot: 'boot',
-    unit: null,
-    supervision_record: '/synthetic/supervision.json',
-  };
+  const { identity, supervisor: unit, scratch } = worker_supervision_fixture();
   const ready = Promise.withResolvers<void>();
   const custody = Promise.withResolvers<void>();
   const record_custody = vi.fn(async () => {
     await custody.promise;
   });
-  const unit = {
-    environment: {},
-    argv: (original: readonly string[]) => original,
-    path: '/synthetic/supervision.json',
-    spawned: vi.fn(async () => {}),
-    started: vi.fn(async () => {
-      await ready.promise;
-    }),
-    identity: vi.fn(async () => identity),
-    shutdown_settled: Promise.resolve(),
-    stop: vi.fn(async (native_stop: () => Promise<void>) => {
-      announce_stop();
-      await stopped;
-      await native_stop();
-      return { complete: true, reason: 'gone', scope: 'ticket' };
-    }),
-  };
+  unit.started.mockImplementation(async () => {
+    await ready.promise;
+  });
+  unit.stop.mockImplementation(async (native_stop) => {
+    announce_stop();
+    await stopped;
+    await native_stop?.();
+    return { complete: true, reason: 'gone', scope: 'ticket' };
+  });
   vi.mocked(WorkerSupervisor.create).mockResolvedValue(unit as never);
-  const scratch = { environment: { TMPDIR: '/synthetic/scratch' }, close: vi.fn(async () => {}) };
   vi.mocked(WorkerScratch.create).mockResolvedValue(scratch as never);
   const { client, child, finish_reader, pumping } = setup(
     { PLAN_TICKET_ID: 'synthetic-worker' },
@@ -732,18 +718,7 @@ it('rejects an async prompt released after stdin fails before any message is reg
 });
 
 it('revokes an unspawned Worker when its supervision reporter fails and closes scratch', async () => {
-  const supervisor = {
-    environment: {},
-    path: '/synthetic/supervision.json',
-    cancel_unspawned: vi.fn(async () => {}),
-    stop: vi.fn(async (_native?: () => Promise<void>, _options?: { deadline: number }) => ({
-      complete: true,
-      reason: 'never launched',
-      scope: 'ticket',
-    })),
-    shutdown_settled: Promise.resolve(),
-  };
-  const scratch = { environment: {}, close: vi.fn(async () => {}) };
+  const { supervisor, scratch } = worker_supervision_fixture();
   vi.mocked(WorkerSupervisor.create).mockResolvedValueOnce(supervisor as never);
   vi.mocked(WorkerScratch.create).mockResolvedValueOnce(scratch as never);
   const reporting = Promise.withResolvers<void>();

@@ -166,6 +166,9 @@ async function execute(action: JournalAction): Promise<unknown> {
     case 'mark_outputs_published':
       engine!.mark_outputs_published(action.command_id);
       return;
+    case 'cleanup_evidence':
+      require_cursor();
+      return cursor(engine!.cleanup_evidence());
     case 'unpublished':
       require_cursor();
       return cursor(engine!.unpublished());

@@ -56,6 +56,14 @@ export interface MacCommandDependencies {
   readonly inputs: {
     download_inputs(command: ChildCommand, signal: AbortSignal): Promise<void>;
   };
+  readonly recheck_cleanup: (
+    source: ChildReference,
+    ticket_id: string,
+  ) => Promise<{
+    complete: boolean;
+    reason: string;
+    source_available: boolean;
+  }>;
   /** The lifecycle owner joins command/source work and marks invocation under the native lock.
    * Failed source work or unpublished output must prevent a successful stop certificate. */
   readonly stop_exact: (

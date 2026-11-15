@@ -233,6 +233,23 @@ export class JournalEngine {
       tx.run('UPDATE commands SET outputs_published=1 WHERE command_id=?', [id]);
     });
   }
+  cleanup_evidence(): EncodedJournalRow[] {
+    return this.db().read((sql) =>
+      sql
+        .all<{
+          command_id: string;
+          mailbox_command_json: Buffer | string;
+          result_json: Buffer | string | null;
+        }>(
+          'SELECT command_id,mailbox_command_json,result_json FROM commands WHERE length(mailbox_command_json)>0',
+        )
+        .map((row) => ({
+          command_id: row.command_id,
+          command: Buffer.from(row.mailbox_command_json),
+          ...(row.result_json === null ? {} : { result: Buffer.from(row.result_json) }),
+        })),
+    );
+  }
   unpublished(): EncodedJournalRow[] {
     const rows = this.db().read((sql) =>
       sql.all<{ mailbox_command_json: Buffer; result_json: Buffer }>(
@@ -337,10 +354,16 @@ export class JournalEngine {
   }
   shrink_to_tombstones(): void {
     this.write((tx) => {
-      const rows = tx.all<{ command_id: string; result_json: Buffer }>(
-        "SELECT command_id,result_json FROM commands WHERE phase='finished' AND result_reported=1 AND outputs_published=1 AND length(mailbox_command_json)>0",
+      const rows = tx.all<{
+        command_id: string;
+        result_json: Buffer;
+        mailbox_command_json: Buffer;
+      }>(
+        "SELECT command_id,result_json,mailbox_command_json FROM commands WHERE phase='finished' AND result_reported=1 AND outputs_published=1 AND length(mailbox_command_json)>0",
       );
       for (const row of rows) {
+        const command = this.command(row.mailbox_command_json).child_command;
+        if (command?.operation === 'start' || command?.operation === 'stop') continue;
         const result = this.result(row.result_json);
         const kept: CommandResult = {
           command_id: result.command_id,

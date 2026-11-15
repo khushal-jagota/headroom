@@ -13,7 +13,11 @@ import type {
   ChildReference,
   CommandOutcome,
   TurnToken,
+  WorkerCleanupUncertainty,
 } from '../../wire.generated.ts';
+import { same_reference } from '../../child_reference.ts';
+import { snapshot_cleanup } from '../cleanup_reconciliation.ts';
+import type { ExecutorCleanupSnapshot } from '../cleanup_contracts.ts';
 import type { CanonicalReader } from '../storage/journal_contracts.ts';
 import { MailboxRunCancelled } from '../mailbox/contracts.ts';
 import type { MacNativeChildrenContract } from './contracts.ts';
@@ -31,6 +35,9 @@ import { create_mac_output_publication } from './publication.ts';
 import { MacWorkspaceCleanup } from './workspaces.ts';
 
 export class MacRunner implements MacRunnerContract {
+  private readonly options: MacRunnerOptions;
+  private uncertainties: readonly WorkerCleanupUncertainty[] = [];
+  private cleanup_notice: string | null = null;
   readonly native_children: MacNativeChildrenContract;
   private readonly commands: MacCommandServiceContract;
   private readonly state: MacChildState;
@@ -39,7 +46,9 @@ export class MacRunner implements MacRunnerContract {
   private readonly maintenance: MacMaintenance;
   private readonly lifetime: MacRunnerLifetime;
   private readonly workspaces: MacWorkspaceCleanup;
+  private readonly retirement: MacRetirement;
   constructor(options: MacRunnerOptions) {
+    this.options = options;
     const state = new MacChildState();
     let lifetime!: MacRunnerLifetime;
     let events!: MacRunnerEvents;
@@ -61,6 +70,10 @@ export class MacRunner implements MacRunnerContract {
       register_workspace: options.register_workspace,
       event_sink: (reference) => events.event_sink(reference),
       on_failure: failure,
+      worker_cleanup: {
+        refresh: (ticket_id) => this.refresh_worker_cleanup({ ticket_id }),
+        uncertain: (ticket_id) => this.uncertainties.some((item) => item.ticket_id === ticket_id),
+      },
     });
     const publication = create_mac_output_publication(options.outbox);
     events = new MacRunnerEvents({
@@ -88,6 +101,7 @@ export class MacRunner implements MacRunnerContract {
       inputs: options.inputs,
       now_ms: options.now_ms,
       stop_exact: (command, work, invoking) => retirement.stop_exact(command, work, invoking),
+      recheck_cleanup: (source, ticket_id) => this.recheck_cleanup(source, ticket_id),
     });
     const maintenance = new MacMaintenance({
       native_children: native,
@@ -115,6 +129,7 @@ export class MacRunner implements MacRunnerContract {
     this.events = events;
     this.maintenance = maintenance;
     this.lifetime = lifetime;
+    this.retirement = retirement;
     this.workspaces = new MacWorkspaceCleanup({
       paths: options.native.paths,
       workspace_home: options.native.workspace_home,
@@ -130,6 +145,71 @@ export class MacRunner implements MacRunnerContract {
   }
   cleanup_workspaces(states: readonly WorkspaceState[], now: number): Promise<void> {
     return this.workspaces.cleanup(states, now);
+  }
+  stop_and_publish(command: ChildCommand): Promise<CommandOutcome> {
+    this.assert_admission();
+    return this.retirement.stop_and_publish(command, this.commands);
+  }
+  get cleanup_uncertainties(): WorkerCleanupUncertainty[] {
+    return [...this.uncertainties];
+  }
+  get legacy_cleanup_notice(): string | null {
+    return this.cleanup_notice;
+  }
+  private cache_cleanup(snapshot: ExecutorCleanupSnapshot, ticket_id?: string): void {
+    this.uncertainties =
+      ticket_id === undefined
+        ? snapshot.uncertainties
+        : [
+            ...this.uncertainties.filter((item) => item.ticket_id !== ticket_id),
+            ...snapshot.uncertainties,
+          ];
+    if (ticket_id === undefined) this.cleanup_notice = snapshot.notice;
+  }
+  async refresh_worker_cleanup(
+    options: { ticket_id?: string; revoke_pending?: boolean } = {},
+  ): Promise<void> {
+    const snapshot = await snapshot_cleanup(this.options.native.paths, this.options.cleanup, {
+      ...options,
+      healthy_sources: this.native_children.healthy_sources(),
+      preparing_sources: this.commands
+        .records()
+        .filter(
+          (record) =>
+            record.command.arguments.kind === 'start' &&
+            record.outcome === null &&
+            record.task !== null &&
+            !this.state.is_retiring(record.command.child.child_id) &&
+            !this.native_children.is_retiring(record.command.child.child_id),
+        )
+        .map((record) => record.command.child),
+    });
+    this.cache_cleanup(snapshot, options.ticket_id);
+  }
+  private async recheck_cleanup(source: ChildReference, ticket_id: string) {
+    // Explicit historical rechecks carry no exemption for a healthy current child.
+    const snapshot = await snapshot_cleanup(this.options.native.paths, this.options.cleanup, {
+      ticket_id,
+    });
+    this.cache_cleanup(snapshot, ticket_id);
+    if (
+      !snapshot.sources.some(
+        (item) => same_reference(item.source, source) && item.ticket_id === ticket_id,
+      )
+    )
+      return {
+        source_available: false,
+        complete: false,
+        reason: 'Exact Worker cleanup source is unavailable',
+      };
+    const remaining = snapshot.uncertainties.find(
+      (item) => item.ticket_id === ticket_id && item.conversation_id === source.conversation_id,
+    );
+    return {
+      source_available: true,
+      complete: remaining === undefined,
+      reason: remaining?.reason ?? 'Recorded Worker cleanup is complete',
+    };
   }
   get admission_stopped(): boolean {
     return this.state.admission_stopped;

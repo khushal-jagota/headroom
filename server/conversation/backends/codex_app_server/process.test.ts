@@ -85,7 +85,8 @@ test.skipIf(process.platform !== 'linux')(
       setInterval(() => {}, 1000);
     `;
     const started = performance.now();
-    const owned = await spawn_codex_process([process.execPath, '-e', leader], {
+    const created: OwnedCodexProcess[] = [];
+    const pending = spawn_codex_process([process.execPath, '-e', leader], {
       child_processes: new ChildProcesses(),
       environment: Object.fromEntries(
         Object.entries(process.env).filter(
@@ -93,7 +94,12 @@ test.skipIf(process.platform !== 'linux')(
         ),
       ),
       working_directory: process.cwd(),
+      on_created: (value) => {
+        created.push(value);
+      },
     });
+    const synchronous_handles = [...created];
+    const owned = await pending;
     let descendant: number | null = null;
     const terminated = () => {
       if (descendant === null) return false;
@@ -107,6 +113,7 @@ test.skipIf(process.platform !== 'linux')(
       }
     };
     try {
+      expect(synchronous_handles).toEqual([owned]);
       let output = '';
       const ready = new Promise<void>((resolve) =>
         owned.child.stdout.on('data', (chunk: Buffer) => {
