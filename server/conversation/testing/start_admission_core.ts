@@ -13,9 +13,13 @@ export async function run(path: string, outcome: 'accepted' | 'uncertain'): Prom
   let available = false;
   const saving = Promise.withResolvers<void>();
   const database = createDatabase(path);
-  const store = new ConversationStore(database, { integer_now: () => 100 });
-  database.write((tx) => store.reconcile_in_transaction(tx, new Map()));
   const registry = new ScriptedBackendRegistry();
+  const store = new ConversationStore(database, {
+    integer_now: () => 100,
+    local_child_custody: registry.custody.inspection,
+  });
+  await store.prepare_reconciliation(new Map());
+  database.write((tx) => store.reconcile_in_transaction(tx, new Map()));
   const core = new SqliteProcessConversationSystem({
     store,
     backend_child_factories: registry.factories,

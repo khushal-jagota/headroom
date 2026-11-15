@@ -16,12 +16,24 @@ export interface LocalChildCustodyRow {
   readonly supervision_record: string | null;
 }
 
-export type RecordedSourceSettlement = 'undelivered' | 'retired';
+export type { RecordedSourceSettlement } from './local_child_contracts.ts';
 
 export interface LocalChildCustodyInspection {
   host_boot_identity(): Promise<LocalHostBootIdentity | null>;
   retirement_row_proven(row: LocalChildCustodyRow, options?: StopOptions): Promise<boolean>;
-  stop_recorded_child(identity: LocalChildIdentity, host: string | null, options?: StopOptions): Promise<boolean>;
-  inspect_supervision(path: string, identity?: LocalChildIdentity, options?: StopOptions): Promise<boolean>;
-  stop_supervision(path: string, identity?: LocalChildIdentity, options?: StopOptions): Promise<boolean>;
+  stop_recorded_child(
+    identity: LocalChildIdentity,
+    host: string | null,
+    options?: StopOptions,
+  ): Promise<boolean>;
+  inspect_supervision(
+    path: string,
+    identity?: LocalChildIdentity,
+    options?: StopOptions,
+  ): Promise<boolean>;
+  stop_supervision(
+    path: string,
+    identity?: LocalChildIdentity,
+    options?: StopOptions,
+  ): Promise<boolean>;
 }

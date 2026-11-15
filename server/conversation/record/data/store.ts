@@ -2,7 +2,10 @@ import { HOME_MACHINE_ID } from '../../../execution_identity.ts';
 import { write_bindings } from '../../start_admission/index.ts';
 import type { AdmissionDatabase, StartRequest } from '../../start_admission/contracts.ts';
 import type { LocalChildIdentity } from '../../local_child_contracts.ts';
-import type { LocalChildCustodyRow, RecordedSourceSettlement } from '../../local_child_custody_contracts.ts';
+import type {
+  LocalChildCustodyRow,
+  RecordedSourceSettlement,
+} from '../../local_child_custody_contracts.ts';
 import type { WorkspaceIdentity } from '../../../ticket_workspaces/contracts.ts';
 import type { CapturedTurn } from '../../deploy_interruptions/contracts.ts';
 import type { TurnToken } from '../../backends/contracts.ts';
@@ -264,7 +267,8 @@ export class ConversationStorePrimitives {
           randomUUID().replaceAll('-', ''),
           epoch.epoch,
         ]);
-        if (!this.blocked_local_conversations.has(conversation_id)) custody.bind_current_turn(tx, conversation_id);
+        if (!this.blocked_local_conversations.has(conversation_id))
+          custody.bind_current_turn(tx, conversation_id);
         write_bindings(tx, { conversation_id, turn_number: number }, requests);
         apply_facts(tx, conversation_id, [
           {
@@ -484,6 +488,266 @@ export class ConversationStore
 
   finish_writes(): Promise<void> {
     return this.#settlement.finish_writes();
+  }
+
+  readonly #startup_source_proofs = new Map<string, LocalChildCustodyRow>();
+  readonly #settled_recorded_turns = new Map<string, TurnToken>();
+  #reconciliation_prepared = false;
+
+  async record_child_custody(
+    conversation_id: string,
+    generation: string,
+    identity: LocalChildIdentity | null = null,
+    options: { retired?: boolean } = {},
+  ): Promise<void> {
+    return this.#settlement.retain_recording(
+      (async () => {
+        const current =
+          !options.retired && identity === null
+            ? await this.#participants.local_child_custody?.host_boot_identity()
+            : null;
+        if (!options.retired && identity === null && (!current?.host || !current.boot))
+          throw new BackendSpawnFailed(
+            'Cannot establish the host and boot identity before agent startup',
+          );
+        await this.#settlement.write_recording(() =>
+          this.#write_custody((tx) => {
+            if (options.retired) custody.write_retired(tx, conversation_id, generation);
+            else if (identity === null)
+              custody.write_pending(tx, conversation_id, generation, current!);
+            else {
+              custody.write_started(tx, conversation_id, generation, identity);
+              const recorded = custody.read(tx, conversation_id);
+              if (
+                recorded === undefined ||
+                recorded.generation !== generation ||
+                recorded.state !== 'started' ||
+                recorded.pid !== identity.pid ||
+                recorded.birth !== identity.birth ||
+                recorded.boot !== identity.boot ||
+                recorded.unit !== identity.unit ||
+                recorded.supervision_record !== identity.supervision_record
+              )
+                throw new BackendSpawnFailed('The agent process identity could not be saved');
+            }
+          }),
+        );
+      })(),
+    );
+  }
+  async record_child_supervision(
+    conversation_id: string,
+    generation: string,
+    path: string,
+  ): Promise<void> {
+    return this.#settlement.retain_recording(
+      (async () => {
+        const record = await supervision_records.read(path);
+        if (record.conversation_id !== conversation_id)
+          throw new Error('Worker supervision record does not own this conversation');
+        await this.#settlement.write_recording(() =>
+          this.#write_custody((tx) =>
+            custody.write_supervision(tx, conversation_id, generation, path),
+          ),
+        );
+      })(),
+    );
+  }
+  async has_recorded_source(conversation_id: string): Promise<boolean> {
+    return this.database.read((sql) => custody.read(sql, conversation_id) !== undefined);
+  }
+  async recorded_source_retirement_proven(conversation_id: string): Promise<boolean> {
+    return this.database.read((sql) => {
+      const row = custody.read(sql, conversation_id);
+      const proof = this.#startup_source_proofs.get(conversation_id);
+      return (
+        row !== undefined &&
+        (row.state === 'retired' || (proof !== undefined && custody.same(row, proof)))
+      );
+    });
+  }
+  async check_local_child_started(
+    conversation_id: string,
+    generation: string,
+    turn_number: number,
+  ): Promise<boolean> {
+    return this.database.read(
+      (sql) =>
+        sql.get(
+          "SELECT 1 FROM conversation_child_custody c JOIN conversation_turn_occurrences o ON o.conversation_id=c.conversation_id AND o.occurrence_id=c.occurrence_id AND o.runtime_epoch=c.runtime_epoch WHERE c.conversation_id=? AND c.generation=? AND c.state='started' AND c.host IS NOT NULL AND c.host!='' AND c.pid>0 AND c.birth IS NOT NULL AND c.birth!='' AND c.boot IS NOT NULL AND c.boot!='' AND o.turn_number=?",
+          [conversation_id, generation, turn_number],
+        ) !== undefined,
+    );
+  }
+  async recorded_source_block_reason(conversation_id: string): Promise<string> {
+    const pending_without_identity = this.database.read((sql) => {
+      const row = custody.read(sql, conversation_id);
+      return row?.state === 'launch_pending' && row.supervision_record === null;
+    });
+    return pending_without_identity
+      ? "The home stopped before it saved the agent's process identity. Your conversation is safe: a second agent cannot start. Reboot this same host, reopen Headroom, select Stop, then send your message again. A restart of Headroom alone does not clear this block."
+      : 'The home stopped during agent startup. A second agent cannot start. Select Stop to end the previous agent before another can start. If Stop fails, the previous process still needs cleanup.';
+  }
+  settled_recorded_turn(conversation_id: string): TurnToken | null {
+    return this.#settled_recorded_turns.get(conversation_id) ?? null;
+  }
+  async workspace_conversation_ids(
+    ticket_id: string,
+    identity: WorkspaceIdentity,
+  ): Promise<readonly string[]> {
+    return this.database.read((sql) =>
+      sql
+        .all<{ conversation_id: string }>(
+          'SELECT conversation_id FROM ticket_workspace_conversations WHERE ticket_id=? AND machine_id=? AND workspace_id=?',
+          [ticket_id, identity.machine_id, identity.workspace_id],
+        )
+        .map((row) => row.conversation_id),
+    );
+  }
+  async retire_idle_recorded_source(
+    conversation_id: string,
+    options: { inspect_only?: boolean; deadline?: number } = {},
+  ): Promise<boolean> {
+    return this.#settlement.retain_recording(
+      (async () => {
+        const source = this.database.read((sql) => custody.read(sql, conversation_id));
+        const stop = options.deadline === undefined ? undefined : { deadline: options.deadline };
+        const inspector = this.#participants.local_child_custody;
+        if (source === undefined) return false;
+        let proven =
+          source.state === 'retired' ||
+          (await inspector?.retirement_row_proven(source, stop)) === true;
+        const identity = custody.identity(source);
+        if (!proven && !options.inspect_only && source.state === 'started' && identity !== null)
+          proven = (await inspector?.stop_recorded_child(identity, source.host, stop)) === true;
+        if (!proven) return false;
+        return this.#settlement.write_recording(() =>
+          this.#write_custody((tx) => {
+            if (
+              !custody.same(custody.read(tx, conversation_id), source) ||
+              tx.get(
+                "SELECT 1 FROM conversation_lifecycle_facts WHERE conversation_id=? AND ((kind='turn' AND status IN ('intent','running','unknown')) OR (kind='attempt' AND status IN ('intent','unknown')) OR (kind='request' AND status IN ('pending','answering'))) LIMIT 1",
+                [conversation_id],
+              ) !== undefined
+            )
+              return false;
+            custody.write_retired(tx, conversation_id, source.generation);
+            return true;
+          }),
+        );
+      })(),
+    );
+  }
+  async settle_recorded_source(
+    conversation_id: string,
+    options: { inspect_only?: boolean; deadline?: number } = {},
+  ): Promise<RecordedSourceSettlement | null> {
+    return this.#settlement.retain_recording(
+      (async () => {
+        const source = this.database.read((sql) => custody.read(sql, conversation_id));
+        const stop = options.deadline === undefined ? undefined : { deadline: options.deadline };
+        if (source === undefined) return null;
+        const inspector = this.#participants.local_child_custody;
+        let result: RecordedSourceSettlement;
+        if (source.state === 'launch_pending') {
+          const proven =
+            source.supervision_record !== null
+              ? options.inspect_only
+                ? await inspector?.inspect_supervision(source.supervision_record, undefined, stop)
+                : await inspector?.stop_supervision(source.supervision_record, undefined, stop)
+              : await inspector?.retirement_row_proven(source, stop);
+          if (proven !== true) return null;
+          result = 'undelivered';
+        } else if (source.state === 'retired') result = 'retired';
+        else {
+          const identity = custody.identity(source);
+          if (identity === null) return null;
+          const proven = options.inspect_only
+            ? await inspector?.retirement_row_proven(source, stop)
+            : await inspector?.stop_recorded_child(identity, source.host, stop);
+          if (proven !== true) return null;
+          result = 'retired';
+        }
+        const token = await this.#settlement.write_recording(() =>
+          this.#write_custody((tx) => {
+            if (!custody.same(custody.read(tx, conversation_id), source)) return null;
+            const occurrence = tx.get<{ turn_number: number }>(
+              'SELECT turn_number FROM conversation_turn_occurrences WHERE conversation_id=? AND occurrence_id=? AND runtime_epoch=?',
+              [conversation_id, source.occurrence_id, source.runtime_epoch],
+            );
+            if (occurrence === undefined) return null;
+            const number = occurrence.turn_number;
+            const facts = read_facts(tx, conversation_id);
+            let settled: readonly LifecycleFact[];
+            if (result === 'undelivered') {
+              const turn = facts.find((f) => f.kind === K.turn && f.turn_number === number);
+              const prompt = facts.find(
+                (f) => f.kind === K.attempt && f.identity === `prompt:${number}`,
+              );
+              if (
+                turn === undefined ||
+                prompt === undefined ||
+                (turn.status !== S.intent && turn.status !== S.unavailable) ||
+                (prompt.status !== S.intent && prompt.status !== S.suppressed)
+              )
+                return null;
+              settled = [
+                { ...turn, status: S.unavailable },
+                { ...prompt, status: S.suppressed },
+              ];
+            } else {
+              custody.write_retired(tx, conversation_id, source.generation);
+              settled = facts_after_restart(facts, null);
+            }
+            apply_facts(tx, conversation_id, [
+              ...settled,
+              {
+                kind: K.attempt,
+                identity: `cancel:recorded:${number}:${source.generation}`,
+                turn_number: number,
+                operation: O.cancel,
+                status: S.accepted,
+                provider_identity: null,
+              },
+            ]);
+            this.#participate(tx, conversation_id, []);
+            tx.run(
+              'DELETE FROM automatic_start_bindings WHERE conversation_id=? AND turn_number=?',
+              [conversation_id, number],
+            );
+            return { conversation_id, turn_number: number };
+          }),
+        );
+        if (token === null) return null;
+        this.#settled_recorded_turns.set(conversation_id, token);
+        this.blocked_local_conversations.delete(conversation_id);
+        return result;
+      })(),
+    );
+  }
+  async prepare_reconciliation(open_runs: ReadonlyMap<string, OpenRunTurn>): Promise<void> {
+    return this.#settlement.retain_recording(
+      (async () => {
+        this.#startup_source_proofs.clear();
+        const candidates = this.database.read((sql) => read_unresolved_turns(sql));
+        for (const turn of candidates) {
+          if (open_runs.has(turn.conversation_id)) continue;
+          const source = this.database.read((sql) => custody.read(sql, turn.conversation_id));
+          if (
+            source !== undefined &&
+            (source.state === 'retired' ||
+              (await this.#participants.local_child_custody?.retirement_row_proven(source)) ===
+                true)
+          )
+            this.#startup_source_proofs.set(turn.conversation_id, source);
+        }
+        this.#reconciliation_prepared = true;
+      })(),
+    );
+  }
+
+  #write_custody<T>(operation: (tx: TransactionSql) => T): T {
+    return this.database.write(operation, { changeSignal: 'silent' });
   }
 
   bind_interruption_delivery(
@@ -1223,6 +1487,38 @@ export class ConversationStore
   }
 
   reconcile_in_transaction(tx: TransactionSql, open_runs: ReadonlyMap<string, OpenRunTurn>): void {
+    if (this.#participants.local_child_custody !== undefined && !this.#reconciliation_prepared)
+      throw new Error('Local custody proofs must be prepared before reconciliation');
+    for (const pending of tx.all<{ ticket_id: string; claim_revision: number }>(
+      "SELECT d.ticket_id,d.claim_revision FROM worker_step_dispatch_intents d JOIN tickets t ON t.id=d.ticket_id WHERE d.state='prepared' AND t.worker_step_claim='out' AND t.worker_step_claim_revision=d.claim_revision",
+    )) {
+      release_worker_step_claim(tx, pending.ticket_id, {
+        expected_claim: 'out',
+        expected_claim_revision: pending.claim_revision,
+        now: this.integer_now(),
+      });
+    }
+    const unresolved = read_unresolved_turns(tx).filter(
+      (turn) =>
+        !open_runs.has(turn.conversation_id) &&
+        custody.read(tx, turn.conversation_id) !== undefined,
+    );
+    this.blocked_local_conversations.clear();
+    for (const turn of unresolved) {
+      const proof = this.#startup_source_proofs.get(turn.conversation_id);
+      if (
+        proof === undefined ||
+        !custody.same(custody.read(tx, turn.conversation_id), proof) ||
+        !custody.occurrence_matches(
+          tx,
+          turn.conversation_id,
+          turn.occurrence_id,
+          turn.runtime_epoch,
+        )
+      )
+        this.blocked_local_conversations.add(turn.conversation_id);
+    }
+    for (const id of this.blocked_local_conversations) this.#startup_source_proofs.delete(id);
     const reconcile = this.#participants.reconcile_deployment;
     if (reconcile !== undefined) {
       synchronously(() => reconcile(tx, this.integer_now()));
@@ -1240,6 +1536,7 @@ export class ConversationStore
         "WHERE status IN ('intent','running','pending','answering') ORDER BY conversation_id",
     );
     for (const { conversation_id } of ids) {
+      if (this.blocked_local_conversations.has(conversation_id)) continue;
       const facts = facts_after_restart(
         read_facts(tx, conversation_id),
         open_runs.get(conversation_id) ?? null,

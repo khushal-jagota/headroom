@@ -403,6 +403,7 @@ test('ordinary sends publish real core status and shutdown fences a blocked nati
   const dependencies: ProductionServerDependencies = {
     backends: {
       claude: (binding) => {
+        registry.bind_runtime(binding.worker_supervision);
         bindings_seen.push(binding);
         return registry.factories.claude;
       },

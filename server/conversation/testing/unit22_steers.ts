@@ -21,9 +21,13 @@ const database = createDatabase(spec.path),
 let registry!: ScriptedBackendRegistry,
   store!: ConversationStore,
   core!: SqliteProcessConversationSystem;
-function cycle() {
+async function cycle() {
   registry = new ScriptedBackendRegistry();
-  store = new ConversationStore(database, { integer_now: () => 1000 });
+  store = new ConversationStore(database, {
+    integer_now: () => 1000,
+    local_child_custody: registry.custody.inspection,
+  });
+  await store.prepare_reconciliation(new Map());
   database.write((tx) => store.reconcile_in_transaction(tx, new Map()), { changeSignal: 'silent' });
   core = new SqliteProcessConversationSystem({
     store,
@@ -109,7 +113,7 @@ async function restart_case(id: string, anonymous = false, held = false) {
     .find((row) => row.payload instanceof PromptDeliveryUncertainEventPayload)!.sequence;
   await capture(`${id}-before-restart`, id);
   await close();
-  cycle();
+  await cycle();
   if (held) await send(id, 'fresh incumbent');
   await core.await_late_steer(id, sequence, Promise.resolve(true));
   await Promise.all([...core.conversations.get(id)!.late_steers]);
@@ -119,19 +123,19 @@ async function restart_case(id: string, anonymous = false, held = false) {
     await Promise.all([...core.conversations.get(id)!.late_steers]);
     await capture(`${id}-held`, id);
     await close();
-    cycle();
+    await cycle();
     await core.await_late_steer(id, sequence, Promise.resolve(true));
     await Promise.all([...core.conversations.get(id)!.late_steers]);
     await core.wait_until_quiescent();
   }
   await capture(`${id}-once`, id);
   await close();
-  cycle();
+  await cycle();
   await core.await_late_steer(id, sequence, Promise.resolve(true));
   await core.wait_until_quiescent();
   await capture(`${id}-no-repeat`, id);
 }
-cycle();
+await cycle();
 try {
   await start('refused');
   await send('refused', 'incumbent');

@@ -1,4 +1,5 @@
 import { create_worker_supervision_runtime } from '../../../worker_supervision/composition.ts';
+import { LocalChildCustody } from '../../child_custody.ts';
 /** Real TS core + real Claude SDK + one owned local scripted CLI. */
 import { OneShotChildren } from '../../../lifecycle/one_shot_children.ts';
 import { SHUTDOWN_GRACE_SECONDS } from '../../../lifecycle/configuration.ts';
@@ -51,10 +52,15 @@ export async function run_part2_parity(spec: Part2Spec): Promise<unknown> {
       ['unit18-runtime'],
     ),
   );
-  const store = new ConversationStore(database, { integer_now: () => 100 });
   const child_processes = new ChildProcesses();
   const one_shot_children = new OneShotChildren(child_processes);
   const worker_supervision = create_worker_supervision_runtime({ one_shot_children });
+  const local_child_custody = new LocalChildCustody({
+    runtime: worker_supervision,
+    child_processes,
+    one_shot_children,
+  });
+  const store = new ConversationStore(database, { integer_now: () => 100, local_child_custody });
   const factory = create_claude_backend_child_factory(
     {
       claude_executable: spec.executable,
