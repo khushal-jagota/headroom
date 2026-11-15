@@ -1,6 +1,6 @@
 {
   "oldest_supported_build": 1,
   "decision": "compatible",
-  "contract_sha256": "263d56e6153bd2201bb0dc27dadbe08609ffeaccb684b9b1eb9723ea6d5fe41d",
-  "evidence": "Source review preserves installed accept/reject URLs, expected-revision validation and Ticket JSON responses from staging. The iOS protected decision adapter retains its receipt contract and atomic replay, permits approval message, and forwards the existing operation identity into shared decision actions. Old note-free protected commands remain valid. Native build floor remains 1. Authentication supplies attribution. Both native and legacy routes retain existing authorization. The forward merge joins ticket_decision_operations and ticket_decision_messages with no schema change. Verification results belong in the Ticket evidence; no signed-device or deployment claim."
+  "contract_sha256": "7bed766519ccb7a35bd29dc128d84c458558cf74ee6f38ec6b4839b30fe4cfb7",
+  "evidence": "Source review preserves the existing notification route and server_url fields for tap-only installed clients. The reply category and original conversation metadata are additive. Existing clients ignore these fields and retain ordinary tap behavior. Notification preference endpoints and response shapes stay unchanged. The migration adds nullable context and reply columns and preserves queued deliveries. The native build floor remains 1. Focused notification/APNs tests, queued-delivery migration checks, APNs registration integration, 30 native unit tests, and a local Simulator reply/settings review passed. No oldest signed-build, physical-device, Apple delivery, deployment, or live-readiness claim."
 }
