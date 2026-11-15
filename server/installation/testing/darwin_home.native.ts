@@ -36,7 +36,7 @@ if(process.argv[2]==='serve') {
 const app = `import{createServer}from'node:http';
 import{readFileSync,writeFileSync,existsSync,realpathSync}from'node:fs';
 import{join}from'node:path';import{fileURLToPath}from'node:url';
-import{createDatabase,createDatabaseFromSeed}from'./core/database/index.ts';
+import{createDatabase}from'./core/database/index.ts';
 import{ChildProcesses}from'./lifecycle/owned_processes.ts';
 import{current_darwin_home}from'./environments/updates/darwin/launch.ts';
 import{create_installer_operations}from'./environments/updates/installation.ts';
@@ -45,7 +45,13 @@ import{UpdateBarrier}from'./environments/update_barrier.ts';
 const root=process.cwd(),application=fileURLToPath(new URL('../',import.meta.url)),data=join(root,'data'),database=process.env.PLAN_DB_PATH;
 const revision=JSON.parse(readFileSync(join(application,'manifest.json'),'utf8')).app_sha;
 const seed=JSON.parse(readFileSync(join(application,'server/core/database/application_schema.json'),'utf8'));
-const db=existsSync(database)?createDatabase(database):createDatabaseFromSeed(database,seed,tx=>tx.run("INSERT INTO projects(id,name,created_at,updated_at) VALUES('native-proof','sentinel',0,0)"));
+if(!existsSync(database))throw Error('The first-home installer did not initialize its database');
+const db=createDatabase(database);
+if(db.read(sql=>sql.get('SELECT version_num FROM alembic_version'))?.version_num!==seed.alembicRevision)throw Error('The installed database schema differs from its payload');
+if(!db.read(sql=>sql.get("SELECT id FROM projects WHERE id='native-proof'"))){
+ if(existsSync(join(data,'update-attempt.json')))throw Error('The fixture project disappeared during update');
+ db.write(tx=>tx.run("INSERT INTO projects(id,name,created_at,updated_at) VALUES('native-proof','sentinel',0,0)"));
+}
 const policy=()=>{try{return JSON.parse(readFileSync(join(data,'probe-policy.json'),'utf8'));}catch{return{};}};
 if(policy().fail_sha===revision)db.write(tx=>tx.run("UPDATE projects SET name='candidate-write' WHERE id='native-proof'"));
 const children=new ChildProcesses(),controller=new AbortController();let launching=false;

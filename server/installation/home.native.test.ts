@@ -23,6 +23,7 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { install_home, check_home_port } from './home.ts';
 import { create_linux_home_service } from './linux.ts';
 import { create_darwin_home_service } from './darwin.ts';
+import { initialize_candidate_home_database } from './database.ts';
 import type { HomeInstallDependencies, HomeServicePlan, HomeCommand } from './contracts.ts';
 import { ChildProcesses, OneShotChildren } from '../lifecycle/owned_processes.ts';
 import { observe_promise } from '../core/promise_observer.ts';
@@ -88,7 +89,7 @@ test.skipIf(!admitted)(
       system,
       architecture: process.arch,
       boundary:
-        'Actual installer and native services; injected mini-app extraction/admission. No sealed-package claim.',
+        'Actual installer and native services; injected mini-app extraction, admission and database initialization. No sealed-package claim.',
       cases: [],
     };
     const cases = report.cases as Record<string, unknown>[];
@@ -103,7 +104,7 @@ test.skipIf(!admitted)(
         });
         report.mini_builds = mini_builds;
         report.boundary =
-          'Real sealed mini-home archives, admission, launchd and copied updater. Production archive foreground proof is separate.';
+          'Real sealed mini-home archives, candidate database initialization, admission, launchd and copied updater. Production archive foreground proof is separate.';
       }
       for (const fault of ['none', 'health', 'auxiliary'] as const) {
         const started = performance.now(),
@@ -272,6 +273,18 @@ test.skipIf(!admitted)(
           admit: async (candidate, manifest, scope) => {
             if (system === 'darwin')
               await admit_runtime(candidate, manifest, scope.child_processes);
+          },
+          initialize_database: async (candidate, path, scope) => {
+            if (system === 'darwin')
+              await initialize_candidate_home_database(
+                candidate,
+                path,
+                scope,
+                deps.node_executable,
+              );
+            // The Linux mini app has no SQLite use. Its database initialization is injected.
+            record.database_initialization =
+              system === 'darwin' ? 'real candidate child' : 'injected mini-app boundary';
           },
           healthy: async (port, sha, signal) => {
             await wait_for(async () => {
