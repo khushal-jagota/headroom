@@ -1,5 +1,7 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
+import { mkdir, writeFile } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
 import { join } from 'node:path';
 import { setImmediate as yield_turn } from 'node:timers/promises';
 import { BackendPromptAccepted } from '../../../conversation/backends/contracts.ts';
@@ -27,6 +29,7 @@ import {
   record_commands,
   pending_envelopes,
   close_fixture_owners,
+  fixture_cleanup_dependencies,
 } from './runner_fixture.ts';
 import type { FixtureStores } from './runner_fixture.ts';
 
@@ -133,10 +136,16 @@ let parity: unknown,
 try {
   stores = await open_fixture_stores(join(root, 'spool'), now, on_failure, options);
   const { store, journal } = stores;
+  const cleanup_dependencies = fixture_cleanup_dependencies(journal);
+  owners.push({
+    stop: (options) => cleanup_dependencies.runtime.close(options),
+    settled: () => cleanup_dependencies.runtime.shutdown_settled,
+  });
   const runner_options: MacRunnerOptions = {
     incarnation: 'inc',
     journal,
     outbox: store,
+    cleanup: cleanup_dependencies,
     now_ms: () => now,
     inputs: { download_inputs: unexpected },
     live: {
@@ -158,7 +167,47 @@ try {
           new Map(values.resolved_start.role_materials?.identity_environment_variables).get(
             'PLAN_EXECUTOR_CHILD_ID',
           ) === 'terminal-child';
-        return native;
+        const native_start = native.start.bind(native);
+        const native_stop = native.stop.bind(native);
+        const environment = new Map(
+          values.resolved_start.role_materials?.identity_environment_variables,
+        );
+        const record_root = environment.get('PLAN_WORKER_PROCESS_ROOT')!;
+        const child_id = environment.get('PLAN_EXECUTOR_CHILD_ID')!;
+        const record_path = join(
+          record_root,
+          createHash('md5').update(child_id).digest('hex') + '.json',
+        );
+        return {
+          ...native,
+          start: (...args: Parameters<typeof native.start>) => native_start(...args),
+          async stop() {
+            await native_stop();
+            await mkdir(record_root, { recursive: true, mode: 0o700 });
+            const process = {
+              pid: 20,
+              birth: child_id,
+              parent: 1,
+              group: 20,
+              session: 20,
+              zombie: false,
+            };
+            await writeFile(
+              record_path,
+              JSON.stringify({
+                version: 1,
+                ticket_id: environment.get('PLAN_TICKET_ID'),
+                conversation_id: values.resolved_start.conversation_id,
+                source_incarnation: environment.get('PLAN_EXECUTOR_SOURCE_INCARNATION'),
+                source_child_id: child_id,
+                root: process,
+                processes: [process],
+                state: 'complete',
+              }),
+              { mode: 0o600 },
+            );
+          },
+        };
       },
       native_skill_home: () => join(root, 'native'),
       snapshot_directory: join(root, 'skills'),

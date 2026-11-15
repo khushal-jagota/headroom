@@ -91,7 +91,6 @@ let active_sink: BackendEventSink | undefined, turn: TurnToken | undefined;
 let retired_sink: BackendEventSink | undefined;
 const bindings: MacHostBindings = {
   ...concrete,
-  processes: () => null,
   adapters(owners) {
     const host = create_mac_adapter_host({
       ...owners,

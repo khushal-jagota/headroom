@@ -33,13 +33,16 @@ export class LockLease {
 export async function acquire_after_steers(
   state: ConversationState,
   deadline?: number,
+  /** An admitted native settlement retains runtime ownership after closing starts. */
+  options: { admitted_settlement?: boolean } = {},
 ): Promise<LockLease> {
   while (true) {
-    if (state.closing) throw new DOMException('The operation was aborted', 'AbortError');
+    if (state.closing && !options.admitted_settlement)
+      throw new DOMException('The operation was aborted', 'AbortError');
     for (const barrier of [...state.steer_settlements])
       await wait_for_item(barrier.promise, deadline);
     const release = await state.lock.acquire(deadline);
-    if (state.closing) {
+    if (state.closing && !options.admitted_settlement) {
       release();
       throw new DOMException('The operation was aborted', 'AbortError');
     }

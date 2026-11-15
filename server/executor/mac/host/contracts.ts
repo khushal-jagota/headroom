@@ -29,10 +29,6 @@ export interface MacHostLoop extends MacOwnedService {
 export interface MacHostUpdates extends MacHostLoop {
   offer(update: MacUpdateCheck): void;
 }
-export interface MacAgentProcesses extends MacOwnedService {
-  end_orphans(signal: AbortSignal): Promise<void>;
-  record_children(): Promise<void>;
-}
 export interface MacInvocation {
   readonly child_processes: OwnedChildProcesses;
   readonly one_shot_children: OwnedOneShotChildren;
@@ -62,9 +58,6 @@ export interface MacHostBindings {
     invocation: MacInvocation,
     on_failure: (error: Error) => void,
   ): MacCatalog;
-  processes(
-    context: MacInvocation & { readonly files: FilesService; readonly paths: ExecutorPaths },
-  ): MacAgentProcesses | null;
   updates(context: MacHostContext): MacHostUpdates;
   client?(
     server_url: string,

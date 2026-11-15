@@ -7,7 +7,6 @@ import type {
   RecordedSourceSettlement,
 } from '../../local_child_custody_contracts.ts';
 import type { WorkspaceIdentity } from '../../../ticket_workspaces/contracts.ts';
-import type { CapturedTurn } from '../../deploy_interruptions/contracts.ts';
 import type { TurnToken } from '../../backends/contracts.ts';
 import { BackendSpawnFailed } from '../../backends/contracts.ts';
 import { read_unresolved_turns } from '../../deploy_interruptions/capture.ts';
@@ -729,7 +728,9 @@ export class ConversationStore
     return this.#settlement.retain_recording(
       (async () => {
         this.#startup_source_proofs.clear();
-        const candidates = this.database.read((sql) => read_unresolved_turns(sql));
+        const candidates = this.database.read((sql) =>
+          read_unresolved_turns(sql, { include_custody_unavailable: true }),
+        );
         for (const turn of candidates) {
           if (open_runs.has(turn.conversation_id)) continue;
           const source = this.database.read((sql) => custody.read(sql, turn.conversation_id));
@@ -1498,7 +1499,7 @@ export class ConversationStore
         now: this.integer_now(),
       });
     }
-    const unresolved = read_unresolved_turns(tx).filter(
+    const unresolved = read_unresolved_turns(tx, { include_custody_unavailable: true }).filter(
       (turn) =>
         !open_runs.has(turn.conversation_id) &&
         custody.read(tx, turn.conversation_id) !== undefined,
@@ -1521,7 +1522,16 @@ export class ConversationStore
     for (const id of this.blocked_local_conversations) this.#startup_source_proofs.delete(id);
     const reconcile = this.#participants.reconcile_deployment;
     if (reconcile !== undefined) {
-      synchronously(() => reconcile(tx, this.integer_now()));
+      synchronously(() =>
+        reconcile(tx, this.integer_now(), {
+          blocked: unresolved.filter((turn) =>
+            this.blocked_local_conversations.has(turn.conversation_id),
+          ),
+          proven: unresolved.filter(
+            (turn) => !this.blocked_local_conversations.has(turn.conversation_id),
+          ),
+        }),
+      );
     } else {
       // Deployment reconciliation imports evidence before rotating the epoch.
       // The standalone record still claims a fresh epoch when that owner is absent.

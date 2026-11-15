@@ -37,6 +37,10 @@ export interface FreshJournalCommand {
   command_id: string;
   command: CanonicalReader;
 }
+/** Original stored bytes preserve pre-upgrade field presence and cleanup receipts. */
+export interface CleanupJournalCommand extends FreshJournalCommand {
+  readonly result: CanonicalReader | null;
+}
 export interface FreshCommandCursor extends JournalCursor<FreshJournalCommand> {
   /** Original reply command count, including duplicates. */
   readonly command_count: number;
@@ -62,6 +66,7 @@ export type JournalReportFeedback = readonly string[] | null | 'cancelled';
 export interface AsyncCommandJournal extends OutboxCleanup {
   assert_healthy(): void;
   delivery_failure(message: string, cause?: unknown): Error;
+  cleanup_evidence(): Promise<JournalCursor<CleanupJournalCommand>>;
   poll_cursor(): Promise<number>;
   lower_poll_cursor(high: number, cursor_at_lease: number): Promise<boolean>;
   record_poll_reply(

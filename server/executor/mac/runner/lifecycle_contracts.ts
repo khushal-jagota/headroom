@@ -3,7 +3,15 @@ import type {
   BackendEventSink,
   BackendEventValue,
 } from '../../../conversation/backends/contracts.ts';
-import type { BackendEvent, ChildReference, TurnToken } from '../../wire.generated.ts';
+import type {
+  BackendEvent,
+  ChildCommand,
+  ChildReference,
+  CommandOutcome,
+  TurnToken,
+  WorkerCleanupUncertainty,
+} from '../../wire.generated.ts';
+import type { CleanupReconciliationDependencies } from '../cleanup_contracts.ts';
 import type { MailboxRunner } from '../mailbox/contracts.ts';
 import type { OutboxStore } from '../storage/outbox.ts';
 import type {
@@ -44,7 +52,8 @@ export interface MacRunnerEventsContract {
 }
 export interface MacRunnerOptions {
   readonly incarnation: string;
-  readonly native: Omit<MacNativeChildrenOptions, 'event_sink'>;
+  readonly native: Omit<MacNativeChildrenOptions, 'event_sink' | 'worker_cleanup'>;
+  readonly cleanup: CleanupReconciliationDependencies;
   readonly journal: MacCommandDependencies['journal'];
   readonly outbox: OutboxStore;
   readonly inputs: MacCommandDependencies['inputs'];
@@ -59,6 +68,13 @@ export interface MacRunnerContract
     MacRunnerEventsContract,
     MacRunnerLifetimeContract {
   readonly native_children: MacNativeChildrenContract;
+  readonly cleanup_uncertainties: WorkerCleanupUncertainty[];
+  readonly legacy_cleanup_notice: string | null;
+  refresh_worker_cleanup(options?: { ticket_id?: string; revoke_pending?: boolean }): Promise<void>;
+  /** Unjournaled exact stop with durable FIFO publication before custody release.
+   * Concurrent calls for the same source join its settled outcome or receive a refusal.
+   * Publication failures can retry the same ID. Permanent runner shutdown refuses new calls. */
+  stop_and_publish(command: ChildCommand): Promise<CommandOutcome>;
   seal_admission(): void;
   authenticate(child_id: string | null, capability: string | null): MacRunningChild;
   withdraw(command_id: string): boolean;

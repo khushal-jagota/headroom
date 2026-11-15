@@ -85,7 +85,8 @@ test.skipIf(process.platform !== 'linux')(
       setInterval(() => {}, 1000);
     `;
     const started = performance.now();
-    const owned = await spawn_codex_process([process.execPath, '-e', leader], {
+    const created: OwnedCodexProcess[] = [];
+    const pending = spawn_codex_process([process.execPath, '-e', leader], {
       child_processes: new ChildProcesses(),
       environment: Object.fromEntries(
         Object.entries(process.env).filter(
@@ -93,7 +94,12 @@ test.skipIf(process.platform !== 'linux')(
         ),
       ),
       working_directory: process.cwd(),
+      on_created: (value) => {
+        created.push(value);
+      },
     });
+    const synchronous_handles = [...created];
+    const owned = await pending;
     let descendant: number | null = null;
     const terminated = () => {
       if (descendant === null) return false;
@@ -107,6 +113,7 @@ test.skipIf(process.platform !== 'linux')(
       }
     };
     try {
+      expect(synchronous_handles).toEqual([owned]);
       let output = '';
       const ready = new Promise<void>((resolve) =>
         owned.child.stdout.on('data', (chunk: Buffer) => {
@@ -139,23 +146,3 @@ test.skipIf(process.platform !== 'linux')(
     }
   },
 );
-
-test('spawn transfers the native handle synchronously before the spawn event wait', async () => {
-  const child = fake_child();
-  const owner = new ChildProcesses();
-  vi.spyOn(owner, 'spawn').mockReturnValue(child as unknown as ChildProcessWithoutNullStreams);
-  const created = vi.fn();
-  const pending = spawn_codex_process(['/synthetic/codex'], {
-    child_processes: owner,
-    environment: {},
-    working_directory: '/private',
-    on_created: created,
-  });
-  expect(created).toHaveBeenCalledTimes(1);
-  expect(created.mock.calls[0][0].child).toBe(child);
-  child.emit('spawn');
-  const owned = await pending;
-  child.exitCode = 0;
-  child.emit('exit', 0, null);
-  await owned.stop();
-});

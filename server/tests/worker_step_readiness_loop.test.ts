@@ -17,7 +17,6 @@ import * as decisions from '../tickets/decision_messages.ts';
 import { conversation_holds_an_unanswered_memory_loss } from '../runtime/worker_memory.ts';
 import { restart_worker } from '../tickets/worker_restart.ts';
 import { OWNER, PlannerError } from '../core/contracts.ts';
-import { ORIGINAL_MAC_MACHINE_ID } from '../execution_identity.ts';
 import { configured_worker_type_registry } from '../worker_types/configuration.ts';
 import { InMemoryConversationSystem } from '../conversation/in_memory_conversation_system.ts';
 import {

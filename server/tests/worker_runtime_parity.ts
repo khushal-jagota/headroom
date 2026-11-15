@@ -1,4 +1,5 @@
 /** Export-only companion for the direct Worker comparison in tests/compare/direct/. */
+import { run as custody_parity } from '../conversation/testing/custody_parity.ts';
 import { createDatabase } from '../core/database/index.ts';
 import { load_worker_runtime_definitions } from '../worker_types/configuration.ts';
 import * as tickets from '../tickets/data/index.ts';
@@ -19,7 +20,8 @@ import { require_restartable } from '../tickets/worker_restart.ts';
 import type { ExecutorIdentity } from '../execution_identity.ts';
 
 export interface WorkerRuntimeParityInput {
-  mode: 'readiness' | 'abort' | 'decisions' | 'machine_admission';
+  mode: 'readiness' | 'abort' | 'decisions' | 'machine_admission' | 'custody';
+  journal?: string;
   db_path: string;
   workspace: string;
   now: number;
@@ -39,6 +41,7 @@ export interface WorkerRuntimeParityInput {
 export async function run_worker_runtime_parity(
   input: WorkerRuntimeParityInput,
 ): Promise<Record<string, unknown>> {
+  if (input.mode === 'custody') return custody_parity(input.db_path, input.journal!);
   const database = createDatabase(input.db_path);
   const original_now = Date.now;
   Date.now = () => input.wall;

@@ -2,10 +2,12 @@
 import { decode_json, encode_bounded } from '../../protocol.ts';
 import { MacLeaseLoop, MacPresence } from '../transport/presence.ts';
 import type { MacLeaseOptions } from '../transport/presence.ts';
+import { Deferred } from '../../../conversation/runtime/state.ts';
 export async function leases(input: {
   identity: string;
   replies: string[];
   working: string;
+  cleanup: string;
 }): Promise<unknown> {
   const identity = decode_json(input.identity, 'ExecutorIdentity');
   const presence = new MacPresence(identity, () => 1700000000000, 7);
@@ -19,6 +21,8 @@ export async function leases(input: {
   let cursor = 100,
     replaced = false,
     stopped = false;
+  const cleanup_entered = new Deferred<void>(),
+    cleanup_release = new Deferred<void>();
   const options: MacLeaseOptions = {
     presence,
     client: {
@@ -46,6 +50,12 @@ export async function leases(input: {
       },
     },
     runner: {
+      cleanup_uncertainties: [decode_json(input.cleanup, 'WorkerCleanupUncertainty')],
+      legacy_cleanup_notice: 'Legacy evidence needs inspection',
+      async refresh_worker_cleanup() {
+        cleanup_entered.resolve();
+        await cleanup_release.promise;
+      },
       get admission_stopped() {
         return stopped;
       },
@@ -59,7 +69,6 @@ export async function leases(input: {
         offers.push(Buffer.from(encode_bounded(update, 'MacUpdateCheck')).toString());
       },
     },
-    async record_children() {},
     replaced() {
       replaced = true;
     },
@@ -71,6 +80,10 @@ export async function leases(input: {
   for (let index = 0; index < 3; index++) {
     keep_running.push(await loop.lease_once());
   }
+  await cleanup_entered.promise;
+  cleanup_release.resolve();
+  await loop.stop({ deadline: performance.now() / 1000 + 5 });
+  await loop.settled();
   const { last_lease_failure, ...status } = presence.status(stopped);
   const stopping = new MacLeaseLoop({
     ...options,

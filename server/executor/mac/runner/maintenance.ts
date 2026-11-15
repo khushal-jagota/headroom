@@ -12,7 +12,6 @@ import type {
   MacMaintenanceDependencies,
   MacMaintenanceOperations,
 } from './maintenance_contracts.ts';
-import { outcome } from './logic/outcomes.ts';
 import type { StopOptions } from '../../../lifecycle/contracts.ts';
 import { remember_model_catalog_failure } from '../../../conversation/backends/catalog_cleanup.ts';
 
@@ -253,11 +252,8 @@ export class MacMaintenance implements MacMaintenanceContract, MacMaintenanceOpe
         };
         pending.push(command);
       }
-      await commands.adopt_unjournaled_outcome(command, outcome(command, 'succeeded', {}));
-      this.dependencies.state.mark_retired(child.reference);
-      this.dependencies.native_children.retire(child.reference);
-      this.dependencies.retirement.prune(child.reference);
-      commands.prune(child.reference);
+      const result = await this.dependencies.retirement.stop_and_publish(command, commands);
+      if (result.disposition !== 'succeeded') return false;
     }
     this.update_commands.delete(request_id);
     return true;

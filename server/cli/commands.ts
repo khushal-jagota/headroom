@@ -1349,6 +1349,17 @@ export function create_commands(environment: NodeJS.ProcessEnv = {}): CliCommand
       description: 'Print machine-readable JSON. Errors are printed as JSON on stderr.',
     }),
   ]);
+  command(
+    'ticket recheck-worker-cleanup',
+    'Recheck exact Worker cleanup without starting work or discarding evidence.',
+    [
+      argument('ticket_id', '<TICKET_ID>', text, {}),
+      option('as_json', '--json', boolean, {
+        default: false,
+        description: 'Print machine-readable JSON. Errors are printed as JSON on stderr.',
+      }),
+    ],
+  );
   command('ticket restart-worker', 'Restart one dead Worker through the existing recovery route.', [
     argument('ticket_id', '<TICKET_ID>', text, {}),
     option('backend', '--backend <TEXT>', text, {

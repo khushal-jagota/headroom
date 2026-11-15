@@ -43,6 +43,58 @@ def test_opaque_tokens_preserve_change_history(tmp_path: Path) -> None:
     )
 
 
+def test_process_identity_tokens_keep_global_references_and_value_kinds(tmp_path: Path) -> None:
+    # Per-row tokens falsely equate a changed parent and child process reference.
+    rules = {
+        "process_identity_tokens": {
+            "children.pid": "native child",
+            "children.birth": "native birth",
+            "parents.pid": "same native child",
+            "parents.birth": "same native birth",
+            "parents.child_birth": "cross-column native reference",
+        }
+    }
+    left, right = Normalizer(rules, tmp_path), Normalizer(rules, tmp_path)
+    assert left.normalize({"pid": 11, "birth": "left"}, "first", "children") == right.normalize(
+        {"pid": 99, "birth": "right"},
+        "different-context",
+        "children",
+    )
+    assert left.normalize({"pid": 11, "birth": "left"}, "other-row", "parents") == right.normalize(
+        {"pid": 99, "birth": "right"},
+        "other-table",
+        "parents",
+    )
+    assert left.normalize({"pid": 11}, "third", "parents") != right.normalize(
+        {"pid": 100},
+        "third",
+        "parents",
+    )
+    mixed = Normalizer(rules, tmp_path)
+    values = [
+        mixed.normalize({"pid": value}, str(index), "children")["pid"]
+        for index, value in enumerate((1, "1", 1.0, True, b"1"))
+    ]
+    assert len({value["token"] for value in values}) == len(values)
+    assert {value["process_identity_kind"] for value in values} == {
+        "int",
+        "str",
+        "float",
+        "bool",
+        "bytes",
+    }
+    assert mixed.normalize({"pid": None}, "nullable", "children") == {"pid": None}
+    assert mixed.normalize({"pid": 1}) != mixed.normalize({"pid": 2})
+    assert mixed.normalize({"pid": 1}, "repeat", "parents")["pid"] == values[0]
+    assert (
+        mixed.normalize({"child_birth": "1"}, "cross-column", "parents")["child_birth"] == values[1]
+    )
+    assert Normalizer(rules, tmp_path).normalize({"pid": 1}, "", "children") != Normalizer(
+        rules,
+        tmp_path,
+    ).normalize({"pid": "1"}, "", "children")
+
+
 def test_source_rows_and_user_json_remain_significant(tmp_path: Path) -> None:
     import sqlite3
 

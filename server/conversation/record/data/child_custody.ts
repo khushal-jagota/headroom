@@ -1,4 +1,5 @@
 /** Custody writes share the record owner's transaction and immutable turn occurrence. */
+import { runtime_epoch } from '../../deploy_interruptions/data.ts';
 import type { ReadSql, TransactionSql } from '../../../core/database/contracts.ts';
 import type { LocalChildIdentity, LocalHostBootIdentity } from '../../local_child_contracts.ts';
 import type { LocalChildCustodyRow } from '../../local_child_custody_contracts.ts';
@@ -29,10 +30,7 @@ export function bind_current_turn(tx: TransactionSql, conversation_id: string): 
     'SELECT occurrence_id,runtime_epoch FROM conversation_turn_occurrences WHERE conversation_id=? ORDER BY turn_number DESC LIMIT 1',
     [conversation_id],
   );
-  const epoch =
-    turn?.runtime_epoch ??
-    tx.get<{ epoch: string }>('SELECT epoch FROM conversation_runtime_epoch WHERE singleton=1')
-      ?.epoch;
+  const epoch = turn?.runtime_epoch ?? runtime_epoch(tx);
   tx.run(
     'UPDATE conversation_child_custody SET occurrence_id=?,runtime_epoch=? WHERE conversation_id=?',
     [turn?.occurrence_id ?? null, epoch ?? null, conversation_id],

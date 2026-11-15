@@ -17,8 +17,33 @@ import type {
   ReadCleanupCommands,
 } from './cleanup_contracts.ts';
 import { read_record } from './runtime/records.ts';
+import { read_canonical_body } from './mailbox/poll.ts';
+import type { AsyncCommandJournal } from './storage/journal_contracts.ts';
 
-export const LEGACY_CLEANUP_RECEIPT = 'legacy-worker-cleanup.json';
+import { LEGACY_CLEANUP_RECEIPT, legacy_targets } from './legacy_worker_cleanup.ts';
+export { LEGACY_CLEANUP_RECEIPT } from './legacy_worker_cleanup.ts';
+/** Borrow the journal cursor. Preserve stored field presence before wire defaults. */
+export function read_cleanup_commands(
+  journal: Pick<AsyncCommandJournal, 'cleanup_evidence'>,
+): ReadCleanupCommands {
+  return async function* () {
+    const cursor = await journal.cleanup_evidence();
+    try {
+      for await (const row of cursor) {
+        try {
+          const command_json = await read_canonical_body(row.command);
+          const result_json = row.result === null ? null : await read_canonical_body(row.result);
+          yield { command_json, result_json };
+        } finally {
+          await Promise.all([row.command.close(), row.result?.close()]);
+        }
+      }
+    } finally {
+      await cursor.close();
+    }
+  };
+}
+
 async function record_paths(run: string): Promise<string[]> {
   const root = join(run, 'worker-processes');
   try {
@@ -124,17 +149,7 @@ export function legacy_notice(
     if (receipt === null) return null;
     if (receipt.version !== 1 || receipt.attempted !== true)
       return 'The legacy cleanup receipt is unreadable';
-    if (!Array.isArray(receipt.targets)) throw new Error('Legacy process evidence is unreadable');
-    const targets = receipt.targets.map((value: unknown) => {
-      if (
-        !is_record(value) ||
-        !Number.isSafeInteger(value.process_id) ||
-        (value.process_id as number) <= 0 ||
-        typeof value.started !== 'string'
-      )
-        throw new Error('Legacy process identity is unreadable');
-      return { process_id: value.process_id as number, started: value.started };
-    });
+    const targets = legacy_targets(receipt.targets);
     const deadline = dependencies.runtime.clock() + INSPECTION_SECONDS;
     const unresolved: number[] = [];
     for (const target of targets) {
