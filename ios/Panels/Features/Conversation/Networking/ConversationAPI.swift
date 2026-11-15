@@ -31,7 +31,8 @@ extension APIClient: ConversationServing {
         return try await get(id.map { "/api/conversation/conversations/\($0)" } ?? path + "/start-values")
     }
     func conversationSnapshot(_ id: String, lens: ConversationLens, transcript: Bool) async throws -> ConversationSnapshot {
-        try await get("/api/conversation/conversations/\(id)/view", query: [.init(name: "lens", value: lens.rawValue), .init(name: "transcript", value: String(transcript))])
+        let (data, _) = try await responseData("/api/conversation/conversations/\(id)/view", query: [.init(name: "lens", value: lens.rawValue), .init(name: "transcript", value: String(transcript))])
+        return try Self.decoder().decode(ConversationSnapshot.self, from: data)
     }
     func conversationReceipts(_ id: String, messageIDs: [String]) async throws -> [ConversationReceipt] {
         struct Receipts: Decodable, Sendable { let receipts: [ConversationReceipt] }
@@ -81,11 +82,11 @@ extension APIClient {
     // carry the window and its changes, decoded here off the main actor; nothing is
     // dropped, because a missing change frame is a gap. Cancelling the view task also
     // cancels this socket.
-    func conversationTail(_ id: String, lens: ConversationLens) -> AsyncThrowingStream<ConversationTailFrame, Error> {
+    func conversationTail(_ id: String, lens: ConversationLens, transcript: Bool = true) -> AsyncThrowingStream<ConversationTailFrame, Error> {
         AsyncThrowingStream { continuation in
             let task = Task {
                 do {
-                    var request = try self.request(try url("/api/conversation/conversations/\(id)/view/tail", query: [.init(name: "lens", value: lens.rawValue), .init(name: "transcript", value: "true")]))
+                    var request = try self.request(try url("/api/conversation/conversations/\(id)/view/tail", query: [.init(name: "lens", value: lens.rawValue), .init(name: "transcript", value: String(transcript))]))
                     request.setValue("text/event-stream", forHTTPHeaderField: "Accept")
                     request.timeoutInterval = 120
                     let (bytes, response) = try await session.bytes(for: request)

@@ -3,6 +3,7 @@ import type { Database } from '../core/database/contracts.ts';
 import { is_os_error } from '../core/system_errors.ts';
 import { inspect } from 'node:util';
 import { ConversationBackendKey } from '../conversation/contracts.ts';
+import { ORIGINAL_MAC_MACHINE_ID } from '../execution_identity.ts';
 import { save_machine_model_list } from '../conversation/backend_state.ts';
 import type { BackendSnapshot, SnapshotOptions } from '../conversation/snapshot/contracts.ts';
 import type { RemoteCatalogSource } from '../conversation/model_resolution/contracts.ts';
@@ -83,7 +84,7 @@ export class VpsCatalogRelay implements RemoteCatalogSource {
     const row = this.database.read((sql) =>
       sql.get<{ snapshot_json: string }>(
         'SELECT snapshot_json FROM machine_backend_snapshots WHERE machine_id=? AND backend_key=?',
-        ['macos', backend_key],
+        [ORIGINAL_MAC_MACHINE_ID, backend_key],
       ),
     );
     return row ? this.decode(row.snapshot_json) : null;
@@ -264,7 +265,7 @@ export class VpsCatalogRelay implements RemoteCatalogSource {
         default_reasoning_effort: previous.default_reasoning_effort,
         models_complete: true,
       };
-    this.database.write((tx) => save_machine_model_list(tx, 'macos', snapshot));
+    this.database.write((tx) => save_machine_model_list(tx, ORIGINAL_MAC_MACHINE_ID, snapshot));
     return snapshot;
   }
   private answer(

@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import json
 import sqlite3
+from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Any, cast
 
@@ -31,12 +32,19 @@ from planner.executor.protocol import (
     encode_value,
 )
 from planner.executor.vps_transport import VpsExecutor
+from planner.worker_supervision.contracts import CleanupResult
 
 
 class ScriptedPreparation:
     """Any provider preparation on this creation path is a regression."""
 
     calls = 0
+    cleanup_recheck: Callable[[ChildReference, str], Awaitable[CleanupResult]] | None = None
+
+    def configure_worker_cleanup_recheck(
+        self, callback: Callable[[ChildReference, str], Awaitable[CleanupResult]],
+    ) -> None:
+        self.cleanup_recheck = callback
 
     async def validate_launch_selection(self, *args: Any, **kwargs: Any) -> Any:
         self.calls += 1

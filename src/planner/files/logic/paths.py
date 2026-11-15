@@ -8,6 +8,10 @@ from urllib.parse import unquote, urlsplit
 
 from planner.files.contracts import GoalFile, ManagerFile, TicketFile
 
+PRIVATE_TICKET_NAMES = frozenset({
+    "worktree", ".panels-workspace.json", ".panels-workspace.json.tmp",
+})
+
 _SAFE_ID_RE = re.compile(r"^[A-Za-z0-9_-]+$")
 _ENCODED_UNSAFE_RE = re.compile(r"%(?:25|2e|2f|5c)", re.IGNORECASE)
 
@@ -89,7 +93,23 @@ def _validate_safe_id(value: str, label: str) -> None:
         raise ValueError(f"unsafe {label} id")
 
 
+def private_ticket_path(owner_root: Path, relative_path: str) -> bool:
+    """Reject both the reserved spelling and aliases into the private checkout."""
+    path = PurePosixPath(relative_path)
+    if path.parts and path.parts[0] in PRIVATE_TICKET_NAMES:
+        return True
+    try:
+        resolved = (owner_root / path).resolve().relative_to(owner_root.resolve())
+    except ValueError:
+        return False  # The ordinary containment check rejects an escaped target.
+    except (OSError, RuntimeError):
+        return True  # An unreadable alias cannot become a public artifact.
+    return bool(resolved.parts and resolved.parts[0] in PRIVATE_TICKET_NAMES)
+
+
 def _resolve_managed_file(root_path: Path, entity_id: str, relative_path: str) -> Path:
+    if root_path.name == "tickets" and private_ticket_path(root_path / entity_id, relative_path):
+        raise ValueError("private Ticket workspace")
     try:
         if root_path.is_symlink():
             raise ValueError("managed file root is a symlink")

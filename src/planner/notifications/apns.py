@@ -6,6 +6,7 @@ import hashlib
 import json
 import logging
 import re
+from dataclasses import asdict
 from pathlib import Path
 from typing import Protocol
 from urllib.parse import urlsplit
@@ -18,6 +19,7 @@ from planner.notifications.config import (
     APNS_JWT_LIFETIME_SECONDS,
     APNS_PAYLOAD_MAX_BYTES,
     APNS_TIMEOUT_SECONDS,
+    MESSAGE_REPLY_CATEGORY,
 )
 from planner.notifications.contracts import APNsConfig, APNsResult, PendingAPNsDelivery
 
@@ -124,9 +126,11 @@ class TokenAPNsAdapter:
                     "alert": {"title": intent.title, "body": intent.body},
                     "sound": "default",
                     "thread-id": intent.tag,
+                    **({"category": MESSAGE_REPLY_CATEGORY} if intent.reply is not None else {}),
                 },
                 "server_url": origin,
                 "route": intent.route,
+                **({"reply": asdict(intent.reply)} if intent.reply is not None else {}),
             },
             ensure_ascii=False,
             separators=(",", ":"),

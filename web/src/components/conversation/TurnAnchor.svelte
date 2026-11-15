@@ -86,7 +86,6 @@
     return () => clearTimeout(decay);
   });
 
-
 </script>
 
 {#if visible}
@@ -122,7 +121,7 @@
           class:live-text-shimmer={fresh && !activityUncertain}
           data-conversation-alive-word
         >
-          {activityUncertain ? "Current activity on Mac is unknown." : workingSentence(elapsed.seconds)}
+          {activityUncertain ? "Current activity on this machine is unknown." : workingSentence(elapsed.seconds)}
         </span>
       </div>
     {/if}

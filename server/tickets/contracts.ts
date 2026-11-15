@@ -58,6 +58,7 @@ export interface Ticket extends EmployeeLaunchConfiguration {
   created_at: number;
   updated_at: number;
   locale: TicketLocale;
+  machine_id: string;
   is_backlogged: boolean;
   pending_proposal_revision: number;
 }

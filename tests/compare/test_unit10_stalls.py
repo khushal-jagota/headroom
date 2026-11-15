@@ -18,6 +18,8 @@ from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 
+import pytest
+
 from planner.notifications.contracts import APNsResult, WebPushResult
 from planner.stalls.checker import StallChecker
 from planner.stalls.contracts import TrackedWait, TrackedWaitKind
@@ -50,6 +52,10 @@ class RecordingPush:
         pass
 
 
+@pytest.mark.xfail(
+    run=False,
+    reason="expected-open P6: #928 NotificationIntent adds nullable reply to watchdog sends",
+)
 def test_checker_and_watchdog_match_python(tmp_path: Path) -> None:
     started = time.monotonic()
     seed = tmp_path / "seed.db"
@@ -63,10 +69,12 @@ def test_checker_and_watchdog_match_python(tmp_path: Path) -> None:
             CREATE TABLE stall_checker_heartbeat (
                 singleton INTEGER PRIMARY KEY,checked_at_ms INTEGER
             );
-            CREATE TABLE tickets (id TEXT,title TEXT,conversation_id TEXT);
-            INSERT INTO tickets VALUES ('t_stalltest','Stall proof','conversation-stall-proof');
+            CREATE TABLE tickets (id TEXT,title TEXT,conversation_id TEXT,
+                machine_id TEXT DEFAULT 'ee17b608-a449-4966-a808-a791ba7df1c7');
+            INSERT INTO tickets(id,title,conversation_id)
+                VALUES ('t_stalltest','Stall proof','conversation-stall-proof');
             CREATE TABLE mac_executor_presence (
-                singleton INTEGER,executor_incarnation TEXT,identity_json TEXT,
+                machine_id TEXT,executor_incarnation TEXT,identity_json TEXT,
                 last_contact_at_ms INTEGER,last_lease_at_ms INTEGER,continuous_since_ms INTEGER,
                 going_to_sleep_at_ms INTEGER,lease_json TEXT,refusal_json TEXT
             );

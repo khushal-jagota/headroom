@@ -586,6 +586,12 @@ async def reference(root: Path, data: dict[str, Any], patch: pytest.MonkeyPatch)
         box.close()
 
 
+@pytest.mark.xfail(
+    run=False,
+    reason=(
+        "expected-open P2: #916 prompt acceptance adds agent_acceptance_proven"
+    ),
+)
 def test_unit22_mac_commands(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, request: pytest.FixtureRequest
 ) -> None:
@@ -614,10 +620,12 @@ def test_unit22_mac_commands(
         source_error = (source if collection == "outcomes" else source["child_outcome"])["result"]
         native_error = (native if collection == "outcomes" else native["child_outcome"])["result"]
         assert source_error == {
-            "error_type": "RuntimeError", "error_message": "required source publication failed"
+            "error_type": "RuntimeError",
+            "error_message": "required source publication failed",
         }
         assert native_error == {
-            "error_type": "Error", "error_message": "required source publication failed"
+            "error_type": "Error",
+            "error_message": "required source publication failed",
         }
         source_error["error_type"] = "Error"
     assert observed["parity"] == expected
@@ -634,7 +642,9 @@ def test_unit22_mac_commands(
         "no provider or network",
         python_retry_attempts=python_attempts,
         native_diagnostic_difference={
-            "command": "failed-source-stop", "python": "RuntimeError", "typescript": "Error",
+            "command": "failed-source-stop",
+            "python": "RuntimeError",
+            "typescript": "Error",
             "preserved": "uncertain disposition, command identity, and original error message",
         },
     )

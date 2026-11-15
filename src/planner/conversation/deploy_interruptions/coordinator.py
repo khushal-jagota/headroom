@@ -10,9 +10,16 @@ import asyncio
 import json
 import logging
 import sqlite3
+from contextlib import nullcontext
 from typing import Any
 
-from planner.conversation.contracts import ConversationSystem, PromptDeliveryMode
+from planner.conversation.contracts import (
+    ConversationSystem,
+    PromptDeliveryMode,
+    PromptDeliveryRefused,
+    PromptDeliverySuppressed,
+    PromptDeliveryUncertain,
+)
 from planner.conversation.deploy_interruptions.contracts import CaptureManifest
 from planner.conversation.deploy_interruptions.data import import_captured_turns
 from planner.conversation.deploy_interruptions.logic import recovery_message_identity
@@ -27,8 +34,11 @@ MAC_RESTART_CLAIM_ERROR_REASON = "interrupted by a Mac restart"
 
 async def run_automatic_recovery(system: ConversationSystem, store: ConversationStore) -> None:
     # Startup only: a recovery prompt still at intent was lost with the previous process.
-    await store.record_unknown_recovery_deliveries()
-    await recover_conversations(system, store)
+    with system.workspace_admission.operation(starts=True) as admitted:
+        if not admitted:
+            return
+        await store.record_unknown_recovery_deliveries()
+    await recover_conversations(system, store, startup=True)
 
 
 async def recover_conversations(
@@ -37,12 +47,17 @@ async def recover_conversations(
     *,
     conversation_ids: tuple[str, ...] | None = None,
     mode: PromptDeliveryMode = PromptDeliveryMode.queue,
+    startup: bool = False,
 ) -> None:
     """Send each eligible conversation its one recovery prompt, optionally only some.
 
     ``send_now`` puts the prompt ahead of messages already waiting in the conversation.
     """
-    selected = await store.select_deployment_recoveries()
+    admission = system.workspace_admission if startup else None
+    with admission.operation(starts=True) if admission else nullcontext(True) as admitted:
+        if not admitted:
+            return
+        selected = await store.select_deployment_recoveries()
     if conversation_ids is not None:
         selected = {
             conversation_id: references
@@ -50,14 +65,24 @@ async def recover_conversations(
             if conversation_id in conversation_ids
         }
 
-    async def resume(conversation_id: str) -> None:
+    async def resume(conversation_id: str) -> bool:
         references = selected[conversation_id]
+        identity = recovery_message_identity(tuple(ref.interruption_id for ref in references))
+        starts = getattr(system, "start_admission", None)
         # Do not manufacture activity over work already running on this boot.
         if await system.is_running(conversation_id):
-            return
-        identity = recovery_message_identity(tuple(ref.interruption_id for ref in references))
+            if starts is not None:
+                starts.finish_unbound(identity)
+            return True
+        if starts is not None:
+            request_factory = getattr(system, "automatic_start_request", None)
+            assert request_factory is not None
+            request = await request_factory(identity, conversation_id)
+            if not starts.try_start(request):
+                return False
+        offered = False
         try:
-            await system.send(
+            fate = await system.send(
                 conversation_id,
                 text_message_content(
                     "Inspect the interrupted work and continue the current authorized step."
@@ -68,14 +93,59 @@ async def recover_conversations(
                 record_refusal=True,
                 recovery_references=references,
             )
+            offered = True
+            if starts is not None:
+                if isinstance(fate, (PromptDeliveryRefused, PromptDeliverySuppressed)):
+                    starts.finish(identity)
+                elif isinstance(fate, PromptDeliveryUncertain):
+                    starts.uncertain(identity)
         except asyncio.CancelledError:
             raise
         except Exception:
+            if startup and system.workspace_admission.starts_closed:
+                return False
             _LOG.exception("Automatic recovery failed for conversation %s", conversation_id)
+        finally:
+            if starts is not None and not offered:
+                starts.finish_unbound(identity)
+        return True
 
-    async with asyncio.TaskGroup() as group:
-        for conversation_id in selected:
-            group.create_task(resume(conversation_id))
+    pending = list(selected)
+    delay = 1.0
+    while pending:
+        with admission.operation(starts=True) if admission else nullcontext(True) as admitted:
+            if not admitted:
+                starts = getattr(system, "start_admission", None)
+                if starts is not None:
+                    for conversation_id in pending:
+                        starts.finish_unbound(recovery_message_identity(
+                            tuple(ref.interruption_id for ref in selected[conversation_id])
+                        ))
+                return
+            remaining = []
+            starts = getattr(system, "start_admission", None)
+            if starts is not None:
+                request_factory = getattr(system, "automatic_start_request", None)
+                assert request_factory is not None
+                requests = {
+                    conversation_id: await request_factory(
+                        recovery_message_identity(
+                            tuple(ref.interruption_id for ref in selected[conversation_id])
+                        ),
+                        conversation_id,
+                    )
+                    for conversation_id in pending
+                }
+                pending.sort(key=lambda identity: requests[identity].work_class != "supervisor")
+            for conversation_id in pending:
+                # Keep cancellation of one recovery local, as the former TaskGroup did.
+                result = (await asyncio.gather(resume(conversation_id), return_exceptions=True))[0]
+                if result is False:
+                    remaining.append(conversation_id)
+            pending = remaining
+        if pending:
+            await asyncio.sleep(delay)
+            delay = min(delay * 2, 60.0)
 
 
 def close_run_of_replaced_mac_process(db_path: str, reference: ChildReference, now_ms: int) -> None:

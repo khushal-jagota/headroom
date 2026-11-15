@@ -2,6 +2,28 @@
 
 This file records intentional differences that the migration Manager accepted. No new difference enters this file without that acceptance. Close an entry when Python adopts the same behavior.
 
+## Pending staging port: mailbox authority and protocol
+
+These are open P2/P3 boundaries, not accepted final parity. The populated mailbox
+exchange remains expected-open P2 with its original comparisons intact.
+
+- Python refuses reports from a successor incarnation while the old process remains current.
+  TypeScript returns a batch receipt with `command_of_another_executor_process` instead.
+- Python emits `StartRun.arguments.supervision_protocol=24`. TypeScript omits it. P2 owns this wire gap.
+- Python includes `machine_id=null` on internal mailbox stall waits. TypeScript omits it. P3 owns this metadata gap.
+
+No field projection hides these differences. The retained proof must pass after the port.
+
+## Pending staging port: Linux host admission
+
+P5 owns the Linux host admission Node version policy. Python accepts Node majors at or
+above the required major. TypeScript requires the declared major. Python reports
+`runtime requires Node 22.18.0 or newer`, while TypeScript reports
+`runtime requires Node 22.18.0 or a later Node 22` for the observed minimum-version refusal.
+The exact host comparison remains expected-open P5. Release identity, archive, frontier,
+and native probe report checks stay active. Their report records both host results.
+This is an open port boundary, not accepted final parity.
+
 ## Native TypeScript presentation
 
 The owner accepts native diagnostics, CLI human text and help layout, and HTTP JSON number spelling.
@@ -759,3 +781,10 @@ An empty object is truthy in TypeScript. A legacy `created_at: {}` therefore fai
 Existing update, installer, provider, and supervisor comparisons record these specific Python and TypeScript observations separately.
 The supervisor proof reuses its foreground restart for version `1.0` and retains refusal of version `1.5`.
 This decision does not change HTTP, executor wire, or database numeric boundaries. Metrics and status boundary holdouts retain exact-number handling.
+
+## Staging port — expected-open packages
+
+The foundation refresh adopts machine UUID rows and the current schema. It does not claim full staging parity.
+Executor routing and credential consumption remain with P2. Machine routes and credential authority follow in foundation PR B.
+The retained comparisons in [the expected-open list](../tests/compare/README.md#expected-open-staging-ports)
+name the packages that replace retired Worker launch and scratch fixtures. These cases do not count as passing parity.

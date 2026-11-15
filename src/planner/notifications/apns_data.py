@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import json
 import sqlite3
+from dataclasses import asdict
 from typing import Literal, cast
 from uuid import uuid4
 
 from planner.core.contracts import OWNER_PRINCIPAL_ID
+from planner.notifications.attention import TASK_ALERT_IS_CURRENT
 from planner.notifications.config import (
     APNS_BATCH_SIZE,
     APNS_DELIVERY_TTL_SECONDS,
@@ -18,8 +21,10 @@ from planner.notifications.contracts import (
     APNsResult,
     EdgeKey,
     NotificationIntent,
+    NotificationReply,
     PendingAPNsDelivery,
 )
+from planner.notifications.data import expire_stale_deliveries
 
 
 def register_device(
@@ -67,8 +72,8 @@ def queue_intent(
     conn.execute(
         "INSERT OR IGNORE INTO notification_apns_deliveries "
         "(subject_kind,subject_id,notification_type,generation,device_id,"
-        "title,body,route,tag,created_at,status,attempts,next_attempt_at) "
-        "SELECT ?,?,?,?,device_id,?,?,?,?,?,'pending',0,? "
+        "title,body,route,tag,reply_json,created_at,status,attempts,next_attempt_at) "
+        "SELECT ?,?,?,?,device_id,?,?,?,?,?,?,'pending',0,? "
         "FROM notification_apns_devices WHERE owner_id=?",
         (
             edge.subject_kind,
@@ -79,6 +84,7 @@ def queue_intent(
             intent.body,
             intent.route,
             intent.tag,
+            json.dumps(asdict(intent.reply)) if intent.reply is not None else None,
             now,
             now,
             OWNER_PRINCIPAL_ID,
@@ -87,11 +93,7 @@ def queue_intent(
 
 
 def pending_deliveries(conn: sqlite3.Connection, now: int) -> tuple[PendingAPNsDelivery, ...]:
-    conn.execute(
-        "UPDATE notification_apns_deliveries SET status='expired' "
-        "WHERE status IN ('pending','retry') AND created_at <= ?",
-        (now - APNS_DELIVERY_TTL_SECONDS,),
-    )
+    expire_stale_deliveries(conn, now, native=True)
     rows = conn.execute(
         "SELECT d.*,s.device_token,s.bundle_id,s.environment,s.registration_version,s.updated_at "
         "FROM notification_apns_deliveries d JOIN notification_apns_devices s USING(device_id) "
@@ -100,6 +102,7 @@ def pending_deliveries(conn: sqlite3.Connection, now: int) -> tuple[PendingAPNsD
         "(SELECT 1 FROM tickets WHERE id=d.subject_id)) OR "
         "(d.subject_kind='manager' AND EXISTS (SELECT 1 FROM managers WHERE id=d.subject_id)) OR "
         "(d.subject_kind='agent' AND EXISTS (SELECT 1 FROM agents WHERE agent_key=d.subject_id))) "
+        f"AND {TASK_ALERT_IS_CURRENT} "
         "ORDER BY d.next_attempt_at,d.device_id LIMIT ?",
         (now, APNS_BATCH_SIZE),
     ).fetchall()
@@ -116,7 +119,11 @@ def pending_deliveries(conn: sqlite3.Connection, now: int) -> tuple[PendingAPNsD
                 row["registration_version"],
                 row["updated_at"],
             ),
-            NotificationIntent(row["title"], row["body"], row["route"], row["tag"]),
+            NotificationIntent(
+                row["title"], row["body"], row["route"], row["tag"],
+                NotificationReply(**json.loads(row["reply_json"]))
+                if row["reply_json"] is not None else None,
+            ),
             row["attempts"],
             row["created_at"],
         )

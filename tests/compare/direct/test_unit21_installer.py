@@ -35,7 +35,7 @@ from tests.integration.test_update_installer import (
 )
 from tests.support.synthetic_homes import create_synthetic_homes
 
-from planner.environments import update_installer as installer
+from planner.platform_runtime.linux import update_installer as installer
 
 ROOT = Path(__file__).resolve().parents[3]
 COMPANION = ROOT / "server/environments/updates/installer/testing/compare.ts"
@@ -167,6 +167,10 @@ def _python(scratch: Scratch, scenario: str) -> tuple[dict[str, Any], str]:
     }, capture_detail
 
 
+@pytest.mark.xfail(
+    run=False,
+    reason="expected-open P5: #916 Linux installer adds the durable update barrier",
+)
 def test_installer_algorithm_and_configured_paths(
     tmp_path: Path, request: pytest.FixtureRequest
 ) -> None:

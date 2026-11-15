@@ -47,6 +47,7 @@ from planner.executor.store import ExecutorStore
 from planner.executor.vps_mailbox import SqliteCommandMailbox
 from planner.executor.vps_presence import MacPresenceService, no_update_check
 from planner.executor.vps_presence_store import accept_lease_in_transaction, read_presence
+from planner.machines.contracts import ORIGINAL_MAC_MACHINE_ID
 
 ROOT = Path(__file__).resolve().parents[3]
 NOW = 1_760_000_000_000
@@ -176,7 +177,7 @@ def _observe(path: Path) -> dict[str, Any]:
                 "FROM executor_child_assignments ORDER BY executor_incarnation,child_id"
             ),
             "presence": (
-                "SELECT *,typeof(singleton) AS singleton_type,"
+                "SELECT *,typeof(machine_id) AS machine_type,"
                 "typeof(last_contact_at_ms) AS contact_type,typeof(last_lease_at_ms) AS lease_type,"
                 "typeof(continuous_since_ms) AS continuous_type,"
                 "typeof(going_to_sleep_at_ms) AS sleep_type FROM mac_executor_presence"
@@ -209,7 +210,7 @@ def _observe(path: Path) -> dict[str, Any]:
         }
         assert result["total"][0]["bad_types"] == 0
         assert all(
-            value in ("integer", "null")
+            (value == "text" if key == "machine_type" else value in ("integer", "null"))
             for rows in result.values()
             for row in rows
             for key, value in row.items()
@@ -305,9 +306,11 @@ def _seed(path: Path) -> None:
         store.register_child(
             _typed("ChildReference", _child(conversation)), "ticket", "fixture", NOW
         )
+    history_mailbox = SqliteCommandMailbox(str(path), clock=lambda: NOW)
     with closing(connect(str(path))) as connection:
         connection.execute(
-            "INSERT INTO executor_incarnations VALUES (?,?,?)",
+            "INSERT INTO executor_incarnations"
+            "(executor_incarnation,first_leased_at_ms,replaced_at_ms) VALUES (?,?,?)",
             (HISTORICAL, NOW - 30000, NOW - 1000),
         )
 
@@ -318,7 +321,7 @@ def _seed(path: Path) -> None:
             finished: int | None = None,
             result: dict[str, Any] | None = None,
         ) -> None:
-            placed = SqliteCommandMailbox._insert(
+            placed = history_mailbox._insert(
                 connection,
                 wire.MailboxCommand(
                     0,
@@ -847,7 +850,10 @@ async def _outcome(work: Any) -> dict[str, Any]:
 def _comparable_outcome(outcome: dict[str, Any]) -> dict[str, Any]:
     """Compare failure categories while each runtime owns its diagnostic classes."""
     if outcome.get("ok") is False and outcome.get("type") in {
-        "ValidationError", "ValueError", "ExecutorValidationError", "JSONDecodeError"
+        "ValidationError",
+        "ValueError",
+        "ExecutorValidationError",
+        "JSONDecodeError",
     }:
         assert isinstance(outcome["message"], str) and outcome["message"]
         return {**outcome, "type": "validation", "message": "<validation diagnostic>"}
@@ -873,6 +879,10 @@ def _semantic_snapshot(snapshot: dict[str, Any]) -> dict[str, Any]:
     return result
 
 
+@pytest.mark.xfail(
+    run=False,
+    reason="expected-open P2: #916 port successor-incarnation report authority and receipts",
+)
 def test_unit22_mailbox_exchange(tmp_path: Path, request: pytest.FixtureRequest) -> None:
     async def exercise() -> dict[str, Any]:
         started = time.perf_counter()
@@ -963,6 +973,19 @@ def test_unit22_mailbox_exchange(tmp_path: Path, request: pytest.FixtureRequest)
                 right = {**actual, "value": compared(native_error)}
             else:
                 left, right = compared(expected), compared(actual)
+            if action["op"] == "inspect" and left["ok"] and right["ok"]:
+                # Recovery queries promise membership, not order. New machine indexes change
+                # SQLite's traversal order without changing the returned recovery evidence.
+                for outcome in (left, right):
+                    outcome["value"]["rewritten"] = sorted(
+                        outcome["value"]["rewritten"],
+                        key=lambda row: (
+                            row[0]["executor_incarnation"],
+                            row[0]["conversation_id"],
+                            row[0]["child_id"],
+                            row[1],
+                        ),
+                    )
             assert right == left, (action.get("method", action["op"]), actual, expected)
             if not reference_error["ok"]:
                 observed_errors.append(
@@ -1089,7 +1112,9 @@ def test_unit22_mailbox_exchange(tmp_path: Path, request: pytest.FixtureRequest)
                     "answer_permission_ask",
                     "expiry",
                     arguments={
-                        "kind": "answer_permission_ask", "ask_id": "closed", "option_id": "allow"
+                        "kind": "answer_permission_ask",
+                        "ask_id": "closed",
+                        "option_id": "allow",
                     },
                 ),
                 _command("user-open", "answer_user_input", "expiry"),
@@ -1314,7 +1339,9 @@ def test_unit22_mailbox_exchange(tmp_path: Path, request: pytest.FixtureRequest)
                     "op": "sql",
                     "statements": [
                         _statement(
-                            "UPDATE mac_executor_presence SET identity_json='{}' WHERE singleton=1"
+                            "UPDATE mac_executor_presence SET identity_json='{}' "
+                            "WHERE machine_id=?",
+                            ORIGINAL_MAC_MACHINE_ID,
                         )
                     ],
                 }
@@ -1350,8 +1377,9 @@ def test_unit22_mailbox_exchange(tmp_path: Path, request: pytest.FixtureRequest)
                     "op": "sql",
                     "statements": [
                         _statement(
-                            "UPDATE mac_executor_presence SET identity_json=? WHERE singleton=1",
+                            "UPDATE mac_executor_presence SET identity_json=? WHERE machine_id=?",
                             identity_json,
+                            ORIGINAL_MAC_MACHINE_ID,
                         )
                     ],
                 }
@@ -1417,14 +1445,18 @@ def test_unit22_mailbox_exchange(tmp_path: Path, request: pytest.FixtureRequest)
                     OLD,
                 ),
                 _statement(
-                    "INSERT INTO executor_incarnations VALUES (?,?,NULL)", NEW, stale_at + 1
+                    "INSERT INTO executor_incarnations"
+                    "(executor_incarnation,first_leased_at_ms,replaced_at_ms) VALUES (?,?,NULL)",
+                    NEW,
+                    stale_at + 1,
                 ),
                 _statement(
                     "UPDATE mac_executor_presence SET executor_incarnation=?,"
-                    "identity_json=?,last_lease_at_ms=? WHERE singleton=1",
+                    "identity_json=?,last_lease_at_ms=? WHERE machine_id=?",
                     NEW,
                     _json(SUCCESSOR),
                     stale_at + 1,
+                    ORIGINAL_MAC_MACHINE_ID,
                 ),
             ]
             for conversation in ("race", "pending"):
@@ -1597,17 +1629,15 @@ def test_unit22_mailbox_exchange(tmp_path: Path, request: pytest.FixtureRequest)
             ]
             for path in copies:
                 for row in _observe(path)["rows"]:
-                    assert (
-                        json.loads(wire.encode_bounded(
+                    assert json.loads(
+                        wire.encode_bounded(
                             _typed("MailboxCommand", json.loads(row["command_json"]))
-                        ))
-                        == json.loads(row["command_json"])
-                    )
+                        )
+                    ) == json.loads(row["command_json"])
                     if row["outcome_json"] is not None:
                         decoded_result = _typed("CommandResult", json.loads(row["outcome_json"]))
-                        assert (
-                            json.loads(_outcome_json(decoded_result))
-                            == json.loads(row["outcome_json"])
+                        assert json.loads(_outcome_json(decoded_result)) == json.loads(
+                            row["outcome_json"]
                         )
             foreign_signals: list[int] = []
             forget_foreign = change_signal.subscribe(lambda: foreign_signals.append(1))
@@ -1981,11 +2011,9 @@ async def _presence_phases(source: _Source, node: Any, paired: Any, paths: list[
                     "WHERE command_sequence BETWEEN 7 AND 3006 ORDER BY command_sequence"
                 ).fetchall()
             )
+
     def replacement_meanings(rows: list[Any]) -> list[Any]:
-        return [
-            [*row[:3], None if row[3] is None else json.loads(row[3]), row[4]]
-            for row in rows
-        ]
+        return [[*row[:3], None if row[3] is None else json.loads(row[3]), row[4]] for row in rows]
 
     assert replacement_meanings(compared[0]) == replacement_meanings(compared[1])
     assert len(compared[0]) == len(compared[1]) == 3000

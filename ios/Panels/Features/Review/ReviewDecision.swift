@@ -1,6 +1,37 @@
 import Foundation
 import Observation
 
+/// The approval sheet displays this exact note and submits only this proposal-bound snapshot.
+struct DecisionGuidance: Sendable, Equatable {
+    let server: String
+    let ticketID: String
+    let field: String
+    let proposalCreatedAt: Double
+    let proposalRevision: Int
+    let draftID: String
+    let text: String
+    let draftUpdatedAt: Date?
+
+    static func draftIdentity(ticketID: String, proposal: TicketProposal) -> String {
+        "review:\(ticketID):\(proposal.field):\(proposal.createdAt):\(proposal.revision)"
+    }
+
+    static func capture(text: String, server: String, ticketID: String, proposal: TicketProposal,
+                        loadedServer: String?, loadedIdentity: String?, draftUpdatedAt: Date? = nil) -> DecisionGuidance? {
+        let identity = draftIdentity(ticketID: ticketID, proposal: proposal)
+        guard loadedServer == server, loadedIdentity == identity,
+              !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
+        return DecisionGuidance(server: server, ticketID: ticketID, field: proposal.field,
+            proposalCreatedAt: proposal.createdAt, proposalRevision: proposal.revision,
+            draftID: identity + ":guidance", text: text, draftUpdatedAt: draftUpdatedAt)
+    }
+
+    func matches(server: String, ticketID: String, proposal: TicketProposal) -> Bool {
+        self.server == server && self.ticketID == ticketID && field == proposal.field
+            && proposalCreatedAt == proposal.createdAt && proposalRevision == proposal.revision
+    }
+}
+
 /// A draft belongs to the exact proposal the person read, including its revision.
 @MainActor @Observable final class ReviewDecision {
     /// The Ticket's view stamp when the last load started; a read-ahead taken before a
@@ -19,7 +50,7 @@ import Observation
         LocalStore.shared.saveDraft(text, server: server, id: id + suffix)
     }
     private func restoreDrafts(api: APIClient, ticket: TicketDetail, proposal: TicketProposal, discard: Bool = false) {
-        let id = "review:\(ticket.id):\(proposal.field):\(proposal.createdAt):\(proposal.revision)"
+        let id = DecisionGuidance.draftIdentity(ticketID: ticket.id, proposal: proposal)
         guard draftIdentity != id || discard else { return }
         restoringDrafts = true
         draftServer = LocalStore.server(api.baseURL); draftIdentity = id
@@ -53,7 +84,8 @@ import Observation
         }
         guard !busy, !resolved, !Task.isCancelled else { return }
         if ticket == nil, let saved = api.cachedTicket(item.ticketId), let proposal = saved.pendingProposal,
-           proposal.field == item.field, proposal.createdAt == item.waitingSince {
+           proposal.field == item.field, proposal.createdAt == item.waitingSince,
+           item.proposalRevision == nil || proposal.revision == item.proposalRevision {
             ticket = saved
             manifest = saved.workflow.map(ReviewWorkerManifest.init(workflow:))
             restoreDrafts(api: api, ticket: saved, proposal: proposal)
@@ -64,7 +96,8 @@ import Observation
             let fetched = try await api.ticket(item.ticketId)
             guard !Task.isCancelled else { return }
             guard let incoming = fetched.pendingProposal, incoming.field == item.field,
-                  incoming.createdAt == item.waitingSince else {
+                  incoming.createdAt == item.waitingSince,
+                  item.proposalRevision == nil || incoming.revision == item.proposalRevision else {
                 changed = true
                 error = "This proposal is no longer waiting. Refresh Review for the latest queue."
                 return
@@ -82,7 +115,10 @@ import Observation
                 throw APIError(status: 0, message: "This proposal field is unavailable for its worker type.")
             }
             restoreDrafts(api: api, ticket: fetched, proposal: incoming, discard: discardDraft)
-            ticket = fetched; manifest = lifecycle; changed = false; error = nil
+            ticket = fetched; manifest = lifecycle; changed = false
+            let facts = (try? LocalStore.shared.outgoing.decisionSummaries(server: LocalStore.server(api.baseURL), ticketID: fetched.id)) ?? []
+            let terminal = facts.last { $0.proposalField == incoming.field && $0.proposalRevision == incoming.revision && $0.proposalCreatedAt == incoming.createdAt && $0.state == "changed" }
+            error = terminal?.note
         } catch {
             guard !Task.isCancelled else { return }
             self.error = error.localizedDescription
@@ -101,22 +137,34 @@ import Observation
         } catch { self.error = error.localizedDescription; return false }
     }
 
-    func approve(api: APIClient, ceiling: String, holder: Principal) async -> Bool {
+    func approvalGuidance(api: APIClient) -> DecisionGuidance? {
+        guard ready, let ticket, let proposal else { return nil }
+        let server = LocalStore.server(api.baseURL)
+        let captured = revisionDraftID.flatMap { try? LocalStore.shared.outgoing.captureDraft(server: server, id: $0).text }
+        let updated = captured?.payload == Data(revisionDraft.utf8) ? captured?.updated : nil
+        return DecisionGuidance.capture(text: revisionDraft, server: server,
+            ticketID: ticket.id, proposal: proposal, loadedServer: draftServer, loadedIdentity: draftIdentity, draftUpdatedAt: updated)
+    }
+
+    func approve(api: APIClient, ceiling: String, holder: Principal, guidance: DecisionGuidance? = nil) async -> Bool {
         guard ready, let ticket, let proposal, approvalStages.contains(where: { $0.id == ceiling }) else { return false }
+        guard guidance == nil || guidance?.matches(server: LocalStore.server(api.baseURL), ticketID: ticket.id, proposal: proposal) == true else {
+            error = "The proposal changed. Close approval and review it again."
+            return false
+        }
         let body = ReviewApproval(expectedProposalRevision: proposal.revision,
                                   editedBody: draft == proposal.body ? nil : draft,
                                   nextCeiling: ceiling, nextHolder: holder)
         return enqueue(PendingWork(id: UUID().uuidString, created: .now, kind: .approval,
-            ticketID: ticket.id, proposal: proposal, approval: body,
+            ticketID: ticket.id, proposal: proposal, approval: body, guidance: guidance?.text, draftID: guidance?.draftID, decisionDraftUpdatedAt: guidance?.draftUpdatedAt,
             ticketTitle: ticket.title, proposalFieldLabel: manifest?.fields.first { $0.id == proposal.field }?.label ?? proposal.field.capitalized), api: api)
     }
 
     func sendBack(api: APIClient, message: String) async -> Bool {
-        let message = message.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard ready, canReturn, !message.isEmpty, let ticket else { return false }
+        guard ready, canReturn, !message.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, let ticket else { return false }
         guard let proposal else { return false }
         return enqueue(PendingWork(id: UUID().uuidString, created: .now, kind: .sendBack,
-            ticketID: ticket.id, proposal: proposal, guidance: message,
+            ticketID: ticket.id, proposal: proposal, guidance: message, draftID: revisionDraftID,
             ticketTitle: ticket.title, proposalFieldLabel: manifest?.fields.first { $0.id == proposal.field }?.label ?? proposal.field.capitalized), api: api)
     }
 
@@ -151,4 +199,46 @@ struct ReviewQueue {
     mutating func resolve(_ item: ReviewItem) { resolved.insert(item.id) }
     mutating func restore(_ item: ReviewItem) { resolved.remove(item.id); skipped[item.id] = nil }
     mutating func revisit() { skipped.removeAll() }
+}
+
+/// One snapshot for Review and its badge. Rendering reads memory, never the store.
+@MainActor @Observable final class ReviewSavedWork {
+    struct Key: Equatable {
+        let server: String
+        let revision: Int
+    }
+    @ObservationIgnored private let outbox: Outbox
+    @ObservationIgnored private let read: (String) -> [OutgoingStore.Summary]
+    private(set) var key: Key?
+    private var saved: [OutgoingStore.Summary] = []
+    init(outbox: Outbox = .shared, read: ((String) -> [OutgoingStore.Summary])? = nil) {
+        self.outbox = outbox
+        self.read = read ?? outbox.decisionSummaries
+    }
+    func refresh(_ server: String) {
+        let next = Key(server: server, revision: outbox.store.outgoingRevision(server))
+        guard next != key else { return }
+        saved = read(server)
+        key = next
+    }
+    func decisions(_ server: String) -> [OutgoingStore.Summary] { key?.server == server ? saved : [] }
+    func messages(_ server: String, conversationID: String) -> [PendingWork] { outbox.entries(server, conversationID: conversationID) }
+    func voice(_ server: String, draftID: String) -> [PendingWork] { outbox.entries(server, draftID: draftID) }
+    /// Only a visible exact proposal can justify subtracting a pending card badge.
+    static func pendingDecisionTickets(in cards: [ReviewCard], decisions: [OutgoingStore.Summary]) -> Set<String> {
+        Set(cards.flatMap(\.parts).filter { item in
+            !item.isMessage && item.proposalRevision != nil && decisions.contains {
+                $0.ticketID == item.ticketId && $0.proposalField == item.field && $0.proposalCreatedAt == item.waitingSince
+                    && $0.proposalRevision == item.proposalRevision && ["waiting", "sending"].contains($0.state)
+            }
+        }.map(\.ticketId))
+    }
+    static func cards(_ cards: [ReviewCard], decisions: [OutgoingStore.Summary]) -> [ReviewCard] {
+        cards.compactMap { card in
+            let parts = card.parts.filter { item in
+                !decisions.contains { item.proposalRevision != nil && $0.proposalRevision == item.proposalRevision && $0.ticketID == item.ticketId && $0.proposalField == item.field && $0.proposalCreatedAt == item.waitingSince && ["waiting", "sending", "uncertain", "sent"].contains($0.state) }
+            }
+            return parts.isEmpty ? nil : ReviewCard(id: card.id, ticketId: card.ticketId, parts: parts)
+        }
+    }
 }

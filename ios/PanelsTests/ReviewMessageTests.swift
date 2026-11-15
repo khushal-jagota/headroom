@@ -3,6 +3,46 @@ import XCTest
 @testable import Panels
 
 @MainActor final class ReviewMessageTests: XCTestCase {
+    func testRetainedMessagePresentationReadsOnlyTheSelectedSnapshot() async throws {
+        let api = makeAPI()
+        ReviewMessageProtocol.state.reset()
+        defer { clean(api) }
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let outbox = Outbox(store: LocalStore(url: directory.appendingPathComponent("review.store")))
+        let server = LocalStore.server(api.baseURL)
+        let message = ConversationSend(conversationId: "c", content: [.init(text: "Saved reply")], senderMessageId: "saved-reply", sentAtUnixMilliseconds: 1, ownerReadThroughSequence: 66)
+        var work = PendingWork(id: "saved-reply", created: .now, kind: .message, state: .uncertain, owner: .chief, message: message)
+        try outbox.save(work, server: server)
+        var reads = 0
+        var selected: [PendingWork] = []
+        var revision: Int?
+        let refresh: (String) -> Void = { server in
+            let current = outbox.store.outgoingRevision(server)
+            guard revision != current else { return }
+            reads += 1; selected = outbox.entries(server, conversationID: "c"); revision = current
+        }
+        refresh(server)
+        let decision = ReviewMessageDecision(savedWork: { _ in selected }, refreshSavedWork: refresh)
+        await decision.load(item: item(), api: api)
+        XCTAssertNil(decision.error)
+        XCTAssertEqual(decision.attempt?.id, work.id)
+        XCTAssertEqual(decision.composer.outgoing.first?.id, work.id)
+        XCTAssertEqual(reads, 1)
+        // These getters also run when SwiftUI retains the hidden Review subtree.
+        for _ in 0..<100 {
+            XCTAssertEqual(decision.attempt?.state, .uncertain)
+            XCTAssertTrue(decision.pending)
+            XCTAssertFalse(decision.accepted)
+        }
+        XCTAssertEqual(reads, 1)
+        work.state = .sent
+        try outbox.save(work, server: server)
+        refresh(server); decision.refreshAttempt()
+        XCTAssertEqual(reads, 2)
+        XCTAssertTrue(decision.accepted)
+        XCTAssertFalse(decision.pending)
+    }
     func testAutomaticRecoveryRetainsSenderInsteadOfBecomingOwnerWords() throws {
         let body = try APIClient.decoder().decode(ConversationBody.self, from: Data(#"{"kind":"prompt","sender_label":"Panels deployment recovery","content":[{"piece":"text","text":"Inspect interrupted work"}]}"#.utf8))
         let model = ConversationModel()
@@ -77,7 +117,7 @@ import XCTest
         await Outbox.shared.drain(api: api)
         XCTAssertEqual(ReviewMessageProtocol.state.bodies.filter { $0["sender_message_id"] != nil }.count, 2)
     }
-    func testLostQueuedReplyReconcilesHeldIdentityWithoutAnotherSend() async throws {
+    func testLostQueuedReplyWithoutReceiptStaysUncertainWithoutAnotherSend() async throws {
         let api = makeAPI()
         ReviewMessageProtocol.state.reset()
         ReviewMessageProtocol.state.loseResponse = true
@@ -93,7 +133,8 @@ import XCTest
         await restored.load(item: item(), api: api)
         XCTAssertEqual(restored.attemptID, original)
         await Outbox.shared.drain(api: api)
-        XCTAssertEqual(restored.attempt?.state, .serverQueued)
+        restored.refreshAttempt()
+        XCTAssertEqual(restored.attempt?.state, .uncertain)
         XCTAssertEqual(restored.attempt?.message?.ownerReadThroughSequence, 66)
         XCTAssertEqual(ReviewMessageProtocol.state.bodies.count, 1)
     }
@@ -110,6 +151,32 @@ import XCTest
         let sent = await decision.send()
         XCTAssertFalse(sent)
         XCTAssertTrue(ReviewMessageProtocol.state.bodies.isEmpty)
+    }
+    func testReplacementUpdatesAuthorityWithoutChangingDisplayedRunOrDraft() async throws {
+        let api = makeAPI()
+        ReviewMessageProtocol.state.reset()
+        defer { clean(api) }
+        let decision = ReviewMessageDecision()
+        await decision.load(item: item(), api: api)
+        decision.composer.draft = "Keep this old-conversation draft"
+        decision.composer.attachments = [.init(piece: "file", data: "YWJj", mediaType: "text/plain", fileName: "note.txt")]
+        let reads = ReviewMessageProtocol.state.eventReads
+        ReviewMessageProtocol.state.newMessage = true
+        decision.updateAddressCurrent(false)
+        XCTAssertTrue(decision.historical)
+        XCTAssertTrue(decision.isCurrent(for: item(current: false)), "Replacement does not invalidate the displayed unread run")
+        XCTAssertEqual(decision.events.count, 65)
+        XCTAssertEqual(decision.through, 66)
+        XCTAssertEqual(ReviewMessageProtocol.state.eventReads, reads)
+        XCTAssertEqual(decision.composer.conversationID, "c")
+        XCTAssertEqual(decision.composer.draft, "Keep this old-conversation draft")
+        XCTAssertEqual(decision.composer.attachments.first?.fileName, "note.txt")
+        let sent = await decision.send()
+        XCTAssertFalse(sent)
+        XCTAssertTrue(ReviewMessageProtocol.state.bodies.isEmpty)
+        let marked = await decision.markRead()
+        XCTAssertTrue(marked)
+        XCTAssertEqual(ReviewMessageProtocol.state.bodies.last?["through_sequence"] as? Int, 66)
     }
     private func item(current: Bool = true) -> ReviewItem { .init(reviewItemType: "message", title: "Chief", waitingSince: 1, conversationId: "c", ownerKind: "chief", ownerId: "chief", ownerReadThroughSequence: 1, addressCurrent: current) }
     private func makeAPI() -> APIClient {

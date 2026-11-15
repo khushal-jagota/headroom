@@ -37,6 +37,7 @@ from planner.environments.update_configuration import STAGED_APP_PREFIX
 from planner.environments.update_contracts import (
     SUPPORTED_UPDATE_SCHEMA_FLOOR,
     UPDATE_ARTIFACT_RETENTION_DAYS,
+    PublishedLinuxExecutorUpdate,
     PublishedMacUpdate,
 )
 from planner.executor.update_configuration import (
@@ -174,6 +175,104 @@ def validate_mac_publication(
     return PublishedMacUpdate(artifact_id, digest, size)
 
 
+def validate_linux_executor_publication(
+    directory: Path,
+    *,
+    requested: str,
+    artifact_id: int,
+    build_result: str,
+) -> PublishedLinuxExecutorUpdate:
+    """Bind the Linux executor bytes and role to the requested source."""
+    if build_result != "success" or type(artifact_id) is not int or artifact_id < 1:
+        raise ValueError("Linux executor publication requires a successful native build")
+    value = json.loads((directory / "linux-executor-publication.json").read_text())
+    archive = directory / "panels-linux-executor.tar.gz"
+    digest, size = hash_archive(archive), archive.stat().st_size
+    expected = {
+        "application_revision": requested,
+        "platform": "linux",
+        "architecture": "x86_64",
+        "role": "executor",
+    }
+    if (
+        re.fullmatch(r"[0-9a-f]{40}", requested) is None
+        or any(value.get(key) != item for key, item in expected.items())
+        or value.get("archive_sha256") != digest
+        or value.get("archive_size") != size
+        or value.get("schema_version") != 1
+        or not isinstance(value.get("proof"), dict)
+        or any(
+            value["proof"].get(key) != "passed"
+            for key in (
+                "native_startup",
+                "relocated_archive",
+                "executor_cli",
+            )
+        )
+        or not 0 < size <= MAX_MAC_RUNTIME_ARCHIVE_BYTES
+    ):
+        raise ValueError("Linux executor publication differs from its source or archive")
+    with tarfile.open(archive, "r:gz") as packed:
+        member = packed.getmember(MAC_RUNTIME_MANIFEST_NAME)
+        if not member.isfile() or member.size > MAX_MAC_RUNTIME_MANIFEST_BYTES:
+            raise ValueError("Linux executor manifest is invalid")
+        stream = packed.extractfile(member)
+        manifest = None if stream is None else json.load(stream)
+        if not isinstance(manifest, dict) or any(
+            manifest.get(key) != item for key, item in expected.items()
+        ):
+            raise ValueError("Linux executor archive has the wrong target")
+    return PublishedLinuxExecutorUpdate(artifact_id, digest, size)
+
+
+def validate_mac_home_publication(
+    directory: Path, *, requested: str, run_id: int, artifact_id: int, build_result: str
+) -> dict[str, object]:
+    """Bind the home role, sealed bytes and native home execution to this publication."""
+    from planner.platform_runtime.darwin.runtime_contracts import DarwinRuntimeContract
+
+    if build_result != "success" or type(artifact_id) is not int or artifact_id < 1:
+        raise ValueError("Mac home publication requires a successful native build and artifact")
+    value = json.loads((directory / "mac-home-publication.json").read_text())
+    archive = directory / APP_ARCHIVE_NAME
+    digest = hash_archive(archive)
+    manifest = value.get("manifest", {})
+    proof = value.get("proof", {})
+    if not isinstance(manifest, dict) or not isinstance(proof, dict):
+        raise ValueError("Mac home publication is malformed")
+    contract = DarwinRuntimeContract.from_dict(manifest.get("runtime_contract"))
+    if (
+        value.get("schema_version") != 1
+        or value.get("publication_run_id") != run_id
+        or re.fullmatch(r"[0-9a-f]{40}", requested) is None
+        or value.get("application_revision") != requested
+        or manifest.get("app_sha") != requested
+        or manifest.get("format") != "panels-app-v1"
+        or value.get("archive_sha256") != digest
+        or value.get("archive_size") != archive.stat().st_size
+        or proof.get("passed") is not True
+        or proof.get("application_revision") != requested
+        or proof.get("relocation") is not True
+        or proof.get("health_assets_api") is not True
+        or proof.get("archive_sha256") != digest
+        or proof.get("contract_sha256") != contract.digest
+        or not isinstance(proof.get("duration_seconds"), (int, float))
+        or proof["duration_seconds"] <= 0
+        or not value.get("native")
+    ):
+        raise ValueError(
+            "Mac home publication differs from source or lacks native home execution proof"
+        )
+    with tarfile.open(archive, "r:gz") as packed:
+        member = packed.getmember("manifest.json")
+        if not member.isfile() or member.size > MAX_MAC_RUNTIME_MANIFEST_BYTES:
+            raise ValueError("Mac home manifest is invalid")
+        stream = packed.extractfile(member)
+        if stream is None or json.load(stream) != manifest:
+            raise ValueError("Mac home archive manifest differs from its receipt")
+    return {"artifact_id": artifact_id, "manifest": manifest, "archive_sha256": digest}
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(__doc__)
     parser.add_argument(
@@ -223,7 +322,22 @@ def main() -> None:
             artifact_id=int(os.environ["PANELS_MAC_ARTIFACT_ID"]),
             build_result=os.environ["PANELS_MAC_BUILD_RESULT"],
         )
+        linux_executor = validate_linux_executor_publication(
+            gate / "linux-executor",
+            requested=requested,
+            artifact_id=int(os.environ["PANELS_LINUX_EXECUTOR_ARTIFACT_ID"]),
+            build_result=os.environ["PANELS_LINUX_EXECUTOR_BUILD_RESULT"],
+        )
+        mac_home = validate_mac_home_publication(
+            gate / "mac-home",
+            requested=requested,
+            run_id=int(os.environ["GITHUB_RUN_ID"]),
+            artifact_id=int(os.environ["PANELS_MAC_HOME_ARTIFACT_ID"]),
+            build_result=os.environ["PANELS_MAC_BUILD_RESULT"],
+        )
         receipt = {
+            "linux_executor": asdict(linux_executor),
+            "mac_home": mac_home,
             "mac": asdict(mac),
             "publication_run_id": int(os.environ["GITHUB_RUN_ID"]),
             "artifact_id": int(os.environ["PANELS_ARTIFACT_ID"]),

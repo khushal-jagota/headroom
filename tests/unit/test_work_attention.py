@@ -140,6 +140,41 @@ def test_manager_children_carry_the_complete_attention_queue(tmp_path: Path) -> 
     assert item_row["awaiting_reply"] is False
     assert item_row["conversation_signal"] == {"working": False, "message_for_owner": False}
     assert all(not children[row.id]["awaiting_reply"] for row in (rows[0], rows[2], rows[3]))
+    # Deferral changes the rollup, not the raw child or conversation facts.
+    for deferred in rows:
+        tickets_data.set_ticket_backlog(
+            conn, deferred.id, is_backlogged=True, principal=OWNER_PRINCIPAL, now=3
+        )
+    asyncio.run(
+        add_work_attention(
+            conn,
+            cast(ConversationSystem, _ConversationFacts(running_ids={"c_off_today_child"})),
+            record,
+            tickets=item_row["tickets"],
+            managers=(item_row,),
+        )
+    )
+    assert item_row["ticket_rollup"] == {
+        "awaiting_reply": False, "awaiting_answer": False, "awaiting_approval": False,
+        "awaiting_agent_approval": False, "assigned": False, "agent_state": "idle",
+    }
+    assert owner_approval["awaiting_approval"] is True
+    assert owner_approval["conversation_signal"] == {"working": True, "message_for_owner": True}
+    tickets_data.set_ticket_backlog(
+        conn, rows[1].id, is_backlogged=False, principal=OWNER_PRINCIPAL, now=4
+    )
+    asyncio.run(
+        add_work_attention(
+            conn,
+            cast(ConversationSystem, _ConversationFacts(running_ids={"c_off_today_child"})),
+            record,
+            managers=(item_row,),
+        )
+    )
+    assert item_row["ticket_rollup"]["awaiting_approval"] is True
+    assert item_row["ticket_rollup"]["awaiting_reply"] is True
+    assert item_row["ticket_rollup"]["agent_state"] == "working"
+    assert item_row["ticket_rollup"]["assigned"] is False
     conn.close()
 
 

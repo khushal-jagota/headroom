@@ -15,12 +15,13 @@ from urllib.parse import urljoin
 import httpx
 
 from planner.environments.app import validate_app_manifest
+from planner.environments.runtime_admission import probe_environment
 
 
 def smoke_environment(root: Path, port: int) -> dict[str, str]:
     """No ambient values or credentials cross the candidate boundary."""
     return {
-        "PATH": "/usr/local/bin:/usr/bin:/bin",
+        "PATH": probe_environment(root)["PATH"],
         "LANG": "C.UTF-8",
         "HOME": str(root / "home"),
         "TMPDIR": str(root / "tmp"),

@@ -1,4 +1,5 @@
 import { fetchJson } from '../api';
+import { tick } from 'svelte';
 import { queryClient } from '../queryClient';
 import { updatePageBlock } from './presentation';
 import { goalQueries } from './queries';
@@ -19,18 +20,29 @@ const http: EditorIO = {
 
 // Only unfinished commands live here. Accepted documents remain in server queries.
 const tails = new Map<string, Promise<unknown>>();
+const writingListeners = new Map<string, Set<(writing: boolean) => void>>();
+function publishWriting(id: string) {
+  for (const listener of writingListeners.get(id) ?? []) listener(tails.has(id));
+}
 function enqueue<T>(id: string, command: () => Promise<T>): Promise<T> {
   const next = (tails.get(id) ?? Promise.resolve()).catch(() => undefined).then(command);
   tails.set(id, next);
-  void next.finally(() => { if (tails.get(id) === next) tails.delete(id); }).catch(() => undefined);
+  publishWriting(id);
+  void next.finally(async () => {
+    // Query observers update synchronously; let their accepted props reach controls
+    // before another click can capture a document revision.
+    await tick();
+    if (tails.get(id) === next) { tails.delete(id); publishWriting(id); }
+  }).catch(() => undefined);
   return next;
 }
 
-export function createPageEditor<Document, Patch>(id: string, io: {
+export function createPageEditor<Document, Patch extends {expected_revision?: number}>(id: string, io: {
   read(): Promise<Document>;
   write(patch: Patch): Promise<Document>;
   page(document: Document): PageDocument | null;
-  pagePatch(page: PageDocument): Patch;
+  pagePatch(page: PageDocument, revision: number): Patch;
+  revision(document: Document): number;
   refresh(): Promise<unknown>;
 }) {
   async function accept(patch: Patch) {
@@ -41,14 +53,26 @@ export function createPageEditor<Document, Patch>(id: string, io: {
   }
   return {
     getAccepted: io.read,
-    write: (patch: Patch) => enqueue(id, () => accept(patch)),
-    updateBlock: (blockId: string, update: (block: Block) => Block) => enqueue(id, async () => {
+    subscribeWriting(listener: (writing: boolean) => void) {
+      const listeners = writingListeners.get(id) ?? new Set<(writing: boolean) => void>();
+      writingListeners.set(id, listeners);
+      listeners.add(listener);
+      listener(tails.has(id));
+      return () => {
+        listeners.delete(listener);
+        if (!listeners.size) writingListeners.delete(id);
+      };
+    },
+    write: (patch: Patch) => enqueue(id, async () => accept({
+      ...patch, expected_revision: patch.expected_revision ?? io.revision(await io.read()),
+    })),
+    updateBlock: (blockId: string, update: (block: Block) => Block, expectedRevision?: number) => enqueue(id, async () => {
       const document = await io.read(), page = io.page(document);
       if (!page) throw new Error('This page no longer exists.');
       let found = false;
       const blocks = updatePageBlock(page.blocks, blockId, block => { found = true; return update(block); });
       if (!found) throw new Error('This block no longer exists. Refresh the page before another edit.');
-      return accept(io.pagePatch({ ...page, blocks }));
+      return accept(io.pagePatch({ ...page, blocks }, expectedRevision ?? io.revision(document)));
     }),
   };
 }
@@ -63,7 +87,8 @@ export function createGoalEditor(goalId: string, io: EditorIO = http) {
     },
     write: patch => io.write(goalId, patch),
     page: goal => goal.page,
-    pagePatch: page => ({page}),
+    pagePatch: (page, expected_revision) => ({page, expected_revision}),
+    revision: goal => goal.revision,
     refresh: io.refresh,
   })};
 }

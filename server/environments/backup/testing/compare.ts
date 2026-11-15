@@ -182,6 +182,10 @@ function fresh_probe(root: string): unknown {
           attention: sql.get('SELECT * FROM attention_history_metadata'),
           chief: sql.get('SELECT * FROM chief_page'),
           preferences: sql.all('SELECT * FROM notification_preferences'),
+          machines: sql.all('SELECT * FROM machines ORDER BY machine_id'),
+          machine_credentials: sql.all(
+            'SELECT * FROM machine_executor_credentials ORDER BY machine_id',
+          ),
         };
       }),
     );

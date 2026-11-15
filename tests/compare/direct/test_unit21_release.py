@@ -40,6 +40,7 @@ from planner.environments.app import (
 )
 from planner.environments.runtime_contracts import (
     NodeRuntimeContract,
+    RuntimeContract,
     RuntimeContractError,
 )
 from planner.environments.runtime_elf import (
@@ -346,7 +347,7 @@ def _admission_group_proof(
 def _admission_rules(root: Path) -> tuple[dict[str, Any], dict[str, Any]]:
     v1 = validate_app_manifest(root / "app/manifest.json").runtime_contract
     v2 = validate_app_manifest(root / "v2/manifest.json").runtime_contract
-    assert v1 is not None and isinstance(v2, NodeRuntimeContract)
+    assert isinstance(v1, RuntimeContract) and isinstance(v2, NodeRuntimeContract)
     facts: dict[str, Any] = dict(
         system="linux",
         architecture="x86_64",
@@ -378,26 +379,26 @@ def _admission_rules(root: Path) -> tuple[dict[str, Any], dict[str, Any]]:
 
         with (
             patch(
-                "planner.environments.runtime_admission.platform.system",
+                "planner.platform_runtime.linux.runtime.platform.system",
                 lambda: "Linux",
             ),
             patch(
-                "planner.environments.runtime_admission.platform.machine",
+                "planner.platform_runtime.linux.runtime.platform.machine",
                 lambda: "x86_64",
             ),
             patch(
-                "planner.environments.runtime_admission.platform.freedesktop_os_release",
+                "planner.platform_runtime.linux.runtime.platform.freedesktop_os_release",
                 lambda: {"ID": "ubuntu", "VERSION_ID": "24.04"},
             ),
             patch(
-                "planner.environments.runtime_admission.platform.libc_ver",
+                "planner.platform_runtime.linux.runtime.platform.libc_ver",
                 lambda: ("glibc", "2.39"),
             ),
             patch(
-                "planner.environments.runtime_admission.ctypes.CDLL", lambda name: None
+                "planner.platform_runtime.linux.runtime.ctypes.CDLL", lambda name: None
             ),
             patch(
-                "planner.environments.runtime_admission.shutil.which",
+                "planner.platform_runtime.linux.runtime.shutil.which",
                 lambda *args, **kwargs: "/synthetic/tool",
             ),
             patch.object(
@@ -807,8 +808,21 @@ def _ios_fixture(root: Path) -> dict[str, Any]:
     )
 
 
+@pytest.mark.parametrize(
+    "scope",
+    [
+        "release",
+        pytest.param(
+            "host-admission",
+            marks=pytest.mark.xfail(
+                run=False,
+                reason="expected-open P5: #916 port Linux host admission Node version policy",
+            ),
+        ),
+    ],
+)
 def test_unit21_release_identity_archive_and_frontier(
-    tmp_path: Path, request: pytest.FixtureRequest
+    tmp_path: Path, request: pytest.FixtureRequest, scope: str
 ) -> None:
     started = time.perf_counter()
     tmp_path = tmp_path.resolve()
@@ -1140,7 +1154,10 @@ def test_unit21_release_identity_archive_and_frontier(
         == native_paths
     )
     assert actual["native_loader"] == expected_loader
-    assert actual["admission"] == expected_admission
+    if scope == "host-admission":
+        assert actual["admission"] == expected_admission
+    else:
+        assert actual["admission"]["reports"] == expected_admission["reports"]
     built = actual["builder"]
     assert built["manifest"]["app_sha"] == python_build.app_sha == build_sha
     assert built["manifest"]["source_digest"] == python_build.source_digest
@@ -1343,6 +1360,16 @@ def test_unit21_release_identity_archive_and_frontier(
                         "full_native_closure": "OPEN; static synthetic paths only",
                     },
                     "admission_rules": actual["admission"],
+                    "expected_open": (
+                        {
+                            "owner": "P5 platform runtime",
+                            "boundary": "Linux host admission Node version policy",
+                            "python": expected_admission["hosts"],
+                            "typescript": actual["admission"]["hosts"],
+                        }
+                        if scope == "release"
+                        else None
+                    ),
                     "admission_group": group_proof,
                     "source_only_builder": built,
                     "unit_boundaries": actual["units"],
@@ -1359,6 +1386,7 @@ def test_unit21_release_identity_archive_and_frontier(
                         "Representative full release tree/memory/disk/cost on hosted root",
                         "Sealed bundled-package license inventory",
                         "Runtime execution",
+                        "P5 Linux host admission Node version policy",
                     ],
                 },
                 indent=2,

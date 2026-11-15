@@ -23,6 +23,7 @@ from planner.server_lifecycle.event_loop_tasks import (
     open_event_loop_tasks_listing,
 )
 from planner.server_lifecycle.supervisor import resolve_planner_launch_root
+from planner.server_lifecycle.thread_diagnostics import thread_dump_signal
 
 
 class ChangeStreamClosingServer(uvicorn.Server):
@@ -113,12 +114,14 @@ def run_application_process() -> None:
     # The supervisor names its control socket for the child it starts; the event-loop-tasks
     # socket lives beside it. Without a supervisor there is no socket to stand beside.
     control_socket = os.environ.get("PLAN_SERVER_CONTROL_SOCKET")
-    ChangeStreamClosingServer(
-        server_config,
-        event_loop_tasks_socket_path=(
-            resolve_event_loop_tasks_socket_path(Path(control_socket)) if control_socket else None
-        ),
-    ).run()
+    with thread_dump_signal():
+        ChangeStreamClosingServer(
+            server_config,
+            event_loop_tasks_socket_path=(
+                resolve_event_loop_tasks_socket_path(Path(control_socket))
+                if control_socket else None
+            ),
+        ).run()
 
 
 if __name__ == "__main__":

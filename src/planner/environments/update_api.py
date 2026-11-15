@@ -46,6 +46,7 @@ def _attempt_body(attempt: UpdateAttempt) -> dict[str, object]:
 @router.get("")
 async def status(request: Request) -> dict[str, object]:
     service = _service(request)
+    # Status combines owner-loop decisions with SQLite reads on this worker.
     result = await asyncio.to_thread(service.status)
     endpoint = getattr(request.app.state, "executor_endpoint", None)
     mac_details = None if endpoint is None else dict(endpoint.health_payload())

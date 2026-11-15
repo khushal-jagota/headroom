@@ -1,3 +1,4 @@
+import { ORIGINAL_MAC_MACHINE_ID } from '../execution_identity.ts';
 /** Gap: persisted Mac presence cannot authorize a VPS-local adapter for a retained
  * conversation whose workspace policy is already home_relative. No HTTP/provider runs.
  */
@@ -147,8 +148,9 @@ test('local composition refuses a retained Mac Ticket before constructing its se
       }
       sql.run(
         `INSERT INTO mac_executor_presence
-        (singleton,executor_incarnation,identity_json,last_lease_at_ms) VALUES(1,?,?,?)`,
+        (machine_id,executor_incarnation,identity_json,last_lease_at_ms) VALUES(?,?,?,?)`,
         [
+          ORIGINAL_MAC_MACHINE_ID,
           'retained-mac',
           JSON.stringify({
             protocol_version: PROTOCOL_VERSION,

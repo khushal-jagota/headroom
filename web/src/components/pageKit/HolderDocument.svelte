@@ -26,7 +26,8 @@
   goal:()=>page.data?{revision:page.data.page_revision,completed:false,status:'neutral',status_date:readings.data?.status_date}:undefined,
   readings:()=>readings.data,narrow:()=>narrow,sessions:()=>sessions,
  },{
-  updateBlock:(id,update)=>editor.updateBlock(id,update),
+  subscribeWriting:listener=>editor.subscribeWriting(listener),
+  updateBlock:(id,update,revision)=>editor.updateBlock(id,update,revision),
   manualSession:measureId=>sessions.manual(ownerId,measureId)
  }));
 </script>

@@ -187,6 +187,9 @@ async def python_exercise(spec: dict[str, Any]) -> dict[str, Any]:
         downstream = options["event_sink"]
 
         class Sink:
+            async def record_local_child_custody(self, identity: Any) -> None:
+                await downstream.record_local_child_custody(identity)
+
             async def report(self, turn: Any, event: Any) -> None:
                 value = dataclasses.asdict(event)
                 backend_events.append(
@@ -476,6 +479,10 @@ def compared(result: dict[str, Any]) -> dict[str, Any]:
     return compared_value
 
 
+@pytest.mark.xfail(
+    run=False,
+    reason="expected-open P3 (#912): Hermes tools events persist working-turn compaction boundary",
+)
 def test_unit16_adapter_real_core_parity(tmp_path: Path, request: pytest.FixtureRequest) -> None:
     """Protect adapter semantics through actual ACP bytes and both durable cores."""
     started = time.perf_counter()

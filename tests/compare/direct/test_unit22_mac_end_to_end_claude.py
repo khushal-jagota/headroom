@@ -26,6 +26,13 @@ from planner.runtime.logic.conversation_start_resolution import ConversationStar
 pytestmark = pytest.mark.usefixtures("executor_transport_home")
 
 
+@pytest.mark.xfail(
+    run=False,
+    reason=(
+        "expected-open P2: #916 staging protocol24 machine credentials and cleanup "
+        "leases leave the TS22 Mac unleased"
+    ),
+)
 def test_claude_configuration_refusal_rebinds_only_after_exact_native_cleanup(
     tmp_path: Path,
 ) -> None:

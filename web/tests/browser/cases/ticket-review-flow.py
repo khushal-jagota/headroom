@@ -476,7 +476,9 @@ def run(browser, urls):
             path = path.removesuffix("/workspace")
         if path.startswith("tickets?"):
             path = "tickets/" + parse_qs(path.split("?", 1)[1])["id"][0]
-        if path == "updates":
+        if path == "machines":
+            result = fixture["MACHINE_CATALOG"]
+        elif path == "updates":
             result = {
                 "state": "up_to_date", "allowed_actions": [], "activity": "unknown",
                 "available": None, "attempt": None, "app_sha": "fixture", "detail": None,
@@ -938,6 +940,24 @@ def run(browser, urls):
         expect(field).to_have_value(draft + "\n")
         field.fill(draft)
 
+    def assert_proposal_note_keys_leave_a_draft(field, draft):
+        """Text entry must not select either proposal decision or send a plain note."""
+        def writes():
+            return len(approval_attempts) + len(revisions) + len(review_note_sends)
+
+        assert_enter_rules_leave_a_draft(field, draft, writes)
+        before = writes()
+        field.press("End")
+        field.press("Enter")
+        expect(field).to_have_value(draft + "\n")
+        for key in ("Control+Enter", "Meta+Enter"):
+            field.fill(draft)
+            field.press(key)
+            assert field.input_value().rstrip("\n") == draft
+        page.wait_for_timeout(100)
+        assert writes() == before
+        field.fill(draft)
+
     def wait_for_held(predicate):
         # A held route never finishes its request, so poll the fixture while the
         # driver hands the route to its handler. Callers assert.
@@ -963,7 +983,7 @@ def run(browser, urls):
         absent=False,
     )
     expect(page.locator("[data-project-fact]")).to_have_text("One")
-    expect(page.locator("[data-ticket-identity]")).to_have_text("One · Coding")
+    expect(page.locator("[data-ticket-identity]")).to_have_text("VPS One · Coding")
     expect(page.locator(".ticket-title [contenteditable]")).to_have_text("Review ticket")
     expect(page.locator("[data-ticket-backlog-action]")).to_have_text("Backlog ticket")
     page.locator("[data-ticket-backlog-action]").click()
@@ -1008,7 +1028,7 @@ def run(browser, urls):
     runtime_working = True
     drive("window.__batch()")
     expect(page.locator(".ticket-title [contenteditable]")).to_have_text("Canonical masthead")
-    expect(page.locator("[data-ticket-identity]")).to_have_text("Current Project · Personal")
+    expect(page.locator("[data-ticket-identity]")).to_have_text("VPS Current Project · Personal")
     expect(page.locator(".ticket-title [data-conversation-id]")).to_have_attribute(
         "data-conversation-id", "masthead-current"
     )
@@ -1117,7 +1137,7 @@ def run(browser, urls):
         "data-section-stage", "needs_success_condition"
     )
     expect(page.locator("[data-approval-block] [contenteditable]")).to_have_text("A result")
-    expect(page.locator("[data-ticket-identity]")).to_have_text("One · Coding")
+    expect(page.locator("[data-ticket-identity]")).to_have_text("VPS One · Coding")
     expect(page.locator("[data-parent-link]")).to_have_count(0)
     assert (
         page.locator(
@@ -1387,6 +1407,14 @@ def run(browser, urls):
     assert page.locator('[data-field="consequences"] [contenteditable]').count() == 0
     personal_outcome.fill("Completed by user")
     personal_outcome.press("Tab")
+    expect(page.locator('[data-ticket-section="t_personal"]')).to_have_attribute(
+        "data-section-stage", "needs_consequences"
+    )
+    # Completion moves the value into lazy history. Open it before checking the saved body.
+    page.locator("[data-stage-fold]").evaluate("node => { node.open = true; }")
+    page.locator('[data-stage-fold] [data-field="outcome"]').evaluate(
+        "node => { node.open = true; }"
+    )
     page.wait_for_function("document.body.textContent.includes('Completed by user')")
     assert writes[-1] == {"personal_outcome": {"body": "Completed by user"}}
     page.evaluate("window.__showTicket('t_kickoff')")
@@ -1423,9 +1451,9 @@ def run(browser, urls):
     page.locator("[data-send-back]").click()
     expect(page.locator("[data-revision-note]")).to_be_focused()
     exact_revision = "Keep the agreed scope.\nPreserve the attributed details."
-    assert_enter_rules_leave_a_draft(page.locator("[data-revision-note]"), "Draft note", lambda: len(revisions))
+    assert_proposal_note_keys_leave_a_draft(page.locator("[data-revision-note]"), "Draft note")
     page.locator("[data-revision-note]").fill(exact_revision)
-    page.locator("[data-revision-note]").press("Enter")
+    page.locator("[data-send-back]").click()
     wait_for_write(lambda: revisions)
     assert revisions == [{"message": exact_revision, "expected_proposal_revision": 1, "decision_id": '["t_with_session",1]:send_back'}]
     drive("window.__batch()")
@@ -1494,7 +1522,7 @@ def run(browser, urls):
     review_note_sends.clear()
     original_note = "  Keep the existing approval boundary.\n\nPreserve café and all whitespace.  "
     note_input = page.locator("[data-review-revision-input]")
-    assert_enter_rules_leave_a_draft(note_input, original_note, lambda: len(approval_attempts) + len(revisions))
+    assert_proposal_note_keys_leave_a_draft(note_input, original_note)
     note_input.fill(original_note)
     retained_editor = page.locator("[data-approval-block] [data-edit]")
     retained_editor.click()

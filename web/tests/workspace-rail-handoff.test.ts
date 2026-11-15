@@ -58,21 +58,22 @@ describe('bounded rail handoff',()=>{
       update({ticket_status:'empty',title:'Fresh Empty',stage:'needs_consequences'});
       expect(group(presented.rail)).toBe('agent');
       expect(presented.rail.chiefGroups[0].cards[0].title).toBe('Fresh Empty');
-      vi.advanceTimersByTime(1000);
+      vi.advanceTimersByTime(1000); await settle();
       expect(group(presented.rail)).toBe('empty');
       motion.freeze(false); await settle();
       update({awaiting_approval:true}); await settle();
       motion.freeze(true); update({ticket_status:'empty'});
       expect(group(presented.rail)).toBe('awaiting_approval');
-      update({awaiting_answer:true,title:'New answer'});
+      update({awaiting_answer:true,title:'New answer'}); await settle();
       expect(group(presented.rail)).toBe('awaiting_answer');
       expect(presented.rail.chiefGroups[0].cards[0].title).toBe('New answer');
       motion.freeze(false); await settle();
       update(); await settle();
       update({ticket_status:'empty'});
       owner.update({rail:buildWorkspaceRail([]),settledOpen:false},contexts);
-      expect(presented.rail.chiefGroups).toEqual([]);
       await settle();
+      expect(presented.rail.chiefGroups).toEqual([]);
+      vi.advanceTimersByTime(1000); await settle();
       expect(presented.rail.chiefGroups).toEqual([]);
       owner.dispose(); motion.dispose();
     } finally {vi.useRealTimers();}

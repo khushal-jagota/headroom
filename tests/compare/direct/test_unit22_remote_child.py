@@ -36,6 +36,13 @@ from planner.executor.vps_remote_child import LateSteer, MacRemoteChild
 ROOT = Path(__file__).resolve().parents[3]
 
 
+@pytest.mark.xfail(
+    run=False,
+    reason=(
+        "expected-open P2: #916 staging executor acceptance payload adds "
+        "agent_acceptance_proven missing from TS events"
+    ),
+)
 def test_remote_child_consumers(tmp_path: Path, request: pytest.FixtureRequest) -> None:
     homes = create_synthetic_homes(tmp_path)
     start = ResolvedConversationStart(

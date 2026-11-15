@@ -10,6 +10,7 @@ import io
 import json
 import subprocess
 import tarfile
+import urllib.request
 from pathlib import Path
 from typing import Any
 
@@ -122,9 +123,18 @@ def test_runtime_roots_use_exact_canonical_pins_without_development_tools(tmp_pa
         '[project]\ndependencies=["aiohttp", "httpx[http2]", "PyICU==2.16.2"]\n'
     )
     requirements = tmp_path / "requirements.txt"
-    requirements.write_text("aiohttp==3.14.3\nhttpx==0.28.1\nPyICU==2.16.2\npytest==9.1.1\n")
+    requirements.write_text(
+        "aiohttp==3.14.3\nhttpx==0.28.1\nPyICU==2.16.2\npytest==9.1.1\n"
+        "greenlet==3.5.3\nmarkdown-it-py==4.0.0\nwebsockets==16.0\nlinkify-it-py==2.0.3\n"
+    )
     assert runtime_requirements(tmp_path) == [
-        "aiohttp==3.14.3", "httpx[http2]==0.28.1", "PyICU==2.16.2"
+        "aiohttp==3.14.3",
+        "httpx[http2]==0.28.1",
+        "PyICU==2.16.2",
+        "greenlet==3.5.3",
+        "markdown-it-py==4.0.0",
+        "websockets==16.0",
+        "linkify-it-py==2.0.3",
     ]
     build_mac_runtime.validate_installed_pins(
         {"aiohttp": "3.14.3", "bootstrap": "1"}, {"aiohttp": "aiohttp==3.14.3"}, {"bootstrap": "1"}
@@ -161,8 +171,15 @@ def test_panels_launcher_uses_its_relocated_interpreter_with_spaces(tmp_path: Pa
     assert not original.exists()
 
 
-def test_library_audit_rejects_a_homebrew_dependency(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+@pytest.mark.parametrize(
+    ("minimum", "dependency", "reason"),
+    [
+        ("15.0", "/opt/homebrew/lib/libicuuc.dylib", "unresolved/external library"),
+        ("27.0", "/usr/lib/libSystem.B.dylib", "requires newer than macOS 15.0"),
+    ],
+)
+def test_library_audit_rejects_a_foreign_library_or_newer_deployment_target(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, minimum: str, dependency: str, reason: str
 ) -> None:
     binary = tmp_path / "python/bin/python3"
     binary.parent.mkdir(parents=True)
@@ -172,11 +189,13 @@ def test_library_audit_rejects_a_homebrew_dependency(
         if command[0].endswith("lipo"):
             return "arm64\n"
         if "-L" in command:
-            return f"{binary}:\n\t/opt/homebrew/lib/libicuuc.dylib (compatibility version 1.0.0)\n"
+            return f"{binary}:\n\t{dependency} (compatibility version 1.0.0)\n"
+        if "-l" in command:
+            return f"cmd LC_BUILD_VERSION\ncmdsize 32\nplatform 1\nminos {minimum}\nsdk 27.0\n"
         return f"{binary}:\n"
 
     monkeypatch.setattr(build_mac_runtime, "run", fake_run)
-    with pytest.raises(ValueError, match="unresolved/external library"):
+    with pytest.raises(ValueError, match=reason):
         build_mac_runtime.audit_native_dependencies(tmp_path, {})
 
 
@@ -224,3 +243,118 @@ def test_workflow_requires_same_run_native_artifact_before_publication() -> None
         receipt["env"]["PANELS_MAC_ARTIFACT_ID"] == "${{ needs.mac-runtime.outputs.artifact_id }}"
     )
     assert receipt["env"]["PANELS_MAC_BUILD_RESULT"] == "${{ needs.mac-runtime.result }}"
+
+
+def test_private_icu_environment_replaces_host_inputs_and_requests_private_install_names(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    configured = build_mac_runtime.private_icu_environment(
+        tmp_path,
+        {
+            "PATH": "/opt/homebrew/bin:/usr/bin:/bin",
+            "PKG_CONFIG_PATH": "/opt/homebrew/icu",
+            "PKG_CONFIG_LIBDIR": "/host/pkgconfig",
+            "CFLAGS": "-mmacosx-version-min=27.0",
+            "CXXFLAGS": "-mmacosx-version-min=27.0",
+            "LDFLAGS": "-L/opt/homebrew/lib",
+            "MACOSX_DEPLOYMENT_TARGET": "27.0",
+        },
+    )
+    assert configured["PKG_CONFIG_LIBDIR"] == str(tmp_path / "lib/pkgconfig")
+    assert configured["PKG_CONFIG_PATH"] == str(tmp_path / "lib/pkgconfig")
+    assert configured["PATH"].split(":")[0] == str(tmp_path / "bin")
+    assert configured["MACOSX_DEPLOYMENT_TARGET"] == "15.0"
+    for key in ("CFLAGS", "CXXFLAGS", "LDFLAGS"):
+        assert "-arch arm64" in configured[key]
+        assert "-mmacosx-version-min=15.0" in configured[key]
+        assert "27.0" not in configured[key] and "/opt/homebrew" not in configured[key]
+
+    # Exercise the real helper's configure boundary without a compiler or network.
+    archive = io.BytesIO()
+    with tarfile.open(fileobj=archive, mode="w:gz") as packed:
+        entry = tarfile.TarInfo("icu/source/runConfigureICU")
+        entry.size = 0
+        packed.addfile(entry, io.BytesIO())
+    payload = archive.getvalue()
+    import hashlib
+
+    monkeypatch.setattr(
+        build_mac_runtime, "MAC_ICU_SOURCE_SHA256", hashlib.sha256(payload).hexdigest()
+    )
+    monkeypatch.setattr(urllib.request, "urlopen", lambda *args, **kwargs: io.BytesIO(payload))
+    calls: list[tuple[list[str], dict[str, str]]] = []
+    rpaths: dict[Path, list[str]] = {}
+    install_names: dict[Path, str] = {}
+
+    def record(command: list[str], *, cwd: Path, environment: dict[str, str]) -> str:
+        calls.append((command, environment))
+        libdir = builder / "icu-prefix/lib"
+        if command == ["/usr/bin/make", "install"]:
+            libdir.mkdir(parents=True)
+            for name, paths in (
+                ("libicuuc.79.1.dylib", [str(libdir), "@loader_path"]),
+                ("libicudata.79.1.dylib", ["@loader_path"]),
+            ):
+                library = libdir / name
+                library.touch()
+                rpaths[library] = paths
+                install_names[library] = str(library)
+            (libdir / "libicuuc.dylib").symlink_to("libicuuc.79.1.dylib")
+        if command[:2] == ["/usr/bin/otool", "-l"]:
+            library = Path(command[2])
+            return f"cmd LC_ID_DYLIB\nname {install_names[library]} (offset 24)\n" + "".join(
+                f"cmd LC_RPATH\ncmdsize 32\npath {path} (offset 12)\n" for path in rpaths[library]
+            )
+        if command[0] == "/usr/bin/install_name_tool":
+            assert command[1:3] == ["-delete_rpath", str(libdir)]
+            rpaths[Path(command[3])].remove(command[2])
+        return "/toolchain/compiler-or-sdk"
+
+    def audit(
+        root: Path, environment: dict[str, str], *, python_relative: str
+    ) -> list[dict[str, object]]:
+        calls.append((["audit"], environment))
+        assert root == builder / "icu-prefix"
+        assert rpaths == {
+            root / "lib/libicuuc.79.1.dylib": ["@loader_path"],
+            root / "lib/libicudata.79.1.dylib": ["@loader_path"],
+        }
+        assert all(name == str(library) for library, name in install_names.items())
+        return []
+
+    monkeypatch.setattr(build_mac_runtime, "run", record)
+    monkeypatch.setattr(build_mac_runtime, "audit_native_dependencies", audit)
+    builder = tmp_path / "builder"
+    builder.mkdir()
+    prefix = build_mac_runtime.build_private_icu(builder, {"PATH": "/usr/bin:/bin"})
+    [(command, environment)] = [call for call in calls if call[0][0].endswith("runConfigureICU")]
+    assert "--enable-rpath" in command
+    assert f"--prefix={prefix}" in command
+    assert prefix == builder / "icu-prefix"
+    assert environment["PKG_CONFIG_LIBDIR"] == str(prefix / "lib/pkgconfig")
+    mutations = [command for command, _ in calls if command[0] == "/usr/bin/install_name_tool"]
+    assert mutations == [
+        [
+            "/usr/bin/install_name_tool",
+            "-delete_rpath",
+            str(prefix / "lib"),
+            str(prefix / "lib/libicuuc.79.1.dylib"),
+        ]
+    ]
+    inspected = [Path(command[2]) for command, _ in calls if command[0] == "/usr/bin/otool"]
+    assert set(inspected) == set(rpaths)
+    assert all(not library.is_symlink() for library in inspected)
+    assert calls[-1][0] == ["audit"]
+
+
+@pytest.mark.parametrize(
+    "commands",
+    [
+        "cmd LC_BUILD_VERSION\ncmdsize 32\nplatform MACOS\nminos 15.0\nsdk 27.0\n",
+        "cmd LC_VERSION_MIN_MACOSX\ncmdsize 16\nversion 15.0\nsdk 27.0\n",
+    ],
+)
+def test_minimum_macos_metadata_is_distinct_from_the_build_sdk(commands: str) -> None:
+    assert build_mac_runtime.minimum_macos_versions(commands) == ["15.0"]
+    with pytest.raises(ValueError, match="lacks minimum macOS metadata"):
+        build_mac_runtime.minimum_macos_versions("cmd LC_RPATH\ncmdsize 32\n")

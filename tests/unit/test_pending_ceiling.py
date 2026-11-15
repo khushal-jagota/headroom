@@ -139,11 +139,14 @@ def test_stale_or_wrong_visible_proposal_acceptance_has_no_effects(
 
 
 
-def test_accept_http_checks_the_visible_revision_before_settling(tmp_db: Connection) -> None:
+def test_accept_http_checks_the_visible_revision_before_settling(
+    tmp_db: Connection, monkeypatch: pytest.MonkeyPatch
+) -> None:
     from pathlib import Path
 
     from fastapi.testclient import TestClient
 
+    from planner.core import server
     from planner.core.clock import build_clock
     from planner.core.config import load_config
     from planner.core.db import connect
@@ -161,6 +164,9 @@ def test_accept_http_checks_the_visible_revision_before_settling(tmp_db: Connect
             "PLAN_LOGS_DIR": str(Path(db_path).parent / "logs"),
         },
     )
+    root = Path(__file__).resolve().parents[2]
+    monkeypatch.setattr(server, "_ASSETS_DIR", root / "assets")
+    monkeypatch.setattr(server, "_STATIC_DIR", root / "static")
     app = create_app(config, build_clock(config), lambda: connect(db_path))
     body = {
         "next_ceiling": "needs_implementation",

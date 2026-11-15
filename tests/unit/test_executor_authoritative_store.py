@@ -130,8 +130,17 @@ def test_postcommit_error_preserves_durable_effect_and_receipt(
             self.connection.rollback()
 
     row = envelope()
+
+    @contextmanager
+    def failing_connection(path: str) -> Iterator[FailingCommit]:
+        connection = original_connect(path)
+        try:
+            yield FailingCommit(connection)
+        finally:
+            connection.close()
+
     with monkeypatch.context() as failure:
-        failure.setattr(store_module, "connect", lambda path: FailingCommit(original_connect(path)))
+        failure.setattr(store_module, "runtime_connection", failing_connection)
         with pytest.raises(RuntimeError) as raised:
             store.accept(row, effect, 123, identity=IDENTITY)
     assert raised.value is error

@@ -121,7 +121,7 @@ def _exits(pid: int, *, within_seconds: float) -> bool:
     try:
         try:
             state = Path(f"/proc/{pid}/stat").read_text().rsplit(")", 1)[1].split()[0]
-        except FileNotFoundError:
+        except (FileNotFoundError, ProcessLookupError):
             return True
         if state == "Z":
             return True
