@@ -7,6 +7,7 @@ import Fastify from 'fastify';
 import { createDatabase } from '../core/database/index.ts';
 import { registerArea } from '../core/authority/register.ts';
 import { conversation_routes } from '../tickets/conversation_routes.ts';
+import { decision_routes } from '../tickets/decision_routes.ts';
 import { PlannerError } from '../core/contracts.ts';
 import { loadConfig } from '../core/config.ts';
 import { buildClock } from '../core/clock.ts';
@@ -42,6 +43,7 @@ c=sqlite3.connect(sys.argv[1]);c.executescript("CREATE TABLE managers(id TEXT PR
         }));
         scope.post('/projects', async () => ({ ok: true }));
         await scope.register(conversation_routes, services);
+        await scope.register(decision_routes, services);
       },
     },
     { database: db, config, clock: buildClock(config) },
@@ -74,6 +76,17 @@ c=sqlite3.connect(sys.argv[1]);c.executescript("CREATE TABLE managers(id TEXT PR
       payload: { recap: 'mine' },
     });
     expect(worker.statusCode).toBe(200);
+    // The actual operation plugin retains float token spelling before admission.
+    const float_revision = await app.inject({
+      method: 'POST',
+      url: '/api/tickets/t/decision-operations/numeric',
+      headers: { 'content-type': 'application/json' },
+      payload: '{"decision":"approve","field":"brief","expected_proposal_revision":1.0}',
+    });
+    expect(float_revision.statusCode).toBe(400);
+    expect(float_revision.json().error.message).toBe(
+      'expected_proposal_revision must be a positive integer',
+    );
     const denied = await app.inject({
       method: 'PATCH',
       url: '/api/tickets/t',

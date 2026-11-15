@@ -4,26 +4,27 @@ import { PlannerError, type Principal } from '../core/contracts.ts';
 import type { ReadSql, TransactionSql } from '../core/database/contracts.ts';
 import type { Ticket } from './contracts.ts';
 import { validate_revision_guidance } from './logic/admission.ts';
+import { stringify_python_json } from '../core/http/numeric_json.ts';
 
 export function validate_request(
   message: string | null,
-  revision: number | null,
+  revision: number | bigint | null,
   decision_id: string | null,
 ): void {
   if (message !== null) validate_revision_guidance(message);
-  if (revision !== null && (!Number.isInteger(revision) || revision <= 0))
+  if (
+    revision !== null &&
+    ((typeof revision !== 'bigint' && !Number.isInteger(revision)) || revision <= 0)
+  )
     throw new PlannerError('validation', 'expected_proposal_revision must be a positive integer');
   if (decision_id !== null && (!decision_id.trim() || Array.from(decision_id).length > 200))
     throw new PlannerError('validation', 'decision_id must contain 1 to 200 characters');
 }
 export function request_json(principal: Principal, values: Record<string, unknown>): string {
   // Stable decision fingerprints sort every object level, including the next holder.
-  return JSON.stringify(
+  return stringify_python_json(
     { sender_kind: principal.kind, sender_id: principal.id, ...values },
-    (_key, value: unknown) =>
-      value !== null && typeof value === 'object' && !Array.isArray(value)
-        ? Object.fromEntries(Object.entries(value).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)))
-        : value,
+    { sort_keys: true, compact: true, ensure_ascii: false },
   );
 }
 export function is_replay(sql: ReadSql, decision_id: string | null, request: string): boolean {

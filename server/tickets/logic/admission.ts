@@ -1,7 +1,19 @@
 import { PlannerError, type Principal } from '../../core/contracts.ts';
 import { RETIRED_WORKER_TYPES, type WorkflowDefinition } from '../../worker_types/contracts.ts';
-import { stage_definition } from './machine.ts';
+import { stage_definition, resolve_ceiling } from './machine.ts';
 export const REVISION_GUIDANCE_MAX_CHARACTERS = 10000;
+export function parse_next_ceiling(
+  raw: string | null,
+  workflow: WorkflowDefinition,
+): string | null {
+  if (raw === null || raw === 'none') return raw;
+  try {
+    return resolve_ceiling(workflow, raw);
+  } catch (error) {
+    if (!(error instanceof PlannerError)) throw error;
+    throw new PlannerError('scope_invalid', 'unknown next_ceiling', { next_ceiling: raw });
+  }
+}
 export const TICKET_FIELDS_ONLY_FROM_ABOVE = new Set([
   'title',
   'project_id',
