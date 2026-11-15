@@ -74,7 +74,7 @@ export class VpsExecutorRegistry {
     const configuration = this.configuration;
     if (configuration)
       owner.configure(configuration.core, configuration.app, configuration.barrier);
-    if (this.updates) owner.bind_updates(this.updates.for_machine(machine_id));
+    if (this.updates) this.bind_owner_updates(owner, this.updates);
     return owner;
   }
 
@@ -134,7 +134,17 @@ export class VpsExecutorRegistry {
   bind_updates(service: MacUpdateServiceContract): void {
     this.admit();
     this.updates = service;
-    for (const owner of this.owned) owner.bind_updates(service.for_machine(owner.machine_id));
+    for (const owner of this.owned) this.bind_owner_updates(owner, service);
+  }
+
+  private bind_owner_updates(owner: VpsExecutor, service: MacUpdateServiceContract): void {
+    owner.bind_updates(service.for_machine(owner.machine_id));
+    // Authentication can change the persisted platform after this endpoint loads.
+    owner.presence.update_check = () => service.for_machine(owner.machine_id).check();
+  }
+
+  update_service_for(machine_id: string): MacUpdateServiceContract | null {
+    return this.updates?.for_machine(machine_id) ?? null;
   }
 
   start(): Promise<void> {

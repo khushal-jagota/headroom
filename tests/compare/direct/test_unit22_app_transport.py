@@ -44,11 +44,19 @@ from planner.conversation.system import SqliteProcessConversationSystem
 from planner.core.clock import TestClock as FixedClock
 from planner.core.db import connect, create_schema
 from planner.environments.mac_updates import MacUpdateService
+from planner.environments.update_attempts import UpdateConflict
 from planner.execution_identity import ChildReference
 from planner.executor import protocol as wire
-from planner.executor.update_contracts import MacUpdateCheck, MacUpdateReport, MacUpdateStatus
+from planner.executor.registry import VpsExecutorRegistry
+from planner.executor.update_contracts import (
+    MacUpdateCheck,
+    MacUpdatePrefetch,
+    MacUpdateReport,
+    MacUpdateStatus,
+)
 from planner.executor.vps_remote_child import MacRemoteChild
 from planner.executor.vps_transport import VpsExecutor
+from planner.machines.contracts import ORIGINAL_MAC_MACHINE_ID
 from planner.tickets.data import claim_ticket_for_worker_step, write_ticket_conversation_start
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -61,7 +69,7 @@ def owned_url(origin: str, path: str) -> str:
     parsed = urlsplit(origin)
     if (
         origin not in OWNED_ORIGINS
-        or parsed.scheme != "https"
+        or parsed.scheme not in {"https", "http"}
         or parsed.hostname != "127.0.0.1"
         or parsed.port is None
         or parsed.port == 8767
@@ -76,6 +84,11 @@ class RecordingUpdates(MacUpdateService):
     def __init__(self, archive: Path) -> None:
         self.archive_file = archive
         self.reports: list[Any] = []
+        self.machine_id = ORIGINAL_MAC_MACHINE_ID
+
+    def for_machine(self, machine_id: str) -> MacUpdateService:
+        assert machine_id == self.machine_id
+        return self
 
     def check(self) -> MacUpdateCheck:
         return MacUpdateCheck(1, None)
@@ -90,6 +103,53 @@ class RecordingUpdates(MacUpdateService):
 
     def report(self, report: MacUpdateReport, health: Any) -> MacUpdateStatus:
         self.reports.append([wire.encode_value(report), wire.encode_value(health)])
+        return MacUpdateStatus(report.request_id, report.application_revision, report.phase)
+
+
+def credential_rows(path: Path) -> list[dict[str, Any]]:
+    with closing(connect(str(path))) as conn:
+        return [
+            dict(row)
+            for row in conn.execute(
+                "SELECT * FROM machine_executor_credentials ORDER BY machine_id"
+            )
+        ]
+
+
+class CredentialUpdates(RecordingUpdates):
+    def __init__(self, archive: Path, path: Path) -> None:
+        super().__init__(archive)
+        self.path = path
+        self.platform = "darwin"
+        self.services: dict[str, CredentialUpdates] = {self.machine_id: self}
+
+    def for_machine(self, machine_id: str) -> MacUpdateService:
+        platform = next(
+            row["platform"] for row in credential_rows(self.path)
+            if row["machine_id"] == machine_id
+        )
+        if machine_id not in self.services or self.services[machine_id].platform != platform:
+            service = CredentialUpdates(self.archive_file, self.path)
+            service.machine_id, service.reports = machine_id, self.reports
+            service.platform = platform
+            self.services[machine_id] = service
+        return self.services[machine_id]
+
+    def check(self) -> MacUpdateCheck:
+        digest = hashlib.sha256(self.archive_file.read_bytes()).hexdigest()
+        return MacUpdateCheck(1, None, MacUpdatePrefetch(
+            ("b" if self.platform == "linux" else "a") * 40,
+            digest, self.archive_file.stat().st_size,
+            "/api/executor/update/prefetch/" + digest,
+        ))
+
+    def report(self, report: MacUpdateReport, health: Any) -> MacUpdateStatus:
+        self.reports.append([
+            self.machine_id, self.platform, wire.encode_value(report), wire.encode_value(health),
+            credential_rows(self.path),
+        ])
+        if report.request_id == "refused":
+            raise UpdateConflict("fixture report refused")
         return MacUpdateStatus(report.request_id, report.application_revision, report.phase)
 
 
@@ -799,3 +859,232 @@ def test_unit22_executor_real_wire(tmp_path: Path, request: pytest.FixtureReques
             json.dumps({"elapsed_seconds": time.perf_counter() - started, **evidence}, indent=2)
             + "\n"
         )
+
+
+async def credential_transcript(
+    proxy: HttpsProxy, path: Path, named_machine: str
+) -> list[dict[str, Any]]:
+    original = {
+        "X-Panels-Executor-ID": "test-executor",
+        "X-Panels-Executor-Credential": "a" * 43,
+        "X-Panels-Executor-Incarnation": IDENTITY.executor_incarnation,
+    }
+    named = {
+        **original,
+        "X-Panels-Executor-ID": named_machine,
+        "X-Panels-Executor-Credential": "b" * 43,
+        "X-Panels-Executor-Incarnation": "22222222-2222-4222-8222-222222222222",
+        "X-Panels-Executor-Platform": "linux",
+    }
+    legacy = {"X-Panels-Executor-ID": "test-executor"}
+    current = {"request_id": "fixture", "application_revision": "a" * 40, "phase": "current"}
+    failed = {**current, "phase": "failed"}
+    operations: list[
+        tuple[str, str, dict[str, str] | list[tuple[str, str]], dict[str, str] | None]
+    ] = [
+        ("authenticate", "GET", original, None),
+        ("platform", "GET", named, None),
+        ("foreign", "POST", {**original, "X-Panels-Executor-Credential": "b" * 43,
+                             "X-Panels-Executor-Platform": "linux"}, current),
+        ("duplicate", "GET", [*original.items(),
+                              ("X-Panels-Executor-Credential", "a" * 43)], None),
+        ("refused", "POST", original, {**current, "request_id": "refused"}),
+        ("legacy_current", "POST", legacy, current),
+        ("other_phase", "POST", original, failed),
+        ("named_report", "POST", named, failed),
+        ("confirmed", "POST", original, current),
+        ("legacy_closed", "GET", legacy, None),
+        ("credential_kept", "GET", original, None),
+    ]
+    routed: list[
+        tuple[str, str, str, dict[str, str] | list[tuple[str, str]], dict[str, str] | None]
+    ] = [
+        ("bootstrap_login", "POST", "/api/executor/credential", legacy, None),
+        ("bootstrap_credential", "POST", "/api/executor/credential", original, None),
+        ("bootstrap_origin", "POST", "/api/executor/credential",
+         {**legacy, "Origin": "https://owner.invalid"}, {}),
+        *((name, method, "/api/executor/update", headers, body)
+          for name, method, headers, body in operations),
+    ]
+    answers = []
+    async with proxy.session_factory() as client:
+        for name, method, route, headers, body in routed:
+            pairs = list(headers.items()) if isinstance(headers, dict) else headers
+            origin = proxy.upstream if name == "bootstrap_login" else proxy.origin
+            assert origin is not None
+            async with client.request(
+                method, owned_url(origin, route),
+                headers=[("Accept-Encoding", "identity"), *pairs],
+                json=body, allow_redirects=False,
+            ) as response:
+                answers.append({
+                    "name": name, "status": response.status,
+                    "body": await response.json(), "credentials": credential_rows(path),
+                })
+    assert [answer["status"] for answer in answers] == [
+        403, 403, 403, 200, 200, 403, 403, 409, 200, 200, 200, 200, 403, 200,
+    ]
+    for answer in answers:
+        rows = {row["machine_id"]: row for row in answer["credentials"]}
+        original_row = rows[ORIGINAL_MAC_MACHINE_ID]
+        closed = answer["name"] in {"confirmed", "legacy_closed", "credential_kept"}
+        assert original_row["legacy_closed_at_ms"] == (NOW if closed else None)
+        assert original_row["pending_credential"] == (None if closed else "a" * 43)
+        assert original_row["platform"] == "darwin"
+        assert rows[named_machine]["platform"] == (
+            "darwin" if answer["name"] in {
+                "bootstrap_login", "bootstrap_credential", "bootstrap_origin", "authenticate"
+            } else "linux"
+        )
+    by_name = {answer["name"]: answer for answer in answers}
+    assert (
+        by_name["foreign"]["credentials"] == by_name["duplicate"]["credentials"]
+        == by_name["platform"]["credentials"]
+    )
+    assert by_name["authenticate"]["body"]["prefetch"]["application_revision"] == "a" * 40
+    assert by_name["platform"]["body"]["prefetch"]["application_revision"] == "b" * 40
+    return answers
+
+
+def test_executor_credentialed_update_handover(
+    tmp_path: Path, request: pytest.FixtureRequest
+) -> None:
+    """The existing TLS peer proves credential admission and committed handover ordering."""
+    started = time.perf_counter()
+    homes = create_synthetic_homes(tmp_path)
+    named_machine = "66666666-6666-4666-8666-666666666666"
+
+    async def run() -> dict[str, Any]:
+        path, candidate = tmp_path / "source.sqlite", tmp_path / "candidate.sqlite"
+        archive = tmp_path / "archive.gz"
+        archive.write_bytes(b"fixture archive")
+        with closing(connect(str(path))) as conn:
+            create_schema(conn)
+            conn.execute("INSERT INTO machines VALUES (?,'Named','server','cyan',0)",
+                         (named_machine,))
+            conn.execute(
+                "UPDATE machine_executor_credentials SET credential_sha256=?,issued_at_ms=?,"
+                "issued_incarnation=?,pending_credential=? WHERE machine_id=?",
+                (hashlib.sha256(("a" * 43).encode()).hexdigest(), NOW - 5,
+                 IDENTITY.executor_incarnation, "a" * 43, ORIGINAL_MAC_MACHINE_ID),
+            )
+            conn.execute(
+                "INSERT INTO machine_executor_credentials(machine_id,credential_sha256,"
+                "issued_at_ms,issued_incarnation,legacy_closed_at_ms) VALUES (?,?,?,?,?)",
+                (named_machine, hashlib.sha256(("b" * 43).encode()).hexdigest(), NOW - 5,
+                 "22222222-2222-4222-8222-222222222222", NOW - 5),
+            )
+            for machine, incarnation in (
+                (ORIGINAL_MAC_MACHINE_ID, IDENTITY.executor_incarnation),
+                (named_machine, "22222222-2222-4222-8222-222222222222"),
+            ):
+                conn.execute(
+                    "INSERT INTO executor_incarnations(executor_incarnation,first_leased_at_ms,"
+                    "machine_id) VALUES (?,?,?)", (incarnation, NOW - 5, machine),
+                )
+                # Updates need no work identity, lease, or protocol admission.
+                conn.execute(
+                    "INSERT OR REPLACE INTO mac_executor_presence(machine_id,executor_incarnation)"
+                    " VALUES (?,?)", (machine, incarnation),
+                )
+            conn.commit()
+        with sqlite3.connect(path) as source, sqlite3.connect(candidate) as destination:
+            source.backup(destination)
+        clock = FixedClock(datetime.fromtimestamp(NOW / 1000, UTC))
+        registry = VpsExecutorRegistry(str(path), clock, original_enabled=True)
+        with closing(connect(str(path))) as conn:
+            registry.load(conn)
+        endpoint = registry.get(ORIGINAL_MAC_MACHINE_ID)
+        assert endpoint is not None
+        for machine in (ORIGINAL_MAC_MACHINE_ID, named_machine):
+            owner = registry.get(machine)
+            assert owner is not None
+            owner.presence._clock = lambda: NOW
+            owner.presence.record()
+        updates = CredentialUpdates(archive, path)
+        app = _transport_app(endpoint, updates)
+        app.state.executor_registry = registry
+        try:
+            async with serve_executor_app(app, tmp_path / "source-tls") as proxy:
+                assert proxy.upstream is not None
+                OWNED_ORIGINS.update((proxy.origin, proxy.upstream))
+                try:
+                    expected = await credential_transcript(proxy, path, named_machine)
+                finally:
+                    OWNED_ORIGINS.difference_update((proxy.origin, proxy.upstream))
+        finally:
+            await registry.close()
+        listener = socket.socket()
+        listener.bind(("127.0.0.1", 0))
+        listener.listen()
+        host: dict[str, Any] = {
+            "path": str(candidate), "archive": str(archive),
+            "archive_sha": hashlib.sha256(archive.read_bytes()).hexdigest(),
+            "ready": str(tmp_path / "ready.json"), "state": str(tmp_path / "state.json"),
+            "continuation": str(tmp_path / "unused.json"), "fd": listener.fileno(),
+            "auth_mode": True,
+        }
+        spec = tmp_path / "host.json"
+        spec.write_text(json.dumps(host))
+        process = subprocess.Popen(
+            ["node", str(ROOT / "server/executor/testing/app_transport.ts"), str(spec)],
+            cwd=ROOT, env={**homes, "PATH": os.environ["PATH"], "TMPDIR": str(tmp_path),
+                           "PLAN_TEST_MODE": "1", "PLAN_SERVER_URL": "http://127.0.0.1:0"},
+            stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            text=True, pass_fds=(listener.fileno(),), start_new_session=True,
+        )
+        try:
+            async with asyncio.timeout(10):
+                while not Path(host["ready"]).exists():
+                    assert process.poll() is None, process.communicate()
+                    await asyncio.sleep(0.01)
+            ready = json.loads(Path(host["ready"]).read_text())
+            assert (ready["address"], ready["port"]) == listener.getsockname()
+            with isolated_https_proxy(
+                tmp_path / "candidate-tls", f"http://127.0.0.1:{ready['port']}"
+            ) as proxy:
+                assert proxy.upstream is not None
+                OWNED_ORIGINS.update((proxy.origin, proxy.upstream))
+                try:
+                    actual = await credential_transcript(proxy, candidate, named_machine)
+                finally:
+                    OWNED_ORIGINS.difference_update((proxy.origin, proxy.upstream))
+            stdout, stderr = await asyncio.to_thread(process.communicate, "close\n", timeout=10)
+            assert process.returncode == 0, stdout + stderr
+            final = json.loads(Path(host["state"]).read_text())
+            assert actual == expected
+            assert final == {"reports": updates.reports, "credentials": credential_rows(path)}
+            assert [report[0] for report in updates.reports] == [
+                ORIGINAL_MAC_MACHINE_ID, ORIGINAL_MAC_MACHINE_ID, ORIGINAL_MAC_MACHINE_ID,
+                named_machine, ORIGINAL_MAC_MACHINE_ID,
+            ]
+            assert [report[1] for report in updates.reports] == [
+                "darwin", "darwin", "darwin", "linux", "darwin",
+            ]
+            # The recording service sees open authority. The confirmed response sees its commit.
+            assert all(
+                row["legacy_closed_at_ms"] is None
+                for report in updates.reports for row in report[4]
+                if row["machine_id"] == ORIGINAL_MAC_MACHINE_ID
+            )
+            return {"answers": actual, **final}
+        finally:
+            listener.close()
+            if process.poll() is None:
+                os.killpg(process.pid, signal.SIGKILL)
+                process.wait(timeout=5)
+
+    with (
+        synthetic_home_environment(homes),
+        patch("planner.executor.vps_presence.now_ms", return_value=NOW),
+        patch("planner.machines.executor_credentials.time.time_ns", return_value=NOW * 1_000_000),
+    ):
+        evidence = asyncio.run(asyncio.wait_for(run(), 35))
+    if directory := request.config.getoption("--compare-report-dir"):
+        target = Path(directory) / "unit-22-credential-update-routes.json"
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(json.dumps({
+            "elapsed_seconds": time.perf_counter() - started,
+            "boundary": "Existing TLS peer: machine authentication, selector, and handover commit",
+            **evidence,
+        }, indent=2) + "\n")
