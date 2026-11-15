@@ -100,12 +100,26 @@ export interface AttentionEdge {
   subject: Principal;
   subject_label: string;
   occurred_at: number;
+  message?: NotificationMessage | null;
+  stage_label?: string | null;
+}
+export interface NotificationReply {
+  conversation_id: string;
+  message_id: string;
+  recipient_kind: string;
+  recipient_id: string;
+}
+export interface NotificationMessage {
+  sender_label: string;
+  preview: string;
+  reply: NotificationReply | null;
 }
 export interface NotificationIntent {
   title: string;
   body: string;
   route: string;
   tag: string;
+  reply: NotificationReply | null;
 }
 export interface PushSubscription {
   subscription_id: string;

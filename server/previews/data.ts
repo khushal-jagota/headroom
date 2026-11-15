@@ -28,10 +28,16 @@ export function eligibility(sql: ReadSql, ticket_id: string): TicketEligibility 
 type PreviewRow = Omit<PreviewRecord, 'process'> & {
   boot_id: string | null;
   pid: number | null;
-  start_ticks: number | null;
+  start_ticks: string | null;
   listener_inode: string | null;
   port: number | null;
 };
+function stored_integer(value: string): number | bigint {
+  const integer = BigInt(value);
+  return integer <= BigInt(Number.MAX_SAFE_INTEGER) && integer >= BigInt(Number.MIN_SAFE_INTEGER)
+    ? Number(integer)
+    : integer;
+}
 export function from_row(row: PreviewRow): PreviewRecord {
   return {
     ticket_id: row.ticket_id,
@@ -48,11 +54,8 @@ export function from_row(row: PreviewRow): PreviewRecord {
         : {
             boot_id: row.boot_id!,
             pid: row.pid,
-            start_ticks: row.start_ticks!,
-            listener_inode:
-              BigInt(row.listener_inode!) <= BigInt(Number.MAX_SAFE_INTEGER)
-                ? Number(row.listener_inode)
-                : BigInt(row.listener_inode!),
+            start_ticks: stored_integer(row.start_ticks!),
+            listener_inode: stored_integer(row.listener_inode!),
             port: row.port!,
             worktree: row.worktree,
           },
@@ -62,11 +65,11 @@ export function get(sql: ReadSql, ticket_id: string, generation?: string): Previ
   const row =
     generation === undefined
       ? sql.get<PreviewRow>(
-          `SELECT *,CAST(listener_inode AS TEXT) AS listener_inode FROM ${TABLE} WHERE ticket_id=? ORDER BY created_at DESC, rowid DESC LIMIT 1`,
+          `SELECT *,CAST(start_ticks AS TEXT) AS start_ticks,CAST(listener_inode AS TEXT) AS listener_inode FROM ${TABLE} WHERE ticket_id=? ORDER BY created_at DESC, rowid DESC LIMIT 1`,
           [ticket_id],
         )
       : sql.get<PreviewRow>(
-          `SELECT *,CAST(listener_inode AS TEXT) AS listener_inode FROM ${TABLE} WHERE ticket_id=? AND generation=?`,
+          `SELECT *,CAST(start_ticks AS TEXT) AS start_ticks,CAST(listener_inode AS TEXT) AS listener_inode FROM ${TABLE} WHERE ticket_id=? AND generation=?`,
           [ticket_id, generation],
         );
   return row ? from_row(row) : null;
@@ -74,7 +77,7 @@ export function get(sql: ReadSql, ticket_id: string, generation?: string): Previ
 export const live = (sql: ReadSql): PreviewRecord[] =>
   sql
     .all<PreviewRow>(
-      `SELECT *,CAST(listener_inode AS TEXT) AS listener_inode FROM ${TABLE} WHERE state!='ended'`,
+      `SELECT *,CAST(start_ticks AS TEXT) AS start_ticks,CAST(listener_inode AS TEXT) AS listener_inode FROM ${TABLE} WHERE state!='ended'`,
     )
     .map(from_row);
 export function end(tx: TransactionSql, generation: string, reason: string): void {

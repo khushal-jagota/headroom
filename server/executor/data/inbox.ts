@@ -17,7 +17,10 @@ import { same_version } from '../mac/file_metadata.ts';
 import { MAX_FILES_PER_PUBLICATION_TRANSACTION } from '../configuration.ts';
 import { as_object, decode_json, decode_value, ExecutorValidationError } from '../protocol.ts';
 import { FileStaging } from '../vps_files.ts';
-import { require_current_incarnation_in_transaction } from '../vps_presence_store.ts';
+import {
+  require_current_incarnation_in_transaction,
+  require_incarnation_owner,
+} from '../vps_presence_store.ts';
 import { open_child_assignment } from './child_custody.ts';
 import { is_record as is_json_object } from '../../core/records.ts';
 import { artifact_changed, PublicationGroup } from './publication.ts';
@@ -74,6 +77,7 @@ function record(value: WireValue<'AcceptanceReceipt'>): string {
 interface InboxPosition {
   sequence: string;
   result_json: string;
+  machine_id: string;
 }
 export interface AcceptOptions {
   identity: ExecutorIdentity;
@@ -86,6 +90,43 @@ export class InboxStore {
   constructor(database: Database, staging: FileStaging) {
     this.database = database;
     this.staging = staging;
+  }
+  get machine_id(): string {
+    return this.staging.machine_id;
+  }
+  require_sender(identity: ExecutorIdentity): void {
+    this.database.read((sql) =>
+      require_current_incarnation_in_transaction(
+        sql,
+        identity.executor_incarnation,
+        this.machine_id,
+      ),
+    );
+  }
+  require_envelope(envelope: WireValue<'QueuedEnvelope'>, identity: ExecutorIdentity): void {
+    const child = decode_value(InboxStore.payload_child(envelope.payload), 'ChildReference');
+    this.database.read((sql) => {
+      require_current_incarnation_in_transaction(
+        sql,
+        identity.executor_incarnation,
+        this.machine_id,
+      );
+      this.require_child(sql, envelope, child);
+    });
+  }
+  private static payload_child(payload: WireValue<'JsonObject'>): WireValue<'JsonObject'> | null {
+    if (is_json_object(payload.child)) return payload.child;
+    const ask = payload.ask;
+    return is_json_object(ask) && is_json_object(ask.child) ? ask.child : null;
+  }
+  private require_child(
+    sql: ReadSql,
+    envelope: WireValue<'QueuedEnvelope'>,
+    child: WireValue<'ChildReference'>,
+  ): void {
+    require_incarnation_owner(sql, child.executor_incarnation, this.machine_id);
+    if (child.conversation_id !== envelope.conversation_id)
+      throw new PlannerError('agent_forbidden', 'item belongs to another conversation');
   }
   static receipt(row: { result_json: string }): WireValue<'AcceptanceReceipt'> {
     return decode_json(row.result_json, 'AcceptanceReceipt');
@@ -113,7 +154,11 @@ export class InboxStore {
     now_ms: number,
     options: AcceptOptions,
   ): readonly [WireValue<'AcceptanceReceipt'>, boolean] {
-    require_current_incarnation_in_transaction(tx, options.identity.executor_incarnation);
+    require_current_incarnation_in_transaction(
+      tx,
+      options.identity.executor_incarnation,
+      this.machine_id,
+    );
     const previous = this.prior_receipt(tx, envelope, options.identity);
     if (previous !== null) return [previous, false];
     const check_files = options.check_files ?? true;
@@ -155,7 +200,7 @@ export class InboxStore {
     options: { dispatching?: boolean } = {},
   ): void {
     tx.run(
-      'INSERT INTO mac_inbox_positions(sender_id,conversation_id,sequence,submission_id,disposition,result_json) VALUES(?,?,?,?,?,?) ON CONFLICT(sender_id,conversation_id) DO UPDATE SET sequence=excluded.sequence,submission_id=excluded.submission_id,disposition=excluded.disposition,result_json=excluded.result_json',
+      'INSERT INTO mac_inbox_positions(sender_id,conversation_id,sequence,submission_id,disposition,result_json,machine_id) VALUES(?,?,?,?,?,?,?) ON CONFLICT(sender_id,conversation_id) DO UPDATE SET sequence=excluded.sequence,submission_id=excluded.submission_id,disposition=excluded.disposition,result_json=excluded.result_json',
       [
         envelope.sender_id,
         envelope.conversation_id,
@@ -163,6 +208,7 @@ export class InboxStore {
         envelope.submission_id,
         options.dispatching ? 'dispatching' : receipt.disposition,
         record(receipt),
+        this.machine_id,
       ],
     );
   }
@@ -175,12 +221,18 @@ export class InboxStore {
   prior_receipt(
     sql: ReadSql,
     envelope: WireValue<'QueuedEnvelope'>,
-    _identity: ExecutorIdentity,
+    identity: ExecutorIdentity,
   ): WireValue<'AcceptanceReceipt'> | null {
+    require_current_incarnation_in_transaction(sql, identity.executor_incarnation, this.machine_id);
+    const reference = InboxStore.payload_child(envelope.payload);
+    if (reference !== null)
+      this.require_child(sql, envelope, decode_value(reference, 'ChildReference'));
     const previous = sql.get<InboxPosition>(
-      'SELECT CAST(sequence AS TEXT) AS sequence,result_json FROM mac_inbox_positions WHERE sender_id=? AND conversation_id=?',
+      'SELECT CAST(sequence AS TEXT) AS sequence,result_json,machine_id FROM mac_inbox_positions WHERE sender_id=? AND conversation_id=?',
       [envelope.sender_id, envelope.conversation_id],
     );
+    if (previous && previous.machine_id !== this.machine_id)
+      throw new PlannerError('agent_forbidden', 'receipt belongs to another machine');
     if (!previous || envelope.sequence > counter(previous.sequence)) return null;
     const stored = InboxStore.receipt(previous);
     if (envelope.sequence === counter(previous.sequence)) {
@@ -318,7 +370,11 @@ export class InboxStore {
         let failed = false;
         try {
           const versions = this.database.write((tx) => {
-            require_current_incarnation_in_transaction(tx, identity.executor_incarnation);
+            require_current_incarnation_in_transaction(
+              tx,
+              identity.executor_incarnation,
+              this.machine_id,
+            );
             if (this.prior_receipt(tx, envelope, identity) !== null)
               throw new PlannerError('retry_later', 'This item was saved meanwhile');
             this.require_file_owner(tx, envelope);

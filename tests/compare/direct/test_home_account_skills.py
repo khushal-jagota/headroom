@@ -10,6 +10,7 @@ import json
 import os
 import shutil
 import subprocess
+import sys
 import time
 from pathlib import Path
 from typing import Any
@@ -35,7 +36,28 @@ def _reference(root: Path) -> dict[str, Any]:
     )
     (homes[0] / "skills/gone").symlink_to(first / "skills/gone")
     (homes[0] / "skills/user").mkdir()
+    byte_entries: list[bytes] = []
+    byte_inodes: list[int] = []
+    byte_foreign_target = b""
+    if sys.platform == "linux":
+        target = os.fsencode(homes[0] / "skills")
+        byte_entries = [target + b"/\x80", target + b"/\x81", target + "/\ufffd".encode()]
+        byte_foreign_target = os.fsencode(root / "foreign") + b"/\x81"
+        Path(os.fsdecode(byte_entries[0])).write_text("raw foreign file")
+        os.symlink(byte_foreign_target, byte_entries[1])
+        Path(os.fsdecode(byte_entries[2])).write_text("Unicode sibling")
+        os.symlink(os.fsencode(first / "skills") + b"/\x82", target + b"/\x82")
+        byte_inodes = [os.lstat(path).st_ino for path in byte_entries]
     repeated = provision_account_skills(first, homes)
+    byte_entries_unchanged = [
+        os.lstat(path).st_ino == byte_inodes[index] and (
+            os.readlink(path) == byte_foreign_target if index == 1
+            else Path(os.fsdecode(path)).read_text() == (
+                "raw foreign file" if index == 0 else "Unicode sibling"
+            )
+        )
+        for index, path in enumerate(byte_entries)
+    ]
     stable = inode == link.lstat().st_ino
     other = provision_account_skills(second, (root / "unused", *homes))
     legacy = root / "legacy"
@@ -44,6 +66,14 @@ def _reference(root: Path) -> dict[str, Any]:
     converted = provision_account_skills(first, (legacy,))
     (homes[0] / "skills/panels-rollover").symlink_to(root / "foreign")
     conflict = provision_account_skills(first, homes)
+    unreadable = root / "unreadable"
+    unreadable.write_text("not a directory")
+    unreadable_ownership = "belongs to unreadable ownership (" in (
+        account_skill_provisioning_conflict(unreadable, homes) or ""
+    )
+    unreadable_publication = "belongs to an unreadable or conflicting account entry (" in (
+        provision_account_skills(unreadable, homes) or ""
+    )
 
     def tree(path: Path) -> list[Any]:
         values = []
@@ -62,10 +92,13 @@ def _reference(root: Path) -> dict[str, Any]:
         untouched=untouched,
         published=published,
         repeated=repeated,
+        byte_entries_unchanged=byte_entries_unchanged,
         stable=stable,
         other=other.replace(str(root), "<root>") if other else None,
         converted=converted,
         conflict=conflict.replace(str(root), "<root>") if conflict else None,
+        unreadable_ownership=unreadable_ownership,
+        unreadable_publication=unreadable_publication,
         tree=tree(root),
     )
 

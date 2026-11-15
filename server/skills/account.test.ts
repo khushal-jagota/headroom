@@ -73,8 +73,16 @@ test('account publication preflights all homes, reconciles only owned links, and
   expect(provision_account_skills(parent, [legacy])).toBeNull();
   expect(lstatSync(join(legacy, 'skills')).isDirectory()).toBe(true);
   expect(readlinkSync(join(legacy, 'skills', 'panels'))).toBe(join(parent, 'skills', 'panels'));
+  const unreadable = join(root, 'unreadable');
+  writeFileSync(unreadable, 'not a directory');
+  expect(account_skill_provisioning_conflict(unreadable, homes)).toContain(
+    'belongs to unreadable ownership (',
+  );
+  expect(provision_account_skills(unreadable, homes)).toContain(
+    'belongs to an unreadable or conflicting account entry (',
+  );
 });
-test('startup honors provider homes and provisioning choice, and a conflict warns without aborting', async () => {
+test('startup honors provider homes and provisioning choice in test mode, and a conflict warns without aborting', async () => {
   const { root, parent, homes } = fixture();
   for (const [key, value] of Object.entries({
     HOME: root,
@@ -94,7 +102,7 @@ test('startup honors provider homes and provisioning choice, and a conflict warn
   ).toThrow('invalid boolean');
   expect(EXTERNAL_RUNTIME_ENVIRONMENT_KEYS.has('CODEX_HOME')).toBe(true);
   expect(EXTERNAL_RUNTIME_ENVIRONMENT_KEYS.has('CLAUDE_CONFIG_DIR')).toBe(true);
-  config.test_mode = false;
+  config.test_mode = true;
   await publish_worker_skills(config);
   expect(readlinkSync(join(homes[1], 'skills', 'panels'))).toBe(join(parent, 'skills', 'panels'));
   rmSync(join(homes[1], 'skills', 'panels'));
@@ -107,9 +115,8 @@ test('startup honors provider homes and provisioning choice, and a conflict warn
   await publish_worker_skills(config);
   expect(warn).not.toHaveBeenCalled();
   config.provision_account_skills = true;
-  config.test_mode = true;
   await publish_worker_skills(config);
-  expect(warn).not.toHaveBeenCalled();
+  expect(warn).toHaveBeenCalledWith(expect.stringContaining('one instance per OS account'));
 });
 
 test('startup publication keeps the event loop responsive while a provider lock is held', async () => {

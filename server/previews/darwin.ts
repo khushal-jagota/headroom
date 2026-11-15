@@ -128,9 +128,7 @@ export class DarwinProcessInspector implements ProcessInspector {
         'Listener cwd or ownership is outside the Ticket preview worktree.',
         410,
       );
-    const birth = Number(seconds * 1000000n + micros);
-    if (!Number.isSafeInteger(birth))
-      throw new PreviewError('Mac process birth exceeds exact storage.', 410);
+    const birth = seconds * 1000000n + micros;
     this.#boot ??= this.observe(() => this.native.boot());
     if (this.native === kernel && !/^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(this.#boot))
       throw new PreviewError('Mac boot evidence is unavailable.', 410);
@@ -139,7 +137,7 @@ export class DarwinProcessInspector implements ProcessInspector {
     return {
       boot_id: this.#boot,
       pid,
-      start_ticks: birth,
+      start_ticks: birth <= BigInt(Number.MAX_SAFE_INTEGER) ? Number(birth) : birth,
       listener_inode:
         generation <= BigInt(Number.MAX_SAFE_INTEGER) ? Number(generation) : generation,
       port,

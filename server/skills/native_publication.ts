@@ -12,6 +12,7 @@ import {
 import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { path_is_within } from '../core/path_containment.ts';
 import { randomUUID } from 'node:crypto';
+import { decode_native_path, native_path_bytes } from '../executor/mac/platform.ts';
 export const RETIRED_PANELS_SKILL_NAMES = new Set([
   'panels-rollover',
   'panels-sprint-planning',
@@ -36,7 +37,7 @@ function realExisting(path: string): string {
 }
 function stat(path: string) {
   try {
-    return lstatSync(path);
+    return lstatSync(native_path_bytes(path));
   } catch (e) {
     if ((e as NodeJS.ErrnoException).code !== 'ENOENT') throw e;
     return null;
@@ -141,7 +142,9 @@ export function resolve_native_skill_path(path: string, active = new Set<string>
     if (stat(candidate)?.isSymbolicLink()) {
       if (active.has(candidate)) throw new Error(`symbolic link loop: ${candidate}`);
       active.add(candidate);
-      const target = readlinkSync(candidate);
+      const target = decode_native_path(
+        readlinkSync(native_path_bytes(candidate), { encoding: 'buffer' }),
+      );
       current = resolve_native_skill_path(
         isAbsolute(target) ? target : current + '/' + target,
         active,

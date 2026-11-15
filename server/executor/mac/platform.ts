@@ -63,24 +63,89 @@ export function require_relative_component(name: string): void {
     throw new ExecutorValidationError('unsafe directory component');
 }
 
+/** Linux represents undecodable filename bytes as their reversible low-surrogate escapes. */
+export function decode_native_path(bytes: Buffer): string {
+  try {
+    return new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(bytes);
+  } catch (error) {
+    if (native_platform() !== 'linux') throw error;
+  }
+  let value = '';
+  for (let offset = 0; offset < bytes.length;) {
+    const first = bytes[offset]!;
+    let length =
+      first < 0x80
+        ? 1
+        : first >= 0xc2 && first <= 0xdf
+          ? 2
+          : first >= 0xe0 && first <= 0xef
+            ? 3
+            : first >= 0xf0 && first <= 0xf4
+              ? 4
+              : 0;
+    if (offset + length > bytes.length) length = 0;
+    for (let index = 1; index < length; index++)
+      if ((bytes[offset + index]! & 0xc0) !== 0x80) length = 0;
+    const second = bytes[offset + 1]!;
+    if (
+      (first === 0xe0 && second < 0xa0) ||
+      (first === 0xed && second >= 0xa0) ||
+      (first === 0xf0 && second < 0x90) ||
+      (first === 0xf4 && second >= 0x90)
+    )
+      length = 0;
+    if (length) {
+      value += bytes.subarray(offset, offset + length).toString('utf8');
+      offset += length;
+    } else {
+      value += String.fromCharCode(0xdc00 + first);
+      offset++;
+    }
+  }
+  return value;
+}
+/** Node filesystem calls accept these bytes without UTF-8 replacement of escaped names. */
+export function native_path_bytes(path: string): Buffer {
+  if (native_platform() !== 'linux') return Buffer.from(path);
+  const pieces: Buffer[] = [];
+  let text = '';
+  for (const character of path) {
+    const code = character.charCodeAt(0);
+    if (character.length === 1 && code >= 0xdc80 && code <= 0xdcff) {
+      if (text) pieces.push(Buffer.from(text));
+      text = '';
+      pieces.push(Buffer.from([code - 0xdc00]));
+    } else text += character;
+  }
+  if (text) pieces.push(Buffer.from(text));
+  return Buffer.concat(pieces);
+}
+function native_path_argument(path: string): string | Buffer {
+  if (path.includes('\0')) throw new ExecutorValidationError('embedded null byte');
+  if (native_platform() === 'darwin') return path;
+  return Buffer.concat([native_path_bytes(path), Buffer.from([0])]);
+}
+
 /** openat does not inherit Node openSync's automatic close-on-exec behavior. */
 export function open_relative(parent: number, name: string, flags: number, mode = 0): number {
   require_relative_component(name);
   const close_on_exec = native_platform() === 'darwin' ? 0x1000000 : 0x80000;
   const openat = native('int openat(int dirfd, const char *path, int flags, ...)');
-  return checked('openat', () => openat(parent, name, flags | close_on_exec, 'int', mode));
+  return checked('openat', () =>
+    openat(parent, native_path_argument(name), flags | close_on_exec, 'int', mode),
+  );
 }
 export function mkdir_relative(parent: number, name: string, mode = 0o700): void {
   require_relative_component(name);
   const mode_type = native_platform() === 'darwin' ? 'uint16_t' : 'unsigned int';
   const mkdirat = native(`int mkdirat(int dirfd, const char *path, ${mode_type} mode)`);
-  checked('mkdirat', () => mkdirat(parent, name, mode));
+  checked('mkdirat', () => mkdirat(parent, native_path_argument(name), mode));
 }
 export function unlink_relative(parent: number, name: string, missing_ok = false): void {
   require_relative_component(name);
   const unlinkat = native('int unlinkat(int dirfd, const char *path, int flags)');
   try {
-    checked('unlinkat', () => unlinkat(parent, name, 0));
+    checked('unlinkat', () => unlinkat(parent, native_path_argument(name), 0));
   } catch (error) {
     if (!missing_ok || (error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
   }
@@ -90,7 +155,7 @@ export function rmdir_relative(parent: number, name: string): void {
   require_relative_component(name);
   const unlinkat = native('int unlinkat(int dirfd, const char *path, int flags)');
   const remove_directory = native_platform() === 'darwin' ? 0x80 : 0x200;
-  checked('unlinkat', () => unlinkat(parent, name, remove_directory));
+  checked('unlinkat', () => unlinkat(parent, native_path_argument(name), remove_directory));
 }
 /** Enumeration opens only dot relative to the held inode and retains the stream until close succeeds. */
 const directory_readers = new Set<() => void>();
@@ -154,7 +219,7 @@ export function read_directory_names(descriptor: number): string[] {
         (darwin && end !== Number(koffi.decode(entry, 18, 'uint16_t')))
       )
         throw new Error('Invalid native directory name length.');
-      const name = new TextDecoder('utf-8', { fatal: true }).decode(bytes.subarray(0, end));
+      const name = decode_native_path(bytes.subarray(0, end));
       if (name !== '.' && name !== '..') {
         require_relative_component(name);
         names.push(name);
@@ -174,7 +239,9 @@ export function readlink_relative(parent: number, name: string): string | null |
   );
   let length: number;
   try {
-    length = checked('readlinkat', () => Number(readlinkat(parent, name, buffer, buffer.length)));
+    length = checked('readlinkat', () =>
+      Number(readlinkat(parent, native_path_argument(name), buffer, buffer.length)),
+    );
   } catch (error) {
     const code = (error as NodeJS.ErrnoException).code;
     if (code === 'ENOENT') return undefined;
@@ -182,12 +249,14 @@ export function readlink_relative(parent: number, name: string): string | null |
     throw error;
   }
   if (length === buffer.length) throw new Error('Native symbolic link target exceeds its buffer.');
-  return new TextDecoder('utf-8', { fatal: true }).decode(buffer.subarray(0, length));
+  return decode_native_path(buffer.subarray(0, length));
 }
 export function symlink_relative(parent: number, name: string, target: string): void {
   require_relative_component(name);
   const symlinkat = native('int symlinkat(const char *target, int dirfd, const char *path)');
-  checked('symlinkat', () => symlinkat(target, parent, name));
+  checked('symlinkat', () =>
+    symlinkat(native_path_argument(target), parent, native_path_argument(name)),
+  );
 }
 export function rename_relative(
   source_parent: number,
@@ -200,7 +269,14 @@ export function rename_relative(
   const renameat = native(
     'int renameat(int source_dirfd, const char *source, int target_dirfd, const char *target)',
   );
-  checked('renameat', () => renameat(source_parent, source, target_parent, target));
+  checked('renameat', () =>
+    renameat(
+      source_parent,
+      native_path_argument(source),
+      target_parent,
+      native_path_argument(target),
+    ),
+  );
 }
 /** Directory flushes deliberately avoid libuv's Darwin full-flush/fallback policy. */
 export function sync_directory_descriptor(descriptor: number): void {

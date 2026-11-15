@@ -1,7 +1,9 @@
 import { createHash, generateKeyPairSync } from 'node:crypto';
+import { NOTIFICATION_FRESHNESS_SECONDS } from './config.ts';
 import type { ReadSql, TransactionSql } from '../core/database/contracts.ts';
 import type {
   AttentionEdge,
+  NotificationMessage,
   EdgeKey,
   PendingDelivery,
   PushSubscription,
@@ -17,6 +19,7 @@ import {
   conversation_attention,
   NOTHING_WAITING,
   reconcile_attention as reconcile_source_attention,
+  TASK_ALERT_IS_CURRENT,
 } from './attention.ts';
 import { workflow_from_row } from '../worker_types/store.ts';
 import { decide_notification } from './logic/policy.ts';
@@ -153,6 +156,7 @@ export function reconcile_attention(sql: TransactionSql): void {
     ceiling_holder: string;
     conversation_id: string | null;
     updated_at: number;
+    is_backlogged: number;
   }>('SELECT * FROM tickets ORDER BY id')) {
     const conversation = conversations.get(row.conversation_id ?? '') ?? NOTHING_WAITING;
     const holder = JSON.parse(row.ceiling_holder);
@@ -161,13 +165,15 @@ export function reconcile_attention(sql: TransactionSql): void {
       : null;
     const flags = {
       awaiting_reply: conversation.unread_message,
-      awaiting_answer: conversation.pending_ask,
+      awaiting_answer: conversation.pending_ask && !row.is_backlogged,
       awaiting_approval:
         row.worker_step_claim !== 'errored' &&
         parked !== null &&
         holder.kind === 'owner' &&
-        holder.id === 'owner',
+        holder.id === 'owner' &&
+        !row.is_backlogged,
       assigned:
+        !row.is_backlogged &&
         workflow_from_row(row).stages.find((s) => s.id === row.stage)?.ownership_mode === 'user',
       errored: row.worker_step_claim === 'errored' || conversation.errored,
     };
@@ -182,7 +188,7 @@ export function reconcile_attention(sql: TransactionSql): void {
           conversation.occurred_at
             ? conversation.occurred_at
             : notification_type === 'awaiting_approval' && parked
-              ? parked.created_at
+              ? Math.max(parked.created_at, row.updated_at)
               : row.updated_at,
       });
   }
@@ -215,9 +221,15 @@ export function queue_deliveries(sql: TransactionSql, now: number): number {
   prune_missing_subjects(sql);
   const preferences = resolved_preferences(sql);
   const subscriptions = active_subscription_ids(sql);
-  const rows = sql.all<EdgeKey & { occurred_at: number }>(
-    `SELECT subject_kind,subject_id,notification_type,generation,occurred_at
-     FROM notification_attention_edges WHERE decided=0 AND subject_kind IN ('ticket','manager','agent')
+  const rows = sql.all<
+    EdgeKey & {
+      occurred_at: number;
+      context_json: string | null;
+      task_alert_is_current: number;
+    }
+  >(
+    `SELECT subject_kind,subject_id,notification_type,generation,occurred_at,context_json,${TASK_ALERT_IS_CURRENT} AS task_alert_is_current
+     FROM notification_attention_edges d WHERE decided=0 AND subject_kind IN ('ticket','manager','agent')
      ORDER BY occurred_at,subject_kind,subject_id,notification_type,generation`,
   );
   let decided = 0;
@@ -246,14 +258,26 @@ export function queue_deliveries(sql: TransactionSql, now: number): number {
         : subject.kind === 'manager'
           ? 'managers'
           : 'chief_of_staff';
+    const context =
+      edge.context_json === null
+        ? {}
+        : (JSON.parse(edge.context_json) as {
+            subject_label?: string;
+            stage_label?: string;
+            message?: NotificationMessage;
+          });
     const attention: AttentionEdge = {
       key: edge,
       subject,
-      subject_label: label,
+      subject_label: context.subject_label ?? label,
+      stage_label: context.stage_label ?? null,
+      message: context.message ?? null,
       occurred_at: edge.occurred_at,
     };
     const intent = decide_notification(attention, {
-      enabled: preferences.get(preference_key(key, edge.notification_type)) ?? false,
+      enabled:
+        !!edge.task_alert_is_current &&
+        (preferences.get(preference_key(key, edge.notification_type)) ?? false),
     });
     if (intent) {
       queue_intent(sql, edge, intent, now);
@@ -289,7 +313,41 @@ export function queue_deliveries(sql: TransactionSql, now: number): number {
 export const SUBJECT_STILL_EXISTS = `((d.subject_kind='ticket' AND EXISTS (SELECT 1 FROM tickets WHERE id=d.subject_id))
   OR (d.subject_kind='manager' AND EXISTS (SELECT 1 FROM managers WHERE id=d.subject_id))
   OR (d.subject_kind='agent' AND EXISTS (SELECT 1 FROM agents WHERE agent_key=d.subject_id)))`;
-export function pending_deliveries(sql: ReadSql, now: number, limit = 50): PendingDelivery[] {
+const CURRENT_ATTENTION = `EXISTS (SELECT 1 FROM notification_attention_state a
+  JOIN notification_attention_edges e USING(subject_kind,subject_id,notification_type,generation)
+  WHERE a.subject_kind=d.subject_kind AND a.subject_id=d.subject_id
+    AND a.notification_type=d.notification_type AND a.generation=d.generation
+    AND a.active=1 AND e.occurred_at>?)`;
+export function expire_stale_deliveries(sql: TransactionSql, now: number, native = false): void {
+  const table = native ? 'notification_apns_deliveries' : 'notification_deliveries';
+  const cutoff = now - NOTIFICATION_FRESHNESS_SECONDS;
+  sql.run(
+    `UPDATE ${table} AS d SET status='expired'
+     WHERE status IN ('pending','retry') AND (created_at<=? OR NOT ${CURRENT_ATTENTION})`,
+    [cutoff, cutoff],
+  );
+}
+export function delivery_is_current(sql: ReadSql, edge: EdgeKey, now: number): boolean {
+  return !!sql.get(
+    `SELECT 1 FROM notification_attention_state a
+     JOIN notification_attention_edges e USING(subject_kind,subject_id,notification_type,generation)
+     WHERE a.subject_kind=? AND a.subject_id=? AND a.notification_type=?
+       AND a.generation=? AND a.active=1 AND e.occurred_at>?`,
+    [
+      edge.subject_kind,
+      edge.subject_id,
+      edge.notification_type,
+      edge.generation,
+      now - NOTIFICATION_FRESHNESS_SECONDS,
+    ],
+  );
+}
+export function pending_deliveries(
+  sql: TransactionSql,
+  now: number,
+  limit = 50,
+): PendingDelivery[] {
+  expire_stale_deliveries(sql, now);
   return sql
     .all<
       EdgeKey &
@@ -305,7 +363,7 @@ export function pending_deliveries(sql: ReadSql, now: number, limit = 50): Pendi
        s.subscription_id,s.endpoint,s.p256dh,s.auth
      FROM notification_deliveries d JOIN notification_push_subscriptions s ON s.subscription_id=d.subscription_id
      WHERE d.status IN ('pending','retry') AND d.next_attempt_at<=? AND s.disabled_at IS NULL
-       AND ${SUBJECT_STILL_EXISTS}
+       AND ${SUBJECT_STILL_EXISTS} AND ${TASK_ALERT_IS_CURRENT}
      ORDER BY d.next_attempt_at,d.subject_kind,d.subject_id,d.notification_type,d.generation LIMIT ?`,
       [now, limit],
     )
@@ -322,7 +380,7 @@ export function pending_deliveries(sql: ReadSql, now: number, limit = 50): Pendi
         p256dh: row.p256dh,
         auth: row.auth,
       },
-      intent: { title: row.title, body: row.body, route: row.route, tag: row.tag },
+      intent: { title: row.title, body: row.body, route: row.route, tag: row.tag, reply: null },
       attempts: row.attempts,
     }));
 }

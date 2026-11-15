@@ -73,6 +73,10 @@ function retained_fixture() {
     },
   ]);
   database.write((tx) => {
+    tx.run(
+      'INSERT INTO executor_incarnations(executor_incarnation,machine_id,first_leased_at_ms) VALUES(?,?,?)',
+      [incarnation, ORIGINAL_MAC_MACHINE_ID, Date.now() - 120000],
+    );
     write_ticket_conversation_start(tx, ticket.id, {
       conversation_id: 'kept',
       backend: 'codex',

@@ -20,6 +20,7 @@ import {
 } from './native_publication.ts';
 import {
   close_native_descriptor,
+  native_path_bytes,
   directory_open_flags,
   mkdir_relative,
   open_directory_descriptor,
@@ -45,7 +46,7 @@ export function account_skill_homes(
 }
 function stat(path: string) {
   try {
-    return lstatSync(path);
+    return lstatSync(native_path_bytes(path));
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
     return undefined;
@@ -97,7 +98,10 @@ export function account_skill_provisioning_conflict(
     }
     return null;
   } catch (error) {
-    return unreadable(parent, error);
+    return warning(
+      (error as NodeJS.ErrnoException)?.path || parent,
+      `unreadable ownership (${error instanceof Error ? error.message : String(error)})`,
+    );
   }
 }
 function same_directory(path: string, fd: number): void {
@@ -172,7 +176,10 @@ export function provision_account_skills(
             same_directory(target, fd);
             for (const name of read_directory_names(fd)) {
               const link = readlink_relative(fd, name);
-              if (typeof link !== 'string' || (!hidden.has(name) && existsSync(join(target, name))))
+              if (
+                typeof link !== 'string' ||
+                (!hidden.has(name) && existsSync(native_path_bytes(join(target, name))))
+              )
                 continue;
               same_directory(target, fd);
               if (

@@ -376,12 +376,18 @@ export function admit_notice_batch(
     .filter((row) => row.source_kind === 'proposal')
     .map((row) => obsolete_proposal(sql, row))
     .filter((value): value is ProposalNoticeSuppression => value !== null);
-  if (obsolete.length || stale.length) {
+  const paused = rows.some(
+    (row) =>
+      row.source_kind === 'proposal' &&
+      !!sql.get('SELECT 1 FROM tickets WHERE id=? AND is_backlogged=1', [row.ticket_id]),
+  );
+  if (obsolete.length || stale.length || paused) {
     for (const row of stale)
       sql.run('UPDATE manager_wakes SET closed_at=? WHERE id=?', [options.now, row.id]);
     for (const value of obsolete) retire_proposal(sql, value, options);
     const reasons = new Set<string>(obsolete.map((value) => value.reason));
     if (stale.length) reasons.add('source_failure_changed');
+    if (paused) reasons.add('ticket_backlogged');
     sql.run("UPDATE manager_wake_batches SET status='discarded',updated_at=? WHERE id=?", [
       options.now,
       batch.id,
@@ -433,7 +439,9 @@ export function claim_next_batch(
   retire_obsolete_source_notices(sql, options.now);
   const cutoff = options.automatic_tickets_created_after;
   const parameters = cutoff === undefined ? [options.now - 5] : [options.now - 5, cutoff];
-  const available = `w.closed_at IS NULL AND NOT EXISTS (
+  const available = `w.closed_at IS NULL
+    AND NOT (w.source_kind='proposal' AND EXISTS (SELECT 1 FROM tickets t WHERE t.id=w.ticket_id AND t.is_backlogged=1))
+    AND NOT EXISTS (
     SELECT 1 FROM manager_wake_batch_members m JOIN manager_wake_batches b ON b.id=m.batch_id
     WHERE m.wake_id=w.id AND b.status IN ('pending','offering','dispatching','accepted','uncertain'))
     AND NOT EXISTS (SELECT 1 FROM manager_wake_batch_members recent_m

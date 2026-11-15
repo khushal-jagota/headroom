@@ -26,9 +26,7 @@ export async function publish_worker_skills(config: Config): Promise<void> {
   const root = fileURLToPath(new URL('../../', import.meta.url));
   const installed = !!config.app_sha && resolve(root) === join(dirname(parent), 'app');
   const account_homes =
-    (config.provision_account_skills ?? installed) && !config.test_mode
-      ? account_skill_homes()
-      : null;
+    (config.provision_account_skills ?? installed) ? account_skill_homes() : null;
   if (config.workspace_root === null && account_homes === null) return;
   const input: SkillPublicationInput = { parent, workspace: config.workspace_root, account_homes };
   const worker = new Worker(new URL('./skill_publication_worker.ts', import.meta.url), {

@@ -351,6 +351,13 @@ def test_unit20_retained_dataset_cli(tmp_path: Path, request: pytest.FixtureRequ
             else:
                 evidence["numeric_ticket_human"].append(observed)
         evidence["numeric_ticket_proof_seconds"] = time.perf_counter() - ticket_started
+        evidence["deferral"] = {
+            name: _deferral_proof(handle, tmp_path, captures["numeric_ticket"])
+            for name, handle in (("python", reference), ("typescript", candidate_host))
+        }
+        deferred_python, deferred_typescript = evidence["deferral"].values()
+        assert deferred_python["responses"] == deferred_typescript["responses"]
+        assert deferred_python["snapshots"] == deferred_typescript["snapshots"]
         evidence["decision_seed_seconds"] = seed_seconds
         evidence["decision_operations"] = {
             name: _decision_operation_proof(handle, tmp_path, captures)
@@ -382,35 +389,9 @@ def _decision_operation_proof(
     }
 
     def retained_rows() -> dict[str, Any]:
-        with closing(sqlite3.connect(f"file:{handle.db_path}?mode=ro", uri=True)) as conn:
-            conn.row_factory = sqlite3.Row
-            conn.execute("BEGIN")
-            stored = {
-                table: [
-                    dict(row)
-                    for row in conn.execute(
-                        f"SELECT * FROM {table} WHERE "
-                        f"{'id' if table == 'tickets' else 'ticket_id'}=?",
-                        (ticket_id,),
-                    )
-                ]
-                for table in ("tickets", "ticket_decision_messages", "ticket_decision_operations")
-            }
-        # Decode stored JSON containers as the ordinary source-row comparison does.
-        containers = {
-            "field_values", "field_approvals", "pending_proposal", "ceiling_holder",
-            "workflow_json", "receipt_json",
-        }
-        return {
-            table: [
-                {
-                    key: json.loads(value) if key in containers and value is not None else value
-                    for key, value in row.items()
-                }
-                for row in values
-            ]
-            for table, values in stored.items()
-        }
+        return _ticket_source_rows(handle, ticket_id, (
+            "tickets", "ticket_decision_messages", "ticket_decision_operations",
+        ))
 
     with httpx.Client(trust_env=False, follow_redirects=False, timeout=30) as client:
         applied = client.post(path, json=command)
@@ -431,6 +412,90 @@ def _decision_operation_proof(
         assert envelopes[3] == {"receipt_contract": 1, "receipt": None}
         assert retained_rows() == saved
     return {"envelopes": envelopes, "rows": saved, "seconds": time.perf_counter() - started}
+
+
+def _ticket_source_rows(
+    handle: ServerHandle, ticket_id: str, tables: tuple[str, ...]
+) -> dict[str, Any]:
+    with closing(sqlite3.connect(f"file:{handle.db_path}?mode=ro", uri=True)) as conn:
+        conn.row_factory = sqlite3.Row
+        conn.execute("BEGIN")
+        stored = {}
+        for table in tables:
+            column = "subject_id" if table.startswith("notification_") else (
+                "id" if table == "tickets" else "ticket_id"
+            )
+            order = "notification_type,generation" if table.startswith("notification_") else (
+                "operation_id" if table == "ticket_decision_operations" else
+                "decision_id" if table == "ticket_decision_messages" else "id"
+            )
+            subject = " AND subject_kind='ticket'" if table.startswith("notification_") else ""
+            stored[table] = [dict(row) for row in conn.execute(
+                f"SELECT * FROM {table} WHERE {column}=?{subject} ORDER BY {order}", (ticket_id,),
+            )]
+    # Keep command/request identity bytes exact; decode ordinary document containers only.
+    containers = {
+        "field_values", "field_approvals", "pending_proposal", "ceiling_holder",
+        "workflow_json", "receipt_json", "context_json", "destination_json",
+    }
+    for values in stored.values():
+        for row in values:
+            for key in row.keys() & containers:
+                if row[key] is not None:
+                    row[key] = json.loads(row[key])
+    return stored
+
+
+
+def _deferral_proof(handle: ServerHandle, root: Path, ticket_id: str) -> dict[str, Any]:
+    """Defer/resume the existing proposal on both actual hosts before its receipt proof."""
+    started = time.perf_counter()
+    CliHost(handle, root).check()
+    tables = (
+        "tickets", "notification_attention_state", "notification_attention_edges",
+        "attention_gate_intervals",
+    )
+    snapshots = [_ticket_source_rows(handle, ticket_id, tables)]
+    responses = []
+    with httpx.Client(trust_env=False, follow_redirects=False, timeout=30) as client:
+        for action in ("backlog", "resume"):
+            answer = client.post(handle.base + f"/api/tickets/{ticket_id}/{action}", json={})
+            assert answer.status_code == 200, answer.text
+            responses.append(answer.json())
+            snapshots.append(_ticket_source_rows(handle, ticket_id, tables))
+    before, paused, resumed = snapshots
+    original = before["tickets"][0]
+    for index, snapshot in enumerate(snapshots):
+        ticket = snapshot["tickets"][0]
+        assert bool(ticket["is_backlogged"]) is (index == 1)
+        for key in (
+            "pending_proposal", "pending_proposal_revision", "field_values",
+            "field_approvals", "stage", "ceiling", "ceiling_holder",
+        ):
+            assert ticket[key] == original[key]
+    for kind in ("assigned", "awaiting_approval"):
+        states = [
+            next(row for row in state["notification_attention_state"]
+                 if row["notification_type"] == kind)
+            for state in snapshots
+        ]
+        assert [state["active"] for state in states] == [1, 0, 1]
+        generation = states[0]["generation"]
+        assert [state["generation"] for state in states] == [generation, generation, generation + 1]
+    assert paused["notification_attention_edges"] == before["notification_attention_edges"]
+    assert len(resumed["notification_attention_edges"]) == (
+        len(before["notification_attention_edges"]) + 2
+    )
+    for row in before["notification_attention_edges"]:
+        assert row in resumed["notification_attention_edges"]
+    assert len(paused["attention_gate_intervals"]) == len(before["attention_gate_intervals"])
+    assert paused["attention_gate_intervals"][-1]["closed_at"] is not None
+    assert len(resumed["attention_gate_intervals"]) == len(before["attention_gate_intervals"]) + 1
+    assert resumed["attention_gate_intervals"][-1]["closed_at"] is None
+    return {
+        "responses": responses, "snapshots": snapshots,
+        "seconds": time.perf_counter() - started,
+    }
 
 
 def _runtime_proof(
@@ -882,6 +947,26 @@ def test_unit20_real_preview_cli(tmp_path: Path, request: pytest.FixtureRequest)
                 results.append(modes)
                 assert child.poll() is None
         assert results[0] == results[1] == results[2], evidence
+        # Reuse these populated hosts to prove exact integers through SQLite and the real route.
+        exact = 2**62 + 567
+        integer_responses = []
+        for handle in (reference, candidate):
+            with closing(sqlite3.connect(handle.db_path)) as connection:
+                connection.execute(
+                    "UPDATE ticket_application_previews SET start_ticks=?,listener_inode=? "
+                    "WHERE ticket_id=?",
+                    (exact, exact, ticket["id"]),
+                )
+                connection.commit()
+            current = fixtures.api(
+                handle, "GET", "/api/previews", identity={"ticket_id": ticket["id"]}
+            )
+            assert current["process"]["start_ticks"] == exact
+            assert current["process"]["listener_inode"] == exact
+            assert type(current["process"]["start_ticks"]) is int
+            integer_responses.append(current["process"])
+        assert integer_responses[0] == integer_responses[1]
+        evidence["exact_preview_integers"] = integer_responses
     finally:
         for handle in reversed(handles):
             _stop_server(handle)

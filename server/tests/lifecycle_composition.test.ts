@@ -5,7 +5,17 @@ import { afterEach, expect, test, vi } from 'vitest';
 import { EventEmitter } from 'node:events';
 import type { Socket } from 'node:net';
 import type { ServerResponse } from 'node:http';
-import { create as create_ticket, fixture, fixture_path, now, read } from './ticket_fixture.ts';
+import {
+  create as create_ticket,
+  fixture,
+  fixture_path,
+  now,
+  read,
+  propose,
+} from './ticket_fixture.ts';
+import { OWNER } from '../core/contracts.ts';
+import { set_ticket_backlog } from '../tickets/data/index.ts';
+import { capture_gate } from '../attention/history.ts';
 import { SCHEMA_VERSION } from '../navigation/contracts.ts';
 import { createDatabase } from '../core/database/index.ts';
 import { record_attention } from '../notifications/attention.ts';
@@ -169,6 +179,293 @@ function done<T>() {
   });
   return { promise, resolve };
 }
+
+test('both delivery channels expire at 300 seconds and reject inactive or superseded attention', () => {
+  const began = performance.now();
+  const { context, database } = setup(),
+    time = context.clock.nowUnix();
+  const tickets = ['current', 'inactive', 'superseded'].map((body) =>
+    propose(database, create(database, { now: time }), body, time),
+  );
+  database.write((sql) => {
+    notificationData.initialize_notifications(sql, time);
+    notificationData.register_subscription(sql, {
+      endpoint: 'https://fresh.invalid',
+      p256dh: 'key',
+      auth: 'auth',
+      now: time,
+    });
+    apnsData.register_device(sql, {
+      device_token: 'aa',
+      bundle_id: 'invalid.panels',
+      environment: 'development',
+      now: time,
+    });
+    notificationData.queue_deliveries(sql, time);
+  });
+  const pending = (at: number) =>
+    database.write((sql) =>
+      [notificationData.pending_deliveries(sql, at), apnsData.pending_deliveries(sql, at)].map(
+        (rows) => rows.map((row) => row.edge.subject_id).sort(),
+      ),
+    );
+  expect(pending(time + 299)).toEqual([
+    tickets.map((t) => t.id).sort(),
+    tickets.map((t) => t.id).sort(),
+  ]);
+  database.write((sql) => {
+    sql.run(
+      "UPDATE notification_attention_state SET active=0 WHERE subject_id=? AND notification_type='awaiting_approval'",
+      [tickets[1]!.id],
+    );
+    sql.run(
+      "UPDATE notification_attention_state SET generation=generation+1 WHERE subject_id=? AND notification_type='awaiting_approval'",
+      [tickets[2]!.id],
+    );
+  });
+  const sources = () =>
+    database.read((sql) => [
+      sql.all(
+        'SELECT * FROM notification_attention_state ORDER BY subject_kind,subject_id,notification_type',
+      ),
+      sql.all(
+        'SELECT * FROM notification_attention_edges ORDER BY subject_kind,subject_id,notification_type,generation',
+      ),
+    ]);
+  const before = sources();
+  expect(pending(time + 299)).toEqual([[tickets[0]!.id], [tickets[0]!.id]]);
+  // Renew the retry itself: the original edge still expires at the inclusive boundary.
+  database.write((sql) => {
+    for (const table of ['notification_deliveries', 'notification_apns_deliveries'])
+      sql.run(`UPDATE ${table} SET created_at=?,status='retry' WHERE subject_id=?`, [
+        time + 299,
+        tickets[0]!.id,
+      ]);
+  });
+  expect(pending(time + 300)).toEqual([[], []]);
+  expect(sources()).toEqual(before);
+  // Conversely a fresh edge cannot revive an old retry.
+  database.write((sql) => {
+    sql.run(
+      "UPDATE notification_attention_edges SET occurred_at=? WHERE subject_id=? AND notification_type='awaiting_approval'",
+      [time + 300, tickets[0]!.id],
+    );
+    for (const table of ['notification_deliveries', 'notification_apns_deliveries'])
+      sql.run(`UPDATE ${table} SET created_at=?,status='retry' WHERE subject_id=?`, [
+        time,
+        tickets[0]!.id,
+      ]);
+  });
+  expect(pending(time + 300)).toEqual([[], []]);
+  for (const table of ['notification_deliveries', 'notification_apns_deliveries'])
+    expect(database.read((sql) => sql.all(`SELECT DISTINCT status FROM ${table}`))).toEqual([
+      { status: 'expired' },
+    ]);
+  console.info(
+    `Notification freshness selector proof: ${(performance.now() - began).toFixed(3)} ms`,
+  );
+});
+
+test.each(['web', 'apns'] as const)(
+  '%s rechecks the clock before each selected send',
+  async (transport) => {
+    const began = performance.now();
+    const { context, database } = setup(),
+      time = context.clock.nowUnix();
+    for (const body of ['First', 'Second'])
+      propose(database, create(database, { now: time }), body, time);
+    database.write((sql) => {
+      notificationData.initialize_notifications(sql, time);
+      if (transport === 'web')
+        notificationData.register_subscription(sql, {
+          endpoint: 'https://fresh.invalid',
+          p256dh: 'key',
+          auth: 'auth',
+          now: time,
+        });
+      else
+        apnsData.register_device(sql, {
+          device_token: 'aa',
+          bundle_id: 'invalid.panels',
+          environment: 'development',
+          now: time,
+        });
+    });
+    const send = vi.fn(async () => {
+      (context.clock as TestClock).set(new Date((time + 300) * 1000).toISOString());
+      return { delivered: true };
+    });
+    const loop = new NotificationLoop({
+      database,
+      clock: context.clock,
+      canonical_origin: 'https://fresh.invalid',
+      adapter: { send },
+      apns_adapter: transport === 'apns' ? { send, close() {} } : null,
+    });
+    expect(await loop.poll_once()).toBe(1);
+    expect(send).toHaveBeenCalledOnce();
+    const table = transport === 'web' ? 'notification_deliveries' : 'notification_apns_deliveries';
+    expect(database.read((sql) => sql.all(`SELECT status FROM ${table} ORDER BY status`))).toEqual([
+      { status: 'delivered' },
+      { status: 'expired' },
+    ]);
+    console.info(
+      `Notification ${transport} pre-send clock proof: ${(performance.now() - began).toFixed(3)} ms`,
+    );
+  },
+);
+
+// Both provider loops must recheck a previously selected obligation after an earlier send defers it.
+test.each(['web', 'apns'] as const)(
+  '%s skips a selected task after deferral and resumes with a new generation',
+  async (transport) => {
+    const { context, database } = setup(),
+      time = context.clock.nowUnix();
+    const first = propose(database, create(database, { now: time }), 'First', time);
+    const second = propose(database, create(database, { now: time }), 'Second', time);
+    const initial_generation = database.read((sql) =>
+      sql.get<{ generation: number }>(
+        "SELECT generation FROM notification_attention_state WHERE subject_id=? AND notification_type='awaiting_approval'",
+        [second.id],
+      ),
+    )!.generation;
+    database.write((sql) => {
+      notificationData.initialize_notifications(sql, time);
+      if (transport === 'web')
+        notificationData.register_subscription(sql, {
+          endpoint: 'https://push.deferral.invalid/one',
+          p256dh: 'synthetic',
+          auth: 'synthetic',
+          now: time,
+        });
+      else
+        apnsData.register_device(sql, {
+          device_token: 'aabb',
+          bundle_id: 'invalid.panels',
+          environment: 'development',
+          now: time,
+        });
+    });
+    const table = transport === 'web' ? 'notification_deliveries' : 'notification_apns_deliveries';
+    database.write((sql) =>
+      set_ticket_backlog(sql, second.id, { principal: OWNER, now: time, is_backlogged: true }),
+    );
+    database.write((sql) => notificationData.queue_deliveries(sql, time));
+    expect(
+      database.read((sql) =>
+        sql.get(
+          "SELECT decided FROM notification_attention_edges WHERE subject_id=? AND notification_type='awaiting_approval' AND generation=?",
+          [second.id, initial_generation],
+        ),
+      ),
+    ).toEqual({ decided: 1 });
+    expect(
+      database.read((sql) =>
+        sql.all(`SELECT * FROM ${table} WHERE subject_id=? AND generation=?`, [
+          second.id,
+          initial_generation,
+        ]),
+      ),
+    ).toEqual([]);
+    database.write((sql) =>
+      set_ticket_backlog(sql, second.id, { principal: OWNER, now: time, is_backlogged: false }),
+    );
+    const attempted: string[] = [];
+    const send = (route: string) => {
+      attempted.push(route);
+      const deferred = route.includes(first.id) ? second : first;
+      database.write((sql) =>
+        set_ticket_backlog(sql, deferred.id, { principal: OWNER, now: time, is_backlogged: true }),
+      );
+      return { delivered: true };
+    };
+    const loop = new NotificationLoop({
+      database,
+      clock: context.clock,
+      canonical_origin: 'https://deferral.invalid',
+      adapter: { send: async (_subscription, intent) => send(intent.route) },
+      apns_adapter:
+        transport === 'apns'
+          ? { send: async (delivery) => send(delivery.intent.route), close() {} }
+          : null,
+    });
+    expect(await loop.poll_once()).toBe(1);
+    expect(attempted).toHaveLength(1);
+    const deferred = attempted[0]!.includes(first.id) ? second : first;
+    const paused_generation = database.read((sql) =>
+      sql.get<{ generation: number }>(
+        "SELECT generation FROM notification_attention_state WHERE subject_id=? AND notification_type='awaiting_approval'",
+        [deferred.id],
+      ),
+    )!.generation;
+    database.write((sql) =>
+      set_ticket_backlog(sql, deferred.id, {
+        principal: OWNER,
+        now: time + 1,
+        is_backlogged: false,
+      }),
+    );
+    database.write((sql) => notificationData.queue_deliveries(sql, time + 1));
+    const pending =
+      transport === 'web'
+        ? database.write((sql) => notificationData.pending_deliveries(sql, time + 1))
+        : database.write((sql) => apnsData.pending_deliveries(sql, time + 1));
+    expect(pending.map((delivery) => delivery.edge)).toEqual([
+      {
+        subject_kind: 'ticket',
+        subject_id: deferred.id,
+        notification_type: 'awaiting_approval',
+        generation: paused_generation + 1,
+      },
+    ]);
+    await loop.stop({ deadline: performance.now() / 1000 + 1 });
+  },
+);
+
+// Imported transitions must use the resume time and never close a gate before observation.
+test('imported deferral closes observed gates and resumes without replaying old edges', () => {
+  const { database } = setup();
+  const ticket = propose(database, create(database), 'Imported proposal');
+  const initial_generation = database.read((sql) =>
+    sql.get<{ generation: number }>(
+      "SELECT generation FROM notification_attention_state WHERE subject_id=? AND notification_type='awaiting_approval'",
+      [ticket.id],
+    ),
+  )!.generation;
+  const intervals = database.read((sql) =>
+    sql.all(
+      'SELECT observed_since,closed_at FROM attention_gate_intervals WHERE ticket_id=? ORDER BY id',
+      [ticket.id],
+    ),
+  );
+  database.write((sql) => {
+    capture_gate(sql, { ticket_id: ticket.id, active: false, now: now - 1 });
+    sql.run('UPDATE tickets SET is_backlogged=1,updated_at=? WHERE id=?', [now + 1, ticket.id]);
+    notificationData.reconcile_attention(sql);
+    sql.run('UPDATE tickets SET is_backlogged=0,updated_at=? WHERE id=?', [now + 2, ticket.id]);
+    notificationData.reconcile_attention(sql);
+  });
+  expect(
+    database.read((sql) =>
+      sql.all(
+        'SELECT observed_since,closed_at FROM attention_gate_intervals WHERE ticket_id=? ORDER BY id',
+        [ticket.id],
+      ),
+    ),
+  ).toEqual([
+    ...intervals.slice(0, -1),
+    { observed_since: now, closed_at: now },
+    { observed_since: now + 2, closed_at: null },
+  ]);
+  expect(
+    database.read((sql) =>
+      sql.get(
+        "SELECT active,generation FROM notification_attention_state WHERE subject_id=? AND notification_type='awaiting_approval'",
+        [ticket.id],
+      ),
+    ),
+  ).toEqual({ active: 1, generation: initial_generation + 1 });
+});
 
 // A successful host notice does not prove Python's cancellation exception boundary.
 test('startup integrity notice preserves cancellation from the ordinary send door', async () => {
@@ -355,7 +652,7 @@ test('notification deadline fences late web and native results and bounds adapte
     p256dh: '',
     auth: '',
   };
-  const intent = { title: '', body: '', route: '', tag: '' };
+  const intent = { title: '', body: '', route: '', tag: '', reply: null };
   const edge = {
     subject_kind: 'ticket',
     subject_id: 'one',
@@ -365,6 +662,8 @@ test('notification deadline fences late web and native results and bounds adapte
   vi.spyOn(notificationData, 'pending_deliveries').mockReturnValue([
     { edge, subscription, intent, attempts: 0 },
   ]);
+  // This test owns shutdown settlement, not durable attention eligibility.
+  vi.spyOn(notificationData, 'delivery_is_current').mockReturnValue(true);
   vi.spyOn(apnsData, 'pending_deliveries').mockReturnValue([
     {
       edge,

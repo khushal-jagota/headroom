@@ -517,6 +517,7 @@ def test_service_command_limits_kill_and_reap_only_the_scripted_child(
 def test_darwin_populated_native_observations_match_python(
     tmp_path: Path,
     request: pytest.FixtureRequest,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Existing Linux fixtures do not prove Darwin births, socket generations or native rates."""
     import base64
@@ -536,6 +537,16 @@ def test_darwin_populated_native_observations_match_python(
     started = time.perf_counter()
     reader = Reader()
     subject, library = inspector(tmp_path)
+    preview_seconds = [1]
+    original_info = library.proc_pidinfo
+
+    def info(pid: int, flavor: int, arg: int, target: Any, size: int) -> int:
+        length = original_info(pid, flavor, arg, target, size)
+        if flavor == 3:
+            ctypes.cast(target, ctypes.POINTER(_BSDInfo)).contents.start_sec = preview_seconds[0]
+        return length
+
+    monkeypatch.setattr(library, "proc_pidinfo", info)
     library.descriptors[12][0].protocol_info.tcp.internet.generation = 2**62 + 567
     now = [100.0]
     stat = os.statvfs_result((4096, 4096, 100, 25, 25, 0, 0, 0, 0, 255))
@@ -554,7 +565,7 @@ def test_darwin_populated_native_observations_match_python(
         return base64.b64encode(raw).decode()
 
     for index, operation in enumerate(
-        ("discover", "connected", "check", "check", "discover", "discover", "check")
+        ("discover", "connected", "check", "check", "discover", "discover", "check", "discover")
     ):
         now[0] = 100.0 + index * 2
         reader.ticks = 24_000_000 + index * 48_000_000
@@ -571,6 +582,8 @@ def test_darwin_populated_native_observations_match_python(
         if index == 4:
             library.descriptors[13] = [tcp()]
             library.unreadable.add(13)
+        if index == 7:
+            preview_seconds[0] = 9_007_199_255
         library.truncate = index == 5
         library.error = errno.EPERM if index == 6 else 0
         bsd = {}
@@ -586,7 +599,9 @@ def test_darwin_populated_native_observations_match_python(
         }
         preview = {}
         for pid, sockets in library.descriptors.items():
-            info = _BSDInfo(pid=pid, uid=os.getuid(), start_sec=1, start_usec=library.birth)
+            info_value = _BSDInfo(
+                pid=pid, uid=os.getuid(), start_sec=preview_seconds[0], start_usec=library.birth
+            )
             paths = _Paths()
             paths.cwd.path = os.fsencode(tmp_path)
             values = []
@@ -594,7 +609,9 @@ def test_darwin_populated_native_observations_match_python(
                 value = _SocketFD()
                 value.socket = socket
                 values.append(binary(value))
-            preview[str(pid)] = {"info": binary(info), "paths": binary(paths), "sockets": values}
+            preview[str(pid)] = {
+                "info": binary(info_value), "paths": binary(paths), "sockets": values
+            }
         actions.append(
             {
                 "now": now[0],

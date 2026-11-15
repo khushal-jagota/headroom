@@ -9,7 +9,7 @@ export class PreviewError extends Error {
 export interface ProcessIdentity {
   boot_id: string;
   pid: number;
-  start_ticks: number;
+  start_ticks: number | bigint;
   listener_inode: number | bigint;
   port: number;
   worktree: string;
