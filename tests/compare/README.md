@@ -10,7 +10,7 @@ The foundation fixes schema, machine keys, and stale fixtures. The cases below r
 They remain collected with `xfail(run=False)` and do not count as parity. Remove each mark when its package restores the proof.
 No comparison field is hidden. Deferred parameters add no active host or runtime cost.
 
-Collected case counts: P2 43, P3 8, P4 4, P5 11, P6 8.
+Collected case counts: P2 43, P3 8, P4 4, P5 11, P6 6.
 
 ### P2 — Executor protocol and custody
 
@@ -107,8 +107,6 @@ Collected case counts: P2 43, P3 8, P4 4, P5 11, P6 8.
 | [`test_unit20_domain_cli.py::test_unit20_retained_dataset_cli[goal-page]`](direct/test_unit20_domain_cli.py) | expected-open P6: #928 goal/page schemas add expected_revision |
 | [`test_unit20_domain_cli.py::test_unit20_domain_same_python_host[python]`](direct/test_unit20_domain_cli.py) | expected-open P6: #928 goal/page CLI schemas now include expected_revision |
 | [`test_unit20_domain_cli.py::test_unit20_domain_same_python_host[typescript]`](direct/test_unit20_domain_cli.py) | expected-open P6: #928 goal/page CLI schemas now include expected_revision |
-| [`test_unit_19_usage.py::test_unit19_usage_reader_and_cache`](direct/test_unit_19_usage.py) | expected-open P6 (#875/#879): port usage cache v5 and Codex compaction resume state |
-| [`test_unit_19_usage.py::test_unit19_usage_http_and_pricing`](direct/test_unit_19_usage.py) | expected-open P6 (#875/#879): port usage cache v5 and pricing metadata in HTTP reads |
 | [`test_unit10_stalls.py::test_checker_and_watchdog_match_python`](test_unit10_stalls.py) | expected-open P6: #928 NotificationIntent adds nullable reply to watchdog sends |
 
 ## Add an area
