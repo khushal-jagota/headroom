@@ -13,10 +13,12 @@ import re
 import shutil
 import sqlite3
 import subprocess
+import sys
 import time
 from contextlib import contextmanager
-from importlib import import_module
+from dataclasses import asdict
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, cast
 from unittest.mock import patch
 
@@ -104,14 +106,16 @@ def snapshot(path: str) -> dict[str, list[dict[str, Any]]]:
 
 @contextmanager
 def owned_launch_boundary(spec: dict[str, str]) -> Any:
-    """Use real argv construction, with every manager call fenced before spawn."""
-    # P3 replaces this retired fixture when its expected-open case returns.
-    worker_unit = import_module("planner.conversation.worker_unit")
+    """Real bootstrap argv and journal, synthetic containment, one exact CLI child."""
+    from planner.conversation.child_custody import host_boot_identity
+    from planner.conversation.worker_scratch import WorkerScratch
+    from planner.worker_supervision import WorkerSupervisor, _inspection_context, records
+    from planner.worker_supervision.contracts import CleanupResult
 
     native_open = anyio.open_process
     native_spawn = asyncio.create_subprocess_exec
-    name = "panels-worker-" + "3" * 32 + ".service"
     directory = Path(spec["workspace"]) / "contained-unit"
+    path = directory / ("3" * 32 + ".json")
     metadata = Path(f"{spec['trace']}.wrapped.json")
     node = shutil.which("node")
 
@@ -131,11 +135,10 @@ def owned_launch_boundary(spec: dict[str, str]) -> Any:
     async def guarded_open(command: Any, **keywords: Any) -> Any:
         actual = list(command)
         delegated = actual
-        wrapped = actual[0] == "systemd-run"
+        wrapped = actual[:4] == [sys.executable, "-I", "-m", "planner.worker_supervision.launch"]
         if wrapped:
-            assert f"--unit={name}" in actual
-            separator = actual.index("--")
-            delegated = actual[separator + 1 :]
+            assert actual[4] == str(path)
+            delegated = actual[5:]
         script_command(delegated)
         if "--version" not in delegated and "-v" not in delegated:
             metadata.write_text(
@@ -144,9 +147,6 @@ def owned_launch_boundary(spec: dict[str, str]) -> Any:
                         "launch_argv": actual,
                         "delegated_argv": delegated,
                         "wrapped_argv": actual if wrapped else None,
-                        "environment_file": (
-                            (directory / "environment").read_text() if wrapped else None
-                        ),
                     }
                 )
             )
@@ -154,44 +154,91 @@ def owned_launch_boundary(spec: dict[str, str]) -> Any:
 
     async def fake_create(environment_: dict[str, str], working_directory: Path) -> Any:
         assert environment_["PLAN_TICKET_ID"] == "unit18-synthetic-worker"
-        (directory / "t").mkdir(parents=True, mode=0o700)
-        values = {
-            **environment_,
-            "TMPDIR": str(directory / "t"),
-            "TMP": str(directory / "t"),
-            "TEMP": str(directory / "t"),
-        }
-        (directory / "environment").write_text(worker_unit._environment_file(values))
-        (directory / "environment").chmod(0o600)
-        unit = worker_unit.WorkerUnit(
-            name=name,
-            directory=directory,
-            environment=values,
-            working_directory=working_directory,
-            slice_name="panels-workers.slice",
+        directory.mkdir(parents=True, mode=0o700)
+        host = host_boot_identity()
+        assert host is not None
+        context = _inspection_context(time.monotonic() + 5)
+        owner = context.primitives.snapshot(time.monotonic() + 5)[os.getpid()]
+        records.write(
+            path,
+            {
+                "version": 1,
+                "ticket_id": environment_["PLAN_TICKET_ID"],
+                "conversation_id": environment_["PLAN_CONVERSATION_ID"],
+                "host": host.host,
+                "boot": host.boot,
+                "owner": asdict(owner),
+                "root": None,
+                "processes": [],
+                "isolated": False,
+                "state": "pending",
+                "launch_phase": "pending",
+            },
         )
+        supervisor = SimpleNamespace(
+            path=path,
+            working_directory=working_directory,
+            environment={**environment_, "PLAN_WORKER_PROCESS_ROOT": str(directory)},
+        )
+        supervisor.argv = WorkerSupervisor.argv.__get__(supervisor)
+        supervisor.identity = WorkerSupervisor.identity.__get__(supervisor)
         stopped = False
 
-        async def stop() -> None:
+        async def started(pid: int) -> None:
+            process = context.primitives.snapshot(time.monotonic() + 5)[pid]
+            record = records.read(path)
+            record.update(root=asdict(process), processes=[asdict(process)], state="running")
+            records.write(path, record)
+
+        async def stop(*, native_stop: Any = None) -> Any:
             nonlocal stopped
             if stopped:
-                return
+                return CleanupResult(True, "Owned scripted child ended")
+            if native_stop is not None:
+                await native_stop()
             stopped = True
+            record = records.read(path)
+            record.update(state="complete", reason="Owned scripted child ended")
+            records.write(path, record)
             with Path(spec["trace"]).open("a") as output:
-                output.write(json.dumps({"kind": "contained-stop", "name": name}) + "\n")
-            shutil.rmtree(directory)
+                output.write(
+                    json.dumps({"kind": "contained-stop", "record_path": str(path)}) + "\n"
+                )
+            return CleanupResult(True, "Owned scripted child ended")
 
-        cast(Any, unit).stop = stop
-        return unit
+        supervisor.started = started
+        supervisor.spawned = started
+        supervisor.stop = stop
+        supervisor.cancel_unspawned = stop
+        return supervisor
 
-    async def no_manager(*arguments: Any) -> Any:
-        raise AssertionError("The paired adapter proof must not contact a service manager")
+    async def scratch(environment_: dict[str, str]) -> Any:
+        temporary = directory / "t"
+        temporary.mkdir(mode=0o700)
+        closed = False
+
+        async def close() -> None:
+            nonlocal closed
+            if closed:
+                return
+            closed = True
+            shutil.rmtree(temporary)
+
+        return SimpleNamespace(
+            environment={
+                **environment_,
+                "TMPDIR": str(temporary),
+                "TMP": str(temporary),
+                "TEMP": str(temporary),
+            },
+            aclose=close,
+        )
 
     with (
         patch.object(asyncio, "create_subprocess_exec", guarded_spawn),
         patch.object(anyio, "open_process", guarded_open),
-        patch.object(worker_unit, "_control", no_manager),
-        patch.object(worker_unit.WorkerUnit, "create", fake_create),
+        patch.object(WorkerSupervisor, "create", fake_create),
+        patch.object(WorkerScratch, "create", scratch),
     ):
         yield
 
@@ -877,18 +924,12 @@ def observed_native_patterns(result: dict[str, Any]) -> dict[str, Any]:
 def launch_environments(python: dict[str, Any], typescript: dict[str, Any]) -> dict[str, Any]:
     py = [row["environment"] for row in python["trace"] if row["kind"] == "launch"]
     ts = [row["environment"] for row in typescript["trace"] if row["kind"] == "launch"]
-    python_shell = ROOT / "src/planner/conversation/tool_shell_startup.bash"
-    typescript_shell = ROOT / "server/conversation/tool_shell_startup.bash"
-    # Manager-approved exact source-location rule. Retain this drift assertion
-    # throughout migration while the Python asset exists. No pattern/wildcard.
-    assert python_shell.read_bytes() == typescript_shell.read_bytes()
     assert len(py) == len(ts) == 7
     from claude_agent_sdk._version import __version__ as python_sdk_version
 
     adjusted = []
     for left, right in zip(py, ts, strict=True):
-        assert left["BASH_ENV"] == str(python_shell)
-        assert right["BASH_ENV"] == str(typescript_shell)
+        assert "BASH_ENV" not in left and "BASH_ENV" not in right
         assert left["CLAUDE_CODE_ENTRYPOINT"] == "sdk-py"
         assert right["CLAUDE_CODE_ENTRYPOINT"] == "sdk-ts"
         assert left["CLAUDE_AGENT_SDK_VERSION"] == python_sdk_version
@@ -899,7 +940,6 @@ def launch_environments(python: dict[str, Any], typescript: dict[str, Any]) -> d
             assert "PLAN_TICKET_ID" not in left and "PLAN_TICKET_ID" not in right
         expected_typescript = {
             **left,
-            "BASH_ENV": str(typescript_shell),
             "CLAUDE_CODE_ENTRYPOINT": "sdk-ts",
             "CLAUDE_AGENT_SDK_VERSION": "0.3.316",
         }
@@ -907,7 +947,7 @@ def launch_environments(python: dict[str, Any], typescript: dict[str, Any]) -> d
         adjusted.append({"python": left, "typescript": right})
     return {
         "launches": adjusted,
-        "shell_bytes_equal": True,
+        "retired_shell_hook_absent": True,
         "other_environment_values_equal": True,
     }
 
@@ -984,8 +1024,25 @@ def launch_arguments(
         if launch["environment"]["PLAN_ACTOR"] == "worker":
             wrapped = launch["wrapped_argv"]
             assert launch["launch_argv"] == wrapped
-            assert wrapped[0] == "systemd-run"
-            assert wrapped[wrapped.index("--") + 1 :] == delegated
+            path = str(
+                Path(launch["environment"]["PLAN_WORKER_PROCESS_ROOT"]) / ("3" * 32 + ".json")
+            )
+            if language == "python":
+                assert wrapped[:5] == [
+                    sys.executable,
+                    "-I",
+                    "-m",
+                    "planner.worker_supervision.launch",
+                    path,
+                ]
+                assert wrapped[5:] == delegated
+            else:
+                assert wrapped[:3] == [
+                    result["node_executable"],
+                    str(ROOT / "server/worker_supervision/launch.ts"),
+                    path,
+                ]
+                assert wrapped[3:] == delegated
         else:
             assert launch["wrapped_argv"] is None
             assert launch["launch_argv"] == delegated
@@ -1007,9 +1064,6 @@ def launch_arguments(
 
 
 def containment_evidence(python: dict[str, Any], typescript: dict[str, Any]) -> dict[str, Any]:
-    # P3 replaces this retired fixture when its expected-open case returns.
-    worker_unit = import_module("planner.conversation.worker_unit")
-
     py = [
         row
         for row in python["trace"]
@@ -1022,13 +1076,7 @@ def containment_evidence(python: dict[str, Any], typescript: dict[str, Any]) -> 
     ]
     assert len(py) == len(ts) == 1
     left, right = py[0], ts[0]
-    left_separator = left["wrapped_argv"].index("--")
-    right_separator = right["wrapped_argv"].index("--")
-    assert (
-        left["wrapped_argv"][: left_separator + 1] == right["wrapped_argv"][: right_separator + 1]
-    )
-    assert left["environment_file"] == worker_unit._environment_file(left["environment"])
-    assert right["environment_file"] == worker_unit._environment_file(right["environment"])
+    assert left["wrapped_argv"][4] == right["wrapped_argv"][2]
     for result in (python, typescript):
         assert sum(row["kind"] == "contained-launch" for row in result["trace"]) == 1
         assert sum(row["kind"] == "contained-stop" for row in result["trace"]) == 1
@@ -1042,19 +1090,16 @@ def containment_evidence(python: dict[str, Any], typescript: dict[str, Any]) -> 
     return {
         "python_wrapped_argv": left["wrapped_argv"],
         "typescript_wrapped_argv": right["wrapped_argv"],
-        "policy_prefix_equal": True,
+        "raw_bootstrap_prefixes_asserted": True,
         "service_manager_calls": 0,
         "boundary": (
-            "Real WorkerUnit.argv; create policy and real manager control remain part 1 proofs. "
-            "Exact script suffix alone executes."
+            "Real WorkerSupervisor.argv and private journal I/O; synthetic custody and scratch. "
+            "Exact script suffix alone executes. Native identity comes from that child. "
+            "Part 1 proves launch policy and journal bytes. Native supervision proves containment."
         ),
     }
 
 
-@pytest.mark.xfail(
-    run=False,
-    reason="expected-open P3: #916 replaces WorkerUnit custody with supervision",
-)
 def test_unit18_adapter_real_core_parity(tmp_path: Path, request: pytest.FixtureRequest) -> None:
     """Protect native admission, cancellation, asks, and real-core persisted outcomes."""
     started = time.perf_counter()
@@ -1174,7 +1219,7 @@ def test_unit18_adapter_real_core_parity(tmp_path: Path, request: pytest.Fixture
         "usage_rule": "The existing plain result input_tokens:5.0 counts as native integer 5.",
         "not_proven": [
             "real provider turn or resume",
-            "systemd containment (part 1 owns policy/byte proof)",
+            "native containment (the supervisor primitive proof owns it)",
             "browser or HTTP routes",
             "Actual inner stream discriminators and nested rate/quota values were not retained "
             "in real evidence; those fixture contents are representative synthetic inputs.",

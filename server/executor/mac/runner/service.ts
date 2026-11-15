@@ -124,12 +124,26 @@ export class MacCommandService implements MacCommandServiceContract {
       record &&
       (record.journaled ||
         !same_wire(record.command, command, 'ChildCommand') ||
-        record.outcome === null ||
-        !same_wire(record.outcome, result, 'CommandOutcome'))
+        record.outcome === null)
     )
       return Promise.reject(
         new ExecutorValidationError('command id reused with different content'),
       );
+    if (record && !same_wire(record.outcome!, result, 'CommandOutcome')) {
+      // An unjournaled stop with no owed output publishes no proof. A later
+      // maintenance attempt can learn a new fate, just as Python replaces that record.
+      if (
+        command.operation === 'stop' &&
+        record.task === null &&
+        record.settled &&
+        !record.has_outputs
+      )
+        record = undefined;
+      else
+        return Promise.reject(
+          new ExecutorValidationError('command id reused with different content'),
+        );
+    }
     if (!record) {
       record = new Record(command, false);
       record.outcome = result;

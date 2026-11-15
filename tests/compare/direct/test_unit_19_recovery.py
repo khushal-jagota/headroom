@@ -203,10 +203,6 @@ def test_unit19_recovery_receipts(tmp_path: Path, request: pytest.FixtureRequest
     assert actual == expected
 
 
-@pytest.mark.xfail(
-    run=False,
-    reason="expected-open P3 (#916): lost-task notices now carry an admission sender_message_id",
-)
 def test_unit19_startup_manifest_and_lost_task_prompts(
     tmp_path: Path, request: pytest.FixtureRequest
 ) -> None:
@@ -331,12 +327,34 @@ def test_unit19_startup_manifest_and_lost_task_prompts(
             _stop_server(server)
     assert "Panels deployment interruption context" in observations[0]["wire"]["recover"][0]
     assert "Synthetic background work" in observations[0]["wire"]["background"][0]
+    # Only the random suffix of this admission identity differs between processes.
+    # Preserve every field and validate the conversation-bound identity before mapping it.
+    import copy
+    import re
+
+    canonical = copy.deepcopy(observations)
+    for observation in canonical:
+        identities: dict[str, str] = {}
+        for event in observation["events"]:
+            sender_id = event["payload"].get("sender_message_id")
+            if not isinstance(sender_id, str) or not sender_id.startswith("lost-background:"):
+                continue
+            prefix = f"lost-background:{event['conversation_id']}:"
+            assert sender_id.startswith(prefix), sender_id
+            assert re.fullmatch(r"[0-9a-f]{32}", sender_id[len(prefix):]), sender_id
+            identities.setdefault(sender_id, f"{prefix}notice-{len(identities) + 1}")
+            event["payload"]["sender_message_id"] = identities[sender_id]
     report = {
         "kind": "direct-connected",
         "case": "unit19-startup-recovery",
-        "equal": observations[0] == observations[1],
+        "equal": canonical[0] == canonical[1],
         "python": observations[0],
         "typescript": observations[1],
+        "canonical": {"python": canonical[0], "typescript": canonical[1]},
+        "identity_rule": (
+            "bijective UUID suffix tokens only for event sender_message_id "
+            "lost-background:<same conversation>:<32 lowercase hex>"
+        ),
         "seconds": time.perf_counter() - started,
     }
     destination = request.config.getoption("--compare-report-dir")
@@ -344,7 +362,7 @@ def test_unit19_startup_manifest_and_lost_task_prompts(
         path = Path(destination)
         path.mkdir(parents=True, exist_ok=True)
         (path / "unit19-startup-recovery.json").write_text(json.dumps(report, indent=2) + "\n")
-    assert observations[0] == observations[1]
+    assert canonical[0] == canonical[1]
 
 
 @pytest.mark.parametrize("scenario", ["closure", "canceled-first", "paced", "already-running"])

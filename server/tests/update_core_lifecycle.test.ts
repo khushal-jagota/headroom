@@ -211,6 +211,7 @@ async function owned_server(
     const server = await startServer({
       enableWorkerReadiness: true,
       createConversationCore(value) {
+        registry.bind_runtime(value.worker_supervision);
         return new SqliteProcessConversationSystem({
           store: value.record.store,
           delivery_model_refusal: (backend, model, ticket_id) =>

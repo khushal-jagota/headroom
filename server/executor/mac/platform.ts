@@ -10,6 +10,7 @@ import koffi from 'koffi';
 import { BackendCommands } from '../../conversation/snapshot/commands.ts';
 import { backend_io_is_test } from '../../conversation/snapshot/environment.ts';
 import type { OwnedOneShotChildren } from '../../lifecycle/contracts.ts';
+import type { InspectLegacyProcess } from './cleanup_contracts.ts';
 import { monotonic_seconds } from '../../lifecycle/configuration.ts';
 import { MAC_AGENT_PROCESS_PROBE_TIMEOUT_SECONDS } from '../configuration.ts';
 import { shell_quote } from '../../conversation/worker_unit/logic.ts';
@@ -543,6 +544,40 @@ export function mac_agent_process_platform(children: OwnedOneShotChildren): Agen
   };
 }
 
+/** Only the retired aggregate receipt uses ps birth text. Modern custody uses libproc. */
+export function legacy_process_inspector(children: OwnedOneShotChildren): InspectLegacyProcess {
+  const commands = new BackendCommands(children);
+  return async (identity, deadline) => {
+    if (native_platform() !== 'darwin' || backend_io_is_test())
+      throw new Error('Native legacy Mac process probes require a production Darwin host.');
+    if (
+      !Number.isSafeInteger(identity.process_id) ||
+      identity.process_id <= 0 ||
+      typeof identity.started !== 'string'
+    )
+      throw new Error('Legacy process identity is unreadable');
+    const remaining = deadline - monotonic_seconds();
+    if (remaining <= 0) throw new Error('Legacy process inspection deadline expired');
+    const result = await commands.run(
+      ['/bin/ps', '-o', 'stat=,lstart=', '-p', String(identity.process_id)],
+      { timeout_seconds: remaining, environment_overrides: { LC_ALL: 'C' } },
+    );
+    if (result.exit_code === 0) {
+      const fields = /^(\S+)\s+(.+)$/.exec(result.standard_output.trim());
+      if (fields === null || !fields[2]!.trim())
+        throw new Error(`Legacy process ${identity.process_id} has unreadable birth evidence`);
+      return !fields[1]!.startsWith('Z') && fields[2]!.trim() === identity.started;
+    }
+    try {
+      process.kill(identity.process_id, 0);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ESRCH') return false;
+      throw error;
+    }
+    throw new Error(`Legacy process ${identity.process_id} cannot be inspected`);
+  };
+}
+
 export function mac_installation_paths(home: string) {
   if (!isAbsolute(home) || home.includes('\0'))
     throw new Error('Mac installation HOME must be absolute.');
@@ -592,6 +627,7 @@ function plist(value: Record<string, PlistValue>): string {
     '</plist>\n'
   );
 }
+
 /** Generate candidate assets only. No compiler, signer, installation or launchctl runs. */
 export function mac_installation_assets(options: {
   home: string;

@@ -2,7 +2,7 @@
 import type { AskReference, ChildReference } from '../../wire.generated.ts';
 import type { MacChildStateContract } from './command_contracts.ts';
 
-function reference_key(child: ChildReference): string {
+export function reference_key(child: ChildReference): string {
   return JSON.stringify([child.executor_incarnation, child.child_id, child.conversation_id]);
 }
 

@@ -1,5 +1,6 @@
 import { ConversationStartAborted } from '../runtime/abort.ts';
 import { ShutdownDeadlineExceeded } from '../lifecycle/contracts.ts';
+import { AutomaticStartAdmission } from '../conversation/start_admission/index.ts';
 import { expect, test, vi } from 'vitest';
 import {
   fixture,
@@ -323,6 +324,8 @@ test('wake stop records uncertainty immediately and retains a hung send without 
     workspace_root: '/workspace',
   });
   const system = new InMemoryConversationSystem();
+  const starts = new AutomaticStartAdmission({ clock: () => 100 });
+  Object.assign(system, { start_admission: starts });
   await system.start_conversation(
     new ConversationStartRequest({
       conversation_id: 'hung-wake',
@@ -386,6 +389,7 @@ test('wake stop records uncertainty immediately and retains a hung send without 
   const pass = loop.poll_once().catch((error: unknown) => error);
   try {
     await entered;
+    expect(starts.snapshots().map((item) => item.request.work_class)).toEqual(['supervisor']);
     expect(
       database.read((sql) => sql.get<{ status: string }>('SELECT status FROM manager_wake_batches'))
         ?.status,
@@ -402,6 +406,7 @@ test('wake stop records uncertainty immediately and retains a hung send without 
     });
     await expect(stopping).rejects.toBeInstanceOf(ShutdownDeadlineExceeded);
     expect(await pass).toBeInstanceOf(ConversationStartAborted);
+    expect(starts.snapshots()).toEqual([]);
     expect(
       database.read((sql) =>
         sql.get<{ closed_at: number | null }>('SELECT closed_at FROM manager_wakes'),

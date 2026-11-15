@@ -66,6 +66,7 @@ import { OneShotChildren } from '../lifecycle/one_shot_children.ts';
 import { LocaleBackendChildFactory } from '../executor/routing.ts';
 import { BackendSpawnFailed } from '../conversation/backends/contracts.ts';
 import type { ConversationCompositionContext } from '../core/start.ts';
+import { create_worker_supervision_runtime } from '../worker_supervision/composition.ts';
 
 test('local composition refuses a retained Mac Ticket before constructing its selected child', async () => {
   const began = performance.now();
@@ -103,6 +104,7 @@ test('local composition refuses a retained Mac Ticket before constructing its se
   const clock = new TestClock('2026-11-12T12:00:00+00:00');
   const child_processes = new ChildProcesses();
   const children = new OneShotChildren(child_processes);
+  const worker_supervision = create_worker_supervision_runtime({ one_shot_children: children });
   const live_tail = new ConversationLiveTail({
     view_output_directory: join(root, 'mac-guard-output'),
   });
@@ -198,6 +200,7 @@ test('local composition refuses a retained Mac Ticket before constructing its se
       revoke_signal() {},
       one_shot_children: children,
       child_processes,
+      worker_supervision,
     };
     bound = compose_production_backends(context, {
       claude: () => local_constructor,
@@ -408,7 +411,24 @@ test('local composition refuses a retained Mac Ticket before constructing its se
       ),
     ).toBeDefined();
     recovery_core = new SqliteProcessConversationSystem(f.core.options);
-    await unchanged(() => recovery_core!.tell_agents_of_background_tasks_lost_at_restart());
+    // Python consumes the recorded tasks before admission queues their notices.
+    // Neither conversation has a live adopted Mac run, so those two tasks ended.
+    const before_lost_tasks = snapshot();
+    expect(before_lost_tasks.conversation_background_tasks).toEqual(
+      [unknown, selected]
+        .map((conversation_id) =>
+          JSON.stringify({
+            conversation_id,
+            task_id: 'persisted-task',
+            task_description: 'Retained Mac task',
+          }),
+        )
+        .sort(),
+    );
+    await recovery_core.tell_agents_of_background_tasks_lost_at_restart();
+    expect(snapshot()).toEqual({ ...before_lost_tasks, conversation_background_tasks: [] });
+    expect(local_constructor).not.toHaveBeenCalled();
+    expect(f.children).toHaveLength(0);
     const recovery_send = vi.spyOn(recovery_core, 'send');
     const recovery_record = vi.spyOn(recovery_core, 'record_events_transaction');
     await unchanged(() => run_automatic_recovery(recovery_core!, database));
@@ -567,6 +587,7 @@ test('local composition refuses a retained Mac Ticket before constructing its se
     await children.settled();
     await child_processes.settled();
     await f.core.shutdown(stop);
+    await worker_supervision.close();
     live_tail.close();
   }
   console.info(`Temporary Mac guard component proof: ${(performance.now() - began).toFixed(3)} ms`);

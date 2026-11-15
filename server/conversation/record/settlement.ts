@@ -57,6 +57,16 @@ export class RecordSettlement {
     return task;
   }
 
+  retain_recording<T>(task: Promise<T>): Promise<T> {
+    this.#pending.add(task);
+    void task.finally(() => this.#pending.delete(task)).catch(() => {});
+    return task;
+  }
+
+  write_recording<T>(operation: () => T | Promise<T>): Promise<T> {
+    return this.retain_recording(this.#write(operation, null));
+  }
+
   async #write<T>(operation: () => T | Promise<T>, retry_later_at: number | null): Promise<T> {
     while (true) {
       try {

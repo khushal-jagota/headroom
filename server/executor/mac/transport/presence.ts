@@ -13,6 +13,7 @@ import type {
   MacLocalStatus,
   MacUpdateCheck,
   WorkingTurn,
+  WorkerCleanupUncertainty,
 } from '../../wire.generated.ts';
 import type { AsyncCommandJournal } from '../storage/journal_contracts.ts';
 import type { OutboxStore } from '../storage/outbox.ts';
@@ -68,11 +69,13 @@ export interface MacLeaseOptions {
   readonly journal: Pick<AsyncCommandJournal, 'poll_cursor' | 'lower_poll_cursor'>;
   readonly runner: {
     readonly admission_stopped: boolean;
+    readonly cleanup_uncertainties: WorkerCleanupUncertainty[];
+    readonly legacy_cleanup_notice: string | null;
+    refresh_worker_cleanup(): Promise<void>;
     working_turns(): readonly WorkingTurn[];
     seal(): void;
   };
   readonly updates: { offer(update: MacUpdateCheck): void };
-  readonly record_children: () => Promise<void>;
   readonly replaced: () => void;
   readonly on_failure: (error: unknown) => void;
   readonly warn: (message: string) => void;
@@ -83,6 +86,8 @@ export class MacLeaseLoop {
   private readonly cancellation = new AbortController();
   private task: Promise<void> | undefined;
   private lease: Promise<boolean> | undefined;
+  private worker_cleanup: Promise<void> | undefined;
+  private next_worker_cleanup = 0;
   private closed = false;
   constructor(options: MacLeaseOptions) {
     this.options = options;
@@ -107,6 +112,8 @@ export class MacLeaseLoop {
       working_turns: [...runner.working_turns()],
       admission_stopped: runner.admission_stopped,
       going_to_sleep: presence.going_to_sleep,
+      cleanup_uncertainties: runner.cleanup_uncertainties,
+      legacy_cleanup_notice: runner.legacy_cleanup_notice,
     };
   }
   lease_once(): Promise<boolean> {
@@ -156,6 +163,18 @@ export class MacLeaseLoop {
     }
     presence.accepted();
     updates.offer(reply.update);
+    if (performance.now() >= this.next_worker_cleanup && this.worker_cleanup === undefined) {
+      this.next_worker_cleanup = performance.now() + 600_000;
+      const task = Promise.resolve()
+        .then(() => runner.refresh_worker_cleanup())
+        .catch((error: unknown) => {
+          warn(`Worker cleanup refresh failed: ${failure_name(error)}`);
+        });
+      this.worker_cleanup = task;
+      void task.finally(() => {
+        if (this.worker_cleanup === task) this.worker_cleanup = undefined;
+      });
+    }
     try {
       if (cursor !== null) await journal.lower_poll_cursor(reply.mailbox_high_sequence, cursor);
     } catch (error) {
@@ -175,11 +194,6 @@ export class MacLeaseLoop {
         const started = performance.now();
         if (!(await this.lease_once())) return;
         if (this.closed) return;
-        try {
-          await this.options.record_children();
-        } catch (error) {
-          this.options.warn(`Agent process record failed: ${failure_name(error)}`);
-        }
         await sleep(
           Math.max(0, started + LEASE_INTERVAL_SECONDS * 1000 - performance.now()),
           undefined,
@@ -207,6 +221,7 @@ export class MacLeaseLoop {
   }
   async settled(): Promise<void> {
     const results = await Promise.allSettled([this.task, this.lease]);
+    results.push(...(await Promise.allSettled([this.worker_cleanup])));
     const failures = new Set<unknown>();
     for (const result of results) {
       if (result.status === 'fulfilled') continue;

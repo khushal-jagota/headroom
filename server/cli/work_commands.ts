@@ -766,6 +766,15 @@ export async function run_work_command(inv: Invocation): Promise<CommandResult> 
       data = { ticket_id: tid, conversation_id: cid, events: page.events, has_more: page.has_more };
       return emit(data, as_json, `${scalar(tid)} ${scalar(data.events.length)} history events`);
     }
+    case 'ticket recheck-worker-cleanup':
+      data = await send(inv, 'POST', `/api/tickets/${v.ticket_id}/recheck-worker-cleanup`, {
+        json_body: {},
+      });
+      return emit(
+        data,
+        as_json,
+        `Worker cleanup ${data.complete ? 'complete' : 'not proven'}: ${scalar(data.reason)}`,
+      );
     case 'ticket restart-worker': {
       if ((v.backend == null) !== (v.model == null))
         fail_validation(inv, 'restart-worker needs --backend and --model together, or neither');

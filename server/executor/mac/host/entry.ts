@@ -1,7 +1,6 @@
 /** Production bindings use the invocation's existing stores and process owners. */
 import { backend_executable_path } from '../../../conversation/snapshot/environment.ts';
 import { SHUTDOWN_GRACE_SECONDS } from '../../../lifecycle/configuration.ts';
-import { AgentProcesses } from '../agent_processes.ts';
 import { create_mac_adapter_host } from '../adapters.ts';
 import { create_mac_catalog } from '../catalog/production.ts';
 import { MAC_RUNTIME_UPDATE_EXIT_CODE } from '../configuration.ts';
@@ -22,16 +21,6 @@ export function production_bindings(
         executable_path: (name) => backend_executable_path(name, environment),
       }),
     catalog: (host, owners, on_failure) => create_mac_catalog({ host, ...owners, on_failure }),
-    processes: ({ paths, files, one_shot_children }) =>
-      process.platform === 'darwin'
-        ? new AgentProcesses({
-            run: paths.run,
-            parent_process_id: process.pid,
-            files,
-            one_shot_children,
-            warn: console.warn,
-          })
-        : null,
     updates: (context) =>
       new MacUpdateController({
         paths: context.paths,
