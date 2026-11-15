@@ -1243,6 +1243,8 @@ export class SqliteProcessConversationSystem implements DeliveryServices, Conver
           ],
           agent_activity: !turn_is_maintenance(running),
           automatic_compaction_confirmed: running.compaction_confirmed,
+          working_turn_compaction_confirmed:
+            running.compaction_confirmed && !running.automatic_compaction,
           automatic_compaction_result: interpreted.compaction_result,
           create_failure_notice: interpreted.failure_notice,
         }),
@@ -1276,6 +1278,10 @@ export class SqliteProcessConversationSystem implements DeliveryServices, Conver
         automatically_compacted_through_sequence: running.compaction_confirmed
           ? latest_agent_activity_sequence
           : state.record.automatically_compacted_through_sequence,
+        working_turn_compacted_through_sequence:
+          running.compaction_confirmed && !running.automatic_compaction
+            ? latest_agent_activity_sequence
+            : state.record.working_turn_compacted_through_sequence,
         automatic_compaction_attempted_through_sequence:
           running.compaction_confirmed || interpreted.compaction_result !== null
             ? latest_agent_activity_sequence
@@ -1457,6 +1463,18 @@ export class SqliteProcessConversationSystem implements DeliveryServices, Conver
           }),
       ),
     );
+  }
+  async sender_message_ids_awaiting_outcome(conversation_id: string): Promise<ReadonlySet<string>> {
+    const state = this.conversation_state(conversation_id);
+    if (!state) return new Set();
+    // Queue removal and delivery registration share one synchronous step.
+    return new Set([
+      ...state.held_prompts.flatMap((message) =>
+        message.sender_message_id ? [message.sender_message_id] : [],
+      ),
+      ...state.admitted_sender_messages.keys(),
+      ...state.sender_messages_being_delivered.keys(),
+    ]);
   }
   async is_running(conversation_id: string): Promise<boolean> {
     this.require_runtime_ownership();

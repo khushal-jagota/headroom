@@ -60,6 +60,20 @@ test('boundary duplicate waits for compaction and runs once', async () => {
   await child.finish();
   await f.core.wait_until_quiescent();
   expect((await child.inspect()).delivered_text).toEqual(['first', '/compact', 'at the boundary']);
+  const idle = f.store.read_conversation('core')!;
+  expect(idle.automatically_compacted_through_sequence).toBeGreaterThan(0);
+  expect(idle.working_turn_compacted_through_sequence).toBe(0);
+  // A vendor compaction inside the resumed work advances the working boundary.
+  await child.emit(new ContextCompacted());
+  await child.finish();
+  await f.core.wait_until_quiescent();
+  const working = f.store.read_conversation('core')!;
+  expect(working.working_turn_compacted_through_sequence).toBe(
+    working.latest_agent_activity_sequence,
+  );
+  expect(working.working_turn_compacted_through_sequence).toBeGreaterThan(
+    idle.automatically_compacted_through_sequence,
+  );
   const prompts = f.store
     .read_events_after('core', 0)
     .filter((row) => row.payload.kind === 'prompt');
