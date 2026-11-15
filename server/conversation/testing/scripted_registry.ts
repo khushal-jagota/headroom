@@ -3,8 +3,20 @@ import type { BackendChildFactory } from '../backends/contracts.ts';
 import type { ConversationCoreOptions } from '../runtime/contracts.ts';
 import type { ScriptedBehavior, ScriptedSnapshot } from './scripted_protocol.ts';
 import { ScriptedChild } from './scripted_child.ts';
+import { ScriptedCustody } from './scripted_custody.ts';
+import type { WorkerSupervisionRuntime } from '../../worker_supervision/runtime.ts';
 
 export class ScriptedBackendRegistry {
+  private owned_custody: ScriptedCustody | null = null;
+  private runtime: WorkerSupervisionRuntime | null = null;
+  get custody(): ScriptedCustody {
+    return (this.owned_custody ??= new ScriptedCustody());
+  }
+  bind_runtime(runtime: WorkerSupervisionRuntime): void {
+    if (this.children.size !== 0 || this.owned_custody !== null)
+      throw new Error('Scripted custody must bind before its first child');
+    this.runtime = runtime;
+  }
   readonly factories: ConversationCoreOptions['backend_child_factories'];
   private readonly current = new Map<string, ScriptedChild>();
   private readonly children = new Map<ScriptedChild, string>();
@@ -15,7 +27,7 @@ export class ScriptedBackendRegistry {
   constructor() {
     const factory: BackendChildFactory = ({ resolved_start, event_sink }) => {
       const id = resolved_start.conversation_id;
-      const child = new ScriptedChild(event_sink);
+      const child = new ScriptedChild(event_sink, this.runtime ?? this.custody.runtime);
       this.current.set(id, child);
       this.children.set(child, id);
       const queued = this.pending.get(id) ?? [];
@@ -82,6 +94,7 @@ export class ScriptedBackendRegistry {
   async close(): Promise<void> {
     await Promise.allSettled(this.ready.values());
     await Promise.all([...this.children.keys()].map((child) => child.terminate()));
+    await this.owned_custody?.close();
     this.current.clear();
     this.children.clear();
     this.ready.clear();

@@ -1,3 +1,6 @@
+import { OneShotChildren } from '../../../lifecycle/one_shot_children.ts';
+import { create_worker_supervision_runtime } from '../../../worker_supervision/composition.ts';
+import { LocalChildCustody } from '../../child_custody.ts';
 /** The real TS adapter and core, with one local scripted ACP peer. */
 import { ChildProcesses } from '../../../lifecycle/owned_processes.ts';
 import { SHUTDOWN_GRACE_SECONDS } from '../../../lifecycle/configuration.ts';
@@ -91,6 +94,8 @@ export async function run_part2_parity(spec: Spec): Promise<unknown> {
   const backendEvents: unknown[] = [];
   const kept: unknown[] = [];
   const child_processes = new ChildProcesses();
+  const one_shot_children = new OneShotChildren(child_processes);
+  const worker_supervision = create_worker_supervision_runtime({ one_shot_children });
   const base = create_hermes_backend_child_factory(
     {
       argv: [process.execPath, spec.executable],
@@ -100,19 +105,20 @@ export async function run_part2_parity(spec: Spec): Promise<unknown> {
         ['UNIT16_CONTROL', spec.control],
       ],
     },
-    { child_processes },
+    { child_processes, worker_supervision },
   );
   const missing = create_hermes_backend_child_factory(
     {
       argv: [spec.workspace + '/missing-hermes-python'],
       environment_overrides: [],
     },
-    { child_processes },
+    { child_processes, worker_supervision },
   );
   const factory: BackendChildFactory = (options) =>
     (options.resolved_start.conversation_id === 'unit16-missing-interpreter' ? missing : base)({
       ...options,
       event_sink: {
+        ...options.event_sink,
         async report(turn, event) {
           const value = JSON.parse(JSON.stringify(event));
           backendEvents.push({ turn, event: event.constructor.name, value });
@@ -137,7 +143,14 @@ export async function run_part2_parity(spec: Spec): Promise<unknown> {
     });
   const frames: unknown[] = [];
   const core = new SqliteProcessConversationSystem({
-    store: new ConversationStore(database, { integer_now: () => now }),
+    store: new ConversationStore(database, {
+      integer_now: () => now,
+      local_child_custody: new LocalChildCustody({
+        runtime: worker_supervision,
+        child_processes,
+        one_shot_children,
+      }),
+    }),
     delivery_model_refusal: (backend, model, ticket_id) =>
       new BackendStateStore(database).delivery_model_refusal(backend, model, ticket_id),
     execution_refusal: (id) =>
@@ -291,6 +304,12 @@ export async function run_part2_parity(spec: Spec): Promise<unknown> {
     }
   } finally {
     await core.shutdown({ deadline: performance.now() / 1000 + SHUTDOWN_GRACE_SECONDS });
+    await core.settled();
+    child_processes.seal();
+    await child_processes.settled();
+    await worker_supervision.close();
+    one_shot_children.seal();
+    await one_shot_children.settled();
     database.close();
   }
   return {

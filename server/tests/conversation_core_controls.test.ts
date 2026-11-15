@@ -16,6 +16,10 @@ import { AgentMessageDelta, TurnEnded } from '../conversation/backends/contracts
 import { text_message_content } from '../conversation/message_content.ts';
 import { Deferred } from '../conversation/runtime/state.ts';
 import { save_attempt } from '../conversation/runtime/save_attempt.ts';
+import { HOME_MACHINE_ID, ORIGINAL_MAC_MACHINE_ID } from '../execution_identity.ts';
+import { PROTOCOL_VERSION } from '../execution_configuration.ts';
+import { native_wire_fixtures } from '../executor/testing/native_protocol_fixtures.ts';
+import { create } from './ticket_fixture.ts';
 
 const writers: ReturnType<typeof spawn>[] = [];
 afterEach(async () => {
@@ -43,6 +47,104 @@ function abort_observer(controller: AbortController): Error {
   controller.abort(error);
   return error;
 }
+
+// Recheck selects this Ticket's historical sources and requires explicit fresh lease evidence.
+test('cleanup recheck refuses absent evidence and delegates only matching historical custody', async () => {
+  const f = setup({ core: { unix_time_now: () => 100 } });
+  const ticket = create(f.database);
+  f.database.write((tx) =>
+    tx.run('UPDATE tickets SET machine_id=? WHERE id=?', [ORIGINAL_MAC_MACHINE_ID, ticket.id]),
+  );
+  const lease = native_wire_fixtures().LeaseRequest;
+  lease.identity.protocol_version = PROTOCOL_VERSION;
+  lease.cleanup_uncertainties = [];
+  const save = (value: unknown) =>
+    f.database.write((tx) =>
+      tx.run(
+        'INSERT INTO mac_executor_presence(machine_id,lease_json,last_lease_at_ms) VALUES(?,?,100000) ON CONFLICT(machine_id) DO UPDATE SET lease_json=excluded.lease_json',
+        [ORIGINAL_MAC_MACHINE_ID, JSON.stringify(value)],
+      ),
+    );
+  save(lease);
+  expect((await f.core.recheck_worker_cleanup(ticket.id)).complete).toBe(true);
+  const { cleanup_uncertainties: _evidence, ...missing } = lease;
+  save(missing);
+  expect(await f.core.recheck_worker_cleanup(ticket.id)).toMatchObject({
+    complete: false,
+    reason: 'Fresh executor cleanup evidence is unavailable',
+  });
+  const source = {
+    executor_incarnation: lease.identity.executor_incarnation,
+    child_id: 'past-child',
+    conversation_id: 'past-conversation',
+  };
+  f.database.write((tx) => {
+    for (const reference of [
+      source,
+      { ...source, child_id: 'other-child', conversation_id: 'other-conversation' },
+    ])
+      tx.run(
+        "INSERT INTO executor_child_assignments(executor_incarnation,child_id,conversation_id,principal_kind,principal_id,created_at_ms) VALUES(?,?,?,'ticket',?,0)",
+        [reference.executor_incarnation, reference.child_id, reference.conversation_id, ticket.id],
+      );
+  });
+  lease.cleanup_uncertainties = [
+    { ticket_id: ticket.id, conversation_id: source.conversation_id, reason: 'Unproven cleanup' },
+  ];
+  save(lease);
+  const recheck = vi.fn(async () => ({ complete: false, reason: 'Still alive', scope: 'fixture' }));
+  f.core.configure_worker_cleanup_recheck(recheck);
+  expect((await f.core.recheck_worker_cleanup(ticket.id)).complete).toBe(false);
+  expect(recheck).toHaveBeenCalledExactlyOnceWith(source, ticket.id);
+  expect(f.children).toHaveLength(0);
+  await f.core.shutdown({ deadline: performance.now() / 1000 + SHUTDOWN_GRACE_SECONDS });
+});
+
+// A workspace cannot detach on uncertain cleanup, or lose its fence when a caller leaves.
+test('workspace retirement keeps exact child and detach barriers until actual completion', async () => {
+  const f = setup();
+  await f.start();
+  vi.spyOn(f.store, 'workspace_conversation_ids').mockResolvedValue(['core']);
+  const inspection = vi.spyOn(f.store, 'settle_recorded_source').mockResolvedValue(null);
+  f.store.blocked_local_conversations.add('core');
+  vi.useFakeTimers();
+  f.core.defer_start_drain(f.core.conversations.get('core')!);
+  const identity = { machine_id: HOME_MACHINE_ID, workspace_id: 'private-workspace' };
+  const detach = vi.fn(async () => ({ path: '/detached' }));
+  const cleanup = { retire_local_children: f.core.retire_local_workspace };
+  expect(await cleanup.retire_local_children('ticket', identity, detach)).toEqual({
+    reason: 'Local child retirement failed',
+  });
+  expect(detach).not.toHaveBeenCalled();
+  inspection.mockRestore();
+  f.store.blocked_local_conversations.clear();
+  f.core.conversations.get('core')!.child_is_quarantined = false;
+  const drain = vi.spyOn(f.core, 'drain_held_prompts');
+  await vi.advanceTimersByTimeAsync(1000);
+  expect(drain).not.toHaveBeenCalled();
+  drain.mockRestore();
+  vi.useRealTimers();
+  const started = new Deferred<void>();
+  const detached = new Deferred<{ path: string }>();
+  const retiring = cleanup.retire_local_children('ticket', identity, () => {
+    started.resolve();
+    return detached.promise;
+  });
+  await started.promise;
+  const observer = new AbortController();
+  const departed = observe(retiring, observer.signal);
+  const reason = abort_observer(observer);
+  await expect(departed).rejects.toBe(reason);
+  expect(f.core.workspace_admission.active).toBe(true);
+  await expect(f.send()).rejects.toThrow('Ticket workspace admission is closed for retirement');
+  expect(await f.core.retire_local_workspace('ticket', identity, detach)).toEqual({
+    reason: 'Ticket workspace retirement is already in progress',
+  });
+  detached.resolve({ path: '/detached' });
+  expect(await retiring).toEqual({ path: '/detached' });
+  expect(f.core.workspace_admission.active).toBe(false);
+  await f.core.shutdown({ deadline: performance.now() / 1000 + SHUTDOWN_GRACE_SECONDS });
+});
 
 // Inventory #18: kill discards its initial queue snapshot; a later admitted send is still owed a turn.
 test('a send during native kill cancellation runs after the kill', async () => {

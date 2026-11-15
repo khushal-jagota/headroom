@@ -171,7 +171,11 @@ export class ChildProcesses implements OwnedChildProcesses {
         if (
           !['show', 'stop', 'reset-failed'].includes(action) ||
           (action === 'show'
-            ? extra.length !== 1 || extra[0] !== '--property=LoadState'
+            ? extra.length !== 1 ||
+              ![
+                '--property=LoadState',
+                '--property=LoadState,ActiveState,SubState,Result,MainPID,ControlGroup,Slice,KillMode',
+              ].includes(extra[0])
             : extra.length !== 0)
         )
           throw new Error('Invalid retained Worker unit cleanup command');
