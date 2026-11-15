@@ -46,7 +46,7 @@ import {
   require_node_database_frontier,
   schema_change_pending,
 } from '../migrations.ts';
-import { AppValidationError, LINUX_EXECUTOR, MAC_EXECUTOR } from '../contracts.ts';
+import { AppValidationError, LINUX_EXECUTOR, MAC_EXECUTOR, MAC_HOME } from '../contracts.ts';
 
 import { parse_dynamic } from '../native/elf.ts';
 import { resolve_provider } from '../native/providers.ts';
@@ -1185,7 +1185,6 @@ export async function release_targets_parity(root: string): Promise<unknown> {
   manifest.artifact_digest = await digest_app_artifact(app);
   await writeFile(join(app, 'manifest.json'), JSON.stringify(manifest));
   result.push(await outcome(() => validate(MAC_EXECUTOR)));
-  result.push(await outcome(() => create_app_archive(app, join(root, 'node-default.tar.gz'))));
   const archive = join(root, 'node-target.tar.gz');
   const digest = await create_app_archive(app, archive, LINUX_EXECUTOR);
   const owner = new ChildProcesses();
@@ -1207,6 +1206,18 @@ export async function release_targets_parity(root: string): Promise<unknown> {
       LINUX_EXECUTOR,
     );
     result.push(await readFile(join(restored, 'sentinel'), 'utf8'));
+    await writeFile(
+      marker,
+      JSON.stringify({ platform: 'darwin', architecture: 'arm64', role: 'home' }),
+    );
+    result.push(
+      await outcome(() =>
+        validate_app_manifest(join(app, 'manifest.json'), {
+          expected_target: MAC_HOME,
+          verify_artifact_digest: false,
+        }),
+      ),
+    );
   } finally {
     owner.seal();
     await owner.settled();

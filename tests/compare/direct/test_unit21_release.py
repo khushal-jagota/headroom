@@ -1394,10 +1394,10 @@ def test_unit21_release_identity_archive_and_frontier(
             + "\n"
         )
 
-
 def test_unit21_release_target_admission(tmp_path: Path, request: pytest.FixtureRequest) -> None:
     """Gap: home/executor role refusals must survive archive create and owned extraction."""
-    from planner.platform_runtime.targets import LINUX_EXECUTOR, MAC_EXECUTOR
+    from planner.platform_runtime.targets import LINUX_EXECUTOR, MAC_EXECUTOR, MAC_HOME
+    from tests.compare.direct.unit20_cli import write_report
 
     began = time.perf_counter()
     app = build_app(tmp_path / "app", SHA, "sentinel")
@@ -1420,7 +1420,6 @@ def test_unit21_release_target_admission(tmp_path: Path, request: pytest.Fixture
     )
     rewrite_artifact_digest(app)
     expected.append(outcome(lambda: validate(MAC_EXECUTOR)))
-    expected.append(outcome(lambda: create_app_archive(app, tmp_path / "python-default.tar.gz")))
     archive = tmp_path / "python-target.tar.gz"
     digest = create_app_archive(app, archive, expected_target=LINUX_EXECUTOR)
     expected.append(
@@ -1430,23 +1429,22 @@ def test_unit21_release_target_admission(tmp_path: Path, request: pytest.Fixture
         archive, tmp_path / "python-restored", digest, SHA, expected_target=LINUX_EXECUTOR
     )
     expected.append((tmp_path / "python-restored/sentinel").read_text())
-    (app / "mac-runtime.json").unlink()
-    rewrite_artifact_digest(app)
-    actual = json.loads(
-        subprocess.check_output(
-            [
-                "node",
-                "--input-type=module",
-                "-e",
-                "const {release_targets_parity}=await import(process.argv[1]);"
-                "console.log(JSON.stringify(await release_targets_parity(process.argv[2])));",
-                (ROOT / "server/environments/release/testing/release_parity.ts").as_uri(),
-                str(tmp_path),
-            ],
-            cwd=ROOT,
-            text=True,
+    (app / "mac-runtime.json").write_text(
+        json.dumps(dict(platform="darwin", architecture="arm64", role="home"))
+    )
+    expected.append(
+        outcome(
+            lambda: validate_app_manifest(
+                app / "manifest.json", expected_target=MAC_HOME, verify_artifact_digest=False
+            )
         )
     )
+    (app / "mac-runtime.json").unlink()
+    rewrite_artifact_digest(app)
+    module = (ROOT / "server/environments/release/testing/release_parity.ts").as_uri()
+    code = "const m=await import(process.argv[1]);console.log(JSON.stringify(await m.release_targets_parity(process.argv[2])));"
+    command = ["node", "--input-type=module", "-e", code, module, str(tmp_path)]
+    actual = json.loads(subprocess.check_output(command, cwd=ROOT, text=True))
     report = dict(
         kind="direct",
         case="unit21-release-targets",
@@ -1455,9 +1453,5 @@ def test_unit21_release_target_admission(tmp_path: Path, request: pytest.Fixture
         typescript=actual,
         seconds=time.perf_counter() - began,
     )
-    destination = request.config.getoption("--compare-report-dir")
-    if destination:
-        output = Path(destination)
-        output.mkdir(parents=True, exist_ok=True)
-        (output / "unit21-release-targets.json").write_text(json.dumps(report, indent=2) + "\n")
+    write_report(request, "unit21-release-targets", report)
     assert actual == expected
