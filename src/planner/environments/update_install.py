@@ -12,9 +12,7 @@ from contextlib import closing
 from pathlib import Path
 
 from planner.environments.update_configuration import INSTALLER_FILE_NAME
-
-_INSTALLER_SOURCE = Path(__file__).with_name("update_installer.py")
-_HOST_PYTHON_PATH = "/usr/local/bin:/usr/bin:/bin"
+from planner.platform_runtime.selection import get_platform_adapter
 
 
 def migration_graph(app_root: Path) -> dict[str, tuple[str, ...]]:
@@ -47,44 +45,48 @@ def migration_graph(app_root: Path) -> dict[str, tuple[str, ...]]:
     return graph
 
 
+def _migration_heads(graph: dict[str, tuple[str, ...]]) -> set[str]:
+    return set(graph) - {parent for parents in graph.values() for parent in parents}
+
+
+def _database_revisions(database: Path) -> set[str]:
+    with closing(sqlite3.connect(f"file:{database}?mode=ro", uri=True)) as connection:
+        rows = connection.execute("SELECT version_num FROM alembic_version").fetchall()
+    return {str(row[0]) for row in rows}
+
+
 def schema_change_pending(database: Path, staged_app: Path) -> bool:
     """True when the candidate migrates this database; refuse a revision it does not know."""
     graph = migration_graph(staged_app)
-    heads = set(graph) - {parent for parents in graph.values() for parent in parents}
-    with closing(sqlite3.connect(f"file:{database}?mode=ro", uri=True)) as connection:
-        rows = connection.execute("SELECT version_num FROM alembic_version").fetchall()
-    revisions = {str(row[0]) for row in rows}
+    revisions = _database_revisions(database)
     if not revisions or not revisions <= set(graph):
         raise ValueError("This release does not know the database's schema revision.")
-    return revisions != heads
+    return revisions != _migration_heads(graph)
+
+
+def require_exact_schema_frontier(database: Path, staged_app: Path) -> None:
+    """A Node release runs no migration, so the database must already be at its heads.
+
+    Behind, ahead, unknown and divergent revision sets are all refused. A backup does
+    not make any of them acceptable.
+    """
+    revisions = _database_revisions(database)
+    if not revisions or revisions != _migration_heads(migration_graph(staged_app)):
+        raise ValueError(
+            "This release requires the database to be at exactly its schema revision. "
+            "Install the Python release that carries the same migrations first."
+        )
 
 
 def own_service_unit(cgroup: str | None = None) -> str | None:
-    """Name the systemd service this process runs in, or None outside one.
-
-    The installer stops and starts exactly this unit, so a server can only ever restart
-    itself. A copy of Panels running anywhere else cannot stop the live service.
-    """
-    if cgroup is None:
-        try:
-            cgroup = Path("/proc/self/cgroup").read_text()
-        except OSError:
-            return None
-    for line in cgroup.splitlines():
-        hierarchy, _, path = line.partition("::")
-        if hierarchy != "0":
-            continue
-        leaf = path.rstrip("/").rsplit("/", 1)[-1]
-        if leaf.endswith(".service") and not leaf.startswith("user@"):
-            return leaf
-    return None
+    return get_platform_adapter().own_service_unit(cgroup)
 
 
 def write_installer(data_directory: Path) -> Path:
     """Copy the installer out of this app, so the app swap cannot change the code it runs."""
     destination = data_directory / INSTALLER_FILE_NAME
     temporary = destination.with_name(f".{destination.name}.tmp")
-    shutil.copyfile(_INSTALLER_SOURCE, temporary)
+    shutil.copyfile(get_platform_adapter().installer_source(), temporary)
     temporary.replace(destination)
     return destination
 
@@ -98,11 +100,9 @@ def installer_command(
     health_url: str,
     health_timeout_seconds: float,
 ) -> list[str]:
-    python = shutil.which("python3", path=_HOST_PYTHON_PATH)
-    if python is None:
-        raise OSError("The host has no python3 for the installer.")
+    python = get_platform_adapter().installer_python(current_root)
     return [
-        python, "-I", "-S", "-B", str(installer),
+        str(python), "-I", "-S", "-B", str(installer),
         "--current-root", str(current_root),
         "--attempt-id", attempt_id,
         "--service", service,

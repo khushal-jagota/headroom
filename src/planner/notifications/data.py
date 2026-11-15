@@ -16,6 +16,7 @@ from cryptography.hazmat.primitives.asymmetric import ec
 from planner.core import ticket_blocks
 from planner.core.contracts import CHIEF_PRINCIPAL, OWNER_PRINCIPAL, Principal, PrincipalKind
 from planner.notifications import attention as attention_data
+from planner.notifications.config import NOTIFICATION_FRESHNESS_SECONDS
 from planner.notifications.contracts import (
     MANAGER_NOTIFICATION_SUBJECT_KEY,
     NOTIFICATION_SUBJECTS,
@@ -272,7 +273,7 @@ def _reconcile_attention(conn: sqlite3.Connection) -> None:
     desired: dict[tuple[str, str, str], tuple[bool, Principal, str, int]] = {}
     ticket_rows = conn.execute(
         "SELECT id, title, stage, worker_type, workflow_json, worker_step_claim, pending_proposal, "
-        "ceiling_holder, conversation_id, updated_at FROM tickets"
+        "ceiling_holder, conversation_id, updated_at, is_backlogged FROM tickets"
     ).fetchall()
     blocked_ticket_ids = ticket_blocks.blocked_ticket_ids(conn)
     for row in ticket_rows:
@@ -291,11 +292,13 @@ def _reconcile_attention(conn: sqlite3.Connection) -> None:
         parked = fields_codec.proposal_from_json(row["pending_proposal"])
         flags = {
             "awaiting_reply": conversation.unread_message,
-            "awaiting_answer": conversation.pending_ask,
+            "awaiting_answer": conversation.pending_ask and not row["is_backlogged"],
             "awaiting_approval": (
-                facts.ticket_status is TicketStatus.awaiting_approval and owner_holds
+                facts.ticket_status is TicketStatus.awaiting_approval
+                and owner_holds
+                and not row["is_backlogged"]
             ),
-            "assigned": ticket_assignment_from_values(
+            "assigned": not row["is_backlogged"] and ticket_assignment_from_values(
                 stage=str(row["stage"]),
                 worker_type=row["worker_type"],
                 worker_type_definition=workflow_from_row(row),
@@ -307,9 +310,9 @@ def _reconcile_attention(conn: sqlite3.Connection) -> None:
                 conversation.occurred_at
                 if notification_type in {"awaiting_reply", "awaiting_answer", "errored"}
                 and conversation.occurred_at
-                # A parked proposal knows when it was parked, and that is the wait.
-                # It is the same number the review list shows.
-                else int(parked.created_at)
+                # Imported backlog/resume state can move eligibility after the
+                # proposal date. Never reopen or close its gate before that update.
+                else max(int(parked.created_at), int(row["updated_at"]))
                 if notification_type == "awaiting_approval" and parked is not None
                 else int(row["updated_at"])
             )
@@ -372,8 +375,9 @@ def _queue_attention_deliveries(conn: sqlite3.Connection, now: int) -> int:
     subscriptions = active_subscription_ids(conn)
     decided = 0
     for row in conn.execute(
-        "SELECT subject_kind, subject_id, notification_type, generation, occurred_at "
-        "FROM notification_attention_edges WHERE decided=0 "
+        "SELECT subject_kind, subject_id, notification_type, generation, occurred_at, "
+        f"{attention_data.TASK_ALERT_IS_CURRENT} AS task_alert_is_current "
+        "FROM notification_attention_edges d WHERE decided=0 "
         "AND subject_kind IN ('ticket','manager','agent') "
         "ORDER BY occurred_at, subject_kind, subject_id, "
         "notification_type, generation"
@@ -406,7 +410,8 @@ def _queue_attention_deliveries(conn: sqlite3.Connection, now: int) -> int:
         )
         intent = decide_notification(
             edge,
-            enabled=preferences.get((_preference_subject_key(edge), edge.notification_type), False),
+            enabled=bool(row["task_alert_is_current"])
+            and preferences.get((_preference_subject_key(edge), edge.notification_type), False),
         )
         if intent is not None:
             from planner.notifications import apns_data
@@ -462,9 +467,48 @@ _SUBJECT_STILL_EXISTS = (
 )
 
 
+_CURRENT_ATTENTION = (
+    "EXISTS (SELECT 1 FROM notification_attention_state a "
+    "JOIN notification_attention_edges e "
+    "USING(subject_kind,subject_id,notification_type,generation) "
+    "WHERE a.subject_kind=d.subject_kind AND a.subject_id=d.subject_id "
+    "AND a.notification_type=d.notification_type AND a.generation=d.generation "
+    "AND a.active=1 AND e.occurred_at > ?)"
+)
+
+
+def expire_stale_deliveries(conn: sqlite3.Connection, now: int, *, native: bool = False) -> None:
+    table = "notification_apns_deliveries" if native else "notification_deliveries"
+    conn.execute(
+        f"UPDATE {table} AS d SET status='expired' "
+        "WHERE status IN ('pending','retry') AND "
+        f"(created_at <= ? OR NOT {_CURRENT_ATTENTION})",
+        (now - NOTIFICATION_FRESHNESS_SECONDS, now - NOTIFICATION_FRESHNESS_SECONDS),
+    )
+
+
+def delivery_is_current(conn: sqlite3.Connection, edge: EdgeKey, now: int) -> bool:
+    """Recheck the durable flag just before network I/O, without a historical scan."""
+    return conn.execute(
+        "SELECT 1 FROM notification_attention_state a "
+        "JOIN notification_attention_edges e "
+        "USING(subject_kind,subject_id,notification_type,generation) "
+        "WHERE a.subject_kind=? AND a.subject_id=? AND a.notification_type=? "
+        "AND a.generation=? AND a.active=1 AND e.occurred_at > ?",
+        (
+            edge.subject_kind,
+            edge.subject_id,
+            edge.notification_type,
+            edge.generation,
+            now - NOTIFICATION_FRESHNESS_SECONDS,
+        ),
+    ).fetchone() is not None
+
+
 def pending_deliveries(
     conn: sqlite3.Connection, now: int, *, limit: int = 50
 ) -> tuple[PendingDelivery, ...]:
+    expire_stale_deliveries(conn, now)
     rows = conn.execute(
         "SELECT d.subject_kind, d.subject_id, d.notification_type, d.generation, d.attempts, "
         "d.title, d.body, d.route, d.tag, "
@@ -474,7 +518,7 @@ def pending_deliveries(
         "AND s.disabled_at IS NULL "
         # The log holds no foreign key to its subject, so a Ticket deleted after the
         # queue step's prune would otherwise still be pushed about.
-        f"AND {_SUBJECT_STILL_EXISTS} "
+        f"AND {_SUBJECT_STILL_EXISTS} AND {attention_data.TASK_ALERT_IS_CURRENT} "
         "ORDER BY d.next_attempt_at, d.subject_kind, d.subject_id, "
         "d.notification_type, d.generation LIMIT ?",
         (now, limit),

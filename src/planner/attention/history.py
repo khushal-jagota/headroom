@@ -114,14 +114,15 @@ def capture_gate(conn: sqlite3.Connection, *, ticket_id: str, active: bool, now:
     if not _installed(conn):
         return
     opened = conn.execute(
-        "SELECT id FROM attention_gate_intervals WHERE ticket_id=? AND closed_at IS NULL",
+        "SELECT id,observed_since FROM attention_gate_intervals "
+        "WHERE ticket_id=? AND closed_at IS NULL",
         (ticket_id,),
     ).fetchone()
     if not active:
         if opened is not None:
             conn.execute(
                 "UPDATE attention_gate_intervals SET closed_at=? WHERE id=?",
-                (now, int(opened[0])),
+                (max(now, int(opened["observed_since"])), int(opened["id"])),
             )
         return
     if opened is not None:

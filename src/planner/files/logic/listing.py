@@ -16,7 +16,9 @@ from planner.files.contracts import ArtifactEntry
 INDEX_FILE_NAME = "index.html"
 
 
-def fold_directory(root: Path, path_prefix: str = "") -> tuple[ArtifactEntry, ...]:
+def fold_directory(
+    root: Path, path_prefix: str = "", *, excluded_names: frozenset[str] = frozenset()
+) -> tuple[ArtifactEntry, ...]:
     """Return what is directly in `root`, with every directory folded to one entry.
 
     `path_prefix` goes in front of each path an entry opens, so a caller that serves the
@@ -27,6 +29,8 @@ def fold_directory(root: Path, path_prefix: str = "") -> tuple[ArtifactEntry, ..
         return ()
     entries: list[ArtifactEntry] = []
     for path in _readable_children(root):
+        if path.name in excluded_names:
+            continue
         opened_path = f"{path_prefix}{path.name}"
         if path.is_file():
             entries.append(

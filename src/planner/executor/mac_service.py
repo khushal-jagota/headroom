@@ -10,7 +10,9 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import logging
 import os
+import signal
 import ssl
 import sys
 from functools import partial
@@ -25,8 +27,9 @@ from planner.executor.configuration import (
     ExecutorPaths,
     validate_server_url,
 )
+from planner.executor.credential_file import credential_path
+from planner.executor.legacy_worker_cleanup import migrate_once
 from planner.executor.mac_agent_gateway import AgentGateway
-from planner.executor.mac_agent_processes import AgentProcesses
 from planner.executor.mac_catalog import MacCatalog
 from planner.executor.mac_files import MacFiles
 from planner.executor.mac_http import MacHttpClient, create_update_session
@@ -46,6 +49,8 @@ from planner.executor.update_configuration import (
     MAC_RUNTIME_HANDOFF_ENV,
     MAC_RUNTIME_UPDATE_EXIT_CODE,
 )
+from planner.worker_supervision import reconcile
+from planner.worker_supervision.config import STOP_SECONDS
 
 # A replaced incarnation exits with this code, so launchd starts a fresh process.
 REPLACED_INCARNATION_EXIT_CODE = 1
@@ -87,10 +92,6 @@ class MacService:
         )
         self.files = MacFiles(self.client, paths)
         self.live = MacLiveSender(self.client)
-        # Agent priority and orphan cleanup act on the Mac's own processes only.
-        self.agent_processes = (
-            AgentProcesses(paths.run, os.getpid()) if sys.platform == "darwin" else None
-        )
         self.catalog = MacCatalog()
         self.runner = MacRunner(
             paths=paths,
@@ -101,7 +102,9 @@ class MacService:
             journal=self.journal,
             files=self.files,
             live=self.live,
-            agent_processes=self.agent_processes,
+            register_workspace=self.client.register_workspace,
+            retire_workspace=self.client.retire_workspace,
+            retirement_is_committed=partial(self.client.retire_workspace, replay=True),
         )
         handoff_path = os.environ.get(MAC_RUNTIME_HANDOFF_ENV)
         if handoff_path is not None:
@@ -135,6 +138,7 @@ class MacService:
             executor_id=executor_id,
             session_factory=partial(create_update_session, ssl_context),
             request_exit=partial(self._exit, MAC_RUNTIME_UPDATE_EXIT_CODE),
+            authentication_headers=self.client.authentication_headers,
         )
         self.lease = MacLeaseLoop(
             client=self.client,
@@ -143,7 +147,6 @@ class MacService:
             runner=self.runner,
             journal=self.journal,
             updates=self.updates,
-            agent_processes=self.agent_processes,
             replaced=partial(self._exit, REPLACED_INCARNATION_EXIT_CODE),
         )
 
@@ -156,13 +159,42 @@ class MacService:
             self._exit_code = code
         self._stop.set()
 
+    async def _reconcile_worker_processes(self) -> None:
+        """Attempt cleanup, then retain only affected Ticket fences without a restart."""
+        try:
+            await asyncio.to_thread(migrate_once, self.paths.run)
+        except (OSError, ValueError) as error:
+            logging.getLogger(__name__).warning("Legacy cleanup compatibility pass: %s", error)
+        reconciliation = await asyncio.to_thread(reconcile, self.paths.run / "worker-processes")
+        for owned in reconciliation.records:
+            if not owned.result.complete:
+                logging.getLogger(__name__).warning(
+                    "Worker cleanup remains unproven ticket=%s conversation=%s record=%s: %s",
+                    owned.ticket_id,
+                    owned.conversation_id,
+                    owned.record_path,
+                    owned.result.reason,
+                )
+        await self.runner.refresh_worker_cleanup(revoke_pending=True)
+
     async def run(self) -> None:
         loops: list[asyncio.Task[None]] = []
+        event_loop = asyncio.get_running_loop()
+        task = asyncio.current_task()
+        termination_requested = False
+
+        def terminate() -> None:
+            nonlocal termination_requested
+            termination_requested = True
+            self._stop.set()
+            if task is not None:
+                task.cancel()
+
+        if sys.platform == "linux":
+            event_loop.add_signal_handler(signal.SIGTERM, terminate)
         try:
-            if self.agent_processes is not None:
-                # Before the first lease, so the VPS's "process replaced, agents gone"
-                # holds even for agents launchd did not end.
-                await asyncio.to_thread(self.agent_processes.end_orphans)
+            await self.client.ensure_credential(credential_path(self.paths.root))
+            await self._reconcile_worker_processes()
             # What an earlier process owed goes into the outbox before the first lease
             # reports the backlog and before any command can add behind it. A spool that
             # keeps failing still lets the lease go out within one interval.
@@ -187,10 +219,22 @@ class MacService:
                         # Only the lease ends by itself, after a replacement; anything
                         # else is a failure that must restart the process.
                         loop.result()
+        except asyncio.CancelledError:
+            if not self._stop.is_set():
+                raise
         finally:
+            if sys.platform == "linux":
+                event_loop.remove_signal_handler(signal.SIGTERM)
             for loop in loops:
                 loop.cancel()
             await asyncio.gather(*loops, return_exceptions=True)
+            if termination_requested:
+                try:
+                    await asyncio.wait_for(self.runner.prepare_update("now"), STOP_SECONDS + 5)
+                except Exception as error:
+                    logging.getLogger(__name__).warning(
+                        "Executor shutdown retains cleanup evidence: %s", error
+                    )
             await self.queues.close()
             await self.live.close()
             with contextlib.suppress(Exception):

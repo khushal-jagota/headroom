@@ -30,3 +30,7 @@ class RemoteCatalogSource(Protocol):
     async def snapshot(
         self, backend_key: ConversationBackendKey, *, refresh: bool = False
     ) -> BackendSnapshot: ...
+
+
+class MachineCatalogResolver(Protocol):
+    def catalog_for(self, machine_id: str) -> RemoteCatalogSource | None: ...

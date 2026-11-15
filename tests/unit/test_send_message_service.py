@@ -245,7 +245,7 @@ def test_a_recap_request_clears_the_line_it_replaces_and_queues_behind_a_refused
         "File a short, top-level recap with your recap tool. "
         "Do not send the user a message. "
         "Workers: `panels worker recap`. Managers: `panels manager set <manager-id> recap`. "
-        "Chief: `PUT /api/workers/chief-of-staff/recap`."
+        "Chief: `PUT /api/workers/chief-of-staff/recap`.\nRequested by Chief."
     )
     owner = Principal(PrincipalKind.owner, "owner")
     worker = Principal(PrincipalKind.ticket, "t_worker")
@@ -302,7 +302,11 @@ def test_a_recap_request_clears_the_line_it_replaces_and_queues_behind_a_refused
             assert isinstance(result.fate, PromptDeliveryStarted), result.fate
             await subject.tell_agent("c_worker", {"command": "reject_steer"})
             await recap_request.request_recap(
-                subject.system, tmp_db, fake_clock, RequestContext(owner), worker
+                subject.system,
+                tmp_db,
+                fake_clock,
+                RequestContext(Principal(PrincipalKind.chief, "chief")),
+                worker,
             )
             await subject.settle()
             assert modes == [PromptDeliveryMode.queue, PromptDeliveryMode.steer]

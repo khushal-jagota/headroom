@@ -25,6 +25,7 @@ from planner.conversation.backends.contracts import (
     TurnToken,
     UserInputRequested,
 )
+from planner.conversation.child_custody import host_boot_identity
 from planner.conversation.contracts import (
     AnswerFate,
     ConversationBackendKey,
@@ -37,6 +38,7 @@ from planner.conversation.events import (
     UserInputOption,
     UserInputQuestion,
 )
+from planner.conversation.local_child_contracts import LocalChildIdentity
 from planner.conversation.message_content import MessageContent, MessageText, text_message_content
 from planner.conversation.snapshot import SubprocessBackendProbeEnvironment
 from planner.core.clock import build_clock
@@ -59,7 +61,12 @@ class ScriptedChild:
         self.reject_next_prompt = False
 
     async def start(self, *args: Any, **kwargs: Any) -> None:
-        pass
+        # This scripted adapter has no OS child. Never name the server as its child.
+        host = host_boot_identity()
+        assert host is not None
+        await self.sink.record_local_child_custody(  # type: ignore[attr-defined]
+            LocalChildIdentity(pid=2_147_483_647, birth="test-child", boot=host.boot)
+        )
 
     async def write_prompt(
         self, turn_token: TurnToken, content: MessageContent, *args: Any, **kwargs: Any,
@@ -284,6 +291,27 @@ def build_app(config: Config) -> FastAPI:
     @app.post("/api/test/signals/{conversation_id}/reject-next-prompt")
     async def reject_next_prompt(conversation_id: str) -> dict[str, bool]:
         children[conversation_id].reject_next_prompt = True
+        return {"ok": True}
+
+    @app.post("/api/test/signals/{conversation_id}/deliver-decisions")
+    async def deliver_decisions(conversation_id: str) -> dict[str, bool]:
+        # Production delivery, manually polled because this host disables automatic
+        # Worker readiness. The decision endpoints and conversation core stay real.
+        from planner.runtime.decision_message_delivery import deliver_ticket_decision_messages
+        from planner.worker_types.configuration import configured_worker_type_registry
+
+        with closing(connect(config.db_path)) as conn:
+            row = conn.execute(
+                "SELECT id FROM tickets WHERE conversation_id=?", (conversation_id,),
+            ).fetchone()
+        assert row is not None
+        await deliver_ticket_decision_messages(
+            str(row["id"]),
+            connect_database=lambda: connect(config.db_path),
+            conversation_system=app.state.conversation.system,
+            worker_type_registry=configured_worker_type_registry(),
+            now=build_clock(config).now_unix,
+        )
         return {"ok": True}
 
     @app.get("/api/test/signals/{conversation_id}/delivered")

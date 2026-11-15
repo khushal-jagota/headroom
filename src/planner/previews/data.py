@@ -28,7 +28,9 @@ def eligibility(conn: sqlite3.Connection, ticket_id: str) -> TicketEligibility:
         "SELECT folder_path FROM projects WHERE id=?", (ticket.project_id,)
     ).fetchone()
     folder = Path(row["folder_path"]) if row is not None and row["folder_path"] else None
-    return TicketEligibility(ticket_id, folder, definition.is_terminal(ticket.stage), ticket.locale)
+    return TicketEligibility(
+        ticket_id, folder, definition.is_terminal(ticket.stage), ticket.machine_id
+    )
 
 
 def from_row(row: sqlite3.Row) -> PreviewRecord:

@@ -64,7 +64,15 @@ def mightCarryUsage(line: str, provider: str) -> bool:
         if provider == "claude"
         else '"turn_completed"' in line
         if provider == "grok"
-        else '"token_count"' in line
+        else any(
+            marker in line
+            for marker in (
+                '"token_count"',
+                '"token_usage_record"',
+                '"compacted"',
+                '"thread_settings_applied"',
+            )
+        )
     )
 
 
@@ -95,7 +103,17 @@ def parseClaudeLine(line: str) -> UsageRecord | None:
         None if messageId is None and requestId is None else f"{messageId or ''}:{requestId or ''}"
     )
     cost = record.get("costUSD")
+    cacheCreation = usage.get("cache_creation")
+    cacheCreation1hTokens = (
+        min(
+            positiveInt(usage.get("cache_creation_input_tokens")),
+            positiveInt(cacheCreation.get("ephemeral_1h_input_tokens")),
+        )
+        if isinstance(cacheCreation, dict)
+        else 0
+    )
     return dict(
+        **({"cacheCreation1hTokens": cacheCreation1hTokens} if cacheCreation1hTokens else {}),
         provider="claude",
         timestampMs=timestampMs,
         model=model,
@@ -120,6 +138,11 @@ def initialCodexScanState() -> CodexScanState:
         sawSessionMeta=False,
         suppressingForkCopies=False,
         forkCopyAnchorMs=0,
+        serviceTier=None,
+        compactions={},
+        compactionMarkers={},
+        completedCompactions=[],
+        cumulativeUsage=None,
     )
 
 
@@ -134,6 +157,70 @@ def isForkedSessionMeta(payload: dict[str, Any]) -> bool:
         return False
     spawn = subagent.get("thread_spawn")
     return isinstance(spawn, dict) and isinstance(spawn.get("parent_thread_id"), str)
+
+
+_COUNTERS = (
+    "input_tokens",
+    "cached_input_tokens",
+    "cache_write_input_tokens",
+    "output_tokens",
+    "reasoning_output_tokens",
+    "total_tokens",
+)
+
+
+def _usageCounters(value: Any) -> dict[str, int]:
+    if not isinstance(value, dict):
+        return {}
+    return {key: positiveInt(value[key]) for key in _COUNTERS if key in value}
+
+
+def _compactionRecord(state: CodexScanState, responseId: str) -> UsageRecord | None:
+    candidate = state["compactions"].get(responseId)
+    if candidate is None or responseId not in state["compactionMarkers"]:
+        return None
+    del state["compactions"][responseId]
+    del state["compactionMarkers"][responseId]
+    state["completedCompactions"].append(responseId)
+    record: UsageRecord = candidate["record"]
+    # Keep an identity with no additional consumption when token_count already
+    # covers this request. Cross-file deduplication runs before date filtering.
+    if candidate["covered"]:
+        record["totals"] = dict(EMPTY_TOTALS)
+        record["compactionCovered"] = True
+    return record
+
+
+def _snapshotCovers(candidate: dict[str, Any], snapshot: dict[str, Any]) -> bool:
+    current, previous, last = snapshot["current"], snapshot["previous"], snapshot["last"]
+    usage, cumulative = candidate["usage"], candidate["cumulative"]
+    if not current or current == previous:
+        return False
+    if cumulative:
+        return all(current.get(k) == v for k, v in cumulative.items())
+    if previous is not None and usage and last == usage:
+        keys = ("input_tokens", "output_tokens")
+        return all(k in current and k in previous and k in usage for k in keys) and all(
+            current[k] - previous[k] == usage[k] for k in keys
+        )
+    return False
+
+
+def _observeCompactionOverlap(state: CodexScanState, info: dict[str, Any]) -> None:
+    current = _usageCounters(info.get("total_token_usage"))
+    snapshot = dict(
+        current=current,
+        previous=state["cumulativeUsage"],
+        last=_usageCounters(info.get("last_token_usage")),
+    )
+    # Only accepted normal records reach this point. Preserve snapshots after a
+    # marker too, because the matching response can arrive later in the file.
+    for snapshots in state["compactionMarkers"].values():
+        snapshots.append(snapshot)
+    for candidate in state["compactions"].values():
+        candidate["covered"] = candidate["covered"] or _snapshotCovers(candidate, snapshot)
+    if current:
+        state["cumulativeUsage"] = current
 
 
 def parseCodexLine(line: str, state: CodexScanState) -> UsageRecord | None:
@@ -162,10 +249,80 @@ def parseCodexLine(line: str, state: CodexScanState) -> UsageRecord | None:
         if isinstance(payload.get("model"), str):
             state["model"] = payload["model"]
         return None
+    if payload.get("type") == "thread_settings_applied":
+        settings = payload.get("thread_settings")
+        if isinstance(settings, dict) and "service_tier" in settings:
+            tier = settings["service_tier"]
+            state["serviceTier"] = tier if isinstance(tier, str) else None
+        return None
+    if record.get("type") == "compacted":
+        responseId = payload.get("compaction_response_id")
+        if (
+            isinstance(responseId, str)
+            and responseId
+            and responseId not in state["completedCompactions"]
+        ):
+            if responseId not in state["compactionMarkers"]:
+                state["compactionMarkers"][responseId] = []
+            return _compactionRecord(state, responseId)
+        return None
+    if record.get("type") == "token_usage_record":
+        responseId = payload.get("response_id")
+        usage = _usageCounters(payload.get("usage"))
+        timestampMs = parseTimestampMs(record.get("timestamp"))
+        if (
+            not isinstance(responseId, str)
+            or not responseId
+            or not usage
+            or timestampMs is None
+            or not state["model"]
+            or responseId in state["completedCompactions"]
+            or responseId in state["compactions"]
+        ):
+            return None
+        inclusive = usage.get("input_tokens", 0)
+        cached = usage.get("cached_input_tokens", 0)
+        creation = usage.get("cache_write_input_tokens", 0)
+        output = usage.get("output_tokens", 0)
+        state["compactions"][responseId] = dict(
+            usage=usage,
+            cumulative=_usageCounters(payload.get("thread_token_usage")),
+            covered=False,
+            record=dict(
+                provider="codex",
+                timestampMs=timestampMs,
+                model=payload.get("model")
+                if isinstance(payload.get("model"), str)
+                else state["model"],
+                sessionId=payload.get("session_id")
+                if isinstance(payload.get("session_id"), str)
+                else state["sessionId"],
+                totals=dict(
+                    uncachedInputTokens=max(0, inclusive - cached - creation),
+                    cachedInputTokens=cached,
+                    cacheCreationTokens=creation,
+                    outputTokens=output,
+                    reasoningTokens=min(output, usage.get("reasoning_output_tokens", 0)),
+                ),
+                reportedCostUsd=None,
+                dedupeKey="codex:compaction:" + responseId,
+                serviceTier=payload.get("service_tier")
+                if isinstance(payload.get("service_tier"), str)
+                else state["serviceTier"],
+            ),
+        )
+        candidate = state["compactions"][responseId]
+        candidate["covered"] = any(
+            _snapshotCovers(candidate, snapshot)
+            for snapshot in state["compactionMarkers"].get(responseId, [])
+        )
+        return _compactionRecord(state, responseId)
     if payload.get("type") != "token_count":
         return None
     info = payload.get("info")
-    if not isinstance(info, dict) or not isinstance(info.get("last_token_usage"), dict):
+    if not isinstance(info, dict):
+        return None
+    if not isinstance(info.get("last_token_usage"), dict):
         return None
     last = info["last_token_usage"]
     timestampMs = parseTimestampMs(record.get("timestamp"))
@@ -193,6 +350,7 @@ def parseCodexLine(line: str, state: CodexScanState) -> UsageRecord | None:
     )
     if totalTokens(totals) == 0:
         return None
+    _observeCompactionOverlap(state, info)
     return dict(
         provider="codex",
         timestampMs=timestampMs,

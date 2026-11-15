@@ -8,27 +8,40 @@ import sys
 from pathlib import Path
 from xml.etree import ElementTree
 
-# Only these exact paid-provider module/reason pairs can skip default coverage.
+# Only these exact provider opt-in module/reason pairs can skip default coverage.
 # Missing local tools and other required skips still fail the gate.
 PROVIDER_SKIPS = {
-    "tests.unit.test_manager_first_model":
+    "tests.unit.test_manager_first_model": (
         "set PANELS_REAL_CODEX_TESTS=1 for the isolated real-account Manager smoke",
-    "tests.unit.test_conversation_claude_agent_sdk":
+    ),
+    "tests.unit.test_conversation_claude_agent_sdk": (
         "set PANELS_REAL_CLAUDE_TESTS=1 with claude installed to run this",
-    "tests.unit.test_conversation_claude_real_cli":
+    ),
+    "tests.unit.test_conversation_claude_real_cli": (
         "set PANELS_REAL_CLAUDE_TESTS=1 with claude installed to run this",
-    "tests.unit.test_conversation_codex_real_cli":
+    ),
+    "tests.unit.test_conversation_codex_real_cli": (
         "set PANELS_REAL_CODEX_TESTS=1 with codex installed to run this",
-    "tests.unit.test_conversation_hermes_acp":
+    ),
+    "tests.unit.test_conversation_hermes_acp": (
         "set PANELS_REAL_HERMES_TESTS=1 with hermes installed to run this",
-    "tests.integration.test_orchestrator_worker_real_lifecycle":
+    ),
+    "tests.integration.test_orchestrator_worker_real_lifecycle": (
         "set PANELS_REAL_LUNA_LIFECYCLE=1 to run real provider calls",
-    "tests.integration.test_conversation_real_credential_requests":
+    ),
+    "tests.integration.test_conversation_real_credential_requests": (
         "set PANELS_REAL_CREDENTIAL_REQUEST_TESTS=1 for billable native Sol high calls",
-    "tests.integration.test_conversation_real_provider_permissions":
+    ),
+    "tests.integration.test_conversation_real_provider_permissions": (
         "set PANELS_REAL_PERMISSION_TESTS=1 for billable real-provider permission exercises",
-    "tests.integration.test_conversation_real_provider_steering":
+    ),
+    "tests.integration.test_conversation_real_provider_steering": (
         "set PANELS_REAL_SYSTEM_STEERING_TESTS=1 to run real provider calls",
+    ),
+    "tests.integration.test_conversation_cli_compatibility": (
+        "set PANELS_QUALIFY_CODEX to an absolute CLI executable path",
+        "set PANELS_QUALIFY_CLAUDE to an absolute CLI executable path",
+    ),
 }
 
 
@@ -68,7 +81,7 @@ def check_pytest(report: Path, selected: list[str]) -> None:
             print(f"Mac proof unavailable on Linux: {name}.{case.get('name')}: {reason}")
             continue
         if not any(
-            (name == module or name.startswith(module + ".")) and reason == expected
+            (name == module or name.startswith(module + ".")) and reason in expected
             for module, expected in PROVIDER_SKIPS.items()
         ):
             raise ValueError(f"unexpected required skip: {name}: {reason}")

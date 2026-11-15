@@ -15,7 +15,7 @@ const indexPath = join(scratchRoot, `composer-redesign-index-${process.pid}.html
     hostPath,
     String.raw`<script lang="ts">
   import UnifiedModelPicker from "../src/components/conversation/UnifiedModelPicker.svelte";
-  import { createQuery } from "@tanstack/svelte-query";
+  import { createQuery, QueryClientProvider } from "@tanstack/svelte-query";
   import { queries } from "../src/lib/queryCatalogue";
   import { queryClient } from "../src/lib/queryClient";
   import WorkerConfigurationSetup from "../src/components/WorkerConfigurationSetup.svelte";
@@ -84,6 +84,7 @@ const indexPath = join(scratchRoot, `composer-redesign-index-${process.pid}.html
     });
   }
 </script>
+<QueryClientProvider client={queryClient}>
 <main data-conversation-pane style="--conversation-target:32px;--conversation-glyph:22px">
   <div class="thread">The conversation remains above the composer.</div>
   {#if editorProof}
@@ -113,6 +114,7 @@ const indexPath = join(scratchRoot, `composer-redesign-index-${process.pid}.html
   />
   {/if}
 </main>
+</QueryClientProvider>
 <style>
   :global(html), :global(body), :global(#app) {height:100%;margin:0;}
   main {display:flex;flex-direction:column;width:100%;height:720px;min-height:0;overflow:hidden;}

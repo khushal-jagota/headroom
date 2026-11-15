@@ -35,7 +35,7 @@ from planner.managers import data as sprints_data
 from planner.managers import service as sprints_service
 from planner.runtime import conversation_start
 from planner.tickets import data as tickets_data
-from planner.tickets import revision_feedback
+from planner.tickets import decision_messages
 
 _OWNER_HOLDER = {"kind": "owner", "id": "owner"}
 
@@ -201,20 +201,23 @@ def test_supervisor_rejection_stores_attributed_feedback_without_backend_io(
         assert system.backend_prompt_writes(conversation_id) == ()
         rejected = client.post(
             path,
-            json={"message": "State the verification evidence."},
+            json={"message": "State the verification evidence.",
+                  "expected_proposal_revision": ticket["pending_proposal"]["revision"]},
             headers=_supervisor_headers(str(item["id"])),
         )
 
     with closing(connect(str(db_path))) as conn:
         after = tickets_data.read_ticket(conn, str(ticket["id"]))
-        feedback = revision_feedback.snapshot(conn, str(ticket["id"]))
+        feedback = conn.execute(
+            "SELECT * FROM ticket_decision_messages WHERE ticket_id=?", (ticket["id"],)
+        ).fetchone()
     assert rejected.status_code == 200, rejected.text
     assert after.pending_proposal is None
     assert after.ticket_status.value == "empty"
     assert feedback is not None
-    assert feedback.items[0].sender.kind.value == "manager"
-    assert feedback.items[0].sender.id == str(item["id"])
-    assert feedback.items[0].message == "State the verification evidence."
+    assert feedback["sender_kind"] == "manager"
+    assert feedback["sender_id"] == str(item["id"])
+    assert feedback["message"] == "State the verification evidence."
     assert system.backend_prompt_writes(conversation_id) == ()
     assert system.observations(conversation_id) == ()
 
@@ -259,7 +262,8 @@ def test_rejection_after_the_day_boundary_rearms_one_worker_step(tmp_path: Path)
             assert moved.status_code == 200, moved.text
             rejected = client.post(
                 f"/api/tickets/{ticket['id']}/reject",
-                json={"message": "Keep the rollover evidence exact."},
+                json={"message": "Keep the rollover evidence exact.",
+                      "expected_proposal_revision": ticket["pending_proposal"]["revision"]},
                 headers=_supervisor_headers(str(item["id"])),
             )
             assert rejected.status_code == 200, rejected.text
@@ -279,18 +283,18 @@ def test_rejection_after_the_day_boundary_rearms_one_worker_step(tmp_path: Path)
     assert repeated.status_code == 200, repeated.text
     assert repeated.json()["dispatched"] is False
     assert current.status_code == 200, current.text
-    assert current.json()["ticket_status"] == "agent"
+    assert current.json()["ticket_status"] == "empty"
     assert current.json()["conversation_id"] == conversation_id
     writes = system.backend_prompt_writes(conversation_id)
     assert len(writes) == 1
-    assert writes[0].sender_label == "loop"
+    assert writes[0].sender_label == "system"
     assert writes[0].text.count("Keep the rollover evidence exact.") == 1
     assert asyncio.run(system.is_running(conversation_id)) is True
     with closing(connect(str(db_path))) as conn:
         after = tickets_data.read_ticket(conn, str(ticket["id"]))
-        assert revision_feedback.snapshot(conn, str(ticket["id"])) is None
-    assert after.worker_step_claim.value == "out"
-    assert after.worker_step_claim_revision == before_claim_revision + 1
+        assert not decision_messages.has_undelivered(conn, str(ticket["id"]))
+    assert after.worker_step_claim.value == "none"
+    assert after.worker_step_claim_revision == before_claim_revision
 
 
 def test_first_message_creates_the_conversation_and_reset_preserves_history(
@@ -528,8 +532,8 @@ def test_a_ticket_cannot_choose_who_stands_above_it(tmp_path: Path) -> None:
     assert after["manager_id"] == other["id"]
 
 
-def test_a_help_request_reaches_no_further_than_a_sent_message(tmp_path: Path) -> None:
-    """The second door that takes a recipient. It asks the same question as the first."""
+def test_worker_messages_reach_their_manager_but_not_unrelated_tickets(tmp_path: Path) -> None:
+    """Workers address their own Manager explicitly and retain the message authority boundary."""
     app, _db_path = _app(tmp_path)
     with TestClient(app) as client:
         own = _create_item(client, "Own")
@@ -548,13 +552,13 @@ def test_a_help_request_reaches_no_further_than_a_sent_message(tmp_path: Path) -
         ).json()
         itself = {"X-Plan-Actor": "worker", "X-Plan-Ticket-ID": str(mine["id"])}
         into_a_stranger = client.post(
-            f"/api/tickets/{mine['id']}/request-help",
-            json={"message": "Help.", "recipient": {"kind": "ticket", "id": stranger["id"]}},
+            "/api/messages/send",
+            json={"message": "Help.", "target": {"kind": "ticket", "id": stranger["id"]}},
             headers=itself,
         )
         up_to_its_outcome = client.post(
-            f"/api/tickets/{mine['id']}/request-help",
-            json={"message": "Help.", "recipient": {"kind": "manager", "id": own["id"]}},
+            "/api/messages/send",
+            json={"message": "Help.", "target": {"kind": "manager", "id": own["id"]}},
             headers=itself,
         )
 
@@ -589,11 +593,6 @@ def test_supervisor_peer_messages_do_not_expand_worker_or_mutation_reach(tmp_pat
             client.post(
                 "/api/messages/send",
                 json={"target": {"kind": "manager", "id": other["id"]}, "message": "Act"},
-                headers=worker,
-            ),
-            client.post(
-                f"/api/tickets/{mine['id']}/request-help",
-                json={"recipient": {"kind": "manager", "id": other["id"]}, "message": "Help"},
                 headers=worker,
             ),
             client.patch(

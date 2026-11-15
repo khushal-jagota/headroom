@@ -71,8 +71,8 @@ def test_installed_admission_and_floor_admit_this_release(tmp_path: Path) -> Non
     admission = installed_source("src/planner/environments/runtime_admission.py")
     old_probes = function(admission, "native_tool_commands",
                           {"Path": Path, "RuntimeContract": object})
-    contract = cast(RuntimeContract, None)
-    assert old_probes(tmp_path, None) == native_tool_commands(tmp_path, contract)
+    contract = RuntimeContract("3.12.12", "f" * 64)
+    assert old_probes(tmp_path, contract) == native_tool_commands(tmp_path, contract)
 
     runner = installed_source("src/planner/environments/update_runner.py")
     validate = function(runner, "validate_schema_ancestry", {

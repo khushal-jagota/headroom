@@ -102,6 +102,9 @@ def run(browser, urls):
     def respond(route):
         parts = urlsplit(route.request.url)
         path = parts.path
+        if path == "/api/machines":
+            route.fulfill(json=fixture["MACHINE_CATALOG"])
+            return
         if card_fixture.get("preview_details"):
             preview_launch = {"backend_key": "codex", "model": "gpt-6.1-sol", "reasoning_effort": "medium"}
             if path == "/api/artifact-catalog/manager/preview_manager":
@@ -212,6 +215,7 @@ def run(browser, urls):
                 route.fulfill(status=503, json={"error": {"code": "fixture", "message": "Rail selection proof only"}})
                 return
             inner = {
+                "/api/machines": fixture["MACHINE_CATALOG"],
                 "/api/goals": {"goals": card_fixture.get("goals", []), "status_date": time.strftime("%Y-%m-%d"), "next_refresh_at": int(time.time()) + 86400},
                 "/api/worker-types?supported=true": {"worker_types": manifests},
                 "/api/worker-types": {"worker_types": manifests},
@@ -513,6 +517,7 @@ def run(browser, urls):
     verify_card_background_motion(page, url, card_fixture, evidence)
     verify_empty_handoff(page, url, card_fixture, evidence)
     verify_rail_pagination(page, url, card_fixture, evidence)
+    verify_offscreen_rows_stay_drawn(page, url, card_fixture, evidence)
     fold["release_sha"] = "fixture-boot"
     verify_recap_pointer_floor(browser, page, url, card_fixture, respond, evidence)
     verify_ticket_preview_details(page, url, card_fixture, evidence)
@@ -1087,7 +1092,9 @@ def verify_empty_handoff(page, url, fixture, evidence):
               "worker_type": "coding", "stage": "needs_implementation", "ticket_status": "agent",
               "conversation_id": "handoff_conversation",
               "conversation_signal": {"working": False, "message_for_owner": False}}
-    fixture.update(enabled=True, board={"managers": [], "columns": [{"cards": [ticket]}]}, chief={"label": "Chief"})
+    neighbor = {"id": "handoff_neighbor", "manager_id": None, "title": "A neighbor moves at the same time",
+                "worker_type": "coding", "stage": "needs_implementation", "ticket_status": "agent"}
+    fixture.update(enabled=True, board={"managers": [], "columns": [{"cards": [ticket, neighbor]}]}, chief={"label": "Chief"})
     page.set_viewport_size({"width": 1280, "height": 900})
     page.emulate_media(reduced_motion="no-preference")
     page.mouse.move(1100, 800)
@@ -1139,9 +1146,22 @@ def verify_empty_handoff(page, url, fixture, evidence):
     expect(row.locator('[data-approval-mark]')).to_have_count(0)
     assert bucket() == "awaiting_approval"
     page.screenshot(path=str(evidence / "handoff-cleared-approval.png"))
+    # The release glides to Agent like any other move. It waits for a neighbor's
+    # move that is already playing, and does not cut that move short.
+    neighbor.update(ticket_status="awaiting_approval", awaiting_approval=True)
+    refresh()
+    page.wait_for_function("""() => { window.__neighborCancelled = 0;
+      const moving = document.querySelector('[data-ticket-id="handoff_neighbor"]')?.getAnimations()
+        .filter(a => a.playState === 'running' && JSON.stringify(a.effect.getKeyframes()).includes('translate')) ?? [];
+      for (const a of moving) a.addEventListener('cancel', () => window.__neighborCancelled++);
+      return moving.length > 0; }""", polling="raf", timeout=2000)
     ticket.update(ticket_status="agent")
     refresh()
+    page.wait_for_function("""() => document.querySelector('[data-ticket-id="handoff_worker"]')?.getAnimations()
+      .some(a => a.playState === 'running' && JSON.stringify(a.effect.getKeyframes()).includes('translate'))""", polling="raf", timeout=2000)
     wait_settled(page, '.workspace-rail')
+    assert bucket() == "agent"
+    assert page.evaluate("window.__neighborCancelled") == 0
 
     # Focus filters the retained Agent placement with the fresh unread fact.
     ticket["conversation_signal"]["message_for_owner"] = True
@@ -1500,6 +1520,66 @@ def verify_rail_pagination(page, url, fixture, evidence):
     }, indent=2))
 
 
+def verify_offscreen_rows_stay_drawn(page, url, fixture, evidence):
+    """A card scrolled out of the rail keeps its Ticket rows mounted.
+
+    The rail used to ask for a card's Ticket rows only while the card was on screen,
+    so rows left the DOM and came back new, with an enter animation. No unit test
+    reaches this: it needs real layout, a real scroll container and the real request
+    path. This reuses the real App host and the fixture's scoped projection.
+    """
+    def ticket(identity, parent):
+        return {"id": identity, "manager_id": parent, "title": "Worker " + identity,
+                "worker_type": "coding", "stage": "needs_implementation", "ticket_status": "agent",
+                "conversation_id": "conversation_" + identity,
+                "conversation_signal": {"working": False, "message_for_owner": False}}
+
+    managers = [{"id": f"drawn_manager_{i:02}", "title": f"Drawn manager {i:02}", "created_at": i + 1,
+                 "tickets": [ticket(f"drawn_{i:02}_{j}", f"drawn_manager_{i:02}") for j in range(3)]}
+                for i in range(12)]
+    fixture.update(enabled=True, board={"managers": managers, "columns": [{"cards": []}]}, chief={"label": "Chief"})
+    page.set_viewport_size({"width": 1100, "height": 650})
+    page.emulate_media(reduced_motion="no-preference")
+    # Keep the pointer off the rail: a pointer over a row defers rail structure.
+    page.mouse.move(900, 600)
+    page.reload(wait_until="domcontentloaded")
+    rows = page.locator('[data-active-work-scroll] [data-ticket-id]')
+    scroll = page.locator('[data-active-work-scroll]')
+    # Every Ticket is drawn at once, including rows of cards far below the viewport.
+    expect(rows).to_have_count(36)
+    page.wait_for_function("!document.querySelector('[data-rail-motion-busy]')")
+    assert scroll.evaluate('n=>n.scrollHeight>n.clientHeight*2'), "the rail must be long enough to scroll away from rows"
+    page.evaluate("""() => {
+      const nodes = [...document.querySelectorAll('[data-active-work-scroll] [data-ticket-id]')];
+      window.__drawn = {nodes, added: 0, animated: new Set()};
+      for (const node of nodes) node.__drawnMark = true;
+      new MutationObserver(records => {
+        for (const record of records) for (const node of record.addedNodes)
+          if (node instanceof HTMLElement) window.__drawn.added += +node.matches('[data-ticket-id]') + node.querySelectorAll('[data-ticket-id]').length;
+      }).observe(document.querySelector('[data-active-work-scroll]'), {childList: true, subtree: true});
+      const watch = () => {
+        for (const animation of document.getAnimations()) {
+          const target = animation.effect?.target;
+          if (target instanceof HTMLElement && /^(row|card):/.test(target.dataset.railMotion ?? '')) window.__drawn.animated.add(target.dataset.railMotion);
+        }
+        requestAnimationFrame(watch);
+      };
+      watch();
+    }""")
+    for position in ("n.scrollHeight", "0"):
+        scroll.evaluate(f"n=>{{n.scrollTop={position};}}")
+        page.wait_for_function("!document.querySelector('[data-rail-motion-busy]')")
+        page.evaluate("() => new Promise(done => requestAnimationFrame(() => requestAnimationFrame(done)))")
+    outcome = page.evaluate("""() => ({
+      added: window.__drawn.added, animated: [...window.__drawn.animated],
+      detached: window.__drawn.nodes.filter(node => !node.isConnected).length,
+      replaced: [...document.querySelectorAll('[data-active-work-scroll] [data-ticket-id]')].filter(node => !node.__drawnMark).length,
+      count: document.querySelectorAll('[data-active-work-scroll] [data-ticket-id]').length})""")
+    page.screenshot(path=str(evidence / 'rail-offscreen-rows-final.png'))
+    (evidence / 'rail-offscreen-rows.json').write_text(json.dumps(outcome, indent=2))
+    assert outcome == {"added": 0, "animated": [], "detached": 0, "replaced": 0, "count": 36}, outcome
+
+
 def verify_conversation_overlay(browser, url):
     """Actual Chief host inside the responsive workspace owns the geometry."""
     started = time.perf_counter()
@@ -1524,6 +1604,7 @@ def verify_conversation_overlay(browser, url):
             return
         key = parse_qs(parts.query).get("key", [path])[0] if path == "/api/resource-body" else path
         values = {
+            "/api/machines": fixture["MACHINE_CATALOG"],
             "/api/goals": {"goals": [], "status_date": time.strftime("%Y-%m-%d"), "next_refresh_at": int(time.time()) + 86400},
             "/api/workers/chief-of-staff/settings": {"employee_id": "chief", "label": "Chief", "recap": "The document keeps its full height beneath the conversation.", "skill": None, "launch_defaults": {"employee_backend": "codex", "employee_launch_model": None, "employee_launch_reasoning_effort": None}},
             "/api/chief/conversation/start-values": {"backend_key": "codex", "model": None, "reasoning_effort": None},
@@ -1999,6 +2080,7 @@ def verify_owner_updates(browser, url):
             return
         key = parse_qs(parts.query).get("key", [path])[0] if path == "/api/resource-body" else path
         values = {
+            "/api/machines": navigation["MACHINE_CATALOG"],
             "/api/goals": {"goals": [], "status_date": time.strftime("%Y-%m-%d"), "next_refresh_at": int(time.time()) + 86400},
             "/api/workers/chief-of-staff/settings": {"employee_id": "chief", "label": "Chief", "recap": "Owner updates", "skill": None, "launch_defaults": {"employee_backend": "codex", "employee_launch_model": None, "employee_launch_reasoning_effort": None}},
             "/api/chief/conversation/start-values": {"backend_key": "codex", "model": None, "reasoning_effort": None},
@@ -2064,11 +2146,14 @@ def verify_owner_updates(browser, url):
         expect(page.locator("[data-mac-status]")).to_have_count(0)
 
         backend.activity = "busy"
+        backend.detail = "Update now stops this work: Release proof, Inbox cleanup."
         signal()
         action.click()
         expect(dialog).to_be_visible()
         expect(dialog).to_contain_text("A new version is ready for Panels and the Mac. Panels restarts, then you refresh to finish.")
-        expect(dialog).to_contain_text("Work is running. Updating now interrupts it.")
+        expect(dialog).to_contain_text("Update now stops this work: Release proof, Inbox cleanup.")
+        expect(dialog).to_contain_text("Release proof")
+        expect(dialog).to_contain_text("Inbox cleanup")
         assert len(posts) == 0
         page.keyboard.press("Escape")
         expect(action).to_be_focused()
@@ -2081,6 +2166,13 @@ def verify_owner_updates(browser, url):
         capture("waiting")
         action.click()
         expect(dialog).to_contain_text("Panels updates as soon as running work finishes.")
+        backend.detail = "Work still waits for a safe point after five minutes. Leave the update pending, cancel it, or choose Update now. Work before the update: Release proof, Inbox cleanup."
+        signal()
+        expect(dialog).to_contain_text("Work still waits for a safe point after five minutes.")
+        expect(dialog).to_contain_text("Release proof")
+        page.screenshot(path=str(evidence / "overdue-detail-dialog.png"))
+        expect(dialog.get_by_role("button", name="Close", exact=True)).to_be_visible()
+        expect(dialog.get_by_role("button", name="Update now", exact=True)).to_be_visible()
         dialog.get_by_role("button", name="Cancel update", exact=True).click()
         expect(card).to_contain_text("Update available")
         assert posts[-1]["path"] == "/api/updates/attempts/attempt-1/cancel"
@@ -2421,10 +2513,14 @@ def verify_recap_pointer_floor(browser, page, url, fixture, respond, evidence):
     set_lines(3)
     panel_settled()
     before = panel.bounding_box()["height"]
-    keyboard_request()
-    refresh()
-    expect(text).to_have_count(0)
-    sample_change('keyboard-no-pointer', lambda: None)
+    def clear_by_keyboard():
+        keyboard_request()
+        refresh()
+        expect(text).to_have_count(0)
+
+    # Arm frame capture before the request. Response/refresh roundtrips can consume
+    # the transition on a loaded host, even though the production motion is correct.
+    sample_change('keyboard-no-pointer', clear_by_keyboard)
     after = panel.bounding_box()["height"]
     assert after < before - 20
     assert any(after + 1 < frame["height"] < before - 1 for frame in proof["samples"][-1]["frames"]), proof["samples"][-1]
@@ -2781,8 +2877,18 @@ def verify_selection_washes(page, url, fixture, evidence):
 
     def hover_at(row_selector, host_selector, where):
         page.mouse.move(*where(page.locator(row_selector).bounding_box()))
-        return page.evaluate("""async ([row, host]) => {
-          await new Promise(requestAnimationFrame); await new Promise(requestAnimationFrame);
+        # ResizeObserver and the rail projection can commit after two frames.
+        # Wait for the actual pointer state and wash geometry that this proof needs.
+        page.wait_for_function("""([row,host])=>{
+          const node=document.querySelector(row),wash=document.querySelector(host+' > .rail-wash--hover:not(.rail-wash--leaving)');
+          if(!node||!wash)return false;
+          const hovered=node.matches(':hover');
+          if(wash.hidden!==!hovered)return false;
+          if(!hovered)return true;
+          const a=node.getBoundingClientRect(),b=wash.getBoundingClientRect();
+          return ['x','y','width','height'].every(key=>Math.abs(a[key]-b[key])<1.6);
+        }""", arg=[row_selector, host_selector])
+        return page.evaluate("""([row, host]) => {
           const node=document.querySelector(row), wash=document.querySelector(host+' > .rail-wash--hover:not(.rail-wash--leaving)');
           const box=n=>{const r=n.getBoundingClientRect();return [r.x,r.y,r.width,r.height];};
           return {hover:node.matches(':hover'), hidden:wash.hidden, row:box(node), wash:box(wash)};

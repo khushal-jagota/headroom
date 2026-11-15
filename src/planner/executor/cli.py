@@ -16,7 +16,7 @@ from planner.executor.protocol import IpcOperation, QuiesceRequest, type_adapter
 
 @click.group("executor")
 def executor_group() -> None:
-    """Run the native Mac executor through the app HTTPS service."""
+    """Run an extra machine executor through the home HTTPS service."""
 
 
 @executor_group.command("run")
@@ -57,6 +57,24 @@ def run(executor_id: str, application_revision: str, panels_server_url: str) -> 
             panels_server_url=panels_server_url,
         ).run()
     )
+
+
+@executor_group.command("credential")
+@click.option(
+    "--file", "source", type=click.Path(exists=True, dir_okay=False, path_type=Path), required=True
+)
+def install_credential(source: Path) -> None:
+    """Install a registration or replacement credential into this executor root."""
+    from planner.executor.credential_file import credential_path, read_credential, write_credential
+
+    try:
+        credential = read_credential(source)
+        if credential is None:
+            raise ValueError("The credential file is missing")
+        write_credential(credential_path(executor_paths().root), credential)
+    except (OSError, ValueError) as error:
+        raise click.ClickException(str(error)) from error
+    click.echo("Machine credential installed.")
 
 
 @executor_group.command("retry")

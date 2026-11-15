@@ -7,6 +7,7 @@ def run(browser, urls):
     import base64
     import json
     import os
+    import runpy
     from pathlib import Path
 
     from playwright.sync_api import Route, expect
@@ -108,6 +109,10 @@ def run(browser, urls):
         )
 
     page = browser.new_page(viewport={"width": 980, "height": 800})
+    fixture = runpy.run_path(
+        str(Path(__file__).resolve().parents[2] / "support/navigation/browser-fixture.py")
+    )
+    page.route("**/api/machines", lambda route: route.fulfill(json=fixture["MACHINE_CATALOG"]))
     page.set_default_timeout(5000)
     errors = []
     expected_console_errors = set()
@@ -343,6 +348,36 @@ def run(browser, urls):
     settled(page)
     assert page.locator(INPUT).input_value() == "newer draft"
     assert names(page) == ["new.txt"]
+
+    # Answering a permission ask removes the buttons the answer was clicked on; Enter must
+    # then reach the box without a click.
+    page.goto([__file__, *urls][1])
+    page.evaluate("window.__setState('ask')")
+    page.locator('[data-conversation-ask-action="approve"]').focus()
+    page.evaluate("window.__setState('empty')")
+    page.wait_for_function("document.activeElement === document.querySelector('[data-conversation-input]')")
+
+    # Enter keeps working after an attachment, with no click: the box is disabled while the
+    # file is read, and focus must come back to it. Enter that confirms an IME choice must
+    # not send.
+    page.goto([__file__, *urls][1])
+    page.locator(INPUT).fill("with a file")
+    page.locator(INPUT).focus()
+    page.locator(INPUT).evaluate("""input => {
+      const data = new DataTransfer();
+      data.items.add(new File(['x'], 'after.txt', {type:'text/plain'}));
+      input.dispatchEvent(new ClipboardEvent('paste', {bubbles:true,cancelable:true,clipboardData:data}));
+    }""")
+    page.locator('[data-chat-file-name="after.txt"]').wait_for()
+    page.wait_for_function("document.activeElement === document.querySelector('[data-conversation-input]')")
+    sent_before = page.evaluate("window.__attempts.length")
+    page.locator(INPUT).evaluate(
+        "input => input.dispatchEvent(new KeyboardEvent('keydown', {key:'Enter', isComposing:true, bubbles:true, cancelable:true}))"
+    )
+    settled(page)
+    assert page.evaluate("window.__attempts.length") == sent_before
+    page.keyboard.press("Enter")
+    page.wait_for_function(f"window.__attempts.length === {sent_before + 1}")
     # Existing host proves component presentation, keyboard identity and advisory transitions.
     # No lifecycle endpoint, durable Ticket write or provider call runs.
     page.route("**/api/conversation/backends", lambda route: route.fulfill(json={"backends": []}))
@@ -350,7 +385,7 @@ def run(browser, urls):
         page.set_viewport_size({"width": width, "height": height})
         page.goto(urls[0] + "?picker", wait_until="domcontentloaded")
         assert page.locator("[data-employee-destination-picker]").count() == 0
-        expect(page.locator('.machine[aria-label="Runs on Mac"]')).to_have_text("Mac")
+        expect(page.get_by_role('img', name='Runs on Mac', exact=True)).to_have_text("Mac")
         picker = page.locator(".picker-proof > [data-conversation-model-picker]")
         trigger = picker.locator("[data-conversation-picker-trigger]")
         assert trigger.inner_text() == "Opus 5.5 high"

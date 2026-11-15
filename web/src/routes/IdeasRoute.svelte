@@ -47,7 +47,7 @@
   }
 
   function keydown(event: KeyboardEvent): void {
-    if (event.key === "Enter" && !event.shiftKey) {
+    if (event.key === "Enter" && !event.shiftKey && !event.isComposing) {
       event.preventDefault();
       void capture();
     } else if (event.key === "Enter") {

@@ -110,6 +110,7 @@ def inside_proof(archive_digest: str, requested_sha: str) -> None:
         admit_runtime,
         native_tool_commands,
     )
+    from planner.environments.runtime_contracts import RuntimeContract
 
     archive = Path("/input/archive.tar.gz")
     if _hash(archive) != archive_digest:
@@ -131,8 +132,8 @@ def inside_proof(archive_digest: str, requested_sha: str) -> None:
         raise ValueError(f"target contains forbidden builder dependencies: {forbidden}")
     manifest = validate_app_manifest(root / "manifest.json", expected_sha=requested_sha)
     contract = manifest.runtime_contract
-    if contract is None:
-        raise ValueError("target proof requires a runtime contract")
+    if not isinstance(contract, RuntimeContract):
+        raise ValueError("target proof requires a version 1 runtime contract")
     admit_runtime(root, manifest)
     native = _native_inventory_proof(root, contract.external_libraries)
     native_operations = json.loads(

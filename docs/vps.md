@@ -16,6 +16,8 @@ History is kept in tiers: raw samples briefly, then coarser buckets for longer. 
 
 Percentages for services and processes are against the whole machine, so a row compares directly with the host chart. Nested service totals overlap and are not added together. Temperature and fans are unavailable on this guest. Command arguments and environment values are never stored.
 
+The Mac collector uses native host and process observations through the same store and API. Process rates require the same boot UUID and exact process birth. Available memory means free plus inactive pages. Linux pressure and unproved disk, network, and process I/O measurements remain unavailable. Service grouping is unavailable on the Mac. An empty service table does not prove that launchd has no jobs.
+
 ## Decisions that shape it
 
 - A separate store and no change signal, so monitoring cannot slow the workspace.
@@ -27,4 +29,4 @@ Percentages for services and processes are against the whole machine, so a row c
 - `src/planner/environments/vps_metrics/`: sampler, collectors, store, and retention. Limits are in `config.py`.
 - `web/src/components/vps/`: the page.
 
-_Last verified: 2026-11-04._
+_Last verified: 2026-11-13._

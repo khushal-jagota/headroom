@@ -15,7 +15,7 @@ from planner.core import ticket_blocks
 from planner.core.contracts import BlockerSummary, JsonDict, PrincipalKind
 from planner.files.lifecycle import database_path
 from planner.files.logic.listing import entries_as_json, fold_directory
-from planner.files.logic.paths import ticket_files_root
+from planner.files.logic.paths import PRIVATE_TICKET_NAMES, ticket_files_root
 from planner.list_reads.contracts import ListPage, ListPageRequest
 from planner.navigation import data as navigation_data
 from planner.navigation.review import review_message_items
@@ -76,6 +76,7 @@ def ticket_json(ticket: Ticket, now: int) -> JsonDict:
             specialist_skill=ticket.workflow.specialist_skill,
         ),
         "locale": ticket.locale.value,
+        "machine_id": ticket.machine_id,
         "employee_backend": ticket.employee_backend,
         "employee_launch_model": ticket.employee_launch_model,
         "employee_launch_reasoning_effort": ticket.employee_launch_reasoning_effort,
@@ -90,6 +91,8 @@ def ticket_json(ticket: Ticket, now: int) -> JsonDict:
         },
         "manager_title": ticket.manager_title,
         "recap": ticket.recap,
+        "recap_updated_at": ticket.recap_updated_at,
+        "recap_stage_changed": ticket.recap_stage_changed,
         "ceiling": str(ticket.ceiling),
         "ceiling_holder": {
             "kind": ticket.ceiling_holder.kind.value,
@@ -197,6 +200,7 @@ def _ticket_summary_json(row: sqlite3.Row) -> JsonDict:
         "id": str(row["id"]),
         "title": str(row["title"]),
         "locale": str(row["locale"]),
+        "machine_id": str(row["machine_id"]),
         "worker_type": row["worker_type"],
         "stage": str(row["stage"]),
         "ticket_status": ticket_status,
@@ -208,7 +212,10 @@ def _ticket_summary_json(row: sqlite3.Row) -> JsonDict:
             "id": (str(row["manager_id"]) if row["manager_id"] is not None else "chief"),
         },
         "manager_title": (str(row["manager_title"]) if row["manager_title"] is not None else None),
+        "recap": str(row["recap"]),
         "recap_preview": str(row["recap_preview"]),
+        "recap_updated_at": row["recap_updated_at"],
+        "recap_stage_changed": bool(row["recap_stage_changed"]),
     }
 
 
@@ -219,6 +226,7 @@ _SUMMARY_RECORD_COLUMNS = ", ".join(
     for name in (
         "title",
         "locale",
+        "machine_id",
         "worker_type",
         "stage",
         "is_backlogged",
@@ -228,7 +236,10 @@ _SUMMARY_RECORD_COLUMNS = ", ".join(
         "project_id",
         "manager_id",
         "manager_kind",
+        "recap",
         "recap_preview",
+        "recap_updated_at",
+        "recap_stage_changed",
         "created_at",
     )
 )
@@ -258,7 +269,7 @@ def list_ticket_summaries(
         clauses.append("json_extract(r.value, '$.manager_id') = ?")
         params.append(manager_id)
     search_columns = (
-        ", t.recap, t.field_values, t.workflow_json, "
+        ", t.field_values, t.workflow_json, "
         "t.pending_proposal AS searchable_pending_proposal"
         if filters.search
         else ""
@@ -287,6 +298,8 @@ def list_ticket_summaries(
         if statuses and status not in statuses:
             continue
         if status in excluded_statuses:
+            continue
+        if filters.active and (row["terminal"] or row["is_backlogged"]):
             continue
         if row["broken"]:
             broken = _broken(conn, str(row["id"]))
@@ -394,7 +407,7 @@ def _ticket_artifacts(conn: sqlite3.Connection, ticket_id: str) -> list[dict[str
         return []
     if any(path.is_symlink() for path in (root, *root.parents)):
         return []
-    return entries_as_json(fold_directory(root))
+    return entries_as_json(fold_directory(root, excluded_names=PRIVATE_TICKET_NAMES))
 
 
 def copy_text(conn: sqlite3.Connection, ticket_id: str) -> str:

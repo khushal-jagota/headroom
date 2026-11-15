@@ -27,6 +27,7 @@ from planner.conversation.logic.pending_requests import (
     REQUEST_TERMINATING_EVENT_KIND,
     advance_pending_requests,
 )
+from planner.notifications.contracts import EdgeKey
 from planner.tickets import derivation
 from planner.tickets.contracts import TicketStatus
 from planner.worker_types.contracts import WorkflowDefinition
@@ -49,6 +50,28 @@ class ConversationAttention(NamedTuple):
 
 
 NOTHING_WAITING = ConversationAttention(False, False, False, 0, 0)
+
+# The alias d can name either an attention edge or a queued delivery. Task alerts
+# describe the current obligation. Messages and failures remain factual events.
+TASK_ALERT_IS_CURRENT = (
+    "(d.subject_kind != 'ticket' "
+    "OR d.notification_type NOT IN ('awaiting_approval','assigned','awaiting_answer') "
+    "OR (EXISTS (SELECT 1 FROM tickets t WHERE t.id=d.subject_id AND t.is_backlogged=0) "
+    "AND EXISTS (SELECT 1 FROM notification_attention_state a "
+    "WHERE a.subject_kind=d.subject_kind AND a.subject_id=d.subject_id "
+    "AND a.notification_type=d.notification_type AND a.active=1 "
+    "AND a.generation=d.generation)))"
+)
+
+
+def task_alert_is_current(conn: sqlite3.Connection, edge: EdgeKey) -> bool:
+    """Recheck a selected delivery immediately before the provider send."""
+    row = conn.execute(
+        f"SELECT {TASK_ALERT_IS_CURRENT} FROM "
+        "(SELECT ? AS subject_kind,? AS subject_id,? AS notification_type,? AS generation) d",
+        (edge.subject_kind, edge.subject_id, edge.notification_type, edge.generation),
+    ).fetchone()
+    return bool(row[0])
 
 
 @dataclass(frozen=True, slots=True)
@@ -347,7 +370,7 @@ def capture_ticket_attention(
 
     row = conn.execute(
         "SELECT id, stage, worker_type, workflow_json, worker_step_claim, "
-        "pending_proposal, ceiling_holder, "
+        "pending_proposal, ceiling_holder, is_backlogged, "
         f"conversation_id, {derivation.HAS_LIVE_BLOCKER_COLUMN} "
         "FROM tickets WHERE id=?",
         (ticket_id,),
@@ -372,9 +395,13 @@ def capture_ticket_attention(
     owner_holds = holder.get("kind") == "owner"
     flags = {
         "awaiting_reply": conversation.unread_message,
-        "awaiting_answer": conversation.pending_ask,
-        "awaiting_approval": facts.ticket_status is TicketStatus.awaiting_approval and owner_holds,
-        "assigned": ticket_assignment_from_values(
+        "awaiting_answer": conversation.pending_ask and not row["is_backlogged"],
+        "awaiting_approval": (
+            facts.ticket_status is TicketStatus.awaiting_approval
+            and owner_holds
+            and not row["is_backlogged"]
+        ),
+        "assigned": not row["is_backlogged"] and ticket_assignment_from_values(
             stage=str(row["stage"]),
             worker_type=row["worker_type"],
             worker_type_definition=worker_type_definition or workflow_from_row(row),
@@ -453,6 +480,10 @@ def reconcile_attention(
         prior_active, generation = prior_value or (False, 0)
         if prior_value is not None and active == prior_active:
             continue
+        if subject_kind == "ticket" and notification_type == "awaiting_approval":
+            from planner.attention.history import capture_gate
+
+            capture_gate(conn, ticket_id=subject_id, active=active, now=occurred_at)
         if active:
             generation += 1
             conn.execute(

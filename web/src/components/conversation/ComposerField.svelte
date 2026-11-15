@@ -32,6 +32,7 @@
     held = null,
     inputAttributes = {},
     onkeydown,
+    onsubmit,
     attach,
     record,
     send,
@@ -53,6 +54,9 @@
     held?: { box: number; input: number } | null;
     inputAttributes?: Attributes;
     onkeydown?: (event: KeyboardEvent & { currentTarget: HTMLTextAreaElement }) => void;
+    /** Opt in to "Enter sends": plain Enter and Cmd/Ctrl+Enter call this, Shift+Enter adds a
+     *  line, and Enter while an input method is composing, or held down, does nothing. */
+    onsubmit?: () => void;
     /** The + at the left: what it adds is the caller's. */
     attach?: Control;
     /** The microphone, first of the controls at the right. */
@@ -71,6 +75,16 @@
     /** What is attached and waiting, on a strip under the draft. */
     attachments?: Snippet;
   } = $props();
+
+  function keydown(event: KeyboardEvent & { currentTarget: HTMLTextAreaElement }): void {
+    onkeydown?.(event);
+    if (onsubmit === undefined || event.defaultPrevented || event.key !== "Enter") return;
+    if (event.shiftKey || event.altKey) return;
+    // Enter that confirms an input method's text (keyCode 229) is not a send.
+    if (event.isComposing || event.keyCode === 229) return;
+    event.preventDefault();
+    if (!event.repeat) onsubmit();
+  }
 
   let box = $state<HTMLDivElement | null>(null);
   let leading = $state<HTMLDivElement | null>(null);
@@ -300,7 +314,7 @@
     bind:value
     {disabled}
     hidden={speaking}
-    {onkeydown}
+    onkeydown={keydown}
     {...inputAttributes}
   ></textarea>
 

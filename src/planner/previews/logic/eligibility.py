@@ -1,16 +1,18 @@
 """Pure eligibility and port restrictions."""
 
+from planner.machines.contracts import HOME_MACHINE_ID
 from planner.previews.contracts import PreviewError, TicketEligibility
-from planner.tickets.contracts import TicketLocale
 
 
-def require_vps(ticket: TicketEligibility) -> None:
-    if ticket.locale is TicketLocale.macos:
-        raise PreviewError("Application previews are unavailable for Tickets running on the Mac.")
+def require_home(ticket: TicketEligibility) -> None:
+    if ticket.machine_id != HOME_MACHINE_ID:
+        raise PreviewError(
+            "Application previews are unavailable for Tickets on a remote Mac executor."
+        )
 
 
 def require_eligible(ticket: TicketEligibility) -> None:
-    require_vps(ticket)
+    require_home(ticket)
     if ticket.terminal:
         raise PreviewError("This Ticket has finished; its preview has expired.", 410)
     if ticket.project_folder is None:

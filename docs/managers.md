@@ -39,7 +39,7 @@ Some events become durable **wakes**, real prompts queued into the responsible C
 - a Ticket turn failing when an agent holds that Ticket's review;
 - a [measure source](measures.md) failing when that Manager or Chief is responsible for it.
 
-Each wake is recorded in the same write as the event that caused it, then delivered by a loop, so a crash cannot lose it. A notice that has gone stale, such as a proposal already decided, is dropped rather than sent. Replying to a wake approves nothing. Proposals are decided only through the [Ticket lifecycle](tickets.md).
+Each wake is recorded in the same write as the event that caused it, then delivered by a loop, so a crash cannot lose it. A notice that has gone stale, such as a proposal already decided, is dropped rather than sent. Backlog pauses an undelivered proposal wake until resume. Failure notices still report real events. Replying to a wake approves nothing. Proposals are decided only through the [Ticket lifecycle](tickets.md).
 
 When the event concerns Khushal rather than an agent, it reaches him through [Review](review.md) and [notifications](notifications.md) instead.
 
@@ -59,6 +59,8 @@ The Workspace shows Chief first, then active Managers with their Tickets grouped
 
 A Tickets block places the Workers within the document. Without that block, they appear below it. See [Goals](goals.md).
 
+Manager lists include recap freshness. Workspace reads also include each child Ticket's recap and freshness.
+
 `panels manager workspace` explains which document the browser displays and gives its edit command. `panels page` reads and edits Manager and Chief documents. `panels goal` edits a held goal's document. Their schema commands explain the accepted content. The plain purpose, recap, and artifacts remain separate.
 
 ## Decisions that shape it
@@ -75,4 +77,4 @@ A Tickets block places the Workers within the document. Without that block, they
 - `src/planner/worker_settings/`: Chief's own settings.
 - `web/src/components/ManagerWorkspace.svelte` and `web/src/components/ChiefConversation.svelte`: the screens.
 
-_Last verified: 2026-11-11._
+_Last verified: 2026-11-13._

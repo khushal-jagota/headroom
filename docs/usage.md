@@ -23,13 +23,17 @@ Opening Limits reads the last observation Headroom saved for Codex and Claude. I
 
 Tokens and Cost are totalled from the transcripts of Codex, Claude, and Grok Build on this host, including sessions never started in Headroom, with prices refreshed separately. That path never asks a provider for allowance. Grok Build appears in the scan but is not a conversation backend. See [Conversations](conversations.md).
 
-Recorded usage comes from one local server. The browser calculates totals and charts from that server’s summary.
+Tokens and Cost read a summary when the selected window first opens. Refresh reads it again. Background changes do not trigger transcript scans. Provider filters use the loaded summary.
+
+Costs use each request’s token counts and model prices before the server combines totals. Long prompts use the applicable higher rates. Claude cache writes use their reported cache duration.
+
+Codex totals also include automatic compactions from matched response records. Copies count once, and compactions that normal usage events already cover add no extra spend. A scan cache upgrade causes the next summary read to rebuild historical totals from local transcripts.
 
 ## Backend setup
 
-Backend cards read the tools installed on this host. Codex can sign in from the screen, while Claude and Hermes keep their own login commands. Claude supplies its model list through its CLI, and Headroom keeps no Claude model table. Each machine reads its own lists. See [Executor](executor.md).
+Backend cards read the tools installed on this host. Codex can sign in from the screen, while Claude and Hermes keep their own login commands. Claude supplies its model list through its CLI, and Headroom keeps no Claude model table. Each machine reads its own lists. See [Executor](executor.md). Panels saves each complete list it reads, one for each machine, and model checks read the saved list. Until a machine has a complete saved list for a backend, its models are not checked against it, and the backend decides.
 
-The catalog also lets models be enabled or disabled. A disabled model is refused wherever a Ticket or message would use it. [Conversations](conversations.md) describes the picker and those refusals.
+The catalog also lets models be enabled or disabled. A disabled model is refused wherever a Ticket or message would use it. When a model leaves every saved complete list, its switch-off is deleted, because the model is refused as not offered. [Conversations](conversations.md) describes the picker and those refusals.
 
 ## Where it shows up
 
@@ -39,4 +43,4 @@ The Usage label in the shell, at `#/backends`, and the same page inside the Work
 
 `src/planner/conversation/usage/` and `web/src/routes/BackendsRoute.svelte`, with sign-in in `web/src/lib/conversation/backendSignIn.ts`.
 
-_Last verified: 2026-11-04._
+_Last verified: 2026-11-13._

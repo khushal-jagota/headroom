@@ -7,7 +7,7 @@
   import type { AgentHoldFacts } from "../lib/workAttentionPresentation";
 
   let {
-    locale, machine = true,
+    locale, machineId, machine = true,
     title,
     signal = undefined,
     conversationId = null,
@@ -22,6 +22,7 @@
     ...rest
   }: {
     locale?: TicketLocale;
+    machineId?: string;
     machine?: boolean;
     title: string;
     signal?: Partial<ConversationSignal>;
@@ -42,9 +43,8 @@
 </script>
 
 {#snippet content()}
-  {#if locale && machine}<MachineIdentity {locale} />{/if}
   {#if lead}<span class="ticket-row-lead">{@render lead()}</span>{/if}
-  <span class="ticket-row-title">{title}</span>
+  <span class="ticket-row-title">{#if locale && machine}<MachineIdentity {locale} {machineId} showName />{/if}<span class="ticket-row-text">{title}</span></span>
   <!-- The mark column says what matters most about the row (owner): the Review icon in the accent
        when it waits on your approval, before an unread message's dot; the icon greyed when it
        waits on an agent's approval and nothing else is showing; otherwise the dot or the
@@ -54,7 +54,7 @@
   {:else if approval === "agent" && !signal?.message_for_owner && !signal?.working}
     <span class="conversation-signal-marks approval-mark approval-mark--agent" role="img" aria-label="Awaiting an agent's approval" data-approval-mark="agent" data-conversation-id={conversationId ?? undefined}><DestinationIcon name="review" /></span>
   {:else}
-    <MachineActivityMark {locale} {signal} {conversationId} completed={quiet} {agentHold} />
+    <MachineActivityMark {machineId} {locale} {signal} {conversationId} completed={quiet} {agentHold} />
   {/if}
 
 {/snippet}
@@ -84,6 +84,9 @@
 {/if}
 
 <style>
+  .ticket-row-title { display:flex; align-items:center; gap:var(--space-2); }
+  .ticket-row-text { min-width:0; overflow:hidden; text-overflow:ellipsis; }
+  .ticket-row-title :global(.machine-identity) { max-width:40%; min-width:0; }
   /* The approval mark: the Review icon at 14px, in the mark column. */
   .approval-mark { display:inline-flex; align-items:center; justify-content:center; flex:none; }
   .approval-mark :global(svg) { width:14px; height:14px; stroke-width:1.8; }
