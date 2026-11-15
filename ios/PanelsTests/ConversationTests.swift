@@ -646,6 +646,11 @@ import XCTest
         XCTAssertTrue(replyAdmitted)
         XCTAssertEqual(model.compactPreview, "Current reply")
         XCTAssertEqual(model.items, retained)
+        let refusal = Self.item("refused", kind: "prompt_refused", text: "Earlier refused prompt")
+        model.items = try APIClient.decoder().decode(ConversationSnapshot.self, from: Data(Self.snapshot([refusal]).utf8)).page.items
+        XCTAssertTrue(try XCTUnwrap(model.latestMessage).own)
+        XCTAssertEqual(model.compactPreview, "Current reply", "A retained server refusal is not a new local unsent message")
+        model.items = retained
         model.status = .init(authority: "stale", turnRunning: nil, liveOutput: nil, rest: reply.status.rest)
         XCTAssertEqual(model.compactPreview, "Cached reply")
         model.outgoing = [.init(id: "local", text: "Unsent local message", note: "Queued")]

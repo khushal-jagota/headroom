@@ -227,18 +227,23 @@ def main() -> int:
                 "request": window, "members": [], "total": 0,
                 "previous": None, "next": None,
             } for window in request["windows"]],
-            "counts": {"running_conversations": 0, "out_claims": 0, "review": 0, "unread": 0, "settled": 0},
+            "counts": {
+                "running_conversations": 0, "out_claims": 0,
+                "review": 0, "unread": 0, "settled": 0,
+            },
         }
         return {
             "event": "snapshot", "wire_version": 3, "projection_version": 7,
             "view_id": "fixture", "scope_generation": request["scope_generation"],
             "ordering_generation": "fixture", "content_version": "detail-fixture",
             "coverage": {"scope": "fixture", "schema_version": 11,
-                "semantics": "attention-knowledge-v11-recap-freshness", "epoch": "fixture", "revision": "1"},
+                "semantics": "attention-knowledge-v11-recap-freshness",
+                "epoch": "fixture", "revision": "1"},
             "mode": "current", "authority": {
                 "delivery_session_id": "fixture",
                 "availability": {"state": "current", "generation": "1", "reason": None},
-                "permit": {"scope": "fixture", "runtime_epoch": "fixture", "installation_id": "fixture", "generation": "1"},
+                "permit": {"scope": "fixture", "runtime_epoch": "fixture",
+                    "installation_id": "fixture", "generation": "1"},
             }, "content": content,
         }
 
@@ -304,14 +309,19 @@ def main() -> int:
                 self.end_headers()
                 try:
                     while not stub.offline:
-                        self.wfile.write(b"event: snapshot\ndata: " + json.dumps(snapshot).encode() + b"\n\n")
+                        self.wfile.write(
+                            b"event: snapshot\ndata: " + json.dumps(snapshot).encode() + b"\n\n"
+                        )
                         self.wfile.flush()
                         time.sleep(1)
                 except (BrokenPipeError, ConnectionResetError):
                     pass
                 return
             if path == "/api/goals":
-                self.respond({"goals": [], "status_date": "2026-11-15", "next_refresh_at": time.time() + 3600})
+                self.respond({
+                    "goals": [], "status_date": "2026-11-15",
+                    "next_refresh_at": time.time() + 3600,
+                })
                 return
             if path == "/api/projects":
                 self.respond({"projects": []})
@@ -663,7 +673,10 @@ def main() -> int:
                 "1",
                 "PANELS_APP_BUNDLE_IDENTIFIER=" + BUNDLE,
                 "CODE_SIGNING_ALLOWED=NO",
-                ("-only-testing:PanelsReviewUITests/" if review else "-only-testing:PanelsNotificationUITests/")
+                (
+                    "-only-testing:PanelsReviewUITests/"
+                    if review else "-only-testing:PanelsNotificationUITests/"
+                )
                 + os.environ.get("PANELS_CONVERSATION_TEST", "ConversationOperationTests"),
                 "test",
             ],

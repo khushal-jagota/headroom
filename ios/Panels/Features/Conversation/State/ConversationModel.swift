@@ -408,7 +408,7 @@ import UniformTypeIdentifiers
     }
     /// The closed dock follows compact status facts without admitting transcript rows.
     var compactPreview: String {
-        if let latest = latestMessage, latest.own, latest.note != "Sent" { return latest.previewText }
+        if let latest = latestMessage, latest.item == nil, latest.own, latest.note != "Sent" { return latest.previewText }
         guard let status, status.authority == "current" else { return latestMessage?.previewText ?? "Conversation" }
         if let happened = status.rest.latestHappened,
            ["prompt", "agent_message", "streaming_agent_message"].contains(happened.kind),
