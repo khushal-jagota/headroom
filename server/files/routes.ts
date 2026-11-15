@@ -237,6 +237,7 @@ export const routes: FastifyPluginAsync<AreaServices> = async (app, services) =>
           kept.seen,
           Math.max(0, offset - rows.length),
           Math.max(0, limit - window.length),
+          filesRoot(db, 'ticket'),
         );
         total += links.total;
         window = [...window, ...links.entries];

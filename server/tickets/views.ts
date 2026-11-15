@@ -4,6 +4,7 @@ import { existsSync, lstatSync, readdirSync, statSync } from 'node:fs';
 import type { ReadSql } from '../core/database/contracts.ts';
 import { PlannerError } from '../core/contracts.ts';
 import type { Principal } from '../core/contracts.ts';
+import { is_private_ticket_name } from '../files/logic/paths.ts';
 import type { Ticket } from './contracts.ts';
 import * as data from './data/index.ts';
 import { blocker_summary } from '../core/ticket_blocks.ts';
@@ -160,11 +161,16 @@ function newest(path: string): number {
       }),
   );
 }
-function fold(root: string, prefix = ''): Artifact[] {
+function fold(
+  root: string,
+  prefix = '',
+  excluded_name: (name: string) => boolean = () => false,
+): Artifact[] {
   if (!existsSync(root) || lstatSync(root).isSymbolicLink() || !statSync(root).isDirectory())
     return [];
   const result: Artifact[] = [];
   for (const name of readdirSync(root).sort()) {
+    if (excluded_name(name)) continue;
     const path = join(root, name),
       s = lstatSync(path),
       opens = prefix + name;
@@ -212,7 +218,7 @@ function ticket_artifacts(filename: string | undefined, id: string): Artifact[] 
     if (existsSync(p) && lstatSync(p).isSymbolicLink()) return [];
     if (p === parse(p).root) break;
   }
-  return fold(root);
+  return fold(root, '', is_private_ticket_name);
 }
 export function ticket_detail(sql: ReadSql, id: string, now: number, db_path?: string): Json {
   const broken = broken_ticket(sql, id);

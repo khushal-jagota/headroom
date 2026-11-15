@@ -19,11 +19,16 @@ async function newest(root: string): Promise<number> {
   );
   return Math.max(0, ...times);
 }
-export async function foldDirectory(root: string, prefix = ''): Promise<ArtifactEntry[]> {
+export async function foldDirectory(
+  root: string,
+  prefix = '',
+  excluded_name: (name: string) => boolean = () => false,
+): Promise<ArtifactEntry[]> {
   const info = await lstat(root).catch(() => null);
   if (!info || info.isSymbolicLink() || !info.isDirectory()) return [];
   const entries: ArtifactEntry[] = [];
   for (const child of await children(root)) {
+    if (excluded_name(child.name)) continue;
     const path = prefix + child.name,
       disk = join(root, child.name);
     if (child.file)

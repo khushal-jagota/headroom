@@ -203,7 +203,11 @@ Focused comparisons reuse private paths and existing fixtures:
 
 The restore proof covers domain reads and writes. It does not install application commit projections or claim HTTP/server startup.
 Part 4's hosted rehearsal supplies the real process, installer, supervisor, and packaged-runtime proofs.
-Scratch cleanup starts only for a matching database outside test mode, with a ten-minute initial wait independent of dispatcher admission.
+Ticket workspace cleanup starts outside test mode, with a ten-minute initial wait independent of dispatcher admission.
+The matching-database gate selects legacy scratch roots for inventory. Those roots remain for owner review.
+The workspace owner inventories complete Ticket folders before removal and applies the seven-day lifecycle clock.
+CLI and scheduled cleanup retain a runtime-unavailable fence until the conversation supervision owner supplies custody and its retirement operation.
+Linux folder removal uses held directory handles and no-follow opens. Mac cleanup inventories and preserves folders with an unsupported-safe-removal reason.
 Its close fences new work at the shared deadline. An already dispatched filesystem removal or a Git child that ignores TERM can outlive that join.
 Production environment activation remains off until Part 4 supplies the real adapters.
 

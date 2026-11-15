@@ -29,13 +29,11 @@ import {
   collect_cleanup_inventory,
   inventory_body,
 } from './vps_status/cleanup.ts';
-import {
-  layout_for,
-  read_ticket_states_from,
-  collect_ticket_scratch,
-} from './ticket_scratch/collect.ts';
-import { remove_ticket_scratch } from './ticket_scratch/apply.ts';
-import type { ScratchResult, TicketScratch } from './ticket_scratch/contracts.ts';
+import { layout_for } from './ticket_scratch/collect.ts';
+import { clean_for_database } from '../ticket_workspaces/cleanup.ts';
+import { snapshot_ticket_scratch, prune_ticket_scratch } from '../conversation/worker_scratch.ts';
+import { dirname, join } from 'node:path';
+import { filesRoot } from '../files/logic/paths.ts';
 
 const success = (stdout: string, stderr = ''): Result => ({
   exit_code: 0,
@@ -87,40 +85,28 @@ export async function environment_cleanup(
             folders: selected_layout.folders.map((path) => deps.admit_path(path)),
           };
     resources.require_active();
-    let scratches: TicketScratch[] = [],
-      scratch_result: ScratchResult | undefined;
-    if (layout !== null) {
-      const states = await read_ticket_states_from(config.db_path),
-        now = Math.floor(deps.now_unix());
-      resources.require_active();
-      scratches = await collect_ticket_scratch(layout, states, now, resources.scratch_options);
-      payload.ticket_scratch = scratches;
-      if (args.apply) {
-        resources.require_active();
-        payload.result = await apply_cleanup_inventory(
-          inventory,
-          resources.signal,
-          deps.admit_path,
-        );
-        resources.require_active();
-        scratch_result = await remove_ticket_scratch(
-          layout,
-          scratches,
-          states,
-          now,
-          resources.scratch_options,
-        );
-        payload.ticket_scratch_result = scratch_result;
-      }
-    } else if (args.apply)
+    const scratch_result = await clean_for_database(config.db_path, Math.floor(deps.now_unix()), {
+      ...resources.scratch_options,
+      extra_roots: layout?.folders ?? [],
+      apply: args.apply,
+      // P3 owns child custody. CLI and scheduled cleanup retain work until that API lands.
+      retire_local_children: () => ({ reason: 'Conversation runtime is unavailable' }),
+      snapshot_ticket_scratch: (ticket) => snapshot_ticket_scratch(ticket, deps.home),
+      prune_ticket_scratch: (ticket, names) => prune_ticket_scratch(ticket, names, deps.home),
+    });
+    const manifest_path = deps.admit_path(
+      join(dirname(filesRoot(config.db_path, 'ticket')), 'ticket-workspaces-cleanup.json'),
+    );
+    payload.ticket_workspaces = JSON.parse(await readFile(manifest_path, 'utf8'));
+    payload.ticket_workspaces_result = scratch_result;
+    if (args.apply)
       payload.result = await apply_cleanup_inventory(inventory, resources.signal, deps.admit_path);
     resources.require_active();
     if (args.json) return success(json(payload));
     const lines = [args.apply ? 'applied cleanup' : 'cleanup dry run'];
     for (const candidate of inventory.candidates)
       lines.push(`${candidate.kind}: ${candidate.path}`);
-    for (const scratch of scratches)
-      for (const entry of scratch.entries) lines.push(`ticket_scratch: ${entry}`);
+    lines.push(`Ticket workspace inventory: ${manifest_path}`);
     for (const kept of scratch_result?.skipped ?? [])
       lines.push(`kept: ${kept.path} (${kept.reason})`);
     return success(lines.join('\n'));

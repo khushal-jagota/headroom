@@ -29,7 +29,8 @@ import type { VpsStatusSnapshot } from './vps_status/contracts.ts';
 import type { StatusOptions } from './vps_status/contracts.ts';
 import { create_vps_status_dependencies } from './vps_status/probes.ts';
 import { layout_for } from './ticket_scratch/collect.ts';
-import { clean_finished_ticket_scratch } from './ticket_scratch/apply.ts';
+import { clean_for_database } from '../ticket_workspaces/cleanup.ts';
+import { snapshot_ticket_scratch, prune_ticket_scratch } from '../conversation/worker_scratch.ts';
 import { create_ticket_scratch_runtime } from './ticket_scratch/runtime.ts';
 
 export interface EnvironmentOperations {
@@ -66,17 +67,25 @@ export async function createEnvironmentRuntime(
   const scratch_layout = config.test_mode
     ? null
     : await layout_for(config.ticket_scratch_root, config.ticket_scratch_database, database);
-  const scratch =
-    scratch_layout === null
-      ? null
-      : create_ticket_scratch_runtime({
-          layout: scratch_layout,
-          db_path: database,
-          test_mode: config.test_mode,
-          now_unix: () => context.clock.nowUnix(),
-          assert_database_owned: context.require_runtime_ownership,
-          clean_finished_ticket_scratch,
-        });
+  const scratch = config.test_mode
+    ? null
+    : create_ticket_scratch_runtime({
+        layout: scratch_layout,
+        db_path: database,
+        test_mode: config.test_mode,
+        now_unix: () => context.clock.nowUnix(),
+        assert_database_owned: context.require_runtime_ownership,
+        clean_workspaces: (db, now, options) =>
+          clean_for_database(db, now, {
+            ...options,
+            extra_roots: scratch_layout?.folders ?? [],
+            git_execution: { children: context.one_shot_children, environment: process.env },
+            snapshot_ticket_scratch,
+            prune_ticket_scratch,
+            // P3 owns live child retirement. Until its merged API arrives, retain custody.
+            retire_local_children: () => ({ reason: 'Conversation runtime is unavailable' }),
+          }),
+      });
   const metrics = new MetricsRuntime({
     path: await store_path(database),
     config: load_metrics_config(),

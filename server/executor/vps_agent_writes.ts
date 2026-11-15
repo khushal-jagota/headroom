@@ -28,7 +28,7 @@ import {
 } from '../message_delivery/routes.ts';
 import { ENTRIES } from '../membership/collections.ts';
 import { write_create_ticket, write_patch_ticket } from '../tickets/routes.ts';
-import { file_current_proposal, read_ticket } from '../tickets/data/index.ts';
+import { file_current_proposal } from '../tickets/data/index.ts';
 import { ticket_json } from '../tickets/views.ts';
 import { notify_review_transfers } from '../tickets/review_transfer.ts';
 import type { ReviewTransferNotice } from '../tickets/contracts.ts';
@@ -135,7 +135,7 @@ export class AgentWrites {
       throw new ExecutorValidationError('CLI conversation conflicts with envelope');
     const principal = await this.runs.authority(write.child);
     const published = await publish();
-    if (write.operation === 'message.send' || write.operation === 'ticket.request_help')
+    if (write.operation === 'message.send')
       return this.deliver_message(envelope, write, principal, identity, published);
     const notices: ReviewTransferNotice[] = [];
     const receipt = this.store.accept(
@@ -154,16 +154,6 @@ export class AgentWrites {
         now: this.clock.nowUnix(),
       });
     return receipt;
-  }
-  private help_recipient(
-    tx: TransactionSql,
-    write: WireValue<'CliWrite'>,
-    principal: Principal,
-  ): Principal {
-    const ticket_id = write.arguments.ticket_id;
-    if (typeof ticket_id !== 'string' || principal.kind !== 'ticket' || principal.id !== ticket_id)
-      throw new PlannerError('agent_forbidden', 'only the Ticket Worker can request help');
-    return read_ticket(tx, ticket_id).ceiling_holder;
   }
   private async deliver_message(
     envelope: WireValue<'QueuedEnvelope'>,
@@ -222,31 +212,11 @@ export class AgentWrites {
       if (!is_json_object(body))
         throw new PlannerError('validation', 'message body must be an object');
       const message = message_text(body.message);
-      if (
-        write.operation === 'ticket.request_help' &&
-        Object.keys(body).some((name) => !['message', 'recipient'].includes(name))
-      )
-        throw new PlannerError('validation', 'unknown help request field');
       const mode = Object.hasOwn(body, 'mode')
         ? message_delivery_mode(body.mode)
         : message_delivery_mode();
-      const recipient =
-        write.operation === 'message.send'
-          ? message_principal(body.target)
-          : (() => {
-              const fallback = this.help_recipient(tx, write, principal);
-              return body.recipient ? message_principal(body.recipient) : fallback;
-            })();
-      admitCommand(
-        tx,
-        principal,
-        'POST',
-        write.operation === 'message.send'
-          ? '/api/messages/send'
-          : '/api/tickets/{ticket_id}/request-help',
-        { ticket_id: write.arguments.ticket_id as string },
-        body,
-      );
+      const recipient = message_principal(body.target);
+      admitCommand(tx, principal, 'POST', '/api/messages/send', {}, body);
       this.store.require_file_owner(tx, envelope);
       this.store.require_unchanged_files(envelope, published);
       this.store.write_position(
