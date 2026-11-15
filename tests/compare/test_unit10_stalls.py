@@ -18,8 +18,6 @@ from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 
-import pytest
-
 from planner.notifications.contracts import APNsResult, WebPushResult
 from planner.stalls.checker import StallChecker
 from planner.stalls.contracts import TrackedWait, TrackedWaitKind

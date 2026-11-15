@@ -255,7 +255,10 @@ def notification_freshness_proof(database: str, ticket: str, now: int) -> dict[s
         before = snapshot_rows()
         fresh = selected(now + 299)
         after_fresh = snapshot_rows()
-        assert all(any(edge["notification_type"] == "awaiting_approval" for edge in rows) for rows in fresh)
+        assert all(
+            any(edge["notification_type"] == "awaiting_approval" for edge in rows)
+            for rows in fresh
+        )
         expired = selected(now + 300)
         after_expired = snapshot_rows()
         assert expired == [[], []]
@@ -339,7 +342,8 @@ def test_unit15b_agent_only_attention(tmp_path: Path, request: pytest.FixtureReq
         "python": python.pop("content_seconds"), "typescript": typescript.pop("content_seconds"),
     }
     freshness_seconds = {
-        "python": python.pop("freshness_seconds"), "typescript": typescript.pop("freshness_seconds"),
+        "python": python.pop("freshness_seconds"),
+        "typescript": typescript.pop("freshness_seconds"),
     }
     expected, actual = normalize(python), normalize(typescript)
     report = {
