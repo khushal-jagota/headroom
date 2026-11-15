@@ -43,6 +43,7 @@ from planner.conversation.message_content import MessageFile, text_message_conte
 from planner.conversation.storage import ConversationStore
 from planner.conversation.system import SqliteProcessConversationSystem
 from planner.core.clock import TestClock as FixedClock
+from planner.core.contracts import PlannerError
 from planner.core.db import connect, create_schema
 from planner.environments.mac_updates import MacUpdateService
 from planner.environments.update_attempts import UpdateConflict
@@ -390,9 +391,25 @@ async def continue_core(endpoint: VpsExecutor, path: Path, proxy: HttpsProxy) ->
         )
         release.set()
         assert type(await sending).__name__ == "PromptDeliverySuppressed"
-        await killing
+        with pytest.raises(PlannerError) as refused:
+            await killing
+        assert refused.value.code.value == "retry_later"
         endpoint.mailbox.put_child_command = original_put  # type: ignore[method-assign]
         await proof(await stop("withdraw"))
+        assert rows("SELECT stop_state FROM mac_runs WHERE conversation_id='withdraw'") == [
+            ["closed"]
+        ]
+        assert rows(
+            "SELECT 1 FROM executor_child_assignments "
+            "WHERE conversation_id='withdraw' AND closed_at_ms IS NOT NULL"
+        ) == [[1]]
+        state = core._conversations["withdraw"]
+        await until(
+            lambda: state.retained_child_reference is None and not state.child_is_quarantined
+        )
+        if state.retirement_task is not None:
+            await state.retirement_task
+        await core.kill("withdraw")
         ordinary = await launched("ordinary")
         watcher = tail.subscribe("ordinary")
         before = (
@@ -622,13 +639,6 @@ async def continue_core(endpoint: VpsExecutor, path: Path, proxy: HttpsProxy) ->
         await core.shutdown()
 
 
-@pytest.mark.xfail(
-    run=False,
-    reason=(
-        "expected-open P2: #916 staging protocol24 rejects TS22 file transport with "
-        "HTTP409 before its 8MiB transfer"
-    ),
-)
 def test_unit22_executor_real_wire(tmp_path: Path, request: pytest.FixtureRequest) -> None:
     started = time.perf_counter()
     homes = create_synthetic_homes(tmp_path)

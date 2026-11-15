@@ -78,13 +78,6 @@ ROOT = Path(__file__).resolve().parents[3]
 NOW = 1760000000000
 
 
-@pytest.mark.xfail(
-    run=False,
-    reason=(
-        "expected-open P2: #916 protocol24 replacement lease is refused by TS22, "
-        "so the retained-run drain remains unsettled at exit13"
-    ),
-)
 def test_retained_runs_rebuild_drain_and_rewrite(
     tmp_path: Path, request: pytest.FixtureRequest
 ) -> None:

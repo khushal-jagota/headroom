@@ -187,13 +187,6 @@ def _safety(root: Path, manifest: wire.FileManifest) -> dict[str, Any]:
         }
 
 
-@pytest.mark.xfail(
-    run=False,
-    reason=(
-        "expected-open P2: #916 staging protocol24 source identity fails TS22 file "
-        "custody identity admission"
-    ),
-)
 def test_unit22_vps_files(
     tmp_path: Path, request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch
 ) -> None:

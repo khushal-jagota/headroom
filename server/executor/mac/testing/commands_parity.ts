@@ -2,7 +2,7 @@
 import { readFileSync, mkdirSync, writeFileSync, existsSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import assert, { fail } from 'node:assert/strict';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { setImmediate as yield_turn } from 'node:timers/promises';
 import {
   BackendPromptAccepted,
@@ -93,7 +93,7 @@ async function managed_workspace_phase(): Promise<unknown> {
       }),
     );
   }
-  writeFileSync(join(paths.root, '.workspace-machine-id'), machine);
+  writeFileSync(join(dirname(paths.artifacts), '.workspace-machine-id'), machine);
   const entered = gate(),
     release = gate(),
     git_children = new OneShotChildren();
@@ -198,7 +198,9 @@ async function managed_workspace_phase(): Promise<unknown> {
   );
   const first = runner.run(commands.one!, new AbortController().signal);
   try {
-    await entered.promise;
+    const early_outcome = await Promise.race([entered.promise.then(() => null), first]);
+    if (early_outcome !== null)
+      throw new Error('Managed registration never started: ' + JSON.stringify(early_outcome));
     let finished = false;
     void first.then(() => {
       finished = true;

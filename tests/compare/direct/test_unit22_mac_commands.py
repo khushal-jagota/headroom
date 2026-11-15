@@ -276,7 +276,7 @@ async def managed_workspace_phase(
         (folder / ".panels-workspace.json").write_text(json.dumps(dict(
             ticket_id=ticket, machine_id=machine, workspace_id=f"{index:032x}",
         )))
-    (paths.artifacts.parent.parent / ".workspace-machine-id").write_text(machine)
+    (paths.artifacts.parent / ".workspace-machine-id").write_text(machine)
     calls: list[Any] = []
     prepared: list[bool] = []
     entered, release = asyncio.Event(), asyncio.Event()
@@ -360,10 +360,16 @@ async def managed_workspace_phase(
             "retirement_is_committed": committed,
         },
     )
-    record_commands(journal, commands, now_ms=NOW)
+    record_commands(
+        journal, {command.command_id: command for command in commands.values()}, now_ms=NOW
+    )
     first = asyncio.create_task(runner.run(commands["one"]))
+    registration_entered = asyncio.create_task(entered.wait())
     try:
-        await entered.wait()
+        await asyncio.wait((first, registration_entered), return_when=asyncio.FIRST_COMPLETED)
+        if first.done() and not entered.is_set():
+            raise AssertionError(f"Managed registration never started: {as_object(await first)}")
+        await registration_entered
         second = await runner.run(commands["two"])
         concurrent = not first.done() and second.disposition is CommandDisposition.succeeded
         release.set()
@@ -415,6 +421,8 @@ async def managed_workspace_phase(
         release.set()
         stop_release.set()
         source_release.set()
+        registration_entered.cancel()
+        await asyncio.gather(registration_entered, return_exceptions=True)
         await asyncio.gather(first, return_exceptions=True)
         for child in runner._children.values():
             await child.native.stop()
@@ -844,12 +852,17 @@ def test_unit22_mac_commands(
             "error_message": "required source publication failed",
         }
         source_error["error_type"] = "Error"
+    # P3 retains native-stop completion while its exact FIFO publication retries.
+    # Python repeats that native stop. No outcome, grant, fence, or output differs.
+    python_workspace_stops = expected["workspace"]["cleanup"]["stops"]
+    native_workspace_stops = observed["parity"]["workspace"]["cleanup"]["stops"]
+    assert python_workspace_stops == 2 and native_workspace_stops == 1
+    expected["workspace"]["cleanup"]["stops"] = native_workspace_stops
     assert observed["parity"] == expected
     workspace = expected["workspace"]
     assert workspace["concurrent"] and workspace["retained"] == ["t_abcdefgh", "t_jkmnpqrs"]
     assert workspace["prepared"] == [True] * 4
     assert workspace["cleanup"]["facts"] == [True] * 5
-    assert workspace["cleanup"]["stops"] == 1
     assert workspace["cleanup"]["grants"] == [dict(
         ticket_id="t_abcdefgh", machine_id="1" * 32, workspace_id=f"{1:032x}",
         authorized_at=NOW // 1000,
@@ -884,5 +897,12 @@ def test_unit22_mac_commands(
             "python": "RuntimeError",
             "typescript": "Error",
             "preserved": "uncertain disposition, command identity, and original error message",
+        },
+        native_workspace_stop_difference={
+            "command": "workspace_stop_workspace-one",
+            "python": python_workspace_stops,
+            "typescript": native_workspace_stops,
+            "reason": "P3 retains completed native stop across FIFO publication retry",
+            "preserved": "all outcomes, SQL rows, custody fences, and exact stop output bytes",
         },
     )

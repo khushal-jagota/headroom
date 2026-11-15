@@ -987,10 +987,6 @@ def _semantic_snapshot(snapshot: dict[str, Any]) -> dict[str, Any]:
     return result
 
 
-@pytest.mark.xfail(
-    run=False,
-    reason="expected-open P2: #916 port successor-incarnation report authority and receipts",
-)
 def test_unit22_mailbox_exchange(tmp_path: Path, request: pytest.FixtureRequest) -> None:
     _mailbox_exchange(tmp_path, request)
 
@@ -2338,7 +2334,7 @@ async def _presence_phases(source: _Source, node: Any, paired: Any, paths: list[
     working = [
         {
             "child": _child("basic"),
-            "turn": {"conversation_id": "basic", "turn_number": BIG},
+            "turn": {"conversation_id": "basic", "turn_number": TURN},
             "tool_running": False,
         }
     ]
@@ -2346,7 +2342,7 @@ async def _presence_phases(source: _Source, node: Any, paired: Any, paths: list[
     assert reply is not None and "accepted_at_vps_ms" in reply
     await pending("basic-drain", "drain", "basic")
     first_wait = (await state())["waits"][0]
-    assert first_wait["wait_key"] == f"basic:{BIG}"
+    assert first_wait["wait_key"] == f"basic:{TURN}"
     await clock(source.now + 1)
     await p("activity", key="basic")
     await p("lease", lease(waiting_conversations_truncated=True, working_turns=working))

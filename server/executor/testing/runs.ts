@@ -681,6 +681,8 @@ const lease = (waiting: string[]) => ({
   working_turns: [],
   admission_stopped: false,
   going_to_sleep: false,
+  cleanup_uncertainties: [],
+  legacy_cleanup_notice: null,
 });
 function snapshot() {
   return {

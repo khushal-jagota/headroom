@@ -121,8 +121,20 @@ export async function leases(input: {
     stop_cleanup_release = new Deferred<void>();
   const stop_http_entered = new Deferred<void>();
   let stop_leases = 0;
-  const stopping = new MacLeaseLoop({
+  const maintenance = {
     ...options,
+    journal: {
+      async poll_cursor() {
+        return cursor;
+      },
+      async lower_poll_cursor() {
+        return true;
+      },
+    },
+    updates: { offer() {} },
+  };
+  const stopping = new MacLeaseLoop({
+    ...maintenance,
     workspace_root: input.workspace_root + '/absent',
     runner: {
       ...options.runner,
@@ -147,8 +159,9 @@ export async function leases(input: {
     },
   });
   stopping.start();
+  const accepted = stopping.lease_once();
   await stop_cleanup_entered.promise;
-  await stopping.lease_once();
+  await accepted;
   const http = stopping.lease_once();
   void http.catch(() => {});
   await stop_http_entered.promise;
@@ -167,7 +180,7 @@ export async function leases(input: {
     fault_release = new Deferred<void>();
   const warnings: string[] = [];
   const failing = new MacLeaseLoop({
-    ...options,
+    ...maintenance,
     client: {
       async lease() {
         return decode_json(accepted_reply, 'LeaseReply');

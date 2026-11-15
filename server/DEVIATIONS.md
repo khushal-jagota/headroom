@@ -817,6 +817,15 @@ maintenance remain active. The populated CLI comparison records Python removal a
 TypeScript retention explicitly, while it compares the remaining inventory and host result.
 
 
+## Workspace Stop publication retry
+
+The Manager accepted this difference on November 15, 2026. After a successful native
+Stop and failed durable publication, TypeScript retains the successful Stop and retries
+only publication through `MacRunner.stop_and_publish`. Python calls native Stop again
+on the workspace retirement retry. The populated command proof asserts both counts
+explicitly: two Python native calls and one TypeScript native call. It compares the
+retained custody, retirement grant, final output bytes, and physical removal exactly.
+
 ## Known gap: Mac workspace removal
 
 Linux removes eligible workspaces through open directory descriptors with no-follow

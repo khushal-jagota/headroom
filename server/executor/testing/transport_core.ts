@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { PROTOCOL_VERSION } from '../../execution_configuration.ts';
 import { setTimeout as pause } from 'node:timers/promises';
 import type { Database } from '../../core/database/contracts.ts';
+import { PlannerError } from '../../core/contracts.ts';
 import { ConversationStore } from '../../conversation/record/data/store.ts';
 import { deployment_participants } from '../../conversation/deploy_interruptions/participants.ts';
 import { SqliteProcessConversationSystem } from '../../conversation/system.ts';
@@ -179,6 +180,8 @@ export async function continue_core(database: Database, endpoint: VpsExecutor) {
         working_turns: [],
         admission_stopped: false,
         going_to_sleep: false,
+        cleanup_uncertainties: [],
+        legacy_cleanup_notice: null,
       },
       current,
     );
@@ -203,12 +206,30 @@ export async function continue_core(database: Database, endpoint: VpsExecutor) {
     );
     release.resolve();
     const fate = await sending;
-    await killing;
+    await assert.rejects(
+      killing,
+      (error: unknown) => error instanceof PlannerError && error.code === 'retry_later',
+    );
     assert.equal(fate.constructor.name, 'PromptDeliverySuppressed');
     endpoint.mailbox.put_child_command = original_put;
     await until(() => commands('withdraw', 'stop').length === 1);
     await report((await poll()).commands);
     await submit([stopped(commands('withdraw', 'stop')[0]!)]);
+    assert.deepEqual(rows("SELECT stop_state FROM mac_runs WHERE conversation_id='withdraw'"), [
+      ['closed'],
+    ]);
+    assert.deepEqual(
+      rows(
+        "SELECT 1 FROM executor_child_assignments WHERE conversation_id='withdraw' AND closed_at_ms IS NOT NULL",
+      ),
+      [[1]],
+    );
+    const withdrawn = core.conversations.get('withdraw')!;
+    await until(
+      () => withdrawn.retained_child_reference === null && !withdrawn.child_is_quarantined,
+    );
+    if (withdrawn.retirement_task !== null) await withdrawn.retirement_task;
+    await core.kill('withdraw');
 
     const ordinary = await launched('ordinary'),
       watcher = tail.subscribe('ordinary');
