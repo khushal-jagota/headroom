@@ -1394,10 +1394,12 @@ def test_unit21_release_identity_archive_and_frontier(
             + "\n"
         )
 
+
 def test_unit21_release_target_admission(tmp_path: Path, request: pytest.FixtureRequest) -> None:
     """Gap: home/executor role refusals must survive archive create and owned extraction."""
-    from planner.platform_runtime.targets import LINUX_EXECUTOR, MAC_EXECUTOR, MAC_HOME
     from tests.compare.direct.unit20_cli import write_report
+
+    from planner.platform_runtime.targets import LINUX_EXECUTOR, MAC_EXECUTOR, MAC_HOME
 
     began = time.perf_counter()
     app = build_app(tmp_path / "app", SHA, "sentinel")
@@ -1409,17 +1411,16 @@ def test_unit21_release_target_admission(tmp_path: Path, request: pytest.Fixture
         except ValueError as error:
             return str(error)
 
-    def validate(target: Any = None) -> Any:
-        return validate_app_manifest(
-            app / "manifest.json", expected_target=target, require_runtime=True
-        )
+    def validate(path: Path, target: Any) -> Any:
+        return validate_app_manifest(path / "manifest.json", expected_target=target)
 
-    expected = [outcome(lambda: validate(LINUX_EXECUTOR))]
+    expected = [outcome(lambda: validate(app, LINUX_EXECUTOR))]
+    shutil.copytree(app, tmp_path / "markerless")
     (app / "mac-runtime.json").write_text(
         json.dumps(dict(platform="linux", architecture="x86_64", role="executor"))
     )
     rewrite_artifact_digest(app)
-    expected.append(outcome(lambda: validate(MAC_EXECUTOR)))
+    expected.append(outcome(lambda: validate(app, MAC_EXECUTOR)))
     archive = tmp_path / "python-target.tar.gz"
     digest = create_app_archive(app, archive, expected_target=LINUX_EXECUTOR)
     expected.append(
@@ -1429,28 +1430,47 @@ def test_unit21_release_target_admission(tmp_path: Path, request: pytest.Fixture
         archive, tmp_path / "python-restored", digest, SHA, expected_target=LINUX_EXECUTOR
     )
     expected.append((tmp_path / "python-restored/sentinel").read_text())
-    (app / "mac-runtime.json").write_text(
+    shutil.copytree(app, tmp_path / "home")
+    (tmp_path / "home/mac-runtime.json").write_text(
         json.dumps(dict(platform="darwin", architecture="arm64", role="home"))
     )
-    expected.append(
-        outcome(
-            lambda: validate_app_manifest(
-                app / "manifest.json", expected_target=MAC_HOME, verify_artifact_digest=False
-            )
+    rewrite_artifact_digest(tmp_path / "home")
+    expected.append(outcome(lambda: validate(tmp_path / "home", MAC_HOME)))
+    code = """
+import {readFile} from 'node:fs/promises';
+import {join} from 'node:path';
+import {create_app_archive, extract_app_archive} from './server/environments/release/archive.ts';
+import {validate_app_manifest} from './server/environments/release/identity.ts';
+import {LINUX_EXECUTOR, MAC_EXECUTOR, MAC_HOME} from './server/environments/release/contracts.ts';
+import {ChildProcesses} from './server/lifecycle/owned_processes.ts';
+const root=process.argv[1], app=join(root,'app'), owner=new ChildProcesses();
+const outcome=async f=>{try{await f();return 'accepted';}catch(e){return e.message;}};
+const validate=(path,target)=>validate_app_manifest(join(root,path,'manifest.json'),
+  {expected_target:target});
+try {
+  const result=[await outcome(()=>validate('markerless',LINUX_EXECUTOR)),
+                await outcome(()=>validate('app',MAC_EXECUTOR))];
+  const archive=join(root,'node-target.tar.gz');
+  const digest=await create_app_archive(app,archive,LINUX_EXECUTOR);
+  const sha=(await validate('app',LINUX_EXECUTOR)).app_sha;
+  result.push(await outcome(()=>extract_app_archive(
+    archive,join(root,'node-refused'),digest,sha,owner)));
+  await extract_app_archive(archive,join(root,'node-restored'),digest,sha,owner,
+    undefined,undefined,LINUX_EXECUTOR);
+  result.push(await readFile(join(root,'node-restored/sentinel'),'utf8'),
+              await outcome(()=>validate('home',MAC_HOME)));
+  console.log(JSON.stringify(result));
+} finally {owner.seal();await owner.settled();}
+"""
+    actual = json.loads(
+        subprocess.check_output(
+            ["node", "--input-type=module", "-e", code, str(tmp_path)], cwd=ROOT, text=True
         )
     )
-    (app / "mac-runtime.json").unlink()
-    rewrite_artifact_digest(app)
-    module = (ROOT / "server/environments/release/testing/release_parity.ts").as_uri()
-    code = "const m=await import(process.argv[1]);console.log(JSON.stringify(await m.release_targets_parity(process.argv[2])));"
-    command = ["node", "--input-type=module", "-e", code, module, str(tmp_path)]
-    actual = json.loads(subprocess.check_output(command, cwd=ROOT, text=True))
     report = dict(
-        kind="direct",
-        case="unit21-release-targets",
-        equal=actual == expected,
         python=expected,
         typescript=actual,
+        equal=actual == expected,
         seconds=time.perf_counter() - began,
     )
     write_report(request, "unit21-release-targets", report)

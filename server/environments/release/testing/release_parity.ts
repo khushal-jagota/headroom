@@ -46,7 +46,7 @@ import {
   require_node_database_frontier,
   schema_change_pending,
 } from '../migrations.ts';
-import { AppValidationError, LINUX_EXECUTOR, MAC_EXECUTOR, MAC_HOME } from '../contracts.ts';
+import { AppValidationError } from '../contracts.ts';
 
 import { parse_dynamic } from '../native/elf.ts';
 import { resolve_provider } from '../native/providers.ts';
@@ -1160,67 +1160,4 @@ export async function release_parity(
   } finally {
     process.off('SIGTERM', terminate);
   }
-}
-
-/** Reuse the populated release tree and its owned unpacker to prove role admission end to end. */
-export async function release_targets_parity(root: string): Promise<unknown> {
-  const app = join(root, 'app'),
-    marker = join(app, 'mac-runtime.json');
-  const outcome = async (operation: () => Promise<unknown>) => {
-    try {
-      await operation();
-      return 'accepted';
-    } catch (error) {
-      return (error as Error).message;
-    }
-  };
-  const validate = (expected_target?: typeof LINUX_EXECUTOR) =>
-    validate_app_manifest(join(app, 'manifest.json'), { expected_target, require_runtime: true });
-  const result = [await outcome(() => validate(LINUX_EXECUTOR))];
-  await writeFile(
-    marker,
-    JSON.stringify({ platform: 'linux', architecture: 'x86_64', role: 'executor' }),
-  );
-  const manifest = JSON.parse(await readFile(join(app, 'manifest.json'), 'utf8'));
-  manifest.artifact_digest = await digest_app_artifact(app);
-  await writeFile(join(app, 'manifest.json'), JSON.stringify(manifest));
-  result.push(await outcome(() => validate(MAC_EXECUTOR)));
-  const archive = join(root, 'node-target.tar.gz');
-  const digest = await create_app_archive(app, archive, LINUX_EXECUTOR);
-  const owner = new ChildProcesses();
-  try {
-    result.push(
-      await outcome(() =>
-        extract_app_archive(archive, join(root, 'node-refused'), digest, manifest.app_sha, owner),
-      ),
-    );
-    const restored = join(root, 'node-restored');
-    await extract_app_archive(
-      archive,
-      restored,
-      digest,
-      manifest.app_sha,
-      owner,
-      undefined,
-      undefined,
-      LINUX_EXECUTOR,
-    );
-    result.push(await readFile(join(restored, 'sentinel'), 'utf8'));
-    await writeFile(
-      marker,
-      JSON.stringify({ platform: 'darwin', architecture: 'arm64', role: 'home' }),
-    );
-    result.push(
-      await outcome(() =>
-        validate_app_manifest(join(app, 'manifest.json'), {
-          expected_target: MAC_HOME,
-          verify_artifact_digest: false,
-        }),
-      ),
-    );
-  } finally {
-    owner.seal();
-    await owner.settled();
-  }
-  return result;
 }
