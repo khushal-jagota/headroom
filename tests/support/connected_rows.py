@@ -3,11 +3,9 @@
 from __future__ import annotations
 
 import httpx
-from tests.support.server import JsonObject, ServerHandle, _append_rows
+from tests.support.server import JsonObject, ServerHandle
 
-from planner.conversation.events import MessageToOwnerEventPayload
-from planner.conversation.message_content import text_message_content
-from planner.core.contracts import OWNER_PRINCIPAL, Principal
+from planner.core.contracts import Principal
 
 
 def _post(server: ServerHandle, path: str, body: JsonObject) -> JsonObject:
@@ -26,15 +24,26 @@ def _conversation(server: ServerHandle, name: str) -> None:
 
 
 def _message(server: ServerHandle, conversation: str, sender: Principal, text: str) -> None:
-    _append_rows(
+    _post(
         server,
-        conversation,
-        MessageToOwnerEventPayload(
-            content=text_message_content(text),
-            sender=sender,
-            recipient=OWNER_PRINCIPAL,
-            sender_label="Proof Worker",
-        ),
+        f"/api/test/connected/{conversation}/message",
+        {
+            "kind": sender.kind.value,
+            "id": sender.id,
+            "text": text,
+        },
+    )
+
+
+def _bind(server: ServerHandle, kind: str, identity: str, conversation: str = "") -> None:
+    _post(
+        server,
+        "/api/test/connected/bind",
+        {
+            "kind": kind,
+            "id": identity,
+            "conversation_id": conversation,
+        },
     )
 
 

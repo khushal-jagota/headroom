@@ -1,20 +1,27 @@
+import type { PendingVideo } from "../../../lib/conversation/videoUploads/contracts";
 import type { PendingConversationImage } from "../../../lib/conversation/pendingImages";
 import type { PendingConversationFile } from "../../../lib/conversation/pendingFiles";
 
-export type ComposerAttachmentReference = Readonly<{ kind: "image" | "file"; id: number }>;
+export type ComposerAttachmentReference = Readonly<{ kind: "image" | "file" | "video"; id: number }>;
 export type ComposerAttachment =
   | { kind: "image"; value: PendingConversationImage }
-  | { kind: "file"; value: PendingConversationFile };
+  | { kind: "file"; value: PendingConversationFile }
+  | { kind: "video"; value: PendingVideo };
 
 export function orderedComposerAttachments(
   order: readonly ComposerAttachmentReference[],
   images: readonly PendingConversationImage[],
-  files: readonly PendingConversationFile[]
+  files: readonly PendingConversationFile[],
+  videos: readonly PendingVideo[] = []
 ): ComposerAttachment[] {
   return order.flatMap((reference): ComposerAttachment[] => {
     if (reference.kind === "image") {
       const image = images.find((candidate) => candidate.id === reference.id);
       return image ? [{ kind: "image", value: image }] : [];
+    }
+    if (reference.kind === "video") {
+      const video = videos.find(candidate => candidate.id === reference.id);
+      return video ? [{kind: "video", value: video}] : [];
     }
     const file = files.find((candidate) => candidate.id === reference.id);
     return file ? [{ kind: "file", value: file }] : [];

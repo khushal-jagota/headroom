@@ -2,54 +2,16 @@
 
 from __future__ import annotations
 
-import logging
 import sqlite3
-from collections.abc import Callable
-from datetime import datetime
 
-from planner.conversation.contracts import ConversationSystem
 from planner.core import ticket_blocks
 from planner.core.authctx import RequestContext
 from planner.core.clock import Clock
-from planner.core.contracts import Principal, PrincipalKind
-from planner.core.errors import ErrorCode, PlannerError
-from planner.message_delivery import service as message_delivery_service
+from planner.core.contracts import Principal
 from planner.tickets import data as tickets_data
 from planner.tickets.contracts import Ticket
 from planner.tickets.logic import admission
-
-LOGGER = logging.getLogger(__name__)
-
-
-def resolve_creation_placement(
-    conn: sqlite3.Connection,
-    *,
-    planning_now: datetime,
-    boundary_hour: int,
-    sprint_item_id: str | None,
-    project_id: str | None,
-    sprint_id: str | None,
-    sprint_id_explicit: bool,
-    worker_type: str,
-    project_id_explicit: bool = False,
-) -> tuple[None, str, str | None, str | None]:
-    """Resolve defaults for a newly created Ticket without overriding placement intent."""
-    if sprint_item_id is not None:
-        item = conn.execute(
-            "SELECT project_id FROM sprint_items WHERE id = ?", (sprint_item_id,)
-        ).fetchone()
-        if item is not None:
-            if project_id_explicit and project_id is None:
-                raise PlannerError(ErrorCode.validation, "ticket Project does not match Outcome")
-            if project_id is not None and project_id != item["project_id"]:
-                raise PlannerError(ErrorCode.validation, "ticket Project does not match Outcome")
-            project_id = str(item["project_id"])
-    return (
-        None,
-        project_id or "project_other",
-        sprint_id if sprint_id_explicit else None,
-        sprint_item_id,
-    )
+from planner.worker_types.contracts import TicketWorkflowDefinition
 
 
 def create_ticket(
@@ -59,40 +21,24 @@ def create_ticket(
     principal: Principal,
     now: int,
     title_max_chars: int,
-    worker_type: str,
+    worker_type: str | None,
+    workflow: TicketWorkflowDefinition | None = None,
     locale: str | None = None,
+    machine_id: str | None = None,
     employee_backend: str | None = None,
     employee_launch_model: str | None = None,
+    employee_launch_reasoning_effort: str | None = None,
+    reasoning_effort_is_set: bool = False,
     model_source_is_historical: bool = False,
     brief: str | None = "",
     project_id: str | None = None,
-    sprint_id: str | None = None,
     deadline: str | None = None,
-    sprint_item_id: str | None = None,
-    orchestrator_kind: str | None = None,
+    manager_id: str | None = None,
+    manager_kind: str | None = None,
     blocked_by_ticket_ids: list[str] | None = None,
-    planning_now: datetime | None = None,
-    boundary_hour: int = 5,
-    sprint_item_id_explicit: bool = False,
-    sprint_id_explicit: bool = False,
-    project_id_explicit: bool = False,
     stated_ceiling: str | None = None,
     stated_holder: Principal | None = None,
 ) -> Ticket:
-    if planning_now is None:
-        day_id = None
-    else:
-        day_id, project_id, sprint_id, sprint_item_id = resolve_creation_placement(
-            conn,
-            planning_now=planning_now,
-            boundary_hour=boundary_hour,
-            sprint_item_id=sprint_item_id,
-            project_id=project_id,
-            project_id_explicit=project_id_explicit,
-            sprint_id=sprint_id,
-            sprint_id_explicit=sprint_id_explicit,
-            worker_type=worker_type,
-        )
     return tickets_data.create_ticket(
         conn,
         title=title,
@@ -100,16 +46,18 @@ def create_ticket(
         now=now,
         title_max_chars=title_max_chars,
         brief=brief,
-        project_id=project_id,
-        sprint_id=sprint_id,
+        project_id=(project_id or "project_other") if manager_id is None else project_id,
         deadline=deadline,
-        sprint_item_id=sprint_item_id,
-        orchestrator_kind=orchestrator_kind,
-        day_id=day_id,
+        manager_id=manager_id,
+        manager_kind=manager_kind,
         worker_type=worker_type,
+        workflow=workflow,
         locale=locale,
+        machine_id=machine_id,
         employee_backend=employee_backend,
         employee_launch_model=employee_launch_model,
+        employee_launch_reasoning_effort=employee_launch_reasoning_effort,
+        reasoning_effort_is_set=reasoning_effort_is_set,
         model_source_is_historical=model_source_is_historical,
         blocked_by_ticket_ids=blocked_by_ticket_ids,
         stated_ceiling=stated_ceiling,
@@ -123,22 +71,13 @@ def add_ticket_block(
     blocked_ticket_id: str,
     *,
     now: int,
-    admit: Callable[[], None] | None = None,
 ) -> None:
-    """Create a Ticket block under admission, in one transaction.
+    """Create a Ticket block in one transaction.
 
     Nothing is settled afterwards. What the blocked Ticket shows is derived from this row.
     """
-    conn.execute("BEGIN IMMEDIATE")
-    try:
-        if admit is not None:
-            admit()
+    with tickets_data._txn(conn):
         ticket_blocks.add_ticket_block(conn, blocking_ticket_id, blocked_ticket_id, now)
-    except BaseException:
-        conn.execute("ROLLBACK")
-        raise
-    else:
-        conn.execute("COMMIT")
 
 
 def remove_ticket_block(
@@ -147,22 +86,13 @@ def remove_ticket_block(
     blocked_ticket_id: str,
     *,
     now: int,
-    admit: Callable[[], None] | None = None,
 ) -> None:
-    """Remove a Ticket block under admission, in one transaction.
+    """Remove a Ticket block in one transaction.
 
     Nothing is settled afterwards. What the blocked Ticket shows is derived from this row.
     """
-    conn.execute("BEGIN IMMEDIATE")
-    try:
-        if admit is not None:
-            admit()
+    with tickets_data._txn(conn):
         ticket_blocks.remove_ticket_block(conn, blocking_ticket_id, blocked_ticket_id, now)
-    except BaseException:
-        conn.execute("ROLLBACK")
-        raise
-    else:
-        conn.execute("COMMIT")
 
 
 def file_current_proposal(
@@ -188,12 +118,13 @@ def file_current_proposal(
     )
 
 
-async def reject_ticket_proposal(
-    conversation_system: ConversationSystem,
+def reject_ticket_proposal(
     conn: sqlite3.Connection,
     ticket_id: str,
     *,
     message: str | None,
+    expected_proposal_revision: int | None = None,
+    decision_id: str | None = None,
     ctx: RequestContext,
     clock: Clock,
 ) -> Ticket:
@@ -201,34 +132,13 @@ async def reject_ticket_proposal(
     if message is not None:
         admission.validate_revision_guidance(message)
     principal = ctx.principal
-    source_turn = await message_delivery_service.revision_source_turn(
-        conversation_system, conn, ctx=ctx
-    )
-    planning_now = clock.now()
-    now = int(planning_now.timestamp())
-    ticket = tickets_data.require_reject(
-        conn,
-        ticket_id,
-        principal=principal,
-        has_guidance=message is not None,
-    )
-    revised = tickets_data.reject_proposal(
+    now = clock.now_unix()
+    return tickets_data.reject_proposal(
         conn,
         ticket_id,
         message=message,
         principal=principal,
         now=now,
-        expected_proposal=ticket.pending_proposal,
+        expected_proposal_revision=expected_proposal_revision,
+        decision_id=decision_id,
     )
-    if source_turn is not None:
-        try:
-            await conversation_system.record_explicit_reply(
-                source_turn, Principal(PrincipalKind.ticket, ticket_id)
-            )
-        except Exception:
-            LOGGER.warning(
-                "could not record explicit reply for Ticket revision %s",
-                ticket_id,
-                exc_info=True,
-            )
-    return revised

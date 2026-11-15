@@ -70,7 +70,7 @@ def test_predeploy_backup_replaces_ambient_hermes_home_with_vps_home(
     tmp_path: Path,
 ) -> None:
     current = tmp_path / "current"
-    launcher = current / "app" / "bin" / "panels-launcher"
+    launcher = current / "app" / "bin" / "panels"
     launcher.parent.mkdir(parents=True)
     calls = tmp_path / "calls"
     launcher.write_text(

@@ -10,8 +10,10 @@
     view,
     intents,
     snapshots = $bindable(),
-    beforeSubmit
+    beforeSubmit,
+    onRetry
   }: {
+    onRetry?: () => Promise<void>;
     view: ComposerRunControlsView;
     intents: ComposerRunControlIntents;
     snapshots: readonly import("../../../lib/conversation/wire").BackendSnapshot[];
@@ -21,12 +23,15 @@
 </script>
 
 <UnifiedModelPicker
+  readError={view.readError}
+  {onRetry}
   chevron="drawn"
   view={view.picker}
   bind:snapshots
   models={view.pickerSource.models}
   backendEffortOptions={view.pickerSource.backendEffortOptions}
   showUsage
+  tonedMark
   disabled={view.disabled}
   attributes={{ "data-conversation-picker-model": "" }}
   afterChoose={() => {}}
@@ -55,6 +60,7 @@
       onclick={intents.stop}
     ><span class="chat-send-fill" aria-hidden="true"></span></button>
   {/if}
+  <!-- Sending leaves the cursor in the field, so a phone's keyboard stays up for the reply. -->
   {#if view.submit.active || view.submit.sending}
     <button
       type="button"
@@ -66,6 +72,7 @@
       disabled={view.submit.disabled}
       title={view.submit.title}
       aria-label={view.submit.ariaLabel}
+      onmousedown={(event) => event.preventDefault()}
       onclick={intents.send}
     ><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 19V5M5 12l7-7 7 7" /></svg></button>
   {/if}

@@ -6,14 +6,13 @@ There is no immutable spec. `SPEC.md` was a starting point and has been retired:
 
 ## Stack and system map
 - Python ≥ 3.12 backend in `src/planner/`, with FastAPI wiring in `src/planner/core/server.py` and SQLite schema/migrations in `src/planner/core/db.py`.
-- Domain code is grouped by system: `tickets/`, `sprints/`, `days/`, and `projects/`. Contracts live in each domain's `contracts.py`; framework-free rules live in `logic/`; HTTP routes live in `api.py`.
-- `panels` is the CLI entry point (`planner.cli.main:main`); `python -m planner` delegates to it. Important command groups are `serve`, `project`, `day`, `ticket`, `sprint`, `sprint item`, `worker`, and `worker-type`. The Chief is a recipient of `send-message`, not a command group.
-- Worker orchestration lives in `runtime/`. `worker_step_readiness.py` is the whole readiness decision — read-only, no writes. `worker_step_readiness_loop.py` holds both the poll thread and `start_ready_worker_step`, the per-Ticket flow: occupancy check, one guarded write that takes the worker-step claim (the only state of control a Ticket stores — no claim stamp, no run row), start or reuse the Ticket's conversation, compose the opener, send. Started and queued are both success; only a refusal releases the claim. Nothing watches a turn end. `conversation_start.py` owns resolve/start/send/reset against the conversation contract.
-- Generic exact-time Ticket supply lives in `scheduled_tickets/`. Its sibling poll loop shares the server lifespan and single-machine lock, evaluates only the current local minute, and transactionally records a created, suppressed, or failed occurrence. It stops at ordinary Ticket creation and day placement; the change signal and readiness loop own the Worker handoff.
+- Domain code is grouped by system: `tickets/`, `managers/`, `ideas/`, and `projects/`. Contracts live in each domain's `contracts.py`; framework-free rules live in `logic/`; HTTP routes live in `api.py`.
+- `panels` is the CLI entry point (`planner.cli.main:main`); `python -m planner` delegates to it. Important command groups are `serve`, `project`, `ticket`, `manager`, `worker`, and `worker-type`. The Chief is a recipient of `send-message`, not a command group.
+- Worker orchestration lives in `runtime/`. `worker_step_readiness.py` is the whole readiness decision — read-only, no writes. `worker_step_readiness_loop.py` holds both the poll thread and `start_ready_worker_step`, the per-Ticket flow: conversation busy check, one guarded write that takes the worker-step claim (the only state of control a Ticket stores — no claim stamp, no run row), start or reuse the Ticket's conversation, compose the opener, send. Started and queued are both success; only a refusal releases the claim. Nothing watches a turn end. `conversation_start.py` owns resolve/start/send/reset against the conversation contract.
 - `core/change_signal.py` is the payload-free, best-effort "something was written" signal. Every connection from `core/db.connect` announces its own commits, so no domain action carries wake or invalidation calls. The one way past it is `core/db.commit_without_change_signal`, used where the writer has established that no screen is waiting for its rows: managed skill history, and the conversation rows only an open conversation shows, which the live tail hands over directly. While the polling-lock owner's readiness loop runs it is subscribed to the signal; SQLite and the periodic timer remain canonical. The browser hears the same signal over `GET /api/changes` (`core/sse.py`).
 - Conversation code lives in `conversation/`, and it is the only one: contract, core, record, live tail, backend snapshots, and one adapter per backend under `backends/`. Every screen that shows a conversation and every worker step goes through it. The backends are a closed set of exactly `hermes`, `codex`, and `claude`, stated in the contract, and one door turns untrusted text into a member of it.
 - Frontend is Svelte/Vite in `web/`; FastAPI serves the built `web/dist` app at `/` and Vite chunks under `/_app/`. Shared design assets remain in `assets/`: `tokens.css` and `app.css`; the Vite-owned GFM pipeline lives in `web/src/lib/markdownPipeline.ts`.
-- Skill text is a row in `managed_skills`, and the row is the authority. Panels writes `data/skills/<name>/SKILL.md` from the rows whenever a database opens, and every agent home — Hermes, Codex, Claude — links to those copies. The packaged `src/planner/skills` tree is only what a database holding no skills is seeded from, and nothing consults it again: an edit there changes a fresh install and no running agent. Every skill write is owner-only (`PATCH /api/skills/<name>`, `PUT|PATCH /api/workers/<type>/skill`), so write the exact text and hand it to the owner or the Chief. `panels skill check` reports a row naming a command, Stage or skill this build lacks.
+- Skill text is a row in `managed_skills`, and the row is the authority. Panels writes `data/skills/<name>/SKILL.md` from the rows whenever a database opens, and every agent home — Hermes, Codex, Claude — links to those copies. The packaged `src/planner/skills` tree is only what a database holding no skills is seeded from, and nothing consults it again: an edit there changes a fresh install and no running agent. Skills use `PATCH /api/skills/<name>`, atomic `POST /api/skills/apply`, `DELETE /api/skills/<name>`, and `PUT /api/skills/<name>/files` for a supporting file that lives only on disk, all behind the same owner-only door. Worker and Chief routes remain compatibility adapters. `panels skill list`, `show`, `edit`, `apply`, `delete`, and `write-file` expose this system in the CLI. Workers must hand exact live skill edits to the owner or the Chief. `panels skill check` reports a row naming a command, Stage or skill this build lacks.
 - `docs/` is the live plain-language system documentation. `orchestration/tickets/` holds historical ticket plans, dispatches, and reviews.
 - `data/` is gitignored runtime state: SQLite DBs, WAL/SHM files, logs, locks, Hermes home state, and smoke artifacts.
 
@@ -28,18 +27,20 @@ There is no immutable spec. `SPEC.md` was a starting point and has been retired:
 
 ## Memory
 - **Panels ticket fields, recap, and artifacts** — keep the current stage, evidence, judgment calls, next step, and blockers with the ticket that owns the work.
-- **docs/** — plain-language documentation of what exists and how it works, split by system (`docs/README.md` is the map; `docs/CLAUDE.md` holds the conventions). Simple sentences, no jargon — a smart non-engineer must be able to read it; if a section can't be understood without reading the code, rewrite the section. Kept **current, not frozen**: written as work completes, and corrected in the same breath when a feature changes or is removed — a doc still describing deleted machinery is a bug, not history. History is git's.
+- **docs/** — a top-level view of each system: what it is for, how it works, and roughly how, with just enough detail to sense-check the design. `docs/README.md` is the map, and `docs/AGENTS.md` holds the rules. Plain language that a smart non-engineer can read. When you change a system, update its page in the same change at the same depth: trim before you add, and never add a page for a feature. A doc that describes removed machinery is a bug. History is git's.
 
 ## Verification
+- For iPhone work, follow [permanent screen tests and one-off reviews](ios/README.md#permanent-screen-tests-and-one-off-reviews). Keep the five admitted screen methods separate from the review scheme.
 - Apply the test-admission policy in **PRINCIPLES.md** during existing plan and implementation review. Record each added test's distinct risk, existing coverage gap, chosen layer, reused setup, and any new connected case or browser host cost.
 - **A check follows a piece of work, not a file and not an edit.** Finish what you set out to do, then run the narrowest check that proves it. A broad suite re-run when nothing since could have changed it proves nothing, and at a hundred repetitions it is not a detail of the work, it is most of the wall clock.
 - There is no single command that checks everything. Run `ruff`, `mypy` and `pytest` yourself, pointed at what your work touched, and read the output. A tool that is missing or a suite that skipped says so on screen, which a wrapper reporting one number does not.
 - `tests/unit`, `tests/integration` and `tests/e2e` must each get their own `pytest` process. Playwright's sync API holds an event loop for the whole session, so a unit fixture that calls `asyncio.run()` in teardown raises `asyncio.run() cannot be called from a running event loop` once an E2E test has run in the same process. A single `pytest tests` reports hundreds of failures that are not real. Three commands, three processes.
+- A full pass runs the three suites one after another, each on several processes with `pytest-xdist`: `scripts/dev pytest tests/unit -n 6`, then `scripts/dev pytest tests/integration -n 6`, then `scripts/dev pytest tests/e2e -n 4`. A focused run needs no `-n`. Because the processes run side by side, a test must not write outside its own `tmp_path`: not into the shared `.venv`, the repository tree, or a fixed path or port. Give it its own copy instead.
 - Use Playwright E2E only when a material risk requires a real browser and live server together. Ticket plans or reviews must name that risk, the exercised boundary, and why frontend, unit, or integration tests cannot prove it. Keep the smallest E2E proof. Test other browser behavior in `web/tests`, and never rely on an eyeball check.
 - Independent reviews may use a fresh sub-agent; the Codex CLI is not required. Use one focused review wherever a second pair of eyes materially improves confidence: completed work against its contract/design, intricate correctness logic, or a combined diff before integration. A second round is only for a concrete unresolved finding. Surface the review output and address or refute each point in writing.
 
 ## Operating model: plan and orchestrate
-- You are primarily a **planner and orchestrator of sub-agents**. Your own outputs are: the plan, contract-scoped tickets, dispatches, independent reviews, serial integrations, and verification runs. Implementation substance is produced by sub-agents working tickets.
+- You are primarily a **planner and manager of sub-agents**. Your own outputs are: the plan, contract-scoped tickets, dispatches, independent reviews, serial integrations, and verification runs. Implementation substance is produced by sub-agents working tickets.
 - Write code directly only when a change is too small to be worth a ticket — glue, integration repairs, one-line fixes — and note it in the owning ticket. If you catch yourself implementing a stage's substance inline, stop and cut tickets. Route, don't execute.
 - A ticket is contract-scoped: it names the contract/type files it implements against, the acceptance tests it must turn green, and nothing else. Sub-agents do not invent shapes, do not modify contracts, and do not touch files outside their ticket.
 - Per-ticket pipeline — each step isolated work: (1) you decompose and write the ticket; (2) a sub-agent plans the ticket's implementation; (3) an independent reviewer checks that plan against the contracts and relevant design doc; (4) a sub-agent implements to the reviewed plan; (5) an independent reviewer checks the implementation diff; (6) you integrate serially. Steps 2–5 can be collapsed for trivial tickets when the ticket records why. Each ticket names its own focused gates.
@@ -51,19 +52,22 @@ There is no immutable spec. `SPEC.md` was a starting point and has been retired:
 
 ## Worktree and server flow
 
-- Create the Ticket branch and isolated worktree from current `staging`. Do the work
-  in that worktree.
+- Panels creates the Ticket branch and worktree before the Worker starts. Use that
+  worktree through resume and restart. Do not create or remove Ticket worktrees.
+- Each Ticket folder has `worktree/` for code, dependencies, and scratch, and
+  `artifacts/` for documents and evidence. Use the paths in the Worker prompt.
+  Panels clears both seven days after the Ticket ends, subject to remote-work safety.
+  See `docs/environments.md`.
+- Workers still install dependencies, commit, push, open pull requests, and perform
+  approved merges. Fetch the integration target before integration. State the base
+  and final checked commits in the implementation evidence.
 - Set up the worktree's dependencies, environment inputs, generated prerequisites,
   and local runtime state, then verify that its source, dependencies, configuration,
   and state resolve to that worktree.
 - For a new worktree, run:
 
   ```sh
-  python3 -m venv .venv
-  .venv/bin/python -m pip install -r requirements.txt
-  .venv/bin/python -m pip install --editable .
-  npm ci --prefix web
-  npm ci --prefix agent_backends
+  scripts/dev setup
   ```
 
   Create `.venv` in the worktree with those commands. Never copy, move, or symlink
@@ -71,39 +75,68 @@ There is no immutable spec. `SPEC.md` was a starting point and has been retired:
   built in, so a copy points `pytest` at that tree's source and checks this source
   against that tree's pinned dependency versions. `git worktree move` breaks a
   virtualenv the same way. After a move, delete `.venv` and build it again.
-- `mypy` with this tree's config and any `pytest` that collects under `tests/` check
-  environment identity first, then installed distributions against applicable exact
-  pins in `requirements.txt`. The dependency check runs before `planner` imports.
-  Extra installed distributions and this tree's editable install are valid.
-  A dependency refusal names the required and installed versions, active interpreter,
-  and a repair command anchored to this tree. Missing or unusable `packaging` reports
-  a parser bootstrap failure. A foreign or moved virtualenv needs a rebuild.
-  A pin change makes old environments stale, so refusal is expected until their
-  installed dependencies match. No environment variable or flag skips this check.
-  Restore the pinned dependency versions to pass it.
-  These hooks cannot cover failures before pytest or mypy loads them. They do not
-  cover `ruff`, pytest outside `tests/`, or arbitrary `.venv/bin` commands.
+- Use guarded commands for dependency setup, npm, pytest, and mypy:
+
+  ```sh
+  scripts/dev npm --prefix web ci
+  scripts/dev npm --prefix agent_backends ci
+  scripts/dev npm --prefix web run check
+  scripts/dev pytest tests/unit/test_instrument.py
+  scripts/dev mypy scripts/tree_environment.py
+  scripts/dev python -m pytest tests/unit/test_instrument.py
+  scripts/dev .venv/bin/mypy scripts/tree_environment.py
+  ```
+
+  These launchers check deployment sharing before the requested tool starts.
+  Setup requires absent `.venv` and Node dependency directories and never deletes them.
+  Every web script also checks before its dependency executable starts.
+  No flag or environment variable bypasses the guard. If dependencies share deployed
+  storage, report the unsafe workspace so that Panels can replace it. Do not delete through
+  an unresolved link or mount. If valid independent dependencies receive a false refusal,
+  fix the detector and add a regression check. If evidence is unavailable, restore the
+  evidence or fix its acquisition before retry. See `docs/deployment.md` for diagnostics.
+- `mypy` with this tree's config and `pytest` under `tests/` use one source path
+  check. The imported `planner` package must resolve inside this checkout's `src`.
+  If it resolves elsewhere, reinstall this checkout with `.venv/bin/python -m pip install --editable .`.
+  Keep development dependencies and runtime state independent of the deployment.
+  The separate development safety launcher checks deployment sharing before tools start.
+  Direct invocations outside guarded entry points can still write into the deployment.
+  General prevention and race-free filesystem containment remain uncommissioned.
+  Development and verification run in independent worktrees, never the installed tree.
+  Startup checks do not contain running processes or prevent later writes.
+  The artifact digest detects damage after a write. Do not add cache exclusions.
+  If a write reaches the installed tree, report it and leave it in place. Do not clean it.
+  Repository review or merge does not install enforcement into the deployed release.
 - Run `env | rg '^PLAN_(DB_PATH|LOGS_DIR|DISPATCHER_LOCK_PATH|SERVER_CONTROL_SOCKET|HERMES_HOME)='`
   and confirm any printed path resolves to the worktree before using its runtime.
+- Python test entry points replace inherited `PLAN_*` runtime paths with private
+  scratch storage before application imports. Each pytest worker gets its own storage.
+  The shared pytest setup and Python browser runners refuse remaining deployment
+  paths or live server URLs. Keep the explicit non-live `PLAN_SERVER_URL` default:
+  unsetting it restores the CLI's live-server fallback. Server fixtures replace it
+  with their allocated server URL. Original launch evidence stays with containment checks.
 - Node dependency trees under `web/` and `agent_backends/` may be reused when their
-  manifests and locks match. Detach them before installing or changing dependencies.
+  manifests and locks match and their storage is independent of the deployment.
+  Matching lockfiles never permit deployed storage. Detach safe development-owned
+  trees before installing or changing dependencies.
   This never covers `.venv`.
 - When testing, browsing, computer use, exploration, or other active work needs
   running services, survey current port use, select available ports, start the
   services, and stop them when that active work is finished. If a port is taken during
   startup, select another and retry.
-- The worktree's database and other local state may remain for later use until
-  Consequences.
-- At Consequences, complete integration: bring current `staging` into the Ticket branch,
-  repair and verify the resulting revision, advance `staging` when it is green, push
-  that exact revision to `origin/staging`, and verify the remote ref matches before
-  removing the Ticket's services, local runtime state, worktree, and branch.
-- Always keep a single rolling `staging` → `main` pull request open. After the
-  `origin/staging` push, check whether one already exists; if not, create one. It
-  updates on its own as later Consequences Stages advance `staging`, so there is nothing to do
-  when one is already open.
-- Deployment from `main` remains a later user action. It is not part of Ticket
-  integration.
+- Keep the worktree's database and other local state in the Ticket workspace.
+  Panels owns their removal after the Ticket ends.
+- At Consequences, push the Ticket branch and open an ordinary pull request into
+  `staging`. Write an ordinary note about the change. Wait for `mypy (merged tree)`
+  to pass, merge the pull request explicitly, and verify that it merged.
+  Stop the services you started. Leave workspace removal to Panels.
+  If an old direct push to `origin/staging` is rejected,
+  use this pull request route. If GitHub refuses the merge because of conflicts,
+  bring current `staging` into the Ticket branch. Resolve the conflicts, verify the
+  resulting revision, and push the branch. Wait for a fresh `mypy (merged tree)`
+  pass, merge the pull request explicitly, and verify that it merged.
+- Open a `staging` → `main` pull request only when the user explicitly requests a
+  release. Deployment from `main` remains a later user action.
 
 ## Conduct
 - Integrate only after the final checks pass; investigate failures rather than advancing over them. Do not use repeated broad verification as the implementation loop.
@@ -113,5 +146,5 @@ There is no immutable spec. `SPEC.md` was a starting point and has been retired:
 ## Project notes
 - Python ≥ 3.12, venv at `.venv`, deps pinned in `requirements.txt`. Run the server: `panels serve` (or `python -m planner serve`). DB and logs live under `data/` (gitignored).
 - Frontend is Svelte/Vite in `web/`; FastAPI serves the built `web/dist` app at `/` and mounts Vite chunks under `/_app/`. Shared tokens, app CSS, and markdown rendering remain in `assets/`.
-- Frontend reactivity is `commit → contentless change signal → invalidate everything → only mounted queries refetch`. Committing a write emits one payload-free signal, unless it is one of the few commits nothing outside its own writer reads; `GET /api/changes` streams it to the browser, which debounces and invalidates the whole TanStack query cache. Only queries a mounted screen is using refetch, and structural sharing means an unchanged answer produces no re-render — so composing survives a change landing under it. There is no client-side store of canonical state and no whole-screen refetch; the server stays the single source of truth. A new resource is just a new query in the catalogue — there is no vocabulary to keep in step.
+- Frontend reactivity is `commit → contentless change signal → coalesced mounted-resource version probe → changed body reads`. Generic domains register authoritative source revisions. A body and its version enter the query cache together from one coherent source read. Unknown resources and failed probes retain explicit mounted-query refresh. Navigation and conversation tails keep their own scoped paths. Confirmed mutations still invalidate immediately. Inactive decoded query bodies are bounded by 64 entries and four MiB, counted once at admission, with LRU eviction and the existing age limit. Drafts and outgoing messages are outside that cache. Artifact inventory remains an explicit selected-only refresh fallback because direct filesystem writes have no DB revision.
 - One canonical writer function per state transition. Agents (claim-carrying requests) write proposals only — the proposal resolver is the single door to canonical values.

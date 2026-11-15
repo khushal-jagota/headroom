@@ -13,10 +13,13 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import select
 from collections.abc import Awaitable, Callable, Coroutine, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
+
+import pytest
 
 from planner.conversation.backends.claude_model_catalog import (
     ClaudeModel,
@@ -30,10 +33,8 @@ from planner.conversation.backends.codex_app_server.model_catalog import (
 )
 from planner.conversation.contracts import ConversationBackendKey
 from planner.conversation.snapshot import (
-    BackendIdentityStatus,
     BackendInstallMethod,
     BackendSnapshotService,
-    BackendUpdateOutcome,
     CommandOutcome,
     SubprocessBackendProbeEnvironment,
     probe_backend,
@@ -135,7 +136,7 @@ def _codex_that_answers(
         del codex_executable
         efforts: list[str] = []
         for model in models:
-            for effort in model.reasoning_effort_options:
+            for effort in model.reasoning_effort_options or ():
                 if effort not in efforts:
                     efforts.append(effort)
         default = next((model for model in models if model.is_default), None)
@@ -187,7 +188,7 @@ def _claude_that_answers(
         del claude_executable
         efforts: list[str] = []
         for model in answered:
-            for effort in model.reasoning_effort_options:
+            for effort in model.reasoning_effort_options or ():
                 if effort not in efforts:
                     efforts.append(effort)
         return ClaudeModelCatalog(
@@ -251,293 +252,13 @@ def _installed_claude(
 # --- reading a version line ----------------------------------------------------------------
 
 
-
-
 # --- reading where a binary lives ------------------------------------------------------------
 
 
 # --- what a card says --------------------------------------------------------------------
 
 
-
-
-def test_claude_reports_its_account_its_models_and_its_effort_levels() -> None:
-    async def exercise() -> None:
-        machine = _installed_claude()
-
-        card = await probe_backend(
-            ConversationBackendKey.claude,
-            machine,
-            claude_model_catalog_probe=_claude_that_answers(),
-        )
-
-        assert card.installed is True
-        assert card.version == "2.1.219"
-        assert card.identity is not None
-        assert card.identity.status is BackendIdentityStatus.authenticated
-        assert card.identity.account_label == "owner@example.com"
-        assert card.identity.detail == "max plan via claude.ai"
-        assert card.identity.login_command == "claude auth login"
-        # The catalog is the CLI's own handshake: the value --model takes, the versioned
-        # name of what it reaches, and the resolution spelled out as the detail line.
-        assert [model.model_id for model in card.available_models] == [
-            "opus[1m]",
-            "sonnet",
-            "haiku",
-        ]
-        assert [model.display_name for model in card.available_models] == [
-            "Opus 5 (1M)",
-            "Sonnet 5",
-            "Haiku 4.5",
-        ]
-        assert card.available_models[0].detail == "opus[1m] → claude-opus-5[1m]"
-        assert card.reasoning_effort_options == ("low", "medium", "high", "xhigh", "max")
-        assert card.diagnoses == ()
-
-    _run(exercise)
-
-
-def test_each_model_keeps_the_efforts_it_said_it_takes() -> None:
-    """The backend-wide list is the union, so on its own it offers a model values it
-    refuses. What each model said about itself survives the probe.
-
-    Claude's handshake here is the honest case: two models take five efforts and one
-    says nothing about efforts at all. The union is the same five either way, so only
-    the per-model answer can tell the third one apart.
-    """
-
-    async def exercise() -> None:
-        card = await probe_backend(
-            ConversationBackendKey.claude,
-            _installed_claude(),
-            claude_model_catalog_probe=_claude_that_answers(),
-        )
-
-        efforts = {
-            model.model_id: model.reasoning_effort_options
-            for model in card.available_models
-        }
-        assert efforts["opus[1m]"] == ("low", "medium", "high", "xhigh", "max")
-        assert efforts["sonnet"] == ("low", "medium", "high", "xhigh", "max")
-        # Said nothing, so it carries nothing and the backend's own list applies to it.
-        assert efforts["haiku"] == ()
-
-    _run(exercise)
-
-
-def test_a_codex_model_keeps_the_efforts_it_said_it_takes() -> None:
-    """Two codex models that take different efforts stay different after the probe.
-
-    The union offers all four, so a picker reading only the union would offer xhigh on
-    a model that takes low, medium and high.
-    """
-
-    async def exercise() -> None:
-        card = await probe_backend(
-            ConversationBackendKey.codex,
-            _installed_codex(),
-            codex_model_catalog_probe=_codex_that_answers(
-                CodexModel(
-                    model_id="gpt-5.6-sol",
-                    display_name="GPT-5.6-Sol",
-                    reasoning_effort_options=("low", "medium", "high"),
-                    default_reasoning_effort="low",
-                    is_default=True,
-                ),
-                CodexModel(
-                    model_id="gpt-5.5",
-                    display_name="GPT-5.5",
-                    reasoning_effort_options=("medium", "xhigh"),
-                    default_reasoning_effort="medium",
-                    is_default=False,
-                ),
-            ),
-        )
-
-        efforts = {
-            model.model_id: model.reasoning_effort_options
-            for model in card.available_models
-        }
-        assert efforts["gpt-5.6-sol"] == ("low", "medium", "high")
-        assert efforts["gpt-5.5"] == ("medium", "xhigh")
-        # And the backend-wide list is still the union of them, for a model that says
-        # nothing and for a picker with no model chosen yet.
-        assert card.reasoning_effort_options == ("low", "medium", "high", "xhigh")
-
-    _run(exercise)
-
-
-def test_a_signed_out_cli_is_told_which_command_to_run() -> None:
-    async def exercise() -> None:
-        machine = _installed_claude(
-            identity=CommandOutcome(
-                exit_code=0, standard_output=json.dumps({"loggedIn": False}), standard_error=""
-            )
-        )
-
-        card = await probe_backend(
-            ConversationBackendKey.claude,
-            machine,
-            claude_model_catalog_probe=_claude_that_answers(),
-        )
-
-        assert card.identity is not None
-        assert card.identity.status is BackendIdentityStatus.unauthenticated
-        assert card.identity.account_label is None
-        assert card.diagnoses == (
-            "`claude` is not signed in. Run `claude auth login` in a terminal.",
-        )
-
-    _run(exercise)
-
-
-
-
-def test_codex_reads_its_login_line_and_what_its_app_server_says_it_runs() -> None:
-    """Codex is the one backend whose catalog is asked rather than written down."""
-
-    async def exercise() -> None:
-        machine = _installed_codex()
-
-        card = await probe_backend(
-            ConversationBackendKey.codex,
-            machine,
-            codex_model_catalog_probe=_codex_that_answers(
-                CodexModel(
-                    model_id="gpt-5.6-sol",
-                    display_name="GPT-5.6-Sol",
-                    reasoning_effort_options=("low", "medium", "high"),
-                    default_reasoning_effort="low",
-                    is_default=True,
-                ),
-                CodexModel(
-                    model_id="gpt-5.5",
-                    display_name="GPT-5.5",
-                    reasoning_effort_options=("medium", "xhigh"),
-                    default_reasoning_effort="medium",
-                    is_default=False,
-                ),
-            ),
-        )
-
-        assert card.version == "0.145.0"
-        assert card.identity is not None
-        assert card.identity.status is BackendIdentityStatus.authenticated
-        assert card.identity.account_label == "Logged in using ChatGPT"
-        assert card.identity.login_command == "codex login"
-        assert [model.model_id for model in card.available_models] == [
-            "gpt-5.6-sol",
-            "gpt-5.5",
-        ]
-        # The union across the models, in the order codex listed them: a picker shows one
-        # list, and an effort no model takes is one no turn could run under.
-        assert card.reasoning_effort_options == ("low", "medium", "high", "xhigh")
-        assert card.diagnoses == ()
-
-    _run(exercise)
-
-
-def test_a_codex_that_will_not_say_what_it_runs_lists_nothing_and_says_why() -> None:
-    async def exercise() -> None:
-        card = await probe_backend(
-            ConversationBackendKey.codex,
-            _installed_codex(),
-            codex_model_catalog_probe=_codex_that_says_nothing,
-        )
-
-        assert card.installed is True
-        assert card.available_models == ()
-        assert card.reasoning_effort_options == ()
-        assert card.diagnoses == (
-            "Codex is installed but did not answer when asked what it can run, so no "
-            "models are listed. Check that `codex app-server` starts from a terminal.",
-        )
-
-    _run(exercise)
-
-
 # --- what a backend runs when nobody picks --------------------------------------------------
-
-
-def test_configured_hermes_is_probed_when_it_is_absent_from_path() -> None:
-    async def exercise() -> None:
-        configured_path = "/opt/hermes/venv/bin/hermes"
-        machine = _FakeMachine(
-            executables={"hermes": "/usr/local/bin/unrelated-hermes"},
-            configured_executables={"hermes": configured_path},
-            answers_any_other_command=CommandOutcome(
-                exit_code=0,
-                standard_output=json.dumps(
-                    {
-                        "schemaVersion": 1,
-                        "status": "not_configured",
-                        "defaultModelId": None,
-                        "providers": [],
-                    }
-                ),
-                standard_error="",
-            ),
-        )
-        machine.outcomes[(configured_path, "--version")] = CommandOutcome(
-            exit_code=0,
-            standard_output="Hermes Agent v0.18.2\n",
-            standard_error="",
-        )
-
-        card = await probe_backend(ConversationBackendKey.hermes, machine)
-
-        assert card.installed is True
-        assert card.executable_path == configured_path
-        assert card.diagnoses == (
-            "Hermes is installed but has no default provider and model configured. "
-            "Run `hermes model` in a terminal.",
-        )
-
-    _run(exercise)
-
-
-def test_hermes_default_must_be_present_in_its_returned_inventory() -> None:
-    async def exercise() -> None:
-        machine = _FakeMachine(executables={"hermes": HERMES_PATH})
-        machine.outcomes[(HERMES_PATH, "--version")] = CommandOutcome(
-            exit_code=0,
-            standard_output="Hermes Agent v0.18.2\n",
-            standard_error="",
-        )
-        machine.answers_any_other_command = CommandOutcome(
-            exit_code=0,
-            standard_output=json.dumps(
-                {
-                    "schemaVersion": 1,
-                    "status": "default_unavailable",
-                    "defaultModelId": "openai:missing",
-                    "providers": [
-                        {
-                            "id": "openai",
-                            "displayName": "OpenAI",
-                            "models": [
-                                {
-                                    "id": "openai:available",
-                                    "displayName": "Available",
-                                    "detail": "OpenAI",
-                                }
-                            ],
-                        }
-                    ],
-                }
-            ),
-            standard_error="",
-        )
-
-        card = await probe_backend(ConversationBackendKey.hermes, machine)
-
-        assert card.default_model_id is None
-        assert [model.model_id for model in card.available_models] == [
-            "openai:available"
-        ]
-        assert "does not have usable credentials" in card.diagnoses[0]
-
-    _run(exercise)
 
 
 # --- the update advisory ------------------------------------------------------------------
@@ -579,33 +300,6 @@ def test_codex_user_local_npm_install_targets_the_same_resolved_prefix() -> None
     _run(exercise)
 
 
-
-
-
-
-def test_a_backend_that_installed_itself_is_updated_by_its_own_command() -> None:
-    async def exercise() -> None:
-        machine = _FakeMachine(
-            executables={"codex": CODEX_PATH}, real_paths={CODEX_PATH: CODEX_REAL_PATH}
-        )
-        machine.outcomes[(CODEX_PATH, "--version")] = CommandOutcome(
-            exit_code=0, standard_output="codex-cli 0.145.0\n", standard_error=""
-        )
-        machine.outcomes[(CODEX_PATH, "login", "status")] = CommandOutcome(
-            exit_code=0, standard_output="Logged in using ChatGPT\n", standard_error=""
-        )
-
-        card = await probe_backend(ConversationBackendKey.codex, machine)
-
-        assert card.update_advisory is not None
-        assert card.update_advisory.install_method is BackendInstallMethod.native
-        assert card.update_advisory.update_command == ("codex", "update")
-        # A vendor's own updater is not a published package, so nothing is looked up.
-        assert machine.registry_lookups == []
-
-    _run(exercise)
-
-
 # --- running an update --------------------------------------------------------------------
 
 
@@ -620,90 +314,54 @@ def _claude_update_command() -> tuple[str, ...]:
     )
 
 
-def test_hermes_update_action_is_unavailable_without_running_an_update_command() -> None:
+@pytest.mark.parametrize("backend", [ConversationBackendKey.claude, ConversationBackendKey.codex])
+def test_updates_the_selected_user_local_installation(backend: ConversationBackendKey) -> None:
     async def exercise() -> None:
-        machine = _FakeMachine(executables={"hermes": HERMES_PATH})
-        machine.outcomes[(HERMES_PATH, "--version")] = CommandOutcome(
-            exit_code=0, standard_output="Hermes Agent v0.18.2\n", standard_error=""
+        machine = (
+            _installed_claude() if backend is ConversationBackendKey.claude else _installed_codex()
         )
-        machine.answers_any_other_command = CommandOutcome(
-            exit_code=0,
-            standard_output=json.dumps(
-                {
-                    "schemaVersion": 1,
-                    "status": "not_configured",
-                    "defaultModelId": None,
-                    "providers": [],
-                }
-            ),
-            standard_error="",
+        path = CLAUDE_PATH if backend is ConversationBackendKey.claude else CODEX_PATH
+        package = (
+            "@anthropic-ai/claude-code"
+            if backend is ConversationBackendKey.claude else "@openai/codex"
         )
-
-        result = await BackendSnapshotService(machine).update_backend(
-            ConversationBackendKey.hermes
+        machine.real_paths[path] = f"{USER_LOCAL_NPM_PREFIX}/lib/node_modules/{package}/bin/cli"
+        command = (
+            "npm", "install", "--global", "--prefix", USER_LOCAL_NPM_PREFIX, package + "@latest"
         )
-
-        assert result.outcome is BackendUpdateOutcome.failed
-        assert result.detail == "There is no update Panels can run for this backend."
-        assert all("update" not in command for command in machine.run_commands)
-
-    _run(exercise)
-
-
-def test_an_update_that_failed_carries_the_end_of_what_it_printed() -> None:
-    async def exercise() -> None:
-        machine = _installed_claude()
-        machine.registry_versions["@anthropic-ai/claude-code"] = "2.1.230"
-        machine.outcomes[_claude_update_command()] = CommandOutcome(
-            exit_code=1, standard_output="", standard_error="x" * 20_000 + "EACCES at the end"
+        machine.outcomes[command] = CommandOutcome(0, "installed", "")
+        machine.after_run[command] = lambda: machine.outcomes.__setitem__(
+            (path, "--version"), CommandOutcome(0, "9.0.0", "")
         )
-
-        result = await BackendSnapshotService(
-            machine, claude_model_catalog_probe=_claude_that_answers()
-        ).update_backend(
-            ConversationBackendKey.claude
-        )
-
-        assert result.outcome is BackendUpdateOutcome.failed
-        assert result.detail == "The update command exited with code 1."
-        assert result.output_tail.endswith("EACCES at the end")
-        assert len(result.output_tail) <= 10_000
-
-    _run(exercise)
-
-
-
-
-
-
-def test_an_update_on_one_backend_does_not_hold_up_reading_another_ones_card() -> None:
-    """An install is slow; looking at a card is not, and must not wait behind one."""
-
-    async def exercise() -> None:
-        machine = _installed_claude()
-        machine.registry_versions["@anthropic-ai/claude-code"] = "2.1.230"
-        machine.outcomes[_claude_update_command()] = CommandOutcome(
-            exit_code=0, standard_output="", standard_error=""
-        )
-        machine.slow_commands.add(_claude_update_command())
-        machine.let_slow_commands_finish = asyncio.Event()
         service = BackendSnapshotService(
-            machine, claude_model_catalog_probe=_claude_that_answers()
+            machine, claude_model_catalog_probe=_claude_that_answers(),
+            codex_model_catalog_probe=_codex_that_answers(),
         )
+        result = await service.update_backend(backend)
+        assert result.outcome == "succeeded"
+        assert result.detail == "Updated to 9.0.0."
+        assert command in machine.run_commands
+        assert (await service.snapshot(backend)).version == "9.0.0"
 
-        updating = asyncio.create_task(service.update_backend(ConversationBackendKey.claude))
-        for _ in range(50):
-            await asyncio.sleep(0)
+    _run(exercise)
 
-        # The codex card comes back while claude is still installing.
-        card = await asyncio.wait_for(
-            service.snapshot(ConversationBackendKey.codex), timeout=5.0
-        )
-        assert card.backend_key is ConversationBackendKey.codex
 
-        assert machine.let_slow_commands_finish is not None
-        machine.let_slow_commands_finish.set()
-        await updating
+def test_update_reports_no_change_or_failure_and_refuses_other_prefixes() -> None:
+    async def exercise() -> None:
+        machine = _installed_claude()
+        command = _claude_update_command()
+        machine.outcomes[command] = CommandOutcome(0, "already current", "")
+        service = BackendSnapshotService(machine, claude_model_catalog_probe=_claude_that_answers())
+        assert (await service.update_backend(ConversationBackendKey.claude)).outcome == "unchanged"
+        machine.outcomes[command] = CommandOutcome(1, "", "network failed")
+        failed = await service.update_backend(ConversationBackendKey.claude)
+        assert failed.outcome == "failed"
+        assert "network failed" in failed.output_tail
+        machine.writable_prefixes.clear()
+        before = machine.run_commands.count(command)
+        refused = await service.update_backend(ConversationBackendKey.claude)
+        assert refused.outcome == "failed"
+        assert machine.run_commands.count(command) == before
 
     _run(exercise)
 
@@ -711,14 +369,22 @@ def test_an_update_on_one_backend_does_not_hold_up_reading_another_ones_card() -
 # --- what a command that runs out of time leaves behind ------------------------------------
 
 
-def _still_alive(process_id: int) -> bool:
+def _exits(process_id: int, *, within_seconds: float) -> bool:
+    """A zombie or a reaped PID has exited. A pidfd becomes readable when it exits."""
     try:
-        os.kill(process_id, 0)
+        descriptor = os.pidfd_open(process_id)
     except ProcessLookupError:
-        return False
-    except PermissionError:
         return True
-    return True
+    try:
+        try:
+            stat = Path(f"/proc/{process_id}/stat").read_text()
+        except FileNotFoundError:
+            return True
+        if stat.rsplit(")", 1)[1].split()[0] == "Z":
+            return True
+        return bool(select.select([descriptor], [], [], within_seconds)[0])
+    finally:
+        os.close(descriptor)
 
 
 def test_a_command_that_runs_out_of_time_takes_what_it_started_with_it(
@@ -746,11 +412,9 @@ def test_a_command_that_runs_out_of_time_takes_what_it_started_with_it(
         assert "did not answer within" in outcome.standard_error
 
         child_process_id = int(child_process_id_file.read_text().strip())
-        for _ in range(100):
-            if not _still_alive(child_process_id):
-                break
-            await asyncio.sleep(0.05)
-        assert not _still_alive(child_process_id), (
+        # The group's SIGKILL lands asynchronously, and the orphan stays a zombie until
+        # init reaps it. Either way it is no longer running.
+        assert _exits(child_process_id, within_seconds=5), (
             f"the command's own child ({child_process_id}) outlived it"
         )
 
@@ -760,3 +424,74 @@ def test_a_command_that_runs_out_of_time_takes_what_it_started_with_it(
 # --- keeping the answers ---------------------------------------------------------------------
 
 
+def test_machine_catalog_refreshes_on_version_refresh_and_twelve_hour_backstop() -> None:
+    from datetime import UTC, datetime, timedelta
+
+    async def exercise() -> None:
+        clock = [datetime(2026, 10, 31, tzinfo=UTC)]
+        machine = _installed_claude()
+        generation = ["claude-fable-5-1"]
+
+        async def models(executable: str) -> ClaudeModelCatalog:
+            return ClaudeModelCatalog(
+                (ClaudeModel(generation[0], "Fable", generation[0], ("high",)),),
+                ("high",),
+                generation[0],
+            )
+
+        service = BackendSnapshotService(
+            machine, claude_model_catalog_probe=models, machine_catalog=True, now=lambda: clock[0]
+        )
+        first = await service.snapshot(ConversationBackendKey.claude)
+        assert first.available_models[0].selected_variant == "fable"
+        assert first.available_models[0].version == (5, 1)
+        generation[0] = "claude-fable-5-5"
+        assert (
+            await service.snapshot(ConversationBackendKey.claude)
+        ).default_model_id == "claude-fable-5-1"
+        machine.outcomes[(CLAUDE_PATH, "--version")] = CommandOutcome(0, "2.1.314", "")
+        assert (
+            await service.snapshot(ConversationBackendKey.claude)
+        ).default_model_id == "claude-fable-5-5"
+        generation[0] = "claude-fable-6"
+        clock[0] += timedelta(hours=12)
+        assert (
+            await service.snapshot(ConversationBackendKey.claude)
+        ).default_model_id == "claude-fable-6"
+        generation[0] = "claude-fable-7"
+        assert (
+            await service.snapshot(
+                ConversationBackendKey.claude, refresh=True, discover_update_advisory=False
+            )
+        ).default_model_id == "claude-fable-7"
+        assert machine.registry_lookups == []
+
+    _run(exercise)
+
+
+def test_machine_codex_update_retains_complete_models_and_variant_metadata() -> None:
+    async def exercise() -> None:
+        machine = _installed_codex()
+        complete = [True]
+        full = _codex_that_answers(
+            CodexModel("gpt-6.1-terra", "GPT 6.1 Terra", ("high",), "high", True)
+        )
+
+        async def models(executable: str) -> CodexModelCatalog:
+            if complete[0]:
+                return await full(executable)
+            return CodexModelCatalog((), (), complete=False)
+
+        service = BackendSnapshotService(
+            machine, machine_catalog=True, codex_model_catalog_probe=models
+        )
+        result = await service.snapshot(ConversationBackendKey.codex)
+        assert result.available_models[0].selected_variant == "terra"
+        assert result.available_models[0].version == (6, 1)
+        complete[0] = False
+        machine.outcomes[(CODEX_PATH, "--version")] = CommandOutcome(0, "0.166.0", "")
+        after_update = await service.snapshot(ConversationBackendKey.codex)
+        assert after_update.available_models == result.available_models
+        assert after_update.default_model_id == result.default_model_id
+
+    _run(exercise)

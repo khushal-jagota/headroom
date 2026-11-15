@@ -1,156 +1,101 @@
-# Runtime environments
+# Environments
 
-Panels uses one operating identity on the VPS: the existing UID-1000 `vps` user. Live,
-staging, and Ticket processes are separated by explicit paths and launch configuration,
-not by Linux accounts.
+An environment is one running Headroom server with its own state: a database, files, logs, locks, and a loopback port. Headroom has three kinds on the VPS: live, staging, and Ticket servers. A local checkout on any machine is the same shape. This page says which servers exist, what separates them, and who runs what on the host.
+
+All of them run as one Unix user, the existing `vps` account. They are separated by directories and by the environment they are launched with, not by Linux accounts. Provider logins stay in that user's real Hermes, Codex, and Claude homes. Headroom does not copy them into role accounts.
 
 ```text
-~/Deployments/Panels/
-└── current/
-    ├── app/       deployed, Git-free application
-    ├── data/      live database, files, config, locks, and sockets
-    └── logs/      live logs
-
-~/projects/Panels/
-└── Panels/
-    ├── source checkout
-    └── data/environments/staging/   persistent fake staging state
+~/Deployments/Panels/current/{app,data,logs}   live: the installed release, no Git
+~/projects/Panels/Panels/                      source; staging state under data/environments/staging
+<ticket worktree>/data/                        one Ticket server's private state
+<any checkout>/data/                           a local server's state
 ```
 
-Live uses loopback port 8767 behind the existing Tailscale Serve route. Staging and
-Ticket servers use dynamic loopback ports and run only while active work needs them.
-The checked-in user units under `ops/panels-environments/` launch live, the dedicated
-GitHub Actions runner, and backups. There is no staging unit.
+## What each one is
 
-Code paths: `src/planner/environments/`, `src/planner/cli/main.py`.
+- **Live.** The installed release from [Deployment](deployment.md), run by a systemd user service on loopback port 8767 behind the existing Tailscale Serve route. Only the verified service manager can stop it by signal. Workers never stop the server that hosts them. The interactive `panels` command on the host follows the installed app.
+- **Staging.** A foreground server from the source checkout with fake data that persists between runs. It runs only while someone needs it and has no service. `panels environment prepare`, `run`, and `reset` manage it.
+- **Ticket servers.** A Worker's own `panels serve` from its isolated git worktree, with every `PLAN_*` path pointing into that worktree. Headroom never publishes one through the live app. Work Khushal must see is a file in the live Ticket tree or a [preview](previews.md). The Worker stops its server when active work ends. Panels owns the worktree and its later removal, as [Ticket scratch](#ticket-scratch) describes.
+- **A local checkout.** One source checkout, one Python environment, one loopback server, and one SQLite file under `data/`. It runs the source, not a sealed release. The install steps are in the repository README.
 
-## Live
+Live and staging are registered environments. Headroom validates them together: one live environment, distinct ports, and no staging root inside the live tree. Ticket servers and local checkouts are outside that registry. Their isolation is the worktree and its `PLAN_*` paths. [`AGENTS.md`](../AGENTS.md) holds the setup rules agents follow. A second isolated server on one machine is set up with [ops/runbooks/isolated-server.md](../ops/runbooks/isolated-server.md).
 
-The live environment root is the deployment root. Its manifest and persistent paths
-resolve beneath `~/Deployments/Panels`, and its state shares the deployment transaction's
-stable `current/data` and `current/logs` directories.
+## The operating-system boundary
 
-```sh
-panels environment prepare \
-  --kind live \
-  --environment-root "$HOME/Deployments/Panels" \
-  --json
+The home uses one platform contract for service identity, app-child launch, process evidence, private sockets, locks, and resource collection. The Linux adapter preserves the existing systemd and kernel operations. Shared installation paths keep explicit configuration and current defaults. Runtime selection separates the operating system, architecture, and home or executor role. Existing archive formats and integrity checks stay the same. A Mac executor archive cannot become a home release.
 
-panels environment inspect \
-  --kind live \
-  --environment-root "$HOME/Deployments/Panels" \
-  --json
-```
+An Apple Silicon Mac can run a home from source in the owner's login session. Its launchd job owns the supervisor and app process group, so a hard supervisor crash does not leave the app behind. Private short sockets support long installation paths. Separate launchd jobs run verified backups, proof-bound maintenance, and stall alarms through the existing commands. Logout stops the home, and sleep makes it unreachable. A sealed release uses the same custody and account skill guard. Its app stays separate from data, logs, and Ticket files. See the [Mac installation procedures](../ops/mac-home/installation.md).
 
-Preparation records and validates the live contract but does not pre-create
-`current/data` or `current/logs`; the first exact-app deployment must be able to create
-the complete `current` layout transactionally. Live carries no source-repository or
-credential-file path: the user service runs only the deployed Git-free app with the
-`vps` user's normal provider homes.
+A real home provisions its managed skills in the provider account folders. One operating system account supports one Panels instance. If another instance owns the Panels skill links, the second home starts but leaves those links unchanged. Setup output and the server log explain the conflict and the account limit. Its Workers cannot receive their own home's skills through that account. Use a separate operating system account for a second instance.
 
-The deployed user service starts
-`~/Deployments/Panels/current/app/bin/panels-launcher serve` with explicit live paths.
-It binds to `127.0.0.1:8767`. `systemctl --user` starts, stops, restarts, and inspects
-the service without sudo.
+The home provisions workspace and account skill files on awaited worker threads, so file removal does not block the event loop. Startup waits for provisioning before normal work starts.
 
-Interactive commands use `~/Deployments/Panels/current/app/bin/panels` instead. The
-global `panels` wrapper follows that command. The deployed command establishes its own
-application root and exact SHA, preserves the rest of the caller context, and does not
-enter the managed service launcher's allowlisted environment.
+The disposable test option disables provisioning and can read the existing instance's skills. That exception is for tests only.
 
-Live host migration is separate operator work. This repository change does not rename
-the account, move existing host state, or alter Tailscale Serve.
+A release-installed Mac home updates through an independent LaunchAgent. Its installer and external Python remain outside the app that it replaces. A failed health trial returns to the previous app and snapshot record. This rollback can discard later record writes. It does not prove preservation of active work. The Mac home uses native process evidence for local previews and metrics. Its jobs run only during the graphical login session. Other POSIX source servers retain their existing foreground lifecycle. The Mac executor remains separate. Linux checks do not prove Mac behavior.
 
-## Staging
+Worker supervision is one subsystem for home and executor processes. It uses exact identities and durable custody for bounded shutdown and scoped cleanup proof. Unknown cleanup retains a fence. Linux Workers share the home service resource domain, but the adapter removes its protected OOM score before the backend starts. Delegated cgroup v2 child groups keep each Linux Worker and its descendants inside a separate cleanup boundary. Unsupported hosts retain a cleanup fence. Separate Worker units and slices do not apply.
 
-Staging is an on-demand foreground process from `~/projects/Panels/Panels`. Its fake
-database, managed files, and logs persist below
-`~/projects/Panels/Panels/data/environments/staging`.
+The contracts and OS adapters live in `platform_runtime/`. Domain policy stays in lifecycle, preview, conversation, and environment code.
 
-```sh
-STAGING_ROOT="$HOME/projects/Panels/Panels/data/environments"
-STAGING_REPOSITORY="$HOME/projects/Panels/Panels"
+## How a server is configured
 
-panels environment prepare \
-  --kind staging \
-  --environment-root "$STAGING_ROOT" \
-  --repository-root "$STAGING_REPOSITORY" \
-  --credentials-env-file "$HOME/projects/Panels/Panels/data/staging.env" \
-  --json
+Defaults live in `config.yaml`. Every value there can be overridden by the matching `PLAN_*` environment variable. Test-only switches are environment-only on purpose. Stream heartbeats, database lock waits, and shutdown grace periods use fixed values in code. The background poll interval remains adjustable. Startup does not create an empty logs folder. Status and cleanup can inspect existing logs. A server with dispatch enabled owns the readiness, measure-source schedule, and manager-wake loops behind one machine lock, so a second server on the same lock never becomes a second scheduler.
 
-panels environment run \
-  --kind staging \
-  --environment-root "$STAGING_ROOT" \
-  --repository-root "$STAGING_REPOSITORY"
-```
+A server can also be given a default workspace folder for new agent conversations. It links the managed skills into that folder and refuses to start rather than overwrite anything already there. How a conversation picks its folder is in [Conversations](conversations.md).
 
-Each run reserves an available loopback port through server startup and prints the
-actual URL. Stop the process when active work finishes. `environment reset` restores
-the canonical fake fixture without changing staging's prepared identity or paths.
+Agent backends need their CLIs installed and logged in outside Headroom. On the VPS, the sealed release carries the Claude Code and Codex CLIs.
 
-## Ticket servers
+Live and staging launches rebuild the process environment from a fixed allowlist instead of inheriting the caller's. Live passes only named settings and provider keys from its service environment. Staging keeps the user's home, locale, terminal, and path, drops stray `PLAN_*` values, adds validated credentials from its own file, and sets the paths it owns. Credentials are never written into a manifest or printed.
 
-Ticket servers run from isolated worktrees. Their database, managed files, Hermes
-state, logs, locks, and sockets stay in the worktree's local `data/`; their loopback
-port is selected for that run. Confirm the imported `planner` package and every
-printed `PLAN_*` path resolve to the worktree before starting a service.
+## Host automation
 
-Ticket servers stay on the machine loopback interface. Panels does not expose them
-through its application. Use a Ticket-owned HTML, image, Markdown, or other file for
-work that the user must review. Store that durable work in the live Ticket file tree and
-link it through `/files/tickets/<ticket-id>/<relative-path>`.
+The user units in `ops/panels-environments/` cover the live service, the deployment runner (kept for one release, only for the [update bridge](deployment.md#the-one-release-bridge)), and two daily timers:
 
-Stop Ticket services after active work, then remove their local state, worktree, and
-branch at Consequences.
+- **Backup.** Takes a verified snapshot of live data with the installed app. See [Backups](backups.md).
+- **Cleanup.** Runs `panels environment cleanup --apply`: rotates oversized Linux logs, truncates live Mac logs in place, removes expired backup temporaries, prunes old verified backups, and runs the [Ticket file clock](#ticket-scratch). It re-proves every target when it runs and never stops a process or removes an environment or the installed app.
 
-## Launch isolation and provider homes
+## Ticket scratch
 
-Every environment launch rebuilds its process environment from an allowlist. It keeps
-the `vps` user's normal `HOME`, locale, terminal, path, and temporary-directory values,
-adds validated provider credentials, and supplies explicit contract-owned `PLAN_*`
-paths. Ambient `PLAN_*` values are not forwarded.
+Panels owns each Ticket's workspace. A Project can name its repository directly or contain one repository; the conventional `repository` child also selects it explicitly. On the Mac, a Ticket without a Project gets a plain work folder, independent of repositories in the shared workspace. Before repository work starts, it creates the branch and the `worktree/` folder inside that machine's Ticket files folder. The sibling `artifacts/` folder holds documents and evidence. Workers use the same workspace on later turns. They install dependencies, commit, push, open pull requests, and perform approved merges. They do not create worktrees or remove Ticket files.
 
-Hermes, Codex, and Claude therefore use the `vps` user's normal homes. Prepared
-environment manifests do not emulate another user's home and do not copy provider
-identity or session trees. Manifests from the retired role-account model must be
-re-prepared; Panels does not translate their account or generated-home fields.
+Codex, Claude, and Hermes use real disk scratch at `~/.pw/<ticket-id>-<six hex characters>` on Linux and macOS. This short path leaves room for Unix sockets. `TMPDIR`, `TMP`, and `TEMP` point there, and the launcher removes it when the backend process ends, including failed startup. A fresh backend folder replaces other scratch folders for the same Ticket. Retirement removes the scratch recorded before that workspace detached, so a later retry preserves fresh backend scratch.
 
-Live, staging, and Ticket repository and state paths may not share or nest across
-environment boundaries. Credential contents are never written to a manifest or
-printed by inspection.
+Scratch belongs to one backend process. Panels can remove scratch of a process that is no longer current. Scratch preparation and removal run on awaited worker threads. A cancelled start waits for preparation and removes its exact new directory before it releases ownership.
 
-## Host status and maintenance
+Tools that follow the temporary environment use this scratch. Commands that name `/tmp` or `/var/tmp` still use those host paths. Workers must use `TMPDIR` or a tool's explicit temporary-folder setting. Chief and Managers retain the server's private `/tmp` on the VPS, which shares the host's memory-backed filesystem. Host storage and age cleanup remain operator policy.
 
-`panels environment status --json` reads the full local filesystem and process
-inventory without contacting the Panels HTTP server. `GET /api/vps-status` keeps that
-same response for compatibility and diagnostics.
+The checkout stays private. File access and artifact transfers exclude it, and backups already exclude the files tree. Development checks admit only the managed checkout while they continue to reject storage shared with the installed app. Projects without a repository use an ordinary Ticket workspace.
 
-The browser uses the smaller `GET /api/vps-status-summary`. It contains only the
-deployed SHA, relevant deployment outcome and public-safe detail, CPU/RAM/disk use, and
-latest verified-backup age. Linux CPU use comes from two bounded `/proc/stat` samples;
-RAM uses `MemTotal` and `MemAvailable`; disk uses the filesystem holding runtime data.
-Every measure has a fixed healthy, warning, or critical threshold. Missing or malformed
-host evidence is returned as an explicit unavailable value and reason. Collection runs
-off the server event loop because the CPU sample waits briefly.
+Panels clears the complete Ticket folder seven days after the Ticket ends. The database keeps the end time and ownership after Ticket deletion. A reopened Ticket no longer qualifies. New activity on a Done Ticket starts a fresh seven-day wait. Grants belong to one physical workspace on one machine. Removal of a server mirror cannot displace the Mac checkout.
 
-`panels environment cleanup` is a dry run. `--apply` collects a fresh inventory and
-re-proves every target before changing it. It can rotate configured oversized logs,
-remove expired backup temporaries, and prune verified backups beyond seven. It never
-kills a process or removes a worktree, cache, environment, deployed app, or ambiguous
-path.
+Attached checkouts keep their local changes on resume. Server and CLI cleanup share exclusive access to each cleanup pass. Cleanup adopts existing artifact folders without recreating absent paths. It detaches only the exact expired folder before slow deletion. File preparation precedes the short database transaction that authorizes detach. Stop and backlog do not start the clock. Stage text and proposals survive, but links to deleted documents and evidence no longer work. Existing ended Tickets receive a full week from adoption because their historical end dates are unknown.
 
-## Handoffs
+Before removal, Panels checks that the Ticket is still ended and the work is safe on a remote. It never commits or pushes on a Worker's behalf. Uncommitted files, unpublished commits, or failed Git inspection preserve the folder and produce a report. Legacy scratch outside the Ticket files root remains in its original location for owner review. Worktrees with submodules also remain with an explicit reason. Ignored files, including environment files and local databases, expire with the folder.
 
-- **Production deployment** (`deployment.md`) — replacing the live app with an exact
-  commit.
-- **Database backups** (`backups.md`) — verified live snapshots and restore.
-- **The command-line tool** (`cli.md`) — the command tree that exposes environment
-  lifecycle verbs.
-- **Worker orchestration** (`worker-orchestration.md`) — the scheduled-Ticket and
-  worker-readiness loops the foreground server started by `environment run` owns.
-- **The conversation system** (`conversation-system.md`) — the three agent backends
-  that use the configured provider homes.
+Tickets deleted before migration have no reliable end record, so their old folders remain for review. The Mac uses authoritative lifecycle state from the VPS, not absence from a local cache. See [Executor](executor.md).
 
----
+Renaming the account, moving host state, or changing Tailscale Serve is operator work outside this code.
 
-_Last verified: 2026-08-09._
+## Status
+
+`panels environment status` reads the local filesystem and process list without calling the server. The graphs are a separate system, [VPS](vps.md).
+
+## Decisions that shape it
+
+- One Unix user and real provider homes. Separation is by directory and launch environment.
+- Live is the installed release, never a checkout.
+- Staging and Ticket servers run only while needed.
+- Launches rebuild their environment from an allowlist rather than inheriting stray settings.
+
+## Code
+
+- `src/planner/ticket_workspaces/`: local workspace ownership, activity clocks, and safe removal.
+- `src/planner/environments/`: the registry, launch environments, status, and cleanup. `logic/validation.py` and `logic/launch_env.py` hold the rules.
+- `src/planner/core/config.py`: configuration and `PLAN_*` overrides. `src/planner/skill_sources.py`: the workspace skills link.
+- `src/planner/server_lifecycle/`: who may stop a server.
+- `ops/panels-environments/`: user units, timers, and the host wrapper.
+
+Named execution destinations and physical workspace identity are separate. A Ticket’s `machine_id` selects home execution or the original executor. `WorkspaceIdentity.machine_id` identifies one local physical data tree. Workspace registration binds its folder to the conversation on that destination. A display edit never rotates either identity.
+
+_Last verified: 2026-11-13._

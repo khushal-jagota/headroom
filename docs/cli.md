@@ -1,215 +1,57 @@
-# The command-line tool
+# The command line
 
-`panels` speaks to the Panels server over HTTP. Add `--json` to receive the existing
-machine-readable response from each route.
+`panels` is Headroom's record, reached over HTTP. The browser is Khushal's main surface. The command is how a Worker acts, how the Chief or a Manager acts from its own process, and how an operator runs the host. Every command calls the same routes the browser uses, and `--json` returns the route's own body.
 
-Ordinary help exposes these roots:
+## Who is calling
 
-- `send-message` sends text to an existing Panels conversation.
-- `project` reads and changes Projects.
-- `day` reads historical Days.
-- `ticket` reads and changes Tickets.
-- `orchestrator` reads and changes ordinary orchestrators.
-- `sprint` retains historical reads and the stable `sprint item` alias.
+The command name grants nothing. The process environment says who is calling: Headroom sets the actor, the Ticket or Manager id, and the conversation id when it starts an agent. The server admits or refuses that caller with the same rule as the browser. See [Who may act](authority.md).
 
-The command name does not grant authority. Each request carries the principal from the
-runtime context. The server admits or refuses that principal through the existing
-authority service.
+Manager commands accept `panels manager` and `--manager`. The old Sprint Item and Orchestrator spellings are removed.
 
-Host, deployment, schedules, feedback, Worker types, skills, launch configuration, and
-conversation recovery remain callable administrative paths. They do not appear in
-ordinary root help. A specialist skill names one when approved work needs it.
+## What it is made of
 
-## Record reads
+- **Ordinary roots**, shown in help, for people and supervising agents:
+  - `send-message` addresses Khushal, the Chief, a Ticket's Worker, or a Manager through the [conversation](conversations.md) door. Every message requires an explicit recipient.
+  - `machine list` reads named destinations and availability. Owner commands register extra machines and replace their credentials.
+  - `project`, `ticket`, and `manager` read and edit the catalog, Tickets, and Managers, including backlog and resume, assignment, accepting or revising a parked proposal, restarting a stalled Worker, and settling a Manager.
+  - `page` reads and edits Manager and Chief documents. `goal` edits [goal](goals.md) pages. `measure`, `dataset`, and `measure-source` maintain [project measures](measures.md). `credential` lists and requests [credentials](credentials.md). `attention` reads [historical attention](attention.md).
+  - `executor`, `environment`, and `preview` serve the operator: the [Mac executor](executor.md), [environments](environments.md), and [previews](previews.md).
+- **The Worker group**, hidden from ordinary help: read my Ticket, file a proposal, set a recap. A Worker can file a proposal. Accepting one is `ticket proposal`, for a caller who stands above the Ticket.
+- **Hidden groups** that a specialist skill or an operator names when needed: `serve`, `skill`, and `worker-type`.
+- **Server lifecycle commands**, also hidden, that use the server's local sockets instead of HTTP. `restart` asks the supervisor, over its control socket, to replace the application. `server-event-loop-tasks` asks the application, over its own socket beside that one, what it is waiting on: each asyncio task on its event loop, with its name, coroutine, the line it is awaiting, and its age, oldest first. A stall inside a task leaves every thread idle, so a stack dump cannot show it. The command only reads. A very long list stops at a size limit and says how many tasks it left out. A loop blocked by synchronous code cannot answer; a stack dump shows that case.
 
-`project show`, `day show`, `ticket show`, `sprint show`, and `sprint item show` return a
-header and a part manifest. Add one comma-separated part list to expand selected values.
+## How reads and writes work
 
-```sh
-panels ticket show t_example success_condition,what_changes --json
-panels ticket show brief,guidance --json
-panels sprint show current primary_bet,kickoff --json
-panels sprint item show si_example body --json
-panels day show 2026-08-10 focus,watchout --json
-```
+A `show` returns a short header and a list of parts, and the caller names the parts to expand. Lists come in pages and say what they left out. Backlog and resume need no record fingerprint. `ticket delete` needs no confirmation flag, but a running Ticket still needs `--force`. `ticket create --input-json FILE` sends one object to the same create route as the browser, which validates the whole Ticket before one write. A new Ticket starts from a preset or custom stages. Custom stages carry their result fields, ownership, and instructions together.
 
-`ticket show` with no Ticket ID reads the authenticated Worker's Ticket through the
-worker-self route. It includes the Worker type and specialist identity. A named read uses
-the ordinary Ticket record route. Neither form reads conversation history. Use `ticket
-history` when that record is necessary.
+`ticket create --machine-id ID` chooses the machine from `machine list`. The JSON object also accepts `machine_id`. Omission selects the home. The destination stays fixed after creation, including when a machine changes its name. Away work waits for that machine. Legacy `--locale vps` and `--locale macos` remain aliases for the original home and Mac. If both forms arrive, the server rejects disagreement.
 
-List commands return bounded summaries. `ticket list`, `sprint list`, `sprint item list`,
-and `project list` use pages of 30 by default. Every result reports omissions and the
-next offset. Ticket list no longer filters live work by Day or Sprint.
+`ticket list --active` selects unfinished Tickets outside backlog. The default list remains an inventory that includes deferred Tickets. Manager rollups exclude deferred children, while a Manager workspace keeps the complete child inventory and its backlog marks.
 
-Ticket lists accept `--backlogged`, `--not-backlogged`, and repeated `--worker-type`
-filters. Completed records require `--include-terminal`; add `--stage done` to select
-them. Direct record reads remain available regardless of those list filters.
+Ticket and Manager lists include each recap and its age. Missing recaps and unknown ages are explicit. Ticket overviews also flag a stage change since the recap. JSON carries the recap timestamp, so agents can calculate its age.
 
-```sh
-panels ticket backlog t_example
-panels ticket resume t_example
-panels ticket list --backlogged --worker-type coding --limit 30
-```
+`ticket request-recap ID` and `manager request-recap ID` ask for a fresh recap within the caller's supervision scope. See [conversations](conversations.md).
 
-Backlog and Resume accept `--expected-record-sha256` from the full Ticket read. A stale
-hash refuses the action without a write. Resume does not grant an approval or clear a
-blocker. These commands use existing caller authority.
+A Manager workspace read identifies the document that the browser displays and gives its edit command. It keeps the purpose, recap, held goals, artifacts, and Tickets distinct. `page show` and `page edit` select a Manager or Chief. `page schema` describes their shared document format. A sole held goal remains a goal edit through `goal`. A page edit replaces the complete document, so an agent preserves unrelated content. Optional captured revisions protect Goal and holder-page edits from replacing newer documents.
 
-`panels ticket delete t_example` removes the Ticket record. Its artifact files survive.
-Backlog preserves a Ticket for later work; Delete removes it. See `deployment.md` for
-owner-run recovery when an older database contains cancelled Tickets.
+To send a proposal back, use `panels ticket proposal ID revise --body-file guidance.md` or `--message` with inline guidance. Use `--body-file -` to read stdin. A separate message does not replace this guidance.
 
-## Structured Ticket writes
+Proposal accept and revise commands pin the revision from their own read. Optional `--expected-proposal-revision N` instead protects the proposal that the caller inspected earlier. Existing invocations remain valid. Older clients can omit revisions, but omission cannot protect an earlier read.
 
-`ticket create` reads one JSON object and sends it unchanged to the existing Ticket
-create route. The server applies existing defaults and validates the complete Ticket
-before one atomic write.
+## What the CLI feeds
 
-```sh
-panels ticket create --input-json - <<'JSON'
-{
-  "title": "Clear outcome title",
-  "worker_type": "coding",
-  "project_id": "project_panels",
-  "orchestrator": {"kind": "chief", "id": "chief"},
-  "brief": "Faithful intake context"
-}
-JSON
-```
+A Worker's proposal feeds the [proposal resolver](tickets.md#how-a-stage-advances). `send-message` feeds a conversation. Operator commands feed the host. None of these are a side channel into a model: an agent learns something only when a prompt its conversation actually sent carries it.
 
-`title` and `worker_type` are required. Existing optional keys cover launch overrides,
-deadline, canonical placement IDs, blockers, Brief, ceiling, and ceiling
-holder. Hidden legacy flags remain callable during migration. A call cannot mix those
-flags with `--input-json`.
+## Decisions that shape it
 
-Create rejects unknown JSON keys before it creates anything. The validation error
-identifies the offending key. Use `brief` for the Brief text. The old `kickoff_note`
-JSON key and unsupported launch options such as `employee_launch_reasoning_effort`
-produce an error. Hidden legacy `--kickoff-note` flags send the text as `brief`.
+- One set of writers. The CLI adds no rule of its own, so the browser and the command cannot disagree.
+- Identity comes from the environment Headroom set, not from a flag the caller chooses.
+- Help shows the roots a person or a supervisor needs. Specialist and operator groups stay hidden until a skill names them.
 
-`ticket edit` sends one JSON object to the existing Ticket PATCH route. One request can
-change one or more fields that the route already accepts.
+## Code
 
-```sh
-panels ticket edit t_example --input-json - <<'JSON'
-{
-  "recap": "Ready for review.",
-  "guidance_append": "Keep the public surface small."
-}
-JSON
-```
+- `src/planner/cli/main.py`: the command tree. `src/planner/cli/http.py`: the HTTP client and identity headers.
+- `src/planner/server_lifecycle/control.py`: the control socket and its messages. `event_loop_tasks.py`: the event loop tasks and the creation times it reads.
+- Each domain's `cli.py` holds its own group, such as `src/planner/credentials/cli.py` and `src/planner/goals/cli.py`. The routes they call are in each domain's `api.py`.
 
-The server validates the intended final state and writes it in one transaction. Proposal
-transitions, blockers, Worker restart, deletion, help, and messages keep dedicated
-commands because they have effects beyond a Ticket field edit.
-
-## Correct saved models
-
-The administrative `model-corrections` commands repair saved models within their selected
-variant. Preview accepts explicit targets. Repeat target flags to inspect several records.
-
-```sh
-panels model-corrections preview --ticket t_example --orchestrator si_example --chief --worker-default coding > corrections.json
-panels model-corrections apply < corrections.json
-```
-
-Preview prints JSON without changes to saved model choices. Review the proposed models before apply.
-Apply reads the complete preview from stdin. It checks the original launch choices and
-the proposed model again, so a stale preview cannot overwrite a later choice.
-Each result reports its own success or refusal. Both commands accept `--json`.
-
-Corrections preserve backend and reasoning effort. They work for idle Workers and
-user-owned Stages. Active turns finish on their current model. Apply does not start a turn,
-restart a Worker, approve work, or change its Stage. The server checks authority for
-each target again at apply.
-
-## Ticket proposals
-
-One command owns the proposal lifecycle:
-
-```sh
-panels ticket proposal t_example submit < proposal.md
-panels ticket proposal t_example accept --ceiling needs_plan
-panels ticket proposal t_example revise --body-file guidance.md
-```
-
-Submit remains restricted to the authenticated Worker for its own current Stage. Accept
-and revise retain the existing proposal resolver and authority checks. `ticket complete`
-remains separate because it completes a user-owned Stage directly.
-
-Revise requires `--message` or `--body-file`; use `--body-file -` to read stdin.
-Give the revision guidance to revise itself; a separate message does not replace it.
-Revise stores the attributed feedback, removes the proposal, and returns the Stage to
-rest in one commit. Normal readiness
-then reuses the existing conversation for one revision prompt.
-
-`ticket request-help` reads its message from standard input. It records the Ticket
-attention fact and sends the message through the existing help route. `send-message`
-only sends conversation text and does not change that attention fact.
-
-## Worker restart
-
-`ticket restart-worker` resets the dead conversation and makes one explicit start
-attempt. Its JSON response includes `started` and `delivery_fate`. Started, queued, and
-injected fates set `started` to true. Refused and uncertain fates set it to false. A
-failure before delivery sets `delivery_fate` to null and reports `not_started_because`.
-
-An uncertain delivery keeps the Worker claim and does not trigger an automatic retry.
-The human output reports the uncertainty without a restart success claim. Panels does
-not enforce a delay. Use one explicit `ticket restart-worker` call when it is safe to try
-again.
-
-## Orchestrator assignment and settlement
-
-`orchestrator create/list/show/set/workspace` keeps the existing Item identity and
-conversation. `sprint item` remains an alias. Artifact operations keep their existing
-managed roots. `send-message --sprint-item` keeps its stable recipient address.
-`orchestrator create --body-file <brief-file>` starts the supervisor with the brief.
-A blank or absent brief leaves it idle. The result reports the saved orchestrator and
-startup outcome. Refused, failed, or uncertain startup still leaves the orchestrator saved.
-Inspect it and recover on that same orchestrator instead of creating another one.
-Uncertain startup gets no automatic replay. For failed or uncertain startup, check the
-conversation before any resend.
-`--json` preserves the complete creation response, including `startup`. As with message
-sends, a successful HTTP response exits zero. Check the startup fate for delivery success.
-
-Existing ordinary orchestrator supervisors can use it to coordinate with one another.
-The permission sends a message; approvals, ceilings, assignments, and other writes
-keep their existing authority requirements. Workers cannot use it to address an
-unrelated supervisor.
-
-`ticket assign <ticket> --chief` assigns to Chief. `--orchestrator <item>` assigns to
-an ordinary orchestrator. Structured create and edit use the same explicit `orchestrator`
-reference. Assignment and the ceiling holder are independent.
-
-`orchestrator settle <item>` is owner-only. Add `--active` to return it to active.
-Chief cannot settle. Day edits, Sprint edits, commitments, and carry-forward are retired.
-Historical `day show` and `sprint list/show/list-items` remain readable.
-
-## Compatibility and errors
-
-Hidden aliases retain Worker, Ticket edit, proposal, historical Day list, and Item
-conversation paths. No alias restores retired calendar writes.
-
-`ticket restart-worker` also recovers an older rejected Ticket only when it is
-Worker-owned, Empty, claim-free, attached to a conversation, and holds matching revision
-feedback. Recovery keeps that conversation and refuses launch overrides. Historical Day
-membership does not affect ordinary continuation.
-
-Human errors use one cause line and, when a valid recovery exists, one exact command
-shape. JSON errors keep the existing envelope and exit code. Authority refusals do not
-invent another route.
-
-On the production host, `~/.local/bin/panels` follows the current deployed application.
-The launcher preserves the runtime identity and uses the interpreter from that exact
-deployment.
-
-Ticket creation accepts `locale` in its JSON object or `--locale vps|macos` beside
-`--input-json`. Use one input source for the locale. An idle Ticket moves with
-`panels ticket move <ticket> --locale vps|macos`.
-
-Projects accept `--requires-macos` at creation and
-`panels project set <project> requires-macos --value true|false` for later edits.
-These requirements affect future locale resolution. See
-[Ticket locale rules](tickets-and-gates.md#execution-locale).
+_Last verified: 2026-11-14._

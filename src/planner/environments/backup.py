@@ -1,11 +1,7 @@
-"""Small, operator-facing SQLite backup and restore operations.
+"""Verified SQLite snapshots with small managed configuration roots.
 
-A snapshot now protects two things at nightly granularity: the online SQLite
-database and the managed-file tree that lives beside it (ticket files,
-worker-settings, and the skills home once it exists).  Both parts are verified
-before a snapshot is published, both are restored together, and the existing
-restraint is unchanged -- verify before publish, atomic publish, retention of
-verified snapshots, and existing snapshots left untouched when a run fails.
+New snapshots exclude live ticket artifacts and uploads. Legacy snapshots retain
+all captured roots, including artifact content, through the existing restore path.
 """
 
 from __future__ import annotations
@@ -25,17 +21,17 @@ SNAPSHOT_METADATA_NAME = "metadata.json"
 SNAPSHOT_FILES_DIR_NAME = "files"
 SNAPSHOT_FILES_MANIFEST_NAME = "manifest.json"
 SNAPSHOT_FORMAT = "panels-backup-v2"
-RETENTION_COUNT = 7
+RETENTION_COUNT = 3
 
 
 def managed_file_roots(database_path: Path) -> dict[str, Path]:
-    """The managed-file roots protected alongside the database.
+    """The known managed-file roots, including legacy snapshot restore targets.
 
     The managed files root and worker-settings root anchor on the database's
     directory. The canonical Panels skills also live there; normal provider homes
     contain links to that managed authority and are not owned or replaced by backup.
-    A root that does not exist yet is skipped and is picked up automatically once
-    it exists.
+    New captures protect only configuration roots that exist. Restore uses this
+    full mapping for every root recorded by either new or legacy snapshots.
     """
     parent = Path(database_path).expanduser().resolve().parent
     return {
@@ -50,7 +46,7 @@ def create_database_backup(
     backup_dir: Path,
     deployed_revision: str,
 ) -> Path:
-    """Create and publish one verified snapshot of the database and file tree."""
+    """Create and publish a verified database and configuration snapshot."""
     source_db = source_db.expanduser().resolve()
     backup_dir = backup_dir.expanduser().resolve()
     if not source_db.is_file():
@@ -198,13 +194,15 @@ def _relative_manifest(root: Path) -> dict[str, str]:
 
 
 def _capture_managed_files(source_db: Path, files_destination: Path) -> dict[str, object] | None:
-    """Copy each existing managed-file root into the snapshot and record a manifest.
+    """Capture configuration roots and record a manifest, excluding live artifacts.
 
     Returns the metadata block describing the capture, or ``None`` when no managed
     root exists yet (an empty capture is not a failure).
     """
     roots = managed_file_roots(source_db)
-    present = {name: path for name, path in roots.items() if path.exists()}
+    # Keep the full root mapping for legacy restore. Only new capture excludes
+    # the artifact/upload tree, which remains untouched beside the live database.
+    present = {name: path for name, path in roots.items() if name != "files" and path.exists()}
     if not present:
         return None
     files_destination.mkdir(parents=True, exist_ok=True)

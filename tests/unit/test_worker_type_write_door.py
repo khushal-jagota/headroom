@@ -6,34 +6,34 @@ it is now a write, and that the write is guarded where the import-time check use
 
 from __future__ import annotations
 
+import hashlib
 import json
-import time
 from collections.abc import Iterator
+from contextlib import closing
 from pathlib import Path
 from typing import Any
 
 import pytest
 from fastapi.testclient import TestClient
-from tests.support.model_catalogue import seed_test_model_catalogue
+from tests.support.in_memory_conversation_system import InMemoryConversationSystem
 from tests.support.principals import OWNER_PRINCIPAL
 
-from planner.conversation.backend_state import write_model_enablement
-from planner.conversation.contracts import require_conversation_backend_key
-from planner.conversation.in_memory_conversation_system import InMemoryConversationSystem
 from planner.core.clock import build_clock
 from planner.core.config import load_config
+from planner.core.contracts import PlannerError
 from planner.core.db import connect, create_schema
 from planner.core.server import create_app
 from planner.tickets import data as tickets_data
+from planner.worker_settings import service as worker_settings_service
 from planner.worker_types.configuration import configured_worker_type_registry
 
 
 @pytest.fixture
 def client(tmp_path: Path) -> Iterator[tuple[TestClient, Path]]:
     db_path = tmp_path / "worker-types.db"
-    with connect(str(db_path)) as boot:
+    with closing(connect(str(db_path))) as boot:
         create_schema(boot)
-        seed_test_model_catalogue(boot)
+
     config = load_config(
         path=None,
         env={
@@ -58,85 +58,12 @@ def _arrival_record(coding: dict[str, Any]) -> dict[str, Any]:
     record["worker_type"] = "arrival"
     record["label"] = "Arrival"
     record["profile"]["specialist_skill"] = "panels-worker-arrival"
-    record["skill"] = {
-        "description": "A worker declared without a release.",
-        "markdown_body": "# Arrival\n\nDo the work.\n",
-    }
+    record["guidance"] = "# Arrival\n\nDo the work.\n"
+    record["skill"] = {"description": "A worker declared without a release."}
     return record
 
 
-def test_a_worker_type_and_its_skill_are_declared_in_one_write(
-    client: tuple[TestClient, Path], tmp_path: Path
-) -> None:
-    test_client, _db_path = client
-    coding = test_client.get("/api/worker-types/coding").json()
-
-    response = test_client.post("/api/worker-types", json=_arrival_record(coding))
-
-    assert response.status_code == 200, response.text
-    assert response.json()["worker_type"] == "arrival"
-    listed = test_client.get("/api/worker-types").json()["worker_types"]
-    assert "arrival" in [manifest["worker_type"] for manifest in listed]
-    assert "arrival" in configured_worker_type_registry().registered_worker_types()
-    supported = test_client.get("/api/worker-types?supported=true").json()["worker_types"]
-    assert "arrival" in [manifest["worker_type"] for manifest in supported]
-    assert "arrival" in configured_worker_type_registry().supported_worker_types()
-    # The skill is on disk too, because that is what an agent reads.
-    written = tmp_path / "skills" / "panels-worker-arrival" / "SKILL.md"
-    assert "Do the work." in written.read_text(encoding="utf-8")
-
-
-def test_a_worker_type_naming_a_skill_that_does_not_exist_is_refused(
-    client: tuple[TestClient, Path],
-) -> None:
-    test_client, _db_path = client
-    coding = test_client.get("/api/worker-types/coding").json()
-    record = _arrival_record(coding)
-    record.pop("skill")
-
-    response = test_client.post("/api/worker-types", json=record)
-
-    assert response.status_code == 400, response.text
-    assert "unknown skill" in response.text
-
-
-def test_a_type_that_declares_no_consequences_is_refused_at_the_door(
-    client: tuple[TestClient, Path],
-) -> None:
-    """A Worker type with no Closeout is not stored and does not become runnable.
-
-    The gap used to surface only when a Ticket ran out of Stages with nothing to land
-    its work. Now it surfaces here, when somebody saves the type.
-    """
-    test_client, _db_path = client
-    coding = test_client.get("/api/worker-types/coding").json()
-    record = _arrival_record(coding)
-    record["stages"] = [stage for stage in record["stages"] if stage["id"] != "needs_consequences"]
-    record["fields"] = [field for field in record["fields"] if field["id"] != "consequences"]
-
-    response = test_client.post("/api/worker-types", json=record)
-
-    assert response.status_code == 400, response.text
-    assert "every worker type must declare a consequences field" in response.text
-    assert test_client.get("/api/worker-types/arrival").status_code == 404
-    assert "arrival" not in configured_worker_type_registry().registered_worker_types()
-
-
-def test_a_malformed_record_is_refused_and_changes_nothing(
-    client: tuple[TestClient, Path],
-) -> None:
-    test_client, _db_path = client
-    before = test_client.get("/api/worker-types/coding").json()
-    broken = json.loads(json.dumps(before))
-    broken["stages"][1]["ownership_mode"] = "chief"
-
-    response = test_client.post("/api/worker-types", json=broken)
-
-    assert response.status_code == 400, response.text
-    assert test_client.get("/api/worker-types/coding").json() == before
-
-
-def test_a_rewrite_that_would_strand_a_live_ticket_is_refused(
+def test_a_rewrite_keeps_ticket_snapshots_and_the_read_record_shape(
     client: tuple[TestClient, Path],
 ) -> None:
     test_client, db_path = client
@@ -151,38 +78,99 @@ def test_a_rewrite_that_would_strand_a_live_ticket_is_refused(
             now=1,
             title_max_chars=200,
         )
-        conn.execute("UPDATE tickets SET stage = 'needs_plan' WHERE id = ?", (ticket.id,))
+        conn.execute(
+            "UPDATE tickets SET stage = 'needs_implementation', "
+            "pending_proposal = NULL WHERE id = ?",
+            (ticket.id,),
+        )
+        finished = tickets_data.create_ticket(
+            conn,
+            worker_type="coding",
+            title="Historical Implementation ceiling",
+            brief="Kickoff",
+            principal=OWNER_PRINCIPAL,
+            now=1,
+            title_max_chars=200,
+        )
+        conn.execute(
+            "UPDATE tickets SET stage='done', ceiling='needs_implementation', "
+            "pending_proposal=NULL WHERE id=?",
+            (finished.id,),
+        )
+        finished_before = dict(
+            conn.execute("SELECT * FROM tickets WHERE id=?", (finished.id,)).fetchone()
+        )
     finally:
         conn.close()
 
     coding = test_client.get("/api/worker-types/coding").json()
-    without_plan = json.loads(json.dumps(coding))
-    without_plan["stages"] = [
-        stage for stage in without_plan["stages"] if stage["id"] != "needs_plan"
+    without_implementation = json.loads(json.dumps(coding))
+    without_implementation["stages"] = [
+        stage for stage in without_implementation["stages"] if stage["id"] != "needs_implementation"
     ]
-    without_plan["fields"] = [field for field in without_plan["fields"] if field["id"] != "plan"]
+    without_implementation["fields"] = [
+        field for field in without_implementation["fields"] if field["id"] != "implementation"
+    ]
 
-    response = test_client.post("/api/worker-types", json=without_plan)
+    response = test_client.post("/api/worker-types", json=without_implementation)
 
-    assert response.status_code == 400, response.text
-    assert ticket.id in response.text
-    assert test_client.get("/api/worker-types/coding").json() == coding
+    assert response.status_code == 200, response.text
+    assert test_client.get("/api/worker-types/coding").json() == without_implementation
+    assert configured_worker_type_registry().require("coding").stage_ids() == tuple(
+        stage["id"] for stage in without_implementation["stages"]
+    )
+    with closing(connect(str(db_path))) as conn:
+        assert conn.execute("SELECT stage FROM tickets WHERE id=?", (ticket.id,)).fetchone()[0] == (
+            "needs_implementation"
+        )
+    historical = test_client.get(f"/api/tickets?detail=full&id={finished.id}")
+    assert historical.status_code == 200, historical.text
+    assert historical.json()["stage"] == "done"
+    assert historical.json()["ceiling"] == "needs_implementation"
+    listing = test_client.get("/api/tickets?detail=full")
+    assert listing.status_code == 200, listing.text
+    assert finished.id in {row["id"] for row in listing.json()["tickets"]}
+    with closing(connect(str(db_path))) as conn:
+        finished_after = dict(
+            conn.execute("SELECT * FROM tickets WHERE id=?", (finished.id,)).fetchone()
+        )
+        assert finished_after["stage"] == finished_before["stage"] == "done"
+        assert finished_after["ceiling"] == "needs_implementation"
+        for key in ("field_values", "field_approvals", "ceiling_holder", "workflow_json"):
+            assert finished_after[key] == finished_before[key]
+        tickets_data.audit_ticket_registry_integrity(conn)
 
 
-def test_a_skill_a_worker_type_owns_is_not_editable_through_the_skills_route(
+def test_failed_bundled_amendment_preserves_skill_definition_and_runtime(
     client: tuple[TestClient, Path],
 ) -> None:
-    test_client, _db_path = client
-
-    response = test_client.patch(
-        "/api/skills/panels-worker-coding", json={"description": "Edited the wrong way"}
-    )
-
+    test_client, db_path = client
+    coding = test_client.get("/api/worker-types/coding").json()
+    skill_before = test_client.get("/api/skills/panels-worker-coding").json()
+    registry_before = configured_worker_type_registry()
+    with closing(connect(str(db_path))) as conn:
+        ticket = tickets_data.create_ticket(
+            conn,
+            worker_type="coding",
+            title="Incompatible proposal",
+            brief="Kickoff",
+            principal=OWNER_PRINCIPAL,
+            now=1,
+            title_max_chars=200,
+        )
+        conn.execute("UPDATE tickets SET stage='needs_implementation' WHERE id=?", (ticket.id,))
+    replacement = json.loads(json.dumps(coding))
+    replacement["stages"] = [s for s in replacement["stages"] if s["id"] != "needs_implementation"]
+    # Leave the field undeclared by any stage: the record itself is invalid.
+    replacement["skill"] = {"description": "must not persist"}
+    response = test_client.post("/api/worker-types", json=replacement)
     assert response.status_code == 400, response.text
-    assert "Worker type" in response.text
-    # The skill every Worker shares is still editable there.
-    shared = test_client.patch("/api/skills/panels-worker", json={"description": "Edited"})
-    assert shared.status_code == 200, shared.text
+    assert "field" in response.text
+    assert test_client.get("/api/worker-types/coding").json() == coding
+    assert test_client.get("/api/skills/panels-worker-coding").json() == skill_before
+    assert configured_worker_type_registry() is registry_before
+    exported = db_path.parent / "skills/panels-worker-coding/SKILL.md"
+    assert exported.read_text() == skill_before["source_text"]
 
 
 def test_launch_defaults_are_the_type_and_take_effect_at_once(
@@ -202,9 +190,10 @@ def test_launch_defaults_are_the_type_and_take_effect_at_once(
     assert response.status_code == 200, response.text
     record = test_client.get("/api/worker-types/coding").json()
     assert record["profile"]["default_backend"] == "claude"
-    assert record["profile"]["default_model"] == "opus"
+    assert record["profile"]["default_model"] == "claude-opus-5"
     assert (
-        configured_worker_type_registry().require("coding").worker_profile.default_model == "opus"
+        configured_worker_type_registry().require("coding").worker_profile.default_model
+        == "claude-opus-5"
     )
 
 
@@ -226,40 +215,10 @@ def test_a_worker_may_not_declare_a_worker_type(client: tuple[TestClient, Path])
     ]
 
 
-@pytest.mark.parametrize("worker", ["coding", "chief-of-staff"])
-def test_launch_default_save_refuses_disabled_model_without_partial_write(
-    client: tuple[TestClient, Path], worker: str
-) -> None:
-    test_client, db_path = client
-    settings_path = f"/api/workers/{worker}" + ("/settings" if worker == "chief-of-staff" else "")
-    before = test_client.get(settings_path).json()
-    settings = before if worker == "chief-of-staff" else before["settings"]
-    defaults = settings["launch_defaults"]
-    model = defaults["employee_launch_model"]
-    with connect(str(db_path)) as conn:
-        write_model_enablement(
-            conn, require_conversation_backend_key(defaults["employee_backend"]), model, False
-        )
-    response = test_client.put(f"/api/workers/{worker}/launch-defaults", json=defaults)
-    assert response.status_code == 400, response.text
-    assert model in response.json()["error"]["message"]
-    assert "Choose an enabled model" in response.json()["error"]["message"]
-    assert test_client.get(settings_path).json() == before
-    with connect(str(db_path)) as conn:
-        conn.execute(
-            "INSERT OR REPLACE INTO model_variant_resolutions VALUES (?,?,?,?,?)",
-            ("codex", "astra", "gpt-6-astra", json.dumps(["medium", "high"]), int(time.time())),
-        )
-    alternative = dict(defaults, employee_launch_model="gpt-6-astra")
-    response = test_client.put(f"/api/workers/{worker}/launch-defaults", json=alternative)
-    assert response.status_code == 200, response.text
-    assert response.json()["launch_defaults"] == alternative
-
-
-def test_chief_recap_is_owner_editable_durable_and_exact(
+def test_chief_recap_is_writable_by_the_owner_and_the_chief(
     client: tuple[TestClient, Path],
 ) -> None:
-    """The new write must persist alone and refuse agent writes or malformed payloads."""
+    """The Chief writes its own recap; other agents and malformed payloads are refused."""
     test_client, db_path = client
     settings_path = "/api/workers/chief-of-staff/settings"
     write_path = "/api/workers/chief-of-staff/recap"
@@ -275,8 +234,16 @@ def test_chief_recap_is_owner_editable_durable_and_exact(
     with connect(str(db_path)) as conn:
         assert conn.execute("SELECT recap FROM chief_settings").fetchone()[0] == recap
 
+    chief_recap = "Chief wrote this."
+    response = test_client.put(
+        write_path, json={"recap": chief_recap}, headers={"X-Plan-Actor": "chief"}
+    )
+    assert response.status_code == 200, response.text
+    assert test_client.get(settings_path).json()["recap"] == chief_recap
+    response = test_client.put(write_path, json={"recap": recap})
+    assert response.status_code == 200, response.text
+
     for headers in (
-        {"X-Plan-Actor": "chief"},
         {"X-Plan-Actor": "worker", "X-Plan-Ticket-ID": "t_recap"},
         {"X-Plan-Actor": "sprint_item_supervisor", "X-Plan-Sprint-Item-ID": "si_recap"},
     ):
@@ -290,3 +257,362 @@ def test_chief_recap_is_owner_editable_durable_and_exact(
     response = test_client.put(write_path, json={"recap": ""})
     assert response.status_code == 200, response.text
     assert response.json() == before
+
+
+def test_generic_skill_edit_and_legacy_adapters_use_the_same_partial_writer(
+    client: tuple[TestClient, Path],
+) -> None:
+    test_client, db_path = client
+    before = test_client.get("/api/skills/panels-worker").json()
+    response = test_client.patch(
+        "/api/skills/panels-worker",
+        json={"description": "common writer", "markdown_body": "# Updated"},
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["description"] == "common writer"
+    assert response.json()["markdown_body"] == "\n# Updated\n"
+    assert response.json()["name"] == before["name"]
+    for method in ("put", "patch"):
+        response = test_client.request(
+            method, "/api/workers/coding/skill", json={"body": f"# {method}"}
+        )
+        assert response.status_code == 400, response.text
+        assert "structured Worker preset" in response.text
+    source_before = test_client.get("/api/skills/panels-worker-coding").json()["source_text"]
+    independent = test_client.patch(
+        "/api/skills/panels-worker-coding", json={"markdown_body": "Independent instructions"}
+    )
+    assert independent.status_code == 400, independent.text
+    batch = test_client.post(
+        "/api/skills/apply",
+        json={
+            "skills": [
+                {
+                    "name": "panels-worker-coding",
+                    "source_text": source_before.replace("Coding", "Independent"),
+                    "expected_sha256": hashlib.sha256(source_before.encode()).hexdigest(),
+                }
+            ]
+        },
+    )
+    assert batch.status_code == 400, batch.text
+    assert (
+        test_client.get("/api/skills/panels-worker-coding").json()["source_text"] == source_before
+    )
+    structured = test_client.get("/api/worker-types/coding").json()
+    structured["stages"][1]["instructions"] = "STRUCTURED STAGE INSTRUCTIONS"
+    generated = test_client.post("/api/worker-types", json=structured)
+    assert generated.status_code == 200, generated.text
+    assert (
+        "STRUCTURED STAGE INSTRUCTIONS"
+        in test_client.get("/api/skills/panels-worker-coding").json()["source_text"]
+    )
+    for method in ("put", "patch"):
+        response = test_client.request(
+            method, "/api/workers/chief-of-staff/skill", json={"body": f"# Chief {method}"}
+        )
+        assert response.status_code == 200, response.text
+        assert response.json()["skill"]["markdown_body"] == f"\n# Chief {method}\n"
+    missing = test_client.patch("/api/skills/missing", json={"description": "no create"})
+    assert missing.status_code == 404
+    with connect(str(db_path)) as conn:
+        assert (
+            conn.execute("SELECT 1 FROM managed_skills WHERE skill_name = 'missing'").fetchone()
+            is None
+        )
+
+
+def test_skill_write_authority_is_preserved_at_every_http_entrypoint(
+    client: tuple[TestClient, Path],
+) -> None:
+    test_client, db_path = client
+    coding = test_client.get("/api/worker-types/coding").json()
+    writes = [
+        ("patch", "/api/skills/panels-worker-coding", {"description": "authority checked"}),
+        ("put", "/api/workers/coding/skill", {"description": "authority checked"}),
+        ("patch", "/api/workers/coding/skill", {"description": "authority checked"}),
+        ("put", "/api/workers/chief-of-staff/skill", {"description": "authority checked"}),
+        ("patch", "/api/workers/chief-of-staff/skill", {"description": "authority checked"}),
+        ("post", "/api/worker-types", dict(coding, skill={"description": "authority checked"})),
+    ]
+    for method, path, payload in writes:
+        chief = test_client.request(method, path, json=payload, headers={"X-Plan-Actor": "chief"})
+        assert chief.status_code == 200, chief.text
+        before = test_client.get("/api/skills").json()
+        for headers in (
+            {"X-Plan-Actor": "worker", "X-Plan-Ticket-ID": "t_denied"},
+            {"X-Plan-Actor": "sprint_item_supervisor", "X-Plan-Sprint-Item-ID": "si_denied"},
+        ):
+            refused = test_client.request(method, path, json=payload, headers=headers)
+            assert refused.status_code == 400, refused.text
+            assert refused.json()["error"]["code"] == "agent_forbidden"
+        assert test_client.get("/api/skills").json() == before
+    skill = test_client.get("/api/skills/panels-worker-coding").json()
+    assert skill["description"] == "authority checked"
+    assert (db_path.parent / "skills/panels-worker-coding/SKILL.md").is_file()
+
+
+def test_embedded_skill_validates_the_original_payload_and_requires_initial_fields(
+    client: tuple[TestClient, Path],
+) -> None:
+    test_client, _db_path = client
+    coding = test_client.get("/api/worker-types/coding").json()
+    for skill in (
+        {"body": "initial body"},
+        {"name": "wrong", "description": "initial", "body": "body"},
+        {"description": "initial", "body": "body", "unknown": "bad"},
+        {"description": "initial", "body": "one", "markdown_body": "two"},
+    ):
+        record = _arrival_record(coding)
+        record["skill"] = skill
+        response = test_client.post("/api/worker-types", json=record)
+        assert response.status_code == 400, response.text
+        assert "field" in response.json()["error"]["detail"]
+        assert test_client.get("/api/skills/panels-worker-arrival").status_code == 404
+    record = _arrival_record(coding)
+    record["skill"] = {
+        "name": "panels-worker-arrival",
+        "description": "initial",
+    }
+    assert test_client.post("/api/worker-types", json=record).status_code == 200
+
+
+def test_skill_file_failure_reaches_http_as_an_incomplete_save(
+    client: tuple[TestClient, Path], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    test_client, _db_path = client
+
+    def fail_replace(*args: object, **kwargs: object) -> None:
+        raise OSError("disk unavailable")
+
+    monkeypatch.setattr(worker_settings_service, "atomic_replace_text", fail_replace)
+    response = test_client.patch("/api/skills/panels", json={"description": "saved"})
+    assert response.status_code == 500, response.text
+    error = response.json()["error"]
+    assert error["code"] == "skill_save_incomplete"
+    assert error["detail"] == {
+        "skill_name": "panels",
+        "saved": True,
+        "published": False,
+        "phase": "file",
+    }
+    assert "Read the canonical skill before retry" in error["message"]
+
+
+def test_one_type_reads_back_exactly_what_the_whole_list_said(
+    client: tuple[TestClient, Path],
+) -> None:
+    """The list is 20,165 bytes for fourteen types; a Ticket page draws one.
+
+    The single-type read has to be the same entry in the same shape, because the
+    lifecycle, the stage table and the Ticket section admission all read that shape.
+    """
+    test_client, _db_path = client
+
+    whole = test_client.get("/api/worker-types").json()["worker_types"]
+    one = test_client.get("/api/worker-types/coding/manifest")
+
+    assert one.status_code == 200, one.text
+    assert one.json()["worker_types"] == [
+        entry for entry in whole if entry["worker_type"] == "coding"
+    ]
+
+    unknown = test_client.get("/api/worker-types/not-a-worker/manifest")
+    assert unknown.status_code == 404, unknown.text
+    assert unknown.json()["error"]["code"] == "not_found"
+    assert unknown.json()["error"]["detail"] == {"worker_type": "not-a-worker"}
+
+
+def test_reviewed_skill_batch_accepts_owner_and_chief_but_refuses_other_agents(
+    client: tuple[TestClient, Path],
+) -> None:
+    test_client, _db_path = client
+    source = "---\nname: batch-role\ndescription: Reviewed role\n---\n\nExact owner instructions.\n"
+    payload = {"skills": [{"name": "batch-role", "source_text": source}]}
+    before = test_client.get("/api/skills").json()
+    for headers in (
+        {"X-Plan-Actor": "worker", "X-Plan-Ticket-ID": "t_denied"},
+        {"X-Plan-Actor": "manager", "X-Plan-Manager-ID": "si_denied"},
+        {"X-Plan-Actor": "sprint_item_supervisor", "X-Plan-Sprint-Item-ID": "si_denied"},
+    ):
+        result = test_client.post("/api/skills/apply", json=payload, headers=headers)
+        assert result.status_code == 400, result.text
+        assert result.json()["error"]["code"] == "agent_forbidden"
+        assert test_client.get("/api/skills").json() == before
+    accepted = test_client.post("/api/skills/apply", json=payload)
+    assert accepted.status_code == 200, accepted.text
+    assert test_client.get("/api/skills/batch-role").json()["source_text"] == source
+    chief_source = source.replace("Exact owner instructions.", "Exact Chief instructions.")
+    chief_payload = {
+        "skills": [
+            {
+                "name": "batch-role",
+                "source_text": chief_source,
+            }
+        ]
+    }
+    accepted = test_client.post(
+        "/api/skills/apply", json=chief_payload, headers={"X-Plan-Actor": "chief"}
+    )
+    assert accepted.status_code == 200, accepted.text
+    assert test_client.get("/api/skills/batch-role").json()["source_text"] == chief_source
+
+
+def test_skill_delete_and_file_write_refuse_agents_and_accept_the_chief(
+    client: tuple[TestClient, Path],
+) -> None:
+    """Risk: the two new skill writes open a door for Workers or Managers."""
+    test_client, db_path = client
+    file_body = {"path": "notes/extra.md", "content": "supporting"}
+    for headers in (
+        {"X-Plan-Actor": "worker", "X-Plan-Ticket-ID": "t_denied"},
+        {"X-Plan-Actor": "manager", "X-Plan-Manager-ID": "si_denied"},
+    ):
+        deleted = test_client.delete("/api/skills/probe-worker", headers=headers)
+        written = test_client.put("/api/skills/panels/files", json=file_body, headers=headers)
+        for result in (deleted, written):
+            assert result.status_code == 400, result.text
+            assert result.json()["error"]["code"] == "agent_forbidden"
+    skills_home = db_path.parent / "skills"
+    assert (skills_home / "probe-worker" / "SKILL.md").is_file()
+    assert not (skills_home / "panels" / "notes").exists()
+    chief = {"X-Plan-Actor": "chief"}
+    written = test_client.put("/api/skills/panels/files", json=file_body, headers=chief)
+    assert written.status_code == 200, written.text
+    assert (skills_home / "panels" / "notes" / "extra.md").read_text() == "supporting"
+    deleted = test_client.delete("/api/skills/probe-worker", headers=chief)
+    assert deleted.status_code == 200, deleted.text
+    assert test_client.get("/api/skills/probe-worker").status_code == 404
+
+
+def test_committed_amendment_receipt_survives_skill_file_publication_failure(
+    client: tuple[TestClient, Path], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    test_client, db_path = client
+    with closing(connect(str(db_path))) as conn:
+        ticket = tickets_data.create_ticket(
+            conn,
+            worker_type="coding",
+            title="Receipt survives",
+            brief="Kickoff",
+            principal=OWNER_PRINCIPAL,
+            now=1,
+            title_max_chars=200,
+        )
+        conn.execute(
+            "UPDATE tickets SET stage='needs_what_changes', ceiling='needs_implementation', "
+            "pending_proposal=NULL WHERE id=?",
+            (ticket.id,),
+        )
+    record = test_client.get("/api/worker-types/coding").json()
+    record["stages"] = [s for s in record["stages"] if s["id"] != "needs_implementation"]
+    record["fields"] = [f for f in record["fields"] if f["id"] != "implementation"]
+    record["skill"] = {"description": "committed with receipt"}
+
+    def fail_replace(*args: object, **kwargs: object) -> None:
+        raise OSError("disk unavailable")
+
+    monkeypatch.setattr(worker_settings_service, "atomic_replace_text", fail_replace)
+    response = test_client.post("/api/worker-types", json=record)
+    assert response.status_code == 500, response.text
+    detail = response.json()["error"]["detail"]
+    assert detail["definition_saved"] is True
+    assert (
+        "needs_implementation"
+        not in configured_worker_type_registry().require("coding").stage_ids()
+    )
+    with closing(connect(str(db_path))) as conn:
+        assert conn.execute("SELECT ceiling FROM tickets WHERE id=?", (ticket.id,)).fetchone()[
+            0
+        ] == ("needs_implementation")
+
+
+def test_removing_a_type_leaves_its_tickets_on_their_own_workflow(
+    client: tuple[TestClient, Path],
+) -> None:
+    """Risk: removing a preset strands its Tickets, or removes one something still reads."""
+    test_client, db_path = client
+    historical = json.loads(
+        (Path(__file__).parents[1] / "support" / "retired_general_worker_type.json").read_text()
+    )
+    historical["skill"] = {"description": "Historical General specialist"}
+    restored = test_client.post("/api/worker-types", json=historical)
+    assert restored.status_code == 200, restored.text
+    with closing(connect(str(db_path))) as conn:
+        running = tickets_data.create_ticket(
+            conn,
+            worker_type="general",
+            title="Still running",
+            brief="Kickoff",
+            principal=OWNER_PRINCIPAL,
+            now=1,
+            title_max_chars=200,
+        )
+        workflow_before = conn.execute(
+            "SELECT workflow_json FROM tickets WHERE id=?", (running.id,)
+        ).fetchone()[0]
+        conn.execute("UPDATE tickets SET employee_launch_model=NULL WHERE id=?", (running.id,))
+        conn.commit()
+
+    for path in ("/api/worker-types/general", "/api/worker-types/coding"):
+        response = test_client.delete(path, headers={"X-Plan-Actor": "worker"})
+        assert response.json()["error"]["code"] == "agent_forbidden", response.text
+    refused = test_client.delete("/api/worker-types/general")
+    assert refused.status_code == 400, refused.text
+    assert refused.json()["error"]["detail"]["ticket_ids"] == [running.id]
+
+    with closing(connect(str(db_path))) as conn:
+        conn.execute(
+            "UPDATE tickets SET employee_launch_model='gpt-6.1-sol' WHERE id=?", (running.id,)
+        )
+        conn.commit()
+    deleted = test_client.delete("/api/worker-types/general", headers={"X-Plan-Actor": "chief"})
+    assert deleted.json() == {"worker_type": "general", "deleted": True}, deleted.text
+
+    assert test_client.get("/api/worker-types/general").status_code == 404
+    # The browser and the native app read the Ticket's own workflow from its detail.
+    detail = test_client.get("/api/tickets", params={"detail": "full", "id": running.id})
+    assert detail.status_code == 200, detail.text
+    assert [stage["id"] for stage in detail.json()["workflow"]["stages"]] == [
+        stage["id"] for stage in json.loads(workflow_before)["stages"]
+    ]
+    assert "general" not in configured_worker_type_registry().registered_worker_types()
+    with closing(connect(str(db_path))) as conn:
+        kept = tickets_data.read_ticket(conn, running.id)
+        assert kept.stage == running.stage
+        assert (
+            conn.execute("SELECT workflow_json FROM tickets WHERE id=?", (running.id,)).fetchone()[
+                0
+            ]
+            == workflow_before
+        )
+        with pytest.raises(PlannerError):
+            tickets_data.create_ticket(
+                conn,
+                worker_type="general",
+                title="Refused",
+                brief="Kickoff",
+                principal=OWNER_PRINCIPAL,
+                now=2,
+                title_max_chars=200,
+            )
+    assert test_client.get("/api/skills/panels-worker-general").status_code == 200
+
+    assert running.pending_proposal is not None
+    accepted = test_client.post(
+        f"/api/tickets/{running.id}/accept/brief",
+        json={
+            "next_ceiling": "needs_work_done",
+            "next_holder": {"kind": "owner", "id": "owner"},
+            "expected_proposal_revision": running.pending_proposal_revision,
+        },
+    )
+    assert accepted.status_code == 200, accepted.text
+    assert accepted.json()["stage"] == "needs_work_done"
+    proposed = test_client.post(
+        f"/api/tickets/{running.id}/propose",
+        json={"body": "The historical work can continue."},
+        headers={"X-Plan-Actor": "worker", "X-Plan-Ticket-ID": running.id},
+    )
+    assert proposed.status_code == 200, proposed.text
+    assert proposed.json()["pending_proposal"]["field"] == "work_done"

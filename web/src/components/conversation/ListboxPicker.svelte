@@ -6,6 +6,12 @@
     name: string;
   };
 
+  export type ListboxPageWindow = {
+    offset: number; total: number; rowHeight: number; activeIndex?: number;
+    onWindow: (index: number) => void;
+    onTypeahead: (prefix: string, after: number) => void;
+  };
+
   export type ListboxPickerController = {
     open: () => void;
     readonly expanded: boolean;
@@ -17,6 +23,7 @@
 
   let {
     items,
+    pageWindow,
     selectedValue,
     disabled = false,
     selectionDisabled = disabled,
@@ -25,8 +32,10 @@
     listLabel = label,
     kind = "compact",
     chevron = "typed",
+    scrollPanel = false,
     hideTrigger = false,
     below = false,
+    fitWithin = null,
     align = "left",
     anchor = null,
     attributes = {},
@@ -45,6 +54,7 @@
     afterList
   }: {
     items: readonly ListboxPickerItem[];
+    pageWindow?: ListboxPageWindow;
     selectedValue: string | null;
     disabled?: boolean;
     selectionDisabled?: boolean;
@@ -55,9 +65,12 @@
     /** How the trigger's chevron is drawn. A typed caret is sized by the font rather
      *  than by its box, so it reads small beside stroked icons. The conversation's
      *  composer asks for the drawn one; every other caller keeps what it had. */
-    chevron?: "typed" | "drawn";
+    chevron?: "typed" | "drawn" | "none";
+    scrollPanel?: boolean;
     hideTrigger?: boolean;
     below?: boolean;
+    /** Keep this picker inside its nearest matching scroll area. */
+    fitWithin?: string | null;
     align?: "left" | "right";
     /** Optional second entry point for the same picker; keeps one panel and draft. */
     anchor?: HTMLElement | null;
@@ -92,6 +105,8 @@
   let trigger = $state<HTMLButtonElement | null>(null);
   let list = $state<HTMLDivElement | null>(null);
   let panelElement = $state<HTMLDivElement | null>(null);
+  let fittedBounds = $state<{left: number; top: number; height: number} | null>(null);
+  let panelBounds = $state<{left: number; top: number; height: number} | null>(null);
   let typeahead = "";
   let typeaheadTimer: ReturnType<typeof setTimeout> | undefined;
   let returnFocusWhenEnabled = false;
@@ -99,10 +114,23 @@
   let pointerSpot: { x: number; y: number } | null = null;
   let pointerReallyMoved = false;
 
-  let active = $derived(items.length === 0 ? 0 : Math.min(activeIndex, items.length - 1));
+  let itemOffset = $derived(pageWindow?.offset ?? 0);
+  let totalItems = $derived(pageWindow?.total ?? items.length);
+  let active = $derived(totalItems === 0 ? 0 : Math.min(activeIndex, totalItems - 1));
+  let localActive = $derived(active-itemOffset);
+  $effect(() => { const index=pageWindow?.activeIndex; if(index!==undefined) activeIndex=index; });
+  function activate(index:number):void {
+    activeIndex=index;
+    if(pageWindow && (index<itemOffset || index>=itemOffset+items.length)) pageWindow.onWindow(index);
+  }
+  function scrollWindow():void {
+    if(!pageWindow || !list) return;
+    const index=Math.max(0,Math.floor(list.scrollTop/pageWindow.rowHeight));
+    if(index<itemOffset || (index+8>=itemOffset+items.length && itemOffset+items.length<totalItems)) pageWindow.onWindow(index);
+  }
 
   $effect(() => {
-    onActiveChange?.(open ? items[active]?.value ?? null : null);
+    onActiveChange?.(open ? items[localActive]?.value ?? null : null);
   });
 
   function focusList(): void {
@@ -111,7 +139,7 @@
 
   function setActiveValue(value: string | null): void {
     const index = value === null ? -1 : items.findIndex((item) => item.value === value);
-    activeIndex = Math.max(0, index);
+    activate(itemOffset+Math.max(0, index));
     // A rail switch puts different words in the list. Letters typed at the old one must
     // not join letters typed at the new one, or the match silently finds nothing.
     forgetTypeahead();
@@ -173,9 +201,53 @@
   });
 
   $effect(() => {
-    if (anchor && !anchorPositionReady) return;
-    active;
+    if ((anchor || fitWithin) && !anchorPositionReady) return;
+    active; itemOffset; items.length;
     list?.querySelector<HTMLElement>("[data-listbox-picker-active]")?.scrollIntoView({ block: "nearest" });
+  });
+
+  function fitPanel(): void {
+    const boundary = fitWithin ? root?.closest(fitWithin) : null;
+    const entry = anchor ?? trigger;
+    if (!boundary || !root || !entry || !panelElement || !list) return;
+    const area = boundary.getBoundingClientRect();
+    const origin = root.getBoundingClientRect();
+    const button = entry.getBoundingClientRect();
+    const panel = panelElement.getBoundingClientRect();
+    const gap = parseFloat(getComputedStyle(panelElement).getPropertyValue("--space-1")) || 4;
+    const top = Math.max(0, area.top);
+    // The resting conversation dock can overlay a full-height document.
+    const dock = boundary.closest(".ticket-page")?.querySelector<HTMLElement>("[data-conversation-layer-host]")?.getBoundingClientRect();
+    const bottom = Math.min(window.innerHeight, area.bottom, dock?.top ?? area.bottom);
+    if (button.bottom <= top || button.top >= bottom) { close(false); return; }
+    const above = Math.max(0, button.top - top - gap);
+    const beneath = Math.max(0, bottom - button.bottom - gap);
+    const rail = panelElement.querySelector<HTMLElement>(".picker-rail");
+    const naturalHeight = Math.max(list.scrollHeight + panel.height - list.clientHeight, rail?.scrollHeight ?? 0);
+    const down = naturalHeight <= beneath || (naturalHeight > above && beneath >= above);
+    const height = Math.min(naturalHeight, down ? beneath : above);
+    const left = Math.max(0, area.left, Math.min(button.left, Math.min(window.innerWidth, area.right) - panel.width));
+    fittedBounds = {left:left-origin.left, top:(down ? button.bottom+gap : button.top-gap-height)-origin.top, height};
+  }
+
+  $effect(() => {
+    if (!open || !fitWithin) return;
+    items; // A rail switch changes the natural list height.
+    const boundary = root?.closest(fitWithin);
+    if (!boundary) return;
+    const update = () => fitPanel();
+    const observer = new ResizeObserver(update);
+    observer.observe(boundary);
+    const dock = boundary.closest(".ticket-page")?.querySelector("[data-conversation-layer-host]");
+    if (dock) observer.observe(dock);
+    boundary.addEventListener("scroll", update);
+    window.addEventListener("resize", update);
+    void tick().then(update);
+    return () => {
+      observer.disconnect();
+      boundary.removeEventListener("scroll", update);
+      window.removeEventListener("resize", update);
+    };
   });
 
   async function openPanel(): Promise<void> {
@@ -185,10 +257,21 @@
     const rootRect = root?.getBoundingClientRect();
     const anchorRect = anchor?.getBoundingClientRect();
     anchorOffset = rootRect && anchorRect ? {left:anchorRect.left-rootRect.left,top:anchorRect.bottom-rootRect.top} : null;
-    anchorPositionReady = anchorOffset === null;
-    activeIndex = Math.max(0, items.findIndex((item) => item.value === selectedValue));
+    anchorPositionReady = anchorOffset === null && !fitWithin;
+    activate(itemOffset+Math.max(0, items.findIndex((item) => item.value === selectedValue)));
     open = true;
+    panelBounds = null;
+    fittedBounds = null;
     await tick();
+    if (scrollPanel && panelElement && trigger) {
+      const triggerRect = trigger.getBoundingClientRect();
+      const panelRect = panelElement.getBoundingClientRect();
+      const dock = trigger.closest("[data-conversation-pane]")?.getBoundingClientRect();
+      const bottom = Math.min(window.innerHeight, dock?.bottom ?? window.innerHeight) - 8;
+      const top = below ? triggerRect.bottom + 4 : Math.max(8, triggerRect.top - panelRect.height - 4);
+      panelBounds = {left: Math.max(8, Math.min(panelRect.left, window.innerWidth - panelRect.width - 8)), top, height: Math.max(48, (below ? bottom : triggerRect.top - 4) - top)};
+      await tick();
+    }
     // An alternate entry point can sit near the viewport edge. Bound the same
     // panel using its rendered width; its draft, keyboard flow and focus stay here.
     if (anchorOffset && panelElement && root) {
@@ -199,6 +282,8 @@
       // Publish the bounded position before focus or the active-row scroll effect.
       await tick();
     }
+    fitPanel();
+    await tick();
     anchorPositionReady = true;
     list?.focus(anchor ? {preventScroll:true} : undefined);
   }
@@ -230,6 +315,7 @@
     typeahead += key.toLocaleLowerCase();
     if (typeaheadTimer !== undefined) clearTimeout(typeaheadTimer);
     typeaheadTimer = setTimeout(() => (typeahead = ""), 500);
+    if(pageWindow) { pageWindow.onTypeahead(typeahead,active); return; }
     const start = items.length === 0 ? 0 : (active + 1) % items.length;
     for (let offset = 0; offset < items.length; offset += 1) {
       const index = (start + offset) % items.length;
@@ -246,11 +332,11 @@
       close();
       return;
     }
-    if (items.length === 0) return;
+    if (totalItems === 0) return;
     if (event.key === "ArrowDown" || event.key === "ArrowUp") {
       event.preventDefault();
-      const step = event.key === "ArrowDown" ? 1 : items.length - 1;
-      activeIndex = (active + step) % items.length;
+      const step = event.key === "ArrowDown" ? 1 : totalItems - 1;
+      activate((active + step) % totalItems);
       return;
     }
     if (event.key === "ArrowLeft") {
@@ -262,12 +348,15 @@
     }
     if (event.key === "Home" || event.key === "End") {
       event.preventDefault();
-      activeIndex = event.key === "Home" ? 0 : items.length - 1;
+      activate(event.key === "Home" ? 0 : totalItems - 1);
       return;
     }
-    if ((event.key === "Enter" || event.key === " ") && items[active] !== undefined) {
+    if (event.key === " " && pageWindow && typeahead) {
+      event.preventDefault(); moveToMatch(" "); return;
+    }
+    if ((event.key === "Enter" || event.key === " ") && items[localActive] !== undefined) {
       event.preventDefault();
-      choose(items[active].value);
+      choose(items[localActive].value);
       return;
     }
     if (event.key.length === 1 && !event.ctrlKey && !event.metaKey && !event.altKey) {
@@ -278,7 +367,20 @@
 
   function onPanelKeydown(event: KeyboardEvent): void {
     const target = event.target;
+    if (event.key === "Escape") {
+      event.preventDefault();
+      close();
+      return;
+    }
     if (!(target instanceof HTMLButtonElement) || !target.hasAttribute("data-listbox-picker-action")) return;
+    if (event.key === "Enter" || event.key === " ") {
+      event.preventDefault();
+      // A rail action can remove its own button (Models does). Keep focus inside
+      // the surviving list before that removal, so focusout cannot close the picker.
+      list?.focus();
+      target.click();
+      return;
+    }
     if (event.key === "Escape") {
       event.preventDefault();
       close();
@@ -303,7 +405,7 @@
   }
 </script>
 
-<div class="listbox-picker" bind:this={root} tabindex="-1" {...attributes}>
+<div class="listbox-picker" class:scroll-panel={scrollPanel} bind:this={root} tabindex="-1" {...attributes}>
   {#if !hideTrigger}
   <button
     type="button"
@@ -324,7 +426,7 @@
       <svg class="listbox-picker-chevron-drawn" viewBox="0 0 24 24" aria-hidden="true">
         {#if open}<path d="M6 15l6-6 6 6" />{:else}<path d="M6 9l6 6 6-6" />{/if}
       </svg>
-    {:else}
+    {:else if chevron === "typed"}
       <span class="listbox-picker-chevron" aria-hidden="true">{open ? "⌃" : "⌄"}</span>
     {/if}
   </button>
@@ -338,9 +440,13 @@
       class:compact={kind === "compact"}
       class:below
       class:right={align === "right"}
-      style:left={anchorOffset ? `${anchorOffset.left}px` : undefined}
-      style:top={anchorOffset ? `calc(${anchorOffset.top}px + var(--space-1))` : undefined}
-      style:bottom={anchorOffset ? "auto" : undefined}
+      class:scroll-panel={scrollPanel}
+      class:fitted={fittedBounds !== null}
+      style:position={panelBounds ? "fixed" : undefined}
+      style:max-height={panelBounds || fittedBounds ? `${(panelBounds ?? fittedBounds)!.height}px` : undefined}
+      style:left={fittedBounds ? `${fittedBounds.left}px` : panelBounds ? `${panelBounds.left}px` : anchorOffset ? `${anchorOffset.left}px` : undefined}
+      style:top={fittedBounds ? `${fittedBounds.top}px` : panelBounds ? `${panelBounds.top}px` : anchorOffset ? `calc(${anchorOffset.top}px + var(--space-1))` : undefined}
+      style:bottom={fittedBounds || panelBounds || anchorOffset ? "auto" : undefined}
       aria-busy={panelBusy}
       role="presentation"
       onkeydown={onPanelKeydown}
@@ -356,32 +462,40 @@
         id={listId}
         role="listbox"
         aria-label={listLabel}
-        aria-activedescendant={items.length === 0 ? undefined : `${listId}-${active}`}
+        aria-activedescendant={items[localActive] === undefined ? undefined : `${listId}-${active}`}
         tabindex="-1"
         onkeydown={onListKeydown}
+        onscroll={scrollWindow}
+        style:max-height={pageWindow ? '288px' : undefined}
+        style:overflow-y={pageWindow ? 'auto' : undefined}
       >
+        {#if pageWindow}<div aria-hidden="true" style:height={`${itemOffset*pageWindow.rowHeight}px`}></div>{/if}
         {#each items as item, index (item.value)}
           <button
             type="button"
             class="listbox-picker-option"
-            class:cursor={index === active}
+            class:cursor={index+itemOffset === active}
             class:on={item.value === selectedValue}
-            id={`${listId}-${index}`}
+            id={`${listId}-${index+itemOffset}`}
             role="option"
+            aria-posinset={pageWindow ? index+itemOffset+1 : undefined}
+            aria-setsize={pageWindow ? totalItems : undefined}
+            style:height={pageWindow ? `${pageWindow.rowHeight}px` : undefined}
             tabindex="-1"
             aria-selected={item.value === selectedValue}
             disabled={selectionDisabled}
             data-listbox-picker-value={item.value}
-            data-listbox-picker-active={index === active ? "true" : undefined}
-            onmousemove={() => { if (pointerReallyMoved) activeIndex = index; }}
+            data-listbox-picker-active={index+itemOffset === active ? "true" : undefined}
+            onmousemove={() => { if (pointerReallyMoved) activeIndex = index+itemOffset; }}
             onmousedown={(event) => event.preventDefault()}
             onclick={() => choose(item.value)}
-            {...optionAttributes?.(item, index === active, item.value === selectedValue)}
+            {...optionAttributes?.(item, index+itemOffset === active, item.value === selectedValue)}
           >
             {@render optionContent(item, item.value === selectedValue)}
             <span class="listbox-picker-tick" aria-hidden="true">{item.value === selectedValue ? "✓" : ""}</span>
           </button>
         {/each}
+        {#if pageWindow}<div aria-hidden="true" style:height={`${Math.max(0,totalItems-itemOffset-items.length)*pageWindow.rowHeight}px`}></div>{/if}
       </div>
       {#if afterList}{@render afterList()}{/if}
     </div>
@@ -390,6 +504,8 @@
 
 <style>
   .listbox-picker { position: relative; display: inline-flex; min-width: 0; }
+  .listbox-picker.scroll-panel { max-width: 100%; }
+  .listbox-picker.scroll-panel .listbox-picker-trigger { min-height: 24px; }
   .listbox-picker-trigger {
     display: inline-flex; align-items: center; gap: var(--space-2); min-width: 0; max-width: 100%;
     background: transparent; border: var(--border-hairline) solid transparent;
@@ -416,6 +532,9 @@
     background: var(--surface-2); border: var(--border-hairline) solid var(--border-color);
     border-radius: var(--radius-lg); overflow: hidden;
   }
+  .listbox-picker-panel.fitted { min-height:0; grid-template-rows:minmax(0,1fr); }
+  .fitted :global(.picker-rail) { min-height:0; overflow:hidden; }
+  .fitted > .listbox-picker-list { min-height:0; overflow-y:auto; overscroll-behavior:contain; }
   .listbox-picker-panel.rail {
     display: grid; grid-template-columns: auto minmax(0, 1fr); width: 296px;
     max-width: calc(100vw - var(--space-4) * 2);
@@ -426,6 +545,7 @@
   }
   .listbox-picker-panel.below { top: calc(100% + var(--space-1)); bottom: auto; }
   .listbox-picker-panel.right { right: 0; left: auto; }
+  .listbox-picker-panel.scroll-panel { overflow-y: auto; overscroll-behavior: contain; }
   .listbox-picker-list { min-width: 0; padding-block: var(--space-1); outline: none; }
   .compact > .listbox-picker-list { padding-block: 0; }
   .listbox-picker-option {

@@ -1,27 +1,34 @@
 <script lang="ts">
-  import { onMount, untrack } from "svelte";
+  import { isBrokenTicket } from "../lib/ticketIntegrity";
+  import MacStatus from "../components/machines/MacStatus.svelte";
+  import MachineActivityMark from "../components/machines/MachineActivityMark.svelte";
+  import MachineIdentity from "../components/machines/MachineIdentity.svelte";
+
+  import { onDestroy, tick, untrack } from "svelte";
   import { SvelteMap } from "svelte/reactivity";
   import { createQuery } from "@tanstack/svelte-query";
   import { mutateJson } from "../lib/mutate";
   import { queries } from "../lib/queryCatalogue";
+  import { navigationApplication } from "../lib/navigation/application.svelte";
+  import { navigationConversationSignal, type NavigationTicketMasthead } from "../lib/navigation/presentation";
+  import { ticketSection, ticketSectionFacts, ticketSectionHeading, ticketSectionRunLabel, ticketSectionFieldState } from "../lib/ticketSection";
+
   import { workspaceAddress } from "../lib/workspaceAddress";
   import { labelize } from "../lib/ui";
   import {
     fieldLabelFor,
-    fieldStageVisualStateFor,
-    gatingFieldFor,
-    lifecycleFor,
+    buildLifecycle,
     stageLabelFor
   } from "../lib/lifecycle";
   import { holderLabelFor } from "../lib/ceilingHolder";
   import type { EmployeeConfigurationSnapshot, TicketDetail } from "../lib/types";
   import ConversationSignalMark from "../components/ConversationSignalMark.svelte";
+  import { conversationDock } from "../lib/conversation/layout/dock";
   import LiveConversation from "../components/conversation/LiveConversation.svelte";
+  import { createConversationDismissal } from "../lib/conversation/dismissal";
   import type { ConversationState } from "../lib/conversation/conversationState";
   import { initialTicketConversationState } from "../lib/conversation/ticketConversationState";
   import {
-    readBackends,
-    type BackendSnapshot,
     type DeliveredMessage,
     type OwnerSendBody
   } from "../lib/conversation/wire";
@@ -31,75 +38,106 @@
   import ErrorLine from "../components/ErrorLine.svelte";
   import InlineEdit from "../components/InlineEdit.svelte";
   import ResourceState from "../components/ResourceState.svelte";
+  import RequestRecapAction from "../components/RequestRecapAction.svelte";
+  import RecapSlot from "../components/RecapSlot.svelte";
   import TicketLifecycleControls from "../components/TicketLifecycleControls.svelte";
+  import type { InlineEditDraft } from "../lib/inlineEditDraft";
   import TicketStageSection from "../components/TicketStageSection.svelte";
   import ArtifactPreview from "../components/ArtifactPreview.svelte";
   import ArtifactsBand from "../components/ArtifactsBand.svelte";
   import WorkerProposalCard from "../components/WorkerProposalCard.svelte";
   import { workerPageHistory } from "../lib/workerPageHistory";
-  import { managedFileTargetFromLinkHref, ticketPageArtifactItems } from "../lib/artifactStrip";
-  import { isPlainLinkClick } from "../lib/linkClick";
-  import {
-    resolvePreview,
-    targetFromPreviewHref,
-    type ManagedFileTarget
-  } from "../lib/filePreview";
+  import { createArtifactOnThePage } from "../lib/artifactOnThePage.svelte";
+  import { type ManagedFileTarget } from "../lib/filePreview";
 
   let {
     id,
     // The artifact this screen is showing, when the host keeps that in its address, and
     // the way to write it there. The Workspace supplies both; without them, the screen
     // holds the value itself.
+    requestedConversationId = null,
     openFile = null,
     onOpenFile = null
   }: {
     id: string;
+    requestedConversationId?: string | null;
     openFile?: ManagedFileTarget | null;
     onOpenFile?: ((file: ManagedFileTarget | null) => void) | null;
   } = $props();
   const stableId = untrack(() => id);
 
-  const ticket = createQuery(() => queries.ticket(stableId));
+  const navigation=(()=>{
+    const context=navigationApplication();
+    if(!context) throw new Error('Ticket masthead requires the application navigation owner');
+    return context;
+  })();
+
+  let mastheadElement=$state<HTMLElement | null>(null);
+  let screenElement=$state<HTMLElement | null>(null);
+  let currentView=$derived(navigation.selectors.effective);
+  let currentMasthead=$derived(currentView ? navigation.presentationFor(currentView).ticketMastheadsById.get(stableId) : undefined);
+  let heldMasthead=$state.raw<NavigationTicketMasthead | undefined>(undefined);
+  $effect(()=>{if(currentMasthead) heldMasthead=currentMasthead;});
+  let masthead=$derived(heldMasthead ? {...heldMasthead,
+    conversation_signal:navigationConversationSignal(currentView,heldMasthead.conversation_id)} : undefined);
+  const machineHealth = createQuery(() => ({...queries.executorHealth(masthead?.machine_id), enabled: masthead?.locale === "macos"}));
+  const ticket = createQuery(() => queries.workspaceTicket(stableId));
+  let brokenTicket = $derived(isBrokenTicket(ticket.data) ? ticket.data : undefined);
+  let healthyTicket = $derived(ticket.data && !isBrokenTicket(ticket.data) ? ticket.data : undefined);
   // What a conversation for this Ticket's worker would start on, asked of the server
   // because the server is what resolves it: the Worker type's launch defaults and
   // whatever this Ticket last ran on, through the same code that will create it.
   const conversationStartValues = createQuery(() =>
     queries.ticketConversationStartValues(stableId)
   );
-  const manifest = createQuery(() => queries.workerTypeManifests());
-
-  // Derive the per-Worker-type lifecycle from the QUERY (ticket.data?.worker_type), not
-  // the markup-local {@const detail} which is only bound inside {#if ticket.data}
-  // (Codex F2). Null while the manifest is still loading OR when the Worker type is absent
-  // from a loaded manifest; the markup tells those apart via manifest.isFetching /
-  // manifest.error + a type-present check (Codex F3).
-  let lc = $derived(lifecycleFor(manifest.data, ticket.data?.worker_type));
-  let manifestMissingWorkerType = $derived(
-    Boolean(
-      ticket.data &&
-        manifest.data &&
-        !manifest.data.worker_types.some((item) => item.worker_type === ticket.data?.worker_type)
-    )
-  );
-  // The one Sprint Item this Ticket's ceiling can be handed to, named as Khushal names
+  // The Ticket's saved workflow is authoritative, independent of later preset edits.
+  let conversationLifecycle = $derived(healthyTicket?.workflow ? buildLifecycle(healthyTicket.workflow) : null);
+  let manifestMissingWorkerType = $derived(Boolean(healthyTicket && !healthyTicket.workflow));
+  let canonicalTicket=$derived(currentView ? navigation.presentationFor(currentView).rawTicketsById.get(stableId) : undefined);
+  let sectionConfiguration=$derived(healthyTicket?.workflow);
+  let section=$derived(ticketSection(healthyTicket,sectionConfiguration));
+  let sectionFacts=$derived(section ? ticketSectionFacts(section,currentView) : undefined);
+  let conversationId=$state<string | null>(null);
+  let selectedPastConversationId=$state<string | null>(null);
+  let shownConversationId=$derived(selectedPastConversationId ?? conversationId);
+  $effect(() => navigation.owner.setDemand("ticket", {
+    selected: { kind: "ticket", id: stableId },
+    selected_conversation_id: selectedPastConversationId, windows: []
+  }));
+  onDestroy(() => navigation.owner.setDemand("ticket", undefined));
+  let observedPointer:string | undefined;
+  $effect(()=>{
+    if(!canonicalTicket) return;
+    const key=JSON.stringify([stableId,canonicalTicket.value.conversation_id]);
+    if(key===observedPointer) return;
+    observedPointer=key;
+    conversationId=canonicalTicket.value.conversation_id;
+  });
+  let requestedConversationApplied: string | null | undefined;
+  $effect(() => {
+    if (!canonicalTicket || requestedConversationApplied === requestedConversationId) return;
+    requestedConversationApplied = requestedConversationId;
+    selectedPastConversationId = requestedConversationId && requestedConversationId !== canonicalTicket.value.conversation_id ? requestedConversationId : null;
+    if (requestedConversationId) conversationState = "opened";
+  });
+  // The one Manager this Ticket's ceiling can be handed to, named as Khushal names
   // it. Absent when the Ticket sits outside an Item, and then only me and the Chief show.
-  let ticketSprintItem = $derived(
-    ticket.data?.sprint_item_id
+  let ticketManager = $derived(
+    section?.detail.manager_id
       ? {
-          id: ticket.data.sprint_item_id,
-          title: ticket.data.sprint_item_title || "Sprint Item"
+          id: section.detail.manager_id,
+          title: section.detail.manager_title || "Manager"
         }
       : null
   );
 
   function pageHolderLabel(holder: import("../lib/types").Principal | null): string {
-    return holderLabelFor(ticketSprintItem, holder);
+    return holderLabelFor(ticketManager, holder);
   }
 
   const emptyTicketFieldText = "Not written yet.";
 
   let headerError = $state<unknown>(null);
-  let conversationBackends = $state<readonly BackendSnapshot[]>([]);
 
   /** How far open this page's conversation is.
    *
@@ -116,117 +154,41 @@
    */
   let seededConversationStateFromStatus = false;
   $effect(() => {
-    const ownership = ticket.data && lc ? lc.stageOwnershipMode[ticket.data.stage] : undefined;
-    if (
-      !ticket.isFetchedAfterMount ||
-      !ticket.isSuccess ||
-      ownership === undefined ||
-      seededConversationStateFromStatus
-    ) {
-      return;
-    }
+    const ownership = canonicalTicket && 'stage_ownership' in canonicalTicket.value ? canonicalTicket.value.stage_ownership : undefined;
+    if (ownership === undefined || seededConversationStateFromStatus) return;
     seededConversationStateFromStatus = true;
-    conversationState = initialTicketConversationState(ownership);
+    conversationState = requestedConversationId ? "opened" : initialTicketConversationState(ownership);
   });
 
-  /** A click outside the conversation dismisses it to rest. */
-  function dismissConversationToRest(): void {
-    if (conversationState !== "rest") conversationState = "rest";
-  }
+  const dismissal = createConversationDismissal(() => { conversationState = "rest"; });
+  const dismissOutsideConversation = dismissal.surface;
 
-  /** A press beside the centered conversation card dismisses it to rest. */
-  function dismissConversationOnAPressBesideTheCard(event: MouseEvent): void {
-    const pressed = event.target;
-    if (!(pressed instanceof Element)) return;
-    if (pressed.closest("[data-conversation-pane]") !== null) return;
-    dismissConversationToRest();
-  }
-
-  /** The artifact this screen is showing, when the host does not keep it in an address. */
+  /** The artifact this screen is showing, kept in the address when the host keeps one. */
   let heldFile = $state<ManagedFileTarget | null>(null);
-  let shownFile = $derived(onOpenFile ? openFile : heldFile);
-  let artifactReloadSignal = $state(0);
+  const artifact = createArtifactOnThePage({
+    shown: () => (onOpenFile ? openFile : heldFile),
+    keep: (file) => { if (onOpenFile) onOpenFile(file); else heldFile = file; },
+    conversationState: () => conversationState,
+    dismissConversation: () => { conversationState = "rest"; },
+    root: () => screenElement
+  });
   // Which stages the reader has opened or closed with their own hands, by field name. A
   // stage that settles moves into the fold above and is rebuilt there, so the answer
   // cannot live in the stage. It lives here, where it outlives the move.
   let readerStageFolds = new SvelteMap<string, boolean>();
-
-  /** Show a file on this screen, or close the one it is showing.
-   *
-   * The Ticket stays where it is underneath, so the person who came to read an artifact
-   * has not left the work it belongs to. An opened conversation is the whole page, and
-   * an artifact opened behind it would be an artifact nobody can see, so the
-   * conversation steps back one to let it through.
-   */
-  function showFile(file: ManagedFileTarget | null): void {
-    if (file && !shownFile) {
-      whatHadFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+  let stepsOpen = $state(false);
+  let recapNote = $state<string | null>(null);
+  // A note belongs to the Ticket it was asked of.
+  $effect(() => { void stableId; recapNote = null; });
+  const fieldDrafts = new Map<string, InlineEditDraft>();
+  function fieldDraft(name: string): InlineEditDraft {
+    let draft = fieldDrafts.get(name);
+    if (!draft) {
+      const created = $state<InlineEditDraft>({ value: null, error: null, saving: false });
+      draft = created; fieldDrafts.set(name, draft);
     }
-    if (onOpenFile) onOpenFile(file);
-    else heldFile = file;
-    if (file && conversationState === "opened") conversationState = "peeked";
-    if (!file) {
-      const restoreFocus = whatHadFocus;
-      whatHadFocus = null;
-      queueMicrotask(() => restoreFocus?.focus());
-    }
+    return draft;
   }
-
-  /** The artifact takes focus when it opens, and gives it back when it closes.
-   *
-   * The reader is now reading the artifact, so that is where the keyboard should be. It
-   * is also what makes Escape reach this screen: a Ticket field is an editable surface
-   * and Escape belongs to the editor while the caret is in one, so an artifact opened
-   * from a link inside a field must move the focus out of it.
-   */
-  let artifactElement = $state<HTMLElement | null>(null);
-  let whatHadFocus: HTMLElement | null = null;
-  $effect(() => {
-    if (shownFile && artifactElement) artifactElement.focus();
-  });
-
-  /** A click on a link to a managed file opens the file here.
-   *
-   * Explicit preview addresses always open here. Raw managed links use the same viewer
-   * when their format supports a preview. Downloads and requests for another tab stay
-   * with the browser.
-   */
-  function openManagedFileInPlace(event: MouseEvent): void {
-    if (event.defaultPrevented) return;
-    const anchor = (event.target as Element | null)?.closest?.("a[href]");
-    if (!anchor || anchor.hasAttribute("download")) return;
-    const link = { href: anchor.getAttribute("href"), target: anchor.getAttribute("target") };
-    if (!isPlainLinkClick(link, event)) return;
-    const explicitPreview = targetFromPreviewHref(link.href);
-    const file = explicitPreview ?? managedFileTargetFromLinkHref(link.href);
-    if (!file || (!explicitPreview && resolvePreview(file).kind === "download")) return;
-    event.preventDefault();
-    showFile(file);
-  }
-
-  /** Escape closes the artifact, and belongs to it before anything else on the page.
-   *
-   * The conversation steps back a state on Escape too, so the press is claimed here to
-   * keep one press to one thing.
-   */
-  function closeFileOnEscape(event: KeyboardEvent): void {
-    if (event.key !== "Escape" || event.defaultPrevented) return;
-    if (!shownFile) return;
-    event.preventDefault();
-    showFile(null);
-  }
-
-  onMount(() => {
-    // What the conversation's model and effort pickers offer. Read once on arrival rather
-    // than through the query catalogue: it is a fact about the machine's agents, and
-    // nothing a person does to this Ticket changes it.
-    void readBackends()
-      .then((snapshots) => (conversationBackends = snapshots))
-      .catch(() => {
-        // The pickers fall back to showing the value already in force, which is the same
-        // thing they show before the catalog has arrived. Nothing here is worth a banner.
-      });
-  });
 
   /** Start this Ticket's conversation, so the first message has somewhere to go.
    *
@@ -235,24 +197,26 @@
    * same write that made the link.
    */
   async function sendToTicketWorker(body: OwnerSendBody): Promise<DeliveredMessage> {
-    return mutateJson<DeliveredMessage>(`/api/tickets/${stableId}/conversation/send`, {
+    const delivered=await mutateJson<DeliveredMessage>(`/api/tickets/${stableId}/conversation/send`, {
       method: "POST",
-      body
-    });
+      body});
+    if(delivered.conversation_id!==null) conversationId=delivered.conversation_id;
+    return delivered;
   }
 
   /** New: the old conversation is killed and the Ticket stops pointing at it. The next
    *  message starts a fresh one, through the same door as the first one ever did. */
   async function resetTicketConversation(): Promise<void> {
-    await mutateJson(`/api/tickets/${stableId}/conversation/reset`, { method: "POST" });
+    await mutateJson(`/api/tickets/${stableId}/conversation/reset`, { method: "POST"});
+    conversationId=null;
   }
 
-  function patch(body: Record<string, unknown>): Promise<unknown> {
-    return mutateJson(`/api/tickets/${stableId}`, { method: "PATCH", body });
+  async function patch(body: Record<string, unknown>): Promise<unknown> {
+    return mutateJson(`/api/tickets/${stableId}`, {method:"PATCH",body});
   }
 
   function saveScope(body: Record<string, unknown>): Promise<unknown> {
-    return mutateJson(`/api/tickets/${stableId}`, { method: "PATCH", body });
+    return mutateJson(`/api/tickets/${stableId}`, { method: "PATCH", body});
   }
 
   async function updateScope(body: Record<string, unknown>): Promise<void> {
@@ -267,42 +231,23 @@
 
   function saveValue(field: string, body: string): Promise<unknown> {
     return mutateJson(`/api/tickets/${stableId}`, {
-      method: "PATCH",
-      body: { field_values: { [field]: body } }
-    });
+      method: "PATCH", body: { field_values: { [field]: body } }});
   }
 
   function completeGate(field: string, body: string): Promise<unknown> {
     return mutateJson(`/api/tickets/${stableId}/complete/${field}`, {
-      method: "POST",
-      body: { body }
-    });
+      method: "POST", body: { body }});
   }
 
   function saveEmployeeConfiguration(
     configuration: EmployeeConfigurationSnapshot
   ): Promise<TicketDetail> {
     return mutateJson<TicketDetail>(`/api/tickets/${stableId}/employee-configuration`, {
-      method: "PUT",
-      body: configuration
-    });
-  }
-
-  function acceptField(field: string, body: Record<string, unknown>): Promise<unknown> {
-    return mutateJson(`/api/tickets/${stableId}/accept/${field}`, { method: "POST", body });
-  }
-
-  function currentStageRunLabel(detail: TicketDetail): string | null {
-    if (detail.blocked || detail.ticket_status === "blocked") return null;
-    if (detail.awaiting_approval) return "awaiting approval";
-    if (detail.assigned) {
-      return "you're on it";
-    }
-    return null;
+      method: "PUT", body: configuration});
   }
 
   function conversationWorkerTypeLabel(detail: TicketDetail): string {
-    return lc?.workerTypeLabel ?? labelize(detail.worker_type);
+    return conversationLifecycle?.workerTypeLabel ?? (detail.worker_type ? labelize(detail.worker_type) : 'Custom workflow');
   }
 
   function conversationEmployeeLabel(detail: TicketDetail): string {
@@ -314,25 +259,30 @@
   // choice is editable. Direct blockers belong to the Ticket itself, so they
   // always stay in the masthead instead of moving into a stage card.
   let kickoffCardShowsContextRow = $derived(
-    gatingFieldFor(lc, ticket.data?.stage ?? "") === "brief" &&
-      ticket.data?.pending_proposal?.field === "brief" &&
-      Boolean(ticket.data?.employee_configuration_editable)
+    section?.record.value.gating_field === "brief" &&
+      section.detail.pending_proposal?.field === "brief" &&
+      Boolean(section.detail.employee_configuration_editable)
   );
-
   async function removeBlocker(blockerTicketId: string): Promise<void> {
     headerError = null;
     try {
       await mutateJson(
         `/api/collections/blockers/${encodeURIComponent(stableId)}/${encodeURIComponent(blockerTicketId)}`,
-        { method: "DELETE" }
+        { method: "DELETE"}
       );
     } catch (err) {
       headerError = err;
     }
   }
+  let mastheadTypeLabel=$derived(masthead ? masthead.workflow_label ?? (healthyTicket?.worker_type === masthead.worker_type ? healthyTicket?.workflow?.label : null) ?? (masthead.worker_type ? labelize(masthead.worker_type) : 'Custom workflow') : '');
+
+  // The pointer footprint belongs to the mounted pane, independent of section controls.
+
+  let sectionElement=$state<HTMLElement | null>(null);
+
 </script>
 
-<svelte:window onkeydown={closeFileOnEscape} />
+<svelte:window onkeydown={artifact.closeOnEscape} />
 
 <!-- The catcher for links to managed files sits on the whole screen, so a file opens in
      place wherever it was written: a Ticket field, the recap, or the conversation. -->
@@ -341,39 +291,67 @@
 <!-- svelte-ignore a11y_no_static_element_interactions -->
 <!-- svelte-ignore a11y_click_events_have_key_events -->
 <section
+  bind:this={screenElement}
   class="ticket-screen"
   data-screen="ticket"
   data-ticket-id={stableId}
-  data-stage={ticket.data?.stage}
-  onclick={openManagedFileInPlace}
+  data-stage={section?.record.value.stage}
+  onclick={artifact.claimPress}
 >
-  <ResourceState error={ticket.error} loading={ticket.isFetching} hasData={Boolean(ticket.data)} loadingText="Loading ticket...">
-    {#if ticket.data && (manifest.error || manifestMissingWorkerType)}
+  {#if brokenTicket}
+    <div class="ticket-page" data-broken-ticket>
+      <main class="ticket-doc">
+        <header class="ticket-head">
+          <p class="worker-eyebrow">Broken Ticket</p>
+          <h1 class="ticket-title">{brokenTicket.title}</h1>
+        </header>
+        <ErrorLine error={{message:brokenTicket.integrity_error.reason}} />
+      </main>
+    </div>
+  {:else}
+  <ResourceState shape="document" layout="fill" error={ticket.error} loading={ticket.isFetching || !masthead || !section} hasData={Boolean(healthyTicket && masthead && (section || manifestMissingWorkerType))} loadingText="Loading ticket...">
+    {#if healthyTicket && manifestMissingWorkerType}
       <div class="ticket-page" data-ticket-manifest-error>
         <ErrorLine
-          error={manifest.error ?? { code: "unknown_worker_type", message: `no manifest for Worker type "${ticket.data.worker_type}"` }}
+          error={{ code: "invalid_workflow", message: "The Ticket workflow is unavailable." }}
         />
       </div>
-    {:else if ticket.data}
-      {@const detail = ticket.data}
-      <div class="ticket-page">
+    {:else if healthyTicket && masthead}
+      {@const detail = healthyTicket}
+      <div class="ticket-page" use:conversationDock use:dismissOutsideConversation>
       <div class="ticket-reading">
-      <main class="ticket-doc" onclickcapture={dismissConversationToRest}>
-        <header class="ticket-head">
-          <div class="worker-eyebrow" data-ticket-identity>
-            <span data-project-fact>{detail.project || "No project"}</span>
-            <span aria-hidden="true">·</span>
-            <span data-ticket-type>{conversationWorkerTypeLabel(detail)}</span>
+      <main class="ticket-doc">
+        <header bind:this={mastheadElement} class="ticket-head" data-ticket-masthead-id={masthead.id} data-ticket-locale={masthead.locale}>
+          <!-- Every page has one line above its title: where it lives, then its own facts.
+               Under the title there is only the recap. -->
+          <div class="page-band">
+          <div class="worker-eyebrow page-eyebrow page-band-place" data-ticket-identity>
+            <!-- Where the Ticket runs leads the line, as its icon alone; the machine's name is
+                 the mark's accessible name and tooltip. -->
+            <span class="worker-machine"><MachineIdentity machineId={masthead.machine_id} locale={masthead.locale} showName /></span>
+            <span data-project-fact>{masthead.project || "No project"}</span>
+            <span class="page-eyebrow-sep" aria-hidden="true">·</span>
+            <span data-ticket-type>{mastheadTypeLabel}</span>
+          </div>
+          <!-- The Ticket's utilities sit at the band's right end as ghosts, quiet and always
+               shown, so the decision below is the page's one call to action. -->
+          {#if section}<TicketLifecycleControls ticket={section.detail} terminal={section.record.value.terminal} variant="ghost">
+            {#snippet leading()}<RequestRecapAction kind="ticket" id={stableId} variant="ghost" bind:note={recapNote} noteInline={false} />{/snippet}
+          </TicketLifecycleControls>{/if}
           </div>
           <div class="ticket-title-row">
-            <div class="ticket-title" data-feedback-page-title>
-              <InlineEdit
-                value={detail.title}
+            <!-- The title, then its marks beside its words as staging drew them: working, and
+                 the unread dot. -->
+            <div class="ticket-title">
+              <h1 class="page-title ticket-title-text"><InlineEdit
+                value={masthead.title}
                 placeholder="Untitled"
                 onSave={(raw) => patch({ title: raw })}
-              />
-              <ConversationSignalMark signal={detail.conversation_signal} conversationId={detail.conversation_id} />
+              /></h1>
+              <span class="ticket-title-mark"><MachineActivityMark machineId={masthead.machine_id} working={false} agentHold={detail} locale={masthead.locale} signal={masthead.conversation_signal} conversationId={masthead.conversation_id} completed={detail.stage === "done" || detail.stage === "cancelled"} /></span>
             </div>
+            <RecapSlot>
+            {#snippet children()}
             <ClampedText
               contentKey={detail.recap}
               moreControlAttributes={{ "data-recap-toggle": "" }}
@@ -386,13 +364,16 @@
                 placeholder="+ add orientation"
                 onSave={(raw) =>
                   mutateJson(`/api/tickets/${stableId}`, {
-                    method: "PATCH",
-                    body: { recap: raw }
+                    method: "PATCH", body: { recap: raw }
                   })}
               />
             </ClampedText>
+            {/snippet}
+            </RecapSlot>
+            <!-- What became of an ask for a recap reads under the recap, as staging. -->
+            {#if recapNote}<p class="ticket-recap-note" role="status" data-request-recap-note>{recapNote}</p>{/if}
           </div>
-          {#if lc}<TicketLifecycleControls ticket={detail} terminal={Boolean(manifest.data?.worker_types.find((entry) => entry.worker_type === detail.worker_type)?.stages.find((entry) => entry.id === detail.stage)?.is_terminal)} />{/if}
+          {#if masthead.locale === "macos"}<MacStatus machineId={masthead.machine_id} health={machineHealth.isError ? undefined : machineHealth.data} ticket={{ticket_status: detail.ticket_status, locale: masthead.locale, conversation_signal: masthead.conversation_signal}} />{/if}
           {#if detail.blocker_summary?.blocked_by.length}
             <div class="ticket-blockers" data-blocker-summary>
               <span class="ticket-blocker-heading">Blocked by</span>
@@ -413,43 +394,49 @@
           {#if headerError}<ErrorLine error={headerError} />{/if}
         </header>
 
-        <div class="ticket-col">
+        {#if section}
+        {@const detail=section.detail}
+        {@const lc=section.lifecycle}
+        <div bind:this={sectionElement} class="ticket-col" data-ticket-section={section.record.id} data-section-stage={section.record.value.stage}>
           {#snippet kickoffContextRow()}
             {#if detail.employee_configuration_editable}
-              <WorkerConfigurationSetup ticketId={stableId} employeeBackend={detail.employee_backend}
+              {#key JSON.stringify([stableId, detail.locale, conversationStartValues.data?.workspace_folder, conversationStartValues.data?.workspace_path_policy])}
+              <WorkerConfigurationSetup destination={detail.locale} machineId={masthead.machine_id} ticketId={stableId} employeeBackend={detail.employee_backend}
                 employeeLaunchModel={detail.employee_launch_model} employeeLaunchReasoningEffort={detail.employee_launch_reasoning_effort}
+                workspace={conversationStartValues.data}
                 onSave={saveEmployeeConfiguration} />
+              {/key}
             {/if}
           {/snippet}
-          {#if lc}
-            {@const currentField = gatingFieldFor(lc, detail.stage)}
+          {#if section}
+            {@const currentField = section.record.value.gating_field}
             {@const history = workerPageHistory(lc, detail)}
             {@const completedFields = history.completed}
-            {@const occurredFields = history.fields}
+            {@const stepFields = history.fields}
             {#if currentField}
-              <section class:worker-live-card={detail.pending_proposal?.field !== currentField} class="worker-current" data-worker-live-card>
+              <section class:worker-live-card={detail.pending_proposal?.field !== currentField} class="worker-current" data-worker-live-card data-proposal-created-at={detail.pending_proposal?.created_at} data-proposal-revision={detail.pending_proposal?.revision}>
                 {#if detail.pending_proposal?.field === currentField}
                   {#key `${detail.pending_proposal.field}:${detail.pending_proposal.created_at}:${detail.pending_proposal.revision}`}
-                    <WorkerProposalCard proposal={detail.pending_proposal} lifecycle={lc} stage={detail.stage}
-                      ceiling={detail.ceiling} holder={detail.ceiling_holder} sprintItem={ticketSprintItem} canReturn={Boolean(detail.conversation_id)}
-                      onAccept={(payload) => acceptField(currentField, payload)}
+                    <WorkerProposalCard ticketId={stableId} proposal={detail.pending_proposal} lifecycle={lc} stage={detail.stage}
+                      ceiling={detail.ceiling} holder={detail.ceiling_holder} manager={ticketManager} canReturn={Boolean(detail.conversation_id)}
+                      onAccept={async () => {}}
                       onScope={updateScope}
-                      onReturn={(message) => mutateJson(`/api/tickets/${stableId}/reject`, { method:"POST", body:{ message } })}
+                      onReturn={async () => {}}
                       contextRow={currentField === "brief" && kickoffCardShowsContextRow ? kickoffContextRow : undefined} />
                   {/key}
                 {:else}
-                  <h2>{detail.blocked || detail.ticket_status === "blocked" ? "Blocked on" : detail.agent_state === "errored" ? "Error working on" : detail.assigned ? "Your step:" : detail.stage === "needs_brief" ? "Waiting for" : detail.agent_state === "working" || detail.ticket_status === "agent" ? "Currently working on" : "Waiting at"} {fieldLabelFor(lc, currentField)}</h2>
+                  <h2>{ticketSectionHeading(section,currentView)} {fieldLabelFor(lc, currentField)}</h2>
                   {#if detail.stage !== "needs_brief"}
                     <div class="worker-ceiling-line" data-leash>
                       <CeilingPicker document newStage={detail.stage} lifecycle={lc} ceiling={detail.ceiling} holder={detail.ceiling_holder}
                         triggerLabel={`Approved until ${detail.ceiling === "none" ? "No further" : stageLabelFor(lc, detail.ceiling)}, then ${pageHolderLabel(detail.ceiling_holder)} reviews`}
-                        holderLabel={pageHolderLabel} sprintItem={ticketSprintItem} below onComplete={(change) => void updateScope(change.ceiling === undefined
+                        holderLabel={pageHolderLabel} manager={ticketManager} below onComplete={(change) => void updateScope(change.ceiling === undefined
                           ? { ceiling_holder:change.holder } : { ceiling:change.ceiling, ceiling_holder:change.holder }).catch(() => undefined)} />
                     </div>
                   {/if}
-                  {#if detail.assigned}
+                  {#if sectionFacts?.assigned}
                     <TicketStageSection name={currentField} value={detail.field_values[currentField] ?? ""} lifecycle={lc}
-                      stageState={fieldStageVisualStateFor(lc, detail, currentField)} ticketStage={detail.stage}
+                      stageState={ticketSectionFieldState(section,currentView,currentField)} ticketStage={detail.stage}
                       variant="review" editableCurrentValue={true}
                       onCompleteGate={(raw) => completeGate(currentField, raw)} />
                   {/if}
@@ -458,50 +445,56 @@
               </section>
             {/if}
             <div class="worker-bands">
-              <details class="worker-steps" data-stage-fold>
+              <details class="worker-steps" data-stage-fold bind:open={stepsOpen}>
                 <summary data-stage-fold-open>Steps<span class="band-count">{completedFields.length} of {lc.fieldIds.length} done</span></summary>
+                {#if stepsOpen}
                 <div class="worker-step-rows">
-                  {#each occurredFields as name (`${detail.id}:${name}`)}
-                    {@const stageState = fieldStageVisualStateFor(lc, detail, name)}
-                    <TicketStageSection {name} value={detail.field_values[name] ?? ""}
+                  {#each stepFields as name (`${detail.id}:${name}`)}
+                    {@const stageState = ticketSectionFieldState(section,currentView,name)}
+                    <TicketStageSection {name} ticketId={stableId} draft={fieldDraft(name)} value={detail.field_values[name]}
+                      approval={detail.field_approvals?.[name]}
                       {stageState} lifecycle={lc} ticketStage={detail.stage}
                       emptyText={emptyTicketFieldText} editableValue={true}
                       editableCurrentValue={false} readerLeftItOpen={readerStageFolds.get(name) ?? false}
                       onReaderToggle={(open) => readerStageFolds.set(name, open)}
-                      runLabel={name === currentField ? currentStageRunLabel(detail) : null}
+                      runLabel={name === currentField ? ticketSectionRunLabel(section,currentView) : null}
                       onSaveValue={(raw) => saveValue(name,raw)}
                       onCompleteGate={(raw) => completeGate(name,raw)} />
                   {/each}
                 </div>
+                {/if}
               </details>
-              <ArtifactsBand items={ticketPageArtifactItems(detail.id, detail.artifacts, lc.fieldIds, detail.field_values, detail.pending_proposal)} />
+              <ArtifactsBand owner={{ kind: "ticket", id: detail.id }} />
             </div>
           {/if}
         </div>
+        {/if}
       </main>
-      {#if shownFile}
+      {#if artifact.shown}
         <ArtifactPreview
-          target={shownFile}
-          reloadSignal={artifactReloadSignal}
-          bind:element={artifactElement}
-          onRefresh={() => artifactReloadSignal += 1}
-          onClose={() => showFile(null)}
+          registerArtifactFrame={dismissal.registerArtifactFrame}
+          target={artifact.shown}
+          reloadSignal={artifact.reloadSignal}
+          bind:element={artifact.element}
+          onRefresh={artifact.refresh}
+          onClose={artifact.close}
         />
       {/if}
       </div>
       <div
         class="conversation-layer"
         data-conversation-layer-host
-        onclickcapture={dismissConversationOnAPressBesideTheCard}
       >
         <div class="conversation-column">
-          <LiveConversation
+          <LiveConversation machineId={masthead.machine_id} locale={masthead.locale}
             bind:conversationState
-            conversationId={detail.conversation_id}
+            conversationId={shownConversationId}
+            bind:selectedPastConversationId
+            readOnly={selectedPastConversationId !== null}
             persistenceKey={`owner:ticket:${detail.id}`}
+            uploadOwner={{kind:"ticket",id:detail.id}}
             label={conversationWorkerTypeLabel(detail)}
             composerPlaceholder={`Message ${conversationEmployeeLabel(detail)}...`}
-            bind:backends={conversationBackends}
             startValues={conversationStartValues.data ?? null}
             senderLabel="owner"
             sendMessage={sendToTicketWorker}
@@ -512,35 +505,48 @@
     </div>
     {/if}
   </ResourceState>
+  {/if}
 </section>
 
 <style>
-  .ticket-head, .ticket-col { width:min(720px, calc(100% - 48px)); padding-inline:0; }
+  /* The ticket's ghost page actions end with their label on the column's edge. */
+  .ticket-head .page-band > :global(.ticket-lifecycle) { margin-right:calc(var(--button-pad-x) * -1); }
   .ticket-col { padding-top:0; }
-  .ticket-doc { scrollbar-gutter:auto; }
-  .ticket-head { padding-top:48px; }
-  .worker-eyebrow { line-height:1.6; display:flex; align-items:center; gap:var(--space-2); font-size:13px; color:var(--text-faintest); }
-  .ticket-title-row { display:block; margin-top:var(--space-3); }
-  .ticket-title { display:flex; align-items:center; gap:var(--space-3); font-family:var(--font-ui); font-size:28px; font-weight:600; line-height:1.24; letter-spacing:-.014em; }
-  .ticket-title :global(.ed) { font:inherit; color:var(--text-strong); }
-  .ticket-head :global([data-recap]) { margin-top:var(--space-3); max-width:66ch; font-family:var(--font-ui); font-size:17px; line-height:1.6; color:var(--text-faint); }
+  .ticket-doc { scrollbar-gutter:auto; isolation:isolate; }
+  .ticket-head { padding-top:var(--page-top); }
+  .ticket-title-row { display:block; margin-top:var(--space-1); }
+  .ticket-recap-note { margin:var(--space-2) 0 0; color:var(--tone-tertiary); font-size:var(--type-small); line-height:18px; }
+  .worker-machine { display:inline-flex; align-items:center; margin-right:6px; color:var(--tone-tertiary); }
+
+  /* The title and a fixed 16px mark column, centred on the title's first line. */
+  /* As staging: the title, then its marks right after its words. */
+  .ticket-title { display:flex; align-items:flex-start; gap:var(--space-3); }
+  .ticket-title-text { min-width:0; margin:0; }
+  .ticket-title :global(.ed) { font:inherit; color:var(--tone-strong); }
+  .ticket-title-mark { flex:none; display:flex; align-items:center; justify-content:center; height:32px; }
+  /* The gap belongs to the slot, not to the words in it: the words go while a recap is
+     written, and a gap that went with them would move the page. */
+  .ticket-head :global([data-recap-slot]) { margin-top:var(--space-2); }
+  .ticket-head :global([data-recap]) { max-width:var(--page-prose-measure); font-family:var(--font-ui); font-size:var(--type-body); font-weight:var(--weight-body); line-height:var(--leading-body); color:var(--tone-primary); }
   .ticket-head :global([data-recap] .ed) { font:inherit; }
   .worker-current { margin-top:var(--space-6); }
-  .worker-live-card { padding:var(--space-5); background:var(--surface-2); border-radius:var(--radius-lg); }
-  .worker-live-card h2 { margin:var(--space-2) 0 0; letter-spacing:-.006em; font-size:20px; font-weight:600; line-height:1.35; color:var(--text-strong); }
+  .worker-live-card { padding:var(--page-card-pad); background:var(--page-card-fill); border:var(--border-hairline) solid var(--page-card-edge); border-radius:var(--page-card-radius); }
+  .worker-live-card h2 { margin:0; letter-spacing:0; font-size:var(--type-page-section); font-weight:var(--weight-page-section); line-height:20px; color:var(--tone-primary); }
   .worker-ceiling-line { margin-top:var(--space-3); }
-  .worker-ceiling-line :global([data-scope-ceiling]) { font-family:var(--font-ui); font-size:15px; line-height:1.3; color:var(--text-muted); padding:10px var(--space-3); margin-inline:calc(-1 * var(--space-3)); border:0; border-radius:var(--radius-sm); background:transparent; box-shadow:none; text-align:left; }
+  .worker-ceiling-line :global([data-scope-ceiling]) { font-family:var(--font-ui); font-size:var(--type-body); line-height:20px; color:var(--tone-secondary); padding:var(--space-2) var(--space-3); margin-inline:calc(-1 * var(--space-3)); border:0; border-radius:var(--radius-md); background:transparent; box-shadow:none; text-align:left; }
   .worker-ceiling-line :global([data-scope-ceiling]:hover) { background-image:var(--interaction-hover); }
-  .worker-bands { line-height:1.6; margin-top:var(--space-7); padding-bottom:var(--space-7); }
-  .worker-steps { border-top:1px solid var(--border-color); }
-  .worker-steps > summary { display:flex; align-items:center; gap:var(--space-3); padding:14px var(--space-2); margin-inline:calc(-1 * var(--space-2)); border-radius:var(--radius-sm); font-size:13px; font-weight:600; color:var(--text-faint); cursor:pointer; list-style:none; }
+  /* Steps and Artifacts are staging's two bands between hairlines: the label at the left in
+     Small print, its count at the right. */
+  .worker-bands { line-height:1.6; margin-top:var(--space-6); padding-bottom:var(--space-7); }
+  .worker-steps { border-top:var(--border-hairline) solid var(--border-color); }
+  .worker-steps > summary { display:flex; align-items:center; gap:var(--space-3); padding:14px var(--space-2); margin-inline:calc(-1 * var(--space-2)); border-radius:var(--radius-sm); font-size:var(--type-small); font-weight:var(--weight-title); color:var(--tone-secondary); cursor:pointer; list-style:none; }
   .worker-steps > summary::-webkit-details-marker { display:none; }
-  .worker-steps > summary:hover { background-image:var(--interaction-hover); color:var(--text-strong); }
-  .band-count { margin-left:auto; font-weight:400; color:var(--text-faintest); }
+  .worker-steps > summary:hover { background-image:var(--interaction-hover); color:var(--tone-strong); }
+  .band-count { margin-left:auto; font-weight:var(--weight-small); color:var(--tone-tertiary); }
   .worker-step-rows { padding-bottom:var(--space-4); }
   .worker-step-rows :global(.disclosure--stage) { margin:0; border:0; }
-  .worker-step-rows :global(.disclosure--stage > .disclosure-summary) { padding:9px var(--space-2); margin-inline:calc(-1 * var(--space-2)); border-radius:var(--radius-sm); font-size:15px; color:var(--text-muted); }
-  .worker-step-rows :global(.disclosure--stage > .disclosure-summary:hover) { background-image:var(--interaction-hover); color:var(--text-strong); }
-  .worker-step-rows :global(.disclosure--stage > .disclosure-body) { padding:var(--space-2) var(--space-2) var(--space-5); font-family:var(--font-ui); font-size:15px; color:var(--text-faint); }
-  .worker-step-rows :global(.disclosure-stage-name) { text-transform:none; font-size:15px; letter-spacing:normal; }
+  .worker-step-rows :global(.disclosure--stage > .disclosure-summary) { padding:var(--space-2); margin-inline:calc(-1 * var(--space-2)); border-radius:var(--radius-md); font-size:var(--type-body); color:var(--tone-secondary); }
+  .worker-step-rows :global(.disclosure--stage > .disclosure-summary:hover) { background-image:var(--interaction-hover); color:var(--tone-strong); }
+  .worker-step-rows :global(.disclosure--stage > .disclosure-body) { padding:var(--space-2) var(--space-2) var(--space-5); font-family:var(--font-ui); font-size:var(--type-body); color:var(--tone-primary); }
+  .worker-step-rows :global(.disclosure-stage-name) { text-transform:none; font-size:var(--type-body); letter-spacing:normal; }
 </style>

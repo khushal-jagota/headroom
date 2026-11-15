@@ -19,12 +19,25 @@
    * Choosing one inserts its exact text. The message still goes as ordinary text.
    */
   import { onMount, tick } from "svelte";
+  import { videoUploadAdapter } from "../../lib/conversation/videoUploads/adapter";
+  import { mintOutgoingMessage, reserveOutgoingMessageImages, reserveOutgoingMessageFiles, releaseOutgoingMessageImages, releaseOutgoingMessageFiles } from "../../lib/conversation/outgoing";
+  import { VideoTransfers } from "../../lib/conversation/videoUploads/uploads";
+  import { isVideoFile, VIDEO_ACCEPT } from "../../lib/conversation/videoUploads/config";
+  import type { PendingVideo, UploadDestination, ComposerSendContext } from "../../lib/conversation/videoUploads/contracts";
+  import { LocalComposerSends, releaseRemovedLocalSends, recallLocalSends, rememberLocalSends, recallDraftVideo, rememberDraftVideo, type PendingComposerSend } from "../../lib/conversation/videoUploads/localSends";
+
   import ComposerCatalogMenu from "./ComposerCatalogMenu.svelte";
   import {
     orderedComposerAttachments, attachmentExtension, attachmentByteLabel,
     type ComposerAttachmentReference
   } from "./composer/attachments";
   import { createComposerTextareaMeasurement } from "./composer/textareaMeasurement";
+  import {
+    controlsBelowTheDraft,
+    createDraftLineMeasurement,
+    moveBetweenDraftRows,
+    DRAFT_ROWS_MOTION_MS
+  } from "./composer/draftRows";
   import ComposerRunControls from "./composer/ComposerRunControls.svelte";
   import HeldPromptStack from "./composer/HeldPromptStack.svelte";
   import PermissionAskActions from "./PermissionAskActions.svelte";
@@ -36,6 +49,8 @@
     type ComposerDraft,
     type ComposerSendAttempt
   } from "./composer/draftTransaction";
+  import { untrack } from "svelte";
+  import { readComposerDraft, writeComposerDraft } from "../../lib/conversation/composerDraft";
   import {
     applyComposerRunSelectionIntent,
     resolveComposerRunControls
@@ -50,13 +65,11 @@
   import type { RunValues } from "../../lib/conversation/composer";
   import { catalogTokenAtMessageStart } from "../../lib/conversation/composerCatalog";
   import type { HeldPromptRow } from "../../lib/conversation/heldPrompts";
-  import { COMPOSITION_STATE_EVENT } from "../../lib/releaseMonitor";
   import {
     createVoiceCapture,
     formatVoiceTime,
     voiceCaptureAvailable,
     voiceCaptureSupported,
-    voiceFirstComposer,
     type VoiceCapture,
     type VoiceCaptureState
   } from "../../lib/conversation/voiceCapture";
@@ -87,13 +100,22 @@
 
   let {
     conversationId = null,
+    draftKey,
+    uploadDestination = null,
+    reconcileLocalSend = async () => false,
     backendKey = null,
     conversationExists = false,
     running = false,
     ask = null,
     userInput = null,
     askNote = null,
+    userInputNote = null,
+    permissionAvailable = true,
+    userInputAvailable = true,
     current = { model: null, reasoningEffort: null },
+    readError = null,
+    onRetryModelChoices,
+    onPreviewRunSelection,
     models = [],
     backends = $bindable([]),
     effortOptions = [],
@@ -115,10 +137,14 @@
     onDiscardHeldPrompt,
     onPromoteHeldPrompt,
     onStopDrawingHeldPrompt,
-    onSendHeldPromptAgain
+    onSendHeldPromptAgain,
+    onFieldChosen
   }: {
     /** The current conversation, or none before the first message creates it. */
     conversationId?: string | null;
+    draftKey: string;
+    uploadDestination?: UploadDestination | null;
+    reconcileLocalSend?: (messageId: string) => Promise<boolean>;
     /** The backend this conversation runs on — or, before there is one, the backend a
      *  message sent from here would create it on. */
     backendKey?: ConversationBackendKey | null;
@@ -137,8 +163,14 @@
       questions: readonly UserInputQuestion[];
     } | null;
     askNote?: string | null;
+    userInputNote?: string | null;
+    permissionAvailable?: boolean;
+    userInputAvailable?: boolean;
     current?: RunValues;
     /** What this conversation's own backend offers. */
+    readError?: string | null;
+    onRetryModelChoices?: () => Promise<void>;
+    onPreviewRunSelection?: (selection: ComposerRunSelection, backend?: ConversationBackendKey) => void;
     models?: readonly BackendModel[];
     /** Every backend this machine reported, each with its own catalog. What the rail
      *  chooses from before a conversation exists; empty is a caller that has not read
@@ -166,7 +198,8 @@
     onSend: (
       content: SentMessagePiece[],
       mode: PromptDeliveryMode,
-      picked: RunValues
+      picked: RunValues,
+      context?: ComposerSendContext
     ) => Promise<boolean>;
     onStop?: () => void;
     onAnswer?: (optionId: string) => void;
@@ -179,14 +212,36 @@
     ) => Promise<void> | void;
     onStopDrawingHeldPrompt?: (senderMessageId: string) => Promise<void> | void;
     onSendHeldPromptAgain?: (senderMessageId: string) => Promise<void> | void;
+    /** The person put the cursor in the field: focused it, or pressed it or the box around
+     *  it. Focus the composer hands back after one of its own controls is not this. */
+    onFieldChosen?: () => void;
   } = $props();
 
-  let text = $state("");
+  // Restored before the first paint, so a rebuilt composer comes back with the words
+  // in it rather than empty.
+  let text = $state(untrack(() => readComposerDraft(draftKey)));
+  let draftKeyOnScreen = untrack(() => draftKey);
+  $effect(() => {
+    const key = draftKey;
+    if (key === untrack(() => draftKeyOnScreen)) return;
+    draftKeyOnScreen = key;
+    text = readComposerDraft(key);
+  });
+  $effect(() => { writeComposerDraft(draftKey, text); });
   let deliveryMode = $state<PromptDeliveryMode>("steer");
   let runSelection = $state<ComposerRunSelection>({
     pickedBackend: null,
     pickedModel: null,
     pickedReasoningEffort: null
+  });
+  let providerSelections: Partial<Record<ConversationBackendKey, ComposerRunSelection>> = {};
+  let runSelectionDraftKey = untrack(() => draftKey);
+  $effect(() => {
+    const key = draftKey;
+    if (key === untrack(() => runSelectionDraftKey)) return;
+    runSelectionDraftKey = key;
+    providerSelections = {};
+    runSelection = {pickedBackend: null, pickedModel: null, pickedReasoningEffort: null};
   });
   let inputElement = $state<HTMLTextAreaElement | null>(null);
   // Counted rather than flagged: the box stays typeable through a send, so a second
@@ -205,10 +260,71 @@
   let activeCatalogEntryIndex = $state(0);
   let pendingImages = $state<PendingConversationImage[]>([]);
   let pendingFiles = $state<PendingConversationFile[]>([]);
+  let pendingVideos = $state.raw<PendingVideo[]>([]);
+  let localSends = $state.raw<PendingComposerSend[]>([]);
+  let restoredSendContext: ComposerSendContext | null = null;
+  let nextVideoId = 1;
+  let localStorageKey = untrack(() => draftKey);
+  const transfers = new VideoTransfers(videoUploadAdapter, videoChanged);
+  const makeSendQueue = () => new LocalComposerSends(async (entry, content) => {
+    if (destroyed) return false;
+    return onSend(content, entry.mode, entry.attempt.carriedRunValues, entry.context);
+  }, videoChanged);
+  let sendQueue = makeSendQueue();
+  function videoChanged(): void {
+    if (destroyed) return;
+    const previousEntries = localSends;
+    pendingVideos = [...pendingVideos];
+    localSends = [...sendQueue.entries];
+    rememberDraftVideo(localStorageKey, pendingVideos);
+    rememberLocalSends(localStorageKey, localSends);
+    releaseRemovedLocalSends(previousEntries, localSends);
+    void sendQueue.pump();
+  }
+  async function restoreLocalState(): Promise<void> {
+    const restoringKey = localStorageKey;
+    const restoringQueue = sendQueue;
+    pendingVideos = recallDraftVideo(localStorageKey);
+    nextVideoId = Math.max(1, ...pendingVideos.map(video => video.id + 1));
+    attachmentOrder = [...attachmentOrder.filter(item => item.kind !== "video"), ...pendingVideos.map(video => ({kind: "video" as const, id: video.id}))];
+    sendQueue.entries = recallLocalSends(localStorageKey);
+    for (const entry of sendQueue.entries) reserveLocalSend(entry);
+    localSends = [...sendQueue.entries];
+    for (const entry of [...sendQueue.entries]) {
+      if (entry.phase !== "dispatching") continue;
+      try {
+        const alreadyDispatched = await reconcileLocalSend(entry.context.messageId);
+        if (destroyed || restoringKey !== localStorageKey || restoringQueue !== sendQueue) return;
+        if (alreadyDispatched) {
+          sendQueue.entries = sendQueue.entries.filter(candidate => candidate !== entry);
+        } else { entry.phase = "interrupted"; entry.needsReconciliation = false; }
+      } catch {
+        entry.phase = "interrupted"; entry.needsReconciliation = true;
+        entry.error = "The earlier send could not be checked. Check the conversation before sending it again.";
+      }
+    }
+    if (destroyed || restoringKey !== localStorageKey || restoringQueue !== sendQueue) return;
+    for (const video of pendingVideos) if (video.uploadId && video.phase === "validating") void transfers.validate(video);
+    videoChanged();
+  }
+
   let attachmentOrder = $state<ComposerAttachmentReference[]>([]);
-  let attachments = $derived(orderedComposerAttachments(attachmentOrder, pendingImages, pendingFiles));
+  let attachments = $derived(orderedComposerAttachments(attachmentOrder, pendingImages, pendingFiles, pendingVideos));
   let imageInput = $state<HTMLInputElement | null>(null);
   let fileInput = $state<HTMLInputElement | null>(null);
+  $effect(() => {
+    const key = draftKey;
+    if (key === untrack(() => localStorageKey)) return;
+    untrack(() => {
+      rememberLocalSends(localStorageKey, sendQueue.entries);
+      rememberDraftVideo(localStorageKey, pendingVideos);
+      transfers.dispose(); sendQueue.dispose();
+      releasePendingImages(pendingImages);
+      pendingImages = []; pendingFiles = []; pendingVideos = []; attachmentOrder = [];
+      localStorageKey = key; sendQueue = makeSendQueue();
+      void restoreLocalState();
+    });
+  });
   let nextImageId = 1;
   let nextFileId = 1;
   let dragDepth = 0;
@@ -222,12 +338,7 @@
   let destroyed = false;
 
   // --- speaking instead of typing ----------------------------------------------------------
-  /** Whether the person asked for the keyboard instead of voice-first, kept for the
-   *  session so the composer does not snap back to the mic while they type. */
-  const KEYBOARD_PREFERRED = "panels.composer.voiceKeyboardPreferred";
-  let coarsePointer = $state(false);
   let voiceSupported = $state(false);
-  let keyboardPreferred = $state(false);
   let voiceState = $state<VoiceCaptureState>({ phase: "idle" });
   let voice: VoiceCapture | null = null;
 
@@ -236,19 +347,6 @@
   /** Browser recording capability controls availability. The question panel and
    *  permission ask always outrank voice. */
   let voiceAvailable = $derived(voiceCaptureAvailable(voiceSupported, !takenOver));
-  let voiceTakeover = $derived(voiceState.phase !== "idle");
-  /** The empty composer on a phone leads with the mic. Anything composed, disabled, or
-   *  remembered as keyboard-preferred yields to the normal composer. */
-  let voiceFirstIdle = $derived(
-    voiceFirstComposer({
-      available: voiceAvailable,
-      coarsePointer,
-      active: voiceTakeover,
-      keyboardPreferred,
-      disabled: inputDisabled,
-      empty: text === "" && pendingImages.length === 0 && pendingFiles.length === 0
-    })
-  );
   let livePlaceholder = $derived(ask !== null ? askPlaceholder(ask) : placeholder);
   /** The Add menu, and the camera the design's third choice needs. */
   let addMenuOpen = $state(false);
@@ -280,6 +378,7 @@
 
   let runControlsInput = $derived<ComposerRunControlsInput>({
     selection: runSelection,
+    readError,
     backendKey,
     conversationExists,
     running,
@@ -290,34 +389,15 @@
     startsOnModel,
     startsOnReasoningEffort,
     inputDisabled,
-    hasSendableContent: text.trim() !== "" || pendingImages.length > 0 || pendingFiles.length > 0,
+    hasSendableContent: text.trim() !== "" || pendingImages.length > 0 || pendingFiles.length > 0 || pendingVideos.length > 0,
     sendsInFlight,
     deliveryMode
   });
   let runControlsView = $derived(resolveComposerRunControls(runControlsInput));
-  /** A retained page must not reload while this composer owns work or a user decision. */
-  let compositionActive = $derived(
-    text !== ""
-    || pendingImages.length > 0
-    || pendingFiles.length > 0
-    || voiceState.phase !== "idle"
-    || takenOver
-    || draggingAttachments
-    || attachmentIntakesInFlight > 0
-    || runSelection.pickedBackend !== null
-    || runSelection.pickedModel !== null
-    || runSelection.pickedReasoningEffort !== null
-    || deliveryMode !== "steer"
-  );
-
-  function publishCompositionState(active: boolean): void {
-    document.dispatchEvent(new CustomEvent(COMPOSITION_STATE_EVENT, { detail: { active } }));
-  }
-
   $effect(() => {
-    publishCompositionState(compositionActive);
+    const selection = runSelection;
+    if (onPreviewRunSelection) untrack(() => onPreviewRunSelection?.(selection));
   });
-
   // --- the catalog token being written ----------------------------------------------------
   let catalogTokenUnderway = $derived(catalogTokenAtMessageStart(text, cursorAt));
   let typedCatalogText = $derived(catalogTokenUnderway?.typedSoFar ?? null);
@@ -388,6 +468,7 @@
       one.pickedBackend === other.pickedBackend
       && one.pickedModel === other.pickedModel
       && one.pickedReasoningEffort === other.pickedReasoningEffort
+      && one.effortIsSet === other.effortIsSet
     );
   }
 
@@ -405,9 +486,12 @@
       text,
       pendingImages,
       pendingFiles,
+      pendingVideos,
       attachmentOrder,
       pickedModel: runSelection.pickedModel,
       pickedReasoningEffort: runSelection.pickedReasoningEffort,
+      pickedBackend: runSelection.pickedBackend,
+      effortIsSet: runSelection.effortIsSet,
       compositionRevision
     };
   }
@@ -417,16 +501,26 @@
     attachmentOrder = [...(draft.attachmentOrder ?? [])];
     pendingImages = [...draft.pendingImages];
     pendingFiles = [...draft.pendingFiles];
+    pendingVideos = [...(draft.pendingVideos ?? [])];
+    rememberDraftVideo(localStorageKey, pendingVideos);
     runSelection = {
       ...runSelection,
       pickedModel: draft.pickedModel,
-      pickedReasoningEffort: draft.pickedReasoningEffort
+      pickedBackend: draft.pickedBackend ?? null,
+      pickedReasoningEffort: draft.pickedReasoningEffort,
+      effortIsSet: draft.effortIsSet
     };
     compositionRevision = draft.compositionRevision;
   }
 
   function applyRunSelectionIntent(intent: ComposerRunSelectionIntent): void {
-    const next = applyComposerRunSelectionIntent(runControlsInput, intent);
+    let next = applyComposerRunSelectionIntent(runControlsInput, intent);
+    if (intent.intent === "choose_backend" && !conversationExists) {
+      const previousBackend = runSelection.pickedBackend ?? backendKey;
+      if (previousBackend) providerSelections[previousBackend] = { ...runSelection };
+      next = providerSelections[intent.backendKey] ?? next;
+      next = {...next, pickedBackend: intent.backendKey};
+    }
     const changed = !sameRunSelection(runSelection, next);
     if (changed) {
       runSelection = next;
@@ -436,14 +530,19 @@
       intent.intent === "choose_model"
       || intent.intent === "choose_reasoning_effort"
     ) {
-      inputElement?.focus();
+      returnFocusToTheField();
     }
   }
 
   async function send(): Promise<void> {
     await intakeTail;
     const trimmed = text.trim();
-    if ((!trimmed && pendingImages.length === 0 && pendingFiles.length === 0) || inputDisabled) return;
+    if ((!trimmed && pendingImages.length === 0 && pendingFiles.length === 0 && pendingVideos.length === 0) || inputDisabled) return;
+    const capturedRetryContext = restoredSendContext;
+    restoredSendContext = null;
+    const capturedMode = deliveryMode;
+    const capturedConversationId = conversationId;
+    const capturedDestination = uploadDestination ? {...uploadDestination} : undefined;
     const attempt = beginComposerSend(
       currentComposerDraft(),
       runControlsView.carriedRunValues
@@ -453,12 +552,20 @@
     releasePendingImages(attempt.draftBeforeSend.pendingImages);
     if (imageInput) imageInput.value = "";
     intakeError = null;
+    if ((attempt.draftBeforeSend.pendingVideos?.length ?? 0) > 0 || sendQueue.entries.length > 0) {
+      const messageId = capturedRetryContext?.messageId ?? `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 12)}`;
+      const entry: PendingComposerSend = {context: capturedRetryContext ?? {messageId, expectedConversationId: capturedConversationId, destination: capturedDestination}, attempt, mode: capturedMode, phase: "waiting"};
+      if (!reserveLocalSend(entry)) { await restoreRefusedAttempt(attempt); return; }
+      sendQueue.enqueue(entry);
+      return;
+    }
     sendsInFlight += 1;
     try {
       const delivered = await onSend(
         [...attempt.content],
-        deliveryMode,
-        attempt.carriedRunValues
+        capturedMode,
+        attempt.carriedRunValues,
+        capturedRetryContext ?? undefined
       );
       if (!delivered) await restoreRefusedAttempt(attempt);
     } finally {
@@ -467,8 +574,9 @@
   }
 
   const runControlIntents: ComposerRunControlIntents = {
-    chooseBackend: (backendKey) =>
-      applyRunSelectionIntent({ intent: "choose_backend", backendKey }),
+    chooseBackend: (backendKey) => {
+      applyRunSelectionIntent({ intent: "choose_backend", backendKey });
+    },
     chooseModel: (model, reasoningEffort) =>
       applyRunSelectionIntent({ intent: "choose_model", model, reasoningEffort }),
     chooseReasoningEffort: (reasoningEffort) => applyRunSelectionIntent({
@@ -506,7 +614,7 @@
       || text !== restoredText
       || compositionRevision !== restoredRevision
     ) return;
-    input.focus();
+    returnFocusToTheField();
     input.setSelectionRange(input.value.length, input.value.length);
     cursorAt = input.value.length;
   }
@@ -515,12 +623,32 @@
     files: Iterable<File> | ArrayLike<File> | null | undefined
   ): Promise<void> {
     if (disabled || takenOver) return Promise.resolve();
-    const chosen = Array.from(files ?? []);
+    const chosen: File[] = [];
+    for (const file of Array.from(files ?? [])) {
+      if (!isVideoFile(file.name)) { chosen.push(file); continue; }
+      if (!uploadDestination) { intakeError = "Video upload is unavailable for this conversation."; continue; }
+      if (pendingVideos[0]?.phase === "interrupted" || (pendingVideos[0]?.phase === "failed" && !pendingVideos[0]?.file)) removeVideo(pendingVideos[0]);
+      if (pendingVideos.length) { intakeError = "Attach one video per message."; continue; }
+      try {
+        const video = transfers.create(file, nextVideoId++, uploadDestination);
+        pendingVideos = [video];
+        attachmentOrder = [...attachmentOrder, {kind: "video", id: video.id}];
+        recordDraftChange();
+        void transfers.start(video);
+      } catch (error) { intakeError = error instanceof Error ? error.message : "The video could not be attached."; }
+    }
+    if (!chosen.length) {
+      if (fileInput) fileInput.value = "";
+      if (imageInput) imageInput.value = "";
+      return Promise.resolve();
+    }
     intakeTail = intakeTail.then(() => intakeChosenFiles(chosen));
     return intakeTail;
   }
 
   async function intakeChosenFiles(files: readonly File[]): Promise<void> {
+    // The box is disabled while files are read, and a disabled box drops focus to the page.
+    const focusWasInComposer = boxElement?.contains(document.activeElement) ?? false;
     attachmentIntakesInFlight += 1;
     try {
       const acceptedImages: PendingConversationImage[] = [];
@@ -579,8 +707,65 @@
         // A camera hands back the same filename every time, so an unreset input is a
         // second capture that changes nothing and never fires.
         if (cameraInput) cameraInput.value = "";
+        if (focusWasInComposer) void tick().then(() => { if (!destroyed && !inputDisabled) returnFocusToTheField(); });
       }
     }
+  }
+
+  function removeVideo(video: PendingVideo): void {
+    transfers.remove(video);
+    pendingVideos = pendingVideos.filter(item => item !== video);
+    attachmentOrder = attachmentOrder.filter(item => item.kind !== "video" || item.id !== video.id);
+    recordDraftChange(); videoChanged();
+  }
+  function reserveLocalSend(entry: PendingComposerSend): boolean {
+    const message = {...mintOutgoingMessage({content: [...entry.attempt.content], senderLabel: "owner", mode: entry.mode}), messageId: entry.context.messageId};
+    if (!reserveOutgoingMessageImages(message)) { intakeError = "Wait for an outstanding image message to reach the conversation."; return false; }
+    if (!reserveOutgoingMessageFiles(message)) { releaseOutgoingMessageImages(message.messageId); intakeError = "Wait for an outstanding file message to reach the conversation."; return false; }
+    return true;
+  }
+  async function recoverLocalSend(entry: PendingComposerSend, removeVideo = false): Promise<void> {
+    if (entry.phase === "dispatching") return;
+    if (entry.needsReconciliation) {
+      try {
+        if (await reconcileLocalSend(entry.context.messageId)) { sendQueue.remove(entry.context.messageId); return; }
+        entry.needsReconciliation = false;
+      } catch { entry.error = "The earlier send could not be checked. Wait for the conversation to reconnect before returning it to the composer."; videoChanged(); return; }
+    }
+    entry.phase = "interrupted"; // Explicitly removes the automatic-send intent.
+    if (removeVideo) {
+      for (const video of entry.attempt.draftBeforeSend.pendingVideos ?? []) transfers.remove(video);
+      entry.attempt = {...entry.attempt,
+        content: entry.attempt.content.filter(piece => piece.piece !== "video_upload"),
+        draftBeforeSend: {...entry.attempt.draftBeforeSend, pendingVideos: [], attachmentOrder: entry.attempt.draftBeforeSend.attachmentOrder?.filter(item => item.kind !== "video")}};
+    }
+    const restoration = restoreRefusedComposerSend(currentComposerDraft(), entry.attempt, nextImageId, nextFileId, attachmentIntakesInFlight);
+    // An earlier interrupted draft may be returned once the newer draft is empty.
+    const empty = text === "" && !pendingImages.length && !pendingFiles.length && !pendingVideos.length;
+    const result = restoration.restored ? restoration : empty
+      ? restoreRefusedComposerSend({...entry.attempt.draftAfterSend}, entry.attempt, nextImageId, nextFileId, attachmentIntakesInFlight) : restoration;
+    if (result.restored) {
+      for (const video of result.draft.pendingVideos ?? []) {
+        if (video.uploadId && video.phase === "ready") { video.phase = "validating"; void transfers.validate(video); }
+      }
+      restoredSendContext = {...entry.context};
+      applyComposerDraft(result.draft); nextImageId = result.nextImageId; nextFileId = result.nextFileId;
+      sendQueue.remove(entry.context.messageId);
+      releaseOutgoingMessageImages(entry.context.messageId); releaseOutgoingMessageFiles(entry.context.messageId);
+      void tick().then(() => returnFocusToTheField());
+    } else entry.error = "Your newer draft is kept. Finish it, then return this message to the composer.";
+    videoChanged();
+  }
+  /** Shows the first frame of a video still held in memory; the browser draws it, nothing is uploaded. */
+  function localFrame(node: HTMLVideoElement, file: File) {
+    const url = URL.createObjectURL(file);
+    node.src = `${url}#t=0.1`;
+    return { destroy: () => URL.revokeObjectURL(url) };
+  }
+  function videoProgress(video: PendingVideo): string {
+    return video.phase === "uploading" ? `Uploading ${Math.floor(video.receivedBytes / video.byteCount * 100)}%`
+      : video.phase === "validating" ? "Checking video…" : video.phase === "ready" ? attachmentByteLabel(video.byteCount)
+      : video.error || "Select the video again.";
   }
 
   function removeImage(image: PendingConversationImage): void {
@@ -661,7 +846,8 @@
         }
       }
     }
-    if (event.key === "Enter" && !event.shiftKey) {
+    // Enter that confirms an IME choice belongs to the IME, not to send.
+    if (event.key === "Enter" && !event.shiftKey && !event.isComposing) {
       event.preventDefault();
       void send();
     }
@@ -736,7 +922,7 @@
     await tick();
     const input = inputElement;
     if (input === null) return;
-    input.focus();
+    returnFocusToTheField();
     input.setSelectionRange(cursorGoes, cursorGoes);
     theCursorIsInTheBox = true;
     cursorAt = cursorGoes;
@@ -757,15 +943,14 @@
     await tick();
     const input = inputElement;
     if (input === null) return;
-    input.focus();
+    returnFocusToTheField();
     input.setSelectionRange(1, 1);
     theCursorIsInTheBox = true;
     cursorAt = 1;
   }
 
   /** A transcription landed. The words join the draft the way typing them would have, and
-   *  the composer settles as the normal one with the cursor at the end — never back to the
-   *  voice-first face over text that was just spoken. An empty transcript is a no-op. */
+   *  the composer settles with the cursor at the end. An empty transcript is a no-op. */
   async function landTranscript(transcript: string): Promise<void> {
     if (transcript === "") return;
     recordDraftChange();
@@ -774,20 +959,9 @@
     await tick();
     const input = inputElement;
     if (input === null) return;
-    input.focus();
+    returnFocusToTheField();
     input.setSelectionRange(input.value.length, input.value.length);
     cursorAt = input.value.length;
-  }
-
-  async function preferKeyboard(): Promise<void> {
-    keyboardPreferred = true;
-    try {
-      window.sessionStorage.setItem(KEYBOARD_PREFERRED, "1");
-    } catch {
-      // A browser that keeps nothing for the tab still switches faces for now.
-    }
-    await tick();
-    inputElement?.focus();
   }
 
   // A question panel or permission ask arriving mid-voice takes the composer: whatever
@@ -796,26 +970,11 @@
     if (takenOver && voiceState.phase !== "idle") voice?.cancel();
   });
 
-  function writingAreaPaneHeight(pane: HTMLElement): number {
-    const layer = pane.closest<HTMLElement>(".conversation-layer");
-    if (pane.dataset.conversationState === "rest" && layer?.parentElement) {
-      // At rest the card is intrinsically as tall as this composer. Its bounded page is
-      // the available pane: using the card itself would make each resize shrink its own
-      // ruler, then trigger another resize. Peeked/opened have their own fixed share.
-      return layer.parentElement.clientHeight;
-    }
-    return pane.clientHeight;
-  }
-
   let textareaMeasurement: ReturnType<typeof createComposerTextareaMeasurement> | null = null;
 
   function resizeWritingArea(): void {
     const input = inputElement;
     if (input === null || input.hidden || input.getClientRects().length === 0) return;
-    const pane = input.closest<HTMLElement>("[data-conversation-pane]");
-    if (pane === null) return;
-    const paneHeight = writingAreaPaneHeight(pane);
-    if (paneHeight === 0) return;
     const style = getComputedStyle(input);
     const lineHeight = Number.parseFloat(style.lineHeight);
     if (!Number.isFinite(lineHeight) || lineHeight <= 0) return;
@@ -823,10 +982,138 @@
       textareaMeasurement?.dispose();
       textareaMeasurement = createComposerTextareaMeasurement(input);
     }
-    const size = textareaMeasurement.measure(style, paneHeight);
+    const size = textareaMeasurement.measure(style);
     const height = `${size.height}px`;
+    const host = input.closest<HTMLElement>(".ticket-page, .manager-page") ?? input.closest<HTMLElement>("[data-conversation-pane]");
+    host?.style.setProperty("--composer-growth", `${size.growth}px`);
     if (input.style.height !== height) input.style.height = height;
     if (input.style.overflowY !== size.overflowY) input.style.overflowY = size.overflowY;
+  }
+
+  // --- the draft's row ------------------------------------------------------------------------
+  /** The composer that is one row at rest: in a conversation layer, holding only the line. */
+  const ONE_ROW_COMPOSER =
+    ".conversation-layer .chat-box:not(:has(> :not(.chat-ta, .chat-foot, .chat-drop-label)))";
+  let boxElement = $state<HTMLDivElement | null>(null);
+
+  /** Whether focus now arriving in the field is the composer handing it back. */
+  let returningFocus = false;
+  function returnFocusToTheField(): void {
+    returningFocus = true;
+    try { inputElement?.focus(); } finally { returningFocus = false; }
+  }
+  // Answering an ask or a question removes the buttons that held focus, and the page keeps
+  // none. Give it to the box, but never take it from something the person chose.
+  let wasTakenOver = false;
+  $effect(() => {
+    const answered = wasTakenOver && !takenOver;
+    wasTakenOver = takenOver;
+    if (!answered) return;
+    void tick().then(() => {
+      const active = document.activeElement;
+      if (!destroyed && !inputDisabled && (active === null || active === document.body)) returnFocusToTheField();
+    });
+  });
+  function fieldFocused(): void {
+    readWhereTheCursorIs();
+    if (!returningFocus) onFieldChosen?.();
+  }
+  function fieldPressed(): void {
+    readWhereTheCursorIs();
+    onFieldChosen?.();
+  }
+
+  /** The box's own surface, its padding and the gaps between its controls, belongs to the
+   *  field: the line is 24px inside a taller box, and a press beside it should still write.
+   *  Controls, attachments and panels in the box keep their own presses. */
+  function pressOnTheBoxSurface(event: MouseEvent): boolean {
+    const target = event.target;
+    return target === boxElement
+      || (target instanceof HTMLElement && target.matches(".chat-foot, .chat-submit") && boxElement?.contains(target) === true);
+  }
+  function keepTheFieldFocused(event: MouseEvent): void {
+    if (pressOnTheBoxSurface(event) && document.activeElement === inputElement) event.preventDefault();
+  }
+  function focusTheFieldFromTheBox(event: MouseEvent): void {
+    const input = inputElement;
+    if (!pressOnTheBoxSurface(event) || input === null || input.hidden || input.disabled) return;
+    input.focus();
+    onFieldChosen?.();
+  }
+  /** Whether the controls are on their own row under the draft. Written to the box as
+   *  data-composer-controls-below in the same step as it is decided, so the layout can be
+   *  read before and after it and the move drawn between the two. */
+  let controlsBelow = false;
+  let draftRowsMoving: Animation[] = [];
+  let draftLine: ReturnType<typeof createDraftLineMeasurement> | null = null;
+  /** On the one row, what lies between the add button and the next control that is not
+   *  the draft: the grid's two column gaps and the draft's own inset. Read whenever the one
+   *  row is showing; the columns are the same with the controls below, so it still holds. */
+  let oneRowGutter = 8;
+  let draftRowsKey: string | null = null;
+  /** Whether the last placement found the composer in the shape that has a one row. A box
+   *  coming back to that shape (an attachment removed, a voice take ended) has never been
+   *  drawn in either layout, so it is placed, not moved. */
+  let inOneRowShape = false;
+
+  function roomBesideControls(box: HTMLElement, input: HTMLTextAreaElement): number | null {
+    const foot = box.querySelector<HTMLElement>(":scope > .chat-foot");
+    const add = foot?.querySelector<HTMLElement>(":scope > .chat-add") ?? null;
+    if (foot === null || add === null) return null;
+    const following = Array.from(foot.children).filter(
+      (element) => element !== add && element.getClientRects().length > 0
+    );
+    if (following.length === 0) return null;
+    const between = Math.min(...following.map((element) => element.getBoundingClientRect().left))
+      - add.getBoundingClientRect().right;
+    if (!controlsBelow) oneRowGutter = between - input.clientWidth;
+    return between - oneRowGutter;
+  }
+
+  /** Put the controls beside the draft or under it, as the draft and its room now need. A
+   *  move the person made by writing is animated; the first placement, a different draft, a
+   *  return to this shape and a change of width are simply placed. */
+  function placeDraftRow(animate: boolean): void {
+    const box = boxElement;
+    const input = inputElement;
+    if (box === null || input === null || input.hidden || !box.matches(ONE_ROW_COMPOSER)) {
+      inOneRowShape = false;
+      return;
+    }
+    if (!inOneRowShape) animate = false;
+    inOneRowShape = true;
+    const room = roomBesideControls(box, input);
+    if (room === null) return;
+    const style = getComputedStyle(input);
+    const draftWidth = text === "" || text.includes("\n")
+      ? 0
+      : (draftLine ??= createDraftLineMeasurement(document)).measure(text, style);
+    const next = controlsBelowTheDraft({
+      controlsBelow,
+      text,
+      draftWidth,
+      roomBesideControls: room
+    });
+    if (next === controlsBelow) return;
+    const change = (): void => {
+      controlsBelow = next;
+      box.toggleAttribute("data-composer-controls-below", next);
+      resizeWritingArea();
+    };
+    if (!animate || window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+      for (const animation of draftRowsMoving) animation.cancel();
+      draftRowsMoving = [];
+      change();
+      return;
+    }
+    const foot = box.querySelector<HTMLElement>(":scope > .chat-foot");
+    const controls = Array.from(foot?.children ?? []).filter(
+      (element): element is HTMLElement => element instanceof HTMLElement && element.getClientRects().length > 0
+    );
+    draftRowsMoving = moveBetweenDraftRows(box, [input, ...controls], draftRowsMoving, change, {
+      duration: DRAFT_ROWS_MOTION_MS,
+      easing: style.getPropertyValue("--motion-ease").trim() || "ease-out"
+    });
   }
 
   // Effects run after Svelte has written values and hidden-state changes into the DOM.
@@ -834,34 +1121,40 @@
     text;
     userInput;
     voiceState.phase;
-    voiceFirstIdle;
+    attachments.length;
+    const key = draftKey;
+    const writing = draftRowsKey === key;
+    draftRowsKey = key;
+    placeDraftRow(writing);
+    const heightBefore = inputElement?.style.height;
     resizeWritingArea();
+    // A line gained or lost while the box is still growing: the box takes its new height
+    // now rather than at the end of the move.
+    if (draftRowsMoving.length > 0 && inputElement?.style.height !== heightBefore) {
+      for (const animation of draftRowsMoving) animation.cancel();
+      draftRowsMoving = [];
+    }
   });
 
   $effect(() => {
     const input = inputElement;
     if (input === null) return;
-    const pane = input.closest<HTMLElement>("[data-conversation-pane]");
-    if (pane === null) return;
     let measuredWidth = -1;
-    let measuredPaneHeight = -1;
     let resizeFrame = 0;
     const observer = new ResizeObserver(() => {
       const width = input.clientWidth;
-      const paneHeight = writingAreaPaneHeight(pane);
       // The textarea's own height is an output, never another reason to resize it.
-      if (width === measuredWidth && paneHeight === measuredPaneHeight) return;
+      if (width === measuredWidth) return;
       measuredWidth = width;
-      measuredPaneHeight = paneHeight;
       // Write on the next frame, outside observer delivery. Even one intentional height
       // change to an observed input can otherwise report undelivered observations.
       cancelAnimationFrame(resizeFrame);
-      resizeFrame = requestAnimationFrame(resizeWritingArea);
+      resizeFrame = requestAnimationFrame(() => {
+        placeDraftRow(false);
+        resizeWritingArea();
+      });
     });
-    observer.observe(pane);
     observer.observe(input);
-    const page = pane.closest<HTMLElement>(".conversation-layer")?.parentElement;
-    if (page) observer.observe(page);
     return () => {
       observer.disconnect();
       cancelAnimationFrame(resizeFrame);
@@ -873,23 +1166,21 @@
   });
 
   onMount(() => {
-    coarsePointer = window.matchMedia("(pointer: coarse)").matches;
+    void restoreLocalState();
     voiceSupported = voiceCaptureSupported();
-    try {
-      keyboardPreferred = window.sessionStorage.getItem(KEYBOARD_PREFERRED) === "1";
-    } catch {
-      keyboardPreferred = false;
-    }
     voice = createVoiceCapture({
       onState: (state) => (voiceState = state),
       onTranscript: (transcript) => void landTranscript(transcript)
     });
     return () => {
       destroyed = true;
-      publishCompositionState(false);
+      transfers.dispose();
+      sendQueue.dispose();
       releasePendingImages(pendingImages);
       voice?.dispose();
       voice = null;
+      draftLine?.dispose();
+      draftLine = null;
     };
   });
 </script>
@@ -906,9 +1197,29 @@
 <section
   class="c2-composer"
   data-conversation-composer
-  data-conversation-composition-active={compositionActive ? "true" : undefined}
 >
   <div class="chat-box-stack">
+    {#each localSends as entry (entry.context.messageId)}
+      <article class="chat-local-send" data-local-video-send={entry.context.messageId} aria-label="Local pending message">
+        <p>{entry.attempt.draftBeforeSend.text}</p>
+        {#each entry.attempt.draftBeforeSend.pendingVideos ?? [] as video}
+          <div>{video.fileName} · <span role="status">{videoProgress(video)}</span></div>
+          {#if video.phase === "failed" && video.file && entry.phase === "waiting"}
+            <button type="button" onclick={() => void transfers.start(video)}>Retry</button>
+          {/if}
+        {/each}
+        <div role="status">{entry.error || (entry.phase === "dispatching" ? "Sending…" : entry.phase === "interrupted" ? "Kept in this browser · review before sending" : "Pending in this browser · not sent yet")}</div>
+        {#if entry.phase !== "dispatching"}
+          {#if entry.phase === "failed" && !entry.needsReconciliation}
+            <button type="button" onclick={() => {entry.phase = "waiting"; entry.error = undefined; videoChanged();}}>Retry send</button>
+          {/if}
+          <button type="button" onclick={() => recoverLocalSend(entry)}>{entry.phase === "interrupted" ? "Return to composer" : "Cancel send"}</button>
+          {#if entry.attempt.draftBeforeSend.pendingVideos?.length}
+            <button type="button" onclick={() => recoverLocalSend(entry, true)}>Remove video</button>
+          {/if}
+        {/if}
+      </article>
+    {/each}
     <HeldPromptStack
       rows={heldPromptRows}
       {conversationId}
@@ -920,8 +1231,11 @@
       onSendAgain={onSendHeldPromptAgain}
     />
 
+    <!-- The field takes the keyboard on its own; the box only widens where a press reaches it. -->
+    <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_noninteractive_element_interactions -->
     <div
       class="chat-box"
+      bind:this={boxElement}
       class:drag={draggingAttachments}
       class:has-ask={takenOver}
       data-conversation-box
@@ -932,18 +1246,22 @@
       ondragover={onDragOver}
       ondragleave={onDragLeave}
       ondrop={onDrop}
+      onmousedown={keepTheFieldFocused}
+      onclick={focusTheFieldFromTheBox}
     >
       {#if userInput}
         <UserInputQuestionPanel
           request={userInput}
           busy={disabled}
-          note={askNote}
+          answerAvailable={userInputAvailable}
+          note={userInputNote}
           onSubmit={(answers) => onSubmitUserInput?.(answers)}
           onCancelTurn={() => onCancelTurn?.()}
         />
       {:else if takenOver && ask}
         <PermissionAskCard
           ask={ask}
+          answerAvailable={permissionAvailable}
           busy={disabled}
           note={askNote}
           onAnswer={(optionId) => onAnswer?.(optionId)}
@@ -968,7 +1286,8 @@
             <div
               class="chat-att"
               class:img={attachment.kind === "image"}
-              class:file={attachment.kind === "file"}
+              class:file={attachment.kind === "file" || attachment.kind === "video"}
+              class:video={attachment.kind === "video"}
               data-chat-image-preview={attachment.kind === "image" ? "" : undefined}
               data-chat-image-name={attachment.kind === "image" ? item.fileName : undefined}
               data-chat-file-preview={attachment.kind === "file" ? "" : undefined}
@@ -977,6 +1296,20 @@
             >
               {#if attachment.kind === "image"}
                 <img src={attachment.value.previewUrl} alt="" />
+              {:else if attachment.kind === "video"}
+                <span class="chat-att-thumb" aria-hidden="true">
+                  {#if attachment.value.file}<video use:localFrame={attachment.value.file} muted playsinline preload="metadata" tabindex="-1"></video>{/if}
+                  <svg viewBox="0 0 24 24"><path d="m8 5 11 7-11 7z" /></svg>
+                </span>
+                <span class="chat-att-words"><span class="chat-att-name">{item.fileName}</span>
+                  <span class="chat-att-meta" role="status">{videoProgress(attachment.value)}</span>
+                </span>
+                {#if attachment.value.phase === "interrupted" || (attachment.value.phase === "failed" && !attachment.value.file)}
+                  <button type="button" onclick={() => fileInput?.click()}>Choose video again</button>
+                {/if}
+                {#if attachment.value.phase === "failed" && attachment.value.file}
+                  <button type="button" onclick={() => void transfers.start(attachment.value)}>Retry</button>
+                {/if}
               {:else}
                 <span class="chat-att-kind" aria-hidden="true">{attachmentExtension(item.fileName)}</span>
                 <span class="chat-att-words">
@@ -992,7 +1325,7 @@
                 aria-label={`Remove ${attachment.kind} ${item.fileName || "pasted image"}`}
                 title="Remove"
                 disabled={inputDisabled}
-                onclick={() => attachment.kind === "image" ? removeImage(attachment.value) : removeFile(attachment.value)}
+                onclick={() => attachment.kind === "image" ? removeImage(attachment.value) : attachment.kind === "video" ? removeVideo(attachment.value) : removeFile(attachment.value)}
               >×</button>
             </div>
           {/each}
@@ -1015,22 +1348,6 @@
             </span>
           {/if}
         </div>
-      {:else if userInput === null && voiceFirstIdle}
-        <button
-          type="button"
-          class="chat-voice-idle"
-          data-conversation-voice="idle"
-          data-voice-record
-          aria-label="Tap to speak"
-          disabled={inputDisabled}
-          onclick={() => void voice?.startRecording()}
-        >
-          <svg viewBox="0 0 24 24" aria-hidden="true">
-            <rect x="9" y="3" width="6" height="11" rx="3" />
-            <path d="M5 11a7 7 0 0 0 14 0M12 18v3" />
-          </svg>
-          <span>tap to speak</span>
-        </button>
       {/if}
 
       <textarea
@@ -1041,12 +1358,12 @@
         bind:this={inputElement}
         bind:value={text}
         disabled={inputDisabled}
-        hidden={userInput !== null || voiceState.phase !== "idle" || voiceFirstIdle}
+        hidden={userInput !== null || voiceState.phase !== "idle"}
         onkeydown={onKeydown}
         oninput={textChanged}
         onkeyup={readWhereTheCursorIs}
-        onclick={readWhereTheCursorIs}
-        onfocus={readWhereTheCursorIs}
+        onclick={fieldPressed}
+        onfocus={fieldFocused}
         onblur={() => (theCursorIsInTheBox = false)}
         onpaste={onPaste}
       ></textarea>
@@ -1056,6 +1373,7 @@
         {#if takenOver && ask}
           <PermissionAskActions
             ask={ask}
+            answerAvailable={permissionAvailable}
             busy={disabled}
             onAnswer={(optionId) => onAnswer?.(optionId)}
             onCancelTurn={() => onCancelTurn?.()}
@@ -1092,20 +1410,6 @@
               onclick={() => voice?.retry()}
             >retry</button>
           {/if}
-        {:else if voiceFirstIdle}
-          <button
-            type="button"
-            class="chat-image chat-voice-kb"
-            data-voice-keyboard
-            aria-label="Type instead"
-            title="Type instead"
-            onclick={() => void preferKeyboard()}
-          >
-            <svg viewBox="0 0 24 24" aria-hidden="true">
-              <rect x="2.5" y="6" width="19" height="12" rx="2" />
-              <path d="M6 10h.01M10 10h.01M14 10h.01M18 10h.01M6 14h.01M18 14h.01M9 14h6" />
-            </svg>
-          </button>
         {:else}
           <!-- One place to add something, rather than a row of separate buttons. What it
                offers is still the same set of things, and each of them still does exactly
@@ -1114,7 +1418,7 @@
             <button
               type="button"
               class="chat-image chat-add-btn"
-              class:on={pendingImages.length + pendingFiles.length > 0}
+              class:on={pendingImages.length + pendingFiles.length + pendingVideos.length > 0}
               data-conversation-add
               aria-haspopup="menu"
               aria-expanded={addMenuOpen}
@@ -1212,7 +1516,7 @@
             class="chat-image-input"
             data-conversation-file-input
             type="file"
-            accept={CONVERSATION_FILE_ACCEPT}
+            accept={`${CONVERSATION_FILE_ACCEPT},${VIDEO_ACCEPT}`}
             multiple
             onchange={() => void intakeFiles(fileInput?.files)}
           />
@@ -1239,6 +1543,7 @@
           {#if showRunPicker}
             <ComposerRunControls
               view={runControlsView}
+              onRetry={onRetryModelChoices}
               intents={runControlIntents}
               bind:snapshots={backends}
               beforeSubmit={microphone}
@@ -1323,6 +1628,10 @@
   }
 
   .c2-composer { display: grid; gap: var(--space-2); }
+  .chat-local-send { padding: var(--space-3); border: var(--border-hairline) solid var(--border-color); border-radius: var(--radius-sm); background: var(--surface-recessed); color: var(--text-muted); font-size: var(--type-sm); }
+  .chat-local-send p { white-space: pre-wrap; margin: 0 0 var(--space-2); color: var(--text-strong); }
+  .chat-local-send button { margin-top: var(--space-2); margin-right: var(--space-2); }
+
   /* An ask is a band on top of the box, not a replacement for it: the input keeps its
      resting height underneath, so the composer stays exactly the size it always was. */
   :global(.chat-box.has-ask) { padding-top: 0; }

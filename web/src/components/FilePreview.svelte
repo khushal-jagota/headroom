@@ -1,11 +1,13 @@
 <script lang="ts">
-  import { onDestroy } from "svelte";
+  import EmbeddedMediaPreview from "./EmbeddedMediaPreview.svelte";
+  import { openMediaViewer } from "../lib/mediaViewer.svelte";
+  import SkeletonRegion from "./SkeletonRegion.svelte";
+  import ManagedHtmlDocument from "./ManagedHtmlDocument.svelte";
+  import { observeVisibleContent, resetVisibleContentHeight } from "../lib/visibleContent";
   import type { FilePreviewTarget } from "../lib/filePreview";
   import {
-    MANAGED_HTML_PREVIEW_SANDBOX,
     boundedConversationTextPreview,
     markdownExpansionFor,
-    prepareManagedHtmlPreviewDocument,
     resolvePreview
   } from "../lib/filePreview";
   import MarkdownBlock from "./MarkdownBlock.svelte";
@@ -15,32 +17,69 @@
     target,
     mode = "embedded",
     depth = 0,
-    visited = []
+    visited = [],
+    knownSizeLabel,
+    download,
+    linkText
   }: {
     target: FilePreviewTarget;
     mode?: "embedded" | "full";
     depth?: number;
     visited?: string[];
+    knownSizeLabel?: string;
+    download?: { href: string; fileName: string };
+    /** The words the author wrote for this link, which read as part of the sentence. */
+    linkText?: string;
   } = $props();
 
   const MEDIA_FETCH_FAILED = "file fetch failed";
 
+  let visible = $state(false);
+  function visibility(element: HTMLElement, _identity: string) {
+    const stop = observeVisibleContent(element, next => { visible = next; }, { canRetain: () => !error });
+    return { destroy: stop, update() { resetVisibleContentHeight(element); } };
+  }
+
   let text = $state<string | null>(null);
   let error = $state("");
-  let htmlFrame = $state<HTMLIFrameElement | null>(null);
   let resolved = $derived(resolvePreview(target));
   let expansion = $derived(markdownExpansionFor(resolved, depth, visited));
+  // Embedded, an HTML or Markdown artifact is a link in its sentence. The full preview
+  // is one press away, so nothing is fetched or framed here.
+  let artifactLink = $derived(mode === "embedded" && (resolved.kind === "html" || resolved.kind === "markdown"));
   let shouldFetchText = $derived(
-    (resolved.kind === "markdown" && expansion.expandable)
-      || resolved.kind === "html"
+    (resolved.kind === "markdown" && expansion.expandable && !artifactLink)
       || resolved.kind === "text"
   );
   let showsMedia = $derived(
     (resolved.kind === "image" || resolved.kind === "video" || resolved.kind === "audio") &&
       !error
   );
-  let showsDocument = $derived((shouldFetchText || resolved.kind === "pdf") && !error);
+  let showsDocument = $derived((shouldFetchText || resolved.kind === "pdf" || (resolved.kind === "html" && !artifactLink)) && !error);
   let inline = $derived(!showsMedia && !showsDocument);
+
+  let isCard = $derived(mode === "embedded" && showsDocument);
+  function clipping(element: HTMLElement) {
+    const inner = element.firstElementChild;
+    const measure = () => element.classList.toggle("file-preview-clip--cut",
+      text !== null && element.scrollHeight > element.clientHeight);
+    const observer = new ResizeObserver(measure);
+    observer.observe(element);
+    if (inner) observer.observe(inner);
+    measure();
+    return { destroy: () => observer.disconnect() };
+  }
+
+  let naturallyWide = $state(false);
+  let duration = $state(0);
+  $effect(() => { resolved.href; naturallyWide = false; duration = 0; });
+  function clock(seconds: number) {
+    return `${Math.floor(seconds / 60)}:${String(Math.floor(seconds % 60)).padStart(2, "0")}`;
+  }
+  function openViewer(event: MouseEvent, kind: "image" | "video") {
+    openMediaViewer({ href: resolved.href, label: resolved.label, kind,
+      downloadName: download?.fileName ?? resolved.label }, event.currentTarget as HTMLElement);
+  }
 
   function onMediaError() {
     error = MEDIA_FETCH_FAILED;
@@ -50,17 +89,13 @@
     const current = resolved;
     text = null;
     error = "";
-    if (!shouldFetchText) return;
+    if (!visible || !shouldFetchText) return;
     const controller = new AbortController();
     readManagedFile(current.href, controller.signal)
       .then((body) => {
-        // The read is shared, so it finishes even for a preview that has gone. Each
-        // one applies its own transform to the same immutable text, and a preview that
-        // left says nothing.
+        // Shared reads abort when the last visible reader leaves.
         if (controller.signal.aborted) return;
-        text = current.kind === "html"
-          ? prepareManagedHtmlPreviewDocument(body, current.href)
-          : (current.kind === "text" || current.kind === "markdown")
+        text = (current.kind === "text" || current.kind === "markdown")
               && current.target.kind === "conversation-file"
             ? boundedConversationTextPreview(body)
             : body;
@@ -71,15 +106,6 @@
     return () => controller.abort();
   });
 
-  $effect(() => {
-    if (resolved.kind === "html" && htmlFrame) {
-      htmlFrame.srcdoc = text || "";
-    }
-  });
-
-  onDestroy(() => {
-    if (htmlFrame) htmlFrame.srcdoc = "";
-  });
 </script>
 
 {#snippet openLink(href: string | undefined)}
@@ -89,9 +115,7 @@
   <a class="file-preview-link" {href} rel="noopener noreferrer">Open {resolved.label}</a>
 {/snippet}
 
-<!-- The file's own name, for the previews that cannot say it themselves: any preview on
-     a narrow screen, where the file is not drawn at all, and every media preview, which
-     draws a player with nothing in it until somebody presses play. -->
+<!-- Media retains its name above the transport. -->
 {#snippet nameLink(href: string | undefined)}
   <a class="file-preview-link file-preview-name-link" {href} rel="noopener noreferrer">
     Open {resolved.label}
@@ -102,18 +126,89 @@
   class={`file-preview file-preview--${mode}${inline ? " file-preview--inline" : ""}${resolved.target.kind !== "external-link" ? " file-preview--managed" : ""}`}
   data-file-preview
   data-file-preview-kind={resolved.kind}
+  use:visibility={resolved.href}
+  data-visible-content-failed={Boolean(error) || undefined}
 >
-  {#if mode === "embedded" && resolved.kind !== "download" && resolved.target.kind !== "external-link" && resolved.previewHref}
-    {@render nameLink(resolved.previewHref)}
+  {#if mode === "embedded" && showsMedia && resolved.kind === "audio"}
+    {@render nameLink(resolved.previewHref ?? resolved.href)}
+    {#if download}<a class="pv-act file-preview-media-download" href={download.href} download={download.fileName}>Download</a>{/if}
   {/if}
-  {#if showsMedia && resolved.kind === "image"}
+  {#if artifactLink}
+    <a class="file-preview-artifact-link" href={resolved.previewHref ?? resolved.href} rel="noopener noreferrer">{linkText || resolved.label}</a>
+    {#if download}{" "}<a class="pv-act" href={download.href} download={download.fileName}>Download</a>{/if}
+  {:else if isCard}
+    <article class="file-preview-card" class:file-preview-card--live={resolved.kind === "pdf"}>
+      <div class="file-preview-content">
+        {#if resolved.kind === "pdf"}
+          {#if visible}<iframe class="file-preview-frame file-preview-frame--pdf" src={resolved.href} title={resolved.label}></iframe>{/if}
+        {:else}
+          <div class="file-preview-clip" class:file-preview-clip--loading={text === null} use:clipping>
+            <div class="file-preview-natural" inert>
+              <SkeletonRegion shape="document" loading={text === null} loadingText="Loading preview...">
+                {#if text !== null}<pre class="conversation-text-preview">{text}</pre>{/if}
+              </SkeletonRegion>
+            </div>
+          </div>
+        {/if}
+      </div>
+      <div class="file-preview-band">
+        <span class="file-preview-tile" aria-hidden="true"><svg viewBox="0 0 20 20" fill="none">
+          {#if resolved.kind === "pdf"}<path d="M5 3h7l3 3v11H5Z" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/><path d="M12 3v3h3" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/><path d="M7.6 14v-3.4h1.3a1.1 1.1 0 0 1 0 2.2H7.6M11.6 14v-3.4h1.4" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/>
+          {:else}<path d="M4.5 5h11M4.5 8.5h11M4.5 12h8M4.5 15.5h5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>{/if}
+        </svg></span>
+        <span class="file-preview-identity">
+          <a class="pv-name" href={resolved.previewHref ?? resolved.href}>{resolved.label}</a>
+          <span class="file-preview-kind">{resolved.kind === "pdf" ? "PDF" : "Text"}{knownSizeLabel ? ` · ${knownSizeLabel}` : ""}</span>
+        </span>
+        {#if download}<a class="pv-act" href={download.href} download={download.fileName}>Download</a>{/if}
+      </div>
+    </article>
+  {:else if resolved.kind === "html" && !error}
+    <!-- Drawn before the preview comes into view, so the box it will occupy is already
+         there at first paint. Nothing is fetched until `visible`. -->
+    <article class="file-preview-document">
+      <div class="file-preview-document-header">
+        {@render openLink(resolved.previewHref ?? resolved.href)}
+      </div>
+      <ManagedHtmlDocument href={resolved.href} label={resolved.label} active={visible} />
+    </article>
+  {:else if !visible && !inline}
+    <span aria-hidden="true"></span>
+  {:else if showsMedia && mode === "embedded" && resolved.kind === "image"}
+    <button type="button" class="file-preview-media" data-media-open="image"
+      aria-label={`Open ${resolved.label}`} onclick={event => openViewer(event, "image")}>
+      <img
+        class="file-preview-image"
+        class:file-preview-media--wide={naturallyWide}
+        src={resolved.href}
+        alt={resolved.label}
+        decoding="async"
+        onload={event => { naturallyWide = (event.currentTarget as HTMLImageElement).naturalWidth >= 120; }}
+        onerror={onMediaError}
+      />
+    </button>
+  {:else if showsMedia && mode === "embedded" && resolved.kind === "video"}
+    <button type="button" class="file-preview-media file-preview-media--video" data-media-open="video"
+      aria-label={`Play ${resolved.label}`} onclick={event => openViewer(event, "video")}>
+      <!-- The browser draws the first frame as a poster; the expanded view plays it. -->
+      <video class="file-preview-video-poster" class:file-preview-media--wide={naturallyWide}
+        src={`${resolved.href}#t=0.1`} preload="metadata" muted playsinline tabindex="-1" aria-hidden="true"
+        onloadedmetadata={event => { const video = event.currentTarget as HTMLVideoElement;
+          naturallyWide = video.videoWidth >= 120; duration = video.duration; }}
+        onerror={onMediaError}></video>
+      <span class="file-preview-media-play" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="m8 5 11 7-11 7z" /></svg></span>
+      {#if Number.isFinite(duration) && duration > 0}<span class="file-preview-media-duration">{clock(duration)}</span>{/if}
+    </button>
+  {:else if showsMedia && resolved.kind === "image"}
     <img
       class="file-preview-image"
       src={resolved.href}
       alt={resolved.label}
-      loading="lazy"
+      decoding="async"
       onerror={onMediaError}
     />
+  {:else if showsMedia && resolved.kind === "audio" && mode === "embedded"}
+    {#key resolved.href}<EmbeddedMediaPreview href={resolved.href} label={resolved.label} kind="audio" onerror={onMediaError} />{/key}
   {:else if showsMedia && resolved.kind === "video"}
     <!-- svelte-ignore a11y_media_has_caption -->
     <video
@@ -132,37 +227,23 @@
       onerror={onMediaError}
     ></audio>
   {:else if error}
-    <span class="quiet-line">{error}</span>
+    <span class="quiet-line">{#if mode === "embedded"}<span class="file-preview-failed-name">{resolved.label}</span>{" — "}{/if}{error}</span>
+    {#if mode === "embedded" && download}<a class="pv-act" href={download.href} download={download.fileName}>Download</a>{/if}
   {:else if resolved.kind === "pdf"}
     <iframe
       class="file-preview-frame file-preview-frame--pdf"
       src={resolved.href}
       title={resolved.label}
     ></iframe>
-  {:else if resolved.kind === "html"}
-    <article class="file-preview-document">
-      <div class="file-preview-document-header">
-        {@render openLink(resolved.previewHref ?? resolved.href)}
-      </div>
-      <iframe
-        bind:this={htmlFrame}
-        class="file-preview-frame"
-        data-file-preview-html
-        sandbox={MANAGED_HTML_PREVIEW_SANDBOX}
-        title={resolved.label}
-      ></iframe>
-    </article>
   {:else if resolved.kind === "markdown" && expansion.expandable}
     <article class="file-preview-document">
       <div class="file-preview-document-header">
         {@render openLink(resolved.previewHref ?? resolved.href)}
       </div>
       <div class="file-preview-document-body">
-        {#if text === null}
-          <div class="quiet-line">Loading preview...</div>
-        {:else}
-          <MarkdownBlock text={text} depth={expansion.nextDepth} visited={expansion.nextVisited} />
-        {/if}
+        <SkeletonRegion shape="document" loading={text === null} loadingText="Loading preview...">
+          {#if text !== null}<MarkdownBlock text={text} depth={expansion.nextDepth} visited={expansion.nextVisited} />{/if}
+        </SkeletonRegion>
       </div>
     </article>
   {:else if resolved.kind === "markdown"}
@@ -172,7 +253,9 @@
       <div class="file-preview-document-header">
         {@render openLink(resolved.previewHref ?? resolved.href)}
       </div>
-      <pre class="conversation-text-preview">{text ?? "Loading preview..."}</pre>
+      <SkeletonRegion shape="document" loading={text === null} loadingText="Loading preview...">
+        {#if text !== null}<pre class="conversation-text-preview">{text}</pre>{/if}
+      </SkeletonRegion>
     </article>
   {:else if resolved.kind === "download"}
     <a class="file-preview-link" href={resolved.href} download="">Download {resolved.label}</a>
@@ -183,7 +266,7 @@
 
 <style>
   .file-preview-frame--pdf { min-height: min(32rem, 60vh); }
-  .conversation-text-preview {
+  :global(.file-preview--full) .conversation-text-preview {
     max-height: min(24rem, 50vh);
     margin: 0;
     padding: var(--space-3);

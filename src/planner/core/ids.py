@@ -1,19 +1,16 @@
-"""Id generation: prefixed random slugs for entities, calendar day ids, and
+"""Id generation: prefixed random slugs for entities and
 claim tokens (distinct from run ids so §7.6 validation checks two values)."""
 
 from __future__ import annotations
 
 import secrets
-from datetime import date
 from typing import Final
 
 ID_PREFIXES: Final[dict[str, str]] = {
-    "sprint": "sp",
-    "sprint_item": "si",
+    "manager": "si",
     "ticket": "t",
     "schedule": "schedule",
     "idea": "idea",
-    "feedback": "feedback",
     "run": "run",
 }
 SLUG_ALPHABET: Final = "0123456789abcdefghjkmnpqrstuvwxyz"  # lowercase, no i/l/o
@@ -27,10 +24,6 @@ def _slug(length: int) -> str:
 
 def new_id(prefix: str) -> str:
     return f"{prefix}_{_slug(SLUG_LEN)}"
-
-
-def day_id(planning_date: date) -> str:
-    return f"day_{planning_date.isoformat()}"
 
 
 def new_claim() -> str:

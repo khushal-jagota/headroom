@@ -2,7 +2,7 @@
 
 The request boundary translates transport headers into one shared Principal. An
 unattributed browser or ordinary CLI request is the owner. Employee requests name
-the Chief, a Ticket, or a Sprint Item. Header names stay private to this adapter.
+the Chief, a Ticket, or a Manager. Header names stay private to this adapter.
 
 Whether that principal may act on a given thing is planner.core.authority, which asks
 one question. The guards that used to live here each named their own set of principal
@@ -25,17 +25,20 @@ from planner.core.contracts import (
 )
 from planner.core.errors import ErrorCode, PlannerError
 
+X_PLAN_CONVERSATION_ID: Final = "X-Plan-Conversation-ID"
+PLAN_CONVERSATION_ID_SCOPE_KEY: Final = "planner.request_conversation_id"
 X_PLAN_ACTOR: Final = "X-Plan-Actor"
 X_PLAN_TICKET_ID: Final = "X-Plan-Ticket-ID"
-X_PLAN_SPRINT_ITEM_ID: Final = "X-Plan-Sprint-Item-ID"
+X_PLAN_MANAGER_ID: Final = "X-Plan-Manager-ID"
 PLAN_ACTOR_SCOPE_KEY: Final = "planner.request_actor"
 PLAN_TICKET_ID_SCOPE_KEY: Final = "planner.request_ticket_id"
-PLAN_SPRINT_ITEM_ID_SCOPE_KEY: Final = "planner.request_sprint_item_id"
+PLAN_MANAGER_ID_SCOPE_KEY: Final = "planner.request_manager_id"
 
 
 @dataclass(frozen=True)
 class RequestContext:
     principal: Principal
+    conversation_id: str | None = None
 
 
 def _normalize(raw: str | None) -> str | None:
@@ -49,18 +52,18 @@ def _normalize(raw: str | None) -> str | None:
 def _classify(
     actor: str | None,
     ticket_id: str | None = None,
-    sprint_item_id: str | None = None,
+    manager_id: str | None = None,
 ) -> RequestContext:
     normalized_ticket_id = _normalize(ticket_id)
-    normalized_sprint_item_id = _normalize(sprint_item_id)
+    normalized_manager_id = _normalize(manager_id)
     if actor is None:
         return RequestContext(OWNER_PRINCIPAL)
     if actor == "chief":
         return RequestContext(CHIEF_PRINCIPAL)
     if actor == "worker" and normalized_ticket_id is not None:
         return RequestContext(Principal(PrincipalKind.ticket, normalized_ticket_id))
-    if actor == "sprint_item_supervisor" and normalized_sprint_item_id is not None:
-        return RequestContext(Principal(PrincipalKind.sprint_item, normalized_sprint_item_id))
+    if actor == "manager" and normalized_manager_id is not None:
+        return RequestContext(Principal(PrincipalKind.manager, normalized_manager_id))
     raise PlannerError(
         ErrorCode.agent_forbidden,
         "request actor does not name a Panels principal",
@@ -80,12 +83,34 @@ def request_context(request: Request) -> RequestContext:
         if PLAN_TICKET_ID_SCOPE_KEY in request.scope
         else request.headers.get(X_PLAN_TICKET_ID)
     )
-    sprint_item_id = (
-        request.scope[PLAN_SPRINT_ITEM_ID_SCOPE_KEY]
-        if PLAN_SPRINT_ITEM_ID_SCOPE_KEY in request.scope
-        else request.headers.get(X_PLAN_SPRINT_ITEM_ID)
+    manager_id = (
+        request.scope[PLAN_MANAGER_ID_SCOPE_KEY]
+        if PLAN_MANAGER_ID_SCOPE_KEY in request.scope
+        else request.headers.get(X_PLAN_MANAGER_ID)
     )
-    return _classify(_normalize(actor), _normalize(ticket_id), _normalize(sprint_item_id))
+    classified = _classify(
+        _normalize(actor), _normalize(ticket_id), manager_id
+    )
+    origin = request.scope.get(
+        PLAN_CONVERSATION_ID_SCOPE_KEY, request.headers.get(X_PLAN_CONVERSATION_ID)
+    )
+    return RequestContext(classified.principal, _normalize(origin))
+
+
+def require_owner_or_chief(ctx: RequestContext) -> None:
+    """Permit the owner or the Chief itself.
+
+    The Chief's recap is the Chief's own report of its work, the way a Ticket's recap is
+    its Worker's. Owner-only on that write makes the field unwritable by the one principal
+    whose work it describes.
+    """
+    if ctx.principal.kind in (PrincipalKind.owner, PrincipalKind.chief):
+        return
+    raise PlannerError(
+        ErrorCode.agent_forbidden,
+        "this operation is available only to the owner or the Chief",
+        {"actor": principal_legacy_actor(ctx.principal)},
+    )
 
 
 def require_owner(ctx: RequestContext) -> None:
@@ -102,3 +127,13 @@ def require_owner(ctx: RequestContext) -> None:
         "this operation is available only to the owner",
         {"actor": principal_legacy_actor(ctx.principal)},
     )
+
+
+AUTHENTICATED_OWNER_SCOPE_KEY: Final = "planner.authenticated_owner"
+
+
+def require_authenticated_owner(request: Request) -> None:
+    """Device registration needs the deployed access boundary's owner identity."""
+    require_owner(request_context(request))
+    if request.scope.get(AUTHENTICATED_OWNER_SCOPE_KEY) is not True:
+        raise PlannerError(ErrorCode.agent_forbidden, "authenticated owner access is required", {})

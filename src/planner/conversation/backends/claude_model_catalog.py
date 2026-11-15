@@ -19,6 +19,8 @@ from typing import Final
 
 from claude_agent_sdk import ClaudeAgentOptions, ClaudeSDKClient
 
+from planner.conversation.backends.cli_compatibility import ensure_cli_compatible
+
 # The whole probe — spawn, init handshake, stop — against a local child. Long enough
 # for a cold start on a slow machine, short enough that a card is never left waiting.
 MODEL_CATALOG_TIMEOUT_SECONDS: Final = 30.0
@@ -113,16 +115,16 @@ async def probe_claude_model_catalog(claude_executable: str) -> ClaudeModelCatal
             default_resolves_to = resolved
             continue
         raw_efforts = entry.get("supportedEffortLevels")
-        efforts = tuple(
-            effort for effort in (raw_efforts or ()) if isinstance(effort, str)
-        )
+        efforts = tuple(effort for effort in (raw_efforts or ()) if isinstance(effort, str))
         for effort in efforts:
             if effort not in efforts_in_listed_order:
                 efforts_in_listed_order.append(effort)
+        if any(model.model_id == resolved for model in models):
+            continue
         models.append(
             ClaudeModel(
-                model_id=value,
-                display_name=versioned_display_name(resolved),
+                model_id=resolved,
+                display_name=entry.get("displayName") or versioned_display_name(resolved),
                 resolved_model_id=resolved,
                 reasoning_effort_options=efforts,
             )
@@ -153,6 +155,7 @@ def _default_model_id(models: list[ClaudeModel], resolves_to: str | None) -> str
 
 
 async def _read_models_from_init(claude_executable: str) -> list[object]:
+    await ensure_cli_compatible("claude", claude_executable)
     options = ClaudeAgentOptions(cli_path=claude_executable, max_turns=1)
     async with ClaudeSDKClient(options=options) as client:
         info = await client.get_server_info()

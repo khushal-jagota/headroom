@@ -61,17 +61,19 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 import uuid
 import warnings
 from base64 import b64encode
 from collections import deque
-from collections.abc import AsyncIterable, AsyncIterator, Callable
-from contextlib import suppress
+from collections.abc import AsyncIterable, AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Final, Protocol, cast
 
+from anyio.abc import Process
 from claude_agent_sdk import (
+    TERMINAL_TASK_STATUSES,
     AssistantMessage,
     CanUseToolShadowedWarning,
     ClaudeAgentOptions,
@@ -88,6 +90,9 @@ from claude_agent_sdk import (
     ResultMessage,
     StreamEvent,
     SystemMessage,
+    TaskNotificationMessage,
+    TaskStartedMessage,
+    TaskUpdatedMessage,
     TextBlock,
     ThinkingBlock,
     ToolPermissionContext,
@@ -97,33 +102,61 @@ from claude_agent_sdk import (
     UserMessage,
 )
 from claude_agent_sdk._internal.transport.subprocess_cli import SubprocessCLITransport
+from claude_agent_sdk._version import __version__ as claude_sdk_version
 from claude_agent_sdk.types import SystemPromptPreset, _configure_can_use_tool
 
+from planner.conversation.backends.cli_compatibility import (
+    BackendCliIncompatible,
+    ensure_cli_compatible,
+)
 from planner.conversation.backends.contracts import (
+    AgentMessageCompleted,
+    AgentMessageDelta,
     BackendEventSink,
     BackendPermissionAsk,
     BackendPromptAccepted,
+    BackendPromptRejected,
     BackendSpawnFailed,
     BackendSteerAccepted,
     BackendSteerOutcome,
     BackendSteerRefused,
     BackendSteerUncertain,
+    BackendStreamEnded,
     BackendUserInputRequest,
+    BackgroundTaskEnded,
+    BackgroundTaskStarted,
+    CommandReplyReported,
+    ComposerCatalogReported,
+    ContextCompacted,
+    ModelThinkingHappened,
     NeedsRebind,
     PermissionAnswerWriteFailed,
+    PermissionAskRaised,
+    PlanUpdated,
     PromptWriteFailed,
     SessionLoadFailed,
+    TokenUsageReported,
+    ToolCallFinished,
+    ToolCallProgress,
+    ToolCallStarted,
+    TurnEnded,
     TurnToken,
     UserInputAnswerWriteFailed,
+    UserInputFailed,
+    UserInputRequested,
+    VendorSessionCursorRebound,
 )
 from planner.conversation.backends.failure_summary import normalized_failure_summary
+from planner.conversation.child_custody import process_identity
 from planner.conversation.contracts import (
+    AnswerFate,
     ComposerCatalogEntry,
     ComposerCatalogEntryKind,
     ConversationAccess,
     PromptDeliveryMode,
     PromptDeliveryRefusalReason,
     ResolvedConversationStart,
+    WorkspacePathPolicy,
 )
 from planner.conversation.events import (
     ConversationTurnEnding,
@@ -135,6 +168,7 @@ from planner.conversation.events import (
     UserInputOption,
     UserInputQuestion,
 )
+from planner.conversation.local_child_contracts import LocalChildIdentity
 from planner.conversation.message_content import (
     ComposedMessageDoesNotContainSenderContent,
     MessageContent,
@@ -149,6 +183,10 @@ from planner.conversation.message_files import (
     ConversationMessageFiles,
     MessageFileMissing,
 )
+from planner.conversation.worker_scratch import WorkerScratch
+from planner.core.task_settlement import run_on_worker_thread
+from planner.worker_supervision import WorkerCleanupError, WorkerSupervisor
+from planner.worker_supervision.config import NATIVE_PHASE_SECONDS, NATIVE_STREAM_SECONDS
 
 LOGGER = logging.getLogger("planner.conversation.backends.claude_agent_sdk")
 
@@ -163,18 +201,16 @@ CLAUDE_CODE_SYSTEM_PROMPT: Final[SystemPromptPreset] = {
 # called, which is why reading the call is reading the plan.
 TODO_WRITE_TOOL_NAME: Final = "TodoWrite"
 
-# The reasoning efforts claude has. A conversation asking for anything else is asking for a
-# session claude cannot give it.
-CLAUDE_REASONING_EFFORTS: Final[frozenset[str]] = frozenset(
-    {"low", "medium", "high", "xhigh", "max"}
-)
-
 # The system messages whose session id is a passing thing rather than the conversation's.
 # Hook messages carry the id of the hook's own run, and taking one for the cursor would
 # leave this conversation resuming from a session that was never its own.
 TRANSIENT_SESSION_ID_SYSTEM_SUBTYPES: Final[frozenset[str]] = frozenset(
     {"hook_started", "hook_progress", "hook_response"}
 )
+
+# The model name Claude Code puts on a message it wrote itself rather than asked the model
+# for. A command it answers locally, such as a refused ``/goal``, arrives this way.
+CLAUDE_SYNTHETIC_MESSAGE_MODEL: Final = "<synthetic>"
 
 # What the CLI calls a turn that somebody stopped. Anything else it reports is a turn that
 # ran and stopped on its own account.
@@ -220,6 +256,15 @@ REJECTED_COMMAND_LIFECYCLE_STATES: Final[frozenset[str]] = frozenset(
 # running, its closing receipt comes after its own result, and Panels puts no clock on work
 # Claude is doing. 15.0 seconds is what codex and hermes allow a wait of this kind.
 CLAUDE_STEER_SETTLEMENT_TIMEOUT_SECONDS: Final[float] = 15.0
+
+# Claude's word for the frame that carries every live background task after a change.
+BACKGROUND_TASKS_CHANGED_SUBTYPE: Final[str] = "background_tasks_changed"
+
+# How a task that left claude's live set ended when claude said nothing else about it.
+BACKGROUND_TASK_ENDED_UNREPORTED: Final[str] = "unreported"
+
+# How a task ends as activity when claude marks it ambient while it goes on running.
+BACKGROUND_TASK_BECAME_AMBIENT: Final[str] = "ambient"
 
 # Stop must not leave a queued steering command behind. A missing cancel receipt is a
 # failed cancellation, which makes the core discard this child and resume its session on
@@ -304,7 +349,10 @@ class ClaudeSdkClient(Protocol):
         """
         ...
 
-    async def query(self, prompt: str | AsyncIterable[dict[str, Any]]) -> None:
+    async def query(
+        self,
+        prompt: str | AsyncIterable[dict[str, Any]],
+    ) -> None:
         """A message as words, or as the content blocks a richer one is made of.
 
         Both are the SDK's own input shapes. Words stay words: the SDK wraps a string in
@@ -350,10 +398,13 @@ class ClaudeSdkClient(Protocol):
     async def disconnect(self) -> None: ...
 
 
-type ClaudeSdkClientFactory = Callable[[ClaudeAgentOptions], ClaudeSdkClient]
+class ClaudeSdkClientFactory(Protocol):
+    def __call__(self, options: ClaudeAgentOptions) -> ClaudeSdkClient: ...
 
 
-def claude_sdk_client(options: ClaudeAgentOptions) -> ClaudeSdkClient:
+def claude_sdk_client(
+    options: ClaudeAgentOptions,
+) -> ClaudeSdkClient:
     """The real SDK client, with the SDK's public custom-transport observation seam."""
 
     async def empty_prompt() -> AsyncIterator[dict[str, Any]]:
@@ -364,9 +415,182 @@ def claude_sdk_client(options: ClaudeAgentOptions) -> ClaudeSdkClient:
         warnings.simplefilter("ignore", CanUseToolShadowedWarning)
         transport_options = _configure_can_use_tool(options)
     transport = _ClaudeProtocolTransport(
-        SubprocessCLITransport(prompt=empty_prompt(), options=transport_options)
+        _ClaudeCleanupTransport(prompt=empty_prompt(), options=transport_options)
     )
     return _ObservedClaudeSdkClient(options, transport)
+
+
+class _ClaudeCleanupTransport(SubprocessCLITransport):
+    """Keep exact process exit evidence when SDK 0.2.152 clears its handle.
+
+    The SDK can return from close without a confirmed exit. Its next close is then
+    a no-op, so only the retained process can establish cleanup on a later call.
+    One transport owns one process lifetime and cannot reconnect after cleanup.
+    """
+
+    def __init__(
+        self,
+        prompt: str | AsyncIterable[dict[str, Any]],
+        options: ClaudeAgentOptions,
+    ) -> None:
+        super().__init__(prompt, options)
+        self._cleanup_process: Process | None = None
+        self._cleanup_started = False
+        self._worker_supervisor: WorkerSupervisor | None = None
+        self._worker_scratch: WorkerScratch | None = None
+        self.supervision_reporter: Callable[[str], Awaitable[None]] | None = None
+        self.custody_reporter: Callable[[LocalChildIdentity], Awaitable[None]] | None = None
+
+    def _build_command(self) -> list[str]:
+        command = super()._build_command()
+        if self._worker_supervisor is not None:
+            return list(self._worker_supervisor.argv(command))
+        return command
+
+    async def connect(self) -> None:
+        if self._cleanup_started:
+            raise RuntimeError("a Claude transport cannot reconnect after cleanup")
+        if self._cli_path is None:
+            self._cli_path = await asyncio.to_thread(self._find_cli)
+        await ensure_cli_compatible(
+            "claude",
+            self._cli_path,
+            environment=self._options.env,
+            working_directory=Path(self._cwd) if self._cwd else None,
+        )
+        try:
+            await self._connect_worker()
+        except BaseException as error:
+            cause = error
+            while cause.__cause__ is not None:
+                cause = cause.__cause__
+            if (isinstance(cause, OSError) and self._process is None
+                    and self._worker_supervisor is not None):
+                await self._worker_supervisor.cancel_unspawned()
+            elif self._worker_supervisor is not None and self._process is not None:
+                await self._worker_supervisor.spawned(self._process.pid)
+            # This transport owns the native handle before the SDK initializes.
+            if self._process is not None or self._worker_scratch is not None:
+                await self.close()
+            raise
+
+    async def _connect_worker(self) -> None:
+        # Use the role's explicit identity, never an inherited Worker identity.
+        if self._options.env.get("PLAN_TICKET_ID"):
+            environment = {
+                key: value for key, value in os.environ.items() if key != "CLAUDECODE"
+            }
+            environment.update({"CLAUDE_CODE_ENTRYPOINT": "sdk-py"})
+            environment.update(self._options.env)
+            environment["CLAUDE_AGENT_SDK_VERSION"] = claude_sdk_version
+            if self._cwd:
+                environment["PWD"] = self._cwd
+            if self._options.enable_file_checkpointing:
+                environment["CLAUDE_CODE_ENABLE_SDK_FILE_CHECKPOINTING"] = "true"
+            self._worker_supervisor = await WorkerSupervisor.create(
+                environment, Path(self._cwd or os.getcwd())
+            )
+            try:
+                self._worker_scratch = await WorkerScratch.create(environment)
+            except BaseException:
+                if self._worker_supervisor is not None:
+                    await self._worker_supervisor.cancel_unspawned()
+                raise
+            environment = self._worker_scratch.environment
+            self._options.env.update(environment)
+            if self._worker_supervisor is not None:
+                self._worker_supervisor.environment.update(environment)
+                self._options.env.update(self._worker_supervisor.environment)
+                if self.supervision_reporter is not None:
+                    try:
+                        await self.supervision_reporter(str(self._worker_supervisor.path))
+                    except BaseException:
+                        await self._worker_supervisor.cancel_unspawned()
+                        raise
+        await super().connect()
+        if self._worker_supervisor is not None and self._process is not None:
+            await self._worker_supervisor.started(self._process.pid)
+        if self.custody_reporter is not None:
+            if self._process is None:
+                raise BackendSpawnFailed("Claude did not expose its process identity")
+            if self._worker_supervisor is None:
+                identity = await run_on_worker_thread(process_identity, self._process.pid)
+            else:
+                identity = await run_on_worker_thread(self._worker_supervisor.identity)
+            if identity is None:
+                raise BackendSpawnFailed("Cannot establish the Claude process identity")
+            try:
+                await self.custody_reporter(identity)
+            except Exception as error:
+                raise BackendSpawnFailed(
+                    f"Cannot save the Claude process identity: {error}"
+                ) from error
+
+    async def _stop_worker(self) -> None:
+        supervisor = self._worker_supervisor
+        if supervisor is not None:
+            result = await supervisor.stop(native_stop=self._stop_native_process)
+            if not result.complete:
+                raise WorkerCleanupError(result.reason)
+
+    async def _stop_native_process(self) -> None:
+        if self._cleanup_process is None:
+            self._cleanup_process = self._process
+        process = self._cleanup_process
+        # Keep escalation inside the shared owner's callback budget. The SDK's
+        # ordinary EOF/TERM/KILL waits exceed that budget before KILL can run.
+        if process is not None and process.returncode is None:
+            if self._stdin_stream is not None:
+                try:
+                    await asyncio.wait_for(self._stdin_stream.aclose(), NATIVE_STREAM_SECONDS)
+                except (OSError, TimeoutError):
+                    pass
+            for action in (None, process.terminate, process.kill):
+                if process.returncode is not None:
+                    break
+                if action is not None:
+                    try:
+                        action()
+                    except ProcessLookupError:
+                        pass
+                try:
+                    await asyncio.wait_for(process.wait(), NATIVE_PHASE_SECONDS)
+                except TimeoutError:
+                    continue
+            if process.returncode is None:
+                raise WorkerCleanupError(
+                    "The owned Claude process did not stop before its deadline"
+                )
+        await super().close()
+
+    async def _read_messages_impl(self) -> AsyncIterator[dict[str, Any]]:
+        try:
+            async for message in super()._read_messages_impl():
+                yield message
+        except Exception:
+            if self._worker_supervisor is not None:
+                await self._stop_worker()
+            if self._worker_scratch is not None:
+                await self._worker_scratch.aclose()
+            raise
+        else:
+            if self._worker_supervisor is not None:
+                await self._stop_worker()
+            if self._worker_scratch is not None:
+                await self._worker_scratch.aclose()
+
+    async def close(self) -> None:
+        self._cleanup_started = True
+        if self._cleanup_process is None:
+            self._cleanup_process = self._process
+        if self._worker_supervisor is not None:
+            await self._stop_worker()
+        if self._worker_supervisor is None:
+            await super().close()
+        if self._cleanup_process is not None and self._cleanup_process.returncode is None:
+            raise RuntimeError("Claude process termination remains unconfirmed")
+        if self._worker_scratch is not None:
+            await self._worker_scratch.aclose()
 
 
 @dataclass(slots=True)
@@ -377,6 +601,17 @@ class _ObservedUserMessage:
     # it tells a command folded into the turn that just ended from one Claude has only now
     # taken up as a turn of its own.
     started: bool = False
+    admission_consumed: bool = False
+    conflicting_admission: bool = False
+
+
+def _observe_user_admission(observed: _ObservedUserMessage) -> None:
+    if not observed.admission.done():
+        observed.admission.set_result(True)
+    elif observed.admission.result() is False:
+        # A prior rejection cannot establish non-admission once Claude reports activity.
+        # Acceptance observed first remains acceptance, including later cancellation.
+        observed.conflicting_admission = True
 
 
 def _settle(observed: _ObservedUserMessage) -> None:
@@ -413,6 +648,7 @@ class _ClaudeProtocolTransport(Transport):
                 if not observed.admission.done():
                     observed.admission.set_result(None)
                 _settle(observed)
+            self._retire_settled_user_messages()
             for response in self._control_responses.values():
                 if not response.done():
                     response.set_result(None)
@@ -429,11 +665,10 @@ class _ClaudeProtocolTransport(Transport):
             if observed is not None:
                 if state == "started":
                     observed.started = True
-                if not observed.admission.done():
-                    if state in {"queued", "started", "completed"}:
-                        observed.admission.set_result(True)
-                    elif state in REJECTED_COMMAND_LIFECYCLE_STATES:
-                        observed.admission.set_result(False)
+                if state in {"queued", "started", "completed"}:
+                    _observe_user_admission(observed)
+                elif state in REJECTED_COMMAND_LIFECYCLE_STATES and not observed.admission.done():
+                    observed.admission.set_result(False)
                 if state in TERMINAL_COMMAND_LIFECYCLE_STATES:
                     _settle(observed)
         if message.get("type") == "result":
@@ -444,9 +679,10 @@ class _ClaudeProtocolTransport(Transport):
                 for user_message_uuid in user_message_uuids:
                     observed = self._user_messages.get(user_message_uuid)
                     if observed is not None:
-                        if not observed.admission.done():
-                            observed.admission.set_result(True)
+                        _observe_user_admission(observed)
                         _settle(observed)
+
+        self._retire_settled_user_messages()
 
         if message.get("type") == "control_response":
             response = message.get("response")
@@ -462,6 +698,18 @@ class _ClaudeProtocolTransport(Transport):
                 payload = response.get("response")
                 waiting.set_result(payload if isinstance(payload, dict) else None)
 
+    def _retire_settled_user_messages(self) -> None:
+        for identity, observed in tuple(self._user_messages.items()):
+            if observed.admission_consumed and observed.settled.done():
+                self._user_messages.pop(identity, None)
+
+    def forget_user_message(self, user_message_uuid: str) -> None:
+        observed = self._user_messages.pop(user_message_uuid, None)
+        if observed is not None:
+            if not observed.admission.done():
+                observed.admission.set_result(False)
+            _settle(observed)
+
     def watch_user_message(self, user_message_uuid: str) -> None:
         loop = asyncio.get_running_loop()
         self._user_messages[user_message_uuid] = _ObservedUserMessage(
@@ -472,7 +720,9 @@ class _ClaudeProtocolTransport(Transport):
     async def wait_for_user_message_admission(
         self, user_message_uuid: str
     ) -> bool | None:
-        observed = self._user_messages[user_message_uuid]
+        observed = self._user_messages.get(user_message_uuid)
+        if observed is None:
+            return None
         try:
             admission = await asyncio.wait_for(
                 asyncio.shield(observed.admission),
@@ -480,7 +730,10 @@ class _ClaudeProtocolTransport(Transport):
             )
         except TimeoutError:
             return None
-        return admission
+        finally:
+            observed.admission_consumed = True
+            self._retire_settled_user_messages()
+        return None if observed.conflicting_admission else admission
 
     def user_message_uuids_for_result(self, result_uuid: str | None) -> frozenset[str]:
         if result_uuid is None:
@@ -488,8 +741,8 @@ class _ClaudeProtocolTransport(Transport):
         user_message_uuids = self._result_user_message_uuids.pop(
             result_uuid, frozenset()
         )
-        for user_message_uuid in user_message_uuids:
-            self._user_messages.pop(user_message_uuid, None)
+        # Do not delete the watched future here. A result can beat query's return
+        # and the admission waiter must still observe that exact UUID's receipt.
         return user_message_uuids
 
     def user_message_is_settled(self, user_message_uuid: str) -> bool:
@@ -557,12 +810,14 @@ class _ClaudeProtocolTransport(Transport):
             raise PromptWriteFailed(
                 "claude did not confirm queued command cancellation"
             )
-        cancelled = _raw_uuid_set(payload.get("cancelled"))
-        still_queued = _raw_uuid_set(payload.get("still_queued"))
+        cancelled = _cancellation_uuid_set(payload.get("cancelled"))
+        still_queued = _cancellation_uuid_set(payload.get("still_queued"))
         return cancelled, still_queued
 
     async def close(self) -> None:
         await self._inner.close()
+        self._user_messages.clear()
+        self._result_user_message_uuids.clear()
 
     def is_ready(self) -> bool:
         return self._inner.is_ready()
@@ -575,10 +830,32 @@ class _ObservedClaudeSdkClient:
     """Expose typed SDK messages plus the raw receipts that the parser omits."""
 
     def __init__(
-        self, options: ClaudeAgentOptions, transport: _ClaudeProtocolTransport
+        self, options: ClaudeAgentOptions, transport: _ClaudeProtocolTransport,
     ) -> None:
         self._client = ClaudeSDKClient(options, transport=transport)
         self._transport = transport
+
+    def set_supervision_reporter(
+        self, reporter: Callable[[str], Awaitable[None]] | None,
+    ) -> None:
+        inner = self._transport._inner
+        if isinstance(inner, _ClaudeCleanupTransport):
+            inner.supervision_reporter = reporter
+
+    def set_custody_reporter(
+        self, reporter: Callable[[LocalChildIdentity], Awaitable[None]] | None,
+    ) -> None:
+        inner = self._transport._inner
+        if isinstance(inner, _ClaudeCleanupTransport):
+            inner.custody_reporter = reporter
+
+    def local_child_identity(self) -> LocalChildIdentity | None:
+        # Called after SDK initialization, so the service launch reached its child.
+        inner = self._transport._inner
+        if not isinstance(inner, _ClaudeCleanupTransport) or inner._process is None:
+            return None
+        unit = inner._worker_supervisor
+        return process_identity(inner._process.pid) if unit is None else unit.identity()
 
     async def connect(self) -> None:
         await self._client.connect()
@@ -586,11 +863,17 @@ class _ObservedClaudeSdkClient:
     async def get_server_info(self) -> dict[str, Any] | None:
         return await self._client.get_server_info()
 
-    async def query(self, prompt: str | AsyncIterable[dict[str, Any]]) -> None:
+    async def query(
+        self,
+        prompt: str | AsyncIterable[dict[str, Any]],
+    ) -> None:
         await self._client.query(prompt)
 
     def receive_messages(self) -> AsyncIterator[Message]:
         return self._client.receive_messages()
+
+    def forget_user_message(self, user_message_uuid: str) -> None:
+        self._transport.forget_user_message(user_message_uuid)
 
     def watch_user_message(self, user_message_uuid: str) -> None:
         self._transport.watch_user_message(user_message_uuid)
@@ -619,6 +902,10 @@ class _ObservedClaudeSdkClient:
 
     async def disconnect(self) -> None:
         await self._client.disconnect()
+        # A failed connect can spawn a process before the SDK creates its query.
+        # SDK disconnect then drops its transport without closing it. Keep our
+        # independently owned transport responsible for exact process exit proof.
+        await self._transport.close()
 
 
 @dataclass(frozen=True, slots=True)
@@ -677,7 +964,10 @@ class _TurnInFlight:
     """The turn this child is running, and what it has half-said so far."""
 
     token: TurnToken
+    automatic_compaction: bool = False
     cancel_requested: bool = False
+    # Claude's own words, kept until the model works on or the turn completes.
+    command_replies: list[str] = field(default_factory=list)
     owned_steer_uuids: set[str] = field(default_factory=set)
     held_result: ResultMessage | None = None
     steer_settlement_watch: asyncio.Task[None] | None = None
@@ -716,6 +1006,13 @@ class ClaudeAgentSdkBackendChild:
         self._standard_error: deque[str] = deque()
         self._asks_raised = 0
         self._available_command_names: frozenset[str] = frozenset()
+        # Claude's own live set of background tasks, as its last report gave it: task id
+        # to description. Each report replaces the whole set, so an end claude never
+        # announced cannot leave a task here.
+        self._live_background_tasks: dict[str, str] = {}
+        # How each live task ended, from claude's task_updated and task_notification
+        # frames, kept until the task leaves the live set.
+        self._live_background_task_endings: dict[str, str] = {}
 
     # --- the seam -----------------------------------------------------------------------
 
@@ -731,16 +1028,25 @@ class ClaudeAgentSdkBackendChild:
         returns, so the conversation can resume from it whatever happens next. A resume
         names the session it wants and gets that one or nothing.
         """
+        if self._client is not None or self._reader is not None:
+            raise BackendSpawnFailed("the previous Claude child still owns cleanup handles")
+        if resolved_start.workspace_path_policy == WorkspacePathPolicy.executor_default:
+            raise BackendSpawnFailed("executor workspace requires native resolution")
         self._resolved_start = resolved_start
-        minted_session_id = (
-            None if vendor_session_cursor is not None else str(uuid.uuid4())
-        )
-        options = self._options(
-            resolved_start, vendor_session_cursor, minted_session_id
-        )
+        minted_session_id = None if vendor_session_cursor is not None else str(uuid.uuid4())
+        options = self._options(resolved_start, vendor_session_cursor, minted_session_id)
         client = self._client_factory(options)
-        await self._connect(client, resumed_from=vendor_session_cursor)
+        if isinstance(client, _ObservedClaudeSdkClient):
+            client.set_supervision_reporter(
+                getattr(self._sink, "record_local_child_supervision", None)
+            )
+            client.set_custody_reporter(
+                getattr(self._sink, "record_local_child_custody", None)
+            )
+        self._wire_broken = True
         self._client = client
+        await self._connect(client, resumed_from=vendor_session_cursor)
+        self._wire_broken = False
         self._session_id = vendor_session_cursor or minted_session_id
         # A session claude was asked to load has not proved itself yet; one it was asked to
         # create under our own id is bound to that id from the start.
@@ -752,7 +1058,9 @@ class ClaudeAgentSdkBackendChild:
             name=f"planner.conversation.claude.{resolved_start.conversation_id}",
         )
         if minted_session_id is not None:
-            await self._sink.vendor_session_cursor_rebound(minted_session_id)
+            await self._sink.report(
+                None, VendorSessionCursorRebound(vendor_session_cursor=minted_session_id)
+            )
         await self._report_the_available_commands(client)
 
     async def _report_the_available_commands(self, client: ClaudeSdkClient) -> None:
@@ -775,7 +1083,7 @@ class ClaudeAgentSdkBackendChild:
         self._available_command_names = frozenset(
             entry.display_text.removeprefix("/") for entry in composer_catalog
         )
-        await self._sink.composer_catalog_reported(composer_catalog)
+        await self._sink.report(None, ComposerCatalogReported(composer_catalog=composer_catalog))
 
     async def write_prompt(
         self,
@@ -789,6 +1097,7 @@ class ClaudeAgentSdkBackendChild:
         model_change: str | None,
         reasoning_effort_change: str | None,
         automatic_compaction: bool = False,
+        reasoning_effort_is_set: bool = False,
     ) -> BackendPromptAccepted:
         """Start a turn with this message, on values this child is already running.
 
@@ -802,13 +1111,11 @@ class ClaudeAgentSdkBackendChild:
         """
         del mode
         self._require_the_carried_values_are_in_force(
-            model_change, reasoning_effort_change
+            model_change, reasoning_effort_change, reasoning_effort_is_set=reasoning_effort_is_set
         )
         client = self._connected_client()
         self._require_a_live_wire()
-        native_command = (
-            sender_message_count == 1 and self._is_catalog_command(sender_content)
-        )
+        native_command = sender_message_count == 1 and self._is_catalog_command(sender_content)
         try:
             delivered_content = (
                 sender_content
@@ -819,15 +1126,45 @@ class ClaudeAgentSdkBackendChild:
             )
         except ComposedMessageDoesNotContainSenderContent as invalid_composition:
             raise PromptWriteFailed(str(invalid_composition)) from invalid_composition
-        asked = await self._query_argument(delivered_content)
+        if automatic_compaction or native_command:
+            # Native controls retain their exact route and acknowledgment contract.
+            asked = await self._query_argument(delivered_content)
+            self._turn = _TurnInFlight(token=turn_token, automatic_compaction=automatic_compaction)
+            try:
+                await client.query(asked)
+            except Exception as failed:
+                self._wire_broken = True
+                raise PromptWriteFailed(str(failed)) from failed
+            return BackendPromptAccepted(composed_content_delivered=False)
+
+        # Install ownership before I/O. The sink queues durable output without blocking
+        # the reader that must observe the raw UUID admission receipt.
+        user_message_uuid = str(uuid.uuid4())
+        asked = await self._query_argument(
+            delivered_content, user_message_uuid=user_message_uuid
+        )
+        turn = _TurnInFlight(token=turn_token)
+        self._turn = turn
+        client.watch_user_message(user_message_uuid)
+        query_failure: Exception | None = None
         try:
             await client.query(asked)
-        except Exception as did_not_reach:
+        except Exception as failed:
+            query_failure = failed
+            # A provider receipt is stronger than a subsequent local write failure.
             self._wire_broken = True
-            raise PromptWriteFailed(str(did_not_reach)) from did_not_reach
-        self._turn = _TurnInFlight(token=turn_token)
+        admission = await client.wait_for_user_message_admission(user_message_uuid)
+        if admission is False:
+            if self._turn is turn:
+                self._turn = None
+            raise BackendPromptRejected("claude refused the user message")
+        if admission is not True:
+            self._wire_broken = True
+            raise PromptWriteFailed("claude did not acknowledge the user message")
+        if query_failure is not None:
+            await self._fail_the_running_turn(str(query_failure))
         return BackendPromptAccepted(
-            composed_content_delivered=not (automatic_compaction or native_command)
+            composed_content_delivered=not (automatic_compaction or native_command),
         )
 
     async def _query_argument(
@@ -842,11 +1179,7 @@ class ClaudeAgentSdkBackendChild:
         A message with more in it goes as one user message carrying content blocks, which
         is the SDK's other documented input.
         """
-        if (
-            user_message_uuid is None
-            and len(content) == 1
-            and isinstance(content[0], MessageText)
-        ):
+        if user_message_uuid is None and len(content) == 1 and isinstance(content[0], MessageText):
             return content[0].text
 
         blocks: list[dict[str, Any]] = []
@@ -968,19 +1301,30 @@ class ClaudeAgentSdkBackendChild:
             )
         client.watch_user_message(user_message_uuid)
         turn.owned_steer_uuids.add(user_message_uuid)
+        if (
+            self._turn is not turn
+            or turn.cancel_requested
+            or self._client is not client
+            or self._wire_broken
+        ):
+            turn.owned_steer_uuids.discard(user_message_uuid)
+            if isinstance(client, _ObservedClaudeSdkClient):
+                client.forget_user_message(user_message_uuid)
+            return BackendSteerRefused(
+                PromptDeliveryRefusalReason.no_running_turn_to_steer_into
+                if self._turn is not turn or turn.cancel_requested
+                else PromptDeliveryRefusalReason.write_to_backend_failed
+            )
         try:
             await client.query(asked)
         except Exception:
-            # The command can have crossed the process boundary before this failure. Keep
-            # its ownership on the turn so Claude's later receipt for it remains captured.
-            # A stream failure, if there was one, closes the wire through the reader path.
-            return BackendSteerUncertain(
-                composed_content_delivered=not native_command
-            )
+            # A write failure cannot undo admission that Claude already observed.
+            # Keep turn ownership until the UUID's later settlement.
+            pass
         admission = await client.wait_for_user_message_admission(user_message_uuid)
         if admission is True:
             return BackendSteerAccepted(
-                composed_content_delivered=not native_command
+                composed_content_delivered=not native_command,
             )
         if admission is False:
             turn.owned_steer_uuids.discard(user_message_uuid)
@@ -1037,7 +1381,14 @@ class ClaudeAgentSdkBackendChild:
                 "claude cancelled its queue but did not settle the active command"
             ) from did_not_settle
 
-    async def answer_permission_ask(self, ask_id: str, option_id: str) -> None:
+    async def answer_permission_ask(
+        self,
+        ask_id: str,
+        option_id: str,
+        *,
+        answer_id: str | None = None,
+        turn_token: TurnToken | None = None,
+    ) -> AnswerFate:
         """Give the SDK the option a person chose, and wait for its callback to take it.
 
         The answer is what the held-open callback returns, so it has been given only once
@@ -1060,10 +1411,16 @@ class ClaudeAgentSdkBackendChild:
             await parked.handed_over
         except Exception as never_given:
             raise PermissionAnswerWriteFailed(ask_id) from never_given
+        return AnswerFate.applied
 
     async def answer_user_input(
-        self, request_id: str, answers: tuple[UserInputAnswer, ...]
-    ) -> None:
+        self,
+        request_id: str,
+        answers: tuple[UserInputAnswer, ...],
+        *,
+        answer_id: str | None = None,
+        turn_token: TurnToken | None = None,
+    ) -> AnswerFate:
         """Give Claude's held callback its complete answer map."""
         turn = self._turn
         parked = None if turn is None else turn.parked_user_inputs.get(request_id)
@@ -1081,9 +1438,22 @@ class ClaudeAgentSdkBackendChild:
             await parked.handed_over
         except Exception as never_given:
             raise UserInputAnswerWriteFailed(request_id) from never_given
+        return AnswerFate.applied
+
+    @property
+    def stop_outside_lock(self) -> bool:
+        return False
+
+    async def withdraw_delivery(self) -> bool:
+        return True
+
+    async def detach(self) -> None:
+        await self.stop()
 
     async def stop(self) -> None:
-        """Shut the child down: stop reading, settle its asks, close the client."""
+        """Close the exact child, retaining cleanup handles until each step succeeds."""
+        self._wire_broken = True
+        self._forget_background_tasks()
         turn = self._turn
         self._turn = None
         self._last_ended_turn = None
@@ -1091,18 +1461,30 @@ class ClaudeAgentSdkBackendChild:
             self._stop_waiting_for_steers(turn)
             self._settle_parked_asks(turn)
         reader = self._reader
-        self._reader = None
         if reader is not None:
-            reader.cancel()
-            with suppress(asyncio.CancelledError):
-                await reader
+            if not reader.cancelling():
+                reader.cancel()
+            try:
+                # Shield the reader's cancellation cleanup from a cancellation of
+                # this caller. A later stop can still join that exact reader.
+                await asyncio.shield(reader)
+            except asyncio.CancelledError:
+                caller = asyncio.current_task()
+                if caller is not None and caller.cancelling():
+                    raise
+                if not reader.cancelled():
+                    raise
+            except Exception:
+                # A reader that died with an error re-raises it on every await, so
+                # letting it escape would keep this stop from ever reaching the client.
+                LOGGER.warning(
+                    "the claude reader had already ended with an error", exc_info=True
+                )
+            self._reader = None
         client = self._client
-        self._client = None
         if client is not None:
-            # A client whose child has already gone makes closing it fail too, and a child
-            # being shut down has no use for the complaint.
-            with suppress(Exception):
-                await client.disconnect()
+            await client.disconnect()
+            self._client = None
 
     # --- starting -----------------------------------------------------------------------
 
@@ -1113,6 +1495,10 @@ class ClaudeAgentSdkBackendChild:
         minted_session_id: str | None,
     ) -> ClaudeAgentOptions:
         """Everything the child is started with, from the values this conversation runs on."""
+        identity = dict(_identity_environment(resolved_start))
+        environment = {**dict(self._launch.environment_overrides), **identity}
+        if identity.get("PLAN_TICKET_ID"):
+            environment["PLAN_CONVERSATION_ID"] = resolved_start.conversation_id
         return ClaudeAgentOptions(
             cwd=str(resolved_start.workspace_folder),
             cli_path=self._launch.claude_executable,
@@ -1122,10 +1508,7 @@ class ClaudeAgentSdkBackendChild:
             permission_mode=_permission_mode(resolved_start.access),
             resume=vendor_session_cursor,
             session_id=minted_session_id,
-            env={
-                **dict(self._launch.environment_overrides),
-                **dict(_identity_environment(resolved_start)),
-            },
+            env=environment,
             max_buffer_size=CLAUDE_SDK_MAX_BUFFER_SIZE,
             include_partial_messages=True,
             can_use_tool=self._can_use_tool,
@@ -1133,18 +1516,9 @@ class ClaudeAgentSdkBackendChild:
         )
 
     def _effort(self, reasoning_effort: str | None) -> EffortLevel | None:
-        """The reasoning effort as claude names it, or nothing this session can be put on.
-
-        A session that cannot be put on the value this conversation runs on is not one to
-        write under: the text would go to an agent thinking as hard as somebody else asked.
-        """
+        """Forward the exact native effort; the provider owns rejection of new values."""
         if reasoning_effort is None:
             return None
-        if reasoning_effort not in CLAUDE_REASONING_EFFORTS:
-            raise SessionLoadFailed(
-                f"claude has no reasoning effort {reasoning_effort!r}, so a session cannot "
-                "be put on it"
-            )
         return cast(EffortLevel, reasoning_effort)
 
     async def _connect(
@@ -1164,8 +1538,10 @@ class ClaudeAgentSdkBackendChild:
                 # callback is there for the asks that reach it anyway.
                 warnings.simplefilter("ignore", CanUseToolShadowedWarning)
                 await client.connect()
-        except CLINotFoundError as no_executable:
-            raise BackendSpawnFailed(str(no_executable)) from no_executable
+        except (
+            CLINotFoundError, BackendCliIncompatible, BackendSpawnFailed, WorkerCleanupError,
+        ) as start_failure:
+            raise BackendSpawnFailed(str(start_failure)) from start_failure
         except Exception as would_not_come_up:
             why = self._with_the_standard_error(str(would_not_come_up))
             if resumed_from is not None:
@@ -1175,7 +1551,11 @@ class ClaudeAgentSdkBackendChild:
     # --- model and reasoning effort ------------------------------------------------------
 
     def _require_the_carried_values_are_in_force(
-        self, model_change: str | None, reasoning_effort_change: str | None
+        self,
+        model_change: str | None,
+        reasoning_effort_change: str | None,
+        *,
+        reasoning_effort_is_set: bool = False,
     ) -> None:
         """Ask for a new child unless this one is already running on what was asked for.
 
@@ -1183,15 +1563,15 @@ class ClaudeAgentSdkBackendChild:
         that is up. Saying so before anything is written is what keeps a change and its
         prompt one act: the child that takes the prompt was started on the new values.
         """
+
         if model_change is not None and model_change != self._session_model:
             raise NeedsRebind(
                 f"claude takes its model when the child starts, so {model_change!r} needs "
                 "a child started on it"
             )
         if (
-            reasoning_effort_change is not None
-            and reasoning_effort_change != self._session_reasoning_effort
-        ):
+            reasoning_effort_change is not None or reasoning_effort_is_set
+        ) and reasoning_effort_change != self._session_reasoning_effort:
             raise NeedsRebind(
                 "claude takes its reasoning effort when the child starts, so "
                 f"{reasoning_effort_change!r} needs a child started on it"
@@ -1227,14 +1607,14 @@ class ClaudeAgentSdkBackendChild:
         self._stop_waiting_for_steers(turn)
         self._settle_parked_asks(turn)
         try:
-            await self._sink.turn_ended(
+            await self._sink.report(
                 turn.token,
-                ending=ending,
-                error_summary=error_summary,
-                standard_error_tail=(
-                    self._standard_error_tail()
+                TurnEnded(
+                    ending=ending,
+                    error_summary=error_summary,
+                    standard_error_tail=self._standard_error_tail()
                     if ending is ConversationTurnEnding.failed
-                    else None
+                    else None,
                 ),
             )
         finally:
@@ -1287,11 +1667,23 @@ class ClaudeAgentSdkBackendChild:
             await self._fail_the_running_turn(
                 self._with_the_standard_error(str(stream_failed))
             )
+            await self._report_the_stream_ended()
         else:
             self._wire_broken = True
             await self._fail_the_running_turn(
                 self._with_the_standard_error("the backend's message stream ended")
             )
+            await self._report_the_stream_ended()
+
+    async def _report_the_stream_ended(self) -> None:
+        """Say the child is gone. A stop the core asked for cancels the reader instead."""
+        self._forget_background_tasks()
+        await self._sink.report(None, BackendStreamEnded())
+
+    def _forget_background_tasks(self) -> None:
+        """Claude's live set belongs to one process, and starts empty in the next."""
+        self._live_background_tasks.clear()
+        self._live_background_task_endings.clear()
 
     async def _take_in(self, message: Message) -> None:
         """One piece of the agent's news, turned into what the core keeps or shows."""
@@ -1300,19 +1692,18 @@ class ClaudeAgentSdkBackendChild:
             await self._note_the_session_id(session_id)
         if self._wire_broken:
             return
+        # Background tasks belong to the session, and their news usually arrives when no
+        # turn is running, so it is taken before anything that needs one.
+        if await self._take_in_background_task_news(message):
+            return
         turn = self._turn
         if turn is None:
             # Claude's persistent run may deliver the parent's next ordinary message after
             # a result ended the backend turn. It is still a message in this conversation,
             # so preserve it under the turn that just ended. Every other late event remains
             # turn-bound and is dropped. The session id above is conversation-bound too.
-            if (
-                isinstance(message, AssistantMessage)
-                and self._last_ended_turn is not None
-            ):
-                await self._on_assistant_message_after_turn(
-                    self._last_ended_turn, message
-                )
+            if isinstance(message, AssistantMessage) and self._last_ended_turn is not None:
+                await self._on_assistant_message_after_turn(self._last_ended_turn, message)
             return
         match message:
             case StreamEvent():
@@ -1327,12 +1718,69 @@ class ClaudeAgentSdkBackendChild:
                 # Claude summarised the conversation so far and dropped what it summarised.
                 # What it summarised is not kept and there is nothing to keep: that it
                 # happened, and where in the thread, is the whole of what a reader needs.
-                await self._sink.context_compacted(turn.token)
+                await self._sink.report(turn.token, ContextCompacted())
             case _:
                 LOGGER.debug(
                     "conversation %s: nothing to do with a %s",
                     self._resolved_start.conversation_id,
                     type(message).__name__,
+                )
+
+    async def _take_in_background_task_news(self, message: Message) -> bool:
+        """Follow claude's live set of background tasks. True when the message was that.
+
+        Claude reports the whole live set after every change, and that report is the only
+        source of which tasks are live: a task joins when it appears and leaves when it
+        is gone, whether or not its end was ever announced. Tasks claude marks ambient
+        are not activity and are left out. The task frames only say how a task ended.
+        """
+        if isinstance(message, TaskNotificationMessage | TaskUpdatedMessage):
+            task_status = message.status
+            if task_status in TERMINAL_TASK_STATUSES and (
+                message.task_id in self._live_background_tasks
+            ):
+                self._live_background_task_endings[message.task_id] = task_status
+            return True
+        if isinstance(message, TaskStartedMessage):
+            return True
+        if isinstance(message, SystemMessage) and message.subtype == (
+            BACKGROUND_TASKS_CHANGED_SUBTYPE
+        ):
+            await self._take_in_the_live_background_tasks(message.data.get("tasks"))
+            return True
+        return False
+
+    async def _take_in_the_live_background_tasks(self, reported: object) -> None:
+        live: dict[str, str] = {}
+        ambient: set[str] = set()
+        for task in reported if isinstance(reported, list) else ():
+            if not isinstance(task, dict):
+                continue
+            task_id, description = task.get("task_id"), task.get("description")
+            if not isinstance(task_id, str) or not isinstance(description, str):
+                continue
+            if task.get("ambient") is True:
+                ambient.add(task_id)
+            else:
+                live[task_id] = description
+        previous = self._live_background_tasks
+        self._live_background_tasks = live
+        for task_id in previous:
+            if task_id not in live:
+                task_status = self._live_background_task_endings.pop(
+                    task_id,
+                    BACKGROUND_TASK_BECAME_AMBIENT
+                    if task_id in ambient
+                    else BACKGROUND_TASK_ENDED_UNREPORTED,
+                )
+                await self._sink.report(
+                    None, BackgroundTaskEnded(task_id=task_id, task_status=task_status)
+                )
+        for task_id, description in live.items():
+            if task_id not in previous:
+                await self._sink.report(
+                    None,
+                    BackgroundTaskStarted(task_id=task_id, task_description=description),
                 )
 
     async def _note_the_session_id(self, session_id: str) -> None:
@@ -1350,7 +1798,7 @@ class ClaudeAgentSdkBackendChild:
             await self._refuse_the_substituted_session(session_id)
             return
         self._session_id = session_id
-        await self._sink.vendor_session_cursor_rebound(session_id)
+        await self._sink.report(None, VendorSessionCursorRebound(vendor_session_cursor=session_id))
 
     async def _refuse_the_substituted_session(self, session_id: str) -> None:
         """Have nothing more to do with a child that is not the session that was asked for.
@@ -1383,7 +1831,7 @@ class ClaudeAgentSdkBackendChild:
         # What the model thought is dropped where it arrives, along with everything else
         # that is not the agent's own text. That it thought is forwarded on its own.
         if delta.get("type") == "thinking_delta":
-            await self._sink.model_thinking_happened(turn.token)
+            await self._sink.report(turn.token, ModelThinkingHappened())
             return
         if delta.get("type") != "text_delta":
             return
@@ -1392,15 +1840,13 @@ class ClaudeAgentSdkBackendChild:
             return
         inside_a_tool_call = message.parent_tool_use_id
         if inside_a_tool_call is not None:
-            await self._sink.tool_call_progress(
-                turn.token, tool_call_id=inside_a_tool_call, detail=text
+            await self._sink.report(
+                turn.token, ToolCallProgress(tool_call_id=inside_a_tool_call, detail=text)
             )
             return
-        await self._sink.agent_message_delta(turn.token, text)
+        await self._sink.report(turn.token, AgentMessageDelta(text_delta=text))
 
-    async def _on_assistant_message(
-        self, turn: _TurnInFlight, message: AssistantMessage
-    ) -> None:
+    async def _on_assistant_message(self, turn: _TurnInFlight, message: AssistantMessage) -> None:
         """A finished message from the agent, and the tool calls it made in it.
 
         The blocks are taken in the order they were written, and text is finished off
@@ -1411,6 +1857,11 @@ class ClaudeAgentSdkBackendChild:
             # A subagent talking inside a tool call. The tool call is the thing that
             # happened; its inner conversation is not the agent's message to anyone.
             return
+        if message.model == CLAUDE_SYNTHETIC_MESSAGE_MODEL:
+            self._keep_the_command_reply(turn, message)
+            return
+        # The model is working, so what Claude wrote before it was a reply, not an error.
+        await self._report_the_held_command_replies(turn)
         said: list[str] = []
         for block in message.content:
             match block:
@@ -1423,25 +1874,45 @@ class ClaudeAgentSdkBackendChild:
                         continue
                     plan = _todo_write_plan(block)
                     if plan is not None:
-                        await self._sink.plan_updated(turn.token, plan)
-                    await self._sink.tool_call_started(
+                        await self._sink.report(turn.token, PlanUpdated(entries=plan))
+                    await self._sink.report(
                         turn.token,
-                        tool_call_id=block.id,
-                        title=block.name,
-                        # Claude classifies its calls by the tool they are made on: every
-                        # Bash call is the same kind of thing. There is no other kind on
-                        # the wire, and the tool's name is a truer one than "other".
-                        tool_kind=block.name,
-                        detail=_canonical_json(block.input),
+                        ToolCallStarted(
+                            tool_call_id=block.id,
+                            title=block.name,
+                            tool_kind=block.name,
+                            detail=_canonical_json(block.input),
+                        ),
                     )
                 case ThinkingBlock():
                     # What it thought is dropped where it arrives: never stored, never
                     # forwarded. That it thought is forwarded, and is all that is.
-                    await self._sink.model_thinking_happened(turn.token)
+                    await self._sink.report(turn.token, ModelThinkingHappened())
                     continue
                 case _:
                     continue
         await self._complete_agent_message(turn, said)
+
+    def _keep_the_command_reply(self, turn: _TurnInFlight, message: AssistantMessage) -> None:
+        """Hold Claude's own words until the turn says whether they are a command's reply.
+
+        They are once the model goes on to work, as after ``/goal set``, or once the turn
+        completes. A failed turn already shows its error, which is the same text when
+        Claude writes an API error this way. An interrupted turn's ending is the news, and
+        one the core ended itself takes no later fact. Automatic compaction already records
+        whether it compacted. In those cases what was held is dropped.
+        """
+        if turn.automatic_compaction:
+            return
+        text = "".join(block.text for block in message.content if isinstance(block, TextBlock))
+        if text:
+            turn.command_replies.append(text)
+
+    async def _report_the_held_command_replies(self, turn: _TurnInFlight) -> None:
+        # Taken, not read: a second result racing a held one must not report them again.
+        replies, turn.command_replies = turn.command_replies, []
+        for reply_text in replies:
+            await self._sink.report(turn.token, CommandReplyReported(reply_text=reply_text))
 
     async def _on_assistant_message_after_turn(
         self, turn: _TurnInFlight, message: AssistantMessage
@@ -1464,14 +1935,14 @@ class ClaudeAgentSdkBackendChild:
                 return
         await self._complete_agent_message(turn, said)
 
-    async def _complete_agent_message(
-        self, turn: _TurnInFlight, said: list[str]
-    ) -> None:
+    async def _complete_agent_message(self, turn: _TurnInFlight, said: list[str]) -> None:
         if not said:
             return
         text = "".join(said)
         said.clear()
-        await self._sink.agent_message_completed(turn.token, text_message_content(text))
+        await self._sink.report(
+            turn.token, AgentMessageCompleted(content=text_message_content(text))
+        )
 
     async def _on_user_message(self, turn: _TurnInFlight, message: UserMessage) -> None:
         """What the tools gave back. Their results arrive as a message from the user side.
@@ -1491,15 +1962,15 @@ class ClaudeAgentSdkBackendChild:
                 continue
             if block.tool_use_id in turn.user_input_tool_use_ids:
                 continue
-            await self._sink.tool_call_finished(
+            await self._sink.report(
                 turn.token,
-                tool_call_id=block.tool_use_id,
-                tool_call_status=(
-                    ToolCallStatus.failed
+                ToolCallFinished(
+                    tool_call_id=block.tool_use_id,
+                    tool_call_status=ToolCallStatus.failed
                     if block.is_error
-                    else ToolCallStatus.completed
+                    else ToolCallStatus.completed,
+                    detail=_tool_result_detail(block.content),
                 ),
-                detail=_tool_result_detail(block.content),
             )
 
     async def _on_result_message(
@@ -1591,6 +2062,7 @@ class ClaudeAgentSdkBackendChild:
                 turn, ConversationTurnEnding.failed, _result_error_summary(message)
             )
             return
+        await self._report_the_held_command_replies(turn)
         await self._end_turn(turn, ConversationTurnEnding.completed, None)
 
     async def _report_what_has_been_spent(
@@ -1615,12 +2087,14 @@ class ClaudeAgentSdkBackendChild:
         nothing about cached tokens has not said the turn read none.
         """
         counted = message.usage or {}
-        await self._sink.token_usage_reported(
+        await self._sink.report(
             turn.token,
-            input_tokens=_token_count(counted.get("input_tokens")),
-            output_tokens=_token_count(counted.get("output_tokens")),
-            cached_input_tokens=_token_count(counted.get("cache_read_input_tokens")),
-            cost_usd=message.total_cost_usd,
+            TokenUsageReported(
+                input_tokens=_token_count(counted.get("input_tokens")),
+                output_tokens=_token_count(counted.get("output_tokens")),
+                cached_input_tokens=_token_count(counted.get("cache_read_input_tokens")),
+                cost_usd=message.total_cost_usd,
+            ),
         )
 
     # --- permission asks -------------------------------------------------------------------
@@ -1647,10 +2121,12 @@ class ClaudeAgentSdkBackendChild:
         if tool_name == ASK_USER_QUESTION_TOOL_NAME:
             questions = _user_questions(tool_input)
             if questions is None:
-                await self._sink.user_input_failed(
+                await self._sink.report(
                     turn.token,
-                    request_id=ask_id,
-                    detail="Claude sent a malformed question request, so Panels refused it.",
+                    UserInputFailed(
+                        request_id=ask_id,
+                        detail="Claude sent a malformed question request, so Panels refused it.",
+                    ),
                 )
                 return PermissionResultDeny(
                     message="The question request was malformed and could not be shown."
@@ -1665,26 +2141,28 @@ class ClaudeAgentSdkBackendChild:
             turn.parked_user_inputs[ask_id] = parked_user_input
             if context.tool_use_id is not None:
                 turn.user_input_tool_use_ids.add(context.tool_use_id)
-            await self._sink.user_input_requested(
+            await self._sink.report(
                 turn.token,
-                BackendUserInputRequest(
-                    request_id=ask_id,
-                    questions=tuple(
-                        UserInputQuestion(
-                            question_id=question.text,
-                            header=question.header,
-                            question=question.text,
-                            options=tuple(
-                                UserInputOption(
-                                    label=choice.label, description=choice.description
-                                )
-                                for choice in question.choices
-                            ),
-                            multi_select=question.multi_select,
-                            allow_other=True,
-                        )
-                        for question in questions
-                    ),
+                UserInputRequested(
+                    request=BackendUserInputRequest(
+                        request_id=ask_id,
+                        questions=tuple(
+                            UserInputQuestion(
+                                question_id=question.text,
+                                header=question.header,
+                                question=question.text,
+                                options=tuple(
+                                    UserInputOption(
+                                        label=choice.label, description=choice.description
+                                    )
+                                    for choice in question.choices
+                                ),
+                                multi_select=question.multi_select,
+                                allow_other=True,
+                            )
+                            for question in questions
+                        ),
+                    )
                 ),
             )
             try:
@@ -1710,13 +2188,15 @@ class ClaudeAgentSdkBackendChild:
             suggestions=tuple(context.suggestions),
         )
         turn.parked_asks[ask_id] = parked
-        await self._sink.permission_ask_raised(
+        await self._sink.report(
             turn.token,
-            BackendPermissionAsk(
-                ask_id=ask_id,
-                title=tool_name,
-                detail=_canonical_json(tool_input),
-                options=PERMISSION_ASK_OPTIONS,
+            PermissionAskRaised(
+                ask=BackendPermissionAsk(
+                    ask_id=ask_id,
+                    title=tool_name,
+                    detail=_canonical_json(tool_input),
+                    options=PERMISSION_ASK_OPTIONS,
+                )
             ),
         )
         try:
@@ -1903,11 +2383,7 @@ def _user_questions(tool_input: dict[str, Any]) -> tuple[_UserQuestion, ...] | N
                 return None
             label = option.get("label")
             description = option.get("description")
-            if (
-                not isinstance(label, str)
-                or not label
-                or not isinstance(description, str)
-            ):
+            if not isinstance(label, str) or not label or not isinstance(description, str):
                 return None
             choices.append(_QuestionChoice(label=label, description=description))
         if len({choice.label for choice in choices}) != len(choices):
@@ -2052,6 +2528,13 @@ def _raw_uuid_set(value: Any) -> frozenset[str]:
     if not isinstance(value, list):
         return frozenset()
     return frozenset(item for item in value if isinstance(item, str))
+
+
+def _cancellation_uuid_set(value: Any) -> frozenset[str]:
+    """A missing or malformed receipt cannot prove that Claude emptied its queue."""
+    if not isinstance(value, list) or any(not isinstance(item, str) for item in value):
+        raise PromptWriteFailed("claude did not confirm queued command cancellation")
+    return frozenset(value)
 
 
 def _raw_user_message_uuids(message: dict[str, Any]) -> frozenset[str]:

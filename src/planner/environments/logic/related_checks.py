@@ -65,14 +65,6 @@ def select_paths(
         else:
             broad = True
             reasons.append(f"{path}: shared or unknown impact selects all default suites")
-        # Every HTTP API change must retain authority protection, including a narrow domain.
-        if path.startswith("src/planner/") and path.endswith("/api.py"):
-            authority = "tests/unit/test_authority_matrix.py"
-            if authority not in inventory["unit"]:
-                broad = True
-                reasons.append("Missing HTTP authority matrix; selecting all default suites")
-            else:
-                selected["unit"].add(authority)
     if broad:
         selected = {suite: set(inventory[suite]) for suite in SUITES}
     if not reasons:

@@ -9,58 +9,32 @@ from typing import Any, NoReturn, TextIO
 
 import click
 
-LEGACY_SUPERVISOR_RECOVERIES: dict[str, str] = {
-    "show": "panels sprint item show ITEM_ID",
-    "context": "panels sprint item workspace ITEM_ID",
-    "ticket-context": "panels ticket show TICKET_ID",
-    "history": "panels ticket history TICKET_ID",
-    "message-worker": "panels send-message --ticket TICKET_ID --message TEXT",
-    "restart-worker": "panels ticket restart-worker TICKET_ID",
-    "set-item": "panels sprint item set ITEM_ID FIELD --value VALUE",
-    "set-ticket": "panels ticket edit TICKET_ID --input-json FILE",
-    "artifact-list": "panels sprint item artifact list ITEM_ID",
-    "artifact-write": ("panels sprint item artifact write ITEM_ID ARTIFACT_PATH --body-file FILE"),
-    "artifact-delete": "panels sprint item artifact delete ITEM_ID ARTIFACT_PATH",
-    "send": "panels send-message --sprint-item ITEM_ID --message TEXT",
-    "reset": "panels sprint item conversation reset ITEM_ID",
-    "approve": "panels ticket proposal TICKET_ID accept --ceiling STAGE",
-    "reject": "panels ticket proposal TICKET_ID revise < GUIDANCE_FILE",
-}
-
 # These commands enforce one input rule after Click parses their options. Their shortest
 # usable forms are kept here so a validation error never points back to an incomplete
 # ``[OPTIONS]`` synopsis.
 COMMAND_RECOVERY_SHAPES: dict[str, str] = {
     "panels send-message": "panels send-message --owner --message TEXT",
-    "panels schedule set": "panels schedule set SCHEDULE_ID FIELD --value VALUE",
     "panels worker-type save": "panels worker-type save < RECORD_FILE",
     "panels worker-type skill": (
         "panels worker-type skill WORKER_TYPE --description TEXT < SKILL_FILE"
     ),
+    "panels skill edit": "panels skill edit NAME --description TEXT < SKILL_FILE",
     "panels project set": "panels project set PROJECT_ID FIELD --value VALUE",
-    "panels ticket delete": "panels ticket delete TICKET_ID --yes",
+    "panels ticket delete": "panels ticket delete TICKET_ID",
     "panels ticket create": "panels ticket create --input-json FILE",
     "panels ticket assign": "panels ticket assign TICKET_ID --chief",
-    "panels orchestrator settle": "panels orchestrator settle ITEM_ID",
+    "panels manager settle": "panels manager settle ITEM_ID",
     "panels ticket edit": "panels ticket edit TICKET_ID --input-json FILE",
     "panels ticket proposal": "panels ticket proposal TICKET_ID ACTION",
-    "panels ticket request-help": "panels ticket request-help TICKET_ID < MESSAGE_FILE",
-    "panels ticket set": "panels ticket set TICKET_ID FIELD --value VALUE",
     "panels ticket complete": "panels ticket complete TICKET_ID FIELD --value VALUE",
-    "panels ticket set-value": "panels ticket set-value TICKET_ID FIELD --value VALUE",
-    "panels ticket place": "panels ticket place TICKET_ID --project-id PROJECT_ID",
-    "panels ticket approve": "panels ticket approve TICKET_ID --ceiling STAGE",
-    "panels ticket reject": "panels ticket reject TICKET_ID --message TEXT",
-    "panels sprint item create": ("panels sprint item create --title TEXT --project-id PROJECT_ID"),
-    "panels sprint item delete": "panels sprint item delete ITEM_ID --yes",
-    "panels sprint item set": "panels sprint item set ITEM_ID FIELD --value VALUE",
-    "panels sprint item conversation send": (
-        "panels sprint item conversation send ITEM_ID --message TEXT"
-    ),
+    "panels manager create": ("panels manager create --title TEXT --project-id PROJECT_ID"),
+    "panels manager delete": "panels manager delete ITEM_ID --yes",
+    "panels page edit": "panels page schema",
+    "panels page show": "panels page show --manager ID",
+    "panels manager set": "panels manager set ITEM_ID FIELD --value VALUE",
+    "panels manager conversation send": ("panels manager conversation send ITEM_ID --message TEXT"),
     "panels worker propose": "panels worker propose TICKET_ID < PROPOSAL_FILE",
-    "panels worker request-help": "panels worker request-help TICKET_ID < MESSAGE_FILE",
     "panels worker recap": "panels worker recap TICKET_ID < RECAP_FILE",
-    "panels worker note": "panels worker note TICKET_ID < GUIDANCE_FILE",
 }
 
 _PANELS_CALL = re.compile(r"(?:^|[`'\" ])panels(?:[ `]|$)")
@@ -149,13 +123,6 @@ def _context_for_child(ctx: click.Context, name: str) -> click.Context | None:
     return click.Context(child, info_name=name, parent=ctx)
 
 
-def _legacy_supervisor_recovery(args: Sequence[str]) -> str | None:
-    prefix = ("sprint", "item", "supervisor")
-    if tuple(args[:3]) != prefix or len(args) < 4:
-        return None
-    return LEGACY_SUPERVISOR_RECOVERIES.get(args[3])
-
-
 def _show_usage_error(error: click.UsageError, args: Sequence[str]) -> None:
     ctx = error.ctx
     if isinstance(error, click.exceptions.NoArgsIsHelpError):
@@ -190,7 +157,7 @@ def _show_usage_error(error: click.UsageError, args: Sequence[str]) -> None:
             )
             return
         path = _canonical_command_path(ctx) if ctx is not None else "panels"
-        recovery = _legacy_supervisor_recovery(args)
+        recovery = "panels page --help" if tuple(args[:2]) == ("manager", "page") else None
         if recovery is None and ctx is not None and error.possibilities:
             child_ctx = _context_for_child(ctx, error.possibilities[0])
             recovery = command_shape(child_ctx) if child_ctx is not None else None

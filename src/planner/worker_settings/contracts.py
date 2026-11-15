@@ -8,7 +8,7 @@ managed overlay that can be edited outside installed Python code.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TypedDict
+from typing import Literal, TypedDict
 
 from planner.worker_types.contracts import WorkerTypeManifest
 
@@ -26,9 +26,19 @@ class SkillsHome:
     skills: tuple[ManagedSkill, ...]
 
 
-class SpecialistSkillPatch(TypedDict, total=False):
+class SkillPatch(TypedDict, total=False):
     description: str
     markdown_body: str
+
+
+SpecialistSkillPatch = SkillPatch
+
+
+class SkillSaveIncompleteDetail(TypedDict):
+    skill_name: str
+    saved: Literal[True]
+    published: bool
+    phase: Literal["file", "history"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -51,7 +61,6 @@ class ManagedWorkerSettings:
     worker_type: str
     specialist_skill: ManagedSkill
     launch_defaults: ManagedWorkerLaunchDefaults
-    requires_macos: bool = False
     candidate_specialist_skill: ManagedSkill | None = None
 
 
@@ -70,10 +79,17 @@ class WorkerManagementSummary:
     label: str
     specialist_skill_name: str
     launch_defaults: ManagedWorkerLaunchDefaults
-    requires_macos: bool = False
 
 
 @dataclass(frozen=True, slots=True)
 class WorkerManagementDetail:
     manifest: WorkerTypeManifest
     settings: ManagedWorkerSettings
+
+
+@dataclass(frozen=True, slots=True)
+class SkillApplication:
+    """One exact source with an optimistic current-row expectation."""
+
+    name: str
+    source_text: str

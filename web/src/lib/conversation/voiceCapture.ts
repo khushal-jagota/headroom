@@ -10,6 +10,7 @@
  * retry uploads it again, and only an explicit cancel throws it away.
  */
 
+import { mutationHeaders } from "../releaseMonitor";
 import { CONVERSATION_BASE } from "./wire";
 
 export type VoiceCaptureState =
@@ -36,13 +37,14 @@ export async function postVoiceTranscription(
   body: VoiceTranscriptionBody,
   signal?: AbortSignal
 ): Promise<VoiceTranscriptionResult> {
+  const headers = await mutationHeaders({ "Content-Type": "application/json" });
   let response: Response;
   try {
     response = await fetch(
       `${CONVERSATION_BASE}/voice-transcriptions`,
       {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers,
         body: JSON.stringify(body),
         signal
       }
@@ -101,24 +103,6 @@ export function voiceCaptureAvailable(
   transcriptAccepted: boolean
 ): boolean {
   return supported && transcriptAccepted;
-}
-
-export function voiceFirstComposer(input: {
-  available: boolean;
-  coarsePointer: boolean;
-  active: boolean;
-  keyboardPreferred: boolean;
-  disabled: boolean;
-  empty: boolean;
-}): boolean {
-  return (
-    input.available
-    && input.coarsePointer
-    && !input.active
-    && !input.keyboardPreferred
-    && !input.disabled
-    && input.empty
-  );
 }
 
 // --- the injectable browser edges -----------------------------------------------------------

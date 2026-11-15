@@ -26,21 +26,21 @@ describe("exact conversation signal marks", () => {
   });
 });
 
-import SprintTicketRow from "../src/components/SprintTicketRow.svelte";
+import WorkerRow from "../src/components/WorkerRow.svelte";
 import WorkspaceRailCard from "../src/components/WorkspaceRailCard.svelte";
 
 describe("shared conversation signal consumers", () => {
-  it("forwards mixed signal identity through the actual Worker and supervisor consumers", () => {
+  it("forwards mixed signal identity through the actual Worker and manager consumers", () => {
     const signal = { working: true, message_for_owner: true };
-    const worker = render(SprintTicketRow, { props: {
+    const worker = render(WorkerRow, { props: {
       title: "Worker", signal, conversationId: "worker-mixed-exact"
     } }).body;
-    const supervisor = render(WorkspaceRailCard, { props: {
-      id: "item-mixed", title: "Supervisor", signal, conversationId: "supervisor-mixed-exact",
+    const manager = render(WorkspaceRailCard, { props: {
+      id: "item-mixed", title: "Manager", signal, conversationId: "manager-mixed-exact",
       selected: false, selectedTicketId: null, groups: [], onSelect: () => {},
       onTicket: () => {}, onSettle: () => {}, onHover: () => {}, onWorkerHover: () => {}, onLeave: () => {}
     } }).body;
-    for (const [html, id] of [[worker, "worker-mixed-exact"], [supervisor, "supervisor-mixed-exact"]]) {
+    for (const [html, id] of [[worker, "worker-mixed-exact"], [manager, "manager-mixed-exact"]]) {
       expect(html).toContain(`data-conversation-id="${id}"`);
       expect(html).toContain('data-conversation-signal="message"');
       expect(html).toContain('aria-label="Unread message"');
@@ -61,6 +61,9 @@ describe("shared conversation signal consumers", () => {
     } }).body;
     expect(html).toContain('data-conversation-id="child-exact"');
     expect(html).not.toContain('data-conversation-signal="working"');
-    expect(html.match(/data-conversation-signal="message"/g)).toHaveLength(1);
+    // The child's row carries its own mark, and its approval outranks its message (owner): the
+    // Review icon, once. The Chief's header carries none of the child's activity.
+    expect(html.match(/data-approval-mark="owner"/g)).toHaveLength(1);
+    expect(html).not.toContain('data-conversation-signal="message"');
   });
 });

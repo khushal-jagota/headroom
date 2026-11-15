@@ -1,13 +1,16 @@
 """Disposable hosted-runner setup around the real deployment workflow."""
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
 import shutil
 import socket
+import sqlite3
 import subprocess
 import sys
+import sysconfig
 import time
 import urllib.error
 import urllib.request
@@ -46,7 +49,6 @@ def deployment_paths(environment: dict[str, str]) -> dict[str, str]:
         "PANELS_DEPLOYMENT_ID": run,
         "PANELS_CURRENT_ROOT": str(current),
         "PANELS_APP_HOME": str(app_home),
-        "PANELS_LIFECYCLE_PATH": str(current / "data/deployment-lifecycle.json"),
         "PANELS_SERVICE_NAME": f"panels-rehearsal-{run}.service" if rehearsal
         else "panels-live.service",
         "PANELS_HEALTH_URL": "http://127.0.0.1:8767/api/health",
@@ -85,14 +87,24 @@ def start() -> None:
     current = Path(os.environ["PANELS_CURRENT_ROOT"])
     app_home = Path(os.environ["PANELS_APP_HOME"])
     baseline = os.environ["PANELS_BASELINE_SHA"]
-    source = root / "baseline-source"
-    subprocess.run(["git", "worktree", "add", "--detach", str(source), baseline], check=True)
-    with (root / "gate/baseline-build.log").open("w") as log:
-        subprocess.run([
-            sys.executable, "-m", "planner", "environment", "app-build",
-            "--source-root", str(source), "--requested-sha", baseline,
-            "--candidate-app", str(current / "app"),
-        ], check=True, stdout=log, stderr=subprocess.STDOUT)
+    # The workflow restores this build from its cache, keyed by the baseline SHA.
+    # On a miss, build it once here and the workflow saves it for later runs.
+    cached = Path(os.environ["PANELS_BASELINE_APP_CACHE"])
+    if not cached.exists():
+        source = root / "baseline-source"
+        subprocess.run(["git", "worktree", "add", "--detach", str(source), baseline], check=True)
+        with (root / "gate/baseline-build.log").open("w") as log:
+            subprocess.run([
+                sys.executable, "-m", "planner", "environment", "app-build",
+                "--source-root", str(source), "--requested-sha", baseline,
+                "--candidate-app", str(cached),
+            ], check=True, stdout=log, stderr=subprocess.STDOUT)
+    shutil.copytree(cached, current / "app", symlinks=True)
+    from planner.environments.app import validate_app_manifest
+
+    # The copy must still be the exact baseline build: SHA and artifact digest.
+    validate_app_manifest(current / "app/manifest.json", expected_sha=baseline,
+                          require_runtime=True)
     for directory in (app_home, current / "data", current / "logs", current / "run"):
         directory.mkdir(parents=True, exist_ok=True)
     config = current / "data/config.yaml"
@@ -137,6 +149,7 @@ def start() -> None:
                     body = json.load(response)
                 if body.get("app_sha") == baseline and body.get("ready") is True:
                     (root / "gate/baseline-health.json").write_text(json.dumps(body) + "\n")
+                    seed_synthetic_state(current, url)
                     append_environment({"PANELS_HEALTH_URL": url})
                     return
             except (OSError, ValueError):
@@ -151,17 +164,143 @@ def start() -> None:
             raise RuntimeError("baseline did not become healthy:\n" + journal[-6000:])
 
 
+def seed_synthetic_state(current: Path, health_url: str) -> None:
+    """Create only disposable records and excluded files on the hosted runner."""
+    require_rehearsal()
+    url = health_url.removesuffix("/api/health") + "/api/projects"
+    request = urllib.request.Request(url, data=json.dumps({
+        "name": "Publication rehearsal", "summary": "Synthetic upgrade sentinel",
+    }).encode(), headers={"Content-Type": "application/json"}, method="POST")
+    with urllib.request.urlopen(request, timeout=5) as response:
+        record = json.load(response)
+    gate = Path(os.environ["PANELS_GATE_DIR"])
+    (gate / "synthetic-record-before.json").write_text(json.dumps(record) + "\n")
+    capture_schema(current, gate / "schema-before.json")
+    hashes = {}
+    for relative in ("video-uploads/rehearsal-sentinel.txt",
+                     "tickets/t_rehearsal/artifacts/sentinel.txt"):
+        path = current / "data/files" / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        content = ("Disposable publication proof: " + relative).encode()
+        path.write_bytes(content)
+        hashes[relative] = hashlib.sha256(content).hexdigest()
+    (gate / "excluded-files-before.json").write_text(json.dumps(hashes) + "\n")
+
+
+def capture_schema(current: Path, output: Path) -> None:
+    with sqlite3.connect(f"file:{current / 'data/planner.db'}?mode=ro", uri=True) as conn:
+        revisions = [row[0] for row in conn.execute("SELECT version_num FROM alembic_version")]
+    output.write_text(json.dumps({"revisions": sorted(revisions)}) + "\n")
+
+
+def capture_synthetic_state(current: Path, health_url: str, gate: Path) -> None:
+    capture_schema(current, gate / "schema-after.json")
+    record = json.loads((gate / "synthetic-record-before.json").read_text())
+    url = (health_url.removesuffix("/api/health") + "/api/projects?detail=full&id="
+           + record["id"])
+    with urllib.request.urlopen(url, timeout=5) as response:
+        after = json.load(response)
+    (gate / "synthetic-record-after.json").write_text(json.dumps(after) + "\n")
+    if any(after.get(key) != record.get(key) for key in ("id", "name", "summary")):
+        raise ValueError("synthetic record changed across the upgrade")
+    before = json.loads((gate / "excluded-files-before.json").read_text())
+    hashes = {relative: hashlib.sha256((current / "data/files" / relative).read_bytes()).hexdigest()
+              for relative in before}
+    (gate / "excluded-files-after.json").write_text(json.dumps(hashes) + "\n")
+    if hashes != before:
+        raise ValueError("excluded upload or ticket artifact changed across the upgrade")
+
+
+def install() -> None:
+    """Install the staged candidate onto the known-good release the way the server does."""
+    require_rehearsal()
+    from datetime import UTC, datetime, timedelta
+
+    from planner.environments.update_attempts import (
+        FileUpdateAttemptStore,
+        attempt_path,
+        parse_release,
+        utc_now,
+    )
+    from planner.environments.update_configuration import (
+        STAGED_APP_PREFIX,
+        UPDATE_HEALTH_TIMEOUT_SECONDS,
+        UPDATE_INSTALL_DEADLINE_SECONDS,
+    )
+    from planner.environments.update_contracts import (
+        SUPPORTED_UPDATE_SCHEMA_FLOOR,
+        UpdateAttempt,
+    )
+    from planner.environments.update_install import (
+        installer_command,
+        schema_change_pending,
+        write_installer,
+    )
+
+    current = Path(os.environ["PANELS_CURRENT_ROOT"])
+    gate = Path(os.environ["PANELS_GATE_DIR"])
+    baseline, requested = os.environ["PANELS_BASELINE_SHA"], os.environ["PANELS_REQUESTED_SHA"]
+    data, staged = current / "data", current / f"{STAGED_APP_PREFIX}{requested}"
+    backup = None
+    if schema_change_pending(data / "planner.db", staged):
+        # The running known-good release backs itself up, while it still serves.
+        backup = subprocess.run(
+            [str(current / "app/bin/panels"), "environment", "backup-current",
+             "--source-db", str(data / "planner.db"), "--backup-dir", str(data / "backups"),
+             "--current-app", str(current / "app")],
+            check=True, capture_output=True, text=True,
+            env=os.environ | {"HOME": os.environ["PANELS_APP_HOME"]},
+        ).stdout.strip()
+    attempt_id = "rehearsal-" + os.environ["PANELS_DEPLOYMENT_ID"]
+    now = utc_now()
+    store = FileUpdateAttemptStore(attempt_path(data))
+    store.create(UpdateAttempt(
+        attempt_id=attempt_id, from_sha=baseline, to_sha=requested, mode="now",
+        confirm_activity=False, state="installing", created_at=now, updated_at=now,
+        # The artifact is uploaded after this proof, so it has no artifact ids yet.
+        release=parse_release({
+            "publication_run_id": os.environ["GITHUB_RUN_ID"], "artifact_id": 0,
+            "proof_artifact_id": 0, "manifest": json.loads((staged / "manifest.json").read_text()),
+            "archive_sha256": (gate / "archive-sha256.txt").read_text().strip(),
+            "schema_floor": SUPPORTED_UPDATE_SCHEMA_FLOOR, "expires_at": now,
+        }),
+        deadline_at=(
+            datetime.now(UTC) + timedelta(seconds=UPDATE_INSTALL_DEADLINE_SECONDS)
+        ).isoformat(),
+        backup=backup,
+    ))
+    command = installer_command(
+        write_installer(data), current_root=current, attempt_id=attempt_id,
+        service=os.environ["PANELS_SERVICE_NAME"], health_url=os.environ["PANELS_HEALTH_URL"],
+        health_timeout_seconds=UPDATE_HEALTH_TIMEOUT_SECONDS,
+    )
+    # Its own transient unit, as the server starts it, so stopping the service spares it.
+    subprocess.run(["systemd-run", "--user", "--wait", "--collect", "--pipe", "--quiet",
+                    f"--unit=panels-update-{attempt_id}", *command], check=False)
+    attempt = store.read()
+    if attempt is None or attempt.attempt_id != attempt_id or attempt.state != "done":
+        raise RuntimeError(
+            "the installer did not finish the update: "
+            + ("no attempt" if attempt is None else f"{attempt.state}: {attempt.detail}")
+        )
+    url = os.environ["PANELS_HEALTH_URL"] + "?expected_sha=" + requested
+    with urllib.request.urlopen(url, timeout=5) as response:
+        health = json.load(response)
+    if health.get("app_sha") != requested or health.get("ready") is not True:
+        raise RuntimeError("the installed candidate is not healthy at its exact SHA")
+
+
 def check_selection() -> None:
     require_rehearsal()
     selection = json.loads((Path(os.environ["PANELS_GATE_DIR"]) / "selection.json").read_text())
-    if "tests/unit/test_conversation_codex_bindings.py" not in selection["unit"]:
+    if "tests/integration/test_conversation_codex_bindings.py" not in selection["integration"]:
         raise ValueError("rehearsal must exercise Codex bindings")
     if not selection["e2e"]:
         raise ValueError("rehearsal must exercise the E2E report boundary")
 
 
 def verify_proof(gate: Path, baseline: str, requested: str) -> None:
-    """A green rehearsal must prove the real replacement and backup path."""
+    """A green rehearsal must prove the installer's replacement and any backup it needed."""
     def read(name: str) -> dict[str, object]:
         value: dict[str, object] = json.loads((gate / name).read_text())
         return value
@@ -174,17 +313,18 @@ def verify_proof(gate: Path, baseline: str, requested: str) -> None:
         raise ValueError("rehearsal did not finish healthy at the requested SHA")
     if read("deployed-manifest.json").get("app_sha") != requested:
         raise ValueError("rehearsal installed manifest differs from requested SHA")
-    if read("lifecycle.json").get("phase") != "succeeded":
-        raise ValueError("rehearsal lifecycle did not succeed")
-    if not any(
-        (metadata := read(path.name)).get("verified") is True
-        and metadata.get("deployed_revision") == baseline
-        for path in gate.glob("backup-*.json")
-    ):
-        raise ValueError("rehearsal did not retain a verified prior-release backup")
+    attempt = read("update-attempt.json")
+    if (attempt.get("state") != "done" or attempt.get("from_sha") != baseline
+            or attempt.get("to_sha") != requested):
+        raise ValueError("rehearsal update attempt did not finish at the requested SHA")
+    backup = attempt.get("backup")
+    if backup is not None:
+        metadata = read("backup-" + Path(str(backup)).name + ".json")
+        if metadata.get("verified") is not True or metadata.get("deployed_revision") != baseline:
+            raise ValueError("rehearsal did not retain a verified prior-release backup")
     (gate / "replacement-proof.json").write_text(json.dumps({
-        "baseline_sha": baseline, "requested_sha": requested,
-        "real_backup_and_replacement": True,
+        "baseline_sha": baseline, "requested_sha": requested, "backup": backup,
+        "installer_steps": attempt.get("steps"),
     }) + "\n")
 
 
@@ -196,7 +336,7 @@ def capture() -> None:
     current = Path(os.environ["PANELS_CURRENT_ROOT"])
     gate.mkdir(parents=True, exist_ok=True)
     for name, path in {
-        "lifecycle.json": Path(os.environ["PANELS_LIFECYCLE_PATH"]),
+        "update-attempt.json": current / "data/update-attempt.json",
         "deployed-manifest.json": current / "app/manifest.json",
         "service-unit.txt": unit_path(),
     }.items():
@@ -217,12 +357,41 @@ def capture() -> None:
     except (OSError, ValueError) as exc:
         (gate / "final-health-error.txt").write_text(str(exc))
     if os.environ.get("PANELS_REHEARSAL_JOB_STATUS") == "success":
+        capture_synthetic_state(current, os.environ["PANELS_HEALTH_URL"], gate)
         verify_proof(gate, os.environ["PANELS_BASELINE_SHA"], os.environ["PANELS_REQUESTED_SHA"])
+
+
+def validate_cleanup(environment: dict[str, str]) -> None:
+    """Keep this checkout, its Python and unretained evidence out of every deletion."""
+    root = Path(environment["PANELS_TEMP_ROOT"]).resolve()
+    checkout = Path(__file__).resolve().parents[1]
+    protected = (
+        checkout, Path(sys.executable).resolve(),
+        Path(sysconfig.get_path("stdlib")).resolve(),
+        Path(sysconfig.get_path("platstdlib")).resolve(),
+    )
+    targets = [root, Path(environment["PANELS_CANDIDATE_SOURCE"]).resolve()]
+    if environment.get("PANELS_REHEARSAL") == "true":
+        targets.append((root / "baseline-source").resolve())
+        if environment.get("PANELS_REHEARSAL_HERMES_ROOT"):
+            targets.append(Path(environment["PANELS_REHEARSAL_HERMES_ROOT"]).resolve())
+    for target in targets:
+        for execution_path in protected:
+            if target.is_relative_to(execution_path) or execution_path.is_relative_to(target):
+                raise ValueError(
+                    f"Cleanup refused: {target} overlaps execution path "
+                    f"{execution_path}. No service action or deletion occurred."
+                )
+    if environment.get("PANELS_REHEARSAL") != "true":
+        return
+    if environment.get("PANELS_PROOF_RETENTION_OUTCOME") != "success":
+        raise ValueError("Cleanup refused: publication diagnostics are not retained.")
 
 
 def cleanup() -> None:
     if "PANELS_TEMP_ROOT" not in os.environ:
         return
+    validate_cleanup(dict(os.environ))
     root = Path(os.environ["PANELS_TEMP_ROOT"])
     if os.environ.get("PANELS_REHEARSAL") == "true":
         require_rehearsal()
@@ -241,5 +410,5 @@ def cleanup() -> None:
 
 
 if __name__ == "__main__":
-    {"configure": configure, "start": start, "check-selection": check_selection,
-     "capture": capture, "cleanup": cleanup}[sys.argv[1]]()
+    {"configure": configure, "start": start, "install": install,
+     "check-selection": check_selection, "capture": capture, "cleanup": cleanup}[sys.argv[1]]()

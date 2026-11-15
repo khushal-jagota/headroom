@@ -15,159 +15,351 @@ The schema itself is not written here. It lives in the migration history under
 
 from __future__ import annotations
 
+import re
 import sqlite3
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, Final
+from typing import Any, Final, Literal, Self, TypeVar, overload
 
 from alembic import command
 from alembic.config import Config
-from alembic.script import ScriptDirectory
 from sqlalchemy import Connection, Engine, create_engine, event
 from sqlalchemy.engine import URL
 
 from planner.core import change_signal
+from planner.core.config import DB_BUSY_TIMEOUT_MS
+from planner.core.transaction_participants import TransactionParticipant, finalize
 
 MIGRATIONS_DIRECTORY: Final = Path(__file__).resolve().parent / "migrations"
-BASELINE_REVISION: Final = "baseline_2026_09"
+BASELINE_REVISION: Final = "canonical_manager_identities"
 
-# The head of the sixty-revision chain the baseline replaced. A database that carries this
-# revision holds exactly the schema the baseline builds, and every row rewrite those
-# revisions performed, so it is adopted at the baseline rather than rebuilt. Frozen: it
-# names a moment in history, so later schema work never changes it.
-PRE_COLLAPSE_HEAD_REVISION: Final = "settled_stage_and_field_ids"
-
-# Every table, index and trigger a database at that head holds. Frozen alongside the
-# revision above, and read only when adopting such a database, so it describes that one
-# moment in history and never follows later schema changes.
-PRE_COLLAPSE_HEAD_SCHEMA_OBJECT_NAMES: Final = frozenset(
-    {
-        "agents",
-        "backend_model_enablement",
-        "backend_usage_snapshots",
-        "backend_usage_windows",
-        "chief_settings",
-        "conversation_error_acknowledgements",
-        "conversation_events",
-        "conversations",
-        "day_tickets",
-        "days",
-        "feedback_notes",
-        "ideas",
-        "idx_conversation_events_kind_recipient",
-        "idx_conversation_events_sender_message_id",
-        "idx_conversations_automatic_compaction_due",
-        "idx_feedback_notes_state_created",
-        "idx_feedback_notes_ticket_id",
-        "idx_ideas_project_id",
-        "idx_notification_deliveries_due",
-        "idx_scheduled_ticket_occurrences_created_at",
-        "idx_scheduled_ticket_schedules_slot",
-        "idx_sprint_items_project_id",
-        "idx_sprint_items_supervisor_agent_key",
-        "idx_sprint_outcomes_outcome_id",
-        "idx_ticket_blocks_blocked_ticket_id",
-        "idx_ticket_conversations_ticket_id",
-        "idx_tickets_project_id",
-        "idx_tickets_stage",
-        "idx_tickets_worker_type_stage",
-        "managed_skill_versions",
-        "managed_skill_versions_no_delete",
-        "managed_skill_versions_no_update",
-        "managed_skills",
-        "notification_attention_edges",
-        "notification_attention_state",
-        "notification_deliveries",
-        "notification_preferences",
-        "notification_push_subscriptions",
-        "notification_web_push_identity",
-        "projects",
-        "scheduled_ticket_occurrences",
-        "scheduled_ticket_schedules",
-        "sprint_items",
-        "sprint_items_supervisor_create",
-        "sprint_items_supervisor_insert_guard",
-        "sprint_items_supervisor_update_guard",
-        "sprint_outcomes",
-        "sprints",
-        "ticket_blocks",
-        "ticket_conversations",
-        "ticket_paired_stage_openers",
-        "ticket_revision_feedback",
-        "tickets",
-        "worker_step_skill_bindings",
-        "worker_types",
-    }
+_CONTROL_TOKEN = re.compile(
+    r"\s+|--[^\n]*(?:\n|$)|/\*.*?\*/|"
+    r"\"(?:\"\"|[^\"])*\"|'(?:''|[^'])*'|`(?:``|[^`])*`|\[[^]]*\]|[\w$]+|[^\s;]",
+    re.DOTALL,
 )
+_CursorT = TypeVar("_CursorT", bound=sqlite3.Cursor)
+_ASCII_LOWER = str.maketrans("ABCDEFGHIJKLMNOPQRSTUVWXYZ", "abcdefghijklmnopqrstuvwxyz")
 
 
-def _statement_commits(sql: str) -> bool:
-    """Whether this statement is the one that ends a transaction by keeping its work.
+def _control_words(sql: str) -> list[str]:
+    """Read transaction control only. Never classify domain writes from SQL text."""
+    words = []
+    for match in _CONTROL_TOKEN.finditer(sql):
+        token = match.group()
+        if token.isspace() or token == "\ufeff" or token.startswith(("--", "/*")):
+            continue
+        if token[0] in {'"', "'", "`", "["}:
+            quote = token[0]
+            token = token[1:-1].replace(quote * 2, quote)
+        words.append(token.translate(_ASCII_LOWER))
+        if len(words) == 1 and words[0] not in {"savepoint", "release", "rollback"}:
+            return words
+        if len(words) == 5:
+            break
+    return words
 
-    Transactions here always end with a literal ``COMMIT``; a ``ROLLBACK`` throws the
-    work away and must stay silent.
-    """
-    return sql.strip().lower().startswith("commit")
+
+class ParticipatingCursor(sqlite3.Cursor):
+    """Use the connection boundary even for callers that retain a cursor."""
+
+    def execute(self, sql: str, parameters: Any = (), /) -> Self:
+        connection = self.connection
+        assert isinstance(connection, ChangeSignallingConnection)
+        connection._execute(self, sql, parameters)
+        return self
+
+    def executemany(self, sql: str, parameters: Any, /) -> Self:
+        connection = self.connection
+        assert isinstance(connection, ChangeSignallingConnection)
+        owns_transaction = not connection.in_transaction
+        if owns_transaction:
+            connection.execute("BEGIN")
+        try:
+            sqlite3.Cursor.executemany(self, sql, parameters)
+            if owns_transaction:
+                connection.commit()
+            return self
+        except BaseException:
+            if owns_transaction:
+                connection.rollback()
+            elif not connection.in_transaction:
+                connection._clear_transaction()
+            raise
+
+    def executescript(self, sql_script: str, /) -> sqlite3.Cursor:
+        # Match sqlite3's initial implicit commit through the managed boundary.
+        # Never call its native script runner: transaction statements inside that
+        # runner bypass the Python connection/cursor overrides.
+        if self.connection.in_transaction:
+            self.connection.commit()
+        start = 0
+        for index, character in enumerate(sql_script):
+            if character == ";" and sqlite3.complete_statement(sql_script[start : index + 1]):
+                self.execute(sql_script[start : index + 1])
+                start = index + 1
+        tail = sql_script[start:]
+        if _control_words(tail):
+            self.execute(tail)
+        return self
 
 
 class ChangeSignallingConnection(sqlite3.Connection):
-    """A connection that announces the writes it commits, once each.
+    """Finalize participants before commit, then announce committed writes.
 
-    This is the door writers already go through, so no writer has to remember to
-    announce anything. A write commits in one of two ways here, and both are watched:
-
-    - inside a transaction the caller opened, when the closing ``COMMIT`` runs;
-    - on its own. These connections leave transaction control to the caller, so a
-      statement run with nothing open commits the moment it returns. Whether it was
-      really a write is the row count: a statement that leaves the stored rows exactly
-      as they were — a read, an update that matched nothing, a schema change — says
-      nothing, because there is nothing for a reader to come back for.
-
-    The announcement happens after the statement returns, when the write lock is
-    already released and the new rows are readable. A rollback, or a commit that
-    fails, announces nothing. A committed transaction that changed no rows — a
-    reconciliation pass that found nothing to do — also announces nothing: several
-    background loops open a transaction on every pass and are themselves woken by
-    this signal, so an empty commit that announced would wake the loop that made it
-    and the tick would collapse into a busy-spin.
-
-    A caller that knows no reader is waiting for its rows closes its transaction with
-    ``commit_without_change_signal``, which goes around this and stays quiet.
+    Standalone SQL mutation operations run inside explicit transactions. This
+    class classifies SQL operations only; domains determine relevant source rows.
+    Base-class transaction calls bypass this protocol and are unsupported.
+    DML RETURNING requires an explicit transaction and consumed result rows before
+    commit. A standalone unconsumed result fails and rolls back its source write.
     """
 
-    # Rows changed when the currently open transaction began; None when no
-    # transaction is open or it was opened outside this method (then a commit
-    # announces, conservatively).
-    _rows_changed_at_transaction_start: int | None = None
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        self._participants: tuple[TransactionParticipant, ...] = ()
+        self._finalizing = False
+        self._rows_changed_at_transaction_start: int | None = None
+        self._savepoints: list[str] = []
+        self._savepoint_transaction = False
+        self._contexts: list[str | None] = []
+        self._context_sequence = 0
+        self._control_guard_depth = 0
+        self._closed = False
+        self._authorizer: Callable[..., int] | None = None
+        self._refresh_authorizer()
+
+    def _refresh_authorizer(self) -> None:
+        # Installing the dispatcher also expires cached statements. Their old
+        # authorization cannot bypass a newly entered control guard.
+        super().set_authorizer(self._authorize)
+
+    def _authorize(self, action: int, *arguments: Any) -> int:
+        if self._control_guard_depth and action in {
+            sqlite3.SQLITE_TRANSACTION,
+            sqlite3.SQLITE_SAVEPOINT,
+        }:
+            return sqlite3.SQLITE_DENY
+        if self._authorizer is not None:
+            return self._authorizer(action, *arguments)
+        return sqlite3.SQLITE_OK
+
+    def set_authorizer(self, authorizer_callback: Callable[..., int] | None) -> None:
+        if self._control_guard_depth:
+            raise RuntimeError("transaction participants cannot replace the authorizer")
+        self._authorizer = authorizer_callback
+        self._refresh_authorizer()
+
+    def _check_transaction_control(self) -> None:
+        if self._finalizing or self._control_guard_depth:
+            raise RuntimeError("transaction participants cannot control transactions")
+
+    def _failed_commit(self, error: BaseException) -> None:
+        try:
+            if self.in_transaction:
+                super().rollback()
+        except BaseException as cleanup_error:
+            error.add_note(f"commit rollback also failed: {cleanup_error!r}")
+        self._clear_transaction()
+
+    def close(self) -> None:
+        self._check_transaction_control()
+        if self._closed:
+            return
+        if self.in_transaction:
+            self._rollback_failed()
+        super().close()
+        self._closed = True
+
+    @overload
+    def cursor(self, factory: None = None) -> sqlite3.Cursor: ...
+
+    @overload
+    def cursor(self, factory: Callable[[sqlite3.Connection], _CursorT]) -> _CursorT: ...
+
+    def cursor(self, factory: Any = None) -> Any:
+        if factory is not None and factory is not ParticipatingCursor:
+            raise sqlite3.NotSupportedError("custom cursors bypass transaction participation")
+        return super().cursor(ParticipatingCursor)
 
     def execute(self, sql: str, parameters: Any = (), /) -> sqlite3.Cursor:
-        had_open_transaction = self.in_transaction
-        rows_changed_before = self.total_changes
-        cursor = super().execute(sql, parameters)
+        return self.cursor().execute(sql, parameters)
+
+    def executemany(self, sql: str, parameters: Any, /) -> sqlite3.Cursor:
+        return self.cursor().executemany(sql, parameters)
+
+    def executescript(self, sql_script: str, /) -> sqlite3.Cursor:
+        return self.cursor().executescript(sql_script)
+
+    def _execute(self, cursor: sqlite3.Cursor, sql: str, parameters: Any) -> sqlite3.Cursor:
+        words = _control_words(sql)
+        operation = words[0] if words else ""
+        if not self.in_transaction and operation in {
+            "insert",
+            "update",
+            "delete",
+            "replace",
+            "with",
+        }:
+            self.execute("BEGIN")
+            try:
+                result = self._execute(cursor, sql, parameters)
+                self.commit()
+                return result
+            except BaseException:
+                self.rollback()
+                raise
+        if (self._finalizing or self._control_guard_depth) and operation in {
+            "begin",
+            "commit",
+            "end",
+            "savepoint",
+            "release",
+            "rollback",
+        }:
+            raise RuntimeError("transaction participants cannot control transactions")
+        had_transaction = self.in_transaction
+        before = self.total_changes
+        release_index: int | None = None
+        if operation == "release" and len(words) > 1:
+            name = words[2] if words[1] == "savepoint" and len(words) > 2 else words[1]
+            release_index = next(
+                (
+                    index
+                    for index in range(len(self._savepoints) - 1, -1, -1)
+                    if self._savepoints[index] == name
+                ),
+                None,
+            )
+        commits = operation in {"commit", "end"} or (
+            operation == "release" and release_index == 0 and self._savepoint_transaction
+        )
+        try:
+            if commits and had_transaction:
+                self._before_commit()
+            result = self._sqlite_execute(cursor, sql, parameters)
+        except BaseException as error:
+            if commits and had_transaction:
+                self._failed_commit(error)
+            elif had_transaction and not self.in_transaction:
+                self._clear_transaction()
+            raise
+        if operation == "savepoint" and len(words) > 1:
+            if not had_transaction:
+                self._savepoint_transaction = True
+            self._savepoints.append(words[1])
+        elif operation == "release" and release_index is not None:
+            del self._savepoints[release_index:]
+        elif operation == "rollback" and "to" in words:
+            index = words.index("to") + 1
+            if index < len(words) and words[index] == "savepoint":
+                index += 1
+            if index < len(words):
+                matches = [i for i, name in enumerate(self._savepoints) if name == words[index]]
+                if matches:
+                    del self._savepoints[matches[-1] + 1 :]
         if self.in_transaction:
-            if not had_open_transaction:
-                self._rows_changed_at_transaction_start = rows_changed_before
-            return cursor
-        if had_open_transaction:
-            if _statement_commits(sql) and self._open_transaction_wrote():
+            if not had_transaction:
+                self._rows_changed_at_transaction_start = before
+        elif had_transaction:
+            wrote = self._open_transaction_wrote()
+            self._clear_transaction()
+            if commits and wrote:
                 change_signal.emit()
-            self._rows_changed_at_transaction_start = None
-        elif self.total_changes != rows_changed_before:
+        elif self.total_changes != before:
             change_signal.emit()
-        return cursor
+        return result
+
+    def _sqlite_execute(self, cursor: sqlite3.Cursor, sql: str, parameters: Any) -> sqlite3.Cursor:
+        return sqlite3.Cursor.execute(cursor, sql, parameters)
+
+    def _before_commit(self) -> None:
+        if self._finalizing:
+            raise RuntimeError("transaction participants cannot commit")
+        self._finalizing = True
+        try:
+            finalize(self, self._participants)
+        except BaseException:
+            self._rollback_failed()
+            raise
+        finally:
+            self._finalizing = False
+
+    def _commit(self, *, announce: bool) -> None:
+        self._check_transaction_control()
+        had_transaction = self.in_transaction
+        if had_transaction:
+            self._before_commit()
+        wrote = self._open_transaction_wrote()
+        try:
+            self._sqlite_commit()
+        except BaseException as error:
+            self._failed_commit(error)
+            raise
+        self._clear_transaction()
+        if announce and had_transaction and wrote:
+            change_signal.emit()
+
+    def _sqlite_commit(self) -> None:
+        super().commit()
 
     def commit(self) -> None:
-        had_open_transaction = self.in_transaction
-        wrote = self._open_transaction_wrote()
-        super().commit()
+        self._commit(announce=True)
+
+    def rollback(self) -> None:
+        self._check_transaction_control()
+        self._rollback_failed()
+
+    def _rollback_failed(self) -> None:
+        try:
+            super().rollback()
+        finally:
+            self._clear_transaction()
+
+    def __enter__(self) -> Self:
+        if self.in_transaction:
+            self._context_sequence += 1
+            name = f"managed_context_{self._context_sequence}"
+            self.execute(f"SAVEPOINT {name}")
+        else:
+            name = None
+            self.execute("BEGIN")
+        self._contexts.append(name)
+        return self
+
+    def __exit__(self, exc_type: Any, exc_value: Any, traceback: Any) -> Literal[False]:
+        name = self._contexts.pop()
+        if not self.in_transaction:
+            return False
+        if name is not None:
+            if exc_type is not None:
+                self.execute(f"ROLLBACK TO {name}")
+            self.execute(f"RELEASE {name}")
+        elif exc_type is None:
+            self.commit()
+        else:
+            self.rollback()
+        return False
+
+    def _clear_transaction(self) -> None:
         self._rows_changed_at_transaction_start = None
-        if had_open_transaction and wrote:
-            change_signal.emit()
+        self._savepoints.clear()
+        self._savepoint_transaction = False
 
     def _open_transaction_wrote(self) -> bool:
         baseline = self._rows_changed_at_transaction_start
         return baseline is None or self.total_changes != baseline
+
+
+@contextmanager
+def transaction_control_guard(connection: ChangeSignallingConnection, /) -> Iterator[None]:
+    connection._control_guard_depth += 1
+    connection._refresh_authorizer()
+    try:
+        yield
+    finally:
+        connection._control_guard_depth -= 1
+        connection._refresh_authorizer()
 
 
 def commit_without_change_signal(conn: sqlite3.Connection) -> None:
@@ -182,25 +374,41 @@ def commit_without_change_signal(conn: sqlite3.Connection) -> None:
     Staying quiet is decided at the write, one commit at a time. Anything that might have
     a reader commits normally.
     """
-    sqlite3.Connection.execute(conn, "COMMIT")
+    if isinstance(conn, ChangeSignallingConnection):
+        conn._commit(announce=False)
+    else:
+        conn.execute("COMMIT")
 
 
-def connect(db_path: str, busy_timeout_ms: int = 5000) -> sqlite3.Connection:
+def connect(db_path: str, busy_timeout_ms: int = DB_BUSY_TIMEOUT_MS) -> sqlite3.Connection:
     conn = sqlite3.connect(
         db_path,
         isolation_level=None,
         timeout=busy_timeout_ms / 1000,
         factory=ChangeSignallingConnection,
+        # A request opens its connection on one worker thread and can run its handler on
+        # another, so the connection must be usable from any thread. Each connection is
+        # still used by one caller at a time.
+        check_same_thread=False,
     )
     conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA journal_mode=WAL")
+    if str(conn.execute("PRAGMA journal_mode").fetchone()[0]).lower() != "wal":
+        conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA foreign_keys=ON")
     conn.execute(f"PRAGMA busy_timeout={int(busy_timeout_ms)}")
+
+    from planner.database_modules import attach
+
+    conn._participants = attach(conn)
     return conn
 
 
-def create_schema(conn: sqlite3.Connection) -> None:
-    """Bring the connected database up to the current schema and seed default projects.
+def create_schema(
+    conn: sqlite3.Connection,
+    *,
+    startup_audit: Callable[[sqlite3.Connection], None] | None = None,
+) -> None:
+    """Bring the connected database to the current schema and seed default projects.
 
     Safe to call on every open: a new database is built, a current one is left alone.
     """
@@ -220,7 +428,35 @@ def create_schema(conn: sqlite3.Connection) -> None:
             "run on their own connection and would wait on this one's lock"
         )
     _upgrade_to_current_schema(_main_database_path(conn), _busy_timeout_ms(conn))
-    projects_data.seed_default_projects(conn)
+    # Migrations use another connection. Refresh this connection's cached schema
+    # before its first write prepares triggers that migrations just removed.
+    conn.execute("SELECT name FROM sqlite_master LIMIT 1").fetchall()
+    if startup_audit is not None:
+        # Startup must mark invalid Tickets before any ordinary seed commit asks the
+        # shared projections to interpret them. A new database needs its registry first.
+        notification_schema_exists = (
+            conn.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' "
+                "AND name='notification_web_push_identity'"
+            ).fetchone()
+            is not None
+        )
+        with conn:
+            projects_data.seed_default_projects(conn)
+            if worker_types_table_exists(conn):
+                seed_packaged_skills(conn)
+                seed_shipped_worker_types(conn)
+                seed_chief_settings(conn)
+                notifications_data.seed_shipped_notification_preferences(conn)
+                load_worker_runtime_definitions(conn)
+            startup_audit(conn)
+        if notification_schema_exists:
+            notifications_data.get_or_create_web_push_identity(conn, 0)
+        if worker_types_table_exists(conn):
+            write_skill_home(conn, Path(_main_database_path(conn)).parent)
+        return
+    with conn:
+        projects_data.seed_default_projects(conn)
     # Migration-unit fixtures deliberately replace the tree with a historical
     # subset. Seed the current subsystem only when that tree actually installed it.
     notification_schema_exists = conn.execute(
@@ -269,26 +505,28 @@ def _busy_timeout_ms(conn: sqlite3.Connection) -> int:
 
 
 @contextmanager
-def schema_migration_transaction(db_path: str, busy_timeout_ms: int = 5000) -> Iterator[Connection]:
-    """Hold the same all-or-nothing schema writer lease used by application startup.
+def schema_migration_transaction(
+    db_path: str, busy_timeout_ms: int = DB_BUSY_TIMEOUT_MS
+) -> Iterator[Connection]:
+    """Hold the all-or-nothing schema transaction used by application startup.
 
-    Explicit offline maintenance may prepare historical schema on this connection,
-    after archiving the original database. Nothing is upgraded merely by entering.
+    Explicit offline maintenance can prepare historical schema on this connection,
+    after the original database archive. Nothing is upgraded merely by entry.
     """
     engine = _migration_engine(db_path, busy_timeout_ms)
     try:
-        with engine.begin() as connection:
-            yield connection
-            violations = connection.exec_driver_sql("PRAGMA foreign_key_check").fetchall()
-            if violations:
-                raise RuntimeError(f"migrations left foreign key violations: {violations!r}")
+        with engine.connect() as connection:
+            with connection.begin():
+                yield connection
+                violations = connection.exec_driver_sql("PRAGMA foreign_key_check").fetchall()
+                if violations:
+                    raise RuntimeError(f"migrations left foreign key violations: {violations!r}")
     finally:
         engine.dispose()
 
 
 def upgrade_schema_connection(connection: Connection, revision: str) -> None:
-    """Replay packaged historical revisions within the caller's existing transaction."""
-    _adopt_database_left_by_the_collapsed_chain(connection)
+    """Apply packaged revisions within the caller's existing transaction."""
     command.upgrade(_alembic_config(connection), revision)
 
 
@@ -316,6 +554,11 @@ def _migration_engine(db_path: str, busy_timeout_ms: int) -> Engine:
         # off while migrations run and the foreign_key_check afterwards is what catches a
         # migration that left the record inconsistent.
         dbapi_connection.execute("PRAGMA foreign_keys=OFF")
+        # Existing module triggers also run during historical source rewrites.
+        # Attach their SQL functions before migrations, on this same connection.
+        from planner.database_modules import attach
+
+        attach(dbapi_connection)
 
     @event.listens_for(engine, "begin")
     def _begin_immediate(connection: Connection) -> None:
@@ -331,84 +574,3 @@ def _alembic_config(connection: Connection) -> Config:
     config.set_main_option("script_location", str(MIGRATIONS_DIRECTORY))
     config.attributes["connection"] = connection
     return config
-
-
-def _schema_object_names(connection: Connection) -> set[str]:
-    """Every table, index and trigger a database holds, excluding SQLite's own."""
-    return {
-        str(row[0])
-        for row in connection.exec_driver_sql(
-            "SELECT name FROM sqlite_master "
-            "WHERE type IN ('table', 'index', 'trigger') AND name NOT LIKE 'sqlite_%'"
-        )
-    }
-
-
-def _revisions_this_build_carries(connection: Connection) -> frozenset[str]:
-    """Every revision id in this build's own migration directory."""
-    script = ScriptDirectory.from_config(_alembic_config(connection))
-    return frozenset(revision.revision for revision in script.walk_revisions())
-
-
-def _adopt_database_left_by_the_collapsed_chain(connection: Connection) -> None:
-    """Give a database the old chain left behind the version marker this build reads.
-
-    A new database needs nothing here, and neither does a database standing on any
-    revision this build carries — the upgrade that follows builds the first and moves the
-    second to the head. A database at the head the old chain finished at holds the
-    baseline's schema and the row rewrites that chain performed, so it is adopted at the
-    baseline once that schema is confirmed.
-
-    Every other state is refused. The revisions that would carry such a database forward
-    are not in this build, so the only honest answer is to say which build has them.
-    """
-    tables = {
-        str(row[0])
-        for row in connection.exec_driver_sql(
-            "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'"
-        )
-    }
-
-    if "alembic_version" not in tables:
-        if not tables:
-            return
-        raise RuntimeError(
-            "this database has tables but no version table, so there is no saying what "
-            "schema it holds. Open it once with a build from before the migration chain "
-            "was collapsed, let it start, then come back."
-        )
-
-    revisions = [
-        str(row[0]) for row in connection.exec_driver_sql("SELECT version_num FROM alembic_version")
-    ]
-    # Any revision this build carries is left for the upgrade below. Naming the baseline
-    # alone would refuse every start after the first revision added on top of it.
-    if len(revisions) == 1 and revisions[0] in _revisions_this_build_carries(connection):
-        return
-    if revisions != [PRE_COLLAPSE_HEAD_REVISION]:
-        held = ", ".join(revisions) if revisions else "nothing"
-        raise RuntimeError(
-            f"this database is at revision {held}, which this build does not carry. It "
-            f"starts at {BASELINE_REVISION} and adopts only from {PRE_COLLAPSE_HEAD_REVISION}. "
-            "Deploy the build from before the migration chain was collapsed, let it start "
-            "once so it carries this database to "
-            f"{PRE_COLLAPSE_HEAD_REVISION}, then deploy this build again."
-        )
-
-    present = _schema_object_names(connection)
-    promised = set(PRE_COLLAPSE_HEAD_SCHEMA_OBJECT_NAMES)
-    missing = sorted(promised - present)
-    unexpected = sorted(present - promised - {"alembic_version"})
-    if missing or unexpected:
-        raise RuntimeError(
-            f"this database is at revision {PRE_COLLAPSE_HEAD_REVISION} but does not hold "
-            f"that schema: missing {missing}, unexpected {unexpected}"
-        )
-    # purge, because the row already in the version table names a revision this build no
-    # longer carries. Without it Alembic tries to resolve that name to plot a path, and
-    # fails before it writes anything.
-    command.stamp(_alembic_config(connection), BASELINE_REVISION, purge=True)
-    # The pre-Alembic ladder left a version marker behind, and no build still reads it.
-    # Clearing it as the database is adopted makes an adopted database and a database this
-    # build made from nothing the same database.
-    connection.exec_driver_sql("PRAGMA user_version=0")

@@ -1,7 +1,7 @@
 import type { BackendModel } from "./wire";
 
 /** Match Claude's versioned_display_name: dates are release stamps, [1m] is context. */
-function readableResolvedModel(identifier: string): string {
+export function readableResolvedModel(identifier: string): string {
   const largeContext = identifier.endsWith("[1m]");
   const base = largeContext ? identifier.slice(0, -4) : identifier;
   const [provider, family, ...parts] = base.split("-");
@@ -17,7 +17,9 @@ function readableResolvedModel(identifier: string): string {
       part[0].toUpperCase() + part.slice(1)
     ).join(" ")}`;
   }
-  return identifier;
+  return /^(opus|sonnet|haiku)(\[1m\])?$/i.test(identifier)
+    ? `${identifier.split("[")[0][0].toUpperCase()}${identifier.split("[")[0].slice(1)}${largeContext ? " (1M)" : ""}`
+    : identifier;
 }
 
 /** Both the closed face and model options name the resolution, without a second alias. */

@@ -2,8 +2,9 @@
 
 The *values* live in `assets/tokens.css` (the only place a colour, radius, spacing step,
 duration, or type size is written — never hardcode one). This file is the *how*: the
-principles those tokens serve. Warm near-black surfaces, one amber accent that means
-"needs the human", a closed five-size type scale. Restraint over decoration.
+principles those tokens serve. Warm near-black surfaces, one accent — the soft steel
+`--accent-bright` — that means "needs the human", a shared sans type scale. Restraint
+over decoration. How those choices show up in the product is `docs/design.md`.
 
 Distilled from `tokens.css`, `PRINCIPLES.md`, and the Vylo conversation reference (no-divider fades,
 bubble-less assistant, recessed composer).
@@ -11,7 +12,12 @@ bubble-less assistant, recessed composer).
 ## Surface roles
 
 - `--surface-1` is the main neutral plane; `--surface-2` is the contained neutral
-  plane for cards, menus, controls, and the human message bubble.
+  plane for cards, controls, and the human message bubble. A page card has no edge: its
+  fill alone separates it. The workspace rail's column takes the page's colour with no line
+  between them, and `--surface-rail` fills its bubbles, one close step from the page.
+  `--surface-raised` is the one floating plane, for popovers, menus, tooltips and hover previews (`#2a2a2a`), with a 1px
+  `--border-raised` ring and `--shadow-float`; nothing nests a darker well inside it. The
+  composer field is `--surface-input` with a 1px `--border-input` edge one step lighter.
 - `--surface-recessed` is for wells, editors, code, and persistent selections.
 - `--surface-ink` is the cool near-black conversation band and human-input panel;
   it also supplies dark foreground ink on bright fills.
@@ -35,12 +41,12 @@ bubble-less assistant, recessed composer).
    gradient), and get depth from a recessed surface (`--surface-recessed` + an inset shadow) or a
    raise, not borders. Spend a `--border-color` hairline only where a real seam is needed.
 
-4. **One accent, one meaning.** `--accent-bright` (amber) means *needs the human* — a pending
-   approval, a required action. Never decorative. If amber is everywhere it says nothing; that
-   is why it stays out of the conversation thread and shows up on the gate.
+4. **One accent, one meaning.** `--accent-bright` means *needs the human* — a pending
+   approval, a required action. Never decorative. If the accent is everywhere it says nothing; that
+   is why it stays out of ordinary agent prose and shows up on the gate and on the enabled Send control.
 
 5. **Asymmetry carries meaning.** Different things look different. The human's message is a
-   contained pill; the agent's is bare prose. The gate is amber; settled state is quiet. Don't
+   contained pill; the agent's is bare prose. The gate is the accent; settled state is quiet. Don't
    make everything a rounded card with a shadow.
 
 6. **Scannable and self-evident.** Design billboards, not brochures — visual weight equals
@@ -51,23 +57,34 @@ bubble-less assistant, recessed composer).
    hand off to smooth streaming, a working marker on a running ticket. Never leave a surface
    frozen and silent.
 
-8. **The scales are closed.** The sans type sizes, the 4/8/12 radius steps, the fixed spacing
-   scale. Snap to them; don't invent a size for a one-off. A new category needs evidence of need
-   (`PRINCIPLES.md`), not taste. The one added category is the **serif ladder** (`--font-serif`
-   plus its six `--type-serif-*` sizes) — the voice below earns it.
+8. **Use the shared scales.** Text uses six roles and five tones (the "Direction v2 roles"
+   block in `tokens.css`): page title 26/600, section head 15/600, body 14/400 at 1.55,
+   rail title 16/600, row 13.5/400 (500 when it needs the person), and Small 12.5/450 for
+   eyebrows, group headings, meta, dates, counts, axes and table heads. Tones are strong
+   (92%), primary (84%, body and recaps), secondary (62%, dimmed rows, secondary button
+   labels), tertiary (45%, Small text) and faint (32%, placeholders and disabled). The older
+   `--text-*` and `--type-*` names land on these, so no screen can reach a seventh size.
+   Hierarchy comes from tone, not from more sizes and weights. Nothing marks a
+   selected or current state with a left-edge line: selection is a fill. Every page has one
+   line above its title (where it lives, then its own facts) and only its recap below; the
+   rail keeps one left edge, with the Manager's name, not an indent, carrying its structure.
+   There is one button (`Button.svelte`, `.button`): 28px tall, radius 8, padding 0 12,
+   label 13.5/450; primary is inverse, secondary a 13% fill, ghost no fill; a hover adds
+   one 6% step. There is one segmented control (`SegmentedControl.svelte`, `.segmented`)
+   with a 12% selected segment, and one focus ring: 1.5px accent, 2px off the control.
+   Surfaces use the 12px radius. The radius and spacing scales stay fixed; new sizes need
+   an explicit design decision.
 
-9. **The system speaks in serif; the machine stays sans.** Everything the product or its agents
-   *say* is set in serif (Newsreader) — ticket titles and prose, recaps, proposals, notes, field
-   values, day and sprint bodies, conversation messages, the capture inputs, the empty-state lines.
-   Everything that is a *control or a fact* stays in the sans UI face — the nav, labels, pills,
-   buttons, filters, counts, key hints, status words, dates. The split *is* the hierarchy: on any
-   surface the words are the content and the small sans elements are the machinery. No italics
-   except input placeholders.
+9. **One sans voice.** Content and controls use the same sans stack (`--font-ui`):
+   the system face on a Mac, and the self-hosted Inter (`assets/fonts/`) everywhere
+   else. Hierarchy comes from size, weight, spacing, and emphasis. Code, diffs, tool output,
+   and `code`, `pre`, `kbd`, and `samp` retain monospace because alignment carries meaning. Italics are for
+   input placeholders and the quiet line on a Manager page.
 
 10. **Depth is rationed to the ask.** The one raised approval surface earns a top highlight
-    and a long soft shadow, with the solid-amber Approve glowing beneath.
+    and a long soft shadow, with the accent Approve glowing beneath.
     Nothing else on any page is elevated. Hairlines survive only where a real list needs a seam
-    (the ticket stage spine, the sprint/ideas/backlog rows) and at the conversation rail edge; blocks are
+    (the ticket stage spine, manager and idea rows) and at the conversation rail edge; blocks are
     otherwise separated by space, not lines.
 
 ## Applied so far
@@ -77,10 +94,10 @@ bubble-less assistant, recessed composer).
   bubble-less **worker** prose, compact closed thought and tool details, one persistent
   status line, explicit permissions, and a recessed composer carrying the model and effort
   in force plus Steer, Send Now, run-when-free, Stop and New when applicable.
-- **The serif redesign, across every screen** (`assets/tokens.css` serif ladder;
-  `web/src/routes/*` + the `[data-screen="…"]` blocks in `assets/app.css`) — the serif/sans voice
-  split, the amber-only accent, the line diet, and the single depth-bearing ask surface, applied
-  to Day, Review, Workspace, Ticket, Sprint, Backlog, and Ideas, plus the shell presence readout.
+- **Shared typography across every screen** (`assets/tokens.css` type scale;
+  `web/src/routes/*` + the `[data-screen="…"]` blocks in `assets/app.css`) — one
+  system sans voice for content and controls, with monospace for aligned technical
+  text. Size, spacing, and emphasis carry the hierarchy.
 
 ## Framing
 

@@ -1,104 +1,52 @@
-# Panels — the map
+# Headroom
 
-Panels is a workspace for orchestrators and Workers on one host. Chief is a special
-orchestrator and an explicit Worker assignment destination. Ordinary orchestrators keep
-their former Sprint Item identities, artifacts, and supervisor conversations. Tickets
-remain the stored Workers. Ideas hold possibilities in the background.
+Headroom is the workspace where Khushal directs agents, reviews what they propose, and keeps the work that is actually committed. The app and the `panels` command still carry the old Panels name.
 
-The owner can settle any ordinary orchestrator. Chief never settles. Settlement changes
-presentation and does not gate Worker continuation or hide approvals and messages.
-Explicit Ticket backlog separately prevents automatic Worker progression. Resume restores
-ordinary checks. Delete removes a Ticket when its record is no longer needed.
-Sprint and Day records remain historical reads. Their live planning machinery is retired.
+These pages are a top-level view of each system: what it is for, how it works, and roughly how. Read the page that owns your question, then go to the code for the details. [`AGENTS.md`](AGENTS.md) holds the rules for editing them.
 
-This is the entry point. Read it to find which system owns a question, then read
-that system's doc.
+The word list lives in [`CONTEXT.md`](../CONTEXT.md), the engineering rules in [`PRINCIPLES.md`](../PRINCIPLES.md), and the visual rules in [`DESIGN.md`](../DESIGN.md). Step-by-step procedures live under [`ops/`](../ops/). Historical ticket plans live under `orchestration/tickets/` and are not this manual.
 
-## Interfaces and authority
+## Start here
 
-```
-browser and direct CLI ─────┐
-Sprint Item supervisor ─────┴──────────► domain writers ───────► record
-                                               ▲
-Ticket Worker ──field proposal──► proposal resolver
-direct user ──user-owned value───► proposal resolver
-```
+- [The product](product.md) — what Headroom is for, and how a piece of work moves through it.
+- [Decisions that must stay put](invariants.md) — the cross-cutting rules a later change has to respect on purpose.
 
-The browser is the main human surface. The `panels` CLI exposes ordinary direct actions
-and Ticket Worker actions as separate command groups.
+## The work
 
-Every operation has exactly one address, and one sentence decides who may call it: you
-may act on anything strictly below you. See `authority.md`.
+- [Ticket lifecycle](tickets.md) — one bounded piece of work, its stages, proposals, and the ceiling that decides who must look.
+- [Worker types](worker-types.md) — the workflows Headroom ships, and where each one pulls a person in.
+- [Worker steps](worker-steps.md) — how a ready Ticket receives its next prompt.
+- [Skills](skills.md) — the instructions an agent actually reads, and who may change them.
 
-Ticket gated fields still have one door: a Worker files a proposal, and the proposal
-resolver alone can settle its value or advance its Stage. Retired planning Worker types
-retain their history but no longer receive shared-plan write authority.
-A direct user can complete the unset gate of the current user-owned Stage. The same
-canonical transition settles the value and advances one Stage. There is no arbitrary
-Stage setter. A Sprint Item supervisor has no address of its own: it calls the routes
-every other principal calls, and the rule holds it to its own current child Tickets.
+## People, attention, and screens
 
-At its ceiling a Ticket proposes and waits, and there is one approval gate — a parked
-proposal is addressed to somebody, and anyone above the Ticket can decide it. Review
-holds owner-addressed parked proposals and explicit Worker help requests. A Sprint Item
-conversation starts through an addressed message or the existing durable manager-notice
-path. The supervisor reads canonical Item and Ticket state before it acts on a notice.
+- [Managers and Chief](managers.md) — shared direction, child Tickets, and the conversations that supervise them.
+- [Review](review.md) — the pass through everything waiting on Khushal.
+- [Goals](goals.md) — outcomes with a deadline, their pages, and whether they were hit.
+- [Measures](measures.md) — dated numbers, the sources that collect them, and datasets.
+- [Historical attention](attention.md) — where Khushal's recorded involvement went between two dates.
+- [Ideas](ideas.md) — possibilities kept before they become work.
+- [Projects](projects.md) — the catalog that classifies work and points at a folder.
+- [Design](design.md) — how the visual principles show up, and the shared page kit.
+- [Live screens](live-updates.md) — why an open screen moves after a write.
+- [Usage](usage.md) — allowance, recorded spend, and backend setup.
+- [Notifications](notifications.md) — which events can reach a phone.
+- [Native iOS compatibility](ios-compatibility.md) — how the server refuses unsupported app builds.
+- [Who may act](authority.md) — the rule behind every guarded call.
 
-## The systems
+## Talking to an agent
 
-**The full-system view**
+- [Conversations](conversations.md) — the only path into an agent, its notebook, and honest send fates.
+- [Credentials](credentials.md) — named API keys that scripts use without a secret reaching an agent.
+- [Extra machines](executor.md) — Mac and Linux executors run Workers while the home keeps the record.
+- [The command line](cli.md) — how people and Workers act through `panels`.
 
-- **Systems** (`systems.md`) — the cold-start map: the record, ticket gate,
-  runtime, the conversation system, UI, CLI, and the main boundaries.
-- **Systems artifact** (`systems.html`) — the same map as a designed, collapsible
-  reading artifact.
+## Operating a host
 
-**The core of the work**
+- [Environments](environments.md) — live, staging, Ticket, and local servers on one user account.
+- [Deployment](deployment.md) — how a push to `main` becomes a sealed release, and how the owner installs it.
+- [Backups](backups.md) — verified snapshots and the stopped restore.
+- [Previews](previews.md) — one tailnet link to a Ticket's own dev server.
+- [VPS](vps.md) — machine measurements.
 
-- **Who may act** (`authority.md`) — one address per operation, and the one sentence
-  that decides every call: you may act on anything strictly below you.
-- **Tickets & the gates** (`tickets-and-gates.md`) — what a ticket is, the stages
-  it moves through, and the proposal resolver, the ceiling, and the approval gate that govern
-  every advance. The correctness heart of the system.
-- **Worker types and settings** (`worker-types.md`) — the registry declares each workflow's
-  immutable Stages, gates, fields, specialist identity, and starting worker setup. Managed
-  settings own prospective Stage defaults and editable specialist-skill content.
-- **Worker orchestration** (`worker-orchestration.md`) — how Panels decides a ticket is
-  ready for its next worker step, claims it, and sends the step into that ticket's
-  conversation. It starts work; it does not watch it.
-- **Scheduled Ticket creation** (`scheduled-tickets.md`) — exact-time Ticket supply,
-  durable occurrence receipts, and the boundary before Worker readiness.
-- **The conversation system** (`conversation-system.md`) — the one way Panels talks to an
-  agent, behind a fixed contract: one agent process per conversation, an append-only
-  notebook of events, honest send fates, and backend cards. It serves every screen that
-  shows a conversation — a Ticket's and the Chief of Staff's.
-- **Runtime environments** (`environments.md`) — prepared live and staging runtime
-  layouts, Ticket worktree servers, scrubbed launch, and user-service inputs.
-- **Database backups** (`backups.md`) — verified SQLite snapshots and the safe operator restore.
-- **Notifications** (`notifications.md`) — installable Panels, notification choices,
-  and the durable Web Push path from a system fact to a phone.
-- **Production deployment** (`deployment.md`) — exact-commit building, single-app replacement,
-  and automatic recovery.
-
-**The surfaces you plan on**
-
-- **Historical Days** (`days.md`) — retained writing and memberships, with no live
-  Today gate or planning schedule.
-- **Orchestrators and historical Sprints** (`sprints.md`) — explicit Chief assignment,
-  owner-controlled settlement, stable identities, and historical reads.
-- **Backlog & Ideas** (`backlog-and-ideas.md`) — committed work and remembered possibilities.
-- **Feedback** (`feedback.md`) — loose notes captured from any page and their handled history.
-- **Projects** (`projects.md`) — the data-backed project catalog.
-
-**The two interfaces**
-
-- **The front end** (`frontend.md`) — the Svelte web app: the screens, shared tokens,
-  and how open screens follow the server.
-- **The command-line tool** (`cli.md`) — the `panels` tool workers act through, and
-  the separation between direct approval commands and the approval-free `worker`
-  subgroup.
-
----
-
-_Last verified: 2026-10-18 · Covers the system landscape; each doc carries its own
-code paths._
+_Last verified: 2026-11-04._

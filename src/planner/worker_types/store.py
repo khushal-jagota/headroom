@@ -8,8 +8,11 @@ is not exactly the shape of a Worker type, and the registry's rules run on the r
 
 from __future__ import annotations
 
+import functools
 import json
 import sqlite3
+from collections.abc import Iterator
+from contextlib import contextmanager
 from typing import Any
 
 from planner.core.contracts import ErrorCode, PlannerError
@@ -18,10 +21,15 @@ from planner.tickets.contracts import StageOwnershipMode
 from planner.worker_types.contracts import (
     FieldDefinition,
     StageDefinition,
+    TicketWorkflowDefinition,
     WorkerProfile,
     WorkerTypeDefinition,
 )
-from planner.worker_types.registry import KNOWN_TOOLSET_PROFILES, validate_definition
+from planner.worker_types.registry import (
+    KNOWN_TOOLSET_PROFILES,
+    validate_definition,
+    validate_workflow,
+)
 
 
 def _fail(message: str, detail: dict[str, Any]) -> PlannerError:
@@ -44,9 +52,15 @@ def _require_text(value: object, what: str) -> str:
 
 
 def _stage_from_json(raw: object) -> StageDefinition:
+    if isinstance(raw, dict):
+        raw = {"instructions": "", **raw}
     payload = _require_exact_keys(
-        raw, {"id", "label", "gating_field", "is_terminal", "ownership_mode"}, "stage"
+        raw,
+        {"id", "label", "gating_field", "is_terminal", "ownership_mode", "instructions"},
+        "stage",
     )
+    if not isinstance(payload["instructions"], str):
+        raise _fail("stage instructions must be text", {})
     gating_field = payload["gating_field"]
     if gating_field is not None:
         gating_field = _require_text(gating_field, "stage gating field")
@@ -67,6 +81,7 @@ def _stage_from_json(raw: object) -> StageDefinition:
         gating_field=gating_field,
         is_terminal=payload["is_terminal"],
         ownership_mode=ownership_mode,
+        instructions=payload["instructions"],
     )
 
 
@@ -77,6 +92,7 @@ def _stage_to_json(stage: StageDefinition) -> dict[str, Any]:
         "gating_field": stage.gating_field,
         "is_terminal": stage.is_terminal,
         "ownership_mode": None if stage.ownership_mode is None else stage.ownership_mode.value,
+        "instructions": stage.instructions,
     }
 
 
@@ -117,6 +133,7 @@ def definition_to_json(definition: WorkerTypeDefinition) -> str:
         {
             "worker_type": definition.worker_type,
             "label": definition.label,
+            "guidance": definition.guidance,
             "stages": [_stage_to_json(stage) for stage in definition.stages],
             "fields": [{"id": field.id, "label": field.label} for field in definition.fields],
             "profile": {
@@ -136,9 +153,13 @@ def definition_from_json(raw: str) -> WorkerTypeDefinition:
         decoded: Any = json.loads(raw)
     except ValueError as exc:
         raise _fail("stored worker type is not valid JSON", {}) from exc
+    if isinstance(decoded, dict):
+        decoded = {"guidance": "", **decoded}
     payload = _require_exact_keys(
-        decoded, {"worker_type", "label", "stages", "fields", "profile"}, "record"
+        decoded, {"worker_type", "label", "stages", "fields", "profile", "guidance"}, "record"
     )
+    if not isinstance(payload["guidance"], str):
+        raise _fail("workflow guidance must be text", {})
     stages = payload["stages"]
     fields = payload["fields"]
     if not isinstance(stages, list) or not isinstance(fields, list):
@@ -149,6 +170,7 @@ def definition_from_json(raw: str) -> WorkerTypeDefinition:
         stages=tuple(_stage_from_json(stage) for stage in stages),
         fields=tuple(_field_from_json(field) for field in fields),
         worker_profile=_profile_from_json(payload["profile"]),
+        guidance=payload["guidance"],
     )
 
 
@@ -186,72 +208,25 @@ def read_definition(conn: sqlite3.Connection, worker_type: str) -> WorkerTypeDef
 # --- writing ------------------------------------------------------------------
 
 
-def _tickets_standing_on(
-    conn: sqlite3.Connection, worker_type: str, stages: frozenset[str]
-) -> tuple[str, ...]:
-    if not stages:
-        return ()
-    placeholders = ",".join("?" for _ in stages)
-    rows = conn.execute(
-        f"SELECT id FROM tickets WHERE worker_type = ? AND stage IN ({placeholders}) ORDER BY id",
-        (worker_type, *sorted(stages)),
-    ).fetchall()
-    return tuple(str(row["id"]) for row in rows)
-
-
-def _tickets_holding_fields(
-    conn: sqlite3.Connection, worker_type: str, fields: frozenset[str]
-) -> tuple[str, ...]:
-    if not fields:
-        return ()
-    holders: list[str] = []
-    for row in conn.execute(
-        "SELECT id, field_values FROM tickets WHERE worker_type = ? "
-        "AND stage != 'done' ORDER BY id",
-        (worker_type,),
-    ):
-        stored: Any = json.loads(str(row["field_values"]))
-        if not isinstance(stored, dict):
-            continue
-        if any(stored.get(field) for field in fields):
-            holders.append(str(row["id"]))
-    return tuple(holders)
-
-
-def _refuse_to_strand_tickets(
-    conn: sqlite3.Connection, previous: WorkerTypeDefinition, replacement: WorkerTypeDefinition
-) -> None:
-    """Refuse a rewrite that would leave an unfinished Ticket on a stage or field it lost.
-
-    A removed Stage leaves an unfinished Ticket without its current step. A removed
-    field hides text the unfinished Ticket still needs, although storage preserves it.
-    Refuse these changes and name the affected Tickets. Finished Tickets can retain
-    historical text outside the current definition.
-    """
-    lost_stages = frozenset(previous.stage_ids()) - frozenset(replacement.stage_ids())
-    stranded = _tickets_standing_on(conn, previous.worker_type, lost_stages)
-    if stranded:
-        raise PlannerError(
-            ErrorCode.validation,
-            "removing a Stage would strand unfinished Tickets",
-            {
-                "worker_type": previous.worker_type,
-                "stages": sorted(lost_stages),
-                "tickets": list(stranded),
-            },
-        )
-    lost_fields = frozenset(previous.field_ids()) - frozenset(replacement.field_ids())
-    holders = _tickets_holding_fields(conn, previous.worker_type, lost_fields)
-    if holders:
-        raise PlannerError(
-            ErrorCode.validation,
-            "removing a field would discard text unfinished Tickets hold",
-            {
-                "worker_type": previous.worker_type,
-                "fields": sorted(lost_fields),
-                "tickets": list(holders),
-            },
-        )
+@contextmanager
+def definition_transaction(conn: sqlite3.Connection) -> Iterator[None]:
+    """Own the write lock, or keep this save atomic within its caller's transaction."""
+    nested = conn.in_transaction
+    conn.execute("SAVEPOINT worker_type_save" if nested else "BEGIN IMMEDIATE")
+    try:
+        yield
+        if nested:
+            conn.execute("RELEASE worker_type_save")
+        else:
+            conn.commit()
+    except BaseException:
+        if conn.in_transaction:
+            if nested:
+                conn.execute("ROLLBACK TO worker_type_save")
+                conn.execute("RELEASE worker_type_save")
+            else:
+                conn.rollback()
+        raise
 
 
 def write_definition(
@@ -260,31 +235,113 @@ def write_definition(
     *,
     now: int,
 ) -> None:
-    """Store one Worker type, or refuse it.
-
-    The order matters: what is written has already passed the same rules the registry
-    applies, and has already been shown not to strand a Ticket in flight.
-    """
-    validate_definition(
-        definition,
-        known_skills=skill_names(conn),
-        known_toolset_profiles=KNOWN_TOOLSET_PROFILES,
-    )
-    existing = conn.execute(
-        "SELECT definition_json FROM worker_types WHERE worker_type = ?",
-        (definition.worker_type,),
-    ).fetchone()
-    if existing is not None:
-        _refuse_to_strand_tickets(
-            conn, definition_from_json(str(existing["definition_json"])), definition
+    """Save a preset without rewriting any existing Ticket's workflow."""
+    with definition_transaction(conn):
+        validate_definition(
+            definition,
+            known_skills=skill_names(conn),
+            known_toolset_profiles=KNOWN_TOOLSET_PROFILES,
         )
-    next_position = conn.execute(
-        "SELECT COALESCE(MAX(position), -1) + 1 AS next FROM worker_types"
-    ).fetchone()["next"]
-    conn.execute(
-        "INSERT INTO worker_types (worker_type, position, definition_json, updated_at) "
-        "VALUES (?, ?, ?, ?) "
-        "ON CONFLICT(worker_type) DO UPDATE SET definition_json = excluded.definition_json, "
-        "updated_at = excluded.updated_at",
-        (definition.worker_type, int(next_position), definition_to_json(definition), now),
+        next_position = conn.execute(
+            "SELECT COALESCE(MAX(position), -1) + 1 AS next FROM worker_types"
+        ).fetchone()["next"]
+        conn.execute(
+            "INSERT INTO worker_types (worker_type, position, definition_json, updated_at) "
+            "VALUES (?, ?, ?, ?) ON CONFLICT(worker_type) DO UPDATE SET "
+            "definition_json = excluded.definition_json, updated_at = excluded.updated_at",
+            (definition.worker_type, int(next_position), definition_to_json(definition), now),
+        )
+
+
+def delete_definition(conn: sqlite3.Connection, worker_type: str) -> None:
+    """Remove a preset. Tickets made from it keep running on their own copy.
+
+    One thing still reads the preset rather than a Ticket's copy: the launch setup of
+    a Ticket that saved no model. It refuses.
+    """
+    with definition_transaction(conn):
+        read_definition(conn, worker_type)
+        without_model = [
+            str(row["id"])
+            for row in conn.execute(
+                "SELECT id FROM tickets WHERE worker_type = ? AND stage != 'done' "
+                "AND employee_launch_model IS NULL ORDER BY id",
+                (worker_type,),
+            )
+        ]
+        if without_model:
+            raise _fail(
+                "unfinished Tickets of this Worker type have no saved model and launch "
+                "from its defaults",
+                {"worker_type": worker_type, "ticket_ids": without_model},
+            )
+        conn.execute("DELETE FROM worker_types WHERE worker_type = ?", (worker_type,))
+
+
+def workflow_from_preset(definition: WorkerTypeDefinition) -> TicketWorkflowDefinition:
+    return TicketWorkflowDefinition(
+        label=definition.label,
+        stages=definition.stages,
+        fields=definition.fields,
+        guidance=definition.guidance,
+        specialist_skill=definition.worker_profile.specialist_skill,
     )
+
+
+def workflow_to_json(definition: TicketWorkflowDefinition) -> str:
+    return json.dumps(
+        {
+            "label": definition.label,
+            "guidance": definition.guidance,
+            "stages": [_stage_to_json(stage) for stage in definition.stages],
+            "fields": [{"id": field.id, "label": field.label} for field in definition.fields],
+            "specialist_skill": definition.specialist_skill,
+        },
+        ensure_ascii=False,
+    )
+
+
+def _workflow_from_dict(raw: object, *, saved: bool) -> TicketWorkflowDefinition:
+    keys = {"label", "guidance", "stages", "fields"}
+    if saved:
+        keys.add("specialist_skill")
+    payload = _require_exact_keys(raw, keys, "Ticket workflow")
+    if not isinstance(payload["guidance"], str):
+        raise _fail("workflow guidance must be text", {})
+    if not isinstance(payload["stages"], list) or not isinstance(payload["fields"], list):
+        raise _fail("workflow stages and fields must be arrays", {})
+    specialist_skill = payload.get("specialist_skill")
+    if specialist_skill is not None:
+        specialist_skill = _require_text(specialist_skill, "specialist skill")
+    if saved and any(
+        not isinstance(stage, dict) or "instructions" not in stage for stage in payload["stages"]
+    ):
+        raise _fail("saved workflow stage lacks instructions", {})
+    workflow = TicketWorkflowDefinition(
+        label=_require_text(payload["label"], "workflow label"),
+        guidance=payload["guidance"],
+        stages=tuple(_stage_from_json(stage) for stage in payload["stages"]),
+        fields=tuple(_field_from_json(field) for field in payload["fields"]),
+        specialist_skill=specialist_skill,
+    )
+    validate_workflow(workflow)
+    return workflow
+
+
+def custom_workflow_from_dict(raw: object) -> TicketWorkflowDefinition:
+    return _workflow_from_dict(raw, saved=False)
+
+
+# Many Tickets share one workflow text, and a definition is immutable, so a read over
+# every Ticket parses each distinct text once.
+@functools.lru_cache(maxsize=256)
+def workflow_from_json(raw: str) -> TicketWorkflowDefinition:
+    try:
+        payload = json.loads(raw)
+    except (TypeError, ValueError) as exc:
+        raise _fail("saved Ticket workflow is not valid JSON", {}) from exc
+    return _workflow_from_dict(payload, saved=True)
+
+
+def workflow_from_row(row: sqlite3.Row) -> TicketWorkflowDefinition:
+    return workflow_from_json(row["workflow_json"])

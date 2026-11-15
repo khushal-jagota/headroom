@@ -1,0 +1,100 @@
+# Ticket lifecycle
+
+A Ticket is one piece of work small enough to hand to a single AI Worker. It is the unit Headroom can stage, pause, approve, and come back to. Its lifecycle answers one product question for every piece of work: how far may this Worker go before a person has to look?
+
+## What a Ticket is made of
+
+- **Its own workflow.** The Ticket holds its ordered stages, result fields, ownership, and guidance. Creation copies a [preset](worker-types.md) or accepts a custom workflow.
+- **Stage text.** Each stage before Done has one blank. Filling it, and having that fill settle, moves the Ticket one stage forward. Brief holds the intake: the original ask, its boundaries, and advice that should stay readable beside the later stages.
+- **A ceiling and a holder.** The ceiling is the stage at which the Worker's proposals start waiting for a person. The holder is who that person is.
+- **An assignment** to Chief or one ordinary Manager. This is who the work sits under.
+- **A conversation**, the Worker's only input. Workers send ordinary messages to an explicit recipient, separate from the ceiling holder. See [Conversations](conversations.md).
+- **A launch setup**: backend, model, and reasoning, copied from a selected preset or explicitly chosen for custom work, and fixed once the conversation exists.
+- **A machine**: a fixed execution destination, chosen at creation.
+- **Blockers**, other Tickets that must be Done before this one may start a step.
+- **A recap**, the Worker's short status for a person, and **artifacts**, the plans, documents, images, and prototypes the work produced.
+
+## How a stage advances
+
+```text
+Worker files a proposal for the current stage
+                │
+        proposal resolver
+         │                 │
+  stage before the     stage at or past
+  ceiling              the ceiling
+         │                 │
+  text settles,        proposal parks for the holder
+  next stage           │
+                       ├─ approve: text settles, next stage,
+                       │  and the approver sets the next ceiling and holder
+                       └─ send back: stage stays, optional guidance
+                          goes out with the Worker's next step
+```
+
+A proposal waits briefly for a busy database before it changes the record. If that wait expires, the sender receives a retryable refusal. Headroom never repeats a proposal commit after an uncertain result.
+
+Only the Ticket's own Worker files proposals. Khushal, Chief, and Managers decide them, and never write them. The proposal resolver is the only writer that makes stage text canonical and moves a stage. Every approval moves exactly one stage and names how far the Worker may go next, so the ceiling is chosen again at each gate.
+
+By default a new Ticket's ceiling is on Brief and its holder is whoever created it. The Brief then waits for that person, and their approval sets the first real ceiling. A creator can set a later ceiling up front, but never Done.
+
+On a collaborative stage, the person can also complete the gate directly, without a Worker proposal. That uses the same resolver and still moves one stage. A reply typed into the conversation never decides a proposal. Approval and Send back enforce any supplied proposal revision in the same write as the decision. Protected decision receipts retain an exact command and its outcome for the Ticket's lifetime. Repeating that command returns its saved result, even after the Ticket advances.
+
+The browser and iPhone use protected decisions on Review and Ticket pages. The older accept and reject routes remain available to the CLI and existing callers through the same proposal writers. Those routes do not provide receipt recovery.
+
+Each settled stage remembers who approved it: a named person or agent, or auto-accepted when it settled below the ceiling. Editing the text clears that approval.
+
+## Ceiling, holder, and assignment
+
+These are three separate facts.
+
+- The **assignment** says where the work sits in the Workspace, and so which Manager stands above it.
+- The **holder** says who is on the hook to look when a proposal parks: Khushal, Chief for a Chief-assigned Ticket, or the assigned Manager. A parked proposal for Khushal appears in [Review](review.md). One for Chief or a Manager arrives in that agent's conversation as a real prompt. See [Managers and Chief](managers.md).
+- **Who may approve** is wider than the holder. Anyone who stands above the Ticket may approve or send back. See [Who may act](authority.md).
+
+Moving a Ticket to another Manager can make the old holder illegal. Then the holder returns to Khushal unless the move names a new one.
+
+## How status is read
+
+A Ticket stores one control fact, the worker-step claim: at rest, out, or errored. [Worker steps](worker-steps.md) owns it. Everything a person calls status is derived on read, in this order: errored, awaiting approval, agent (a step is out), blocked (at rest behind an unfinished blocker), and empty (ready for the next step). Whether the agent is working right now is a separate question, answered by the conversation.
+
+The navigation index stores each Ticket's derived status with its other facts, in the same transaction as each write. Ticket and Manager list reads take status from there instead of deriving it again for every Ticket. See [Live screens](live-updates.md).
+
+An errored claim stops automatic progress. Restart the Worker for explicit repair. A restart first kills the Ticket's conversation. After a successful kill, it unlinks the conversation, gives back any claim, and starts a fresh step. The claim does not determine whether a restart can proceed. A revision also starts in a fresh conversation. Its undelivered decision notes carry over.
+
+If new launch settings fail after the old Worker ends, restart clears its old link and marks the claim errored when the database permits cleanup. The settings error remains visible. The Ticket stays stopped until an explicit restart, so old launch settings cannot start another Worker automatically.
+
+If cleanup cannot establish that the old Worker ended, restart refuses before the claim, conversation link, or launch settings change. Use Recheck Worker cleanup before another restart. A user-owned Stage refuses, because a restart there would end the user's discussion and start nothing. A Mac Ticket refuses while the Mac is away, because the kill cannot reach it.
+
+## Backlog and delete
+
+Backlog pauses the next automatic Worker step. The stage, any parked proposal, the conversation, and the artifacts stay. Messages and approvals still work, and a turn already running keeps running. Resume clears the pause and restores eligibility under the ordinary checks. Deferred children do not contribute to a Manager's active-work rollup. Their direct records retain the proposal and conversation facts.
+
+Tickets come from Khushal, Chief, or Managers. Tickets cannot be created on a timer. Daily schedules for measure sources remain separate.
+
+Delete removes the Ticket's record and leaves its files. It is available from the command line and the API, not the browser, to anyone who stands above the Ticket. It refuses while the Worker is still busy, unless the caller forces it or is the Ticket's own Manager. Then the Worker is stopped first, so it never outlives its Ticket.
+
+## Where the Worker runs
+
+The machine destination is chosen at creation and never changes. It defaults to the home. Settings → Machines edits its name, icon, and color. These display edits never move work. The home runs its Workers directly. Registered extra destinations pull their own work and wait while they are away. Chief and Managers stay on the home.
+
+The browser and CLI use `machine_id`. Legacy `locale` requests remain compatible: `vps` names only the original home, and `macos` names only the original Mac. Requests that supply both must agree. The operator registers extra destinations without an enrollment screen. See [Extra machines](executor.md).
+
+## Where it shows up
+
+The Ticket page is the inspector: the stage ladder, the current gate with its proposal card, blockers, artifacts, and the conversation beside them. The Workspace rail and each Manager page list Tickets by the attention they need. Creation happens from the command line, the API, or by asking Chief or a Manager. Tickets cannot be created on a timer. Daily schedules for measure sources remain separate. The browser has no new-Ticket form. A new Ticket starts from a preset or custom stages, and its stages belong to that Ticket.
+
+## Decisions that shape it
+
+- **The ceiling is the product choice.** A person decides, Ticket by Ticket and gate by gate, how much the Worker may do alone.
+- **One door moves a stage.** The resolver moves the Ticket through its saved stages. A preset amendment never moves an existing Ticket.
+- **Status is derived, not stored.** The claim, a parked proposal, and live blockers are enough to say what a Ticket is doing.
+- **Holding a review is not authority.** The holder says who must look. It grants no private approval route, and a Worker, which stands above nothing, can never decide its own proposal.
+
+## Code
+
+- `src/planner/tickets/`: the record, derived status, and writers (`data.py`).
+- `src/planner/tickets/logic/`: the stage machine, proposal routing, and the resolver (`machine.py`, `proposal_routing.py`, `resolution.py`).
+- `web/src/routes/TicketRoute.svelte` and `web/src/components/WorkerProposalCard.svelte`: the Ticket page and its gate.
+
+_Last verified: 2026-11-15._

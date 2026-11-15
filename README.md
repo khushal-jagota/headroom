@@ -34,9 +34,9 @@ For coding tasks, links to supported local development servers can open through 
 
 ## Get help choosing the work
 
-Keep ideas in the backlog, choose priorities across projects, and decide what belongs in the current sprint and today.
+Keep Ideas for possible work and organize committed Tickets under Chief or ordinary Managers.
 
-Planning workers help review the previous day, agree today's direction, and check how it's going later. You can discuss the work with a Chief of Staff agent, too.
+Discuss direction with Chief and Managers. Their Workers carry bounded work through explicit review gates.
 
 The point is to spend less attention remembering what needs doing, and more on deciding what's worth doing.
 
@@ -56,6 +56,11 @@ Formerly **Panels**. The app and command-line tool still use the `panels` name.
 
 ## Run locally
 
+For a sealed release, use the [one-command home installer](ops/mac-home/installation.md) on Apple Silicon Mac or Linux x86_64.
+Use the [join command](ops/mac-executor/installation.md) to add an extra machine to that home.
+
+For a source checkout, follow the commands below.
+
 Requires **Python 3.12+**, **Node.js 22+**, and npm. Run these commands from a source checkout:
 
 ```sh
@@ -68,7 +73,7 @@ python -m pip install -r requirements.txt
 python -m pip install --editable .
 
 npm ci --prefix web
-npm ci --prefix agent_backends
+scripts/dev npm --prefix agent_backends install
 npm run build --prefix web
 
 panels serve
@@ -79,24 +84,36 @@ Open [localhost:8767](http://127.0.0.1:8767). The server binds to loopback. Conf
 Before starting agent work, configure and authenticate the backend you intend to use:
 
 - **Codex:** install the `codex` CLI and make it available on `PATH`.
-- **Claude Code:** the backend dependencies install the tested CLI; `PLAN_CLAUDE_EXECUTABLE` can select another executable.
+- **Claude Code:** install the `claude` CLI and make it available on `PATH`. `PLAN_CLAUDE_EXECUTABLE` can select another executable.
 - **Hermes:** configure an installed Hermes environment with `PLAN_HERMES_PYTHON` pointing to its Python interpreter.
 
 Voice input uses Groq transcription; set `PLAN_GROQ_API_KEY` to enable it. This is separate from your agent subscription.
 
-Choose the appropriate Worker, Model, and Reasoning settings before approving a new Ticket's kickoff. Provider authentication and access are separate from this repository's installation. See the [conversation system](docs/conversation-system.md) and [Worker settings](docs/worker-types.md) for details.
+Choose the appropriate Worker, Model, and Reasoning settings before approving a new Ticket's kickoff. Provider authentication and access are separate from this repository's installation. See [Conversations](docs/conversations.md) and [Worker types](docs/worker-types.md) for details.
 
 Headroom runs on one host and stores its work record there. Agents still use their configured model providers. Ticket gates govern workflow progression; they are not an operating-system sandbox.
 
 ## Documentation
 
-- [System map](docs/README.md) — the main documentation entry point.
-- [Tickets and gates](docs/tickets-and-gates.md) — stages, ownership, scope, and approval.
-- [Worker orchestration](docs/worker-orchestration.md) — how ready work starts.
-- [Days](docs/days.md) and [Sprints](docs/sprints.md) — planning and commitments.
-- [CLI](docs/cli.md) — direct actions and agent commands.
-- [Deployment](docs/deployment.md) and [backups](docs/backups.md) — operating an installation.
+The map, with one line for each page, is [docs/README.md](docs/README.md).
+
+- [The product](docs/product.md) — what Headroom is for, and how a piece of work moves.
+- [Ticket lifecycle](docs/tickets.md) — stages, ceilings, and the single approval door.
+- [Conversations](docs/conversations.md) — the only path into an agent.
+- [Environments](docs/environments.md) — what the server above actually is. The commands in this file are the install.
+- [Deployment](docs/deployment.md) — publication, replacement, and recovery limits.
 
 ## Development
 
 The backend is Python/FastAPI with SQLite; the browser app is Svelte/Vite. Start with [`AGENTS.md`](AGENTS.md) for code ownership and the working rules. Run `./verify` for the repository's full integration check.
+
+The full candidate build and startup test is opt-in. Ordinary integration runs do not build an installed copy.
+Run it explicitly when the installed-runtime boundary needs a check:
+
+```sh
+scripts/dev pytest tests/opt_in/test_candidate_bootstrap.py -s
+```
+
+Pytest keeps private credential homes. Package installers use the launch environment's `PIP_CACHE_DIR` and `npm_config_cache` instead.
+Without overrides, pip uses `$XDG_CACHE_HOME/pip` (or `$HOME/.cache/pip`) and npm uses `$HOME/.npm` from before home isolation.
+Keep these shared caches on disk, outside temporary test homes. The first install fills them; later installs reuse downloads and built wheels.

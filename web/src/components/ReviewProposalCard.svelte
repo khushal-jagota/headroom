@@ -1,31 +1,35 @@
 <script lang="ts">
+  import { isBrokenTicket } from "../lib/ticketIntegrity";
+  import SkeletonRegion from "./SkeletonRegion.svelte";
   /** One waiting proposal, as a card.
    *
    * This is the ask itself — the Ticket's title, its recap,
-   * the approval control, and the send-back box — and nothing about a queue. It is
-   * named by a Ticket id and a field, and it fetches that Ticket's detail and the
+   * the approval control, and the line for the Worker — and nothing about a queue. It is
+   * named by the shared queue's exact proposal identity, and it fetches its detail and the
    * Worker-type manifest itself, so a caller only has to know which decision it
    * wants shown. Everything about *which* decision is current — walking, skipping,
    * keyboard shortcuts — belongs to the caller.
    *
    * The Review screen (`ReviewRoute`) mounts the card.
    */
-  import { onMount, type Snippet } from "svelte";
+  import { onMount, onDestroy, untrack, type Snippet } from "svelte";
   import { createQuery } from "@tanstack/svelte-query";
   import { mutateJson } from "../lib/mutate";
   import { workspaceAddress } from "../lib/workspaceAddress";
   import { queries } from "../lib/queryCatalogue";
-  import { gatingFieldFor, lifecycleFor } from "../lib/lifecycle";
-  import type { TicketDetail } from "../lib/types";
+  import { buildLifecycle } from "../lib/lifecycle";
+  import { navigationApplication } from "../lib/navigation/application.svelte";
+  import { reviewProposalIdentity, reviewProposalDetailMatches } from "../lib/navigation/presentation";
+
+  import type { NavigationReviewProposalItem, TicketDetail } from "../lib/types";
   import Button from "./Button.svelte";
   import ErrorLine from "./ErrorLine.svelte";
-  import Disclosure from "./Disclosure.svelte";
   import InlineEdit from "./InlineEdit.svelte";
   import MarkdownBlock from "./MarkdownBlock.svelte";
   import WorkerProposalCard from "./WorkerProposalCard.svelte";
+  import ComposerField from "./conversation/ComposerField.svelte";
   import {
     createVoiceCapture,
-    formatVoiceTime,
     voiceCaptureAvailable,
     voiceCaptureSupported,
     type VoiceCapture,
@@ -33,13 +37,26 @@
   } from "../lib/conversation/voiceCapture";
 
   let {
+    identity,
     ticketId,
     field,
     title = null,
     onSkip,
     onResolved,
-    footer
+    footer,
+    decisionActions,
+    embedded = false,
+    initialRevisionDraft = "",
+    onRevisionDraftChange,
+    initialEditedBody,
+    onEditedBodyChange
   }: {
+    identity: NavigationReviewProposalItem;
+    embedded?: boolean;
+    initialRevisionDraft?: string;
+    initialEditedBody?: string;
+    onEditedBodyChange?: (text: string) => void;
+    onRevisionDraftChange?: (text: string) => void;
     /** The Ticket whose proposal this is. */
     ticketId: string;
     /** The Ticket field the proposal is filed against. */
@@ -54,57 +71,46 @@
     onResolved?: () => void;
     /** Rendered under the card, only once the ask itself is on screen. */
     footer?: Snippet;
+    /** The queue's own Skip / Open ticket, placed in the decision card's action row. */
+    decisionActions?: Snippet;
   } = $props();
 
   let revisionDraft = $state("");
-  let revisionError = $state<unknown>(null);
-  let revisionBusy = $state(false);
   let decisionKey = $state<string | null>(null);
 
   let resolvedAnnounced = false;
 
   // --- speaking a revision -----------------------------------------------------------------
-  // Same machine as the composer's, worn lighter: no voice-first face — Approve is this
-  // screen's primary action, so the mic is only an affordance on the revision box.
+  // Same machine as the composer's, worn lighter: Approve is this screen's primary action,
+  // so the mic is only an affordance on the revision box.
   let voiceSupported = $state(false);
   let voiceState = $state<VoiceCaptureState>({ phase: "idle" });
   let voice: VoiceCapture | null = null;
 
-  const manifest = createQuery(() => queries.workerTypeManifests());
-
   // The Ticket behind the proposal on screen. The key follows the Ticket, so
   // moving to the next ask switches the query rather than re-opening a handle.
-  const detail = createQuery(() => queries.ticket(ticketId));
+  const navigation = (() => { const value = navigationApplication(); if (!value) throw new Error("Review proposal requires the application navigation owner"); return value; })();
 
-  let currentKey = $derived(`${ticketId}:${field}`);
+  const detail = createQuery(() => queries.reviewProposal(identity));
+  let healthyDetail = $derived(detail.data && !isBrokenTicket(detail.data) ? detail.data : undefined);
+
+  let currentKey = $derived(reviewProposalIdentity(identity));
   let ticketHref = $derived(workspaceAddress({ kind: "ticket", id: ticketId }));
 
-  // Per-Worker-type lifecycle for this decision's detail. Null while the manifest or
-  // the detail is still loading OR when the detail's worker_type is absent from a
-  // loaded manifest; the markup tells those apart (Codex F3).
-  let detailWorkerType = $derived(
-    typeof detail.data?.worker_type === "string" ? (detail.data.worker_type as string) : null
-  );
-  let lc = $derived(lifecycleFor(manifest.data, detailWorkerType));
+  let lc = $derived(healthyDetail?.workflow ? buildLifecycle(healthyDetail.workflow) : null);
   // Approving here sets the next ceiling, so the reviewer gets the same choice of holder
-  // the Ticket page offers, including handing the Ticket back to its own Sprint Item.
-  let reviewSprintItem = $derived(
-    detail.data?.sprint_item_id
+  // the Ticket page offers, including handing the Ticket back to its own Manager.
+  let reviewManager = $derived(
+    healthyDetail?.manager_id
       ? {
-          id: detail.data.sprint_item_id,
-          title: detail.data.sprint_item_title || "Sprint Item"
+          id: healthyDetail.manager_id,
+          title: healthyDetail.manager_title || "Manager"
         }
       : null
   );
   let voiceAvailable = $derived(voiceCaptureAvailable(voiceSupported, true));
 
-  let manifestMissingWorkerType = $derived(
-    Boolean(
-      detailWorkerType &&
-        manifest.data &&
-        !manifest.data.worker_types.some((item) => item.worker_type === detailWorkerType)
-    )
-  );
+  let manifestMissingWorkerType = $derived(Boolean(healthyDetail && !healthyDetail.workflow));
 
   /** The field to accept against, or null when this Ticket's Worker type has no
    *  such field — the decision is then not a Ticket field at all. */
@@ -131,9 +137,21 @@
   });
 
   function isStale(ticketDetail: TicketDetail): boolean {
-    if (!acceptField) return true;
-    if (ticketDetail.pending_proposal?.field !== acceptField) return true;
-    return gatingFieldFor(lc, String(ticketDetail.stage)) !== acceptField;
+    return !reviewProposalDetailMatches(identity,ticketDetail) || ticketDetail.pending_proposal?.field !== field;
+  }
+
+  function currentIdentity(): boolean {
+    const effective = navigation.state.effective;
+    return Boolean(effective && navigation.presentationFor(effective).review.items.some(item => item.review_item_type === 'ticket' && item.proposal !== null && reviewProposalIdentity(item.proposal) === currentKey));
+  }
+
+  function requireVisibleProposal(): void {
+    if (!currentIdentity() || !healthyDetail || isStale(healthyDetail)) throw new Error("the visible proposal changed; read it again before accepting");
+  }
+
+  async function write(path: string, options: Parameters<typeof mutateJson>[1]): Promise<unknown> {
+    requireVisibleProposal();
+    return mutateJson(path,{...options});
   }
 
   /** One announcement per proposal, whichever way it left the queue. */
@@ -145,10 +163,8 @@
 
   $effect(() => {
     if (currentKey !== decisionKey) {
+      revisionDraft = decisionKey === null ? initialRevisionDraft : "";
       decisionKey = currentKey;
-      revisionDraft = "";
-      revisionError = null;
-      revisionBusy = false;
 
       resolvedAnnounced = false;
       // The box — and anything being spoken into it — belongs to one proposal.
@@ -156,103 +172,87 @@
     }
   });
 
-  // A detail that no longer holds this proposal means the queue that named it is
-  // behind the Ticket. Say so once; the caller decides what to do about it. Only a
-  // loaded lifecycle can tell a resolved decision from an unloaded manifest, so
-  // nothing is announced until there is one.
   $effect(() => {
-    const ticketDetail = detail.data;
-    if (!lc || !ticketDetail) return;
-    if (isStale(ticketDetail)) announceResolved();
+    const text = revisionDraft;
+    untrack(() => onRevisionDraftChange?.(text));
   });
 
-  async function accept(payload: Record<string, unknown>): Promise<unknown> {
-    if (!acceptField) throw new Error("Review decision is not a Ticket field");
-    const result = await mutateJson(`/api/tickets/${ticketId}/accept/${acceptField}`, {
-      method: "POST",
-      body: payload
-    });
+  let reconciledMismatch: string | null = null;
+  $effect(() => {
+    const loaded = healthyDetail;
+    if (!loaded || detail.isFetching || !isStale(loaded)) return;
+    const mismatch = JSON.stringify([currentKey,loaded.pending_proposal?.field,loaded.pending_proposal?.created_at,loaded.pending_proposal?.revision]);
+    if (reconciledMismatch === mismatch) return;
+    reconciledMismatch = mismatch;
+    // Detail can be behind or ahead. Only the shared queue can settle membership.
+    void detail.refetch().catch(() => undefined);
+    void navigation.owner.recover().catch(() => undefined);
+  });
+
+  async function accept(): Promise<void> {
     announceResolved();
-    return result;
   }
 
   function saveTitle(raw: string): Promise<unknown> {
-    return mutateJson(`/api/tickets/${ticketId}`, {
+    return write(`/api/tickets/${ticketId}`, {
       method: "PATCH",
       body: { title: raw }
     });
   }
 
-  async function returnForRevision(): Promise<void> {
-    const message = revisionDraft.trim();
-    if (!message || revisionBusy) return;
-    revisionError = null;
-    revisionBusy = true;
-    try {
-      await mutateJson(`/api/tickets/${ticketId}/reject`, {
-        method: "POST",
-        body: { message }
-      });
-      revisionDraft = "";
-      announceResolved();
-    } catch (err) {
-      revisionError = err;
-    } finally {
-      revisionBusy = false;
-    }
+  async function returnProposal(): Promise<void> {
+    revisionDraft = "";
+    announceResolved();
   }
+
 </script>
 
+<!-- The queue's own actions about this item: Skip (when the queue gives it) and Open ticket. -->
+{#snippet queueActions()}
+  {#if onSkip}
+    <Button variant="ghost" data-skip="" onclick={onSkip}>Skip</Button>
+  {/if}
+  <Button variant="ghost" data-open-ticket href={ticketHref}>Open ticket</Button>
+{/snippet}
+
+<SkeletonRegion shape="block" loading={!detail.error && ((detail.isFetching && !healthyDetail) || Boolean(healthyDetail && !manifestMissingWorkerType && isStale(healthyDetail)))} loadingText="Loading approval...">
 {#if detail.error}
   <div>
     <ErrorLine error={detail.error} />
     {#if title !== null}<div class="quiet-line">{title}</div>{/if}
-    <div class="review-card-actions">
-      {#if onSkip}
-        <Button variant="quiet" data-skip="" onclick={onSkip}>Skip</Button>
-      {/if}
-      <a data-open-ticket href={ticketHref}>open ticket</a>
-    </div>
+    {#if embedded}{:else if decisionActions}{@render decisionActions()}{:else}
+    <div class="review-card-actions">{@render queueActions()}</div>
+    {/if}
   </div>
-{:else if detail.isFetching && !detail.data}
-  <div class="quiet-line">Loading approval...</div>
-{:else if detail.data && (manifest.error || manifestMissingWorkerType)}
-  {@const ticketDetail = detail.data}
+{:else if healthyDetail && manifestMissingWorkerType}
+  {@const ticketDetail = healthyDetail}
   <div data-review-manifest-error>
     <ErrorLine
-      error={manifest.error ?? { code: "unknown_worker_type", message: `no manifest for Worker type "${ticketDetail.worker_type}"` }}
+      error={{ code: "invalid_workflow", message: "The Ticket workflow is unavailable." }}
     />
-    <div class="review-card-actions">
-      {#if onSkip}
-        <Button variant="quiet" data-skip="" onclick={onSkip}>Skip</Button>
-      {/if}
-      <a data-open-ticket href={ticketHref}>open ticket</a>
-    </div>
+    {#if embedded}{:else if decisionActions}{@render decisionActions()}{:else}
+    <div class="review-card-actions">{@render queueActions()}</div>
+    {/if}
   </div>
-{:else if detail.data}
-  {@const ticketDetail = detail.data}
-  {#if isStale(ticketDetail)}
-    <div class="quiet-line">Loading approval...</div>
-  {:else}
+{:else if healthyDetail}
+  {@const ticketDetail = healthyDetail}
+  {#if !isStale(ticketDetail)}
     <div
+      data-proposal-identity={currentKey}
       class="modern-review-content"
       data-review-card
       data-review-item-type="proposal"
       data-ticket-id={ticketId}
       data-field={field}
     >
-      <div class="review-ticket-decision-line review-arrive review-arrive--1">
-        {#if onSkip}
-          <button data-skip="" onclick={onSkip}>Skip &rsaquo;</button>
-        {/if}
-        <a data-open-ticket href={ticketHref}>Open ticket &rsaquo;</a>
-      </div>
+      {#if !embedded}
+      <div class="review-ticket-decision-line review-arrive review-arrive--1">{@render queueActions()}</div>
 
       <div class="review-ticket-heading review-arrive review-arrive--2">
         <div class="review-ticket-heading-main">
           <div class="review-ticket-title">
             <InlineEdit
-              value={ticketDetail.title}
+              value={identity.title}
               placeholder="Untitled"
               onSave={(raw) => saveTitle(raw)}
             />
@@ -265,120 +265,47 @@
         </div>
       </div>
 
-      {#if ticketDetail.guidance}
-        <Disclosure title="Guidance" variant="support" defaultOpen={false} data-ticket-guidance>
-          <MarkdownBlock text={ticketDetail.guidance} />
-        </Disclosure>
       {/if}
       <div class="review-arrive review-arrive--3">
         {#if acceptField}
           {#if lc && ticketDetail.pending_proposal}
             {#key `${ticketDetail.pending_proposal.field}:${ticketDetail.pending_proposal.created_at}:${ticketDetail.pending_proposal.revision}:${lc.workerType}:${lc.stageOrder.join(",")}:${lc.ceilingRange.join(",")}`}
-            <WorkerProposalCard proposal={ticketDetail.pending_proposal} lifecycle={lc} stage={ticketDetail.stage}
-              ceiling={ticketDetail.ceiling} holder={ticketDetail.ceiling_holder} sprintItem={reviewSprintItem}
-              disabled={revisionBusy} canReturn={Boolean(ticketDetail.conversation_id)}
+            <WorkerProposalCard {ticketId} proposal={ticketDetail.pending_proposal} lifecycle={lc} stage={ticketDetail.stage}
+              ceiling={ticketDetail.ceiling} holder={ticketDetail.ceiling_holder} manager={reviewManager}
+              {initialEditedBody} {onEditedBodyChange} canReturn={Boolean(ticketDetail.conversation_id)}
               onAccept={accept}
-              onScope={async (body) => { await mutateJson(`/api/tickets/${ticketId}`, { method:"PATCH", body }); }}
-              onReturn={async (message) => { await mutateJson(`/api/tickets/${ticketId}/reject`, { method:"POST", body:{ message } }); announceResolved(); }}
-              {revisionEditor} />
+              onScope={async (body) => { await write(`/api/tickets/${ticketId}`, { method:"PATCH", body }); }}
+              onReturn={returnProposal}
+              {revisionEditor} bind:revisionText={revisionDraft} holdDecisions={voiceState.phase !== "idle"} />
             {/key}
+          {:else if decisionActions}{@render decisionActions()}
           {/if}
+        {:else if decisionActions}{@render decisionActions()}
         {/if}
       </div>
 
       {#snippet revisionEditor()}
+        <!-- The note goes with the explicit decision. Enter adds a line; the field never
+             chooses Send it back or Approve. Spoken words append to the note. -->
         <div class="review-revise review-arrive review-arrive--4" data-review-revision>
-          <div class="review-revision-box" data-review-voice={voiceState.phase}>
-            {#if voiceState.phase !== "idle"}
-              <!-- The same voice language as the composer: the centred shimmered
-                   word where the words would go, actions where "Send back" sits. -->
-              <div class="chat-voice-mid review-voice-mid">
-                {#if voiceState.phase === "recording"}
-                  <span class="live-text-shimmer">recording</span>
-                  <span class="chat-voice-time">{formatVoiceTime(voiceState.elapsedMs)}</span>
-                {:else if voiceState.phase === "transcribing"}
-                  <span class="live-text-shimmer">transcribing</span>
-                {:else}
-                  <span class="chat-voice-fail">
-                    transcription failed · kept
-                    <span class="chat-voice-time">{formatVoiceTime(voiceState.keptMs)}</span>
-                  </span>
-                {/if}
-              </div>
-              <button
-                type="button"
-                class="chat-voice-cancel review-voice-action"
-                data-voice-cancel
-                aria-label={voiceState.phase === "recording"
-                  ? "Cancel recording"
-                  : voiceState.phase === "transcribing"
-                    ? "Cancel transcription"
-                    : "Discard recording"}
-                onclick={() => voice?.cancel()}
-              >
-                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 5l14 14M19 5L5 19" /></svg>
-              </button>
-              {#if voiceState.phase === "recording"}
-                <button
-                  type="button"
-                  class="chat-voice-stop review-voice-action"
-                  data-voice-stop
-                  aria-label="Stop recording and transcribe"
-                  onclick={() => voice?.stopRecording()}
-                ><span class="chat-voice-square"></span></button>
-              {:else if voiceState.phase === "failed"}
-                <button
-                  type="button"
-                  class="chat-voice-retry review-voice-action"
-                  data-voice-retry
-                  onclick={() => voice?.retry()}
-                >retry</button>
-              {/if}
-            {:else}
-              <textarea
-                class="review-revision-input"
-                data-review-revision-input
-                rows="1"
-                placeholder="Or tell the worker what to change..."
-                bind:value={revisionDraft}
-                disabled={revisionBusy}
-                onkeydown={(event) => {
-                  if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
-                    event.preventDefault();
-                    void returnForRevision();
-                  }
-                }}
-              ></textarea>
-              {#if voiceAvailable}
-                <!-- Speaking with words already in the box appends to them. -->
-                <button
-                  type="button"
-                  class="review-voice-mic"
-                  data-voice-record
-                  aria-label="Speak a revision"
-                  title="Speak a revision"
-                  disabled={revisionBusy}
-                  onclick={() => void voice?.startRecording()}
-                >
-                  <svg viewBox="0 0 24 24" aria-hidden="true">
-                    <rect x="9" y="3" width="6" height="11" rx="3" />
-                    <path d="M5 11a7 7 0 0 0 14 0M12 18v3" />
-                  </svg>
-                </button>
-              {/if}
-              <Button
-                variant="quiet"
-                data-review-revision-send=""
-                disabled={revisionBusy || !revisionDraft.trim()}
-                onclick={() => void returnForRevision()}
-              >
-                Send back
-              </Button>
-            {/if}
-          </div>
-          {#if revisionError}
-            <ErrorLine error={revisionError} />
-          {/if}
+          <ComposerField
+            bind:value={revisionDraft}
+            placeholder="Add a note for the worker…"
+            inputAttributes={{ "data-review-revision-input": "" }}
+            record={voiceAvailable
+              ? {
+                  label: "Speak a revision",
+                  onclick: () => void voice?.startRecording(),
+                  attributes: { "data-voice-record": "", title: "Speak a revision" }
+                }
+              : undefined}
+            voice={{
+              state: voiceState,
+              cancel: () => voice?.cancel(),
+              stop: () => voice?.stopRecording(),
+              retry: () => voice?.retry()
+            }}
+          />
         </div>
       {/snippet}
     </div>
@@ -386,3 +313,17 @@
     {@render footer?.()}
   {/if}
 {/if}
+
+</SkeletonRegion>
+<!-- While the approval loads or is being refreshed, the queue's own actions (Skip, Open ticket)
+     stay at hand at the right: they never wait on the proposal. -->
+{#if !detail.error && (!healthyDetail || (!manifestMissingWorkerType && isStale(healthyDetail)))}
+  <div class="review-card-actions">
+    {#if embedded}{:else if decisionActions}{@render decisionActions()}{:else}{@render queueActions()}{/if}
+  </div>
+{/if}
+
+<style>
+  /* An error state's actions about the queue sit at the right, like every button row. */
+  .review-card-actions { display:flex; align-items:center; justify-content:flex-end; gap:var(--space-2); margin-top:var(--space-3); }
+</style>

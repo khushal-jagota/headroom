@@ -31,47 +31,57 @@ import json
 import logging
 import os
 from collections import deque
-from collections.abc import Mapping, Sequence
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from contextlib import suppress
 from pathlib import Path
 from typing import Any, Protocol
 
 from pydantic import BaseModel, ValidationError
 
-from planner.conversation.backends.codex_app_server import bindings_gen as bindings
+from planner.conversation.backends.cli_compatibility import (
+    BackendCliIncompatible,
+    ensure_cli_compatible,
+)
+from planner.conversation.backends.codex_app_server import protocol
 from planner.conversation.backends.codex_app_server.login import (
     codex_home,
     logins_hold_the_same_credential,
 )
+from planner.conversation.backends.task_ending import end_task
+from planner.conversation.child_custody import process_identity
+from planner.conversation.local_child_contracts import LocalChildIdentity
+from planner.conversation.worker_scratch import WorkerScratch
+from planner.core.task_settlement import run_on_worker_thread
+from planner.worker_supervision import WorkerCleanupError, WorkerSupervisor
 
 LOGGER = logging.getLogger("planner.conversation.backends.codex_app_server")
 
 # The methods this adapter acts on. A notification outside this table is one of the many
 # codex sends that Panels has no use for, and is dropped where it arrives.
 CONSUMED_SERVER_NOTIFICATIONS: dict[str, type[BaseModel]] = {
-    "turn/started": bindings.TurnStartedNotification,
-    "turn/completed": bindings.TurnCompletedNotification,
-    "item/agentMessage/delta": bindings.AgentMessageDeltaNotification,
-    "item/started": bindings.ItemStartedNotification,
-    "item/completed": bindings.ItemCompletedNotification,
-    "item/commandExecution/outputDelta": bindings.CommandExecutionOutputDeltaNotification,
-    "item/mcpToolCall/progress": bindings.McpToolCallProgressNotification,
-    "item/reasoning/textDelta": bindings.ReasoningTextDeltaNotification,
-    "item/reasoning/summaryTextDelta": bindings.ReasoningSummaryTextDeltaNotification,
-    "turn/plan/updated": bindings.TurnPlanUpdatedNotification,
-    "thread/tokenUsage/updated": bindings.ThreadTokenUsageUpdatedNotification,
-    "error": bindings.ErrorNotification,
-    "skills/changed": bindings.SkillsChangedNotification,
-    "app/list/updated": bindings.AppListUpdatedNotification,
+    "turn/started": protocol.TurnStartedNotification,
+    "turn/completed": protocol.TurnCompletedNotification,
+    "item/agentMessage/delta": protocol.AgentMessageDeltaNotification,
+    "item/started": protocol.ItemStartedNotification,
+    "item/completed": protocol.ItemCompletedNotification,
+    "item/commandExecution/outputDelta": protocol.CommandExecutionOutputDeltaNotification,
+    "item/mcpToolCall/progress": protocol.McpToolCallProgressNotification,
+    "item/reasoning/textDelta": protocol.ReasoningTextDeltaNotification,
+    "item/reasoning/summaryTextDelta": protocol.ReasoningSummaryTextDeltaNotification,
+    "turn/plan/updated": protocol.TurnPlanUpdatedNotification,
+    "thread/tokenUsage/updated": protocol.ThreadTokenUsageUpdatedNotification,
+    "error": protocol.ErrorNotification,
+    "skills/changed": protocol.SkillsChangedNotification,
+    "app/list/updated": protocol.AppListUpdatedNotification,
 }
 
 # The requests codex makes of us that we answer. Anything else it asks is refused with
 # method-not-found rather than left hanging, because a server request nobody answers is a
 # codex that waits forever.
 HANDLED_SERVER_REQUESTS: dict[str, type[BaseModel]] = {
-    "item/commandExecution/requestApproval": bindings.CommandExecutionRequestApprovalParams,
-    "item/fileChange/requestApproval": bindings.FileChangeRequestApprovalParams,
-    "item/tool/requestUserInput": bindings.ToolRequestUserInputParams,
+    "item/commandExecution/requestApproval": protocol.CommandExecutionRequestApprovalParams,
+    "item/fileChange/requestApproval": protocol.FileChangeRequestApprovalParams,
+    "item/tool/requestUserInput": protocol.ToolRequestUserInputParams,
 }
 
 METHOD_NOT_FOUND_ERROR_CODE = -32601
@@ -107,9 +117,7 @@ class CodexChildWouldNotStart(CodexAppServerError):
 class CodexWireFailed(CodexAppServerError):
     """The message did not reach the child, or the wire it would go over is finished."""
 
-    def __init__(
-        self, message: str, *, request_may_have_been_written: bool = False
-    ) -> None:
+    def __init__(self, message: str, *, request_may_have_been_written: bool = False) -> None:
         super().__init__(message)
         self.request_may_have_been_written = request_may_have_been_written
 
@@ -117,12 +125,16 @@ class CodexWireFailed(CodexAppServerError):
 class CodexRequestRejected(CodexAppServerError):
     """The child answered the request with an error rather than a result."""
 
-    def __init__(self, method: str, code: int | None, message: str, data: Any = None) -> None:
+    def __init__(
+        self, method: str, code: int | None, message: str, data: Any = None,
+        *, request_id: str | None = None,
+    ) -> None:
         super().__init__(f"{method} was rejected: {message}")
         self.method = method
         self.code = code
         self.message = message
         self.data = data
+        self.request_id = request_id
 
 
 class CodexLoginIsDuplicated(CodexChildWouldNotStart):
@@ -162,13 +174,16 @@ class CodexAppServerClient:
         self._handler = handler
         self._description = description
         # Which notifications this client decodes. The turn adapter's table is the
-        # default; the sign-in client passes its own, because its models come from a
-        # separately pinned bundle and must not become shapes the turn adapter believes.
+        # default; the sign-in client passes only the notification it consumes.
         self._consumed_notifications: Mapping[str, type[BaseModel]] = (
-            CONSUMED_SERVER_NOTIFICATIONS if consumed_notifications is None
+            CONSUMED_SERVER_NOTIFICATIONS
+            if consumed_notifications is None
             else consumed_notifications
         )
         self._process: asyncio.subprocess.Process | None = None
+        self._worker_supervisor: WorkerSupervisor | None = None
+        self._worker_scratch: WorkerScratch | None = None
+        self._end_reason: str | None = None
         self._request_ids = itertools.count(1)
         self._pending: dict[int, asyncio.Future[dict[str, Any]]] = {}
         self._reader: asyncio.Task[None] | None = None
@@ -181,6 +196,7 @@ class CodexAppServerClient:
         # it takes this count when it starts and asks for what arrived after it.
         self._standard_error_bytes_ever = 0
         self._wire_broken = False
+        self._write_lock = asyncio.Lock()
 
     # --- the process --------------------------------------------------------------------
 
@@ -190,20 +206,69 @@ class CodexAppServerClient:
         argv: Sequence[str],
         environment: Mapping[str, str],
         working_directory: Path,
+        worker_ticket_id: str | None = None,
+        supervision_reporter: Callable[[str], Awaitable[None]] | None = None,
+        custody_reporter: Callable[[LocalChildIdentity], Awaitable[None]] | None = None,
     ) -> None:
         """Spawn the child and begin reading it. Raises ``CodexChildWouldNotStart``."""
+        environment = dict(environment)
+        process: asyncio.subprocess.Process | None = None
         try:
+            await ensure_cli_compatible(
+                "codex", argv[0], environment=environment, working_directory=working_directory
+            )
+            if worker_ticket_id:
+                environment = {**environment, "PLAN_TICKET_ID": worker_ticket_id}
+                self._worker_supervisor = await WorkerSupervisor.create(
+                    environment, working_directory
+                )
+                try:
+                    self._worker_scratch = await WorkerScratch.create(environment)
+                except BaseException:
+                    if self._worker_supervisor is not None:
+                        await self._worker_supervisor.cancel_unspawned()
+                    raise
+                environment = self._worker_scratch.environment
+                if self._worker_supervisor is not None:
+                    self._worker_supervisor.environment.update(environment)
+            supervisor = self._worker_supervisor
+            if supervisor is not None and supervision_reporter is not None:
+                try:
+                    await supervision_reporter(str(supervisor.path))
+                except BaseException:
+                    await supervisor.cancel_unspawned()
+                    raise
             process = await asyncio.create_subprocess_exec(
-                *argv,
+                *(argv if supervisor is None else supervisor.argv(argv)),
                 stdin=asyncio.subprocess.PIPE,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
-                env=dict(environment),
+                env=dict(environment) if supervisor is None else supervisor.environment,
                 cwd=str(working_directory),
                 limit=CHILD_OUTPUT_LINE_LIMIT_BYTES,
             )
-        except OSError as would_not_spawn:
-            raise CodexChildWouldNotStart(str(would_not_spawn)) from would_not_spawn
+            self._process = process
+            if supervisor is not None:
+                await supervisor.spawned(process.pid)
+                await supervisor.started(process.pid)
+            if custody_reporter is not None:
+                identity = await run_on_worker_thread(self.local_child_identity)
+                if identity is None:
+                    raise CodexChildWouldNotStart("Cannot establish the Codex process identity")
+                await custody_reporter(identity)
+        except BaseException as would_not_spawn:
+            if self._worker_supervisor is not None:
+                if process is None and isinstance(would_not_spawn, OSError):
+                    await self._worker_supervisor.cancel_unspawned()
+                await self._stop_worker()
+                self._worker_supervisor = None
+            elif process is not None:
+                await self._stop_native_process()
+            if self._worker_scratch is not None:
+                await self._worker_scratch.aclose()
+            if isinstance(would_not_spawn, (OSError, WorkerCleanupError, BackendCliIncompatible)):
+                raise CodexChildWouldNotStart(str(would_not_spawn)) from would_not_spawn
+            raise
         self._process = process
         self._reader = asyncio.create_task(
             self._read_messages(), name=f"planner.conversation.codex.read.{self._description}"
@@ -218,20 +283,46 @@ class CodexAppServerClient:
             name=f"planner.conversation.codex.child.{self._description}",
         )
 
+    async def _stop_worker(self) -> None:
+        supervisor = self._worker_supervisor
+        if supervisor is not None:
+            result = await supervisor.stop(native_stop=self._stop_native_process)
+            if not result.complete:
+                raise WorkerCleanupError(result.reason)
+
+    def local_child_identity(self) -> LocalChildIdentity | None:
+        """Read as soon as the native process exists."""
+        if self._process is None:
+            return None
+        supervisor = self._worker_supervisor
+        return process_identity(self._process.pid) if supervisor is None else supervisor.identity()
+
     async def stop(self) -> None:
         """End the child: stop reading it, close its input, and make sure it is gone."""
         self._wire_broken = True
-        for task in (self._reader, self._standard_error_reader, self._child_watcher):
+        for what, task in (
+            ("the reader", self._reader),
+            ("the stderr reader", self._standard_error_reader),
+            ("the child watcher", self._child_watcher),
+        ):
             if task is not None:
-                task.cancel()
-                with suppress(asyncio.CancelledError):
-                    await task
+                await end_task(task, what=f"codex {self._description}: {what}", logger=LOGGER)
         self._reader = None
         self._standard_error_reader = None
         self._child_watcher = None
         self._fail_everything_pending("this child is being shut down")
-        process = self._process
+        supervisor = self._worker_supervisor
+        if supervisor is not None:
+            await self._stop_worker()
+            self._worker_supervisor = None
+        if supervisor is None:
+            await self._stop_native_process()
         self._process = None
+        if self._worker_scratch is not None:
+            await self._worker_scratch.aclose()
+
+    async def _stop_native_process(self) -> None:
+        process = self._process
         if process is None:
             return
         if process.stdin is not None:
@@ -245,8 +336,11 @@ class CodexAppServerClient:
             except TimeoutError:
                 with suppress(ProcessLookupError):
                     process.kill()
-                with suppress(Exception):
-                    await process.wait()
+                await asyncio.wait_for(process.wait(), CHILD_SHUTDOWN_GRACE_SECONDS)
+
+    @property
+    def end_reason(self) -> str | None:
+        return self._end_reason
 
     @property
     def is_alive(self) -> bool:
@@ -313,7 +407,9 @@ class CodexAppServerClient:
         )
 
     async def begin_request(
-        self, method: str, params: Mapping[str, Any] | None = None
+        self,
+        method: str,
+        params: Mapping[str, Any] | None = None,
     ) -> asyncio.Future[dict[str, Any]]:
         """Put a request on the wire and hand back the answer that has not arrived yet.
 
@@ -329,7 +425,7 @@ class CodexAppServerClient:
             message["params"] = dict(params)
         try:
             await self._write(message)
-        except CodexWireFailed:
+        except (CodexWireFailed, asyncio.CancelledError):
             self._pending.pop(request_id, None)
             if not answer.done():
                 answer.cancel()
@@ -358,6 +454,7 @@ class CodexAppServerClient:
                 f"{method} was not answered", request_may_have_been_written=True
             ) from never_answered
         except asyncio.CancelledError:
+            self._remove_pending_answer(answer)
             raise
         except CodexWireFailed:
             raise
@@ -368,6 +465,7 @@ class CodexAppServerClient:
                 error.get("code") if isinstance(error, dict) else None,
                 str(error.get("message")) if isinstance(error, dict) else str(error),
                 error.get("data") if isinstance(error, dict) else None,
+                request_id=str(envelope["id"]) if "id" in envelope else None,
             )
         return envelope.get("result")
 
@@ -391,15 +489,27 @@ class CodexAppServerClient:
         await self._write({"id": request_id, "error": {"code": code, "message": message}})
 
     async def _write(self, message: Mapping[str, Any]) -> None:
+        line = json.dumps(message, ensure_ascii=False, separators=(",", ":")) + "\n"
+        async with self._write_lock:
+            self._write_prepared_line(line)
+            process = self._process
+            assert process is not None and process.stdin is not None
+            try:
+                await process.stdin.drain()
+            except Exception as did_not_reach:
+                self._wire_broken = True
+                raise CodexWireFailed(
+                    str(did_not_reach), request_may_have_been_written=True
+                ) from did_not_reach
+
+    def _write_prepared_line(self, line: str) -> None:
         process = self._process
         if process is None or process.stdin is None or self._wire_broken:
             raise CodexWireFailed(
                 "this child's wire is not usable", request_may_have_been_written=False
             )
-        line = json.dumps(message, ensure_ascii=False, separators=(",", ":")) + "\n"
         try:
             process.stdin.write(line.encode("utf-8"))
-            await process.stdin.drain()
         except Exception as did_not_reach:
             self._wire_broken = True
             raise CodexWireFailed(
@@ -519,20 +629,28 @@ class CodexAppServerClient:
     async def _watch_for_the_child_ending(self, process: asyncio.subprocess.Process) -> None:
         """Wait for the process to go, then stop everything that is waiting on its wire."""
         await process.wait()
+        supervisor = self._worker_supervisor
+        if supervisor is not None:
+            try:
+                await self._stop_worker()
+            except (WorkerCleanupError, TimeoutError) as cleanup_failed:
+                self._end_reason = f"Worker cleanup remains unproven: {cleanup_failed}"
+            else:
+                self._worker_supervisor = None
+        if self._worker_supervisor is None and self._worker_scratch is not None:
+            await self._worker_scratch.aclose()
         # The pipes reach EOF separately. Finish draining stderr before the adapter
         # classifies the turn that ended with the child.
         if self._standard_error_reader is not None:
             await self._standard_error_reader
         self._wire_broken = True
-        self._fail_everything_pending("the codex process ended")
+        self._fail_everything_pending(self._end_reason or "the codex process ended")
         await self._handler.on_child_ended()
 
     def _fail_everything_pending(self, why: str) -> None:
         for answer in list(self._pending.values()):
             if not answer.done():
-                answer.set_exception(
-                    CodexWireFailed(why, request_may_have_been_written=True)
-                )
+                answer.set_exception(CodexWireFailed(why, request_may_have_been_written=True))
         self._pending.clear()
 
 

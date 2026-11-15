@@ -18,8 +18,10 @@ class PrincipalKind(StrEnum):
 
     owner = "owner"
     chief = "chief"
-    sprint_item = "sprint_item"
+    manager = "manager"
+    goal = "goal"
     ticket = "ticket"
+
 
 
 OWNER_PRINCIPAL_ID: Final = "owner"
@@ -55,7 +57,8 @@ def principal_legacy_actor(principal: Principal) -> str:
     return {
         PrincipalKind.owner: "unattributed",
         PrincipalKind.chief: "chief",
-        PrincipalKind.sprint_item: "sprint_item_supervisor",
+        PrincipalKind.manager: "manager",
+        PrincipalKind.goal: "goal",
         PrincipalKind.ticket: "worker",
     }[principal.kind]
 
@@ -92,8 +95,19 @@ class ErrorCode(StrEnum):
     agent_forbidden = "agent_forbidden"  # attributed agent hits a direct-only action
     gateway_offline = "gateway_offline"  # §11
     already_running = "already_running"  # Hermes 4009 session busy
+    diagnostic_expired = "diagnostic_expired"
     not_found = "not_found"
+    revision_conflict = "revision_conflict"  # captured document revision no longer matches
     validation = "validation"  # generic input validation
+    skill_save_incomplete = "skill_save_incomplete"
+    # Nothing was saved and no receipt was written; the sender keeps the item and sends it again.
+    retry_later = "retry_later"
+    # The VPS could not save this item, and saving it again would fail the same way.
+    save_failed = "save_failed"
+    # The Mac's protocol or spool version is not the one this server speaks. Nothing applied.
+    executor_version_refused = "executor_version_refused"
+    # The sending Mac process is not the current executor incarnation. Nothing applied.
+    executor_incarnation_not_current = "executor_incarnation_not_current"
 
 
 class PlannerError(Exception):

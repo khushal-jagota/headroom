@@ -77,9 +77,15 @@ type OpenTurn = {
   anchorIndex: number | null;
   groupIndexes: number[];
   openGroupIndex: number | null;
-  /** Where this turn's own messages landed, in the order it said them. The last is the
-   *  answer and stays; the ones before it are commentary and fold. */
+  /** Where this turn's ordinary messages landed. Addressed owner messages never fold.
+   *  The last ordinary message stays; earlier commentary folds.
+   *  toOwner classifies message_to_owner events. Their recipients are assumed owners.
+   *  If recipients broaden, harmonize this with the recipient-sensitive projection. */
   messageIndexes: number[];
+  /** Whether the head stays once the turn ends: its opening prompt is in view, or it
+   *  said something in view. A turn that ended having left nothing in view loses its
+   *  head. While it runs, the head shows whoever started it. */
+  keepsHeadWhenEnded: boolean;
 };
 
 const NO_TURN: OpenTurn = {
@@ -89,7 +95,8 @@ const NO_TURN: OpenTurn = {
   anchorIndex: null,
   groupIndexes: [],
   openGroupIndex: null,
-  messageIndexes: []
+  messageIndexes: [],
+  keepsHeadWhenEnded: false
 };
 
 /** Lay the thread out: a head for every turn, and its work in the places it happened.
@@ -110,6 +117,9 @@ export function threadItems(
   rowIsVisible: (row: TranscriptRow) => boolean = () => true
 ): ThreadItem[] {
   const items: ThreadItem[] = [];
+  // Heads of ended turns that left nothing in view, removed once the layout is done so
+  // that no index recorded along the way moves.
+  const droppedHeads = new Set<number>();
   let turn: OpenTurn = { ...NO_TURN };
 
   function settleTurn(
@@ -128,6 +138,7 @@ export function threadItems(
       }
     }
     const at = turn.anchorIndex;
+    if (at !== null && !stopped && !turn.keepsHeadWhenEnded) droppedHeads.add(at);
     if (at !== null) {
       const anchor = items[at];
       if (anchor?.kind === "turn") {
@@ -168,6 +179,7 @@ export function threadItems(
   }
 
   for (const row of rows) {
+    // Provider observations remain in the record, but never interrupt visible work.
     const visible = rowIsVisible(row);
     if (row.kind === "tool_call") {
       if (!visible) continue;
@@ -206,7 +218,14 @@ export function threadItems(
     const rowIndex = visible ? items.length : null;
     if (visible) items.push({ kind: "row", key: row.key, row, behindTheFoldOf: null });
 
-    if (row.kind === "agent_message" && turn.anchorIndex !== null && rowIndex !== null) {
+    if (row.kind === "agent_message" && visible) turn.keepsHeadWhenEnded = true;
+
+    if (
+      row.kind === "agent_message"
+      && !row.toOwner
+      && turn.anchorIndex !== null
+      && rowIndex !== null
+    ) {
       turn.messageIndexes = [...turn.messageIndexes, rowIndex];
     }
 
@@ -217,26 +236,25 @@ export function threadItems(
         turnKey: `turn:${row.key}`,
         startedAt: row.createdAt,
         startedAtUnixMilliseconds: row.sentAtUnixMilliseconds,
-        anchorIndex: visible ? items.length : null,
+        anchorIndex: items.length,
         groupIndexes: [],
         openGroupIndex: null,
-        messageIndexes: []
+        messageIndexes: [],
+        keepsHeadWhenEnded: visible
       };
-      if (visible) {
-        items.push({
-          kind: "turn",
-          key: `turn:${row.key}`,
-          turnKey: `turn:${row.key}`,
-          settled: false,
-          stopped: false,
-          startedAtUnixMilliseconds: row.sentAtUnixMilliseconds,
-          ending: null,
-          isLatest: false,
-          durationSeconds: null,
-          toolCallCount: 0,
-          foldedMessageCount: 0
-        });
-      }
+      items.push({
+        kind: "turn",
+        key: `turn:${row.key}`,
+        turnKey: `turn:${row.key}`,
+        settled: false,
+        stopped: false,
+        startedAtUnixMilliseconds: row.sentAtUnixMilliseconds,
+        ending: null,
+        isLatest: false,
+        durationSeconds: null,
+        toolCallCount: 0,
+        foldedMessageCount: 0
+      });
       continue;
     }
 
@@ -249,13 +267,15 @@ export function threadItems(
     }
   }
 
+  const laidOut = droppedHeads.size === 0 ? items : items.filter((_, at) => !droppedHeads.has(at));
+
   // The newest turn is the only one that takes the stopped wording.
-  for (let at = items.length - 1; at >= 0; at -= 1) {
-    const item = items[at];
+  for (let at = laidOut.length - 1; at >= 0; at -= 1) {
+    const item = laidOut[at];
     if (item?.kind !== "turn") continue;
-    items[at] = { ...item, isLatest: true };
+    laidOut[at] = { ...item, isLatest: true };
     break;
   }
 
-  return items;
+  return laidOut;
 }

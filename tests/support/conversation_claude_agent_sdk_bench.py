@@ -32,9 +32,29 @@ from planner.conversation.backends.claude_agent_sdk import (
     ClaudeAgentSdkChildLaunch,
 )
 from planner.conversation.backends.contracts import (
+    AgentMessageCompleted,
+    AgentMessageDelta,
+    BackendEventValue,
     BackendPermissionAsk,
+    BackendStreamEnded,
     BackendUserInputRequest,
+    BackgroundTaskEnded,
+    BackgroundTaskStarted,
+    CommandReplyReported,
+    ComposerCatalogReported,
+    ContextCompacted,
+    ModelThinkingHappened,
+    PermissionAskRaised,
+    PlanUpdated,
+    TokenUsageReported,
+    ToolCallFinished,
+    ToolCallProgress,
+    ToolCallStarted,
+    TurnEnded,
     TurnToken,
+    UserInputFailed,
+    UserInputRequested,
+    VendorSessionCursorRebound,
 )
 from planner.conversation.contracts import (
     ComposerCatalogEntry,
@@ -44,7 +64,6 @@ from planner.conversation.contracts import (
     PromptDeliveryMode,
     ResolvedConversationStart,
 )
-from planner.conversation.events import ConversationTurnEnding, ToolCallStatus
 from planner.conversation.message_content import (
     MessageContent,
     message_content_text,
@@ -126,7 +145,10 @@ class _ScriptedClaudeSdkClient:
     async def get_server_info(self) -> dict[str, Any] | None:
         return self.handshake
 
-    async def query(self, prompt: str | AsyncIterable[dict[str, Any]]) -> None:
+    async def query(
+        self,
+        prompt: str | AsyncIterable[dict[str, Any]],
+    ) -> None:
         if self.query_failure is not None:
             raise self.query_failure
         if isinstance(prompt, str):
@@ -134,6 +156,9 @@ class _ScriptedClaudeSdkClient:
             return
         async for message in prompt:
             self.streamed_messages.append(message)
+            blocks = message.get("message", {}).get("content", [])
+            if len(blocks) == 1 and blocks[0].get("type") == "text":
+                self.prompts.append(blocks[0]["text"])
 
     def receive_messages(self) -> AsyncIterator[Message]:
         return self._drain()
@@ -229,6 +254,10 @@ class _RecordingSink:
         self.composer_catalog: list[tuple[ComposerCatalogEntry, ...]] = []
         self.token_usage: list[dict[str, Any]] = []
         self.compactions: list[TurnToken] = []
+        self.command_replies: list[tuple[TurnToken, str]] = []
+        self.session_news: list[
+            BackgroundTaskStarted | BackgroundTaskEnded | BackendStreamEnded
+        ] = []
         # The order the facts a result message carries were told in. What is said about a
         # turn after its ending is said about a turn that has stopped running, and is
         # dropped — so the order is the whole of whether the counts arrive at all.
@@ -241,14 +270,83 @@ class _RecordingSink:
         await self._turn_over.wait()
         self._turn_over.clear()
 
-    async def agent_message_delta(self, turn_token: TurnToken, text_delta: str) -> None:
-        self.deltas.append((turn_token, text_delta))
-
-    async def model_thinking_happened(self, turn_token: TurnToken) -> None:
-        self.thinking_pulses.append(turn_token)
-
-    async def plan_updated(self, turn_token: TurnToken, entries: Any) -> None:
-        self.plans.append([(entry.text, str(entry.status)) for entry in entries])
+    async def report(self, turn: TurnToken | None, event: BackendEventValue) -> None:
+        if isinstance(event, AgentMessageDelta):
+            assert turn is not None
+            self.deltas.append((turn, event.text_delta))
+        elif isinstance(event, ModelThinkingHappened):
+            assert turn is not None
+            self.thinking_pulses.append(turn)
+        elif isinstance(event, PlanUpdated):
+            self.plans.append([(entry.text, str(entry.status)) for entry in event.entries])
+        elif isinstance(event, AgentMessageCompleted):
+            assert turn is not None
+            self.message_contents.append((turn, event.content))
+        elif isinstance(event, ToolCallStarted):
+            self.calls_in_order.append("tool_call_started")
+            self.tools_started.append(
+                {
+                    "turn": turn,
+                    "tool_call_id": event.tool_call_id,
+                    "title": event.title,
+                    "tool_kind": event.tool_kind,
+                    "detail": event.detail,
+                }
+            )
+        elif isinstance(event, ToolCallProgress):
+            self.tools_progressed.append((event.tool_call_id, event.detail))
+        elif isinstance(event, ToolCallFinished):
+            self.tools_finished.append(
+                {
+                    "turn": turn,
+                    "tool_call_id": event.tool_call_id,
+                    "tool_call_status": event.tool_call_status,
+                    "detail": event.detail,
+                }
+            )
+        elif isinstance(event, TokenUsageReported):
+            self.calls_in_order.append("token_usage")
+            self.token_usage.append(
+                {
+                    "turn": turn,
+                    "input_tokens": event.input_tokens,
+                    "output_tokens": event.output_tokens,
+                    "cached_input_tokens": event.cached_input_tokens,
+                    "cost_usd": event.cost_usd,
+                }
+            )
+        elif isinstance(event, CommandReplyReported):
+            self.calls_in_order.append("command_reply")
+            assert turn is not None
+            self.command_replies.append((turn, event.reply_text))
+        elif isinstance(event, ContextCompacted):
+            self.calls_in_order.append("context_compacted")
+            assert turn is not None
+            self.compactions.append(turn)
+        elif isinstance(event, PermissionAskRaised):
+            self.asks.append(event.ask)
+        elif isinstance(event, UserInputRequested):
+            self.user_input_requests.append(event.request)
+        elif isinstance(event, UserInputFailed):
+            self.user_input_failures.append((event.request_id, event.detail))
+        elif isinstance(event, TurnEnded):
+            self.calls_in_order.append("turn_ended")
+            self._turn_over.set()
+            self.endings.append(
+                {
+                    "turn": turn,
+                    "ending": event.ending,
+                    "error_summary": event.error_summary,
+                    "standard_error_tail": event.standard_error_tail,
+                }
+            )
+        elif isinstance(event, VendorSessionCursorRebound):
+            self.cursors.append(event.vendor_session_cursor)
+        elif isinstance(event, ComposerCatalogReported):
+            self.composer_catalog.append(event.composer_catalog)
+        elif isinstance(event, (BackgroundTaskStarted, BackgroundTaskEnded, BackendStreamEnded)):
+            assert turn is None
+            self.session_news.append(event)
 
     @property
     def message_texts(self) -> list[tuple[TurnToken, str]]:
@@ -257,121 +355,6 @@ class _RecordingSink:
             (token, message_content_text(content))
             for token, content in self.message_contents
         ]
-
-    async def agent_message_completed(
-        self, turn_token: TurnToken, content: MessageContent
-    ) -> None:
-        self.message_contents.append((turn_token, content))
-
-    async def tool_call_started(
-        self,
-        turn_token: TurnToken,
-        *,
-        tool_call_id: str,
-        title: str,
-        tool_kind: str,
-        detail: str | None,
-    ) -> None:
-        self.tools_started.append(
-            {
-                "turn": turn_token,
-                "tool_call_id": tool_call_id,
-                "title": title,
-                "tool_kind": tool_kind,
-                "detail": detail,
-            }
-        )
-
-    async def tool_call_progress(
-        self, turn_token: TurnToken, *, tool_call_id: str, detail: str
-    ) -> None:
-        self.tools_progressed.append((tool_call_id, detail))
-
-    async def tool_call_finished(
-        self,
-        turn_token: TurnToken,
-        *,
-        tool_call_id: str,
-        tool_call_status: ToolCallStatus,
-        detail: str | None,
-    ) -> None:
-        self.tools_finished.append(
-            {
-                "turn": turn_token,
-                "tool_call_id": tool_call_id,
-                "tool_call_status": tool_call_status,
-                "detail": detail,
-            }
-        )
-
-    async def token_usage_reported(
-        self,
-        turn_token: TurnToken,
-        *,
-        input_tokens: int | None,
-        output_tokens: int | None,
-        cached_input_tokens: int | None,
-        cost_usd: float | None,
-    ) -> None:
-        self.calls_in_order.append("token_usage")
-        self.token_usage.append(
-            {
-                "turn": turn_token,
-                "input_tokens": input_tokens,
-                "output_tokens": output_tokens,
-                "cached_input_tokens": cached_input_tokens,
-                "cost_usd": cost_usd,
-            }
-        )
-
-    async def context_compacted(self, turn_token: TurnToken) -> None:
-        self.calls_in_order.append("context_compacted")
-        self.compactions.append(turn_token)
-
-    async def permission_ask_raised(
-        self, turn_token: TurnToken, ask: BackendPermissionAsk
-    ) -> None:
-        del turn_token
-        self.asks.append(ask)
-
-    async def user_input_requested(
-        self, turn_token: TurnToken, request: BackendUserInputRequest
-    ) -> None:
-        del turn_token
-        self.user_input_requests.append(request)
-
-    async def user_input_failed(
-        self, turn_token: TurnToken, *, request_id: str, detail: str
-    ) -> None:
-        del turn_token
-        self.user_input_failures.append((request_id, detail))
-
-    async def turn_ended(
-        self,
-        turn_token: TurnToken,
-        *,
-        ending: ConversationTurnEnding,
-        error_summary: str | None,
-        standard_error_tail: str | None,
-    ) -> None:
-        self.calls_in_order.append("turn_ended")
-        self._turn_over.set()
-        self.endings.append(
-            {
-                "turn": turn_token,
-                "ending": ending,
-                "error_summary": error_summary,
-                "standard_error_tail": standard_error_tail,
-            }
-        )
-
-    async def vendor_session_cursor_rebound(self, vendor_session_cursor: str) -> None:
-        self.cursors.append(vendor_session_cursor)
-
-    async def composer_catalog_reported(
-        self, composer_catalog: tuple[ComposerCatalogEntry, ...]
-    ) -> None:
-        self.composer_catalog.append(composer_catalog)
 
 
 def _start_request(
@@ -440,11 +423,14 @@ async def _write(
 
 
 def _assistant(
-    *blocks: Any, session_id: str = SESSION_ID, parent: str | None = None
+    *blocks: Any,
+    session_id: str = SESSION_ID,
+    parent: str | None = None,
+    model: str = "claude",
 ) -> AssistantMessage:
     return AssistantMessage(
         content=list(blocks),
-        model="claude",
+        model=model,
         session_id=session_id,
         parent_tool_use_id=parent,
     )

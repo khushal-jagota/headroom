@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import json
 import sqlite3
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
+from typing import Final
 
 from planner.conversation.backend_usage import (
     BackendUsageOutcome,
@@ -17,6 +19,9 @@ from planner.conversation.contracts import ConversationBackendKey
 from planner.conversation.snapshot import BackendSnapshot
 from planner.core.db import connect
 from planner.core.errors import ErrorCode, PlannerError
+from planner.execution_identity import TicketLocale
+from planner.machines.contracts import HOME_MACHINE_ID, ORIGINAL_MAC_MACHINE_ID
+from planner.machines.data import legacy_machine_id, read_machine
 
 
 @dataclass(frozen=True, slots=True)
@@ -69,6 +74,12 @@ class DurableCodexLoginRejection:
             return
         conn = connect(self._db_path, self._busy_timeout_ms)
         try:
+            found = conn.execute(
+                "SELECT 1 FROM codex_login_rejection WHERE account_id = ? AND last_refresh = ?",
+                (generation.account_id, generation.last_refresh),
+            ).fetchone()
+            if found is None:
+                return
             conn.execute("BEGIN IMMEDIATE")
             conn.execute(
                 "DELETE FROM codex_login_rejection WHERE account_id = ? AND last_refresh = ?",
@@ -143,12 +154,51 @@ class BackendStateStore:
         finally:
             conn.close()
 
-    def model_is_enabled(
-        self, backend_key: ConversationBackendKey, model_id: str
-    ) -> bool:
+    def read_disabled_models(self, backend_key: ConversationBackendKey) -> frozenset[str]:
+        """Which of a backend's models are switched off, in one statement.
+
+        Enablement defaults to on and only a deliberate switch-off is stored, so this set
+        is small and absence is the answer for every other model. Asking the question one
+        model at a time opened a connection per model, three times over, for a card that
+        describes one backend.
+        """
         conn = connect(self._db_path, self._busy_timeout_ms)
         try:
-            return model_is_enabled(conn, backend_key, model_id)
+            return disabled_models(conn, backend_key)
+        finally:
+            conn.close()
+
+    def delivery_model_refusal(
+        self, backend_key: ConversationBackendKey, model_id: str, ticket_id: str | None
+    ) -> str | None:
+        """Why a delivery on this model must not go out, or None.
+
+        The machine is the Ticket's own for a Worker conversation, the VPS otherwise.
+        """
+        conn = connect(self._db_path, self._busy_timeout_ms)
+        try:
+            row = (
+                None
+                if ticket_id is None
+                else conn.execute(
+                    "SELECT machine_id FROM tickets WHERE id = ?", (ticket_id,)
+                ).fetchone()
+            )
+            machine = HOME_MACHINE_ID if row is None else str(row["machine_id"])
+            return model_refusal(conn, backend_key, model_id, machine)
+        finally:
+            conn.close()
+
+    def keep_vps_model_list(self, snapshot: BackendSnapshot) -> None:
+        conn = connect(self._db_path, self._busy_timeout_ms)
+        try:
+            conn.execute("BEGIN IMMEDIATE")
+            save_machine_model_list(conn, HOME_MACHINE_ID, snapshot)
+            conn.execute("COMMIT")
+        except BaseException:
+            if conn.in_transaction:
+                conn.execute("ROLLBACK")
+            raise
         finally:
             conn.close()
 
@@ -209,16 +259,170 @@ def model_is_enabled(
     return row is None or bool(row["enabled"])
 
 
-def require_enabled_model(
+def disabled_models(
+    conn: sqlite3.Connection, backend_key: ConversationBackendKey
+) -> frozenset[str]:
+    """The stored switch-offs for one backend. Absence from this set means enabled."""
+    return frozenset(
+        str(row["model_id"])
+        for row in conn.execute(
+            "SELECT model_id FROM backend_model_enablement WHERE backend_key = ? AND enabled = 0",
+            (str(backend_key),),
+        )
+    )
+
+
+# The Claude CLI takes these short names for the newest model of a family, and a
+# ``[1m]`` suffix for the one-million-token context form of a model. Neither appears in
+# its model list, and saved Tickets use both.
+_CLAUDE_SHORT_NAMES: Final = frozenset({"opus", "sonnet", "haiku", "fable"})
+_CLAUDE_LONG_CONTEXT_SUFFIX: Final = "[1m]"
+
+
+def save_machine_model_list(
+    conn: sqlite3.Connection, machine: str | TicketLocale, snapshot: BackendSnapshot
+) -> None:
+    """Keep the model list one machine reported, so a model check can read it later.
+
+    Once every machine holds a complete list for this backend, a switch-off for a model
+    none of them offers is deleted. Such a model is refused for not being offered, so
+    its row says nothing. While a machine has no list, its models are not checked, so
+    every switch-off still matters there. The caller commits.
+    """
+    from planner.executor.protocol import as_object
+
+    conn.execute(
+        "INSERT INTO machine_backend_snapshots VALUES (?,?,?) "
+        "ON CONFLICT(machine_id,backend_key) DO UPDATE "
+        "SET snapshot_json=excluded.snapshot_json "
+        "WHERE snapshot_json != excluded.snapshot_json",
+        (_machine_id(machine), snapshot.backend_key.value, json.dumps(as_object(snapshot))),
+    )
+    if not snapshot.models_complete:
+        return
+    offered: set[str] = set()
+    for row in conn.execute("SELECT machine_id FROM machines"):
+        listed = offered_model_ids(conn, str(row["machine_id"]), snapshot.backend_key)
+        if listed is None:
+            return
+        offered.update(listed)
+    stale = [
+        str(row["model_id"])
+        for row in conn.execute(
+            "SELECT model_id FROM backend_model_enablement WHERE backend_key = ?",
+            (snapshot.backend_key.value,),
+        )
+        if str(row["model_id"]) not in offered
+    ]
+    conn.executemany(
+        "DELETE FROM backend_model_enablement WHERE backend_key = ? AND model_id = ?",
+        [(snapshot.backend_key.value, model_id) for model_id in stale],
+    )
+
+
+def offered_model_ids(
+    conn: sqlite3.Connection, machine: str | TicketLocale, backend_key: ConversationBackendKey
+) -> tuple[str, ...] | None:
+    """The models this machine's backend last listed in full, in its own order.
+
+    None means Panels holds no complete list for it, and then nothing can be refused
+    for being absent from one.
+    """
+    row = conn.execute(
+        "SELECT snapshot_json FROM machine_backend_snapshots "
+        "WHERE machine_id = ? AND backend_key = ?",
+        (_machine_id(machine), backend_key.value),
+    ).fetchone()
+    return None if row is None else _complete_model_list(str(row["snapshot_json"]))
+
+
+def _complete_model_list(snapshot_json: str) -> tuple[str, ...] | None:
+    snapshot = json.loads(snapshot_json)
+    if not snapshot.get("models_complete") or not snapshot.get("available_models"):
+        return None
+    return tuple(str(model["model_id"]) for model in snapshot["available_models"])
+
+
+def _is_offered(
+    backend_key: ConversationBackendKey, model_id: str, offered: tuple[str, ...]
+) -> bool:
+    if model_id in offered:
+        return True
+    if backend_key is not ConversationBackendKey.claude:
+        return False
+    from planner.conversation.model_resolution.logic.variants import recognize_variant
+
+    base = model_id.removesuffix(_CLAUDE_LONG_CONTEXT_SUFFIX)
+    listed_bases = {listed.removesuffix(_CLAUDE_LONG_CONTEXT_SUFFIX) for listed in offered}
+    if base in listed_bases:
+        return True
+    if base not in _CLAUDE_SHORT_NAMES:
+        return False
+    for listed in listed_bases:
+        variant = recognize_variant(backend_key, listed)
+        if variant is not None and variant.name == base:
+            return True
+    return False
+
+
+def model_refusal(
     conn: sqlite3.Connection,
     backend_key: ConversationBackendKey,
     model_id: str,
-) -> None:
-    """Refuse a new choice without changing historical selections."""
+    machine: str | TicketLocale,
+) -> str | None:
+    """Why this model cannot be chosen here, or None when it can.
+
+    A model the owner switched off is refused everywhere. A Codex or Claude model is also
+    refused when that machine's complete model list does not offer it. Hermes keeps its
+    own acceptance. Without a complete list the backend stays the judge.
+    """
+    backend_key = ConversationBackendKey(backend_key)
     if not model_is_enabled(conn, backend_key, model_id):
+        return _disabled_refusal(model_id)
+    if backend_key is ConversationBackendKey.hermes:
+        return None
+    offered = offered_model_ids(conn, machine, backend_key)
+    if offered is None or _is_offered(backend_key, model_id, offered):
+        return None
+    disabled = disabled_models(conn, backend_key)
+    choices = ", ".join(model for model in offered if model not in disabled)
+    return (
+        f'Model "{model_id}" is not offered by {backend_key.value} '
+        f"on {_machine_name(conn, machine)}. "
+        f"Choose one of: {choices}."
+    )
+
+
+def _disabled_refusal(model_id: str) -> str:
+    return f'Model "{model_id}" is disabled. Choose an enabled model.'
+
+
+def _machine_id(machine: str | TicketLocale) -> str:
+    return legacy_machine_id(machine) if machine in ("vps", "macos") else str(machine)
+
+
+def _machine_name(conn: sqlite3.Connection, machine: str | TicketLocale) -> str:
+    destination = read_machine(conn, _machine_id(machine))
+    if destination.machine_id == HOME_MACHINE_ID and destination.name == "VPS":
+        return "the VPS"
+    if destination.machine_id == ORIGINAL_MAC_MACHINE_ID and destination.name == "Mac":
+        return "the Mac"
+    return destination.name
+
+
+def require_usable_model(
+    conn: sqlite3.Connection,
+    backend_key: ConversationBackendKey,
+    model_id: str,
+    machine: str | TicketLocale,
+) -> None:
+    """Refuse a new choice the machine would not run, without changing saved selections."""
+    refusal = model_refusal(conn, backend_key, model_id, machine)
+    if refusal is not None:
         raise PlannerError(
             ErrorCode.validation,
-            f'Model "{model_id}" is disabled. Choose an enabled model.',
+            refusal,
             {"employee_backend": str(backend_key), "employee_launch_model": model_id},
         )
 
@@ -229,8 +433,10 @@ def write_model_enablement(
     model_id: str,
     enabled: bool,
 ) -> None:
+    # One upsert is atomic and joins an existing caller transaction when present.
     conn.execute(
-        "INSERT INTO backend_model_enablement(backend_key, model_id, enabled) VALUES (?, ?, ?) "
+        "INSERT INTO backend_model_enablement(backend_key, model_id, enabled) "
+        "VALUES (?, ?, ?) "
         "ON CONFLICT(backend_key, model_id) DO UPDATE SET enabled = excluded.enabled",
         (str(backend_key), model_id, int(enabled)),
     )
@@ -256,7 +462,8 @@ def _catalogue_model_id(snapshot: BackendSnapshot, scope: str) -> str | None:
     exact = [
         model.model_id
         for model in snapshot.available_models
-        if wanted in {
+        if wanted
+        in {
             model.model_id.casefold(),
             (model.display_name or "").casefold(),
         }

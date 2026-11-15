@@ -7,12 +7,11 @@ proof uses the existing deterministic conversation adapter and no provider calls
 
 from __future__ import annotations
 
-import sqlite3
 from collections.abc import Callable
 
 from playwright.sync_api import BrowserContext, Page, expect
 from tests.e2e.harness import WAIT_MS, ApiHelper, ServerHandle
-from tests.support.connected_rows import _conversation, _message, _propose
+from tests.support.connected_rows import _bind, _conversation, _message, _propose
 from tests.support.principals import ticket_principal
 from tests.support.server_fixtures import rail_server  # noqa: F401
 
@@ -26,7 +25,9 @@ def test_ticket_backlog_resume_and_settled_discovery(
     server = rail_server
     project = api.direct_post(server, "/api/projects", {"name": "Lifecycle proof"})
     item = api.direct_post(
-        server, "/api/items", {"title": "Synthetic lifecycle review", "project_id": project["id"]}
+        server,
+        "/api/managers",
+        {"title": "Synthetic lifecycle review", "project_id": project["id"]},
     )
     ticket = api.direct_post(
         server,
@@ -35,7 +36,7 @@ def test_ticket_backlog_resume_and_settled_discovery(
             "title": "Synthetic ticket with retained evidence",
             "worker_type": "coding",
             "brief": "A synthetic brief for browser verification.",
-            "orchestrator": {"kind": "sprint_item", "id": item["id"]},
+            "manager": {"kind": "manager", "id": item["id"]},
         },
     )
     ticket_id = str(ticket["id"])
@@ -49,7 +50,7 @@ def test_ticket_backlog_resume_and_settled_discovery(
         server,
         f"/api/tickets/{ticket_id}/accept/brief",
         {
-            "next_ceiling": "needs_success_condition",
+            "next_ceiling": "needs_what_changes",
             "next_holder": {"kind": "owner", "id": "owner"},
         },
     )
@@ -61,15 +62,7 @@ def test_ticket_backlog_resume_and_settled_discovery(
     proposal = f"Pending success evidence survives deferral. [Original artifact]({artifact_href})"
     _propose(server, ticket_id, proposal)
     _conversation(server, "synthetic-lifecycle-conversation")
-    with sqlite3.connect(server.db_path) as conn:
-        conn.execute(
-            "UPDATE tickets SET conversation_id=? WHERE id=?",
-            ("synthetic-lifecycle-conversation", ticket_id),
-        )
-        conn.execute(
-            "INSERT INTO ticket_conversations(conversation_id,ticket_id) VALUES (?,?)",
-            ("synthetic-lifecycle-conversation", ticket_id),
-        )
+    _bind(server, "ticket", ticket_id, "synthetic-lifecycle-conversation")
 
     transcript = "Conversation evidence remains readable after deferral."
     _message(server, "synthetic-lifecycle-conversation", ticket_principal(ticket_id), transcript)
@@ -106,11 +99,11 @@ def test_ticket_backlog_resume_and_settled_discovery(
     page.wait_for_function("location.hash === '#/workspace'", timeout=WAIT_MS)
     expect(page.locator("[data-backlog-tickets]")).to_have_count(0)
     page.goto(server.base + f"/#/workspace/item/{item['id']}")
-    children = page.locator(f'[data-orchestrator-children="sprint_item:{item["id"]}"]')
+    children = page.locator(f'[data-manager-children="manager:{item["id"]}"]')
     backlog_group = children.locator('[data-workspace-group="backlog"]')
     backlog_group.locator(":scope > summary").click()
     expect(backlog_group).to_have_attribute("open", "")
-    deferred_row = children.locator(f'[data-sprint-ticket-id="{ticket_id}"]')
+    deferred_row = children.locator(f'[data-worker-ticket-id="{ticket_id}"]')
     expect(deferred_row).to_be_visible()
     expect(deferred_row).to_contain_text(ticket["title"])
     page.goto(server.base + f"/#/workspace/item/{item['id']}/{ticket_id}")
@@ -126,11 +119,11 @@ def test_ticket_backlog_resume_and_settled_discovery(
     expect(worker.locator("[data-ticket-backlog-action]")).to_have_text("Backlog ticket")
     page.reload()
     expect(worker.locator("[data-ticket-backlog-action]")).to_have_text("Backlog ticket")
-    page.locator("[data-conversation-rest-bar]").click()
+    page.locator("[data-conversation-expand]").click(timeout=WAIT_MS)
     page.locator('[data-conversation-lens-choice="full"]').click()
     expect(page.get_by_text(transcript, exact=True)).to_be_visible()
 
-    api.direct_patch(server, f"/api/items/{item['id']}/settled", {"settled": True})
+    api.direct_patch(server, f"/api/managers/{item['id']}/settled", {"settled": True})
     page.goto(server.base + "/#/workspace")
     settled = page.locator(".settled-head")
     expect(settled).to_be_visible()
@@ -138,4 +131,4 @@ def test_ticket_backlog_resume_and_settled_discovery(
     row = page.locator(f'[data-settled-item="{item["id"]}"]')
     expect(row).to_be_visible()
     row.locator(".settled-title").click()
-    expect(page.locator(f'[data-sprint-item-workspace="{item["id"]}"]')).to_be_visible()
+    expect(page.locator(f'[data-manager-workspace="{item["id"]}"]')).to_be_visible()

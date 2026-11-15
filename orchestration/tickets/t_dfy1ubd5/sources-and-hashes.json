@@ -1,0 +1,6 @@
+{
+  "scope_change": "Chief relayed owner direction: keep the direct Anthropic installation and prepare only the product-design Worker update.",
+  "frontend_design_installation": "Direct installation completed by Chief at /home/vps/.local/share/agent-skills/frontend-design, with native Claude/Codex symlinks. No installation or provisioning belongs to this package.",
+  "worker_before_sha256": "9de2443d67979718a94ed2b1b47941bcdb54c9110919f6b6cc28a90a85788376",
+  "worker_after_sha256": "6bbcd29d30a22da4b20e5bc697204015687e8fad407873b7ae1012a65e348262"
+}

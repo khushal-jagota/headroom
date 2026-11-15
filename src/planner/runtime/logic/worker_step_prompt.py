@@ -1,9 +1,8 @@
 """The ordered inputs Panels sends into a Ticket's conversation for one worker step.
 
-A wake carries only what a Worker cannot get for itself. The Ticket brief and the Ticket
-guidance are not that: they sit in the database, and one command returns them. What a
-Worker cannot get is the knowledge that it lost its memory, so that is what was added
-when those two were removed.
+A wake carries only what a Worker cannot get for itself. The Ticket brief sits in the
+database, and one command returns it. What a Worker cannot get is the knowledge that it
+lost its memory, so Panels includes that fact when the conversation was compacted.
 """
 
 from __future__ import annotations
@@ -13,15 +12,21 @@ from typing import Final
 
 from planner.tickets.contracts import StageOwnershipMode, Ticket
 from planner.tickets.logic import machine
-from planner.tickets.revision_feedback import PendingRevisionFeedback
-from planner.worker_types.contracts import WorkerTypeDefinition
+from planner.worker_types.contracts import WorkflowDefinition
+from planner.worker_types.guidance import render_workflow_guide
 
-READ_YOUR_TICKET_COMMAND: Final = "panels worker my-ticket brief,guidance"
+READ_YOUR_TICKET_COMMAND: Final = "panels worker my-ticket brief"
+# A Ticket copies its workflow when it is made, and a later edit to its Worker type does
+# not reach it. So every Worker follows the Ticket's own guide, never the type's skill.
+FOLLOW_YOUR_WORKFLOW_GUIDE: Final = (
+    "Follow this Ticket’s workflow guide. "
+    "Read the full guide again with panels worker my-ticket workflow if needed."
+)
 
 MEMORY_LOSS_NOTICE: Final = (
     "Your context was compacted, so the conversation you were working from is gone. "
-    f"Re-read your Ticket with {READ_YOUR_TICKET_COMMAND}, re-load your Worker skill, "
-    "then continue this step."
+    f"Re-read your Ticket with {READ_YOUR_TICKET_COMMAND}, re-load the panels-worker skill, "
+    "follow this Ticket’s workflow guide, then continue this step."
 )
 
 
@@ -52,9 +57,7 @@ class WorkerStepPrompt:
 def compose_worker_step_prompt(
     ticket: Ticket,
     *,
-    worker_type_definition: WorkerTypeDefinition,
-    revision_feedback: PendingRevisionFeedback | None,
-    memory_was_lost: bool,
+    worker_type_definition: WorkflowDefinition,
 ) -> WorkerStepPrompt:
     """Compose every Panels-owned input for one Ticket worker step.
 
@@ -62,9 +65,6 @@ def compose_worker_step_prompt(
     requirements also remain in the conversation system, where their own trust rules
     apply. The gated field is resolved against the Ticket's own Worker type definition.
 
-    ``memory_was_lost`` is the caller's answer to whether this conversation was compacted
-    since Panels last spoke into it. Only Panels holds that fact, so only Panels can put
-    it in the message.
     """
     gating = worker_type_definition.gating_field(ticket.stage)
     field = str(gating) if gating is not None else "the next step"
@@ -90,15 +90,20 @@ def compose_worker_step_prompt(
             f"take the next step and propose the '{field}' field for approval. "
             f"Stage owner: {ownership_wire}."
         )
-    step_instruction = f"{step_instruction} Read your Ticket first: {READ_YOUR_TICKET_COMMAND}."
+    step_instruction = (
+        f"{step_instruction} Read your Ticket first: {READ_YOUR_TICKET_COMMAND}. "
+        f"{FOLLOW_YOUR_WORKFLOW_GUIDE}"
+    )
 
-    inputs: list[WorkerStepInput] = []
-    if memory_was_lost:
-        inputs.append(WorkerStepInput("memory loss", MEMORY_LOSS_NOTICE, quoted=False))
-    inputs.append(WorkerStepInput("stage instruction", step_instruction, quoted=False))
-    if revision_feedback is not None:
-        inputs.append(WorkerStepInput("Ticket revision feedback", revision_feedback.text))
-    return WorkerStepPrompt(inputs=tuple(inputs))
+    return WorkerStepPrompt(
+        inputs=(WorkerStepInput("stage instruction", step_instruction, quoted=False),)
+    )
+
+
+def worker_step_memory_loss_prompt(ticket: Ticket) -> str:
+    """Panels' separate dispatch-time input for a worker-step wake."""
+    return (MEMORY_LOSS_NOTICE + "\n\n[Ticket workflow guidance]\n"
+            + render_workflow_guide(ticket.workflow) + "\n[/Ticket workflow guidance]")
 
 
 def mid_step_memory_loss_prompt(ticket: Ticket) -> str:
@@ -106,9 +111,14 @@ def mid_step_memory_loss_prompt(ticket: Ticket) -> str:
 
     No stage instruction follows this one, so it names the Ticket and Stage itself.
     """
+    guidance = (
+        "\n\n[Ticket workflow guidance]\n"
+        + render_workflow_guide(ticket.workflow)
+        + "\n[/Ticket workflow guidance]"
+    )
     return (
         f"You are part-way through a step on ticket {ticket.id} — {ticket.title}, "
-        f"at Stage '{str(ticket.stage)}'. {MEMORY_LOSS_NOTICE}"
+        f"at Stage '{str(ticket.stage)}'. {MEMORY_LOSS_NOTICE}{guidance}"
     )
 
 

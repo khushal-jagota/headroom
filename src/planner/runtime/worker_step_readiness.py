@@ -9,69 +9,19 @@ from __future__ import annotations
 
 import sqlite3
 
-from planner.tickets import derivation, locale_configuration
+from planner.executor.clock import now_ms
+from planner.machines.contracts import HOME_MACHINE_ID
+from planner.tickets import locale_configuration
 from planner.tickets.contracts import StageOwnershipMode, Ticket, TicketStatus
 from planner.tickets.logic import machine
-from planner.worker_types.contracts import CONSEQUENCES_FIELD_ID, WorkerTypeDefinition
-
-CloseoutLaneIdentity = tuple[str | None, str]
-
-
-def closeout_lane_identity(
-    conn: sqlite3.Connection,
-    ticket: Ticket,
-    *,
-    worker_type_definition: WorkerTypeDefinition,
-) -> CloseoutLaneIdentity | None:
-    """Return the effective project-and-Worker-type lane for a Closeout Ticket."""
-    if worker_type_definition.gating_field(ticket.stage) != CONSEQUENCES_FIELD_ID:
-        return None
-    effective_project_id = ticket.project_id
-    if ticket.sprint_item_id is not None:
-        row = conn.execute(
-            "SELECT project_id FROM sprint_items WHERE id = ?",
-            (ticket.sprint_item_id,),
-        ).fetchone()
-        effective_project_id = str(row["project_id"]) if row is not None else None
-    return effective_project_id, ticket.worker_type
-
-
-def _closeout_lane_is_occupied(
-    conn: sqlite3.Connection,
-    ticket: Ticket,
-    *,
-    worker_type_definition: WorkerTypeDefinition,
-) -> bool:
-    lane = closeout_lane_identity(
-        conn,
-        ticket,
-        worker_type_definition=worker_type_definition,
-    )
-    if lane is None:
-        return False
-    effective_project_id, worker_type = lane
-    closeout_stage = worker_type_definition.stage_gated_by(CONSEQUENCES_FIELD_ID)
-    return (
-        conn.execute(
-            "SELECT 1 FROM tickets t "
-            "LEFT JOIN sprint_items si ON si.id = t.sprint_item_id "
-            "WHERE t.id != ? AND t.worker_type = ? AND t.stage = ? "
-            # A resting Closeout Ticket does not occupy the lane, and a blocked one is
-            # resting. The predicate is the derivation's own, so the two cannot drift.
-            f"AND NOT ({derivation.RESTS_PREDICATE}) "
-            "AND CASE WHEN t.sprint_item_id IS NOT NULL THEN si.project_id "
-            "ELSE t.project_id END IS ? LIMIT 1",
-            (ticket.id, worker_type, closeout_stage, effective_project_id),
-        ).fetchone()
-        is not None
-    )
+from planner.worker_types.contracts import WorkflowDefinition
 
 
 def worker_step_blocker(
     conn: sqlite3.Connection,
     ticket: Ticket,
     *,
-    worker_type_definition: WorkerTypeDefinition,
+    worker_type_definition: WorkflowDefinition,
 ) -> str | None:
     """Why Panels may not start this Ticket's next worker step, or nothing when it may.
 
@@ -83,11 +33,14 @@ def worker_step_blocker(
     """
     if ticket.is_backlogged:
         return "the Ticket is backlogged"
-    if ticket.locale != locale_configuration.CURRENT_EXECUTION_LOCALE:
-        return (
-            f"the Ticket locale is {ticket.locale.value}, so it cannot start on "
-            f"this {locale_configuration.CURRENT_EXECUTION_LOCALE.value} machine"
-        )
+    if not locale_configuration.can_execute_machine(conn, ticket.machine_id):
+        return locale_configuration.machine_unavailable_reason(conn, ticket.machine_id)
+    # A start never waits in the mailbox for a Mac that may not come back: the claim is
+    # not taken until the Mac is here, and nothing errors meanwhile.
+    if ticket.machine_id != HOME_MACHINE_ID and not locale_configuration.mac_is_present(
+        conn, now_ms(), ticket.machine_id
+    ):
+        return locale_configuration.machine_unavailable_reason(conn, ticket.machine_id)
     if worker_type_definition.is_terminal(ticket.stage):
         return f"the Stage {ticket.stage} is terminal"
     ownership_mode = machine.stage_ownership_mode(
@@ -106,12 +59,22 @@ def worker_step_blocker(
             return "the user-owned Stage opener already ran for this Stage entry"
     if worker_type_definition.gating_field(ticket.stage) is None:
         return f"the Stage {ticket.stage} has no field for a worker to fill"
-    if _closeout_lane_is_occupied(
+    from planner.conversation.backend_state import model_is_enabled
+    from planner.conversation.contracts import require_conversation_backend_key
+
+    model = ticket.employee_launch_model
+    backend = ticket.employee_backend
+    if model is None and ticket.worker_type is not None:
+        from planner.worker_types.configuration import configured_worker_type_registry
+
+        defaults = configured_worker_type_registry().require(ticket.worker_type).worker_profile
+        model, backend = defaults.default_model, defaults.default_backend
+    if model is not None and not model_is_enabled(
         conn,
-        ticket,
-        worker_type_definition=worker_type_definition,
+        require_conversation_backend_key(backend),
+        model,
     ):
-        return "another Closeout Ticket holds this lane"
+        return f"the model {model} is disabled"
     return None
 
 
@@ -119,7 +82,7 @@ def is_ready_for_worker_step(
     conn: sqlite3.Connection,
     ticket: Ticket,
     *,
-    worker_type_definition: WorkerTypeDefinition,
+    worker_type_definition: WorkflowDefinition,
 ) -> bool:
     """Whether Panels may automatically start this Ticket's next worker step now."""
     return (

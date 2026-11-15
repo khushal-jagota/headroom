@@ -22,7 +22,9 @@ import concurrent.futures
 import logging
 import sqlite3
 import threading
+from collections import deque
 from collections.abc import Callable
+from contextlib import nullcontext
 from dataclasses import dataclass
 from time import monotonic as _monotonic
 from typing import Any, Final, Literal
@@ -33,25 +35,29 @@ from planner.conversation.contracts import (
     PromptDeliveryInjected,
     PromptDeliveryMode,
     PromptDeliveryQueued,
+    PromptDeliveryRefusalReason,
     PromptDeliveryRefused,
     PromptDeliveryStarted,
+    PromptDeliverySuppressed,
     PromptDeliveryUncertain,
 )
 from planner.conversation.message_content import text_message_content
+from planner.conversation.start_admission import manual_start_exempt
+from planner.conversation.start_admission.contracts import StartRequest
 from planner.core.clock import Clock
 from planner.core.db import connect
+from planner.core.errors import ErrorCode, PlannerError
+from planner.core.task_settlement import run_on_worker_thread
 from planner.runtime import conversation_start, worker_memory, worker_step_readiness
+from planner.runtime.decision_message_delivery import deliver_ticket_decision_messages
 from planner.runtime.logic.worker_step_prompt import (
+    WorkerStepPrompt,
     compose_worker_step_prompt,
     mid_step_memory_loss_prompt,
 )
-from planner.skill_versions import (
-    bind_worker_step_skills,
-    delete_worker_step_skill_bindings,
-    settle_worker_step_skill_bindings,
-)
 from planner.tickets import data as tickets_data
-from planner.tickets import revision_feedback
+from planner.tickets import decision_messages
+from planner.tickets.derivation import RESTS_PREDICATE
 from planner.worker_types.configuration import configured_worker_type_registry
 from planner.worker_types.registry import WorkerTypeRegistry
 
@@ -59,7 +65,17 @@ _log = logging.getLogger(__name__)
 
 LOOP_SENDER_LABEL: Final = "loop"
 
-_CANDIDATE_SQL = "SELECT t.id FROM tickets t ORDER BY t.updated_at, t.id"
+# Only a Ticket that readiness could accept is read in full. Readiness refuses a
+# backlogged Ticket, one whose status is not `empty`, and one at a terminal Stage, so the
+# query drops those first. It leaves the blocker and every other check to readiness.
+_CANDIDATE_SQL = (
+    "SELECT t.id FROM tickets t WHERE t.integrity_error_reason IS NULL "
+    "AND t.is_backlogged = 0 AND " + RESTS_PREDICATE + " "
+    "AND NOT EXISTS (SELECT 1 FROM json_each(t.workflow_json, '$.stages') stage "
+    "WHERE json_extract(stage.value, '$.id') = t.stage "
+    "AND json_extract(stage.value, '$.is_terminal')) "
+    "ORDER BY t.updated_at, t.id"
+)
 
 
 type WorkerStepDeliveryFate = Literal[
@@ -68,6 +84,7 @@ type WorkerStepDeliveryFate = Literal[
     "injected",
     "refused",
     "uncertain",
+    "suppressed",
 ]
 
 
@@ -97,6 +114,8 @@ class WorkerStepStartResult:
                 return cls(started=True, delivery_fate="injected")
             case PromptDeliveryRefused():
                 return cls(started=False, delivery_fate="refused")
+            case PromptDeliverySuppressed():
+                return cls(started=False, delivery_fate="suppressed")
             case PromptDeliveryUncertain():
                 return cls(started=False, delivery_fate="uncertain")
 
@@ -109,27 +128,93 @@ async def start_ready_worker_step(
     worker_type_registry: WorkerTypeRegistry,
     now: Callable[[], int],
 ) -> WorkerStepStartResult:
+    admission = getattr(conversation_system, "workspace_admission", None)
+    with admission.operation() if admission is not None else nullcontext(True) as admitted:
+        if not admitted:
+            return WorkerStepStartResult(started=False)
+        decision_fate = await deliver_ticket_decision_messages(
+            ticket_id,
+            connect_database=connect_database,
+            conversation_system=conversation_system,
+            worker_type_registry=worker_type_registry,
+            now=now,
+        )
+        if decision_fate is not None:
+            return WorkerStepStartResult.from_delivery_fate(decision_fate)
+        return await _admitted_start_ready_worker_step(
+            ticket_id,
+            connect_database=connect_database,
+            conversation_system=conversation_system,
+            worker_type_registry=worker_type_registry,
+            now=now,
+        )
+
+
+async def _admitted_start_ready_worker_step(
+    ticket_id: str,
+    *,
+    connect_database: Callable[[], sqlite3.Connection],
+    conversation_system: ConversationSystem,
+    worker_type_registry: WorkerTypeRegistry,
+    now: Callable[[], int],
+) -> WorkerStepStartResult:
     """Start one worker step for this Ticket. Reports whether the send got anywhere.
 
     Every check happens before anything is sent: an occupied worker is skipped outright,
     and the claim re-runs the readiness decision under the write lock. Once the send
     reports started, queued, or injected, the delivery cannot be taken back. The claim is
-    given back only when the send was refused, or when a failure occurred before a fate.
+    given back for other refusals, or when a failure occurred before a fate.
+    A definite backend start failure stays errored for explicit recovery.
     An uncertain delivery stays visible as an errored claim for supervisor restart.
+
+    This runs on the server's event loop, whether the poll thread or a route set it going.
+    So the connection is opened and closed on a worker thread, and so is every write: the
+    claim, its release, the errored mark, and the feedback acknowledgement. The link lock,
+    the busy check, and the send stay on the loop, and the claim is still taken and given
+    back under the link lock.
     """
+    conn = await run_on_worker_thread(connect_database)
     link_lock = conversation_start.conversation_link_lock(f"ticket:{ticket_id}")
-    await link_lock.acquire()
-    conn: sqlite3.Connection | None = None
+    link_acquired = False
+    starts = (
+        None if manual_start_exempt.get() else getattr(conversation_system, "start_admission", None)
+    )
+    automatic_identity: str | None = None
+    automatic_sent = False
     try:
-        conn = connect_database()
-        ticket = tickets_data.read_ticket(conn, ticket_id)
+        await link_lock.acquire()
+        link_acquired = True
+        ticket = await run_on_worker_thread(tickets_data.read_ticket, conn, ticket_id)
         conversation_id = ticket.conversation_id
         if conversation_id is not None and await conversation_system.is_running(conversation_id):
             # An occupied worker is left alone for this pass. Queueing stays the answer
             # only for a collision that slipped between this check and the send.
+            # Its old unbound preparation must not retain priority over ready work.
+            if starts is not None:
+                starts.finish_unbound(f"worker-preparation:{ticket.id}")
             return WorkerStepStartResult(started=False)
 
-        claimed = tickets_data.claim_ticket_for_worker_step(
+        worker_type_definition = ticket.workflow
+        if not await run_on_worker_thread(
+            worker_step_readiness.is_ready_for_worker_step,
+            conn,
+            ticket,
+            worker_type_definition=worker_type_definition,
+        ):
+            return WorkerStepStartResult(started=False)
+        if starts is not None:
+            automatic_identity = f"worker-preparation:{ticket.id}"
+            if not starts.try_start(
+                StartRequest(
+                    automatic_identity,
+                    "worker",
+                    ticket.machine_id,
+                )
+            ):
+                automatic_identity = None
+                return WorkerStepStartResult(started=False)
+        claimed = await run_on_worker_thread(
+            tickets_data.claim_ticket_for_worker_step,
             conn,
             ticket_id,
             readiness_check=worker_step_readiness.is_ready_for_worker_step,
@@ -139,22 +224,39 @@ async def start_ready_worker_step(
             return WorkerStepStartResult(started=False)
         taken_claim = claimed.worker_step_claim
         taken_claim_revision = claimed.worker_step_claim_revision
-        paired_opener = (
-            conn.execute(
-                "SELECT 1 FROM ticket_paired_stage_openers WHERE ticket_id = ? AND stage = ?",
-                (ticket_id, claimed.stage),
-            ).fetchone()
-            is not None
-        )
-        sender_message_id = worker_memory.new_worker_step_message_id()
 
-        def give_the_claim_back(*, opener_succeeded: bool = False) -> None:
+        def has_paired_opener() -> bool:
+            return (
+                conn.execute(
+                    "SELECT 1 FROM ticket_paired_stage_openers WHERE ticket_id = ? AND stage = ?",
+                    (ticket_id, claimed.stage),
+                ).fetchone()
+                is not None
+            )
+
+        paired_opener = await run_on_worker_thread(has_paired_opener)
+        sender_message_id = worker_memory.worker_step_message_id_for_claim(
+            ticket.id, taken_claim_revision
+        )
+        dispatch_admitted = True
+        if starts is not None and automatic_identity is not None:
+            dispatch_admitted = starts.transfer(
+                automatic_identity,
+                StartRequest(
+                    sender_message_id,
+                    "worker",
+                    claimed.machine_id,
+                ),
+            )
+            automatic_identity = sender_message_id
+
+        def release_the_claim(*, opener_succeeded: bool, released_at: int) -> None:
             released = tickets_data.release_worker_step_claim(
                 conn,
                 ticket_id,
                 expected_claim=taken_claim,
                 expected_claim_revision=taken_claim_revision,
-                now=now(),
+                now=released_at,
             )
             if released and paired_opener and not opener_succeeded:
                 tickets_data.forget_user_stage_opener(
@@ -163,31 +265,42 @@ async def start_ready_worker_step(
                     stage=claimed.stage,
                 )
 
-        def remove_tentative_bindings() -> None:
-            delete_worker_step_skill_bindings(conn, sender_message_id)
+        async def give_the_claim_back(*, opener_succeeded: bool = False) -> None:
+            await run_on_worker_thread(
+                release_the_claim, opener_succeeded=opener_succeeded, released_at=now()
+            )
+
+        if not dispatch_admitted:
+            await give_the_claim_back()
+            return WorkerStepStartResult(started=False)
 
         try:
             # Inside the guard: a lookup that raises must give the claim back, or the
             # Ticket sits out of `empty` with nothing running and nothing to re-claim it.
-            worker_type_definition = worker_type_registry.require(claimed.worker_type)
-            bind_worker_step_skills(
-                conn,
-                sender_message_id,
-                worker_type_definition.worker_profile.specialist_skill,
-            )
+            worker_type_definition = claimed.workflow
             conversation_id = claimed.conversation_id
+
             # Composed before anything is made: a failure here must not leave a conversation
             # behind, and the opener is what would have brought one into being.
-            current_ticket = tickets_data.read_ticket(conn, ticket_id)
-            pending_revision_feedback = revision_feedback.snapshot(conn, ticket_id)
-            prompt = compose_worker_step_prompt(
-                current_ticket,
-                worker_type_definition=worker_type_definition,
-                revision_feedback=pending_revision_feedback,
-                memory_was_lost=worker_memory.conversation_holds_an_unanswered_memory_loss(
-                    conn, conversation_id
-                ),
-            )
+            def prepare_prompt() -> WorkerStepPrompt:
+                current_ticket = tickets_data.read_ticket(conn, ticket_id)
+                return compose_worker_step_prompt(
+                    current_ticket,
+                    worker_type_definition=worker_type_definition,
+                )
+
+            prompt = await run_on_worker_thread(prepare_prompt)
+
+            def record_dispatch() -> None:
+                from planner.ticket_workspaces.data import ensure_workspace_activity
+
+                with conn:
+                    tickets_data.mark_worker_step_dispatch_started(
+                        conn, ticket_id, taken_claim_revision
+                    )
+                    ensure_workspace_activity(conn, ticket_id, now())
+
+            await run_on_worker_thread(record_dispatch)
             delivered = await conversation_start.send_to_ticket_conversation(
                 conversation_system,
                 conn,
@@ -199,22 +312,29 @@ async def start_ready_worker_step(
                 mode=PromptDeliveryMode.queue,
                 sender_message_id=sender_message_id,
                 worker_type_registry=worker_type_registry,
+                retain_definite_start_refusal=not paired_opener,
+                workspace_activity_recorded=True,
                 now=now(),
             )
             conversation_id = delivered.conversation_id
             fate = delivered.fate
+            automatic_sent = True
         except Exception:
             _log.exception(
                 "worker step could not be started (ticket=%s conversation=%s)",
                 ticket_id,
                 conversation_id,
             )
-            remove_tentative_bindings()
-            give_the_claim_back()
+            await give_the_claim_back()
             return WorkerStepStartResult(started=False)
 
+        if starts is not None and automatic_identity is not None:
+            if isinstance(fate, (PromptDeliveryRefused, PromptDeliverySuppressed)):
+                starts.finish(automatic_identity)
+            elif isinstance(fate, PromptDeliveryUncertain):
+                starts.uncertain(automatic_identity)
         if isinstance(fate, PromptDeliveryRefused):
-            # The refusal is on the record before the claim is given back, so a release
+            # The refusal is on the record before the claim changes, so a release
             # that itself fails cannot swallow the one line that says why nothing ran.
             _log.error(
                 "worker step send was refused (ticket=%s conversation=%s reason=%s)",
@@ -222,8 +342,27 @@ async def start_ready_worker_step(
                 conversation_id,
                 fate.refusal_reason.value,
             )
-            remove_tentative_bindings()
-            give_the_claim_back()
+            if not paired_opener and fate.refusal_reason in {
+                PromptDeliveryRefusalReason.backend_did_not_start,
+                # The model is switched off or no longer offered. Retrying cannot help,
+                # and the refusal with its reason is already in the conversation.
+                PromptDeliveryRefusalReason.model_resolution_failed,
+            }:
+                await run_on_worker_thread(
+                    tickets_data.mark_worker_step_claim_errored,
+                    conn,
+                    ticket_id,
+                    expected_claim=taken_claim,
+                    expected_claim_revision=taken_claim_revision,
+                    now=now(),
+                    error_reason=f"could not start ({fate.refusal_reason.value})",
+                )
+            else:
+                await give_the_claim_back()
+            return WorkerStepStartResult.from_delivery_fate(fate)
+
+        if isinstance(fate, PromptDeliverySuppressed):
+            await give_the_claim_back()
             return WorkerStepStartResult.from_delivery_fate(fate)
 
         if isinstance(fate, PromptDeliveryUncertain):
@@ -231,12 +370,14 @@ async def start_ready_worker_step(
             # permit an unsafe automatic replay. Keep it visible for the supervisor's
             # explicit restart route instead. A stale result must not replace a newer
             # claim that moved while the delivery was in flight.
-            marked_errored = tickets_data.mark_worker_step_claim_errored(
+            marked_errored = await run_on_worker_thread(
+                tickets_data.mark_worker_step_claim_errored,
                 conn,
                 ticket_id,
                 expected_claim=taken_claim,
                 expected_claim_revision=taken_claim_revision,
                 now=now(),
+                error_reason="delivery uncertain",
             )
             if marked_errored:
                 _log.error(
@@ -244,40 +385,42 @@ async def start_ready_worker_step(
                     ticket_id,
                     conversation_id,
                 )
-            remove_tentative_bindings()
             return WorkerStepStartResult.from_delivery_fate(fate)
 
-        if not isinstance(fate, PromptDeliveryQueued):
-            # The durable conversation record normally finalizes this in the same
-            # transaction as its prompt row. This idempotent update also supports the
-            # in-memory conversation system used by focused worker-step tests.
-            settle_worker_step_skill_bindings(conn, sender_message_id, delivered=True)
-
         if paired_opener:
-            give_the_claim_back(opener_succeeded=True)
+            await give_the_claim_back(opener_succeeded=True)
 
-        if pending_revision_feedback is not None:
-            try:
-                revision_feedback.acknowledge(
-                    conn,
-                    ticket_id,
-                    pending_revision_feedback.revision,
-                )
-            except Exception:
-                # The text is delivered and cannot be taken back, so this is reported and
-                # nothing is reverted: reverting would only send the feedback twice.
-                _log.exception(
-                    "delivered revision feedback could not be acknowledged (ticket=%s)",
-                    ticket_id,
-                )
         return WorkerStepStartResult.from_delivery_fate(fate)
     finally:
-        link_lock.release()
-        if conn is not None:
-            conn.close()
+        if starts is not None and automatic_identity is not None and not automatic_sent:
+            starts.finish_unbound(automatic_identity)
+        if link_acquired:
+            link_lock.release()
+        await run_on_worker_thread(conn.close)
 
 
 async def tell_a_worker_it_lost_its_memory(
+    ticket_id: str,
+    *,
+    connect_database: Callable[[], sqlite3.Connection],
+    conversation_system: ConversationSystem,
+    worker_type_registry: WorkerTypeRegistry,
+    now: Callable[[], int],
+) -> bool:
+    admission = getattr(conversation_system, "workspace_admission", None)
+    with admission.operation() if admission is not None else nullcontext(True) as admitted:
+        if not admitted:
+            return False
+        return await _admitted_tell_a_worker_it_lost_its_memory(
+            ticket_id,
+            connect_database=connect_database,
+            conversation_system=conversation_system,
+            worker_type_registry=worker_type_registry,
+            now=now,
+        )
+
+
+async def _admitted_tell_a_worker_it_lost_its_memory(
     ticket_id: str,
     *,
     connect_database: Callable[[], sqlite3.Connection],
@@ -291,29 +434,35 @@ async def tell_a_worker_it_lost_its_memory(
     for one, and most of these never get another. Nothing is claimed and nothing is
     released here: the claim is already out, and this only speaks into the step.
 
-    The notice answers its own boundary, because it is sent under a worker-step sender
-    message id. A second pass over the same boundary therefore finds it answered.
+    A delivered notice answers its boundary. An uncertain notice prevents another
+    automatic attempt, while a definite refusal or send exception can retry.
     """
     async with conversation_start.conversation_link_lock(f"ticket:{ticket_id}"):
-        conn = connect_database()
+        conn = await run_on_worker_thread(connect_database)
         try:
-            ticket = tickets_data.read_ticket(conn, ticket_id)
+            ticket = await run_on_worker_thread(tickets_data.read_ticket, conn, ticket_id)
             conversation_id = ticket.conversation_id
             if conversation_id is None:
                 return False
-            if not worker_memory.conversation_holds_an_unanswered_memory_loss(
-                conn, conversation_id
+            if not await run_on_worker_thread(
+                worker_memory.ticket_needs_memory_notice, conn, ticket_id
             ):
                 # Something answered the boundary between the scan and here. That is the
                 # normal end of a race, not a failure.
                 return False
             if worker_memory.an_answer_is_already_waiting(
-                await conversation_system.held_prompts(conversation_id)
+                await conversation_system.sender_message_ids_awaiting_outcome(conversation_id)
             ):
-                # A notice sent while the worker was busy is still queued, and a queued
-                # message writes no row to find. Every poll would send another one.
+                # A notice sent while the worker was busy is still queued, or has just left
+                # the queue, and neither has a row to find yet. Every poll would send
+                # another one.
                 return False
             try:
+                # Admission or the boundary may change while held prompts are read.
+                if not await run_on_worker_thread(
+                    worker_memory.ticket_needs_memory_notice, conn, ticket_id
+                ):
+                    return False
                 delivered = await conversation_start.send_to_ticket_conversation(
                     conversation_system,
                     conn,
@@ -323,7 +472,6 @@ async def tell_a_worker_it_lost_its_memory(
                     sender_label=LOOP_SENDER_LABEL,
                     mode=PromptDeliveryMode.queue,
                     sender_message_id=worker_memory.new_memory_notice_message_id(),
-                    reply_requested=False,
                     worker_type_registry=worker_type_registry,
                     now=now(),
                 )
@@ -342,9 +490,11 @@ async def tell_a_worker_it_lost_its_memory(
                     delivered.fate.refusal_reason.value,
                 )
                 return False
+            if isinstance(delivered.fate, PromptDeliverySuppressed):
+                return False
             return True
         finally:
-            conn.close()
+            await run_on_worker_thread(conn.close)
 
 
 class WorkerStepReadinessLoop:
@@ -358,7 +508,9 @@ class WorkerStepReadinessLoop:
         conversation_system: ConversationSystem,
         asyncio_loop: asyncio.AbstractEventLoop,
         busy_timeout_ms: int = 5000,
+        before_poll: Callable[[], bool] | None = None,
     ) -> None:
+        self._before_poll = before_poll
         self._db_path = db_path
         self._clock = clock
         self._conversation_system = conversation_system
@@ -369,6 +521,10 @@ class WorkerStepReadinessLoop:
         self._thread: threading.Thread | None = None
         self._in_flight_lock = threading.Lock()
         self._in_flight: dict[concurrent.futures.Future[Any], str] = {}
+        self._in_flight_destinations: dict[concurrent.futures.Future[Any], str] = {}
+        self._in_flight_counts: dict[str, int] = {}
+        self._ticket_destinations: dict[str, str] = {}
+        self._last_destination: str | None = None
 
     def wake(self) -> None:
         """Ask the loop to poll now; the periodic timer remains the backstop."""
@@ -378,37 +534,67 @@ class WorkerStepReadinessLoop:
         conn = connect(self._db_path, self._busy_timeout_ms)
         try:
             rows = conn.execute(_CANDIDATE_SQL).fetchall()
+            self._ticket_destinations = {}
             ready_ticket_ids: list[str] = []
-            claimed_closeout_lanes: set[worker_step_readiness.CloseoutLaneIdentity] = set()
-            registry = configured_worker_type_registry()
+            ready_start_ids: set[str] = set()
             for row in rows:
-                ticket = tickets_data.read_ticket(conn, str(row["id"]))
-                worker_type_definition = registry.require(ticket.worker_type)
+                try:
+                    ticket = tickets_data.read_ticket(conn, str(row["id"]))
+                except PlannerError as error:
+                    if error.code is ErrorCode.not_found:
+                        # Deleted between the candidate select above and this read.
+                        # The deletion already succeeded; skip it rather than fail
+                        # every other ready Ticket in this pass.
+                        continue
+                    raise
+                worker_type_definition = ticket.workflow
                 if not worker_step_readiness.is_ready_for_worker_step(
                     conn,
                     ticket,
                     worker_type_definition=worker_type_definition,
                 ):
                     continue
-                closeout_lane = worker_step_readiness.closeout_lane_identity(
-                    conn,
-                    ticket,
-                    worker_type_definition=worker_type_definition,
-                )
-                if closeout_lane is not None:
-                    # One Closeout lane takes one Ticket per pass. The lane looks free to
-                    # every waiter until one of them actually flips, so without this the
-                    # same pass would send several into the same lane.
-                    if closeout_lane in claimed_closeout_lanes:
-                        continue
-                    claimed_closeout_lanes.add(closeout_lane)
                 ready_ticket_ids.append(ticket.id)
+                self._ticket_destinations[ticket.id] = ticket.machine_id
+                ready_start_ids.add(f"worker-preparation:{ticket.id}")
+            starts = getattr(self._conversation_system, "start_admission", None)
+            if starts is not None:
+                starts.retain_deferred("worker-preparation:", ready_start_ids)
+                # Select the admission head before the preparation cap can hide it.
+                # All candidates are Workers; unknown identities must not inherit
+                # priority()'s default supervisor role. Stable ties retain DB order.
+                ready_ticket_ids.sort(
+                    key=lambda ticket_id: starts.priority((f"worker-preparation:{ticket_id}",))[1]
+                )
+            # Rotate destination queues without disturbing order within a conversation/machine.
+            groups: dict[str, deque[str]] = {}
+            for ticket_id in ready_ticket_ids:
+                groups.setdefault(self._ticket_destinations[ticket_id], deque()).append(ticket_id)
+            destinations = list(groups)
+            if self._last_destination in destinations:
+                offset = destinations.index(self._last_destination) + 1
+                destinations = destinations[offset:] + destinations[:offset]
+            ready_ticket_ids = []
+            rotation = deque(destinations)
+            while rotation:
+                destination = rotation.popleft()
+                ready_ticket_ids.append(groups[destination].popleft())
+                if groups[destination]:
+                    rotation.append(destination)
+            for ticket_id in decision_messages.pending_ticket_ids(conn):
+                if ticket_id not in ready_ticket_ids:
+                    ready_ticket_ids.append(ticket_id)
+                    self._ticket_destinations[ticket_id] = tickets_data.read_ticket(
+                        conn, ticket_id
+                    ).machine_id
             return ready_ticket_ids
         finally:
             conn.close()
 
     def poll_once(self) -> list[str]:
         """Start a worker step for every ready Ticket. Returns the ids it set going."""
+        if self._before_poll is not None and self._before_poll():
+            return []
         started = [ticket_id for ticket_id in self._ready_ticket_ids() if self._schedule(ticket_id)]
         try:
             self.tell_every_worker_that_lost_its_memory()
@@ -428,8 +614,23 @@ class WorkerStepReadinessLoop:
         return [ticket_id for ticket_id in ticket_ids if self._schedule_memory_notice(ticket_id)]
 
     def _schedule_memory_notice(self, ticket_id: str) -> bool:
+        destination = self._ticket_destinations.get(ticket_id)
+        if destination is None:
+            conn = connect(self._db_path, self._busy_timeout_ms)
+            try:
+                row = conn.execute(
+                    "SELECT machine_id FROM tickets WHERE id=?", (ticket_id,),
+                ).fetchone()
+                if row is None:
+                    return False
+                destination = str(row[0])
+            finally:
+                conn.close()
         with self._in_flight_lock:
             if self._stop.is_set():
+                return False
+            starts = getattr(self._conversation_system, "start_admission", None)
+            if starts is not None and self._in_flight_counts.get(destination, 0) >= starts.limit:
                 return False
             if ticket_id in self._in_flight.values():
                 # The previous pass is still sending this Ticket's notice. Two would
@@ -447,14 +648,32 @@ class WorkerStepReadinessLoop:
         )
         with self._in_flight_lock:
             self._in_flight[future] = ticket_id
+            self._in_flight_destinations[future] = destination
+            self._in_flight_counts[destination] = self._in_flight_counts.get(destination, 0) + 1
+            self._last_destination = destination
         future.add_done_callback(self._step_ended)
         return True
 
     def _schedule(self, ticket_id: str) -> bool:
+        destination = self._ticket_destinations.get(ticket_id)
+        if destination is None:
+            conn = connect(self._db_path, self._busy_timeout_ms)
+            try:
+                row = conn.execute(
+                    "SELECT machine_id FROM tickets WHERE id=?", (ticket_id,),
+                ).fetchone()
+                if row is None:
+                    return False
+                destination = str(row[0])
+            finally:
+                conn.close()
         with self._in_flight_lock:
             if self._stop.is_set():
                 return False
             if ticket_id in self._in_flight.values():
+                return False
+            starts = getattr(self._conversation_system, "start_admission", None)
+            if starts is not None and self._in_flight_counts.get(destination, 0) >= starts.limit:
                 return False
         future = asyncio.run_coroutine_threadsafe(
             start_ready_worker_step(
@@ -468,6 +687,9 @@ class WorkerStepReadinessLoop:
         )
         with self._in_flight_lock:
             self._in_flight[future] = ticket_id
+            self._in_flight_destinations[future] = destination
+            self._in_flight_counts[destination] = self._in_flight_counts.get(destination, 0) + 1
+            self._last_destination = destination
         future.add_done_callback(self._step_ended)
         return True
 
@@ -481,6 +703,13 @@ class WorkerStepReadinessLoop:
         """
         with self._in_flight_lock:
             ticket_id = self._in_flight.pop(future, None)
+            destination = self._in_flight_destinations.pop(future, None)
+            if destination is not None:
+                count = self._in_flight_counts[destination] - 1
+                if count:
+                    self._in_flight_counts[destination] = count
+                else:
+                    self._in_flight_counts.pop(destination)
         if future.cancelled():
             # Stopping cancels what it could not wait out. That is a decision, not a fault.
             return
@@ -536,7 +765,8 @@ class WorkerStepReadinessLoop:
                 self.poll_once()
             except Exception:
                 _log.exception("worker-step readiness poll failed")
-            self._wake.wait(interval)
+            starts = getattr(self._conversation_system, "start_admission", None)
+            self._wake.wait(starts.poll_delay(interval) if starts is not None else interval)
             self._wake.clear()
 
 
