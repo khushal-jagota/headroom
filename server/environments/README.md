@@ -46,7 +46,10 @@ P3 also owns the recorded custody proofs that block idle updates, skip already r
 Until those custody proofs land, TypeScript retains native child stop and final-event drainage. The custody difference remains expected-open.
 Executor update reads select a cached service for each machine through the registered platform.
 Each machine keeps separate request IDs and reports. Darwin machines share archive bytes, and Linux storage stays separate.
-First-home installation remains a P7 slice. Enrollment, Linux executor archive production and offers remain P5 slices.
+Linux executor archive production and low-level installation use the shared native builder, target admission, and process owners in `linux_executor/`.
+The low-level installer writes a private credential and exclusive user unit after admission. It does not start services.
+Linux archive offers, enrollment, and service activation remain later P5 integration.
+P7 owns first-home installation, the Darwin home producer and updates, and Darwin home branches of the shared installer recipe.
 P7 adds configured account skill homes with shared ownership locks, Darwin APP custody and short private sockets,
 Home-machine preview eligibility, native Darwin preview evidence and metrics, and in-place Darwin log cleanup.
 Real Darwin ABI acceptance runs in the existing hosted lifecycle workflow. First-install service acceptance remains open.

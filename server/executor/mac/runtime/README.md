@@ -16,3 +16,8 @@ Darwin ABI and power-loss durability remain later native checks.
 `supervisor.ts` keeps the original installation fixed and launches the selected runtime with the same CLI arguments.
 It checks the ready request and revision before promotion. An unconfirmed trial restores the previous selection and handoff.
 The selected runtime's `bin` leads the child PATH. Callers retain the invocation owners and close files after supervision settles.
+
+`FilesService.read_runtime_revision` and `extract_runtime` accept an optional expected target through the owned files worker.
+Undefined target preserves Darwin's marker and private Node checks. Explicit Linux executor admission instead binds its native Node manifest, payload contract, and inventory under the retained root descriptor.
+Linux requires executable `bin/panels` and the shared executor entrypoint. It does not require `node/bin/node`.
+The shared `admit_runtime` also accepts the target for its manifest recheck. P2 supplies the Linux host Node launch branch.

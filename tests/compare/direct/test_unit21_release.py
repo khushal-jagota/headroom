@@ -1528,3 +1528,174 @@ try {
     )
     write_report(request, "unit21-release-targets", report)
     assert actual == expected
+
+
+def test_unit21_linux_executor_archive_admission(
+    tmp_path: Path, request: pytest.FixtureRequest
+) -> None:
+    """Gap: executor extraction must admit before promotion and clean only its own failures."""
+    from tests.compare.direct.unit20_cli import write_report
+
+    from planner.environments.linux_executor_runtime import extract_runtime, read_runtime_revision
+    from planner.platform_runtime.targets import LINUX_EXECUTOR
+
+    began = time.perf_counter()
+    app = build_app(tmp_path / "legacy", SHA, "sentinel")
+    (app / "mac-runtime.json").write_text(
+        json.dumps(
+            dict(
+                schema_version=1,
+                application_revision=SHA,
+                platform="linux",
+                architecture="x86_64",
+                role="executor",
+            )
+        )
+    )
+    rewrite_artifact_digest(app)
+    archive = tmp_path / "legacy.tar.gz"
+    digest = create_app_archive(app, archive, expected_target=LINUX_EXECUTOR)
+    size = archive.stat().st_size
+
+    def outcome(operation: Any) -> str:
+        try:
+            operation()
+            return "accepted"
+        except ValueError as error:
+            return str(error)
+
+    expected: dict[str, Any] = dict(
+        revision=read_runtime_revision(app, SHA),
+        wrong_revision=outcome(lambda: read_runtime_revision(app, "b" * 40)),
+        size=outcome(
+            lambda: extract_runtime(
+                archive,
+                tmp_path / "python-size",
+                expected_sha256=digest,
+                expected_size=size + 1,
+                expected_revision=SHA,
+            )
+        ),
+    )
+    calls = 0
+
+    def admit(*_: Any) -> None:
+        nonlocal calls
+        calls += 1
+
+    with patch("planner.environments.linux_executor_runtime.admit_runtime", admit):
+        restored = extract_runtime(
+            archive,
+            tmp_path / "python-releases",
+            expected_sha256=digest,
+            expected_size=size,
+            expected_revision=SHA,
+        )
+        retained = extract_runtime(
+            archive,
+            tmp_path / "python-releases",
+            expected_sha256=digest,
+            expected_size=size,
+            expected_revision=SHA,
+        )
+    expected["retained"] = [restored == retained, (retained / "sentinel").read_text(), calls]
+    failed = tmp_path / "python-failed"
+    (failed / "foreign").mkdir(parents=True)
+    (failed / "foreign/keep").write_text("foreign")
+
+    owned_until_settled = False
+
+    def refuse(runtime: Path, *_: Any) -> None:
+        nonlocal owned_until_settled
+        time.sleep(0.05)
+        owned_until_settled = runtime.is_dir()
+        raise ValueError("trusted admission refused")
+
+    with patch("planner.environments.linux_executor_runtime.admit_runtime", refuse):
+        expected["failure"] = outcome(
+            lambda: extract_runtime(
+                archive, failed, expected_sha256=digest, expected_size=size, expected_revision=SHA
+            )
+        )
+    expected["cleanup"] = [
+        sorted(path.name for path in failed.iterdir()),
+        (failed / "foreign/keep").read_text(),
+    ]
+    expected["owned_until_settled"] = owned_until_settled
+    code = """
+import {cp,mkdir,readFile,readdir,stat,writeFile} from 'node:fs/promises';
+import {dirname,join} from 'node:path';
+import {ChildProcesses} from './server/lifecycle/owned_processes.ts';
+import {create_app_archive} from './server/environments/release/archive.ts';
+import {digest_app_artifact} from './server/environments/release/identity.ts';
+import {NODE_RUNTIME_FILES} from './server/environments/release/configuration.ts';
+import {LINUX_EXECUTOR} from './server/environments/release/contracts.ts';
+import {RuntimeProbeUnsettled} from './server/environments/release/admission_process.ts';
+import {extract_runtime,read_runtime_revision}
+  from './server/environments/linux_executor/archive.ts';
+const root=process.argv[1], app=join(root,'native'), owner=new ChildProcesses();
+const execution={child_processes:owner,signal:new AbortController().signal,
+  deadline:performance.now()/1000+30};
+const outcome=async f=>{try{await f();return 'accepted';}
+  catch(e){return e instanceof RuntimeProbeUnsettled?e.cause.message:e.message;}};
+try {
+  await cp(join(root,'legacy'),app,{recursive:true});
+  const document=JSON.parse(await readFile(join(app,'manifest.json'),'utf8'));
+  delete document.runtime_contract.python_version;
+  Object.assign(document.runtime_contract,{version:2,minimum_node_version:'22.18.0'});
+  for(const name of [...NODE_RUNTIME_FILES,'server/executor/mac/entrypoint.ts']) {
+    const path=join(app,name);await mkdir(dirname(path),{recursive:true});await writeFile(path,'');
+  }
+  await writeFile(join(app,'runtime/contract.json'),JSON.stringify(document.runtime_contract));
+  document.artifact_digest=await digest_app_artifact(app);
+  await writeFile(join(app,'manifest.json'),JSON.stringify(document));
+  const archive=join(root,'native.tar.gz'), sha=document.app_sha;
+  const digest=await create_app_archive(app,archive,LINUX_EXECUTOR);
+  const size=(await stat(archive)).size;
+  const approval={expected_sha256:digest,expected_size:size,expected_revision:sha};
+  const result={revision:await read_runtime_revision(app,sha),
+    wrong_revision:await outcome(()=>read_runtime_revision(app,'b'.repeat(40))),
+    size:await outcome(()=>extract_runtime(archive,join(root,'node-size'),
+      {...approval,expected_size:size+1},execution))};
+  let calls=0;
+  const operations={admit:async()=>{calls++;}};
+  const restored=await extract_runtime(
+    archive,join(root,'node-releases'),approval,execution,operations);
+  const retained=await extract_runtime(
+    archive,join(root,'node-releases'),approval,execution,operations);
+  result.retained=[restored===retained,await readFile(join(retained,'sentinel'),'utf8'),calls];
+  const failed=join(root,'node-failed');
+  await mkdir(join(failed,'foreign'),{recursive:true});
+  await writeFile(join(failed,'foreign/keep'),'foreign');
+  let ownedUntilSettled=false;
+  result.failure=await outcome(()=>extract_runtime(archive,failed,approval,execution,
+    {admit:async payload=>{
+      const settled=(async()=>{
+        await new Promise(resolve=>setTimeout(resolve,50));
+        ownedUntilSettled=(await stat(payload)).isDirectory();
+      })();
+      throw new RuntimeProbeUnsettled(settled,Error('trusted admission refused'));
+    }}));
+  result.cleanup=[(await readdir(failed)).sort(),
+    await readFile(join(failed,'foreign/keep'),'utf8')];
+  result.owned_until_settled=ownedUntilSettled;
+  console.log(JSON.stringify(result));
+} finally {owner.seal();await owner.settled();}
+"""
+    actual = json.loads(
+        subprocess.check_output(
+            ["node", "--input-type=module", "-e", code, str(tmp_path)], cwd=ROOT, text=True
+        )
+    )
+    write_report(
+        request,
+        "unit21-linux-executor-archive",
+        dict(
+            python=expected,
+            typescript=actual,
+            equal=actual == expected,
+            seconds=time.perf_counter() - began,
+            scope="synthetic archive and promotion only; native admission is an injected boundary",
+        ),
+    )
+    assert actual == expected

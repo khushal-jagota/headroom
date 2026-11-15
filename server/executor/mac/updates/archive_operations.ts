@@ -11,6 +11,13 @@ import {
   read,
 } from 'node:fs';
 import { basename, dirname, join } from 'node:path';
+import { isDeepStrictEqual } from 'node:util';
+import type { RuntimeTarget } from '../../../environments/release/contracts.ts';
+import {
+  manifest_identity,
+  require_runtime_target,
+} from '../../../environments/release/logic/manifest.ts';
+import { parse_optional_runtime_contract } from '../../../environments/updates/logic/runtime_contract.ts';
 import { isMainThread } from 'node:worker_threads';
 import { createGunzip } from 'node:zlib';
 import { finished } from 'node:stream/promises';
@@ -119,7 +126,7 @@ function regular(parent: number, leaf: string): number {
   }
   return fd;
 }
-function revision(root: number, expected: string): void {
+function revision(root: number, expected: string, expected_target?: RuntimeTarget): void {
   const manifest = owned(regular(root, MAC_RUNTIME_MANIFEST_NAME), (fd) => {
     if (fstatSync(fd).size > MAX_MAC_RUNTIME_MANIFEST_BYTES)
       throw new Error('Runtime manifest exceeds its size limit.');
@@ -130,15 +137,60 @@ function revision(root: number, expected: string): void {
   });
   if (
     manifest.schema_version !== 1 ||
-    manifest.platform !== 'darwin' ||
-    manifest.architecture !== 'arm64' ||
+    manifest.platform !== (expected_target?.system ?? 'darwin') ||
+    manifest.architecture !== (expected_target?.architecture ?? 'arm64') ||
     manifest.application_revision !== expected
   )
     throw new Error('Runtime manifest does not match the approved release.');
-  at(root, 'node/bin/node', false, (parent, leaf) =>
+  if (expected_target)
+    require_runtime_target(
+      {
+        system: manifest.platform,
+        architecture: manifest.architecture,
+        role: manifest.role,
+      } as RuntimeTarget,
+      expected_target,
+    );
+  const linux = expected_target?.system === 'linux';
+  if (linux) {
+    const bytes = (path: string) =>
+      at(root, path, false, (parent, leaf) =>
+        owned(regular(parent, leaf), (fd) => readFileSync(fd)),
+      );
+    const document = JSON.parse(
+      new TextDecoder('utf-8', { fatal: true }).decode(bytes('manifest.json')),
+    );
+    manifest_identity(document, expected);
+    const contract = parse_optional_runtime_contract(document.runtime_contract);
+    if (contract?.version !== 2 || contract.system !== 'linux')
+      throw new Error('Runtime requires a native Linux Node contract.');
+    require_runtime_target(
+      {
+        system: contract.system,
+        architecture: contract.architecture,
+        role: manifest.role,
+      } as RuntimeTarget,
+      expected_target,
+    );
+    const payload = JSON.parse(
+      new TextDecoder('utf-8', { fatal: true }).decode(bytes('runtime/contract.json')),
+    );
+    if (!isDeepStrictEqual(payload, contract))
+      throw new Error('Runtime manifest contract differs from payload.');
+    if (
+      createHash('sha256').update(bytes('runtime/inventory.json')).digest('hex') !==
+      contract.inventory_sha256
+    )
+      throw new Error('Runtime inventory differs from contract.');
+  }
+  at(root, linux ? 'bin/panels' : 'node/bin/node', false, (parent, leaf) =>
     owned(regular(parent, leaf), (fd) => {
       if (fstatSync(fd).size === 0 || (fstatSync(fd).mode & 0o111) === 0)
-        throw new Error('Runtime Node executable is not executable.');
+        throw new Error(
+          linux
+            ? 'Runtime panels executable is not executable.'
+            : 'Runtime Node executable is not executable.',
+        );
     }),
   );
   at(root, 'server/executor/mac/entrypoint.ts', false, (parent, leaf) =>
@@ -147,9 +199,13 @@ function revision(root: number, expected: string): void {
     }),
   );
 }
-export function read_runtime_revision(runtime: string, expected: string): string {
+export function read_runtime_revision(
+  runtime: string,
+  expected: string,
+  expected_target?: RuntimeTarget,
+): string {
   const root = retain(open_directory_descriptor(runtime));
-  owned(root, () => revision(root, expected));
+  owned(root, () => revision(root, expected, expected_target));
   return expected;
 }
 /** Destroy waits for pending reads but never closes the descriptor borrowed from this operation. */
@@ -340,6 +396,7 @@ export async function extract_runtime(
   sha: string,
   bytes: number,
   expected: string,
+  expected_target?: RuntimeTarget,
 ): Promise<string> {
   if (
     sha.length !== 64 ||
@@ -376,7 +433,7 @@ export async function extract_runtime(
         if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
       }
     if (existing !== undefined) {
-      owned(existing, () => revision(existing!, expected));
+      owned(existing, () => revision(existing!, expected, expected_target));
       return join(releases, destination);
     }
     const parser = new ArchiveMembers('extraction');
@@ -404,7 +461,7 @@ export async function extract_runtime(
     mkdir_relative(release, temporary);
     stage = retain(open_relative(release, temporary, directory_open_flags));
     await extract(input, sha, stage, parser.members, bytes);
-    revision(stage, expected);
+    revision(stage, expected, expected_target);
     flush_tree(stage);
     rename_relative(release, temporary, release, destination);
     temporary = undefined;
