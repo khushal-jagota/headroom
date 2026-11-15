@@ -354,7 +354,11 @@ def test_unit19_recovery_refused_during_update_keeps_pending_rows(
     scenario: str,
 ) -> None:
     """The pending loop releases admission and keeps populated durable recovery evidence."""
-    from planner.conversation.contracts import PromptDeliveryRefused, PromptDeliveryUncertain
+    from planner.conversation.contracts import (
+        PromptDeliveryRefusalReason,
+        PromptDeliveryRefused,
+        PromptDeliveryUncertain,
+    )
     from planner.conversation.deploy_interruptions.coordinator import recover_conversations
     from planner.conversation.start_admission import AutomaticStartAdmission
     from planner.conversation.start_admission.contracts import StartRequest
@@ -459,7 +463,7 @@ def test_unit19_recovery_refused_during_update_keeps_pending_rows(
                     return (
                         PromptDeliveryUncertain()
                         if conversation_id == "c2"
-                        else PromptDeliveryRefused("no_such_conversation")
+                        else PromptDeliveryRefused(PromptDeliveryRefusalReason.no_such_conversation)
                     )
                 if canceled_first:
                     if offers == 1:
