@@ -1,6 +1,7 @@
 /** One stable supervisor, one replaceable application, ownership through actual reaping. */
 import { ChildProcesses, signal_child } from './owned_processes.ts';
 import { writeSync } from 'node:fs';
+import { application_process_detached } from './paths.ts';
 import type { ChildProcess } from 'node:child_process';
 import { acquire_server_lifecycle_lease } from './lease.ts';
 import { open_control_server } from './control.ts';
@@ -25,6 +26,7 @@ interface OwnedApplication {
   readonly closed: Promise<0 | 1>;
 }
 export async function run_server_supervisor(options: SupervisorOptions): Promise<0 | 1> {
+  const detached = application_process_detached();
   const children = new ChildProcesses();
   const mode = options.mode;
   let lease: ReturnType<typeof acquire_server_lifecycle_lease>;
@@ -85,7 +87,7 @@ export async function run_server_supervisor(options: SupervisorOptions): Promise
         /* Log failure cannot prevent the terminal fallback. */
       }
       try {
-        signal_child(owned.process, 'SIGKILL');
+        signal_child(owned.process, 'SIGKILL', detached);
       } catch (error) {
         try {
           writeSync(2, `Panels application force was not confirmed: ${String(error)}\n`);
@@ -153,7 +155,7 @@ export async function run_server_supervisor(options: SupervisorOptions): Promise
       {
         cwd: options.application.launch_root,
         env: environment,
-        detached: true,
+        detached,
         stdio: listener
           ? ['ignore', 'inherit', 'inherit', listener.fd]
           : ['ignore', 'inherit', 'inherit'],

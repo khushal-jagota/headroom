@@ -318,7 +318,7 @@ def test_unit21_status_populated_and_sanitized(
         pytest.param(
             "Darwin",
             marks=pytest.mark.xfail(
-                run=False, reason="expected-open P5: #916 Darwin log cleanup truncates native logs"
+                run=False, reason="expected-open P7: #916 Darwin log cleanup truncates native logs"
             ),
         ),
     ],
