@@ -837,7 +837,11 @@ def main() -> int:
                 value = {"managers": [], "page": page}
             elif path == "/api/tickets":
                 value = tickets[query["id"][0]] if "id" in query else {"tickets": [], "page": page}
-            elif path.startswith("/api/tickets/") and path.endswith("/workspace") and path.split("/")[3] in tickets:
+            elif (
+                path.startswith("/api/tickets/")
+                and path.endswith("/workspace")
+                and path.split("/")[3] in tickets
+            ):
                 # TicketResources uses the selected workspace document, not the CLI detail read.
                 # Both decode the same Ticket controls from this fixture's retained state.
                 value = tickets[path.split("/")[3]]

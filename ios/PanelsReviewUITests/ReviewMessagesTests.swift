@@ -10,7 +10,6 @@ final class ReviewMessagesTests: XCTestCase {
         let base = try XCTUnwrap(ProcessInfo.processInfo.environment["PANELS_OFFLINE_STUB_URL"])
         XCTAssertEqual(URL(string: base)?.host, "127.0.0.1")
         let app = XCUIApplication()
-        app.launchArguments = ["--conversation-stub", base, "--conversation-fixture-speech", "--conversation-fixture-silence"]
         defer { app.terminate() }
         func capture(_ name: String) {
             let attachment = XCTAttachment(screenshot: app.screenshot())
@@ -18,6 +17,15 @@ final class ReviewMessagesTests: XCTestCase {
         }
         for owner in ["ticket", "manager"] {
             _ = try await URLSession.shared.data(from: URL(string: base + "/proof/review-owner/" + owner)!)
+            // Each owner scenario needs its own saved-view namespace: Review holds
+            // a restored unread card until handled, even as the fixture changes owner.
+            // Both spellings reach the same loopback fixture host and process.
+            var appBase = try XCTUnwrap(URLComponents(string: base))
+            if owner == "manager" { appBase.host = "localhost" }
+            app.launchArguments = [
+                "--conversation-stub", try XCTUnwrap(appBase.string),
+                "--conversation-fixture-speech", "--conversation-fixture-silence",
+            ]
             app.launch()
             XCTAssertTrue(app.tabBars.buttons["Review"].waitForExistence(timeout: 10))
             app.tabBars.buttons["Review"].tap()
