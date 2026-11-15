@@ -17,6 +17,9 @@ TypeScript uses host Node and the shared executor CLI instead of Python's privat
 The default join root is the XDG data directory's `panels/executor-typescript`, with separate `data/` and `installation/` children.
 Its user unit is `panels-executor-typescript.service`, separate from Python's unit.
 Role admission retains the Python marker filename and identity fields. Native admission binds the Node manifest, contract and inventory.
+The Manager authorizes inactive inventory entries for bundled better-sqlite3 ARM64 prebuilds in the Linux x86_64 archive.
+The actual AArch64 header and matching package selector must agree. These entries retain their byte hashes and never enter the active dependency closure.
+Other unknown ELF architectures still refuse. Python's current Linux builder refuses these foreign ELF files rather than classifying them.
 Paired synthetic proofs project the interpreter, root, PATH, and unit differences explicitly. Real runtime execution remains a hosted acceptance boundary.
 
 ## Pending staging port: mailbox authority and protocol
