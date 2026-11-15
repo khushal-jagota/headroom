@@ -1,7 +1,7 @@
 # Recorded usage
 
 This area reads local native transcripts and returns priced usage buckets. It
-keeps the existing Python contract version 5 and scan cache version 3. The browser
+keeps the existing Python contract version 5 and scan cache version 5. The browser
 DTO types mechanically copy the existing frontend contracts. Their extensionless
 `./index` imports require bundler resolution and fail the server's NodeNext check,
 so the server keeps only the required DTOs locally with the same shapes and brands.
@@ -70,9 +70,13 @@ contracts. These language-boundary changes preserve Python behavior:
   distinction. Python uses that file's real offset, so this fallback is not
   described as exact custom-zone parity.
 
+Request pricing selects long-context rates above 272,000 prompt tokens and retains
+Claude one-hour cache-write tokens. Codex compaction records count once, with
+covered identities reserved across all files before date filtering. Cache version 5
+retains pending compactions, service tiers, and cache-write duration metadata.
+
 These are parity adaptations, not additional usage policies. Later upstream
-provider types, compressed transcripts, cache versions, context tiers, and speed
-pricing do not enter this port.
+provider types, compressed transcripts, and speed pricing do not enter this port.
 
 ## Safety and evidence
 

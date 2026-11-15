@@ -267,7 +267,7 @@ def positive(result: dict[str, Any]) -> None:
 
     if case == "memory_only":
         assert points["compact-debt"]["debt"] is True
-        assert points["compact-debt"]["notice_candidate"] is True
+        assert points["compact-debt"]["notice_candidate"] is False
         assert points["backlogged-debt"]["debt"] is True
         assert points["backlogged-debt"]["notice_candidate"] is False
         assert points["active-memory-notice"]["open_memory_only"] is True
@@ -325,10 +325,6 @@ def positive(result: dict[str, Any]) -> None:
             ]
 
 
-@pytest.mark.xfail(
-    run=False,
-    reason="expected-open P3 (#912): automatic compaction no longer creates a Worker memory notice",
-)
 def test_unit15b_maintenance_matches_fresh_python(
     tmp_path: Path, request: pytest.FixtureRequest
 ) -> None:

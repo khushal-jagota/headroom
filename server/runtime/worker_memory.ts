@@ -21,15 +21,21 @@ export function conversation_holds_an_unanswered_memory_loss(
   sql: ReadSql,
   conversation_id: string | null,
 ): boolean {
+  return boundary_is_unanswered(sql, conversation_id, 'automatically_compacted_through_sequence');
+}
+function boundary_is_unanswered(
+  sql: ReadSql,
+  conversation_id: string | null,
+  boundary: 'automatically_compacted_through_sequence' | 'working_turn_compacted_through_sequence',
+): boolean {
   if (conversation_id === null) return false;
-  const row = sql.get<{
-    automatically_compacted_through_sequence: number;
-  }>('SELECT automatically_compacted_through_sequence FROM conversations WHERE conversation_id=?', [
-    conversation_id,
-  ]);
+  const row = sql.get<{ boundary: number }>(
+    `SELECT ${boundary} AS boundary FROM conversations WHERE conversation_id=?`,
+    [conversation_id],
+  );
   if (!row) return false;
   return memory_was_lost_unanswered({
-    automatically_compacted_through_sequence: row.automatically_compacted_through_sequence,
+    automatically_compacted_through_sequence: row.boundary,
     latest_answering_prompt_sequence: _latest_answering_prompt_sequence(sql, conversation_id),
   });
 }
@@ -53,10 +59,10 @@ export function is_memory_notice_sender_message_id(sender_message_id: string | n
   return sender_message_id !== null && sender_message_id.startsWith(MEMORY_NOTICE_MESSAGE_PREFIX);
 }
 export function an_answer_is_already_waiting(
-  held_prompts: Iterable<import('../conversation/contracts.ts').HeldPrompt>,
+  sender_message_ids_awaiting_outcome: Iterable<string>,
 ): boolean {
-  return [...held_prompts].some((prompt) =>
-    (prompt.sender_message_id ?? '').startsWith(ANSWERING_SENDER_MESSAGE_PREFIX),
+  return [...sender_message_ids_awaiting_outcome].some((identity) =>
+    identity.startsWith(ANSWERING_SENDER_MESSAGE_PREFIX),
   );
 }
 export function ticket_ids_holding_an_unanswered_memory_loss(sql: ReadSql): string[] {
@@ -76,7 +82,8 @@ export function ticket_needs_memory_notice(sql: ReadSql, ticket_id: string): boo
     ticket_id,
   ]);
   if (!row || !can_execute_locale(sql, row.locale)) return false;
-  if (!conversation_holds_an_unanswered_memory_loss(sql, row.conversation_id)) return false;
+  if (!boundary_is_unanswered(sql, row.conversation_id, 'working_turn_compacted_through_sequence'))
+    return false;
   if (
     row.conversation_id !== null &&
     automated_maintenance_suppression_reason(sql, row.conversation_id) !== null
@@ -86,7 +93,7 @@ export function ticket_needs_memory_notice(sql: ReadSql, ticket_id: string): boo
     sql.get(
       `SELECT 1 FROM conversation_events e JOIN conversations c USING(conversation_id)
     WHERE e.conversation_id=? AND e.kind='prompt_delivery_uncertain'
-      AND e.sequence>c.automatically_compacted_through_sequence
+      AND e.sequence>c.working_turn_compacted_through_sequence
       AND substr(json_extract(e.payload,'$.sender_message_id'),1,?)=? LIMIT 1`,
       [row.conversation_id, MEMORY_NOTICE_MESSAGE_PREFIX.length, MEMORY_NOTICE_MESSAGE_PREFIX],
     ) === undefined

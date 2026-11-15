@@ -1,7 +1,7 @@
 """Native schema and peer types agree before either executor starts.
 
 This pure check protects stale generated types and required nullable fields.
-The repository's native wire schema is authoritative. It needs no Python exporter.
+Fresh Python contracts guard the protocol-26 additions without a connected host.
 """
 
 from __future__ import annotations
@@ -14,6 +14,11 @@ from pathlib import Path
 
 import pytest
 from tests.support.synthetic_homes import create_synthetic_homes
+
+from planner.execution_configuration import PROTOCOL_VERSION
+from planner.executor import protocol
+from planner.executor.contracts import ExecutorHealthRead
+from planner.executor.protocol_schema import _without_documentation
 
 ROOT = Path(__file__).resolve().parents[3]
 TOOLS = ROOT / "server/executor/tools"
@@ -45,12 +50,33 @@ def test_unit22_shared_wire_types_are_current(
     types_path = ROOT / "server/executor/wire.generated.ts"
     schema = json.loads(schema_path.read_text())
     manifest = schema["manifest"]
-    assert manifest["protocol_version"] == 22
+    assert manifest["protocol_version"] == PROTOCOL_VERSION == 26
     assert manifest["spool_format_version"] == 5
     assert manifest["command_journal_format_version"] == 1
     assert {"LeaseRequest", "QueuedEnvelope", "MacUpdateCheck", "ExecutorHealthRead"} <= set(
         schema["roots"]
     )
+    # Native wire integers use safe bounds. Python's schema leaves them unbounded.
+    def native_schema(value: object) -> object:
+        if isinstance(value, list):
+            return [native_schema(item) for item in value]
+        if isinstance(value, dict):
+            result = {key: native_schema(item) for key, item in value.items()}
+            if result.get("type") == "integer":
+                result.update(minimum=-(2**53 - 1), maximum=2**53 - 1)
+            return result
+        return value
+
+    for name in (
+        "StartRun", "RecheckCleanup", "LeaseRequest", "WorkerCleanupUncertainty",
+        "WorkspaceIdentity", "WorkspaceState", "WorkspaceStatesRequest", "WorkspaceStatesReply",
+        "WorkspaceRegistrationRequest", "WorkspaceRetirementRequest", "WorkspaceRetirementReply",
+        "ExecutorHealthRead",
+    ):
+        value_type = ExecutorHealthRead if name == "ExecutorHealthRead" else getattr(protocol, name)
+        reference = protocol.type_adapter(value_type).json_schema()
+        reference.pop("$defs", None)
+        assert schema["$defs"][name] == native_schema(_without_documentation(reference)), name
     current = run(["node", str(TOOLS / "generate_wire.ts"), "--check"])
     assert current.returncode == 0, current.stderr + current.stdout
 

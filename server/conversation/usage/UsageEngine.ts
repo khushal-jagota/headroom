@@ -360,6 +360,16 @@ export class UsageEngine implements Omit<RecordedUsageService, 'stop' | 'settled
     const sources: UsageSource[] = [];
     const livePaths = new Set<string>();
     const walkedRoots: string[] = [];
+    // A copied compaction can precede the file whose normal usage covers it.
+    const coveredCompactions = new Set(
+      scannedDirs.flatMap(({ files }) =>
+        (files ?? []).flatMap((file) =>
+          file.records
+            .filter((record) => record.compactionCovered)
+            .map((record) => record.dedupeKey),
+        ),
+      ),
+    );
     for (const { provider, dir, volumeId, files } of scannedDirs) {
       const fingerprint = { hostId, provider, resolvedHomePath: dir, volumeId };
       if (files === null) {
@@ -385,8 +395,10 @@ export class UsageEngine implements Omit<RecordedUsageService, 'stop' | 'settled
           continue;
         }
         scannedFiles += 1;
-        for (const record of file.records)
+        for (const record of file.records) {
+          if (coveredCompactions.has(record.dedupeKey)) continue;
           if (aggregator.add(record) && record.sessionId) sessionIds.add(record.sessionId);
+        }
       }
       sources.push({
         fingerprint,

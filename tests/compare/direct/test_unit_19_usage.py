@@ -445,10 +445,6 @@ def _reader(spec: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-@pytest.mark.xfail(
-    run=False,
-    reason="expected-open P6 (#875/#879): port usage cache v5 and Codex compaction resume state",
-)
 def test_unit19_usage_reader_and_cache(
     tmp_path: Path, request: pytest.FixtureRequest
 ) -> None:
@@ -853,10 +849,6 @@ def _python_http(spec: dict[str, Any], homes: dict[str, str]) -> dict[str, Any]:
     }
 
 
-@pytest.mark.xfail(
-    run=False,
-    reason="expected-open P6 (#875/#879): port usage cache v5 and pricing metadata in HTTP reads",
-)
 def test_unit19_usage_http_and_pricing(
     tmp_path: Path, request: pytest.FixtureRequest
 ) -> None:

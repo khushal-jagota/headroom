@@ -47,6 +47,7 @@ export interface ConversationRecordValues {
   readonly latest_agent_activity_at: number | null;
   readonly latest_agent_activity_sequence: number;
   readonly automatically_compacted_through_sequence: number;
+  readonly working_turn_compacted_through_sequence: number;
   readonly automatic_compaction_attempted_through_sequence: number;
   readonly owner_read_through_sequence: number;
   readonly created_at: number;
@@ -67,6 +68,7 @@ export class ConversationRecord implements ConversationRecordValues {
   declare readonly latest_agent_activity_at: number | null;
   declare readonly latest_agent_activity_sequence: number;
   declare readonly automatically_compacted_through_sequence: number;
+  declare readonly working_turn_compacted_through_sequence: number;
   declare readonly automatic_compaction_attempted_through_sequence: number;
   declare readonly owner_read_through_sequence: number;
   declare readonly created_at: number;
@@ -142,6 +144,7 @@ export interface RunningTurn {
 export interface AppendOptions {
   readonly agent_activity?: boolean;
   readonly automatic_compaction_confirmed?: boolean;
+  readonly working_turn_compaction_confirmed?: boolean;
   readonly automatic_compaction_result?: AutomaticCompactionResult | null;
   readonly create_failure_notice?: boolean;
   readonly owner_read_through_sequence?: number | null;

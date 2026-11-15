@@ -98,7 +98,7 @@ function validator(root: keyof typeof WIRE_SCHEMA.$defs): ValidateFunction {
 export function matches_schema(value: unknown, root: keyof typeof WIRE_SCHEMA.$defs): boolean {
   return validator(root)(structuredClone(value));
 }
-export function decode_value<K extends WireRootName>(value: unknown, root: K): WireTypes[K] {
+function validate_value<K extends WireRootName>(value: unknown, root: K): WireTypes[K] {
   const validate = validator(root);
   if (!validate(value))
     throw new ExecutorValidationError(
@@ -106,6 +106,18 @@ export function decode_value<K extends WireRootName>(value: unknown, root: K): W
       validate.errors ?? [],
     );
   return value as WireTypes[K];
+}
+export function decode_value<K extends WireRootName>(value: unknown, root: K): WireTypes[K] {
+  // A construction default cannot supply evidence that an incoming lease omitted.
+  if (
+    root === 'LeaseRequest' &&
+    value !== null &&
+    typeof value === 'object' &&
+    !Array.isArray(value) &&
+    !Object.hasOwn(value, 'cleanup_uncertainties')
+  )
+    throw new ExecutorValidationError('The lease lacks Worker cleanup evidence');
+  return validate_value(value, root);
 }
 /** Native parser and serializer callbacks share the finite-number rule. */
 export function finite_json_value(_key: string, value: unknown): unknown {
@@ -128,5 +140,5 @@ export function encode_value<K extends WireRootName>(
       `Cannot encode executor JSON: ${error instanceof Error ? error.message : String(error)}`,
     );
   }
-  return decode_value(plain, root) as JsonValue;
+  return validate_value(plain, root) as JsonValue;
 }

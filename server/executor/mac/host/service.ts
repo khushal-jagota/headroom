@@ -10,7 +10,7 @@ import {
   is_shutdown_business_cancellation,
 } from '../../../conversation/shutdown.ts';
 import { ConversationMessageFiles } from '../../../conversation/record/message_files.ts';
-import { PROTOCOL_VERSION, SPOOL_FORMAT_VERSION } from '../../wire.generated.ts';
+import { PROTOCOL_VERSION, SPOOL_FORMAT_VERSION } from '../../../execution_configuration.ts';
 import { parse_identity } from '../../protocol.ts';
 import { mac_runtime_settings } from '../../../core/config.ts';
 import { handoff_identity } from '../runtime/handoff.ts';

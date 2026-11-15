@@ -10,7 +10,7 @@ The foundation fixes schema, machine keys, and stale fixtures. The cases below r
 They remain collected with `xfail(run=False)` and do not count as parity. Remove each mark when its package restores the proof.
 No comparison field is hidden. Deferred parameters add no active host or runtime cost.
 
-Collected case counts: P2 43, P3 10, P4 4, P5 11, P6 8.
+Collected case counts: P2 43, P3 8, P4 4, P5 11, P6 6.
 
 ### P2 — Executor protocol and custody
 
@@ -64,11 +64,9 @@ Collected case counts: P2 43, P3 10, P4 4, P5 11, P6 8.
 
 | Retained case | Staging change |
 | --- | --- |
-| [`test_unit15b_maintenance.py::test_unit15b_maintenance_matches_fresh_python`](direct/test_unit15b_maintenance.py) | expected-open P3 (#912): automatic compaction no longer creates a Worker memory notice |
+| [`test_compare.py::test_comparison[unit-15.queue]`](test_compare.py) | expected-open P3 (#916): Python records local child custody and linked occurrence identities. The compaction slice matches responses and every other source table. |
 | [`test_unit15b_reviews.py::test_unit15b_review_start_boundaries`](direct/test_unit15b_reviews.py) | expected-open P3 (#916): start-admission pacing defers the reassigned review wake |
 | [`test_unit15b_wait.py::test_unit15b_save_wait`](direct/test_unit15b_wait.py) | expected-open P3 (#916): save-retry TrackedWait now includes nullable machine_id |
-| [`test_unit16_adapter.py::test_unit16_adapter_real_core_parity`](direct/test_unit16_adapter.py) | expected-open P3 (#912): Hermes tools events persist working-turn compaction boundary |
-| [`test_unit17_adapter.py::test_unit17_adapter_real_core_parity`](direct/test_unit17_adapter.py) | expected-open P3 (#912): persist working-turn compaction boundary through Codex events |
 | [`test_unit17_startup.py::test_unit17_startup_environment`](direct/test_unit17_startup.py) | expected-open P3: #916 replaces WorkerUnit launch with supervision |
 | [`test_unit18_adapter.py::test_unit18_adapter_real_core_parity`](direct/test_unit18_adapter.py) | expected-open P3: #916 replaces WorkerUnit custody with supervision |
 | [`test_unit18_startup.py::test_unit18_containment_bytes`](direct/test_unit18_startup.py) | expected-open P3: #916 replaces WorkerUnit launch bytes with supervision |
@@ -109,8 +107,6 @@ Collected case counts: P2 43, P3 10, P4 4, P5 11, P6 8.
 | [`test_unit20_domain_cli.py::test_unit20_retained_dataset_cli[goal-page]`](direct/test_unit20_domain_cli.py) | expected-open P6: #928 goal/page schemas add expected_revision |
 | [`test_unit20_domain_cli.py::test_unit20_domain_same_python_host[python]`](direct/test_unit20_domain_cli.py) | expected-open P6: #928 goal/page CLI schemas now include expected_revision |
 | [`test_unit20_domain_cli.py::test_unit20_domain_same_python_host[typescript]`](direct/test_unit20_domain_cli.py) | expected-open P6: #928 goal/page CLI schemas now include expected_revision |
-| [`test_unit_19_usage.py::test_unit19_usage_reader_and_cache`](direct/test_unit_19_usage.py) | expected-open P6 (#875/#879): port usage cache v5 and Codex compaction resume state |
-| [`test_unit_19_usage.py::test_unit19_usage_http_and_pricing`](direct/test_unit_19_usage.py) | expected-open P6 (#875/#879): port usage cache v5 and pricing metadata in HTTP reads |
 | [`test_unit10_stalls.py::test_checker_and_watchdog_match_python`](test_unit10_stalls.py) | expected-open P6: #928 NotificationIntent adds nullable reply to watchdog sends |
 
 ## Add an area
