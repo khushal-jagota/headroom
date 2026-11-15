@@ -122,6 +122,7 @@ export async function healthy(
   timeout_seconds: number,
   signal: AbortSignal,
   environment: NodeJS.ProcessEnv = process.env,
+  require_ready = false,
 ): Promise<boolean> {
   const deadline = performance.now() / 1000 + timeout_seconds;
   for (;;) {
@@ -132,7 +133,7 @@ export async function healthy(
     } catch {
       signal.throwIfAborted();
     }
-    if (result?.status === 200 && is_object(result.body) && result.body.app_sha === sha)
+    if (result?.status === 200 && is_object(result.body) && result.body.app_sha === sha && (!require_ready || result.body.ready === true))
       return true;
     if (performance.now() / 1000 >= deadline) return false;
     await delay(HEALTH_POLL_SECONDS * 1000, undefined, { signal });
