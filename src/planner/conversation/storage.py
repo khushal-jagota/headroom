@@ -1384,6 +1384,26 @@ class ConversationStore:
                         reason = tickets_data.automated_maintenance_suppression_reason(
                             conn, conversation_id
                         )
+                    if reason is None and memory_notice and any(
+                        conn.execute(
+                            "SELECT 1 FROM worker_step_dispatch_intents d "
+                            "JOIN tickets t ON t.id=d.ticket_id "
+                            "WHERE d.sender_message_id=? AND t.conversation_id=?",
+                            (other.sender_message_id, conversation_id),
+                        ).fetchone()
+                        is not None
+                        for other in messages
+                        if other.sender_message_id != message.sender_message_id
+                    ):
+                        reason = "worker_memory_notice_included_in_step"
+                    if reason is None and memory_notice:
+                        ticket = conn.execute(
+                            "SELECT id FROM tickets WHERE conversation_id=?", (conversation_id,)
+                        ).fetchone()
+                        if ticket is None or not worker_memory.ticket_needs_memory_notice(
+                            conn, str(ticket[0])
+                        ):
+                            reason = "worker_memory_notice_no_longer_needed"
                     if reason is not None:
                         previous = conn.execute(
                             "SELECT payload FROM conversation_events WHERE conversation_id=? "
@@ -2539,22 +2559,31 @@ class ConversationStore:
                 (last.created_at, last.sequence, conversation_id),
             )
         if automatic_compaction_confirmed:
+            # The confirmed boundary is the event itself, not later activity at turn end.
+            # The attempted position still tracks activity for idle-compaction scheduling.
             conn.execute(
                 "UPDATE conversations SET "
-                "automatically_compacted_through_sequence=latest_agent_activity_sequence, "
                 "automatic_compaction_attempted_through_sequence=latest_agent_activity_sequence "
                 "WHERE conversation_id=?",
                 (conversation_id,),
             )
-            if working_turn_compaction_confirmed:
-                # Panels' own idle /compact interrupts no step, so only this boundary
-                # owes a Worker the mid-step memory-loss notice.
+            compaction = next(
+                (event for event in reversed(written)
+                 if event.kind is ConversationEventKind.context_compacted),
+                None,
+            )
+            if compaction is not None:
                 conn.execute(
-                    "UPDATE conversations SET "
-                    "working_turn_compacted_through_sequence=latest_agent_activity_sequence "
+                    "UPDATE conversations SET automatically_compacted_through_sequence=? "
                     "WHERE conversation_id=?",
-                    (conversation_id,),
+                    (compaction.sequence, conversation_id),
                 )
+                if working_turn_compaction_confirmed:
+                    conn.execute(
+                        "UPDATE conversations SET working_turn_compacted_through_sequence=? "
+                        "WHERE conversation_id=?",
+                        (compaction.sequence, conversation_id),
+                    )
         elif automatic_compaction_result is AutomaticCompactionResult.not_compacted:
             conn.execute(
                 "UPDATE conversations SET "
