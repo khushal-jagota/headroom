@@ -13,13 +13,16 @@ import pytest
 # The guard is a standalone scripts package, also on mypy's configured search path.
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts"))
 try:
+    from development_safety import launcher
     from development_safety.contracts import SafetyRefusal
     from development_safety.scanner import Mount, _check_paths
 finally:
     sys.path.pop(0)
 
 
-def test_managed_ticket_checkout_admission_preserves_storage_protection(tmp_path: Path) -> None:
+def test_managed_ticket_checkout_admission_preserves_storage_protection(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     deployed = tmp_path / "current"
     installed = deployed / "app"
     installed.mkdir(parents=True)
@@ -109,3 +112,31 @@ def test_managed_ticket_checkout_admission_preserves_storage_protection(tmp_path
             [deployed],
             [*mounts, Mount(dependency, "1:1", installed)],
         )
+
+    # Node searches ancestor node_modules directories even when they are absent.
+    # Exercise the launcher's lookup list through the real storage scanner.
+    web = tree / "web"
+    web.mkdir()
+    monkeypatch.setattr(launcher, "node_environment", lambda *_: None)
+    monkeypatch.setattr(launcher.shutil, "which", lambda *_args, **_kwargs: "/usr/bin/node")
+    monkeypatch.setattr(
+        launcher, "check_paths", lambda paths, **_kwargs: _check_paths(paths, [deployed], mounts)
+    )
+    monkeypatch.setattr(
+        launcher,
+        "check_tree",
+        lambda path, **_kwargs: _check_paths([path], [deployed], mounts, shallow_paths=[path]),
+    )
+    assert launcher.node_safety(tree, "web", {}) == web
+
+    # An actual ancestor lookup inside deployment storage is still forbidden.
+    shared_lookup = deployed / "node_modules"
+    shared_lookup.mkdir()
+    with pytest.raises(SafetyRefusal):
+        launcher.node_safety(tree, "web", {})
+    shared_lookup.rmdir()
+
+    # npm's writable destination must not alias installed storage.
+    (web / "node_modules").symlink_to(installed, target_is_directory=True)
+    with pytest.raises(SafetyRefusal):
+        launcher.node_safety(tree, "web", {})
