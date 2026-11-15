@@ -207,10 +207,13 @@ class MacService:
                     asyncio.create_task(self.outbox.send_pending(self.client, self.files)),
                     asyncio.create_task(self.updates.run()),
                 ]
+                waited = list(loops)
+                # Not waited on: it ends by itself once the home closes the handover.
+                loops.append(asyncio.create_task(self.updates.close_handover_once_kept()))
                 stopping = asyncio.create_task(self._stop.wait())
                 try:
                     done, _ = await asyncio.wait(
-                        (*loops, stopping), return_when=asyncio.FIRST_COMPLETED
+                        (*waited, stopping), return_when=asyncio.FIRST_COMPLETED
                     )
                 finally:
                     stopping.cancel()

@@ -87,11 +87,13 @@ Install that grant into the same selected root. Restart only that executor so it
 
 Until the handover closes, the original Mac can fetch the same pending credential with its old authority. A lost reply or a crash before the private save needs no operator step. This retry also works after a home restart.
 
-The handover closes when the trial runtime sends a credentialed "current" update report. This permanently closes the old authority, including its update requests, and removes the pending secret. The home log records issuance and closure times with the executor incarnation. A home restart or migration replay never reopens that authority. An older runtime without credential support cannot use it after rollback.
+The handover closes when the new runtime sends its credentialed close request. It sends it only after the supervisor keeps it, so a revert always restores a runtime that the home still accepts. This permanently closes the old authority, including its update requests, and removes the pending secret. The home log records issuance and closure times with the executor incarnation. A home restart or migration replay never reopens that authority. An older runtime without credential support cannot use it after rollback.
 
 If the wrong device takes the credential, use the operator replacement command.
 
 ## Recover a Mac locked out after its credential handover
+
+A runtime from before the close request closed the handover at its "current" update report, before the supervisor kept it. Only such a runtime can cause this lockout.
 
 Use this procedure for the original Mac only, and only when all of these are true:
 
