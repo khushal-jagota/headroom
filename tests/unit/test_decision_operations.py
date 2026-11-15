@@ -516,10 +516,13 @@ def test_send_back_old_revision_refused_after_resolution_and_replacement(
     applied = decision_operations.apply(
         tmp_db, original.id, "first-send-back", command, actor=OWNER_PRINCIPAL, now=3,
     )
+    assert applied["receipt"] is not None
     assert applied["receipt"]["outcome"] == "applied"
     resolved = decision_operations.apply(
         tmp_db, original.id, "retry-with-new-id", command, actor=OWNER_PRINCIPAL, now=4,
     )
+    assert resolved["receipt"] is not None
+    assert resolved["receipt"]["error"] is not None
     assert resolved["receipt"]["error"]["detail"]["result"] == "already_resolved"
     replacement = data.file_current_proposal(
         tmp_db, original.id, body="replacement",
@@ -528,6 +531,8 @@ def test_send_back_old_revision_refused_after_resolution_and_replacement(
     stale = decision_operations.apply(
         tmp_db, original.id, "stale-send-back", command, actor=OWNER_PRINCIPAL, now=6,
     )
+    assert stale["receipt"] is not None
+    assert stale["receipt"]["error"] is not None
     assert stale["receipt"]["error"]["detail"] == {
         "ticket_id": original.id,
         "result": "stale",
