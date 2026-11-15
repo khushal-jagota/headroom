@@ -215,6 +215,33 @@ def main() -> int:
         ]
     }
 
+    def navigation_snapshot(request: dict[str, Any]) -> dict[str, Any]:
+        # Same scoped snapshot envelope as the offline Review host. The detail host
+        # needs Chief's current address, while its page fixtures own their content.
+        content = {
+            "records": [{"kind": "chief", "id": "chief", "value": {
+                "label": "Chief of Staff", "conversation_id": "stub",
+            }}],
+            "windows": [{
+                "window_id": json.dumps([window["section"], window["owner"]]),
+                "request": window, "members": [], "total": 0,
+                "previous": None, "next": None,
+            } for window in request["windows"]],
+            "counts": {"running_conversations": 0, "out_claims": 0, "review": 0, "unread": 0, "settled": 0},
+        }
+        return {
+            "event": "snapshot", "wire_version": 3, "projection_version": 7,
+            "view_id": "fixture", "scope_generation": request["scope_generation"],
+            "ordering_generation": "fixture", "content_version": "detail-fixture",
+            "coverage": {"scope": "fixture", "schema_version": 11,
+                "semantics": "attention-knowledge-v11-recap-freshness", "epoch": "fixture", "revision": "1"},
+            "mode": "current", "authority": {
+                "delivery_session_id": "fixture",
+                "availability": {"state": "current", "generation": "1", "reason": None},
+                "permit": {"scope": "fixture", "runtime_epoch": "fixture", "installation_id": "fixture", "generation": "1"},
+            }, "content": content,
+        }
+
     class Handler(http.server.BaseHTTPRequestHandler):
         def log_message(self, fmt: str, *args: object) -> None:
             with (output / "stub-requests.log").open("a") as log:
@@ -266,6 +293,38 @@ def main() -> int:
 
         def do_GET(self) -> None:
             path = urlparse(self.path).path
+            if path in {"/api/navigation/view/snapshot", "/api/navigation/view/events"}:
+                request = json.loads(parse_qs(urlparse(self.path).query)["view"][0])
+                snapshot = navigation_snapshot(request)
+                if path.endswith("/snapshot"):
+                    self.respond(snapshot)
+                    return
+                self.send_response(200)
+                self.send_header("Content-Type", "text/event-stream")
+                self.end_headers()
+                try:
+                    while not stub.offline:
+                        self.wfile.write(b"event: snapshot\ndata: " + json.dumps(snapshot).encode() + b"\n\n")
+                        self.wfile.flush()
+                        time.sleep(1)
+                except (BrokenPipeError, ConnectionResetError):
+                    pass
+                return
+            if path == "/api/goals":
+                self.respond({"goals": [], "status_date": "2026-11-15", "next_refresh_at": time.time() + 3600})
+                return
+            if path == "/api/projects":
+                self.respond({"projects": []})
+                return
+            holder_pages = {"/api/chief/page", "/api/managers/si_4chgag3w/page"}
+            if path in holder_pages:
+                self.respond({"page": {"blocks": []}, "page_revision": 1})
+                return
+            if path.removesuffix("/readings") in holder_pages and path.endswith("/readings"):
+                self.respond({"goal_id": "fixture", "revision": 1, "status": "neutral",
+                    "status_date": "2026-11-15", "next_refresh_at": time.time() + 3600,
+                    "values": [], "sources": [], "charts": {}})
+                return
             if path == "/api/managers/si_4chgag3w/workspace":
                 self.respond(manager)
                 return
