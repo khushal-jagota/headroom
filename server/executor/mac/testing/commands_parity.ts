@@ -1,5 +1,5 @@
 /** Real command/source/retirement custody and stores with scripted skills, files and backend. */
-import { readFileSync, mkdirSync } from 'node:fs';
+import { readFileSync, mkdirSync, writeFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { fail } from 'node:assert/strict';
 import { join } from 'node:path';
@@ -28,6 +28,9 @@ import { MacChildState } from '../runner/state.ts';
 import { MacSourceWork } from '../runner/source_work.ts';
 import { MacRetirement } from '../runner/retirement.ts';
 import { MacMaintenance } from '../runner/maintenance.ts';
+import { MacRunner } from '../runner/index.ts';
+import { OneShotChildren } from '../../../lifecycle/one_shot_children.ts';
+import type { ChildCommand, WorkspaceIdentity } from '../../wire.generated.ts';
 import { ConversationStartAborted } from '../../../runtime/abort.ts';
 import { ServerLifecycleError } from '../../../lifecycle/contracts.ts';
 import { ExecutorPaths } from '../configuration.ts';
@@ -42,6 +45,7 @@ import {
   close_fixture_stores,
   record_commands,
   pending_envelopes,
+  fixture_cleanup_dependencies,
 } from './runner_fixture.ts';
 
 const started = performance.now(),
@@ -49,7 +53,93 @@ const started = performance.now(),
 const input = JSON.parse(readFileSync(join(root, 'input.json'), 'utf8')) as {
   commands: Record<string, string>;
   asks: string[];
+  workspace_commands: Record<string, string>;
 };
+
+async function managed_workspace_phase(): Promise<unknown> {
+  const phase_root = join(root, 'managed-proof'), paths = new ExecutorPaths(join(phase_root, 'state'));
+  const commands = Object.fromEntries(Object.entries(input.workspace_commands)
+    .map(([key, raw]) => [key, decode_json(raw, 'ChildCommand')]));
+  const machine = '1'.repeat(32), calls: unknown[][] = [];
+  let index = 0;
+  for (const command of Object.values(commands)) {
+    if (command.arguments.kind !== 'start') throw new Error('Managed phase expects starts');
+    const ticket = new Map(command.arguments.resolved_start.role_materials!
+      .identity_environment_variables).get('PLAN_TICKET_ID')!;
+    const folder = join(paths.artifacts, ticket);
+    mkdirSync(folder, { recursive: true });
+    writeFileSync(join(folder, '.panels-workspace.json'), JSON.stringify({
+      ticket_id: ticket, machine_id: machine, workspace_id: (++index).toString(16).padStart(32, '0'),
+    }));
+  }
+  writeFileSync(join(paths.root, '.workspace-machine-id'), machine);
+  const entered = gate(), release = gate(), git_children = new OneShotChildren();
+  const stores = await open_fixture_stores(join(phase_root, 'spool'), now, on_failure, options);
+  const register = async (child: ChildCommand['child'], workspace: WorkspaceIdentity) => {
+    calls.push(['register', child, workspace]);
+    const key = child.child_id.replace('workspace-', '');
+    if (key === 'one') { entered.resolve(); await release.promise; }
+    if (key === 'failure') throw new Error('scripted registration refused');
+    if (key === 'swap') {
+      const marker = join(paths.artifacts, 't_12345678', '.panels-workspace.json');
+      const value = JSON.parse(readFileSync(marker, 'utf8'));
+      value.workspace_id = 'f'.repeat(32);
+      writeFileSync(marker, JSON.stringify(value));
+    }
+  };
+  const runner = new MacRunner({
+    incarnation: 'inc', journal: stores.journal, outbox: stores.store,
+    cleanup: fixture_cleanup_dependencies(stores.journal),
+    workspace_git: { children: git_children, environment: process.env },
+    register_workspace: register,
+    retire_workspace: async () => { throw new Error('Retirement is not part of start admission'); },
+    retirement_is_committed: async () => { throw new Error('Replay is not part of start admission'); },
+    inputs: { download_inputs: async () => { throw new Error('No inputs in managed phase'); } },
+    live: null, now_ms: () => now, new_update_id: () => { throw new Error('No update in managed phase'); },
+    native: native_fixture_options({
+      paths, workspace_home: phase_root, native_skill_home: () => join(phase_root, 'native'),
+      snapshot_directory: join(phase_root, 'skills'), on_failure,
+      factory: (resolved) => {
+        const ticket = new Map(resolved.role_materials!.identity_environment_variables).get('PLAN_TICKET_ID')!;
+        calls.push(['factory', ticket]);
+        return () => ({
+          async start() {
+            calls.push(['start', ticket, resolved.workspace_folder.slice(phase_root.length + 1)]);
+          },
+          async stop() {},
+        }) as unknown as BackendChild;
+      },
+    }),
+  });
+  await record_commands(stores.journal, Object.values(commands).map((command, index) => ({
+    command_id: command.command_id, command_sequence: index + 1, created_at_vps_ms: now,
+    child_command: command, model_list_request: null,
+  })));
+  const first = runner.run(commands.one!, new AbortController().signal);
+  try {
+    await entered.promise;
+    let finished = false;
+    void first.then(() => { finished = true; });
+    const second = await runner.run(commands.two!, new AbortController().signal);
+    const concurrent = !finished && second.disposition === 'succeeded';
+    release.resolve();
+    const outcomes = [await first, second];
+    for (const key of ['failure', 'swap'])
+      outcomes.push(await runner.run(commands[key]!, new AbortController().signal));
+    return {
+      calls: [...calls], concurrent, outcomes,
+      retained: runner.native_children.retained_children().map((child) => child.ticket_id).sort(),
+    };
+  } finally {
+    release.resolve();
+    await first;
+    await runner.stop(options);
+    await runner.settled();
+    git_children.seal();
+    await git_children.settled();
+    await close_fixture_stores(stores, options);
+  }
+}
 // Wire numbers remain inside canonical strings until the authoritative codec reads them.
 const commands = Object.fromEntries(
   Object.entries(input.commands).map(([key, raw]) => [key, decode_json(raw, 'ChildCommand')]),
@@ -797,6 +887,7 @@ try {
     unpublished_before_reopen: before,
     pending: pending_rows,
     results,
+    workspace: await managed_workspace_phase(),
   };
   const reference = { ...commands.start!.child, child_id: 'cached-native-stop' };
   const launch = commands.start!.arguments as Parameters<MacNativeChildren['start']>[1];

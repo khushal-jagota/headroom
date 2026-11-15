@@ -1,4 +1,5 @@
 import { ORIGINAL_MAC_MACHINE_ID } from '../execution_identity.ts';
+import { PROTOCOL_VERSION } from '../execution_configuration.ts';
 /** Real file operations with one virtual transfer timer and narrow OS-failure seams. */
 import { createHash } from 'node:crypto';
 import { dirname, join } from 'node:path';
@@ -78,7 +79,7 @@ vi.mock('node:fs/promises', async (original) => {
   };
 });
 const identity = {
-  protocol_version: 22,
+  protocol_version: PROTOCOL_VERSION,
   application_revision: 'fixture',
   spool_format_version: 5,
   executor_incarnation: '11111111-1111-4111-8111-111111111111',

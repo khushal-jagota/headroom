@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { afterEach, expect, test, vi } from 'vitest';
+import { PROTOCOL_VERSION } from '../../../execution_configuration.ts';
 import { Deferred } from '../../../conversation/runtime/state.ts';
 import type { ExecutorIdentity } from '../../../execution_identity.ts';
 import { decode_bounded } from '../../protocol.ts';
@@ -34,7 +35,7 @@ function fixture(replay = false, trial = false) {
   const files = new FilesService();
   workers.push(files);
   const identity: ExecutorIdentity = {
-    protocol_version: 22,
+    protocol_version: PROTOCOL_VERSION,
     spool_format_version: 5,
     application_revision: 'b'.repeat(40),
     executor_incarnation: '11111111-1111-1111-1111-111111111111',

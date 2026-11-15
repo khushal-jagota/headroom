@@ -156,6 +156,33 @@ export async function leases(input: {
   stop_cleanup_release.resolve();
   await Promise.all([stopping_task, http.catch(() => {})]);
   await stopping.settled();
+  const fault_entered = new Deferred<void>(), fault_release = new Deferred<void>();
+  const warnings: string[] = [];
+  const failing = new MacLeaseLoop({
+    ...options,
+    client: {
+      async lease() { return decode_json(accepted_reply, 'LeaseReply'); },
+      async workspace_states() { throw new Error('Refresh failure must prevent reads'); },
+    },
+    runner: {
+      ...options.runner,
+      async refresh_worker_cleanup() {
+        fault_entered.resolve();
+        await fault_release.promise;
+        throw Object.assign(new Error('scripted cleanup read failed'), { code: 'EIO' });
+      },
+    },
+    warn: (message) => warnings.push(message),
+  });
+  await failing.lease_once();
+  await fault_entered.promise;
+  const failed_stopping = failing.stop({ deadline: performance.now() / 1000 + 5 });
+  void failed_stopping.catch(() => {});
+  fault_release.resolve();
+  await failed_stopping;
+  await failing.settled();
+  assert.deepEqual(warnings, ['Ticket workspace cleanup failed: Error'],
+    'an ordinary I/O failure remains visible after shutdown aborts its cleanup task');
   return {
     calls,
     offers,

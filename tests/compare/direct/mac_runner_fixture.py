@@ -36,6 +36,7 @@ def make_runner(
     factory: Callable[[ResolvedConversationStart], BackendChildFactory],
     files: MacFilesApi | None,
     live: MacLiveEvents | None,
+    workspace_callbacks: dict[str, Any] | None = None,
 ) -> tuple[MacRunner, MacOutbox, CommandJournal]:
     patch.setattr(mac_runner, "now_ms", lambda: now_ms)
     patch.setattr(mac_mailbox, "now_ms", lambda: now_ms)
@@ -58,6 +59,7 @@ def make_runner(
             message_files=cast(ConversationMessageFiles, None),
             paths=paths,
             workspace_home=workspace_home,
+            **(workspace_callbacks or {}),
         )
         cleanup.pop_all()
         return runner, box, journal

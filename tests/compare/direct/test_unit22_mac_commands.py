@@ -101,6 +101,7 @@ def fixture(root: Path) -> dict[str, Any]:
         workspace_path_policy=WorkspacePathPolicy.absolute,
     )
     start = replace(base, resolved_start=resolved, workspace_home_relative=None)
+    assert resolved.role_materials is not None
     add("start", start)
     prompt = WritePrompt(
         content=(MessageText("accepted"),),
@@ -200,7 +201,99 @@ def fixture(root: Path) -> dict[str, Any]:
     return dict(
         commands={key: canonical(ChildCommand, value) for key, value in commands.items()},
         asks=[canonical(AskReference, ask) for ask in asks],
+        workspace_commands={
+            key: canonical(ChildCommand, replace(
+                commands["start"], command_id="workspace-" + key,
+                child=replace(child, child_id="workspace-" + key,
+                              conversation_id="workspace-" + key),
+                arguments=replace(start, resolved_start=replace(
+                    resolved, conversation_id="workspace-" + key,
+                    workspace_path_policy=WorkspacePathPolicy.executor_default,
+                    role_materials=replace(resolved.role_materials,
+                        identity_environment_variables=(
+                            ("PLAN_TICKET_ID", ticket), ("PLAN_TICKET_WORKSPACE_MANAGED", "1"),
+                        )),
+                )),
+            ))
+            for key, ticket in zip(("one", "two", "failure", "swap"),
+                                   ("t_abcdefgh", "t_jkmnpqrs", "t_stvwxyz0", "t_12345678"),
+                                   strict=True)
+        },
     )
+
+
+async def managed_workspace_phase(root: Path, data: dict[str, Any], patch: pytest.MonkeyPatch) -> Any:
+    """The command owner needs real preparation and registration, not another Git matrix."""
+    paths = ExecutorPaths(root / "state")
+    commands = {key: type_adapter(ChildCommand).validate_json(raw)
+                for key, raw in data["workspace_commands"].items()}
+    machine = "1" * 32
+    for index, command in enumerate(commands.values(), 1):
+        assert isinstance(command.arguments, StartRun)
+        materials = command.arguments.resolved_start.role_materials
+        assert materials is not None
+        ticket = dict(materials.identity_environment_variables)["PLAN_TICKET_ID"]
+        folder = paths.artifacts / ticket
+        folder.mkdir(parents=True)
+        (folder / ".panels-workspace.json").write_text(json.dumps(dict(
+            ticket_id=ticket, machine_id=machine, workspace_id=f"{index:032x}",
+        )))
+    (paths.artifacts.parent.parent / ".workspace-machine-id").write_text(machine)
+    calls: list[Any] = []
+    entered, release = asyncio.Event(), asyncio.Event()
+
+    async def register(child: Any, workspace: Any) -> None:
+        calls.append(["register", as_object(child), dict(
+            machine_id=workspace.machine_id, workspace_id=workspace.workspace_id,
+        )])
+        key = child.child_id.removeprefix("workspace-")
+        if key == "one":
+            entered.set()
+            await release.wait()
+        if key == "failure":
+            raise RuntimeError("scripted registration refused")
+        if key == "swap":
+            marker = paths.artifacts / "t_12345678" / ".panels-workspace.json"
+            value = json.loads(marker.read_text())
+            value["workspace_id"] = "f" * 32
+            marker.write_text(json.dumps(value))
+
+    class Native:
+        async def start(self, resolved: Any, **_options: Any) -> None:
+            ticket = dict(resolved.role_materials.identity_environment_variables)["PLAN_TICKET_ID"]
+            calls.append(["start", ticket, str(resolved.workspace_folder.relative_to(root))])
+
+        async def stop(self) -> None:
+            pass
+
+    def factory(resolved: Any) -> Any:
+        ticket = dict(resolved.role_materials.identity_environment_variables)["PLAN_TICKET_ID"]
+        calls.append(["factory", ticket])
+        return lambda **_options: Native()
+
+    runner, box, journal = make_runner(
+        patch, root=root, now_ms=NOW, paths=paths, workspace_home=root,
+        factory=factory, files=None, live=None, workspace_callbacks={"register_workspace": register},
+    )
+    record_commands(journal, commands, now_ms=NOW)
+    first = asyncio.create_task(runner.run(commands["one"]))
+    try:
+        await entered.wait()
+        second = await runner.run(commands["two"])
+        concurrent = not first.done() and second.disposition is CommandDisposition.succeeded
+        release.set()
+        outcomes = [await first, second]
+        outcomes.extend([await runner.run(commands[key]) for key in ("failure", "swap")])
+        return dict(calls=calls, concurrent=concurrent,
+                    outcomes=[as_object(value) for value in outcomes],
+                    retained=sorted(child.ticket_id for child in runner._children.values()))
+    finally:
+        release.set()
+        await first
+        for child in runner._children.values():
+            await child.native.stop()
+        journal.close()
+        box.close()
 
 
 async def reference(root: Path, data: dict[str, Any], patch: pytest.MonkeyPatch) -> dict[str, Any]:
@@ -578,6 +671,7 @@ async def reference(root: Path, data: dict[str, Any], patch: pytest.MonkeyPatch)
             unpublished_before_reopen=before,
             pending=pending_rows,
             results=results,
+            workspace=await managed_workspace_phase(root / "managed-proof", data, patch),
         )
     finally:
         source_release.set()
@@ -625,6 +719,14 @@ def test_unit22_mac_commands(
         }
         source_error["error_type"] = "Error"
     assert observed["parity"] == expected
+    workspace = expected["workspace"]
+    assert workspace["concurrent"] and workspace["retained"] == ["t_abcdefgh", "t_jkmnpqrs"]
+    assert [row[0] for row in workspace["calls"]] == [
+        "register", "register", "factory", "start", "factory", "start", "register", "register",
+    ]
+    assert [value["disposition"] for value in workspace["outcomes"]] == [
+        "succeeded", "succeeded", "refused", "refused",
+    ]
     accepted = dict(expected["outcomes"])
     assert accepted["prompt"]["result"]["agent_acceptance_proven"] is True
     assert accepted["maintenance-prompt"]["result"]["agent_acceptance_proven"] is False

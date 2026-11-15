@@ -13,6 +13,7 @@ import { dirname, join } from 'node:path';
 import { IncomingMessage } from 'node:http';
 import { Socket } from 'node:net';
 import { expect, test, vi } from 'vitest';
+import { PROTOCOL_VERSION } from '../../../execution_configuration.ts';
 import { ChildProcesses } from '../../../lifecycle/owned_processes.ts';
 import { OneShotChildren } from '../../../lifecycle/one_shot_children.ts';
 import { ExecutorPaths } from '../configuration.ts';
@@ -237,7 +238,7 @@ if(rows.length===1){fs.writeFileSync(join(root,'updates/pending.json'),JSON.stri
         },
         presence: {
           identity: {
-            protocol_version: 22,
+            protocol_version: PROTOCOL_VERSION,
             spool_format_version: 5,
             application_revision: next_revision,
             executor_incarnation: pending.executor_incarnation,

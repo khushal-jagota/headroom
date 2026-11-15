@@ -1,4 +1,5 @@
 import { ORIGINAL_MAC_MACHINE_ID } from '../execution_identity.ts';
+import { PROTOCOL_VERSION } from '../execution_configuration.ts';
 /** Actual startup preserves retained turns and keeps away/unconfigured Mac work remote. */
 import { dirname, join } from 'node:path';
 import { expect, test, vi } from 'vitest';
@@ -96,7 +97,7 @@ function retained_fixture() {
         ORIGINAL_MAC_MACHINE_ID,
         incarnation,
         JSON.stringify({
-          protocol_version: 22,
+          protocol_version: PROTOCOL_VERSION,
           application_revision: 'synthetic',
           spool_format_version: 5,
           executor_incarnation: incarnation,
@@ -317,7 +318,7 @@ async function prompt_acknowledgement_shutdown(
     });
   const confirm = vi.spyOn(core, 'confirm_remote_prompt_accepted');
   const runs_stop = vi.spyOn(endpoint.runs, 'stop');
-  const database_close = vi.spyOn(context.database, 'close');
+  const read_database = () => context.database.read((sql) => sql.get('SELECT 1 AS open'));
   let save: Promise<unknown> | undefined, closing: Promise<void> | undefined;
   let raw_closed = false,
     endpoint_closed = false,
@@ -368,7 +369,7 @@ async function prompt_acknowledgement_shutdown(
       () => {},
     );
     expect(runs_stop).not.toHaveBeenCalled();
-    expect(database_close).not.toHaveBeenCalled();
+    expect(read_database()).toEqual({ open: 1 });
     expect(endpoint.update_barrier).toBeDefined();
     expect(endpoint.update_barrier!.drained).toBe(false);
     expect(() => acquireRuntimeOwnership(path)).toThrow('ConversationRuntimeAlreadyOwned');
@@ -381,7 +382,7 @@ async function prompt_acknowledgement_shutdown(
     expect(endpoint.update_barrier!.drained).toBe(false);
     expect(runs_stop).not.toHaveBeenCalled();
     expect(raw_closed || endpoint_closed).toBe(false);
-    expect(database_close).not.toHaveBeenCalled();
+    expect(read_database()).toEqual({ open: 1 });
     const fresh = createReadAccess(path);
     try {
       expect(
@@ -405,7 +406,7 @@ async function prompt_acknowledgement_shutdown(
     await server.shutdown_settled;
     await closing;
     expect(raw_closed && endpoint_closed).toBe(true);
-    expect(database_close).toHaveBeenCalledOnce();
+    expect(read_database).toThrow('database is closed');
     const successor = acquireRuntimeOwnership(path),
       after = createReadAccess(path);
     try {
@@ -423,7 +424,6 @@ async function prompt_acknowledgement_shutdown(
     held_save.mockRestore();
     confirm.mockRestore();
     runs_stop.mockRestore();
-    database_close.mockRestore();
   }
 }
 

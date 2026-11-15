@@ -1,5 +1,6 @@
 /** The 14 existing findings tests, with their original parameter cases and simulated clock. */
 import { expect, test } from 'vitest';
+import { PROTOCOL_VERSION } from '../execution_configuration.ts';
 import * as configuration from '../stalls/configuration.ts';
 import { PAUSED_WHILE_MAC_AWAY, TRACKED_WAIT_KINDS, finding_key } from '../stalls/contracts.ts';
 import type { TrackedWaitKind, TrackedWait } from '../stalls/contracts.ts';
@@ -21,7 +22,7 @@ const S = 1000;
 const CHECK_MS = configuration.STALL_CHECK_INTERVAL_SECONDS * S;
 const LEASE_MS = LEASE_INTERVAL_SECONDS * S;
 const IDENTITY = {
-  protocol_version: 22,
+  protocol_version: PROTOCOL_VERSION,
   application_revision: 'rev',
   spool_format_version: 5,
   connection_generation: 1,
