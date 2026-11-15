@@ -18,6 +18,8 @@ import { create_test_environment_runtime } from '../../environments/testing/comp
 import { InboxStore } from '../../executor/data/inbox.ts';
 import { FileStaging } from '../../executor/vps_files.ts';
 import { VpsExecutor } from '../../executor/vps_transport.ts';
+import { VpsExecutorRegistry } from '../../executor/registry.ts';
+import { ORIGINAL_MAC_MACHINE_ID } from '../../execution_identity.ts';
 import { accept_lease_in_transaction } from '../../executor/vps_presence_store.ts';
 import { as_object, parse_identity } from '../../executor/protocol.ts';
 import type { WireValue } from '../../executor/contracts.ts';
@@ -48,14 +50,17 @@ async function cycle() {
   server = await startServer({
     createExecutor(current) {
       database = current.database;
-      endpoint = new VpsExecutor(database, current.clock, {
+      return new VpsExecutorRegistry(database, current.clock, {
         db_path: spec.path,
         changes: current.changes,
         media_signal: current.media_signal,
+        original_enabled: true,
       });
-      return endpoint;
     },
-    readOpenRuns: () => endpoint.open_runs(),
+    readOpenRuns(current) {
+      endpoint = current.executor!.get(ORIGINAL_MAC_MACHINE_ID)!;
+      return current.executor!.open_runs();
+    },
     createConversationCore(current) {
       bound = compose_production_backends(current, {
         claude: () => local,

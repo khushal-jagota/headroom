@@ -32,7 +32,7 @@ export interface BackendProviders {
   readonly saved_codex_login: SavedCodexLoginSource | null;
   readonly codex_sign_in: CodexSignInService | null;
   readonly usage: Readonly<Partial<Record<ConversationBackendKey, BackendUsageAdapter>>>;
-  readonly machine_catalog: () => RemoteCatalogSource | null;
+  readonly machine_catalog: (machine_id: string) => RemoteCatalogSource | null;
 }
 export function create_backend_runtime(options: {
   readonly database: Database;

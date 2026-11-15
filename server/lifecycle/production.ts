@@ -1,7 +1,7 @@
 /** Final production switches, with one fresh composition closure for EVERY invocation. */
 import { startServer } from '../core/start.ts';
 import type { ConversationCompositionContext, StartedServer } from '../core/start.ts';
-import { VpsExecutor } from '../executor/vps_transport.ts';
+import { VpsExecutorRegistry } from '../executor/registry.ts';
 import { now_ms } from '../executor/clock.ts';
 import { close_run_and_record_mac_process_interruption } from '../executor/interruption_coordinator.ts';
 import { close_mac_interruption_of_turn } from '../conversation/deploy_interruptions/data.ts';
@@ -55,14 +55,13 @@ export async function start_production_server(
   return startServer({
     onShutdownComplete,
     createExecutor(context) {
-      return context.config.executor_id === null
-        ? null
-        : new VpsExecutor(context.database, context.clock, {
-            db_path: context.config.db_path,
-            changes: context.changes,
-            media_signal: context.media_signal,
-            application_revision: context.config.app_sha ?? 'unknown',
-          });
+      return new VpsExecutorRegistry(context.database, context.clock, {
+        db_path: context.config.db_path,
+        changes: context.changes,
+        media_signal: context.media_signal,
+        application_revision: context.config.app_sha ?? 'unknown',
+        original_enabled: context.config.executor_id !== null,
+      });
     },
     readOpenRuns: (context) => context.executor?.open_runs() ?? new Map(),
     enableWorkerReadiness: true,

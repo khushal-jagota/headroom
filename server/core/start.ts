@@ -1,6 +1,6 @@
 import { writeSync } from 'node:fs';
 import type { AreaLoopOptions } from '../areas.ts';
-import type { VpsExecutor } from '../executor/vps_transport.ts';
+import type { VpsExecutorRegistry } from '../executor/registry.ts';
 import { loadConfig, SHUTDOWN_GRACE_SECONDS } from './config.ts';
 import type { Clock } from './clock.ts';
 import type { Config } from './config.ts';
@@ -60,7 +60,7 @@ export interface ConversationCompositionContext extends Omit<
   revoke_signal(): void;
   one_shot_children: OwnedOneShotChildren;
   child_processes: OwnedChildProcesses;
-  executor?: VpsExecutor | null;
+  executor?: VpsExecutorRegistry | null;
   update_barrier?: UpdateBarrier;
 }
 export interface TestCompositionContext extends ConversationCompositionContext {
@@ -74,7 +74,7 @@ export interface TestCompositionContext extends ConversationCompositionContext {
 export interface ServerOptions {
   /** Actual process entries supply this. Embedded servers never terminate their host. */
   onShutdownComplete?: ShutdownCompletion;
-  createExecutor?: (context: ExecutorCompositionContext) => VpsExecutor | null;
+  createExecutor?: (context: ExecutorCompositionContext) => VpsExecutorRegistry | null;
   createUsageService?: (context: ConversationCompositionContext) => RecordedUsageService;
   createBackendServices?: (context: ConversationCompositionContext) => BackendHttpRuntime;
   /** Off until Unit 21 explicitly composes the production lifecycle. */
