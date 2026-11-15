@@ -837,6 +837,10 @@ def main() -> int:
                 value = {"managers": [], "page": page}
             elif path == "/api/tickets":
                 value = tickets[query["id"][0]] if "id" in query else {"tickets": [], "page": page}
+            elif path.startswith("/api/tickets/") and path.endswith("/workspace") and path.split("/")[3] in tickets:
+                # TicketResources uses the selected workspace document, not the CLI detail read.
+                # Both decode the same Ticket controls from this fixture's retained state.
+                value = tickets[path.split("/")[3]]
             elif path == "/files/tickets/offline-1/proof.html" and REVIEW_MESSAGES:
                 content = b"<!doctype html><html><body><h1>Inline artifact proof</h1></body></html>"
                 self.send_response(200)
@@ -885,6 +889,9 @@ def main() -> int:
                         "conversation_signal": {"working": False, "message_for_owner": False},
                     }
                 }
+            elif path == "/api/managers/review-manager/workspace-content":
+                manager = json.loads((ROOT / "ios/PanelsTests/Fixtures/manager.json").read_text())
+                value = {"goal": manager["goal"], "recap": manager["recap"]}
             elif path == "/api/managers/review-manager/workspace":
                 value = json.loads((ROOT / "ios/PanelsTests/Fixtures/manager.json").read_text())
                 value.update(
