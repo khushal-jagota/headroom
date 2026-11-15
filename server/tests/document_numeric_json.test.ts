@@ -14,6 +14,9 @@ test('HTTP JSON uses native float spelling and retains exact integer tokens', ()
   expect(cloned.float!.kind).toBe('float');
   expect(cloned.integer!.integer).toBe(900719925474099312345n);
   expect(() => JSON.stringify(new JsonNumber('1e999'))).toThrow('JSON numbers must be finite');
+  expect(stringify_numeric_response({ revision: 900719925474099312345n })).toBe(
+    '{"revision":900719925474099312345}',
+  );
 });
 
 // Metadata must distinguish integer tokens from whole floats before either writer runs.
