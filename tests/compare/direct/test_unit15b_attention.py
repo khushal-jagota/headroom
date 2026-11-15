@@ -124,6 +124,9 @@ async def exercise(
             store, database, ticket, now, preview_cases
         )
         result["content_seconds"] = time.perf_counter() - content_started
+        freshness_started = time.perf_counter()
+        result["notification_freshness"] = notification_freshness_proof(database, ticket, now)
+        result["freshness_seconds"] = time.perf_counter() - freshness_started
         return result
     finally:
         await core.shutdown()
@@ -214,6 +217,55 @@ async def notification_content_proof(
     }
 
 
+def notification_freshness_proof(database: str, ticket: str, now: int) -> dict[str, Any]:
+    """Reuse the content phase's actual approval edge and both queued channels."""
+    with closing(connect(database)) as conn:
+        def snapshot_rows() -> dict[str, Any]:
+            return {
+                table: [
+                    {
+                        key: json.loads(value)
+                        if key in {"context_json", "reply_json"} and value is not None else value
+                        for key, value in dict(row).items()
+                    }
+                    for row in conn.execute(
+                        f"SELECT * FROM {table} WHERE subject_kind='ticket' "
+                        "AND subject_id=? ORDER BY notification_type,generation", (ticket,),
+                    )
+                ]
+                for table in (
+                    "notification_attention_state", "notification_attention_edges",
+                    "notification_deliveries", "notification_apns_deliveries",
+                )
+            }
+
+        def selected(at: int) -> list[Any]:
+            return [
+                sorted(
+                    [asdict(row.edge) for row in rows if row.edge.subject_id == ticket],
+                    key=lambda row: (row["notification_type"], row["generation"]),
+                )
+                for rows in (
+                    notifications.pending_deliveries(conn, at),
+                    apns_data.pending_deliveries(conn, at),
+                )
+            ]
+
+        notifications.queue_deliveries(conn, now)
+        before = snapshot_rows()
+        fresh = selected(now + 299)
+        after_fresh = snapshot_rows()
+        assert all(any(edge["notification_type"] == "awaiting_approval" for edge in rows) for rows in fresh)
+        expired = selected(now + 300)
+        after_expired = snapshot_rows()
+        assert expired == [[], []]
+        for table in ("notification_attention_state", "notification_attention_edges"):
+            assert before[table] == after_expired[table]
+        conn.commit()
+        return dict(before=before, fresh=fresh, after_fresh=after_fresh,
+                    expired=expired, after_expired=after_expired)
+
+
 def test_unit15b_agent_only_attention(tmp_path: Path, request: pytest.FixtureRequest) -> None:
     started = time.perf_counter()
     selected = environment(tmp_path)
@@ -286,6 +338,9 @@ def test_unit15b_agent_only_attention(tmp_path: Path, request: pytest.FixtureReq
     content_seconds = {
         "python": python.pop("content_seconds"), "typescript": typescript.pop("content_seconds"),
     }
+    freshness_seconds = {
+        "python": python.pop("freshness_seconds"), "typescript": typescript.pop("freshness_seconds"),
+    }
     expected, actual = normalize(python), normalize(typescript)
     report = {
         "python": python,
@@ -294,6 +349,7 @@ def test_unit15b_agent_only_attention(tmp_path: Path, request: pytest.FixtureReq
         "compared_typescript": actual,
         "seconds": time.perf_counter() - started,
         "content_seconds": content_seconds,
+        "freshness_seconds": freshness_seconds,
         "source_test": "test_system_prompt_provenance_keeps_agent_only_attention_share_usable",
         "boundary": (
             "Two real-core scripted turns, queued delivery, actual area participants "

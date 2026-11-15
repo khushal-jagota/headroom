@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { TASK_ALERT_IS_CURRENT } from './attention.ts';
+import { expire_stale_deliveries } from './data.ts';
 import type { TransactionSql } from '../core/database/contracts.ts';
 import type {
   APNsDevice,
@@ -79,11 +80,7 @@ export function queue_intent(
   );
 }
 export function pending_deliveries(sql: TransactionSql, now: number): PendingAPNsDelivery[] {
-  sql.run(
-    `UPDATE notification_apns_deliveries SET status='expired'
-    WHERE status IN ('pending','retry') AND created_at<=?`,
-    [now - APNS_DELIVERY_TTL_SECONDS],
-  );
+  expire_stale_deliveries(sql, now, true);
   return sql
     .all<
       EdgeKey &

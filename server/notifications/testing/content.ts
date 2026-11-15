@@ -35,7 +35,7 @@ export function notification_content_proof(
   );
   database.write((sql) => queue_deliveries(sql, now));
   const web = database
-    .read((sql) => pending_deliveries(sql, now))
+    .write((sql) => pending_deliveries(sql, now))
     .find(
       (item) => item.edge.subject_id === ticket && item.edge.notification_type === 'awaiting_reply',
     )!.intent;
@@ -110,4 +110,30 @@ export function notification_content_proof(
     },
     seconds: (performance.now() - began) / 1000,
   };
+}
+
+export function notification_freshness_proof(database: Database, ticket: string, now: number) {
+  const began = performance.now();
+  const snapshot = () => database.read((sql) => Object.fromEntries([
+    'notification_attention_state', 'notification_attention_edges',
+    'notification_deliveries', 'notification_apns_deliveries',
+  ].map((table) => [table, sql.all<Record<string, unknown>>(
+    `SELECT * FROM ${table} WHERE subject_kind='ticket' AND subject_id=? ORDER BY notification_type,generation`, [ticket],
+  ).map((row) => Object.fromEntries(Object.entries(row).map(([key, value]) => [key,
+    ['context_json', 'reply_json'].includes(key) && typeof value === 'string' ? JSON.parse(value) : value,
+  ])))])));
+  database.write((sql) => queue_deliveries(sql, now));
+  const before = snapshot();
+  const selected = (at: number) => database.write((sql) => [pending_deliveries(sql, at), apns.pending_deliveries(sql, at)]
+    .map((rows) => rows.filter((row) => row.edge.subject_id === ticket).map((row) => row.edge)
+      .sort((a, b) => a.notification_type.localeCompare(b.notification_type) || a.generation - b.generation)));
+  const fresh = selected(now + 299), after_fresh = snapshot();
+  if (!fresh.every((rows) => rows.some((edge) => edge.notification_type === 'awaiting_approval')))
+    throw new Error('fresh approval delivery missing');
+  const expired = selected(now + 300), after_expired = snapshot();
+  if (expired.some((rows) => rows.length)) throw new Error('expired delivery selected');
+  for (const table of ['notification_attention_state', 'notification_attention_edges'])
+    if (JSON.stringify(before[table]) !== JSON.stringify(after_expired[table]))
+      throw new Error('delivery expiry changed source attention');
+  return { proof: { before, fresh, after_fresh, expired, after_expired }, seconds: (performance.now() - began) / 1000 };
 }

@@ -1,4 +1,5 @@
 import { createHash, generateKeyPairSync } from 'node:crypto';
+import { NOTIFICATION_FRESHNESS_SECONDS } from './config.ts';
 import type { ReadSql, TransactionSql } from '../core/database/contracts.ts';
 import type {
   AttentionEdge,
@@ -310,7 +311,32 @@ export function queue_deliveries(sql: TransactionSql, now: number): number {
 export const SUBJECT_STILL_EXISTS = `((d.subject_kind='ticket' AND EXISTS (SELECT 1 FROM tickets WHERE id=d.subject_id))
   OR (d.subject_kind='manager' AND EXISTS (SELECT 1 FROM managers WHERE id=d.subject_id))
   OR (d.subject_kind='agent' AND EXISTS (SELECT 1 FROM agents WHERE agent_key=d.subject_id)))`;
-export function pending_deliveries(sql: ReadSql, now: number, limit = 50): PendingDelivery[] {
+const CURRENT_ATTENTION = `EXISTS (SELECT 1 FROM notification_attention_state a
+  JOIN notification_attention_edges e USING(subject_kind,subject_id,notification_type,generation)
+  WHERE a.subject_kind=d.subject_kind AND a.subject_id=d.subject_id
+    AND a.notification_type=d.notification_type AND a.generation=d.generation
+    AND a.active=1 AND e.occurred_at>?)`;
+export function expire_stale_deliveries(sql: TransactionSql, now: number, native = false): void {
+  const table = native ? 'notification_apns_deliveries' : 'notification_deliveries';
+  const cutoff = now - NOTIFICATION_FRESHNESS_SECONDS;
+  sql.run(
+    `UPDATE ${table} AS d SET status='expired'
+     WHERE status IN ('pending','retry') AND (created_at<=? OR NOT ${CURRENT_ATTENTION})`,
+    [cutoff, cutoff],
+  );
+}
+export function delivery_is_current(sql: ReadSql, edge: EdgeKey, now: number): boolean {
+  return !!sql.get(
+    `SELECT 1 FROM notification_attention_state a
+     JOIN notification_attention_edges e USING(subject_kind,subject_id,notification_type,generation)
+     WHERE a.subject_kind=? AND a.subject_id=? AND a.notification_type=?
+       AND a.generation=? AND a.active=1 AND e.occurred_at>?`,
+    [edge.subject_kind, edge.subject_id, edge.notification_type, edge.generation,
+      now - NOTIFICATION_FRESHNESS_SECONDS],
+  );
+}
+export function pending_deliveries(sql: TransactionSql, now: number, limit = 50): PendingDelivery[] {
+  expire_stale_deliveries(sql, now);
   return sql
     .all<
       EdgeKey &

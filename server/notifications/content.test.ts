@@ -43,7 +43,7 @@ test('failed context enrichment commits its source and retains generic copy with
   }
   db.write((sql) => queue_deliveries(sql, now));
   const delivery = db
-    .read((sql) => pending_deliveries(sql, now))
+    .write((sql) => pending_deliveries(sql, now))
     .find((item) => item.edge.notification_type === 'awaiting_approval')!;
   expect(delivery.intent).toMatchObject({
     title: 'Panels',
