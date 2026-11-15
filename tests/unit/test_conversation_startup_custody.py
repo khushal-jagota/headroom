@@ -166,7 +166,7 @@ def test_legacy_worker_retirement_needs_new_boot_or_unit(
 ) -> None:
     from planner.conversation.local_child_contracts import LocalHostBootIdentity
 
-    monkeypatch.setattr(child_custody.sys, 'platform', 'linux')
+    monkeypatch.setattr(sys, 'platform', 'linux')
     conn = sqlite3.connect(':memory:')
     conn.row_factory = sqlite3.Row
     conn.execute('CREATE TABLE custody(state,supervision_record,host,boot,pid,birth,unit)')
