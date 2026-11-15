@@ -245,11 +245,9 @@ export async function startServer(options: ServerOptions = {}): Promise<StartedS
       const producer_actual = shutdown.shutdown_settled;
       stages.own('Worker supervision', async () => {
         await producer_actual.catch(() => {});
-        try {
-          await services.worker_supervision.close(stop);
-        } finally {
-          await services.worker_supervision.shutdown_settled;
-        }
+        // The coordinator observes the shared deadline. This stage owns actual cleanup.
+        void services.worker_supervision.close(stop).catch(() => {});
+        await services.worker_supervision.shutdown_settled;
       });
       stages.own('native processes and worker units', async () => {
         await producer_actual.catch(() => {}); // Individual stages retain their failures.
