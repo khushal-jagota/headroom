@@ -26,7 +26,7 @@ import { ChildProcesses, OneShotChildren } from '../lifecycle/owned_processes.ts
 import { observe_promise } from '../core/promise_observer.ts';
 import { run_release_command } from '../environments/release/process.ts';
 import { healthy } from '../environments/updates/installer/health.ts';
-import type { ReleaseExecution } from '../environments/release/contracts.ts';
+import type { AppManifest, ReleaseExecution } from '../environments/release/contracts.ts';
 import { process_inspector } from '../previews/platform.ts';
 import { DarwinWorkerProcesses } from '../platform_runtime/darwin/worker_processes.ts';
 import { LinuxWorkerProcesses } from '../platform_runtime/linux/worker_processes.ts';
@@ -89,7 +89,8 @@ test.skipIf(!admitted)(
           record: Record<string, unknown> = { fault };
         cases.push(record);
         const token = randomUUID().replaceAll('-', ''),
-          root = join(base, token),
+          // Keep Linux's root-local Unix socket within its native pathname limit.
+          root = join(base, token.slice(0, 12)),
           service_name = 'panels-native-' + token;
         const sentinel = join(base, 'foreign-' + token);
         await writeFile(sentinel, 'unrelated sentinel', { mode: 0o600 });
@@ -220,7 +221,8 @@ test.skipIf(!admitted)(
               app_sha: revision,
               artifact_digest: 'c'.repeat(64),
               source_digest: 'd'.repeat(64),
-              runtime_contract: null,
+              // Admission is injected. Only the orchestration's Node-version boundary is real.
+              runtime_contract: { version: 2 } as AppManifest['runtime_contract'],
             };
           },
           admit: async () => {},
