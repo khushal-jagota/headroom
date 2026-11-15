@@ -55,6 +55,7 @@ import type {
 import type { VpsExecutorRegistry } from '../executor/registry.ts';
 import { ServiceResources } from './service_resources.ts';
 import { create_worker_supervision_runtime } from '../worker_supervision/composition.ts';
+import { LocalChildCustody } from '../conversation/child_custody.ts';
 import type { WorkerSupervisionRuntime } from '../worker_supervision/runtime.ts';
 
 interface ServerLifetime {
@@ -155,7 +156,7 @@ export class ServerServices {
     if (this.lifetime.isClosing()) throw new Error('Server closed during startup');
   }
 
-  create_record() {
+  async create_record() {
     this.assert_startup_open();
     const { config, options, areas } = this;
     const { media_lifetime, one_shot_children, child_processes } = this.lifetime;
@@ -203,6 +204,18 @@ export class ServerServices {
       worker_supervision: this.worker_supervision,
     };
     const open_runs = options.readOpenRuns?.(before_record) ?? new Map();
+    await areas.prepareRecord(
+      database,
+      config,
+      clock,
+      new LocalChildCustody({
+        runtime: this.worker_supervision,
+        child_processes,
+        one_shot_children,
+      }),
+      open_runs,
+    );
+    this.assert_startup_open();
     areas.initialize(
       database,
       config,
@@ -484,7 +497,7 @@ export class ServerServices {
   }
 
   async setup(): Promise<string> {
-    const { context, integrity_issues } = this.create_record();
+    const { context, integrity_issues } = await this.create_record();
     const conversation = this.create_conversation(context);
     const environments = await this.create_environments(conversation.testContext);
     this.assert_startup_open();

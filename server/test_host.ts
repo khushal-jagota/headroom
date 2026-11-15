@@ -60,6 +60,7 @@ await startServer({
   createConversationCore: conversationSystem
     ? undefined
     : (context) => {
+        registry.bind_runtime(context.worker_supervision);
         const { config, database, record, clock, changes } = context;
         return new SqliteProcessConversationSystem({
           store: record.store,

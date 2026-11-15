@@ -85,8 +85,8 @@ async function ensure_child(
       ),
     );
   }
-  state.preparing_child = child;
   if (!child.stop_outside_lock) await host.record_local_child_preparation(state, child, sink);
+  state.preparing_child = child;
   try {
     await host.native_operation(() =>
       child.start(resolved, { vendor_session_cursor: state.record.vendor_session_cursor }),
@@ -277,10 +277,16 @@ export async function deliver_prompt(
           reference,
         ),
       );
-    if (!target.stop_outside_lock && !(await host.check_local_child_started(state, reservation.token))) {
+    if (
+      !target.stop_outside_lock &&
+      !(await host.check_local_child_started(state, reservation.token))
+    ) {
       await host.discard_child(state, target);
-      return result({ refusal_reason: R.backend_did_not_start, record_refusal: true,
-        refusal_detail: 'The agent did not record its process identity. No prompt was sent.' });
+      return result({
+        refusal_reason: R.backend_did_not_start,
+        record_refusal: true,
+        refusal_detail: 'The agent did not record its process identity. No prompt was sent.',
+      });
     }
     host.start_admission.bind_source(reservation.token, target);
     const accepted = await host.native_operation(() =>
@@ -460,7 +466,9 @@ export async function write_replayed_prompt(
       );
     if (!child.stop_outside_lock && !(await host.check_local_child_started(state, token))) {
       await host.discard_child(state, child);
-      throw new BackendSpawnFailed('The agent did not record its process identity. No prompt was sent.');
+      throw new BackendSpawnFailed(
+        'The agent did not record its process identity. No prompt was sent.',
+      );
     }
     host.start_admission.bind_source(token, child);
     const accepted = await host.native_operation(() =>

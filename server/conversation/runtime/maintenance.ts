@@ -186,6 +186,10 @@ export async function detach_children(
     state: ConversationState;
   }[] = [],
   options?: import('../../lifecycle/contracts.ts').StopOptions,
+  on_detached?: (
+    state: ConversationState,
+    child: import('../backends/contracts.ts').BackendChild,
+  ) => Promise<void>,
 ): Promise<void> {
   const candidates = new Map(additional.map(({ child, state }) => [child, state]));
   for (const state of states) if (state.child !== null) candidates.set(state.child, state);
@@ -201,6 +205,7 @@ export async function detach_children(
           throw error;
       }
       await child.settled?.();
+      await on_detached?.(state, child);
       if (state.child === child) state.child = null;
     } catch (error) {
       if (state.child === null) state.child = child;

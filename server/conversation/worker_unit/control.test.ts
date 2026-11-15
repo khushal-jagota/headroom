@@ -11,7 +11,7 @@ const fake = vi.hoisted(() => ({
   }),
 }));
 vi.mock('node:child_process', () => ({ spawn: fake.spawn, spawnSync: vi.fn() }));
-import { control, control_retained } from './control.ts';
+import { control, control_retained, control_retained_with_timeout } from './control.ts';
 
 function owned_child() {
   return Object.assign(new EventEmitter(), {
@@ -111,6 +111,18 @@ it('kills only its timed-out child and waits for exact exit evidence', async () 
     await expect(result).resolves.toEqual([0, '']);
     expect(fake.spawn.mock.calls.at(-1)?.[1]).toEqual(['--user', action, unit.name]);
   }
+  const full_properties =
+    '--property=LoadState,ActiveState,SubState,Result,MainPID,ControlGroup,Slice,KillMode';
+  const proof_child = owned_child();
+  fake.spawn.mockImplementation(() => proof_child);
+  const proof = control_retained_with_timeout(cleanup, 'show', [full_properties], 0.25);
+  expect(AbortSignal.timeout).toHaveBeenLastCalledWith(250);
+  proof_child.emit('close', 0, null);
+  await expect(proof).resolves.toEqual([0, '']);
+  expect(() => cleanup.spawn('show', ['--property=ExecStart'])).toThrow('Invalid retained');
+  const calls = fake.spawn.mock.calls.length;
+  await expect(control_retained_with_timeout(cleanup, 'stop', [], 0)).rejects.toThrow('deadline');
+  expect(fake.spawn).toHaveBeenCalledTimes(calls);
   finish();
   await owner.settled();
   expect(() => cleanup.spawn('stop', [])).toThrow();

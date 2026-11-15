@@ -1,5 +1,6 @@
 import { OneShotChildren } from '../../../lifecycle/one_shot_children.ts';
 import { create_worker_supervision_runtime } from '../../../worker_supervision/composition.ts';
+import { LocalChildCustody } from '../../child_custody.ts';
 /** The real TS adapter and core, with one local scripted ACP peer. */
 import { ChildProcesses } from '../../../lifecycle/owned_processes.ts';
 import { SHUTDOWN_GRACE_SECONDS } from '../../../lifecycle/configuration.ts';
@@ -117,6 +118,7 @@ export async function run_part2_parity(spec: Spec): Promise<unknown> {
     (options.resolved_start.conversation_id === 'unit16-missing-interpreter' ? missing : base)({
       ...options,
       event_sink: {
+        ...options.event_sink,
         async report(turn, event) {
           const value = JSON.parse(JSON.stringify(event));
           backendEvents.push({ turn, event: event.constructor.name, value });
@@ -141,7 +143,14 @@ export async function run_part2_parity(spec: Spec): Promise<unknown> {
     });
   const frames: unknown[] = [];
   const core = new SqliteProcessConversationSystem({
-    store: new ConversationStore(database, { integer_now: () => now }),
+    store: new ConversationStore(database, {
+      integer_now: () => now,
+      local_child_custody: new LocalChildCustody({
+        runtime: worker_supervision,
+        child_processes,
+        one_shot_children,
+      }),
+    }),
     delivery_model_refusal: (backend, model, ticket_id) =>
       new BackendStateStore(database).delivery_model_refusal(backend, model, ticket_id),
     execution_refusal: (id) =>

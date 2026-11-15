@@ -1,6 +1,7 @@
 /** Shared scripted Codex child behind the actual TS conversation core and records. */
 import { ChildProcesses, OneShotChildren } from '../../../lifecycle/owned_processes.ts';
 import { create_worker_supervision_runtime } from '../../../worker_supervision/composition.ts';
+import { LocalChildCustody } from '../../child_custody.ts';
 import { SHUTDOWN_GRACE_SECONDS } from '../../../lifecycle/configuration.ts';
 import childProcess from 'node:child_process';
 import { syncBuiltinESMExports } from 'node:module';
@@ -84,12 +85,19 @@ export async function run_adapter_parity(spec: AdapterParitySpec): Promise<unkno
       ['unit17-runtime'],
     ),
   );
-  const store = new ConversationStore(database, { integer_now: () => 100 });
   const rejection = new DurableCodexLoginRejection(database, () => new Date(100000));
   const backlog_order: string[] = [];
   const children = new ChildProcesses();
   const probes = new OneShotChildren(children);
   const worker_supervision = create_worker_supervision_runtime({ one_shot_children: probes });
+  const store = new ConversationStore(database, {
+    integer_now: () => 100,
+    local_child_custody: new LocalChildCustody({
+      runtime: worker_supervision,
+      child_processes: children,
+      one_shot_children: probes,
+    }),
+  });
   const base_factory = create_codex_backend_child_factory(
     {
       argv: [spec.executable, 'app-server'],

@@ -1,6 +1,9 @@
 import type { AdmissionDatabase, StartRequest } from '../start_admission/contracts.ts';
 import type { LocalChildIdentity } from '../local_child_contracts.ts';
-import type { LocalChildCustodyInspection, RecordedSourceSettlement } from '../local_child_custody_contracts.ts';
+import type {
+  LocalChildCustodyInspection,
+  RecordedSourceSettlement,
+} from '../local_child_custody_contracts.ts';
 import type { WorkspaceIdentity } from '../../ticket_workspaces/contracts.ts';
 import type { CapturedTurn } from '../deploy_interruptions/contracts.ts';
 /** The durable record boundary used by the conversation core. */
@@ -258,7 +261,14 @@ export interface RecordParticipants {
   readonly startup_participant?: (
     tx: TransactionSql,
   ) => ReadonlyMap<string, readonly ConversationEventPayload[]>;
-  readonly reconcile_deployment?: (tx: TransactionSql, now: number, custody?: { readonly blocked: readonly CapturedTurn[]; readonly proven: readonly CapturedTurn[] }) => void;
+  readonly reconcile_deployment?: (
+    tx: TransactionSql,
+    now: number,
+    custody?: {
+      readonly blocked: readonly CapturedTurn[];
+      readonly proven: readonly CapturedTurn[];
+    },
+  ) => void;
 }
 export interface ConversationStoreOptions extends RecordParticipants {
   readonly integer_now?: () => number;
@@ -287,16 +297,38 @@ export type RecordCommitParticipant<T> = (
 /** One append owner, synchronous source effects, and publication after successful return. */
 export interface ConversationRecordStore {
   readonly blocked_local_conversations: Set<string>;
-  record_child_custody(conversation_id: string, generation: string, identity?: LocalChildIdentity | null, options?: { retired?: boolean }): Promise<void>;
-  record_child_supervision(conversation_id: string, generation: string, path: string): Promise<void>;
+  record_child_custody(
+    conversation_id: string,
+    generation: string,
+    identity?: LocalChildIdentity | null,
+    options?: { retired?: boolean },
+  ): Promise<void>;
+  record_child_supervision(
+    conversation_id: string,
+    generation: string,
+    path: string,
+  ): Promise<void>;
   has_recorded_source(conversation_id: string): Promise<boolean>;
   recorded_source_retirement_proven(conversation_id: string): Promise<boolean>;
-  check_local_child_started(conversation_id: string, generation: string, turn_number: number): Promise<boolean>;
+  check_local_child_started(
+    conversation_id: string,
+    generation: string,
+    turn_number: number,
+  ): Promise<boolean>;
   recorded_source_block_reason(conversation_id: string): Promise<string>;
-  retire_idle_recorded_source(conversation_id: string, options?: { inspect_only?: boolean; deadline?: number }): Promise<boolean>;
-  settle_recorded_source(conversation_id: string, options?: { inspect_only?: boolean; deadline?: number }): Promise<RecordedSourceSettlement | null>;
+  retire_idle_recorded_source(
+    conversation_id: string,
+    options?: { inspect_only?: boolean; deadline?: number },
+  ): Promise<boolean>;
+  settle_recorded_source(
+    conversation_id: string,
+    options?: { inspect_only?: boolean; deadline?: number },
+  ): Promise<RecordedSourceSettlement | null>;
   settled_recorded_turn(conversation_id: string): TurnToken | null;
-  workspace_conversation_ids(ticket_id: string, identity: WorkspaceIdentity): Promise<readonly string[]>;
+  workspace_conversation_ids(
+    ticket_id: string,
+    identity: WorkspaceIdentity,
+  ): Promise<readonly string[]>;
   prepare_reconciliation(open_runs: ReadonlyMap<string, OpenRunTurn>): Promise<void>;
   readonly start_admission_database: AdmissionDatabase;
   automatic_start_request(identity: string, conversation_id: string): StartRequest;
