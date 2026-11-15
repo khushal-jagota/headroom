@@ -321,6 +321,7 @@ export interface RecordMessageToOwnerOptions {
   recording_receipt?: NativeMessageOperation | null;
 }
 export interface ConversationSystem {
+  readonly retire_local_workspace?: import('../ticket_workspaces/contracts.ts').WorkspaceRetirementOperation;
   readonly start_admission?: AutomaticStartAdmission;
   automatic_start_request?(identity: string, conversation_id: string): Promise<StartRequest>;
   readonly workspace_admission: WorkspaceAdmission;
