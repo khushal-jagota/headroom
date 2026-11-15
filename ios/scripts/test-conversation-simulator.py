@@ -268,6 +268,13 @@ def main() -> int:
             if path == "/api/managers/si_4chgag3w/workspace":
                 self.respond(manager)
                 return
+            if path == "/api/managers/si_4chgag3w/workspace-content":
+                self.respond({"goal": manager["goal"], "recap": manager["recap"]})
+                return
+            if path == f"/api/tickets/{ticket['id']}/workspace":
+                # Native detail reads the scoped workspace; retain the same fixture controls.
+                self.respond(ticket)
+                return
             if path == "/api/tickets":
                 query = parse_qs(urlparse(self.path).query)
                 if query.get("detail") == ["full"]:
