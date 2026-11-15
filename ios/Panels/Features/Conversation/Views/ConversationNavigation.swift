@@ -349,7 +349,10 @@ struct ConversationThread: View {
                                     if let error = model.bodyErrors[item.key] {
                                         Text(error).font(PanelsTheme.TypeScale.small).foregroundStyle(PanelsTheme.error)
                                     }
-                                } else if !row.text.isEmpty { Text(.init(row.text)).textSelection(.enabled).fixedSize(horizontal: false, vertical: true) }
+                                } else if !row.text.isEmpty {
+                                    Text((try? AttributedString(markdown: row.text, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace), baseURL: store.baseURL)) ?? AttributedString(row.text))
+                                        .textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
+                                }
                                 if !row.attachments.isEmpty { ConversationAttachmentTray(pieces: row.attachments) }
                                 if let note = row.note, note != "Sent" {
                                     HStack {
@@ -472,6 +475,7 @@ struct ConversationThread: View {
                 .animation(reduceMotion ? nil : PanelsTheme.Motion.fade, value: scrollPolicy.showLatest)
             }
         }
+        .reviewArtifactLinks()
     }
 
     private func distanceFromLatest(_ geometry: ScrollGeometry) -> Double {

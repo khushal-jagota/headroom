@@ -449,7 +449,6 @@ private struct ReviewProposalSection: View {
                 DecisionProposalCard(fieldLabel: decision.fieldLabel(item.field), reviewer: reviewer,
                                      text: proposal.body, baseURL: store.baseURL, onReviewer: onReviewer)
                     .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { cardHeight = $0 }
-                ForEach(ReviewArtifactLinks.targets(in: proposal.body, baseURL: store.baseURL)) { target in ReviewInlineArtifact(target: target) }
             } else if decision.error == nil { ScreenLoadingView(title: "review").frame(height: cardHeight) }
             if decision.error != nil {
                 Button(decision.changed ? "Reload proposal" : "Try again") {
