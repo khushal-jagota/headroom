@@ -44,9 +44,11 @@ export class JsonNumber {
 /** Native JSON preserves exact markers without claiming unsafe floats as exact integers. */
 export function stringify_numeric_json(payload: unknown): string {
   return JSON.stringify(payload, (_key, value: unknown) =>
-    typeof value === 'number' && Number.isInteger(value) && !Number.isSafeInteger(value)
-      ? rawJSON(value.toExponential())
-      : value,
+    typeof value === 'bigint'
+      ? rawJSON(String(value))
+      : typeof value === 'number' && Number.isInteger(value) && !Number.isSafeInteger(value)
+        ? rawJSON(value.toExponential())
+        : value,
   );
 }
 function python_float(value: number): string {

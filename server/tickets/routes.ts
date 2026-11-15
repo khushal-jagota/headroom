@@ -26,6 +26,8 @@ import {
 import type { Json } from './views.ts';
 import { notify_review_transfers } from './review_transfer.ts';
 import { workspace_ticket, workspace_field } from './workspace/views.ts';
+import { decision_routes } from './decision_routes.ts';
+import { parse_next_ceiling } from './logic/admission.ts';
 import { add_work_attention, read_running_conversation_count } from '../work_attention.ts';
 
 export function body_str(body: Json, key: string, fallback = ''): string {
@@ -105,12 +107,6 @@ function validate_field(workflow: WorkflowDefinition, field: string): void {
       field,
       workflow: workflow.label,
     });
-}
-function parse_next_ceiling(raw: string | null, workflow: WorkflowDefinition): string | null {
-  if (raw === null || raw === 'none') return raw;
-  if (!workflow.stages.some((s) => s.id === raw))
-    throw new PlannerError('scope_invalid', 'unknown next_ceiling', { next_ceiling: raw });
-  return raw;
 }
 const CREATE_KEYS = [
   'worker_type',
@@ -285,6 +281,7 @@ class QueryBooleanError extends Error {
   }
 }
 export const routes: FastifyPluginAsync<AreaServices> = async (app, services) => {
+  await app.register(decision_routes, services);
   app.post('/tickets', async (request, reply) => {
     if (!dictionaryBody(request.body, reply)) return;
     const raw = request.body;

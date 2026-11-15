@@ -1,8 +1,47 @@
-import type { Principal } from '../core/contracts.ts';
+import { PlannerError, type Principal } from '../core/contracts.ts';
+import type { NumericJSON } from '../core/http/numeric_json.ts';
 import type { TicketWorkflowDefinition, StageOwnershipMode } from '../worker_types/contracts.ts';
 export type { StageOwnershipMode };
 export const TITLE_MAX_CHARS = 200;
 export const NO_FURTHER = 'none';
+export class StoredTicketIntegrityError extends PlannerError {
+  constructor(ticket_id: string, reason: string) {
+    super('validation', 'Ticket integrity failure', { ticket_id, reason });
+  }
+}
+export type DecisionRevision = number | bigint;
+export type DecisionHolder = Principal & { kind: 'owner' | 'chief' | 'manager' };
+export interface DecisionCommand {
+  decision: 'approve' | 'send_back';
+  field: string;
+  expected_proposal_revision: DecisionRevision;
+  message?: string | null;
+  edited_body?: string | null;
+  next_ceiling?: string | null;
+  next_holder?: DecisionHolder | null;
+}
+export interface DecisionTransition {
+  stage: string;
+  ceiling: string;
+  ceiling_holder: DecisionHolder;
+  ticket_status: TicketStatus;
+  pending_proposal_revision: number;
+}
+export interface DecisionReceipt {
+  operation_id: string;
+  ticket_id: string;
+  decision: DecisionCommand['decision'];
+  field: string;
+  expected_proposal_revision: DecisionRevision;
+  outcome: 'applied' | 'refused';
+  transition: DecisionTransition | null;
+  error: { code: string; message: string; detail: Record<string, unknown> } | null;
+  created_at: number;
+}
+export interface DecisionOperationResponse {
+  receipt_contract: 1;
+  receipt: NumericJSON<DecisionReceipt> | null;
+}
 export type NextCeiling = string;
 export type TicketLocale = 'vps' | 'macos';
 export type WorkerStepClaim = 'none' | 'out' | 'errored';

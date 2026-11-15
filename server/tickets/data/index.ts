@@ -19,6 +19,7 @@ import { capture_ticket_attention } from '../../notifications/attention.ts';
 import { capture_gate, record_approval } from '../../attention/history.ts';
 import { create_proposal_wake, create_worker_error_wake } from '../../manager_wakes/data.ts';
 import * as decision_messages from '../decision_messages.ts';
+import { StoredTicketIntegrityError } from '../contracts.ts';
 import * as blocks from '../../core/ticket_blocks.ts';
 import * as admission from '../logic/admission.ts';
 import * as machine from '../logic/machine.ts';
@@ -212,10 +213,7 @@ export function load_ticket_for_write(sql: ReadSql, id: string, startup_audit = 
     integrity_error_reason: string | null;
   }>('SELECT integrity_error_reason FROM tickets WHERE id=?', [id]);
   if (!startup_audit && reason?.integrity_error_reason)
-    throw new PlannerError('validation', 'Ticket integrity failure', {
-      ticket_id: id,
-      reason: reason.integrity_error_reason,
-    });
+    throw new StoredTicketIntegrityError(id, reason.integrity_error_reason);
   const t = read_ticket(sql, id);
   position(t.workflow, t.stage, t.ceiling, startup_audit);
   holder(sql, t.ceiling_holder);
@@ -600,7 +598,7 @@ export interface AcceptOptions {
   edited_body?: string | null;
   next_ceiling?: string | null;
   next_holder: Principal;
-  expected_proposal_revision?: number | null;
+  expected_proposal_revision?: number | bigint | null;
   message?: string | null;
   decision_id?: string | null;
 }
@@ -631,7 +629,7 @@ export function accept_proposal(
   if (decision_messages.is_replay(tx, o.decision_id ?? null, request)) return t;
   if (
     o.expected_proposal_revision != null &&
-    t.pending_proposal_revision !== o.expected_proposal_revision
+    BigInt(t.pending_proposal_revision) !== BigInt(o.expected_proposal_revision)
   )
     throw new PlannerError(
       'validation',
@@ -712,7 +710,7 @@ export function reject_proposal(
     principal: Principal;
     now: number;
     expected_proposal?: PendingTicketProposal | null;
-    expected_proposal_revision?: number | null;
+    expected_proposal_revision?: number | bigint | null;
     decision_id?: string | null;
   },
 ): Ticket {
@@ -733,7 +731,7 @@ export function reject_proposal(
   if (decision_messages.is_replay(tx, o.decision_id ?? null, request)) return t;
   if (
     o.expected_proposal_revision != null &&
-    t.pending_proposal_revision !== o.expected_proposal_revision
+    BigInt(t.pending_proposal_revision) !== BigInt(o.expected_proposal_revision)
   )
     throw new PlannerError(
       'validation',

@@ -38,18 +38,27 @@ export class GoalResources implements ResourceProvider {
           }),
       };
     }
-    if (parts.length === 2 && q.size === 0)
-      return { revision: rev, read: () => goal_json(sql, read_goal(sql, parts[1]!), now) };
+    if (parts.length === 2 && q.size === 0) {
+      const goal = read_goal(sql, parts[1]!);
+      return {
+        revision: goal.revision + ':' + calendar_parts(now)[0],
+        read: () => goal_json(sql, goal, now),
+      };
+    }
     if (
       parts.length === 3 &&
       parts[2] === 'readings' &&
       [...q.keys()].every((k) => ['first_date', 'last_date'].includes(k))
     ) {
-      rev +=
+      const goal = read_goal(sql, parts[1]!);
+      rev =
+        goal.revision +
+        ':' +
+        calendar_parts(now)[0] +
         ':' +
         revision(sql, 'automatic-measures') +
         ':' +
-        reading_calendar(sql, read_goal(sql, parts[1]!), now)[0];
+        reading_calendar(sql, goal, now)[0];
       return {
         revision: rev,
         read: () =>
