@@ -27,6 +27,7 @@ export interface EmployeeLaunchConfiguration {
   employee_launch_reasoning_effort: string | null;
 }
 export interface ResolvedTicketCreationContext {
+  machine_id: string;
   locale: TicketLocale;
   launch_configuration: EmployeeLaunchConfiguration;
   project_id: string | null;

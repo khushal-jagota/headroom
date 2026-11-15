@@ -60,7 +60,7 @@ function resolve_configuration(
 ): EmployeeLaunchConfiguration {
   const employee_backend = require_conversation_backend_key(backend);
   services.database.read((sql) => {
-    require_usable_model(sql, employee_backend, model, data.read_ticket(sql, ticket_id).locale);
+    require_usable_model(sql, employee_backend, model, data.read_ticket(sql, ticket_id).machine_id);
   });
   return {
     employee_backend,

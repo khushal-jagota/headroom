@@ -31,7 +31,10 @@ function parse_lease(text: string | null): WireValue<'LeaseRequest'> | null {
     throw error;
   }
 }
-export function read_presence(sql: ReadSql): PresenceRecord | null {
+export function read_presence(
+  sql: ReadSql,
+  machine_id = ORIGINAL_MAC_MACHINE_ID,
+): PresenceRecord | null {
   const row = sql.get<{
     executor_incarnation: string | null;
     identity_json: string | null;
@@ -44,7 +47,7 @@ export function read_presence(sql: ReadSql): PresenceRecord | null {
   }>(
     'SELECT executor_incarnation,identity_json,last_contact_at_ms,last_lease_at_ms,' +
       'continuous_since_ms,going_to_sleep_at_ms,lease_json,refusal_json FROM mac_executor_presence WHERE machine_id=?',
-    [ORIGINAL_MAC_MACHINE_ID],
+    [machine_id],
   );
   if (!row) return null;
   return {
