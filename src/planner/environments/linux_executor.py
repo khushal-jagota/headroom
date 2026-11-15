@@ -84,6 +84,7 @@ def render_service(configuration: LinuxExecutorInstallation, runtime: Path) -> s
             "ExecStart=" + " ".join(_quoted(argument.replace("$", "$$")) for argument in command),
             "Restart=on-failure",
             "RestartSec=10",
+            "Delegate=yes",
             "KillMode=mixed",
             f"TimeoutStopSec={int(STOP_SECONDS) + 20}",
             "",

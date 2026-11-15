@@ -34,7 +34,7 @@ The disposable test option disables provisioning and can read the existing insta
 
 A release-installed Mac home updates through an independent LaunchAgent. Its installer and external Python remain outside the app that it replaces. A failed health trial returns to the previous app and snapshot record. This rollback can discard later record writes. It does not prove preservation of active work. The Mac home uses native process evidence for local previews and metrics. Its jobs run only during the graphical login session. Other POSIX source servers retain their existing foreground lifecycle. The Mac executor remains separate. Linux checks do not prove Mac behavior.
 
-Worker supervision is one subsystem for home and executor processes. It uses exact identities and durable custody for bounded shutdown and scoped cleanup proof. Unknown cleanup retains a fence. Linux Workers share the home service resource domain, but the adapter removes its protected OOM score before the backend starts. Separate Worker units and slices no longer apply. A missing observation never proves that all descendants stopped.
+Worker supervision is one subsystem for home and executor processes. It uses exact identities and durable custody for bounded shutdown and scoped cleanup proof. Unknown cleanup retains a fence. Linux Workers share the home service resource domain, but the adapter removes its protected OOM score before the backend starts. Delegated cgroup v2 child groups keep each Linux Worker and its descendants inside a separate cleanup boundary. Unsupported hosts retain a cleanup fence. Separate Worker units and slices do not apply.
 
 The contracts and OS adapters live in `platform_runtime/`. Domain policy stays in lifecycle, preview, conversation, and environment code.
 
