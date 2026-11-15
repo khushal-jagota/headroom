@@ -31,6 +31,7 @@ from planner.conversation.contracts import (
     PromptDeliverySuppressed,
 )
 from planner.conversation.message_content import text_message_content
+from planner.core.contracts import PlannerError
 from planner.core.db import connect
 from planner.execution_identity import AskKind, ExecutorIdentity
 from planner.executor import ipc_client
@@ -355,12 +356,25 @@ def test_kill_withdraws_a_stalled_delivery_without_a_round_trip(
                 await asyncio.sleep(0)
                 release.set()
                 assert isinstance(await asyncio.wait_for(sending, 5), PromptDeliverySuppressed)
-                await asyncio.wait_for(killing, 5)
+                with pytest.raises(PlannerError) as refused:
+                    await asyncio.wait_for(killing, 5)
+                assert refused.value.code.value == "retry_later"
                 assert not harness.endpoint.poll_release.is_set()
                 assert harness.commands("write_prompt")[-1][1] == "withdrawn"
                 harness.endpoint.poll_release.set()
                 await harness.wait_calls(stops=1, prompts=1)
                 await harness.wait_settled()
+                state = harness.system._conversations["c_scripted"]
+
+                async def retired() -> bool:
+                    return (
+                        state.retained_child_reference is None and not state.child_is_quarantined
+                    )
+
+                await eventually(retired, "The exact Stop proof did not clear retained custody")
+                if state.retirement_task is not None:
+                    await state.retirement_task
+                await harness.system.kill("c_scripted")
             finally:
                 release.set()
                 harness.endpoint.poll_release.set()
