@@ -20,14 +20,281 @@ from planner.ticket_workspaces.filesystem import (
     prepare_workspace,
     workspace_identity,
 )
+from planner.tickets.contracts import Ticket
 from planner.tickets.data import create_ticket
+
+
+def _register_retired_home_custody(conn: Connection, ticket: Ticket, conversation_id: str) -> None:
+    from planner.files.lifecycle import database_path
+    from planner.files.logic.paths import ticket_files_root
+    from planner.ticket_workspaces.data import register_workspace
+
+    conn.execute(
+        "INSERT INTO conversations(conversation_id,backend_key,workspace_folder,access,created_at) "
+        "VALUES(?, 'codex', '.', 'full', 2)",
+        (conversation_id,),
+    )
+    folder = ticket_files_root(database_path(conn)) / ticket.id
+    register_workspace(conn, ticket.id, conversation_id, workspace_identity(folder))
+    conn.execute(
+        "INSERT INTO conversation_child_custody(conversation_id,generation,state) VALUES(?,?,?)",
+        (conversation_id, "test", "retired"),
+    )
+    conn.commit()
 
 
 @pytest.fixture(autouse=True)
 def isolated_worker_scratch(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     from planner.conversation import worker_scratch
-
     monkeypatch.setattr(worker_scratch, "_scratch_root", lambda: tmp_path / "runs")
+
+
+@pytest.mark.parametrize("deleted", [False, True])
+def test_ended_checkout_is_removed_before_artifacts(tmp_path: Path, deleted: bool) -> None:
+    layout = _layout(tmp_path)
+    root = tmp_path / "files" / "tickets"
+    folder = root / "t_aaaaaaaa"
+    checkout = prepare_workspace(folder, layout.repository, folder.name)
+    artifact = folder / "artifacts" / "report.md"
+    artifact.write_text("retain")
+    state = {folder.name: WorkspaceState(folder.name, 100, deleted)}
+    cleanup_local_workspaces(root, state, 100)
+    assert not checkout.exists()
+    assert artifact.read_text() == "retain"
+    replacement = prepare_workspace(folder, layout.repository, folder.name)
+    assert replacement.is_dir()
+    cleanup_local_workspaces(root, state, 100 + RETENTION_SECONDS)
+    assert not folder.exists()
+
+
+def test_immediate_cleanup_keeps_dirty_checkout(tmp_path: Path) -> None:
+    layout = _layout(tmp_path)
+    root = tmp_path / "files" / "tickets"
+    folder = root / "t_aaaaaaaa"
+    checkout = prepare_workspace(folder, layout.repository, folder.name)
+    state = {folder.name: WorkspaceState(folder.name, 100, False)}
+    (checkout / "unfinished").write_text("work")
+    result = cleanup_local_workspaces(root, state, 100)
+    assert checkout.exists() and "uncommitted" in result.skipped[0]["reason"]
+
+
+def test_immediate_cleanup_preserves_nested_other_ticket_checkout(tmp_path: Path) -> None:
+    layout = _layout(tmp_path)
+    root = tmp_path / "files" / "tickets"
+    folder = root / "t_aaaaaaaa"
+    checkout = prepare_workspace(folder, layout.repository, folder.name)
+    nested = checkout / "t_bbbbbbbb"
+    nested.mkdir()
+    _git(nested, "init", "-q")
+    result = cleanup_local_workspaces(
+        root, {folder.name: WorkspaceState(folder.name, 100, False)}, 100
+    )
+    assert nested.exists()
+    assert "mixed Ticket ownership" in result.skipped[0]["reason"]
+
+
+def test_cleanup_does_not_accept_commit_only_on_another_remote(tmp_path: Path) -> None:
+    layout = _layout(tmp_path)
+    root = tmp_path / "files" / "tickets"
+    folder = root / "t_aaaaaaaa"
+    checkout = prepare_workspace(folder, layout.repository, folder.name)
+    _git(checkout, "config", "user.name", "Test")
+    _git(checkout, "config", "user.email", "test@example.com")
+    _git(checkout, "commit", "-q", "--allow-empty", "-m", "not on origin")
+    secondary = tmp_path / "secondary.git"
+    _git(tmp_path, "init", "-q", "--bare", str(secondary))
+    _git(checkout, "remote", "add", "secondary", str(secondary))
+    _git(checkout, "push", "-q", "secondary", "HEAD:refs/heads/saved")
+    result = cleanup_local_workspaces(
+        root, {folder.name: WorkspaceState(folder.name, 100, False)}, 100
+    )
+    assert checkout.exists()
+    assert "unpushed work" in result.skipped[0]["reason"]
+
+
+def test_cleanup_checks_recorded_ticket_branch_but_not_other_local_branches(tmp_path: Path) -> None:
+    layout = _layout(tmp_path)
+    root = tmp_path / "files" / "tickets"
+    folder = root / "t_aaaaaaaa"
+    checkout = prepare_workspace(folder, layout.repository, folder.name)
+    _git(checkout, "config", "user.name", "Test")
+    _git(checkout, "config", "user.email", "test@example.com")
+    branch = _git(checkout, "branch", "--show-current").strip()
+    _git(checkout, "commit", "-q", "--allow-empty", "-m", "unpublished ticket work")
+    _git(checkout, "checkout", "-q", "--detach", "origin/staging")
+    states = {folder.name: WorkspaceState(folder.name, 100, False)}
+    result = cleanup_local_workspaces(root, states, 100)
+    assert checkout.exists()
+    assert "unpushed work" in result.skipped[0]["reason"]
+    _git(checkout, "push", "-q", "origin", f"{branch}:refs/heads/{branch}")
+    _git(checkout, "checkout", "-q", "-b", "other-local-work")
+    _git(checkout, "commit", "-q", "--allow-empty", "-m", "unrelated branch")
+    _git(checkout, "checkout", "-q", "--detach", "origin/staging")
+    cleanup_local_workspaces(root, states, 100)
+    assert not checkout.exists()
+
+
+def test_recorded_checkout_with_missing_git_metadata_is_never_a_plain_folder(
+    tmp_path: Path,
+) -> None:
+    layout = _layout(tmp_path)
+    root = tmp_path / "files" / "tickets"
+    folder = root / "t_aaaaaaaa"
+    checkout = prepare_workspace(folder, layout.repository, folder.name)
+    (checkout / ".git").rename(checkout / ".git-missing")
+    states = {folder.name: WorkspaceState(folder.name, 100, False)}
+    for now in (100, 100 + RETENTION_SECONDS):
+        result = cleanup_local_workspaces(root, states, now)
+        assert checkout.exists()
+        assert "metadata is missing or invalid" in result.skipped[0]["reason"]
+
+    # A recorded plain workspace remains eligible for normal artifact expiry.
+    plain = root / "t_bbbbbbbb"
+    prepare_workspace(plain, None, plain.name)
+    cleanup_local_workspaces(
+        root, {plain.name: WorkspaceState(plain.name, 100, False)}, 100 + RETENTION_SECONDS
+    )
+    assert not plain.exists()
+
+
+def test_home_cleanup_retires_checkout_but_allows_a_new_workspace(
+    tmp_db: Connection, tmp_path: Path
+) -> None:
+    from planner.files.lifecycle import database_path
+    from planner.files.logic.paths import ticket_files_root
+    from planner.ticket_workspaces.cleanup import clean_for_database
+    from planner.ticket_workspaces.data import has_committed_retirement
+
+    layout = _layout(tmp_path)
+    ticket = create_ticket(
+        tmp_db,
+        title="Retire checkout",
+        principal=OWNER_PRINCIPAL,
+        now=1,
+        title_max_chars=200,
+        worker_type="coding",
+    )
+    folder = ticket_files_root(database_path(tmp_db)) / ticket.id
+    checkout = prepare_workspace(folder, layout.repository, ticket.id)
+    previous_identity = workspace_identity(folder)
+    (folder / "artifacts" / "report.md").write_text("retained")
+    tmp_db.execute("UPDATE tickets SET stage='done',updated_at=100 WHERE id=?", (ticket.id,))
+    tmp_db.commit()
+    clean_for_database(database_path(tmp_db), 100)
+    assert checkout.exists()  # No registered Worker custody is not proof of exit.
+    _register_retired_home_custody(tmp_db, ticket, "retirement_home")
+    tmp_db.execute("DELETE FROM conversation_child_custody WHERE conversation_id='retirement_home'")
+    tmp_db.execute("UPDATE tickets SET stage='done',updated_at=100 WHERE id=?", (ticket.id,))
+    tmp_db.commit()
+    clean_for_database(database_path(tmp_db), 100)
+    assert checkout.exists()  # Registration alone is not a custody proof either.
+    tmp_db.execute(
+        "INSERT INTO conversation_child_custody(conversation_id,generation,state) "
+        "VALUES('retirement_home','test','retired')"
+    )
+    tmp_db.commit()
+    state = read_workspace_states(tmp_db)[ticket.id]
+    clean_for_database(database_path(tmp_db), 100)
+    assert not checkout.exists()
+    assert (folder / "artifacts" / "report.md").read_text() == "retained"
+    assert has_committed_retirement(tmp_db, state, previous_identity)
+    assert workspace_identity(folder) != previous_identity
+    assert prepare_workspace(folder, layout.repository, ticket.id).exists()
+
+
+def test_retry_recovers_checkout_detached_before_grant_or_marker_update(
+    tmp_db: Connection, tmp_path: Path
+) -> None:
+    from planner.files.lifecycle import database_path
+    from planner.files.logic.paths import ticket_files_root
+    from planner.ticket_workspaces.cleanup import clean_for_database
+    from planner.ticket_workspaces.filesystem import prepare_workspace_retirement
+
+    layout = _layout(tmp_path)
+    ticket = create_ticket(
+        tmp_db,
+        title="Interrupted retirement",
+        principal=OWNER_PRINCIPAL,
+        now=1,
+        title_max_chars=200,
+        worker_type="coding",
+    )
+    root = ticket_files_root(database_path(tmp_db))
+    folder = root / ticket.id
+    checkout = prepare_workspace(folder, layout.repository, ticket.id)
+    previous_identity = workspace_identity(folder)
+    _register_retired_home_custody(tmp_db, ticket, "retirement_interrupted")
+    tmp_db.execute("UPDATE tickets SET stage='done',updated_at=100 WHERE id=?", (ticket.id,))
+    tmp_db.commit()
+    state = read_workspace_states(tmp_db)[ticket.id]
+    target = prepare_workspace_retirement(
+        folder,
+        state,
+        identity=previous_identity,
+        retired_root=root.parent / ".ticket-retired",
+        checkout_only=True,
+    )
+    assert isinstance(target, Path)
+    checkout.rename(target / "worktree")  # Crash before marker update and transaction commit.
+    clean_for_database(database_path(tmp_db), 100)
+    assert not target.exists()
+    assert workspace_identity(folder) != previous_identity
+    assert prepare_workspace(folder, layout.repository, ticket.id).exists()
+
+
+def test_retry_retains_no_registration_requirement_for_plain_artifacts(tmp_db: Connection) -> None:
+    from planner.files.lifecycle import database_path
+    from planner.files.logic.paths import ticket_files_root
+    from planner.ticket_workspaces.cleanup import clean_for_database
+    from planner.ticket_workspaces.filesystem import retire_workspace
+
+    ticket = create_ticket(
+        tmp_db, title="Plain artifacts", principal=OWNER_PRINCIPAL, now=1,
+        title_max_chars=200, worker_type="coding",
+    )
+    root = ticket_files_root(database_path(tmp_db))
+    folder = root / ticket.id
+    prepare_workspace(folder, None, ticket.id)
+    tmp_db.execute("UPDATE tickets SET stage='done',updated_at=100 WHERE id=?", (ticket.id,))
+    tmp_db.commit()
+    state = read_workspace_states(tmp_db)[ticket.id]
+    target = retire_workspace(folder, state, retired_root=root.parent / ".ticket-retired")
+    assert isinstance(target, Path)
+    clean_for_database(database_path(tmp_db), 100 + RETENTION_SECONDS)
+    assert not target.exists()
+
+
+def test_mac_cleanup_retires_checkout_without_removing_artifacts(
+    tmp_path: Path,
+    native_registry: tuple[MacRunner, MacOutbox, ScriptedChild, ChildCommand],
+) -> None:
+    import asyncio
+
+    from planner.executor.protocol import WorkerCleanupUncertainty
+
+    layout = _layout(tmp_path)
+    registry, _, _, _ = native_registry
+    folder = registry.paths.artifacts / "t_aaaaaaaa"
+    checkout = prepare_workspace(folder, layout.repository, folder.name)
+    artifact = folder / "artifacts" / "report.md"
+    artifact.write_text("retain")
+    grants: list[WorkspaceState] = []
+
+    async def grant(state: WorkspaceState, _identity: object) -> bool:
+        grants.append(state)
+        return True
+
+    registry._retire_workspace = grant
+    state = WorkspaceState(folder.name, 100, False)
+    registry.cleanup_uncertainties = (WorkerCleanupUncertainty(folder.name, "c", "unknown"),)
+    asyncio.run(registry.cleanup_workspaces((state,), 100))
+    assert checkout.exists()
+    assert not grants
+    registry.cleanup_uncertainties = ()
+    asyncio.run(registry.cleanup_workspaces((state,), 100))
+    assert grants == [state]
+    assert not checkout.exists()
+    assert artifact.read_text() == "retain"
 
 
 def test_end_clock_survives_edits_reopen_and_deletion_without_expiring_live_files(
@@ -74,6 +341,32 @@ def test_end_clock_survives_edits_reopen_and_deletion_without_expiring_live_file
     assert (root.parent / "ticket-workspaces-cleanup.json").exists()
 
 
+def test_deleting_active_ticket_retires_workspace_after_retention(tmp_db: Connection) -> None:
+    from planner.files.lifecycle import database_path
+    from planner.files.logic.paths import ticket_files_root
+    from planner.ticket_workspaces.cleanup import clean_for_database
+    from planner.tickets.data import delete_ticket
+
+    ticket = create_ticket(
+        tmp_db,
+        title="Delete workspace",
+        principal=OWNER_PRINCIPAL,
+        now=1,
+        title_max_chars=200,
+        worker_type="coding",
+    )
+    folder = ticket_files_root(database_path(tmp_db)) / ticket.id
+    prepare_workspace(folder, None, ticket.id)
+    delete_ticket(tmp_db, ticket.id, principal=OWNER_PRINCIPAL, now=2)
+    state = read_workspace_states(tmp_db)[ticket.id]
+    assert state.deleted and state.ended_at is not None
+    clean_for_database(database_path(tmp_db), state.ended_at + RETENTION_SECONDS - 1)
+    assert folder.exists()
+    result = clean_for_database(database_path(tmp_db), state.ended_at + RETENTION_SECONDS)
+    assert str(folder) in result.removed
+    assert not folder.exists()
+
+
 def test_cleanup_retains_unpublished_dirty_and_unverifiable_work_then_removes_safe_worktree(
     tmp_path: Path,
 ) -> None:
@@ -82,6 +375,8 @@ def test_cleanup_retains_unpublished_dirty_and_unverifiable_work_then_removes_sa
     folder = root / "t_aaaaaaaa"
     workspace = prepare_workspace(folder, layout.repository, "t_aaaaaaaa")
     assert prepare_workspace(folder, layout.repository, "t_aaaaaaaa") == workspace
+    _git(workspace, "config", "user.name", "Test")
+    _git(workspace, "config", "user.email", "test@example.com")
     _git(workspace, "commit", "-q", "--allow-empty", "-m", "unpublished")
     states = {"t_aaaaaaaa": WorkspaceState("t_aaaaaaaa", 0, False)}
     result = cleanup_local_workspaces(root, states, RETENTION_SECONDS)
@@ -164,6 +459,11 @@ def test_retirement_detaches_exact_workspace_before_reopen(
             conversation_id=conversation_id,
             now=2,
         )
+    )
+    tmp_db.execute(
+        "INSERT INTO conversation_child_custody(conversation_id,generation,state) "
+        "VALUES(?, 'test', 'retired')",
+        (conversation_id,),
     )
     tmp_db.execute("UPDATE tickets SET stage='done',updated_at=100 WHERE id=?", (ticket.id,))
     tmp_db.execute(
@@ -354,6 +654,8 @@ def test_home_mirror_retirement_does_not_displace_unpushed_mac_workspace(
     mac_root = registry.paths.artifacts / ticket.id
     mac_worktree = initial_start.workspace_folder
     mac_identity = workspace_identity(mac_root)
+    _git(mac_worktree, "config", "user.name", "Test")
+    _git(mac_worktree, "config", "user.email", "test@example.com")
     _git(mac_worktree, "commit", "-q", "--allow-empty", "-m", "Mac unpublished work")
     (mac_worktree / "uncommitted.txt").write_text("Mac draft")
     home_root = ticket_files_root(database_path(tmp_db)) / ticket.id
@@ -414,15 +716,25 @@ def test_recorded_child_uncertainty_blocks_local_detach_and_retirement_replay(
     from planner.ticket_workspaces.cleanup import clean_for_database
 
     ticket = create_ticket(
-        tmp_db, title="Retain child custody", principal=OWNER_PRINCIPAL,
-        now=1, title_max_chars=200, worker_type="coding",
+        tmp_db,
+        title="Retain child custody",
+        principal=OWNER_PRINCIPAL,
+        now=1,
+        title_max_chars=200,
+        worker_type="coding",
     )
     folder = ticket_files_root(database_path(tmp_db)) / ticket.id
     prepare_workspace(folder, None, ticket.id)
-    asyncio.run(start_ticket_conversation(
-        InMemoryConversationSystem(), tmp_db, ticket, worker_resolve(tmp_db, ticket),
-        conversation_id="retained_local_child", now=2,
-    ))
+    asyncio.run(
+        start_ticket_conversation(
+            InMemoryConversationSystem(),
+            tmp_db,
+            ticket,
+            worker_resolve(tmp_db, ticket),
+            conversation_id="retained_local_child",
+            now=2,
+        )
+    )
     tmp_db.execute(
         "INSERT INTO conversation_child_custody(conversation_id,generation,state) "
         "VALUES('retained_local_child','partial-start','launch_pending')"
@@ -436,9 +748,11 @@ def test_recorded_child_uncertainty_blocks_local_detach_and_retirement_replay(
     # An earlier detach grant does not erase newly discovered uncertain custody.
     identity = workspace_identity(folder)
     from planner.ticket_workspaces.data import authorize_retirement
+
     state = read_workspace_states(tmp_db)[ticket.id]
     assert authorize_retirement(tmp_db, state, RETENTION_SECONDS + 100, identity)
     from planner.ticket_workspaces.filesystem import retire_workspace
+
     retired = retire_workspace(folder, state, identity=identity)
     assert isinstance(retired, Path)
     tmp_db.commit()
@@ -473,6 +787,7 @@ def test_cleanup_does_not_recreate_a_folder_detached_after_inventory(
         root,
         {folder.name: WorkspaceState(folder.name, 0, False)},
         RETENTION_SECONDS,
+        measure_size=True,
     )
     assert not folder.exists()
     assert detached.exists()

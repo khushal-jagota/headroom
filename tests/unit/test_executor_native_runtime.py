@@ -220,13 +220,28 @@ def test_managed_native_start_selects_only_its_project_repository(
         _git(repository, "init", "-q")
         _git(repository, "-c", "user.name=Test", "-c", "user.email=test@example.com",
              "commit", "-q", "--allow-empty", "-m", "base")
+        origin = registry.paths.root / "origin.git"
+        _git(registry.paths.root, "init", "--bare", "-b", "staging", str(origin))
+        _git(repository, "remote", "add", "origin", str(origin))
+        _git(repository, "push", "origin", "HEAD:staging")
+        from planner.ticket_workspaces import filesystem
+        monkeypatch.setattr(filesystem, "_PANELS_ORIGIN", str(origin))
         source_file = repository / "unfinished.txt"
         source_file.write_text("preserve source work")
         assert isinstance(start.arguments, StartRun)
+        role_materials = start.arguments.resolved_start.role_materials
+        assert role_materials is not None
         resolved = replace(
             start.arguments.resolved_start,
             workspace_folder=Path("/projects/project_panels") if has_project else Path("/"),
             workspace_path_policy=WorkspacePathPolicy.executor_default,
+            role_materials=replace(
+                role_materials,
+                identity_environment_variables=(
+                    *role_materials.identity_environment_variables,
+                    ("PLAN_TICKET_PROJECT_ID", "project_panels" if has_project else ""),
+                ),
+            ),
         )
         received: list[ResolvedConversationStart] = []
 
@@ -244,19 +259,18 @@ def test_managed_native_start_selects_only_its_project_repository(
         workspace = ticket_folder / "worktree"
         assert len(received) == 1 and received[0].workspace_folder == workspace
         marker = json.loads((ticket_folder / ".panels-workspace.json").read_text())
-        assert marker["repository"] == (str(repository.resolve()) if has_project else None)
+        assert marker["repository"] is None
         if has_project:
-            assert (workspace / ".git").is_file()
-            assert _git(workspace, "rev-parse", "--git-common-dir").strip() == str(
-                repository / ".git"
-            )
+            assert (workspace / ".git").is_dir()
+            assert _git(workspace, "rev-parse", "HEAD") == _git(repository, "rev-parse", "HEAD")
         else:
             assert not (workspace / ".git").exists()
         retained = workspace / "retained.txt"
         retained.write_text("keep Ticket work")
         assert registry._localize_start(
             resolved, start.child, "capability", relative,
-            {"PLAN_TICKET_ID": "t_one", "PLAN_TICKET_WORKSPACE_MANAGED": "1"},
+            {"PLAN_TICKET_ID": "t_one", "PLAN_TICKET_WORKSPACE_MANAGED": "1",
+             "PLAN_TICKET_PROJECT_ID": "project_panels" if has_project else ""},
             registry.paths.skills,
         ).workspace_folder == workspace
         assert retained.read_text() == "keep Ticket work"
@@ -1649,6 +1663,11 @@ def test_ticket_inspection_does_not_hold_other_starts_or_workspace_retirement(
             await asyncio.wait_for(registry.cleanup_workspaces(
                 (WorkspaceState("t_00000001", 0, True),), RETENTION_SECONDS + 1,
             ), 2)
+            assert folder.exists()  # Unassigned legacy custody cannot prove this workspace safe.
+            registry.legacy_cleanup_notice = None
+            await asyncio.wait_for(registry.cleanup_workspaces(
+                (WorkspaceState("t_00000001", 0, True),), RETENTION_SECONDS + 1,
+            ), 2)
             assert not folder.exists()
             assert registry.cleanup_uncertainties == (retained,)
             assert inspected == ["t_one", "t_other"]
@@ -1657,7 +1676,7 @@ def test_ticket_inspection_does_not_hold_other_starts_or_workspace_retirement(
             await first
         assert native.starts == 2
         assert registry.cleanup_uncertainties == (retained,)
-        assert registry.legacy_cleanup_notice == "Unassigned legacy PID 123"
+        registry.legacy_cleanup_notice = "Unassigned legacy PID 123"
         await registry.refresh_worker_cleanup()
         assert registry.legacy_cleanup_notice is None
         assert inspected == ["t_one", "t_other", None]
