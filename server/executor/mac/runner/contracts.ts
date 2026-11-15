@@ -43,7 +43,10 @@ export interface MacNativeChildrenOptions {
   readonly files: Pick<FilesService, 'open_directory' | 'close_directory'>;
   /** This owner closes publication before it joins native starts during shutdown. */
   readonly skills: Pick<MacSkillsPublisher, 'install_native_skill_snapshot' | 'stop' | 'settled'>;
-  readonly record_children: () => Promise<void>;
+  readonly worker_cleanup: {
+    refresh(ticket_id: string): Promise<void>;
+    uncertain(ticket_id: string): boolean;
+  };
   readonly on_failure: (error: Error) => void;
 }
 export interface MacNativeChildrenContract {
@@ -54,6 +57,7 @@ export interface MacNativeChildrenContract {
   authenticate(child_id: string | null, capability: string | null): MacRunningChild;
   get(child_id: string): MacRunningChild | null;
   retained_children(): readonly MacRunningChild[];
+  healthy_sources(): readonly ChildReference[];
   is_retiring(child_id: string): boolean;
   /** Fence new native work first. The command owner joins its commands/source work separately. */
   begin_retirement(reference: ChildReference): void;

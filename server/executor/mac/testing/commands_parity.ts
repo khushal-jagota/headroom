@@ -269,6 +269,9 @@ const dependencies = (
   },
   stop_exact: (command, work, invoking) => retirement.stop_exact(command, work, invoking),
   now_ms: () => now,
+  recheck_cleanup: async () => {
+    throw new Error('Explicit cleanup rechecks belong to runner cleanup proof');
+  },
 });
 await open();
 let service = new MacCommandService(
@@ -547,8 +550,53 @@ try {
     result: {},
   };
   const native_calls = calls.length;
-  await service.adopt_unjournaled_outcome(synthetic, known);
-  await service.adopt_unjournaled_outcome(synthetic, known);
+  const stop_child = native_children.stop_child.bind(native_children);
+  const stop_entered_once = gate(),
+    stop_release_once = gate();
+  let stop_attempts = 0,
+    duplicate_finished = false,
+    wire_finished = false;
+  native_children.stop_child = async () => {
+    stop_attempts++;
+    stop_entered_once.resolve();
+    await stop_release_once.promise;
+    native_children.stop_child = stop_child;
+    throw new Error('scripted stop incomplete');
+  };
+  const first_stop_task = retirement.stop_and_publish(synthetic, service);
+  await stop_entered_once.promise;
+  const duplicate_stop = retirement.stop_and_publish(synthetic, service).then((result) => {
+    duplicate_finished = true;
+    return result;
+  });
+  const competing_stop = retirement.stop_and_publish(
+    { ...synthetic, command_id: 'other-stop' },
+    service,
+  );
+  const wire_stop = retirement
+    .stop_exact({ ...synthetic, command_id: 'wire-stop' }, service, () => {})
+    .then((result) => {
+      wire_finished = true;
+      return result;
+    });
+  await yield_turn();
+  const duplicate_waited = !duplicate_finished && !wire_finished && stop_attempts === 1;
+  stop_release_once.resolve();
+  const [first_stop, duplicate_result, competing_result, wire_result] = await Promise.all([
+    first_stop_task,
+    duplicate_stop,
+    competing_stop,
+    wire_stop,
+  ]);
+  guards.unjournaled_stop_serializes_source =
+    duplicate_waited &&
+    stop_attempts === 1 &&
+    duplicate_result === first_stop &&
+    competing_result.disposition === 'refused' &&
+    wire_result.disposition === 'refused';
+  guards.unjournaled_stop_can_learn_new_fate = first_stop.disposition === 'uncertain';
+  await retirement.stop_and_publish(synthetic, service);
+  await retirement.stop_and_publish(synthetic, service);
   outcomes.push([synthetic.command_id, as_object(known, 'CommandOutcome')]);
   const synthetic_result = await journal!.result_of(synthetic.command_id);
   facts.unjournaled_proof_only =
@@ -606,11 +654,24 @@ try {
     () => null,
     (error: unknown) => error,
   );
+  const retained_after_publication_failure =
+    native_children.get(maintenance_child.reference.child_id) === maintenance_child &&
+    native_children.is_retiring(maintenance_child.reference.child_id) &&
+    !child_state.is_retired(maintenance_child.reference.child_id) &&
+    service
+      .records(maintenance_child.reference)
+      .some(
+        (record) => record.command.command_id === 'update_stop_' + update_id && !record.settled,
+      );
   const updated = await maintenance.prepare_update('now', 'planned-update', signal);
   guards.update_retry_keeps_stop_identity =
     rejected_update instanceof Error &&
     rejected_update.message === 'scripted update append after commit' &&
     update_ids === 1;
+  guards.stop_publication_retains_custody =
+    retained_after_publication_failure &&
+    updated &&
+    native_children.get(maintenance_child.reference.child_id) === null;
   await updating_prompt;
   facts.update_stops_before_join =
     updated &&

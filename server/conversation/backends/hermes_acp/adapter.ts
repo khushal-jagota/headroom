@@ -38,6 +38,9 @@ import type { MessageContent } from '../../message_content.ts';
 import type { ConversationMessageFiles } from '../../message_files.ts';
 import { observe_promise } from '../../../core/promise_observer.ts';
 import type { AcpChildLaunch } from './launch.ts';
+import type { WorkerSupervisionRuntime } from '../../../worker_supervision/runtime.ts';
+import type { StopOptions } from '../../../lifecycle/contracts.ts';
+import type { LocalChildIdentity } from '../../local_child_contracts.ts';
 import { HermesAcpLauncher } from './client.ts';
 import type { OwnedChildProcesses } from '../../../lifecycle/contracts.ts';
 import type { HermesAcpClient } from './client.ts';
@@ -70,12 +73,17 @@ export class HermesAcpBackendChild implements BackendChild {
   private stopped = false;
   constructor(options: {
     child_processes: OwnedChildProcesses;
+    worker_supervision: WorkerSupervisionRuntime;
     launch: AcpChildLaunch;
     resolved_start: ResolvedConversationStart;
     event_sink: BackendEventSink;
     message_files: ConversationMessageFiles;
   }) {
-    this.launcher = new HermesAcpLauncher(options.child_processes);
+    this.launcher = new HermesAcpLauncher(
+      options.child_processes,
+      options.worker_supervision,
+      options.event_sink,
+    );
     this.launch = options.launch;
     this.resolved_start = options.resolved_start;
     this.sink = options.event_sink;
@@ -423,10 +431,16 @@ export class HermesAcpBackendChild implements BackendChild {
   async withdraw_delivery(): Promise<boolean> {
     return true;
   }
-  async detach(): Promise<void> {
-    await this.stop();
+  detach(options?: StopOptions): Promise<void> {
+    return this.stop(options);
   }
-  async stop(): Promise<void> {
+  local_child_identity(): Promise<LocalChildIdentity | null> {
+    return this.launcher.local_child_identity();
+  }
+  settled(): Promise<void> {
+    return this.launcher.settled();
+  }
+  async stop(options?: StopOptions): Promise<void> {
     this.stopped = true;
     const turn = this.events.turn;
     this.events.turn = null;
@@ -435,7 +449,7 @@ export class HermesAcpBackendChild implements BackendChild {
       void turn.prompt.catch(() => {});
     }
     this.client?.close();
-    await this.launcher.stop();
+    await this.launcher.stop(options);
   }
   private log(error: unknown): void {
     console.warn(
@@ -445,7 +459,10 @@ export class HermesAcpBackendChild implements BackendChild {
 }
 export function create_hermes_backend_child_factory(
   launch: AcpChildLaunch,
-  dependencies: { child_processes: OwnedChildProcesses },
+  dependencies: {
+    child_processes: OwnedChildProcesses;
+    worker_supervision: WorkerSupervisionRuntime;
+  },
 ): BackendChildFactory {
   return (options) => new HermesAcpBackendChild({ launch, ...options, ...dependencies });
 }

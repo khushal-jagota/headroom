@@ -54,6 +54,9 @@ import type {
 } from './start.ts';
 import type { VpsExecutorRegistry } from '../executor/registry.ts';
 import { ServiceResources } from './service_resources.ts';
+import { create_worker_supervision_runtime } from '../worker_supervision/composition.ts';
+import { LocalChildCustody } from '../conversation/child_custody.ts';
+import type { WorkerSupervisionRuntime } from '../worker_supervision/runtime.ts';
 
 interface ServerLifetime {
   media_lifetime: AbortController;
@@ -66,6 +69,7 @@ interface ServerLifetime {
 
 /** Service constructors reserve custody before any factory or asynchronous continuation. */
 export class ServerServices {
+  readonly worker_supervision: WorkerSupervisionRuntime;
   readonly resources = new ServiceResources();
   readonly environments = this.resources.service<EnvironmentRuntime>(
     'environment services',
@@ -131,6 +135,9 @@ export class ServerServices {
     this.options = options;
     this.lifetime = lifetime;
     this.update_barrier = new UpdateBarrier(join(dirname(config.db_path), 'update-barrier.json'));
+    this.worker_supervision = create_worker_supervision_runtime({
+      one_shot_children: lifetime.one_shot_children,
+    });
   }
 
   requireOwnership = (): void => {
@@ -149,7 +156,7 @@ export class ServerServices {
     if (this.lifetime.isClosing()) throw new Error('Server closed during startup');
   }
 
-  create_record() {
+  async create_record() {
     this.assert_startup_open();
     const { config, options, areas } = this;
     const { media_lifetime, one_shot_children, child_processes } = this.lifetime;
@@ -194,8 +201,21 @@ export class ServerServices {
       child_processes,
       executor,
       update_barrier: this.update_barrier,
+      worker_supervision: this.worker_supervision,
     };
     const open_runs = options.readOpenRuns?.(before_record) ?? new Map();
+    await areas.prepareRecord(
+      database,
+      config,
+      clock,
+      new LocalChildCustody({
+        runtime: this.worker_supervision,
+        child_processes,
+        one_shot_children,
+      }),
+      open_runs,
+    );
+    this.assert_startup_open();
     areas.initialize(
       database,
       config,
@@ -477,7 +497,7 @@ export class ServerServices {
   }
 
   async setup(): Promise<string> {
-    const { context, integrity_issues } = this.create_record();
+    const { context, integrity_issues } = await this.create_record();
     const conversation = this.create_conversation(context);
     const environments = await this.create_environments(conversation.testContext);
     this.assert_startup_open();

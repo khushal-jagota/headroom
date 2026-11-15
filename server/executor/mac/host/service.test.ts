@@ -20,6 +20,7 @@ import { read_canonical_body } from '../mailbox/poll.ts';
 import { PROTOCOL_VERSION } from '../../../execution_configuration.ts';
 import { credential_path } from '../../credential_file.ts';
 import type { MacUpdateController } from '../updates/controller.ts';
+import { ShutdownDeadlineExceeded } from '../../../lifecycle/contracts.ts';
 
 test('quiesce cancels a catalog probe before native dispatch and joins HTTP before root reuse', async () => {
   const root = await mkdtemp(join(tmpdir(), 'mac-host-'));
@@ -109,15 +110,17 @@ test('quiesce cancels a catalog probe before native dispatch and joins HTTP befo
       return { recorded: ['catalog'], rejected: [] };
     }
     async stop(options: { deadline: number }) {
-      await super.stop(options);
-      await super.settled();
-      http_closed = true;
+      try {
+        await super.stop(options);
+      } finally {
+        await super.settled();
+        http_closed = true;
+      }
     }
   }
   const bindings: MacHostBindings = {
     client: (url, executor, who, options) =>
       new ScriptedClient(url, executor, parse_identity(who), options),
-    processes: () => null,
     adapters(owners) {
       invocation = owners;
       return create_mac_adapter_host({
@@ -215,7 +218,9 @@ test('quiesce cancels a catalog probe before native dispatch and joins HTTP befo
     expect(catalog_outcome).toBeNull();
     expect(catalog_cancelled).toBe(true);
     expect(probes).toBe(1);
-    await service.stop(options());
+    await expect(service.stop({ deadline: performance.now() / 1000 })).rejects.toBeInstanceOf(
+      ShutdownDeadlineExceeded,
+    );
     await service.settled();
     expect(native_probe).not.toHaveBeenCalled();
     expect(http_closed).toBe(true);

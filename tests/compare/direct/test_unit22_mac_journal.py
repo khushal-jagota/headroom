@@ -23,12 +23,14 @@ from planner.executor.mac_mailbox import CommandJournal
 from planner.executor.mac_outbox import MacOutbox
 from planner.executor.mac_runner import command_owes_outputs, owed_outputs
 from planner.executor.protocol import (
+    ChildOperation,
     CommandDisposition,
     CommandOutcome,
     CommandResult,
     MailboxCommand,
     MailboxPollReply,
     ModelListRequest,
+    StartRun,
     type_adapter,
 )
 
@@ -164,6 +166,21 @@ def _reference(
                         journal.mark_reported(step["ids"])
                     elif op == "shrink":
                         journal.shrink_to_tombstones()
+                    elif op == "cleanup":
+                        observations.append(
+                            [
+                                dict(
+                                    id=identity,
+                                    command=_document(command),
+                                    result=None if result is None else _document(result),
+                                )
+                                for identity, command, result in journal._db.execute(
+                                    "SELECT command_id,mailbox_command_json,result_json "
+                                    "FROM commands "
+                                    "WHERE length(mailbox_command_json)>0"
+                                )
+                            ]
+                        )
                     elif op == "inspect":
                         observations.append(_inspect(journal, box, step["ids"]))
                     elif op == "publish":
@@ -358,18 +375,13 @@ def _command(command_id: str, sequence: int, operation: str = "stop") -> Mailbox
     )
 
 
-@pytest.mark.xfail(
-    run=False,
-    reason=(
-        "expected-open P2: #916 staging supervision changes stop-command journal "
-        "retention and publication-crash rows"
-    ),
-)
 def test_unit22_mac_journal_roundtrip_and_publication_crash(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     request: pytest.FixtureRequest,
 ) -> None:
+    from tests.compare.direct.mac_executor_fixture import start_inputs
+
     started = time.perf_counter()
     tmp_path = tmp_path.resolve(strict=True)
     homes = create_synthetic_homes(tmp_path)
@@ -380,7 +392,23 @@ def test_unit22_mac_journal_roundtrip_and_publication_crash(
     own, stale = _command("own", 1, "write_prompt"), _command("stale", 2, "write_prompt")
     model = MailboxCommand(3, "models", HIGH, model_list_request=ModelListRequest("fixture", False))
     stop = _command("stop", HIGH)
-    ids = ["own", "stale", "models", "stop", "missing"]
+    assert stop.child_command is not None
+    arguments = type_adapter(StartRun).validate_python(start_inputs(tmp_path)[0])
+    arguments = replace(
+        arguments, resolved_start=replace(arguments.resolved_start, conversation_id="conversation")
+    )
+    historical = replace(
+        stop,
+        command_id="legacy",
+        command_sequence=4,
+        child_command=replace(
+            stop.child_command,
+            command_id="legacy",
+            operation=ChildOperation.start,
+            arguments=arguments,
+        ),
+    )
+    ids = ["own", "stale", "models", "stop", "legacy", "missing"]
     snapshots = []
 
     def poll(*commands: MailboxCommand, **extra: Any) -> dict[str, Any]:
@@ -430,16 +458,40 @@ def test_unit22_mac_journal_roundtrip_and_publication_crash(
             CommandOutcome("stop", stop.child_command.child, CommandDisposition.succeeded, {}),
         )
         # Both roots start absent. TS creates and populates its own two databases.
-        paired(
+        initial = paired(
             [
                 poll(own),
                 poll(stale, incarnation="old-incarnation"),
-                poll(model, stop),
+                dict(op="cleanup"),
+                poll(model, historical, stop),
+                finish(
+                    historical,
+                    CommandResult(
+                        "legacy",
+                        CommandOutcome(
+                            "legacy", stop.child_command.child, CommandDisposition.refused, {}
+                        ),
+                    ),
+                ),
                 finish(model, large),
                 finish(stop, stopped),
                 dict(op="inspect", ids=ids),
             ]
         )
+        assert all(row["result"] is None for row in initial[2])
+        # A copied pre-upgrade start must retain raw field absence before defaults.
+        for root in (py, ts):
+            with sqlite3.connect(root / "commands.sqlite3") as conn:
+                raw = json.loads(
+                    conn.execute(
+                        "SELECT mailbox_command_json FROM commands WHERE command_id='legacy'"
+                    ).fetchone()[0]
+                )
+                del raw["child_command"]["arguments"]["supervision_protocol"]
+                conn.execute(
+                    "UPDATE commands SET mailbox_command_json=? WHERE command_id='legacy'",
+                    (json.dumps(raw, indent=1).encode(),),
+                )
         seed = tmp_path / "python-populated" / "spool"
         shutil.copytree(py, seed)
         mixed = _snapshot(py)
@@ -487,14 +539,21 @@ def test_unit22_mac_journal_roundtrip_and_publication_crash(
             ]
         )
         assert restarted[0]["results"][0][1] is not None
-        paired(
+        retained = paired(
             [dict(op="published", id=i) for i in ids[:-1]]
             + [
                 dict(op="reported", ids=ids[:-1]),
                 dict(op="shrink"),
+                dict(op="cleanup"),
                 poll(replace(own, command_sequence=6), replace(model, command_sequence=7)),
                 dict(op="inspect", ids=ids),
             ]
+        )
+        raw_sources = {row["id"]: row for row in retained[0]}
+        assert set(raw_sources) == {"legacy", "stop"}
+        assert (
+            "supervision_protocol"
+            not in raw_sources["legacy"]["command"]["child_command"]["arguments"]
         )
         # An orderly exit after durable finish separately checks the publication boundary.
         crash = _command("crash-stop", 8)
@@ -553,6 +612,7 @@ def test_unit22_mac_journal_roundtrip_and_publication_crash(
                         "Native reader bytes and SHA256 match native stored BLOBs."
                     ),
                     recovered=recovered,
+                    cleanup_evidence=raw_sources,
                     finish_before_publication_exit_code=73,
                     midtransaction_signal="SIGKILL",
                     midtransaction_recovered=killed_summary,

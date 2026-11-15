@@ -15,6 +15,7 @@ export function createConversationRuntime() {
   let runtime: ConversationViewRuntime | undefined;
   let rebuilder: ConversationViewRebuilder | undefined;
   let sealed = false;
+  let prepared: { database: Database; store: ConversationStore } | undefined;
   const getRuntime = (): ConversationViewRuntime => {
     if (runtime === undefined) {
       throw new Error('Conversation record runtime is not initialized');
@@ -24,6 +25,18 @@ export function createConversationRuntime() {
   return {
     getRuntime,
     routes: createConversationViewRoutes(getRuntime),
+    async prepare(
+      database: Database,
+      options: ConversationStoreOptions,
+      open_runs: ReadonlyMap<string, OpenRunTurn>,
+    ): Promise<void> {
+      if (runtime !== undefined || prepared !== undefined)
+        throw new Error('Conversation record runtime is already prepared');
+      const store = new ConversationStore(database, options);
+      prepared = { database, store };
+      await store.prepare_reconciliation(open_runs);
+      if (sealed) throw new Error('Conversation record runtime is shut down');
+    },
     initialize(
       database: Database,
       config: Config,
@@ -34,7 +47,9 @@ export function createConversationRuntime() {
         throw new Error('Conversation record runtime is already initialized');
       }
       // startServer owns the canonical conversation lock before any area initializes.
-      const store = new ConversationStore(database, options);
+      if (prepared !== undefined && prepared.database !== database)
+        throw new Error('Prepared conversation record uses another database');
+      const store = prepared?.store ?? new ConversationStore(database, options);
       database.write((tx) => store.reconcile_in_transaction(tx, open_runs), {
         changeSignal: 'silent',
       });
@@ -74,9 +89,10 @@ export function createConversationRuntime() {
       rebuilder?.close();
       runtime?.live_tail.close_all_subscriptions();
       await rebuilder?.finish();
-      await runtime?.store.finish_writes();
+      await (runtime?.store ?? prepared?.store)?.finish_writes();
       runtime?.live_tail.close();
       runtime = undefined;
+      prepared = undefined;
       rebuilder = undefined;
     },
   };

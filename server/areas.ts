@@ -69,7 +69,8 @@ import { providers as resourceProviders } from './resource_versions/registry.ts'
 import type { ResourceProvider } from './resource_versions/contracts.ts';
 import { createSignalNavigationRuntime } from './navigation/index.ts';
 import { createConversationRuntime } from './conversation/record/runtime.ts';
-import type { OpenRunTurn } from './conversation/record/contracts.ts';
+import type { OpenRunTurn, ConversationStoreOptions } from './conversation/record/contracts.ts';
+import type { LocalChildCustodyInspection } from './conversation/local_child_custody_contracts.ts';
 import { deployment_participants } from './conversation/deploy_interruptions/participants.ts';
 import type { SignalPublicationCoordinator } from './conversation/publication/coordinator.ts';
 
@@ -77,6 +78,51 @@ import type { SignalPublicationCoordinator } from './conversation/publication/co
 export function createAreasRuntime(
   additionalResourceProviders: () => readonly ResourceProvider[] = () => [],
 ) {
+  function recordOptions(
+    config: Config,
+    clock: Clock,
+    local_child_custody?: LocalChildCustodyInspection,
+  ): ConversationStoreOptions {
+    return {
+      ...deployment_participants(config.db_path),
+      ...(local_child_custody === undefined ? {} : { local_child_custody }),
+      event_participant: observe_credential_requests,
+      startup_participant: reconcile_credential_requests,
+      integer_now: () => clock.nowUnix(),
+      all_are_notices: all_sender_messages_are_manager_notices,
+      mark_notices_leaving_queue,
+      automated_maintenance_suppression_reason,
+      is_memory_notice: is_memory_notice_sender_message_id,
+      failure_notice: create_ticket_failure_notice,
+      admit_notice(tx, conversation_id, sender_message_id, now) {
+        const [is_manager_notice, suppression_reason] = admit_notice_batch(tx, {
+          conversation_id,
+          sender_message_id,
+          now,
+        });
+        return new PromptDispatchDecision({
+          sender_message_id,
+          is_manager_notice,
+          suppression_reason,
+        });
+      },
+      prepare_attention(tx, conversation_id) {
+        const snapshot = conversation_attention_snapshot(tx, conversation_id);
+        if (snapshot === null) return null;
+        return (source, change) => {
+          const attention = advance_conversation_attention(
+            snapshot,
+            change.written.map((event) => event.payload),
+            {
+              owner_read_through_sequence: change.owner_read_through_sequence,
+              occurred_at: change.occurred_at,
+            },
+          );
+          capture_conversation_attention(source, conversation_id, change.occurred_at, attention);
+        };
+      },
+    };
+  }
   const conversation = createConversationRuntime();
   const previews = createPreviewRoutes();
   let publication: SignalPublicationCoordinator | undefined;
@@ -121,6 +167,15 @@ export function createAreasRuntime(
     prepare(database: Database) {
       return database.write((tx) => audit_ticket_registry_integrity(tx, { startup: true }));
     },
+    prepareRecord(
+      database: Database,
+      config: Config,
+      clock: Clock,
+      inspection: LocalChildCustodyInspection,
+      open_runs: ReadonlyMap<string, OpenRunTurn>,
+    ): Promise<void> {
+      return conversation.prepare(database, recordOptions(config, clock, inspection), open_runs);
+    },
     initialize(
       database: Database,
       config: Config,
@@ -138,54 +193,7 @@ export function createAreasRuntime(
       configure_goal_manager_documents();
       beforeRuntime();
       // The record owns the sole store, tail, reconciliation, and epoch rotation.
-      conversation.initialize(
-        database,
-        config,
-        {
-          ...deployment_participants(config.db_path),
-          event_participant: observe_credential_requests,
-          startup_participant: reconcile_credential_requests,
-          integer_now: () => clock.nowUnix(),
-          all_are_notices: all_sender_messages_are_manager_notices,
-          mark_notices_leaving_queue,
-          automated_maintenance_suppression_reason,
-          is_memory_notice: is_memory_notice_sender_message_id,
-          failure_notice: create_ticket_failure_notice,
-          admit_notice(tx, conversation_id, sender_message_id, now) {
-            const [is_manager_notice, suppression_reason] = admit_notice_batch(tx, {
-              conversation_id,
-              sender_message_id,
-              now,
-            });
-            return new PromptDispatchDecision({
-              sender_message_id,
-              is_manager_notice,
-              suppression_reason,
-            });
-          },
-          prepare_attention(tx, conversation_id) {
-            const snapshot = conversation_attention_snapshot(tx, conversation_id);
-            if (snapshot === null) return null;
-            return (source, change) => {
-              const attention = advance_conversation_attention(
-                snapshot,
-                change.written.map((event) => event.payload),
-                {
-                  owner_read_through_sequence: change.owner_read_through_sequence,
-                  occurred_at: change.occurred_at,
-                },
-              );
-              capture_conversation_attention(
-                source,
-                conversation_id,
-                change.occurred_at,
-                attention,
-              );
-            };
-          },
-        },
-        open_runs,
-      );
+      conversation.initialize(database, config, recordOptions(config, clock), open_runs);
       recordReady = true;
     },
     bindPublication(source: SignalPublicationCoordinator): void {

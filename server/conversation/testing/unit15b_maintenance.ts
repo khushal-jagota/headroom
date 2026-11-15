@@ -41,13 +41,15 @@ export async function run(spec: Spec): Promise<unknown> {
     PLAN_WORKSPACE_ROOT: root,
     PLAN_TEST_MODE: '1',
   });
-  areas.initialize(database, config, {
+  const registry = new ScriptedBackendRegistry();
+  const clock = {
     now: () => new Date(now * 1000),
     nowUnix: () => now,
     isoformat: () => new Date(now * 1000).toISOString(),
-  });
+  };
+  await areas.prepareRecord(database, config, clock, registry.custody.inspection, new Map());
+  areas.initialize(database, config, clock);
   const { store } = areas.getRuntime();
-  const registry = new ScriptedBackendRegistry();
   const core = new SqliteProcessConversationSystem({
     store,
     delivery_model_refusal: (backend, model, ticket_id) =>

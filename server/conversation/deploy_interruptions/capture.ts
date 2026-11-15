@@ -6,7 +6,7 @@ import type { CapturedTurn } from './contracts.ts';
 
 export function read_unresolved_turns(
   sql: ReadSql,
-  options: { conversation_ids?: readonly string[] } = {},
+  options: { conversation_ids?: readonly string[]; include_custody_unavailable?: boolean } = {},
 ): readonly CapturedTurn[] {
   const { conversation_ids } = options;
   const tables = new Set(
@@ -33,12 +33,33 @@ export function read_unresolved_turns(
     conversation_ids === undefined
       ? ''
       : `AND conversation_id IN (${conversation_ids.map(() => '?').join(',')}) `;
+  let eligible = "status IN ('intent','running')";
+  if (options.include_custody_unavailable) {
+    eligible +=
+      " OR (status='unavailable' AND EXISTS(SELECT 1 FROM conversation_child_custody c " +
+      'JOIN conversation_turn_occurrences o ON o.conversation_id=c.conversation_id ' +
+      'AND o.occurrence_id=c.occurrence_id AND o.runtime_epoch=c.runtime_epoch ' +
+      'WHERE c.conversation_id=conversation_lifecycle_facts.conversation_id ' +
+      'AND o.turn_number=conversation_lifecycle_facts.turn_number) ' +
+      'AND EXISTS(SELECT 1 FROM conversation_lifecycle_facts prompt ' +
+      'WHERE prompt.conversation_id=conversation_lifecycle_facts.conversation_id ' +
+      'AND prompt.turn_number=conversation_lifecycle_facts.turn_number ' +
+      "AND prompt.kind='attempt' AND prompt.operation='prompt' " +
+      "AND prompt.status IN ('started','unknown')) " +
+      'AND NOT EXISTS(SELECT 1 FROM conversation_lifecycle_facts cancelled ' +
+      'WHERE cancelled.conversation_id=conversation_lifecycle_facts.conversation_id ' +
+      'AND cancelled.turn_number=conversation_lifecycle_facts.turn_number ' +
+      "AND cancelled.kind='attempt' AND cancelled.operation='cancel' " +
+      "AND cancelled.status='accepted'))";
+  }
   const facts = sql.all<{
     conversation_id: unknown;
     turn_number: number;
-    status: 'intent' | 'running';
+    status: CapturedTurn['original_status'];
   }>(
-    "SELECT conversation_id,turn_number,status FROM conversation_lifecycle_facts WHERE kind='turn' AND status IN ('intent','running') " +
+    "SELECT conversation_id,turn_number,status FROM conversation_lifecycle_facts WHERE kind='turn' AND (" +
+      eligible +
+      ') ' +
       only +
       'ORDER BY conversation_id,turn_number',
     conversation_ids ?? [],

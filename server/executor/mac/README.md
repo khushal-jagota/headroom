@@ -8,10 +8,11 @@ Each producer receives the original absolute stop deadline. Actual joins precede
 `host/entry.ts` supplies the production update, provider, catalog, and Darwin process bindings plus signal ownership.
 The packaged `entrypoint.ts` reuses the ordinary CLI. `run.ts` binds parent mode to the fixed runtime supervisor and child mode to the host.
 
-`AgentProcesses` records descendant identities in `run/agent-processes.json` and retains reparented tools.
-The Darwin host supplies its existing files and one-shot child owners. Native `ps`, priority and individual-PID signals stay in `platform.ts`.
-Startup checks start times before orphan signals and preserves discovered identities across cancellation.
-Linux checks use scripted snapshots only. Real Darwin process identity, priority and signal behavior remain a later Mac check.
+Worker supervision records exact process custody in `run/worker-processes`.
+Startup runs the one-time legacy cleanup pass before modern reconciliation and a cleanup snapshot.
+Starts serialize per Ticket before inspection, and unresolved cleanup fences only the affected Ticket.
+Explicit cleanup commands check the exact historical source. Leases copy the cached evidence.
+The slow lease maintenance task refreshes that evidence without delaying a lease request.
 
 ## Unix CLI client
 

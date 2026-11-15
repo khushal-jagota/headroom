@@ -39,6 +39,7 @@ export type {
 import { assert_test_database_path } from './test_paths.ts';
 import { ServerServices } from './server_services.ts';
 import type { UpdateBarrier } from '../environments/update_barrier.ts';
+import type { WorkerSupervisionRuntime } from '../worker_supervision/runtime.ts';
 
 export interface ExecutorCompositionContext {
   readonly database: Database;
@@ -62,6 +63,7 @@ export interface ConversationCompositionContext extends Omit<
   child_processes: OwnedChildProcesses;
   executor?: VpsExecutorRegistry | null;
   update_barrier?: UpdateBarrier;
+  worker_supervision: WorkerSupervisionRuntime;
 }
 export interface TestCompositionContext extends ConversationCompositionContext {
   /** Existing original stop only. Test close hooks must never create another budget. */
@@ -241,6 +243,12 @@ export async function startServer(options: ServerOptions = {}): Promise<StartedS
       // Producer cleanup can publish additional native control children. Take this
       // snapshot only AFTER every producer begins, then make a FRESH native join.
       const producer_actual = shutdown.shutdown_settled;
+      stages.own('Worker supervision', async () => {
+        await producer_actual.catch(() => {});
+        // The coordinator observes the shared deadline. This stage owns actual cleanup.
+        void services.worker_supervision.close(stop).catch(() => {});
+        await services.worker_supervision.shutdown_settled;
+      });
       stages.own('native processes and worker units', async () => {
         await producer_actual.catch(() => {}); // Individual stages retain their failures.
         await child_processes.settled();

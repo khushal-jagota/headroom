@@ -1,5 +1,8 @@
 /** The only adapter-selection point, with explicit environment composition still required. */
 import type { ConversationCompositionContext } from '../core/start.ts';
+import { dirname, join } from 'node:path';
+import { expand_path } from '../environments/paths.ts';
+import { resolve_path_sync } from '../core/path_resolution.ts';
 import type {
   BackendChildFactory,
   RetainedBackendChildFactory,
@@ -184,7 +187,10 @@ export function create_production_backend_bindings(): ProductionBackendBindings 
       throw new Error('Production backend bindings belong to another server invocation');
     if (launches === undefined) {
       owner = context.database;
-      launches = production_backend_launches(`http://${HOST}:${context.config.port}`);
+      launches = production_backend_launches(
+        `http://${HOST}:${context.config.port}`,
+        join(dirname(resolve_path_sync(expand_path(context.config.db_path))), 'worker-processes'),
+      );
     }
     return launches;
   };
@@ -193,15 +199,18 @@ export function create_production_backend_bindings(): ProductionBackendBindings 
       create_claude_backend_child_factory(current(context).claude, {
         child_processes: context.child_processes,
         one_shot_children: context.one_shot_children,
+        worker_supervision: context.worker_supervision,
       }),
     codex: (context) =>
       create_codex_backend_child_factory(current(context).codex, {
         child_processes: context.child_processes,
+        worker_supervision: context.worker_supervision,
         remembered_login_rejection: context.codex_login_rejection,
       }),
     hermes: (context) =>
       create_hermes_backend_child_factory(current(context).hermes, {
         child_processes: context.child_processes,
+        worker_supervision: context.worker_supervision,
       }),
     http: (context) => {
       const selected = current(context);

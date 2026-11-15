@@ -5,6 +5,12 @@ import { automated_maintenance_suppression_reason } from '../tickets/data/index.
 import type { ReadSql } from '../core/database/contracts.ts';
 export const WORKER_STEP_MESSAGE_PREFIX = 'worker_step_message_';
 export const ANSWERING_SENDER_MESSAGE_PREFIX = 'worker_step_';
+export function worker_step_message_id_for_claim(
+  ticket_id: string,
+  claim_revision: number,
+): string {
+  return `${WORKER_STEP_MESSAGE_PREFIX}${ticket_id}:${claim_revision}`;
+}
 export function new_worker_step_message_id(): string {
   return WORKER_STEP_MESSAGE_PREFIX + randomUUID().replaceAll('-', '');
 }

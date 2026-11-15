@@ -8,7 +8,15 @@ export interface JournalWorkerData {
   health_fence: SharedArrayBuffer;
 }
 export type JournalAction =
-  | { operation: 'open' | 'poll_cursor' | 'unpublished' | 'shrink_to_tombstones' | 'select_report' }
+  | {
+      operation:
+        | 'open'
+        | 'poll_cursor'
+        | 'cleanup_evidence'
+        | 'unpublished'
+        | 'shrink_to_tombstones'
+        | 'select_report';
+    }
   | { operation: 'report_feedback'; selection: number; settled_ids: JournalReportFeedback }
   | { operation: 'lower_poll_cursor'; high: number; cursor_at_lease: number }
   | {

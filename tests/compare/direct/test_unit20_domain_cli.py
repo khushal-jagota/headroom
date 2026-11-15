@@ -1075,6 +1075,89 @@ def test_unit20_real_preview_cli(tmp_path: Path, request: pytest.FixtureRequest)
         driver.write_report(request, "unit20-real-preview-cli", evidence)
 
 
+def test_unit20_worker_cleanup_cli(tmp_path: Path, request: pytest.FixtureRequest) -> None:
+    """Reuse the domain host to prove CLI output and rank enforcement across HTTP."""
+    from planner.machines.contracts import ORIGINAL_MAC_MACHINE_ID
+
+    started = time.perf_counter()
+    captured: list[str] = []
+
+    def seed(target: Path) -> None:
+        with closing(connect(str(target))) as conn:
+            ticket = tickets_data.create_ticket(
+                conn,
+                title="Cleanup recheck",
+                principal=OWNER_PRINCIPAL,
+                now=NOW,
+                title_max_chars=200,
+                brief=None,
+                worker_type="coding",
+                machine_id=ORIGINAL_MAC_MACHINE_ID,
+                worker_runtime_definitions=load_worker_runtime_definitions(conn),
+            )
+            tickets_data.set_ticket_backlog(
+                conn,
+                ticket.id,
+                is_backlogged=True,
+                principal=OWNER_PRINCIPAL,
+                now=NOW,
+            )
+            captured.append(ticket.id)
+
+    handle = _start_server(
+        tmp_path / "cleanup", server_module="tests.compare.ts_launcher", seed_db=seed
+    )
+    try:
+        host = CliHost(handle, tmp_path)
+        step = dict(
+            kind="cli",
+            argv=["ticket", "recheck-worker-cleanup", captured[0]],
+            identity=dict(actor="owner"),
+            exit_code=0,
+            assert_http_status=200,
+            proof="Recheck preserves JSON/text cleanup output without starting a Worker.",
+        )
+        outputs = []
+        for mode in ("json", "text"):
+            answers = [
+                run_cli(host, step, candidate, tmp_path / f"{mode}-{candidate}", mode)
+                for candidate in (False, True)
+            ]
+            assert comparable(answers[0]) == comparable(answers[1])
+            if mode == "json":
+                result = json.loads(answers[0]["stdout"])
+                assert (
+                    set(result) == {"complete", "reason", "scope"} and result["complete"] is False
+                )
+            else:
+                assert answers[0]["stdout"] == answers[1]["stdout"]
+                assert answers[0]["stdout"].startswith("Worker cleanup not proven: ")
+            outputs.append(answers)
+        step.update(
+            identity=dict(actor="worker", ticket_id=captured[0]),
+            exit_code=1,
+            assert_http_status=400,
+        )
+        denied = [
+            run_cli(host, step, candidate, tmp_path / f"denied-{candidate}")
+            for candidate in (False, True)
+        ]
+        assert comparable(denied[0]) == comparable(denied[1])
+        assert json.loads(denied[0]["stderr"])["error"]["code"] == "agent_forbidden"
+        driver.write_report(
+            request,
+            "unit20-worker-cleanup-cli",
+            dict(
+                outputs=outputs,
+                denied=denied,
+                seconds=time.perf_counter() - started,
+                boundary="Existing domain host: fresh Python CLI versus TS CLI through the TS API.",
+            ),
+        )
+    finally:
+        _stop_server(handle)
+
+
 @pytest.mark.parametrize(
     "backend",
     ["tests.compare.host", "tests.compare.ts_launcher"],

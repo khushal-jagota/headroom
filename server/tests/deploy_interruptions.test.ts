@@ -243,11 +243,22 @@ test('restart reports only the task IDs captured before this process starts work
   const core = new (await import('../conversation/system.ts')).SqliteProcessConversationSystem(
     f.core.options,
   );
+  let admit = false;
+  const attempted: string[] = [];
+  const try_start = core.start_admission.try_start.bind(core.start_admission);
+  vi.spyOn(core.start_admission, 'try_start').mockImplementation((request) => {
+    attempted.push(request.identity);
+    return admit && try_start(request);
+  });
+  vi.spyOn(core.start_admission, 'poll_delay').mockReturnValue(0.005);
   try {
     f.database.write((tx) =>
       tx.run("INSERT INTO conversation_background_tasks VALUES ('core','new','New task')"),
     );
     await core.tell_agents_of_background_tasks_lost_at_restart();
+    await vi.waitFor(() => expect(attempted.length).toBeGreaterThan(0));
+    expect(f.store.read_events_after('core', 0)).toHaveLength(0);
+    admit = true;
     await Promise.all([...core.conversations.get('core')!.settlement_tasks]);
     expect(
       f.database.read((sql) =>
@@ -257,6 +268,11 @@ test('restart reports only the task IDs captured before this process starts work
     const first = f.store.read_events_after('core', 0).filter((event) => event.kind === 'prompt');
     expect(JSON.stringify(first)).toContain('Old task');
     expect(JSON.stringify(first)).not.toContain('New task');
+    expect(new Set(attempted).size).toBe(1);
+    expect(attempted[0]).toMatch(/^lost-background:core:[0-9a-f]{32}$/);
+    expect((first[0]!.payload as { sender_message_id: string }).sender_message_id).toBe(
+      attempted[0],
+    );
     await core.tell_agents_of_background_tasks_lost_at_restart();
     expect(
       f.store.read_events_after('core', 0).filter((event) => event.kind === 'prompt'),
@@ -264,6 +280,35 @@ test('restart reports only the task IDs captured before this process starts work
   } finally {
     await core.shutdown({ deadline: performance.now() / 1000 + SHUTDOWN_GRACE_SECONDS });
   }
+});
+
+// A deferred notice owns one scanner, not a sleeping producer that survives shutdown.
+test('shutdown drops a deferred lost-task notice before database ownership ends', async () => {
+  const f = setup();
+  await f.start();
+  await f.core.shutdown({ deadline: performance.now() / 1000 + SHUTDOWN_GRACE_SECONDS });
+  f.database.write((tx) =>
+    tx.run("INSERT INTO conversation_background_tasks VALUES ('core','old','Old task')"),
+  );
+  const core = new (await import('../conversation/system.ts')).SqliteProcessConversationSystem(
+    f.core.options,
+  );
+  const attempted: string[] = [];
+  vi.spyOn(core.start_admission, 'try_start').mockImplementation((request) => {
+    attempted.push(request.identity);
+    return false;
+  });
+  const finish = vi.spyOn(core.start_admission, 'finish_unbound');
+  try {
+    await core.tell_agents_of_background_tasks_lost_at_restart();
+    await vi.waitFor(() => expect(attempted.length).toBeGreaterThan(0));
+  } finally {
+    await core.shutdown({ deadline: performance.now() / 1000 + SHUTDOWN_GRACE_SECONDS });
+    await core.settled();
+  }
+  expect(finish).toHaveBeenCalledWith(attempted[0]);
+  expect(core.conversations.get('core')!.settlement_tasks.size).toBe(0);
+  expect(f.store.read_events_after('core', 0)).toHaveLength(0);
 });
 
 // Startup recovery must release admission when Update closes starts during a pass.
