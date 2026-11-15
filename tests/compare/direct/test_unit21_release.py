@@ -1188,6 +1188,7 @@ def test_unit21_release_identity_archive_and_frontier(
         assert actual["admission"] == {**expected_admission, "hosts": native_hosts}
     else:
         assert actual["admission"]["reports"] == expected_admission["reports"]
+    assert actual["admission"]["darwin_hosts"] == expected_admission["darwin_hosts"]
     built = actual["builder"]
     assert built["manifest"]["app_sha"] == python_build.app_sha == build_sha
     assert built["manifest"]["source_digest"] == python_build.source_digest
