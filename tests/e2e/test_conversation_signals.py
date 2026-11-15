@@ -373,15 +373,40 @@ def test_combined_review_approval_reply_and_bounded_read_reach_canonical_writers
     page.set_viewport_size({"width": 1440, "height": 1000})
     ticket_card.locator("[data-accept]").click()
     ticket_card.locator('[data-ceiling-picker-choice="needs_implementation"]').click()
+    decision_url = f"{server.base}/api/tickets/{identity}/decision-operations/"
     with page.expect_response(
-        lambda response: response.url.endswith(f"/tickets/{identity}/accept/what_changes")
+        lambda response: response.request.method == "POST" and response.url.startswith(decision_url)
     ) as approved:
         ticket_card.locator('[data-ceiling-picker-choice="owner"]').click()
     assert approved.value.ok, approved.value.text()
     approval_body = approved.value.request.post_data_json
     assert isinstance(approval_body, dict)
+    assert approval_body["decision"] == "approve"
+    assert approval_body["field"] == "what_changes"
     assert approval_body["expected_proposal_revision"] == proposal["revision"]
+    approval_result = approved.value.json()
+    assert approval_result["receipt_contract"] == 1
+    receipt = approval_result["receipt"]
+    assert receipt["operation_id"] == approved.value.url.removeprefix(decision_url)
+    assert receipt["operation_id"]
+    assert receipt["ticket_id"] == identity
+    assert receipt["decision"] == "approve"
+    assert receipt["field"] == "what_changes"
+    assert receipt["expected_proposal_revision"] == proposal["revision"]
+    assert receipt["outcome"] == "applied"
+    assert receipt["error"] is None
+    assert (
+        receipt["transition"]["pending_proposal_revision"]
+        == receipt["expected_proposal_revision"]
+    )
     canonical = api.get(server, f"/api/tickets?id={identity}&detail=full")
+    for field in (
+        "stage",
+        "ceiling",
+        "ceiling_holder",
+        "ticket_status",
+    ):
+        assert receipt["transition"][field] == canonical[field]
     assert canonical["field_values"]["what_changes"] == proposal["body"]
     assert canonical["pending_proposal"] is None
     expect(ticket_card.locator("[data-approval-block]")).to_have_count(0)

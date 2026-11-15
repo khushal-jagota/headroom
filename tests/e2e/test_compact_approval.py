@@ -96,25 +96,39 @@ def test_shared_compact_card_real_transaction_and_stale_revision(
     replacement = "A newer Worker proposal must survive the stale browser request."
 
     def replace_before_accept(route: Route) -> None:
-        payload = route.request.post_data_json
-        assert isinstance(payload, dict)
-        stale_payloads.append(payload)
-        _propose(server, ticket_id, replacement)
+        if route.request.method == "POST":
+            payload = route.request.post_data_json
+            assert isinstance(payload, dict)
+            stale_payloads.append(payload)
+            _propose(server, ticket_id, replacement)
         route.continue_()
 
-    accept_url = f"**/api/tickets/{ticket_id}/accept/what_changes"
-    page.route(accept_url, replace_before_accept, times=1)
+    decision_url = f"{server.base}/api/tickets/{ticket_id}/decision-operations/"
+    page.route(f"{decision_url}*", replace_before_accept)
     card.locator("[data-accept]").click()
     panel.locator('[data-ceiling-picker-choice="needs_implementation"]').click()
     with page.expect_response(
-        lambda response: (
-            response.request.method == "POST"
-            and response.url.endswith(f"/{ticket_id}/accept/what_changes")
-        )
+        lambda response: response.request.method == "POST" and response.url.startswith(decision_url)
     ) as stale:
         panel.locator('[data-scope-holder="owner"]').click()
-    assert not stale.value.ok, stale.value.text()
-    assert "visible proposal changed" in stale.value.text()
+    page.unroute(f"{decision_url}*", replace_before_accept)
+    assert stale.value.ok, stale.value.text()
+    stale_result = stale.value.json()
+    assert stale_result["receipt_contract"] == 1
+    stale_receipt = stale_result["receipt"]
+    assert stale_receipt["operation_id"] == stale.value.url.removeprefix(decision_url)
+    assert stale_receipt["operation_id"]
+    assert stale_receipt["ticket_id"] == ticket_id
+    assert stale_receipt["decision"] == "approve"
+    assert stale_receipt["field"] == "what_changes"
+    assert stale_receipt["expected_proposal_revision"] == visible["pending_proposal"]["revision"]
+    assert stale_receipt["outcome"] == "refused"
+    assert stale_receipt["transition"] is None
+    assert stale_receipt["error"]["code"] == "validation"
+    assert stale_receipt["error"]["detail"] == {"ticket_id": ticket_id}
+    assert "visible proposal changed" in stale_receipt["error"]["message"]
+    assert stale_payloads[0]["decision"] == "approve"
+    assert stale_payloads[0]["field"] == "what_changes"
     assert (
         stale_payloads[0]["expected_proposal_revision"] == visible["pending_proposal"]["revision"]
     )
@@ -129,21 +143,48 @@ def test_shared_compact_card_real_transaction_and_stale_revision(
     card.locator("[data-accept]").click()
     panel.locator('[data-ceiling-picker-choice="needs_implementation"]').click()
     with page.expect_response(
-        lambda response: (
-            response.request.method == "POST"
-            and response.url.endswith(f"/{ticket_id}/accept/what_changes")
-        )
+        lambda response: response.request.method == "POST" and response.url.startswith(decision_url)
     ) as accepted:
         panel.locator('[data-scope-holder="owner"]').click()
     assert accepted.value.ok, accepted.value.text()
     accepted_payload = accepted.value.request.post_data_json
     assert isinstance(accepted_payload, dict)
+    assert accepted_payload["decision"] == "approve"
+    assert accepted_payload["field"] == "what_changes"
+    assert accepted_payload["next_ceiling"] == "needs_implementation"
+    assert accepted_payload["next_holder"] == owner
     assert accepted_payload["edited_body"] == edited
+    accepted_result = accepted.value.json()
+    assert accepted_result["receipt_contract"] == 1
+    accepted_receipt = accepted_result["receipt"]
+    assert accepted_receipt["operation_id"] == accepted.value.url.removeprefix(decision_url)
+    assert accepted_receipt["operation_id"]
+    assert accepted_receipt["operation_id"] != stale_receipt["operation_id"]
+    assert accepted_receipt["ticket_id"] == ticket_id
+    assert accepted_receipt["decision"] == "approve"
+    assert accepted_receipt["field"] == "what_changes"
+    assert (
+        accepted_receipt["expected_proposal_revision"]
+        == after_stale["pending_proposal"]["revision"]
+    )
+    assert accepted_receipt["outcome"] == "applied"
+    assert accepted_receipt["error"] is None
+    assert (
+        accepted_receipt["transition"]["pending_proposal_revision"]
+        == accepted_receipt["expected_proposal_revision"]
+    )
     assert (
         accepted_payload["expected_proposal_revision"]
         == after_stale["pending_proposal"]["revision"]
     )
     final = api.get(server, f"/api/tickets?detail=full&id={ticket_id}")
+    for field in (
+        "stage",
+        "ceiling",
+        "ceiling_holder",
+        "ticket_status",
+    ):
+        assert accepted_receipt["transition"][field] == final[field]
     assert final["pending_proposal"] is None
     assert final["field_values"]["what_changes"] == edited
     assert final["stage"] == "needs_implementation"
