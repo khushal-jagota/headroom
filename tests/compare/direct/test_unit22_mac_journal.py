@@ -481,7 +481,7 @@ def test_unit22_mac_journal_roundtrip_and_publication_crash(
         assert all(row["result"] is None for row in initial[2])
         # A copied pre-upgrade start must retain raw field absence before defaults.
         for root in (py, ts):
-            with sqlite3.connect(root / "commands.sqlite3") as conn:
+            with closing(sqlite3.connect(root / "commands.sqlite3")) as conn, conn:
                 raw = json.loads(
                     conn.execute(
                         "SELECT mailbox_command_json FROM commands WHERE command_id='legacy'"
