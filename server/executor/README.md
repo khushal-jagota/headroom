@@ -8,6 +8,8 @@ Each endpoint accepts one `machine_id`, with the original Mac as the default. It
 
 Inbox admission checks the sender, child incarnation, and conversation before receipt replay or any batch effects. Receipt rows record their machine. Uploads for named machines use `executor-uploads/<machine_id>` while the original Mac keeps `executor-uploads`. Publication still targets the canonical Ticket files only after authority checks.
 
+Ticket execution admission, readiness, restart, memory notices, and decision delivery use `ticket.machine_id`. The policy helpers are `can_execute_machine(machine_id, connection)` and `machine_unavailable_reason(machine_id, connection)`. Home remains local. A known compatible remote incarnation permits queued work while absent, but readiness and restart also require that destination's presence. Refusals retain Python's existing payload fields.
+
 ## Startup and retained state
 
 Before record initialization, startup loads the registry and asks it for `open_runs()`. The single reconciliation therefore preserves every loaded destination's retained turns before the core adopts them. Adoption restores asks, saved answers, provider identities, memory-notice maintenance state, and exact child references. A stale or stopping child remains quarantined until its corresponding retirement proof arrives.
@@ -19,6 +21,8 @@ Durable items enter through `MacInbox`. Ordered receipts, replay, assignment aut
 Agent messages require an explicit recipient through `message.send`. Executor transport refuses the retired `ticket.request_help` mutation.
 
 Live batches carry only message deltas, thinking notices, and tool progress. They use the current exact child's event sink and create no durable item receipt. Completed backend prose uses the item route for journal and receipt custody. The core does not turn it into an addressed notebook message. Lifecycle changes and other durable events also use that route. Live reads enter the existing application routes under the child's assigned principal; they do not grant arbitrary owner access.
+
+The Mac runner's `prompt_accepted` result carries the native provider's `agent_acceptance_proven` value exactly. Its default is false. A generic executor receipt keeps that default. The later VPS outcome-to-core confirmation seam remains port work.
 
 ## Routes and authority
 
@@ -48,6 +52,8 @@ Only the original configured executor can request bootstrap credentials, with no
 ## Stop and recovery ownership
 
 An ordinary owner kill waits without a deadline for exact Mac stop proof, as Python does; only that conversation waits. A successful stop result alone does not prove termination. The matching accepted `child_stopped` item or proven process replacement closes exact custody. Rebind waits for that retirement outside the conversation lock before a fresh child takes the same reserved prompt. A safe initial-delivery withdrawal can finish the kill before remote retirement completes.
+
+Registry `recheck_cleanup(source, ticket_id)` resolves the historical exact assignment and Ticket principal. The mailbox sends inspection to the current incarnation, with the retained source in its arguments. Closed source assignments remain inspectable and grant no start or stop authority. A successful inspection also waits for a recent lease of the current incarnation with no truncated list, queued items for that conversation, or cleanup uncertainty. One deadline covers inspection and drain. Registration of the core cleanup callback awaits P3's custody interface merge.
 
 The invocation registers the endpoint through the existing producer lifecycle. Every stop observer receives the original absolute monotonic shutdown deadline. `settled()` retains raw completion after an observer expires. VPS shutdown detaches an active retained Mac child without starting a stop command; an already-running stop remains owned. Failed actual stop attempts remain retryable.
 

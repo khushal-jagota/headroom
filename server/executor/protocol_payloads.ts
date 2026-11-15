@@ -34,7 +34,11 @@ export interface EventArgumentPayloads {
 /** Python accepts additional keys and extensible error/reason text in these dictionaries. */
 export type OpenPayload<T> = T & Wire.JsonObject;
 export interface CommandResultPayloads {
-  prompt_accepted: { kind: 'prompt_accepted'; composed_content_delivered: boolean };
+  prompt_accepted: {
+    kind: 'prompt_accepted';
+    composed_content_delivered: boolean;
+    agent_acceptance_proven: boolean;
+  };
   steer_accepted: { kind: 'steer_accepted'; composed_content_delivered: boolean };
   steer_uncertain: { kind: 'steer_uncertain'; composed_content_delivered: boolean | null };
   steer_refused: { kind: 'steer_refused'; refusal_reason: string };

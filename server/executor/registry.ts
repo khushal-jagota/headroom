@@ -20,6 +20,8 @@ import { HOME_MACHINE_ID, ORIGINAL_MAC_MACHINE_ID } from '../execution_identity.
 import { ServerLifecycleError } from '../lifecycle/contracts.ts';
 import type { StopOptions } from '../lifecycle/contracts.ts';
 import type { StallSource } from '../stalls/contracts.ts';
+import type { CleanupResult } from '../worker_supervision/contracts.ts';
+import { cleanup_result } from '../worker_supervision/inspection.ts';
 import { ticket_id_of } from './routing.ts';
 import type { MacRemoteChild } from './vps_remote_child.ts';
 import { VpsExecutor } from './vps_transport.ts';
@@ -220,11 +222,17 @@ export class VpsExecutorRegistry {
     return retained_open_runs({ claude: factory, codex: factory, hermes: factory });
   }
 
-  private owner_of(source: ChildReference): VpsExecutor | null {
+  private owner_of(source: ChildReference, ticket_id: string | null = null): VpsExecutor | null {
     const row = this.database.read((sql) =>
       sql.get<{ machine_id: string }>(
-        'SELECT i.machine_id FROM executor_incarnations i JOIN executor_child_assignments a USING(executor_incarnation) WHERE i.executor_incarnation=? AND a.child_id=? AND a.conversation_id=?',
-        [source.executor_incarnation, source.child_id, source.conversation_id],
+        "SELECT i.machine_id FROM executor_incarnations i JOIN executor_child_assignments a USING(executor_incarnation) WHERE i.executor_incarnation=? AND a.child_id=? AND a.conversation_id=? AND (? IS NULL OR (a.principal_kind='ticket' AND a.principal_id=?))",
+        [
+          source.executor_incarnation,
+          source.child_id,
+          source.conversation_id,
+          ticket_id,
+          ticket_id,
+        ],
       ),
     );
     return row ? this.get(row.machine_id) : null;
@@ -235,6 +243,14 @@ export class VpsExecutorRegistry {
     options: { event_sink?: BackendEventSink | null } = {},
   ): MacRemoteChild | null {
     return this.owner_of(reference)?.runs.recover(reference, options) ?? null;
+  }
+
+  async recheck_cleanup(source: ChildReference, ticket_id: string): Promise<CleanupResult> {
+    this.admit();
+    const owner = this.owner_of(source, ticket_id);
+    return owner === null
+      ? cleanup_result(false, 'The retained Worker source has no executor assignment')
+      : owner.runs.recheck_cleanup(source, ticket_id);
   }
 
   create(options: Parameters<BackendChildFactory>[0]): MacRemoteChild {

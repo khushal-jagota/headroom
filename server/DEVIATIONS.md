@@ -2,6 +2,14 @@
 
 This file records intentional differences that the migration Manager accepted. No new difference enters this file without that acceptance. Close an entry when Python adopts the same behavior.
 
+## Native Darwin home contract
+
+The Manager authorizes a version 2 Darwin arm64 home contract for the native Node release.
+Python defines a version 1 Darwin contract with `python_version` and Node major 22 or newer.
+The native contract replaces `python_version` with `minimum_node_version: '22.18.0'` and fixes `node_major: 22`.
+It preserves the home role, minimum OS 15.0, inventory digest, and system library prefixes.
+P7 owns Darwin host admission and entrypoint branches. Metadata admission alone does not prove a runnable Darwin release.
+
 ## Pending staging port: mailbox authority and protocol
 
 P2 owns these boundaries. The active machine-scope comparison now proves that stale
@@ -16,6 +24,10 @@ remain intact. These implemented boundaries do not claim full executor parity.
 The native schema describes protocol 26. Runtime identities still advertise protocol 22
 until machine credentials, supervision, and workspace behavior reach parity. This is
 an incomplete staging port, not an accepted final difference.
+
+The active machine-admission comparison uses each runtime's supported identity
+and retains both full identities in its report. It proves destination selection,
+readiness, and refusal envelopes. It does not claim a same-wire protocol-26 exchange.
 
 ## Pending staging port: Linux host admission
 

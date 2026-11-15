@@ -549,6 +549,154 @@ def test_worker_decisions_parity(tmp_path: Path) -> None:
             conn.close()
 
 
+def test_machine_admission_and_refusal_envelopes(tmp_path: Path) -> None:
+    """One destination's presence must not admit or block another destination.
+
+    Reuse the populated Ticket fixture and Node evaluator without a host. Runtime
+    protocol activation remains deferred: each side uses its supported identity,
+    and both complete fixture identities remain explicit in the comparison report.
+    This proves machine admission, not a same-wire protocol-26 exchange.
+    """
+    from planner.machines.contracts import HOME_MACHINE_ID
+    from planner.tickets import locale_configuration
+    from planner.tickets.worker_restart import require_restartable
+
+    began = time.monotonic()
+    machine_a = "44444444-4444-4444-8444-444444444444"
+    machine_b = "55555555-5555-4555-8555-555555555555"
+    source_identity = {
+        "protocol_version": PROTOCOL_VERSION,
+        "spool_format_version": SPOOL_FORMAT_VERSION,
+        "application_revision": "machine-admission-fixture",
+        "executor_incarnation": "77777777-7777-4777-8777-777777777777",
+        "connection_generation": 0,
+    }
+    # The runtime deviation remains recorded until the whole executor port is ready.
+    candidate_identity = {**source_identity, "protocol_version": 22}
+    with synthetic_home_environment(create_synthetic_homes(tmp_path)):
+        conn = connect(str(tmp_path / "python.sqlite"))
+        try:
+            create_schema(conn)
+            for machine_id, name in ((machine_a, "Travel Linux"), (machine_b, "Office")):
+                conn.execute(
+                    "INSERT INTO machines VALUES (?,?,'server','cyan',0)", (machine_id, name)
+                )
+            machine_tickets = {}
+            for name, machine_id in (
+                ("home", HOME_MACHINE_ID), ("original", ORIGINAL_MAC_MACHINE_ID),
+                ("a", machine_a), ("b", machine_b),
+            ):
+                ticket = new_ticket(conn)
+                conn.execute(
+                    "UPDATE tickets SET machine_id=?,locale=? WHERE id=?",
+                    (machine_id, "vps" if machine_id == HOME_MACHINE_ID else "macos", ticket.id),
+                )
+                machine_tickets[name] = ticket.id
+            conn.execute(
+                "INSERT INTO mac_executor_presence(machine_id,executor_incarnation,identity_json,"
+                "last_contact_at_ms,last_lease_at_ms,continuous_since_ms) VALUES(?,?,?,?,?,?)",
+                (machine_a, source_identity["executor_incarnation"], json.dumps(source_identity),
+                 WALL, WALL, WALL),
+            )
+            conn.commit()
+
+            async def exercise() -> dict[str, Any]:
+                system = InMemoryConversationSystem()
+
+                async def capture() -> dict[str, Any]:
+                    result = {}
+                    for name, ticket_id in machine_tickets.items():
+                        current = tickets.read_ticket(conn, ticket_id)
+                        admitted = locale_configuration.can_execute_machine(
+                            conn, current.machine_id
+                        )
+                        restart_error: dict[str, Any] | None = None
+                        send_error: dict[str, Any] | None = None
+                        try:
+                            with patch("planner.tickets.worker_restart.now_ms", return_value=WALL):
+                                require_restartable(conn, OWNER_PRINCIPAL, ticket_id)
+                        except PlannerError as error:
+                            restart_error = error.to_payload()
+                        if not admitted:
+                            try:
+                                await start.send_to_ticket_conversation(
+                                    system, conn, ticket_id,
+                                    text_message_content("Refused machine opener"),
+                                    now=NOW, conversation_id=None, sender_label="test",
+                                )
+                                raise AssertionError("A refused destination started a conversation")
+                            except PlannerError as error:
+                                send_error = error.to_payload()
+                        with patch(
+                            "planner.runtime.worker_step_readiness.now_ms", return_value=WALL
+                        ):
+                            blocker = readiness.worker_step_blocker(
+                                conn, current, worker_type_definition=current.workflow
+                            )
+                        result[name] = {
+                            "admitted": admitted,
+                            "reason": locale_configuration.machine_unavailable_reason(
+                                conn, current.machine_id
+                            ),
+                            "readiness": blocker, "restart": restart_error, "send": send_error,
+                        }
+                    return result
+
+                phases = [await capture()]
+                conn.execute(
+                    "UPDATE mac_executor_presence SET last_lease_at_ms=? WHERE machine_id=?",
+                    (WALL - 60000, machine_a),
+                )
+                other_identity = {
+                    **source_identity,
+                    "executor_incarnation": "88888888-8888-4888-8888-888888888888",
+                }
+                conn.execute(
+                    "INSERT INTO mac_executor_presence"
+                    "(machine_id,executor_incarnation,identity_json,last_contact_at_ms,"
+                    "last_lease_at_ms,continuous_since_ms) VALUES(?,?,?,?,?,?)",
+                    (machine_b, other_identity["executor_incarnation"], json.dumps(other_identity),
+                     WALL, WALL, WALL),
+                )
+                conn.execute(
+                    "UPDATE machines SET name=? WHERE machine_id=?",
+                    ("Café $&", ORIGINAL_MAC_MACHINE_ID),
+                )
+                conn.commit()
+                phases.append(await capture())
+                unknown = None
+                try:
+                    locale_configuration.machine_unavailable_reason(conn, "unknown")
+                except PlannerError as error:
+                    unknown = error.to_payload()
+                return {
+                    "fixture": {
+                        "source_identity": source_identity,
+                        "candidate_identity": candidate_identity,
+                    },
+                    "phases": phases, "unknown": unknown, "rows": rows(conn),
+                }
+
+            answer = compare(conn, tmp_path, {
+                "mode": "machine_admission", "ticket_id": "", "machine_tickets": machine_tickets,
+                "named_machines": [machine_a, machine_b], "source_identity": source_identity,
+                "candidate_identity": candidate_identity,
+            }, lambda: asyncio.run(exercise()))
+            assert answer["phases"][0]["a"]["admitted"]
+            assert answer["phases"][0]["a"]["readiness"] is None
+            assert not answer["phases"][0]["b"]["admitted"]
+            assert answer["phases"][1]["a"]["admitted"]
+            assert answer["phases"][1]["a"]["readiness"] == "Waiting for Travel Linux"
+            assert answer["phases"][1]["b"]["readiness"] is None
+            assert answer["phases"][1]["original"]["send"]["error"]["detail"] == {
+                "ticket_id": machine_tickets["original"],
+                "locale": "macos", "machine_locale": "vps",
+            }
+        finally:
+            conn.close()
+    print(f"machine admission and refusal proof: {time.monotonic() - began:.3f}s")
+
+
 def test_automatic_start_admission_populated_lifecycle(tmp_path: Path) -> None:
     """Gap: pure engine tests cannot prove fresh staging admission rows agree.
 

@@ -107,6 +107,7 @@ async function invoke(
         return {
           kind: 'prompt_accepted',
           composed_content_delivered: result.composed_content_delivered,
+          agent_acceptance_proven: result.agent_acceptance_proven,
         };
       } catch (error) {
         if (error instanceof BackendPromptRejected) child.active_turn = previous;
