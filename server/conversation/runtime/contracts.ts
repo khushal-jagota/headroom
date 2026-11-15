@@ -41,6 +41,7 @@ export interface Message {
   readonly queue_reason: PromptQueueReason;
   readonly delivery_uncertain: boolean;
   readonly system_generated: boolean;
+  readonly dispatch_memory_note?: boolean;
 }
 export interface SenderAdmission {
   readonly message: Message;
@@ -53,6 +54,7 @@ export interface ReservedTurn {
   automatic_notice: boolean;
   memory_notice_only: boolean;
   prompt_accepted: boolean;
+  prompt_write_attempted: boolean;
   messages: readonly Message[];
   mode: PromptDeliveryMode;
   shutdown_owned: boolean;

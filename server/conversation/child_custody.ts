@@ -15,6 +15,7 @@ import { inspect_record, stop_record } from '../worker_supervision/inspection.ts
 import * as records from '../worker_supervision/records.ts';
 import type { WorkerSupervisionRuntime } from '../worker_supervision/runtime.ts';
 import { ORPHAN_AGENT_TERMINATION_GRACE_SECONDS } from '../executor/mac/configuration.ts';
+import { legacy_custody_process_inspector } from '../executor/mac/platform.ts';
 import type { LocalChildIdentity, LocalHostBootIdentity } from './local_child_contracts.ts';
 import type {
   LocalChildCustodyInspection,
@@ -34,6 +35,7 @@ export class LocalChildCustody implements LocalChildCustodyInspection {
   readonly #runtime: WorkerSupervisionRuntime;
   readonly #children: OwnedChildProcesses;
   readonly #commands: BackendCommands;
+  readonly #legacy_process: ReturnType<typeof legacy_custody_process_inspector>;
   readonly #units = new Map<string, RetainedUnit>();
   constructor(options: {
     runtime: WorkerSupervisionRuntime;
@@ -43,6 +45,10 @@ export class LocalChildCustody implements LocalChildCustodyInspection {
     this.#runtime = options.runtime;
     this.#children = options.child_processes;
     this.#commands = new BackendCommands(options.one_shot_children);
+    this.#legacy_process = legacy_custody_process_inspector(
+      options.one_shot_children,
+      options.runtime.clock,
+    );
   }
   host_boot_identity(): Promise<LocalHostBootIdentity | null> {
     return this.#runtime
@@ -176,13 +182,13 @@ export class LocalChildCustody implements LocalChildCustodyInspection {
       if (current.host !== host) return false;
       if (current.boot !== identity.boot) return true;
       if (current.host.startsWith('darwin:') && !/^\d+:\d+$/.test(identity.birth)) {
-        // A libproc timestamp mismatch cannot retire an older ps lstart receipt.
-        try {
-          process.kill(identity.pid, 0);
+        if (
+          await this.#legacy_process(
+            { process_id: identity.pid, started: identity.birth },
+            deadline,
+          )
+        )
           return false;
-        } catch (error) {
-          if ((error as NodeJS.ErrnoException).code !== 'ESRCH') return false;
-        }
       } else if (!(await primitives.is_absent(this.#process(identity), deadline))) return false;
       return identity.unit === null || this.#unit_retired(identity.unit, deadline);
     } catch {

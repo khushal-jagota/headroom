@@ -1,9 +1,9 @@
 import { ORIGINAL_MAC_MACHINE_ID } from '../execution_identity.ts';
 import { expect, test } from 'vitest';
-import { fixture, fixture_path } from './ticket_fixture.ts';
+import { fixture, fixture_path, create } from './ticket_fixture.ts';
 import { ConversationStore } from '../conversation/record/data/store.ts';
 import { ResolvedConversationStart, PromptDeliveryMode } from '../conversation/contracts.ts';
-import { PromptEventPayload } from '../conversation/events.ts';
+import { PromptEventPayload, ContextCompactedEventPayload } from '../conversation/events.ts';
 import { text_message_content } from '../conversation/message_content.ts';
 import type { ReadSql, TransactionSql } from '../core/database/contracts.ts';
 import { PlannerError } from '../core/contracts.ts';
@@ -241,4 +241,50 @@ test('executor refusal after take commits only its receipt and replays without a
   ).toThrow('commit participant refused after taking the conversation event');
   expect(store.read_events_after(id, 0)).toEqual([]);
   expect(store.read_conversation(id)?.latest_sequence).toBe(0);
+});
+
+// Dispatch can follow a user-owned opener's claim release. Its durable intent still owns the wake.
+test('dispatch memory reads keep a current wake after its claim is released', () => {
+  const database = fixture();
+  const ticket = create(database);
+  const store = new ConversationStore(database);
+  const conversation_id = 'released-wake';
+  const wake = `worker_step_message_${ticket.id}:1`;
+  store.create_conversation(
+    new ResolvedConversationStart({
+      conversation_id,
+      backend_key: 'codex',
+      model: 'model',
+      reasoning_effort: null,
+      role_materials: null,
+      workspace_folder: '/synthetic',
+      access: 'full',
+    }),
+  );
+  store.append_events(conversation_id, [
+    new PromptEventPayload({
+      content: text_message_content('original work'),
+      sender_label: 'Panels',
+      sender_message_id: 'worker_step_message_first',
+      mode: PromptDeliveryMode.queue,
+    }),
+    new ContextCompactedEventPayload(),
+  ]);
+  database.write((tx) => {
+    tx.run(
+      'UPDATE conversations SET automatically_compacted_through_sequence=2 WHERE conversation_id=?',
+      [conversation_id],
+    );
+    tx.run(
+      "UPDATE tickets SET conversation_id=?,worker_step_claim='none',worker_step_claim_revision=2 WHERE id=?",
+      [conversation_id, ticket.id],
+    );
+    tx.run("INSERT INTO worker_step_dispatch_intents VALUES (?,1,?,'dispatch_started')", [
+      ticket.id,
+      wake,
+    ]);
+  });
+  const note = store.worker_step_memory_note(conversation_id, ['unregistered', wake]);
+  expect(note?.after_sender_message_id).toBe(wake);
+  expect(note?.sender_message_id).toMatch(/^worker_step_memory_notice_[0-9a-f]{32}$/);
 });

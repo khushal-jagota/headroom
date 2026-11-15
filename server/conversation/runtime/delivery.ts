@@ -14,7 +14,7 @@ import type { BackendChild } from '../backends/contracts.ts';
 import { PromptDeliveryRefusalReason as R, ResolvedConversationStart } from '../contracts.ts';
 import { PromptDiscardedEventPayload } from '../events.ts';
 import { one_prompt_from } from '../logic/held_line.ts';
-import { prefix_message_content_text } from '../message_content.ts';
+import { prefix_message_content_text, text_message_content } from '../message_content.ts';
 import { normalized_failure_summary } from '../logic/backend_events.ts';
 import type { MessageContent } from '../message_content.ts';
 import type { DeliveryAttempt, DeliveryServices, Message, ReservedTurn } from './contracts.ts';
@@ -134,6 +134,7 @@ export async function deliver_prompt(
   reservation: ReservedTurn,
   batch: readonly Message[],
 ): Promise<DeliveryAttempt> {
+  batch = batch.filter((message) => !message.dispatch_memory_note);
   const first = batch[0];
   const requested = first.model_change ?? state.record.model;
   const refusal =
@@ -263,10 +264,6 @@ export async function deliver_prompt(
   let memory_notice_only = decisions
     .filter((decision) => decision.suppression_reason === null)
     .every((decision) => decision.is_memory_notice);
-  let sender_content = one_prompt_from(survivors);
-  let wire_content = await compose(host, state, sender_content);
-  if (interruption_notice !== null)
-    wire_content = prefix_message_content_text(wire_content, interruption_notice, '\n\n');
   const write = async (target: BackendChild) => {
     const reference = state.retained_child_reference;
     if (target.stop_outside_lock && reference !== null)
@@ -288,7 +285,49 @@ export async function deliver_prompt(
         refusal_detail: 'The agent did not record its process identity. No prompt was sent.',
       });
     }
+    survivors = survivors.filter((message) => !message.dispatch_memory_note);
+    const note = host.options.store.worker_step_memory_note(
+      state.record.conversation_id,
+      survivors.flatMap((message) =>
+        message.sender_message_id === null ? [] : [message.sender_message_id],
+      ),
+    );
+    let note_added = false;
+    if (note !== null)
+      survivors = survivors.flatMap((message): Message[] => {
+        if (note_added || message.sender_message_id !== note.after_sender_message_id)
+          return [message];
+        note_added = true;
+        return [
+          message,
+          {
+            ...message,
+            held_prompt_id: '',
+            content: text_message_content(note.text),
+            sender_label: 'Panels',
+            sender_message_id: note.sender_message_id,
+            sent_at_unix_milliseconds: null,
+            sender: null,
+            recipient: null,
+            owner_read_through_sequence: null,
+            recording_receipt: null,
+            recovery_references: [],
+            model_change: null,
+            reasoning_effort_change: null,
+            reasoning_effort_is_set: false,
+            system_generated: true,
+            dispatch_memory_note: true,
+          },
+        ];
+      });
+    const sender_content = one_prompt_from(survivors);
+    let wire_content = await compose(host, state, sender_content);
+    if (interruption_notice !== null)
+      wire_content = prefix_message_content_text(wire_content, interruption_notice, '\n\n');
+    owned(host, state, reservation);
     host.start_admission.bind_source(reservation.token, target);
+    reservation.messages = survivors;
+    reservation.prompt_write_attempted = true;
     const accepted = await host.native_operation(() =>
       target.write_prompt(reservation.token, wire_content, {
         sender_label: survivors[0].sender_label,
@@ -324,6 +363,7 @@ export async function deliver_prompt(
     return await write(child);
   } catch (error) {
     if (!(error instanceof NeedsRebind)) return refusal_or_throw(error);
+    reservation.prompt_write_attempted = false;
     host.start_admission.bind_source(reservation.token, null);
     rebound = true;
     await state.lock.run(() => {
@@ -357,13 +397,10 @@ export async function deliver_prompt(
       memory_notice_only = repeated
         .filter((decision) => decision.suppression_reason === null)
         .every((decision) => decision.is_memory_notice);
-      sender_content = one_prompt_from(survivors);
-      wire_content = await compose(host, state, sender_content);
-      if (interruption_notice !== null)
-        wire_content = prefix_message_content_text(wire_content, interruption_notice, '\n\n');
       owned(host, state, reservation);
       return await write(child);
     } catch (next) {
+      if (next instanceof NeedsRebind) reservation.prompt_write_attempted = false;
       if (next instanceof PromptWriteFailed) throw next;
       await host.discard_child(state, child);
       if (next instanceof NeedsRebind)
@@ -415,6 +452,7 @@ export async function write_replayed_prompt(
     automatic_notice: false,
     memory_notice_only: false,
     prompt_accepted: false,
+    prompt_write_attempted: false,
     messages: [],
     mode: prompt.mode,
     shutdown_owned: false,

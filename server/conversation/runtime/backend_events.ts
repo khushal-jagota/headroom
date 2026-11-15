@@ -269,13 +269,17 @@ export async function take_backend_event_with_receipt(
       if (working_turn_compaction_confirmed) {
         state.record = new ConversationRecord({
           ...state.record,
-          working_turn_compacted_through_sequence: state.record.latest_agent_activity_sequence,
+          working_turn_compacted_through_sequence:
+            result.written.findLast((row) => row.payload.kind === 'context_compacted')?.sequence ??
+            state.record.working_turn_compacted_through_sequence,
         });
       }
       if (interpreted.compacted) {
         state.record = new ConversationRecord({
           ...state.record,
-          automatically_compacted_through_sequence: state.record.latest_agent_activity_sequence,
+          automatically_compacted_through_sequence:
+            result.written.findLast((row) => row.payload.kind === 'context_compacted')?.sequence ??
+            state.record.automatically_compacted_through_sequence,
           automatic_compaction_attempted_through_sequence:
             state.record.latest_agent_activity_sequence,
         });

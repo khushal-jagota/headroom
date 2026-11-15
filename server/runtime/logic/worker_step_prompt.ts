@@ -29,7 +29,6 @@ export function compose_worker_step_prompt(
   ticket: Ticket,
   options: {
     worker_type_definition: WorkflowDefinition;
-    memory_was_lost: boolean;
   },
 ): WorkerStepPrompt {
   const field = gating_field(options.worker_type_definition, ticket.stage) ?? 'the next step';
@@ -47,34 +46,32 @@ export function compose_worker_step_prompt(
         `take the next step and propose the '${field}' field for approval. ` +
         `Stage owner: ${ownership_wire}.`;
   instruction += ` Read your Ticket first: ${READ_YOUR_TICKET_COMMAND}. ${FOLLOW_YOUR_WORKFLOW_GUIDE}`;
-  const inputs: WorkerStepInput[] = [];
-  if (options.memory_was_lost) {
-    inputs.push({
-      name: 'memory loss',
-      text: MEMORY_LOSS_NOTICE,
-      quoted: false,
-    });
-    inputs.push({
-      name: 'Ticket workflow guidance',
-      text: render_workflow_guide(ticket.workflow),
-      quoted: true,
-    });
-  }
-  inputs.push({
-    name: 'stage instruction',
-    text: instruction,
-    quoted: false,
+  return new WorkerStepPrompt({
+    inputs: [
+      {
+        name: 'stage instruction',
+        text: instruction,
+        quoted: false,
+      },
+    ],
   });
-  return new WorkerStepPrompt({ inputs });
 }
 function _render_worker_step_input(item: WorkerStepInput): string {
   return item.quoted ? `[${item.name}]\n${item.text}\n[/${item.name}]` : item.text;
 }
 
-export function mid_step_memory_loss_prompt(ticket: Ticket): string {
-  const guidance =
+export function worker_step_memory_loss_prompt(ticket: Ticket): string {
+  return (
+    MEMORY_LOSS_NOTICE +
     '\n\n[Ticket workflow guidance]\n' +
     render_workflow_guide(ticket.workflow) +
-    '\n[/Ticket workflow guidance]';
-  return `You are part-way through a step on ticket ${ticket.id} — ${ticket.title}, at Stage '${ticket.stage}'. ${MEMORY_LOSS_NOTICE}${guidance}`;
+    '\n[/Ticket workflow guidance]'
+  );
+}
+
+export function mid_step_memory_loss_prompt(ticket: Ticket): string {
+  return (
+    `You are part-way through a step on ticket ${ticket.id} — ${ticket.title}, at Stage '${ticket.stage}'. ` +
+    worker_step_memory_loss_prompt(ticket)
+  );
 }

@@ -137,6 +137,7 @@
     "complete": null,
     "employee-configuration": null,
     "history": null,
+    "recheck-worker-cleanup": null,
     "restart-worker": null,
     "block": null,
     "unblock": null,

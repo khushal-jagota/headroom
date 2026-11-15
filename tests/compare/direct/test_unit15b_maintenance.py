@@ -45,6 +45,8 @@ from planner.runtime.worker_memory import (
     conversation_holds_an_unanswered_memory_loss,
     ticket_needs_memory_notice,
 )
+from planner.runtime.logic.worker_step_prompt import compose_worker_step_prompt
+from planner.tickets import data as tickets_data
 
 ROOT = Path(__file__).resolve().parents[3]
 CASES = (
@@ -75,7 +77,9 @@ async def python_case(path: Path, case: str) -> dict[str, Any]:
     checkpoints: list[dict[str, Any]] = []
     sequence = 0
 
-    async def send(text: str, *, notice: bool = False, steer: bool = False) -> dict[str, Any]:
+    async def send(
+        text: str, *, notice: bool = False, steer: bool = False, wake: bool = False
+    ) -> dict[str, Any]:
         nonlocal sequence
         sequence += 1
         fate = await core.send(
@@ -86,7 +90,7 @@ async def python_case(path: Path, case: str) -> dict[str, Any]:
                 MEMORY_NOTICE_MESSAGE_PREFIX
                 if notice
                 else "worker_step_"
-                if case == "memory_only" and sequence == 1
+                if wake or (case == "memory_only" and sequence == 1)
                 else "owner-"
             )
             + str(sequence),
@@ -161,6 +165,13 @@ async def python_case(path: Path, case: str) -> dict[str, Any]:
                     conn.execute("UPDATE tickets SET is_backlogged=0 WHERE id='t_worker'")
             finally:
                 conn.close()
+            stale = await send("Your context was compacted", notice=True)
+            await capture("idle-notice-is-stale", [stale])
+            await send("work that compacts", wake=True)
+            await registry.current[identity].emit(ContextCompacted())
+            await registry.current[identity].flush_events()
+            await core.wait_until_quiescent()
+            await finish()
             fate = await send("Your context was compacted", notice=True)
             await registry.current[identity].emit(
                 ToolCallStarted(
@@ -182,6 +193,17 @@ async def python_case(path: Path, case: str) -> dict[str, Any]:
             await sweep()
             await capture("real-work-restores-compaction", [fate])
         elif case in ("held_batch", "steer_accepted", "steer_uncertain"):
+            conn = connect(str(path))
+            try:
+                with conn:
+                    conn.execute("UPDATE tickets SET worker_step_claim='out' WHERE id='t_worker'")
+            finally:
+                conn.close()
+            await send("work that compacts", wake=True)
+            await registry.current[identity].emit(ContextCompacted())
+            await registry.current[identity].flush_events()
+            await core.wait_until_quiescent()
+            await finish()
             first = await send("Your context was compacted", notice=True)
             await capture("notice-started", [first])
             if case == "held_batch":
@@ -206,6 +228,49 @@ async def python_case(path: Path, case: str) -> dict[str, Any]:
             now += 50 * 60
             await sweep()
             await capture("joined-work-is-due")
+            if case == "held_batch":
+                async def queue_wake(revision: int) -> tuple[str, str, dict[str, Any]]:
+                    sender_id = f"worker_step_message_t_worker:{revision}"
+                    conn = connect(str(path))
+                    try:
+                        with conn:
+                            conn.execute("INSERT INTO worker_step_dispatch_intents VALUES ('t_worker',?,?, 'dispatch_started')", (revision, sender_id))
+                        ticket = tickets_data.read_ticket(conn, "t_worker")
+                        text = compose_worker_step_prompt(ticket, worker_type_definition=ticket.workflow).model_text
+                    finally:
+                        conn.close()
+                    fate = await core.send(identity, text_message_content(text), sender_label="Panels", sender_message_id=sender_id)
+                    return sender_id, text, delivery_fate_json(fate)
+
+                stale = await send("Your context was compacted", notice=True)
+                wake_id, wake_text, wake_fate = await queue_wake(0)
+                await send("dispatch companion")
+                first_child = registry.current[identity]
+                await registry.configure(identity, "write_prompt", {"barrier": "memory-rebind", "error": {"name": "NeedsRebind", "message": "fresh child"}})
+                await first_child.emit(ContextCompacted())
+                await first_child.flush_events()
+                finishing = asyncio.create_task(finish())
+                await first_child.wait_for_barrier("memory-rebind")
+                conn = connect(str(path))
+                try:
+                    with conn:
+                        conn.execute("UPDATE conversations SET automatically_compacted_through_sequence=0 WHERE conversation_id=?", (identity,))
+                finally:
+                    conn.close()
+                await first_child.release("memory-rebind")
+                await finishing
+                await capture("wake-rebind-recomputed", [stale, wake_fate])
+                checkpoints[-1]["wake"] = {"sender_message_id": wake_id, "text": wake_text}
+                stale = await send("Your context was compacted", notice=True)
+                wake_id, wake_text, wake_fate = await queue_wake(1)
+                await registry.configure(identity, "write_prompt", {"error": {"name": "RuntimeError", "message": "acknowledgement lost after possible emission"}})
+                await registry.current[identity].emit(ContextCompacted())
+                await registry.current[identity].flush_events()
+                await finish()
+                replay = await core.send(identity, text_message_content(wake_text), sender_label="Panels", sender_message_id=wake_id)
+                await capture("wake-note-uncertain", [stale, wake_fate, delivery_fate_json(replay)])
+                checkpoints[-1]["wake"] = {"sender_message_id": wake_id, "text": wake_text}
+                checkpoints[-1]["awaiting"] = sorted(await core.sender_message_ids_awaiting_outcome(identity))
         else:
             await send("real work")
             if case == "queued_backlog":
@@ -271,9 +336,14 @@ def positive(result: dict[str, Any]) -> None:
         assert points["backlogged-debt"]["debt"] is True
         assert points["backlogged-debt"]["notice_candidate"] is False
         assert points["active-memory-notice"]["open_memory_only"] is True
+        assert points["idle-notice-is-stale"]["fates"][0] == {
+            "fate": "suppressed",
+            "reason": "worker_memory_notice_no_longer_needed",
+        }
         assert prompts(points["memory-does-not-recompact"]).count("/compact") == 1
         assert prompts(points["real-work-restores-compaction"]).count("/compact") == 2
-        assert points["real-work-restores-compaction"]["fates"][0]["fate"] == "started"
+        assert points["real-work-restores-compaction"]["fates"][0]["fate"] == "queued"
+        assert prompts(points["real-work-restores-compaction"])[-1] == "more work"
     elif case in ("held_batch", "steer_accepted", "steer_uncertain"):
         assert points["notice-started"]["open_memory_only"] is True
         assert points["real-work-joined"]["open_memory_only"] is False
@@ -285,7 +355,11 @@ def positive(result: dict[str, Any]) -> None:
                 for call in child["calls"]
                 if call["command"] == "write_prompt"
             ]
-            assert calls[-1]["arguments"]["sender_message_count"] == 2
+            assert calls[-1]["arguments"]["sender_message_count"] == 1
+            assert discards(points["real-work-joined"])[-1] == (
+                "Your context was compacted",
+                "worker_memory_notice_no_longer_needed",
+            )
         else:
             assert points["real-work-joined"]["fates"][0]["fate"] == (
                 "uncertain" if case == "steer_uncertain" else "injected"
@@ -325,14 +399,6 @@ def positive(result: dict[str, Any]) -> None:
             ]
 
 
-@pytest.mark.xfail(
-    run=False,
-    reason=(
-        "expected-open P3 (ab57822c9): "
-        "memory notices require an actual compaction boundary; stale notice is "
-        "discarded before a scripted turn starts"
-    ),
-)
 def test_unit15b_maintenance_matches_fresh_python(
     tmp_path: Path, request: pytest.FixtureRequest
 ) -> None:
