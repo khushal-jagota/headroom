@@ -377,7 +377,8 @@ def _queue_attention_deliveries(conn: sqlite3.Connection, now: int) -> int:
     subscriptions = active_subscription_ids(conn)
     decided = 0
     for row in conn.execute(
-        "SELECT subject_kind, subject_id, notification_type, generation, occurred_at, context_json, "
+        "SELECT subject_kind, subject_id, notification_type, generation, occurred_at, "
+        "context_json, "
         f"{attention_data.TASK_ALERT_IS_CURRENT} AS task_alert_is_current "
         "FROM notification_attention_edges d WHERE decided=0 "
         "AND subject_kind IN ('ticket','manager','agent') "

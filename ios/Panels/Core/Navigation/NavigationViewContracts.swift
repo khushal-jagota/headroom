@@ -101,6 +101,8 @@ struct ViewTicketValue: Codable, Sendable {
     let title: String
     let recap: String
     let recapPreview: String
+    let recapUpdatedAt: Int?
+    let recapStageChanged: Bool
     let workerType: String?
     let stageLabel: String?
     let workflowLabel: String?
@@ -125,6 +127,7 @@ struct ViewTicketValue: Codable, Sendable {
     let gatingField: String?
     let terminal: Bool?
     let locale: String?
+    let machineId: String
     let recapReference: ViewContentReference?
     let integrityError: ViewIntegrityIssue?
 }
