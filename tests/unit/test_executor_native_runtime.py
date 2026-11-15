@@ -229,14 +229,16 @@ def test_managed_native_start_selects_only_its_project_repository(
         source_file = repository / "unfinished.txt"
         source_file.write_text("preserve source work")
         assert isinstance(start.arguments, StartRun)
+        role_materials = start.arguments.resolved_start.role_materials
+        assert role_materials is not None
         resolved = replace(
             start.arguments.resolved_start,
             workspace_folder=Path("/projects/project_panels") if has_project else Path("/"),
             workspace_path_policy=WorkspacePathPolicy.executor_default,
             role_materials=replace(
-                start.arguments.resolved_start.role_materials,
+                role_materials,
                 identity_environment_variables=(
-                    *start.arguments.resolved_start.role_materials.identity_environment_variables,
+                    *role_materials.identity_environment_variables,
                     ("PLAN_TICKET_PROJECT_ID", "project_panels" if has_project else ""),
                 ),
             ),

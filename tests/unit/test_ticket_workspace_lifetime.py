@@ -20,10 +20,11 @@ from planner.ticket_workspaces.filesystem import (
     prepare_workspace,
     workspace_identity,
 )
+from planner.tickets.contracts import Ticket
 from planner.tickets.data import create_ticket
 
 
-def _register_retired_home_custody(conn: Connection, ticket: object, conversation_id: str) -> None:
+def _register_retired_home_custody(conn: Connection, ticket: Ticket, conversation_id: str) -> None:
     from planner.files.lifecycle import database_path
     from planner.files.logic.paths import ticket_files_root
     from planner.ticket_workspaces.data import register_workspace

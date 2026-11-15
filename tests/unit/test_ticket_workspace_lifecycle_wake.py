@@ -1,11 +1,14 @@
 """Ticket completion wakes cleanup without scanning workspaces on every write."""
 
 import asyncio
+from pathlib import Path
 from types import SimpleNamespace
+from typing import cast
 from unittest.mock import AsyncMock
 
 from planner.core import change_signal
 from planner.executor.mac_presence import MacLeaseLoop
+from planner.executor.mac_runner import MacRunner
 from planner.ticket_workspaces.contracts import WorkspaceState
 from planner.ticket_workspaces.lifecycle_monitor import monitor_lifecycle
 
@@ -50,7 +53,7 @@ def test_home_lifecycle_change_wakes_cleanup_but_unrelated_write_does_not() -> N
     asyncio.run(exercise())
 
 
-def test_mac_lifecycle_change_runs_cleanup_without_waiting_for_retry(tmp_path) -> None:
+def test_mac_lifecycle_change_runs_cleanup_without_waiting_for_retry(tmp_path: Path) -> None:
     async def exercise() -> None:
         artifacts = tmp_path / "tickets"
         (artifacts / "t_aaaaaaaa").mkdir(parents=True)
@@ -63,7 +66,7 @@ def test_mac_lifecycle_change_runs_cleanup_without_waiting_for_retry(tmp_path) -
             cleanup_workspaces=AsyncMock(),
         )
         mac = MacLeaseLoop.__new__(MacLeaseLoop)
-        mac.client, mac.runner = client, runner
+        mac.client, mac.runner = client, cast(MacRunner, runner)
         mac._workspace_lifecycle = None
         mac._next_workspace_cleanup = 0
         await mac._cleanup_workspaces()
