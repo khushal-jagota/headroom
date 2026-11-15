@@ -61,10 +61,15 @@ def repository_root(folder: Path | None) -> Path | None:
             return Path(result.stdout.strip()).resolve()
     # Do not choose among multiple repositories hidden below a Project folder.
     children = [child for child in folder.iterdir() if child.is_dir() and (child / ".git").exists()]
-    if children:
+    if len(children) > 1:
         raise RuntimeError(
             "Project folder contains repositories; select the repository folder explicitly"
         )
+    if children:
+        result = _git(children[0], "rev-parse", "--show-toplevel")
+        if result.returncode:
+            raise RuntimeError(f"Cannot inspect Project repository: {children[0]}")
+        return Path(result.stdout.strip()).resolve()
     return None
 
 
