@@ -481,7 +481,7 @@ def test_goal_page_persistence_external_refresh_and_owned_conversation(
         assert date_saved.value.ok
         body = date_saved.value.request.post_data_json
         assert isinstance(body, dict)
-        assert "expected_revision" not in body
+        assert body["expected_revision"] == before["revision"]
         accepted = api.get(server, path)
         expected_page = before["page"]
         expected_page["blocks"][0]["items"][1]["deadline"] = value
