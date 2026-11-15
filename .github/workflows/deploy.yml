@@ -410,7 +410,8 @@ jobs:
           mapfile -t selected <<< "$selected_text"
           .venv/bin/python "$GITHUB_WORKSPACE/scripts/deployment_codex.py" verify --source-root "$PANELS_CANDIDATE_SOURCE"
           # One pytest worker per vCPU of the hosted runner, here and in the other suites.
-          .venv/bin/pytest "${selected[@]}" -n 4 --junitxml="$PANELS_REPORT_DIR/unit.xml"
+          # Worker custody needs a delegated cgroup; the runner service cgroup is not writable.
+          systemd-run --user --scope --quiet -p Delegate=yes -- .venv/bin/pytest "${selected[@]}" -n 4 --junitxml="$PANELS_REPORT_DIR/unit.xml"
           python3 "$GITHUB_WORKSPACE/scripts/deployment_check_report.py" pytest "$PANELS_REPORT_DIR/unit.xml" "${selected[@]}"
       - name: pytest integration at requested source
         if: ${{ matrix.suite == 'integration' && !cancelled() && steps.checks_setup.outcome == 'success' }}
@@ -424,7 +425,8 @@ jobs:
           if [ -z "$selected_text" ]; then exit 0; fi
           mapfile -t selected <<< "$selected_text"
           .venv/bin/python "$GITHUB_WORKSPACE/scripts/deployment_codex.py" verify --source-root "$PANELS_CANDIDATE_SOURCE"
-          .venv/bin/pytest "${selected[@]}" -n 4 --junitxml="$PANELS_REPORT_DIR/integration.xml"
+          # Worker custody needs a delegated cgroup; the runner service cgroup is not writable.
+          systemd-run --user --scope --quiet -p Delegate=yes -- .venv/bin/pytest "${selected[@]}" -n 4 --junitxml="$PANELS_REPORT_DIR/integration.xml"
           python3 "$GITHUB_WORKSPACE/scripts/deployment_check_report.py" pytest "$PANELS_REPORT_DIR/integration.xml" "${selected[@]}"
       - name: pytest E2E at requested source
         if: ${{ matrix.suite == 'e2e' && !cancelled() && steps.checks_setup.outcome == 'success' }}

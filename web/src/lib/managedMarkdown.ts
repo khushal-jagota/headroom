@@ -315,6 +315,8 @@ export function createManagedMarkdownSurface(
       }
       const slot = document.createElement("span");
       slot.className = "file-preview-slot";
+      const previewKind = resolvePreview(target).kind;
+      if (previewKind === "image" || previewKind === "video") slot.dataset.mediaSlot = "";
       if (mode === "editable") {
         slot.contentEditable = "false";
         slot.dataset.markdownAtomicSlot = "true";
@@ -330,12 +332,15 @@ export function createManagedMarkdownSurface(
         slot,
         component: mount(FilePreview, {
           target: slot,
-          props: { target, depth, visited: [...visited] }
+          // A bare URL's text is the URL itself, so only written words are kept.
+          props: { target, depth, visited: [...visited],
+            linkText: !isImage && label !== href ? label : undefined }
         }),
         unmounted: false
       };
       previews.set(slot, preview);
     }
+    if (mode === "read-only") groupAdjacentMedia(root);
   }
 
   function repaint(
@@ -453,6 +458,33 @@ function sameReadOnlyInput(
     previous.visited.length === next.visited.length &&
     previous.visited.every((value, index) => value === next.visited[index])
   );
+}
+
+/** Pictures and videos written next to each other, with only space or a line break
+ * between them, are drawn together as a grid. The grid holds the same slots. */
+function groupAdjacentMedia(root: HTMLElement): void {
+  const isMedia = (node: Node | null): node is HTMLElement =>
+    node instanceof HTMLElement && node.dataset.mediaSlot !== undefined;
+  const isGap = (node: Node | null) =>
+    node !== null && ((node.nodeType === Node.TEXT_NODE && !node.textContent?.trim())
+      || (node instanceof HTMLElement && node.tagName === "BR"));
+  for (const first of Array.from(root.querySelectorAll<HTMLElement>("[data-media-slot]"))) {
+    if (first.parentElement?.classList.contains("file-preview-grid")) continue;
+    let last: HTMLElement = first;
+    let count = 1;
+    for (let next = first.nextSibling; next && (isGap(next) || isMedia(next)); next = next.nextSibling) {
+      if (isMedia(next)) { last = next; count += 1; }
+    }
+    if (count < 2) continue;
+    const grid = document.createElement("span");
+    grid.className = "file-preview-grid";
+    first.before(grid);
+    for (let node: Node | null = first; node; ) {
+      const following: Node | null = node === last ? null : node.nextSibling;
+      grid.appendChild(node);
+      node = following;
+    }
+  }
 }
 
 function withinLink(element: Element, root: HTMLElement): boolean {

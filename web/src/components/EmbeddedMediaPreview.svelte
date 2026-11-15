@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onDestroy, tick } from "svelte";
   let { href, label, kind, onerror }: {
-    href: string; label: string; kind: "video" | "audio"; onerror?: () => void;
+    href: string; label: string; kind: "audio"; onerror?: () => void;
   } = $props();
   let activated = $state(false);
   let playing = $state(false);
@@ -24,12 +24,10 @@
   }
   function failed() { if (disposed) return; playing = false; failure = "This media cannot play in this browser."; onerror?.(); }
   async function toggle(event: MouseEvent) {
-    const keyboard = event.detail === 0;
     const attempt = generation;
     const firstPlay = !activated;
     if (firstPlay) { activated = true; await tick(); }
     if (!player || disposed || attempt !== generation) return;
-    if (kind === "video" && keyboard) player.focus();
     try {
       if (firstPlay || player.paused) await player.play(); else player.pause();
     } catch (error) {
@@ -71,20 +69,6 @@
 {/snippet}
 
 <div class={`embedded-media embedded-media--${kind}`} data-embedded-media={kind}>
-  {#if kind === "video"}
-    {#if activated}
-      <!-- svelte-ignore a11y_media_has_caption -->
-      <video bind:this={player} class="file-preview-video" src={href} controls autoplay tabindex="0"
-        aria-label={label} onerror={failed} onloadedmetadata={update} ontimeupdate={update}
-        onplay={update} onpause={update} onended={update}></video>
-    {:else}
-      <div class="file-preview-video-plane">
-        <!-- The browser draws the first frame as a poster; the full video loads only when played. -->
-        <video class="file-preview-video-poster" src={`${href}#t=0.1`} preload="metadata" muted playsinline tabindex="-1" aria-hidden="true"></video>
-        {@render playButton()}
-      </div>
-    {/if}
-  {:else}
     <div class="file-preview-transport">
       {@render playButton()}
       <div class="file-preview-seek" data-audio-seek role="slider" tabindex="0"
@@ -99,6 +83,5 @@
       <audio bind:this={player} src={href} onerror={failed} onloadedmetadata={update}
         ontimeupdate={update} ondurationchange={update} onplay={update} onpause={update} onended={update}></audio>
     {/if}
-  {/if}
   {#if failure}<span class="quiet-line" role="status">{label} — {failure}</span>{/if}
 </div>

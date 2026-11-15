@@ -263,18 +263,7 @@ def _preview_lifecycle(browser, url):
         page.wait_for_function("!document.querySelector('[data-preview-index=\"0\"] [data-visible-content-restoring]')")
         assert not page.evaluate("window.__firstPreview.isConnected")
         assert sum('preview0.html' in href for href in reads) == 2, reads
-        expect(restored_slot.locator('.quiet-line')).to_have_text('preview0.html — file fetch failed: 503')
-        failed_name = restored_slot.locator('.file-preview-failed-name')
-        expect(failed_name).to_have_text('preview0.html')
-        assert failed_name.evaluate("""element => {
-          const style = getComputedStyle(element);
-          const reference = document.createElement('span');
-          reference.style.color = 'var(--text-strong)';
-          element.append(reference);
-          const strongColor = getComputedStyle(reference).color;
-          reference.remove();
-          return style.fontWeight === '600' && style.color === strongColor;
-        }""")
+        expect(restored_slot.locator('[data-html-fetch-notice]')).to_have_text('file fetch failed: 503')
         # Failure completes restoration and is retryable when this preview returns.
         page.locator('[data-preview-fixture]').evaluate("element=>element.scrollTop=element.scrollHeight")
         page.wait_for_function("document.querySelector('[data-preview-index=\"0\"] [data-visible-content-state]')?.dataset.visibleContentState !== 'active'")
@@ -1180,7 +1169,9 @@ def _run(browser, urls):
             f"delayed-{kind}-{mode}": (
                 lambda page, url, kind=kind, mode=mode: delayed_case(page, url, kind, mode)
             )
-            for kind in ["image", "markdown"]
+            # An embedded Markdown artifact is now a link and loads nothing, so only a
+            # delayed picture still changes a row's geometry after it is drawn.
+            for kind in ["image"]
             for mode in ["following", "scrollback"]
         },
     }
