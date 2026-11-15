@@ -1,7 +1,6 @@
 /** Machine identity changes never move a Ticket or change executor authority. */
 import type { ReadSql, TransactionSql } from '../core/database/contracts.ts';
 import { PlannerError } from '../core/contracts.ts';
-import { strip } from '../core/whitespace.ts';
 import { HOME_MACHINE_ID, legacy_machine_id } from '../execution_identity.ts';
 import type { TicketLocale } from '../tickets/contracts.ts';
 import { MACHINE_ICONS, MACHINE_COLORS, type Machine } from './contracts.ts';
@@ -62,7 +61,13 @@ export function edit_machine(
 }
 
 export function validated_machine_name(value: unknown): string {
-  const name = typeof value === 'string' ? strip(value) : '';
+  // Match the stored label from its first through its last non-whitespace character.
+  const name =
+    typeof value === 'string'
+      ? (value.match(
+          /[^\p{White_Space}\u001c-\u001f](?:[\s\S]*[^\p{White_Space}\u001c-\u001f])?/u,
+        )?.[0] ?? '')
+      : '';
   if (!name || Array.from(name).length > 80)
     throw new PlannerError('validation', 'Machine name must contain 1 to 80 characters');
   return name;
