@@ -171,6 +171,9 @@ def run(browser, urls):
     review_note_sends = []
     decision_response = None
     approval_attempts = []
+    decision_receipts = {}
+    hold_decision_lookup = False
+    held_decision_lookups = []
     review_held = []
     review_send_fate = "refused"
     review_message_mode = False
@@ -788,55 +791,58 @@ def run(browser, urls):
         elif path.endswith("/tail"):
             route.fulfill(status=200, content_type="text/event-stream", body="")
             return
-        elif path == "tickets/t_with_session/reject":
-            assert route.request.method == "POST"
-            revisions.append(route.request.post_data_json)
-            session_revised = True
-            fixture_overrides["t_with_session"] = {
-                **fixture_ticket("t_with_session"),
-                "pending_proposal": None,
-            }
-            result = fixture_overrides["t_with_session"]
+        elif path.startswith("tickets/") and "/decision-operations/" in path:
+            _, ticket_id, _, operation_id = path.split("/")
+            receipt = decision_receipts.get(operation_id)
+            if route.request.method == "GET":
+                if hold_decision_lookup:
+                    held_decision_lookups.append((route, receipt))
+                    return
+                result = {"receipt_contract": 1, "receipt": receipt}
+            elif receipt is not None:
+                result = {"receipt_contract": 1, "receipt": receipt}
+            else:
+                command = route.request.post_data_json
+                assert "decision_id" not in command
+                body = {key: value for key, value in command.items() if key not in {"decision", "field"}}
+                error = None
+                if command["decision"] == "send_back":
+                    assert ticket_id == "t_with_session"
+                    revisions.append(body)
+                    session_revised = True
+                    fixture_overrides[ticket_id] = {**fixture_ticket(ticket_id), "pending_proposal": None}
+                else:
+                    approval_attempts.append(body)
+                    if decision_response == "network":
+                        route.abort("failed")
+                        return
+                    if decision_response == "http503":
+                        route.fulfill(status=503, json={"error": {"code": "unavailable", "message": "Decision response unavailable"}})
+                        return
+                    if server_revision is not None and command["expected_proposal_revision"] != server_revision:
+                        error = {"code": "validation", "message": "the visible proposal changed; read it again before accepting", "detail": {}}
+                    else:
+                        approvals.append(body)
+                        ticket.update(pending_proposal=None, ticket_status="empty")
+                        navigation_proposal = None
+                receipt = {
+                    "operation_id": operation_id, "ticket_id": ticket_id,
+                    "decision": command["decision"], "field": command["field"],
+                    "expected_proposal_revision": command["expected_proposal_revision"],
+                    "outcome": "refused" if error else "applied", "error": error,
+                    "transition": None if error else {
+                        "stage": ticket["stage"], "ceiling": ticket["ceiling"],
+                        "ceiling_holder": ticket["ceiling_holder"], "ticket_status": "empty",
+                        "pending_proposal_revision": command["expected_proposal_revision"] + 1,
+                    }, "created_at": 123,
+                }
+                decision_receipts[operation_id] = receipt
+                result = {"receipt_contract": 1, "receipt": receipt}
         elif path in [
-            "tickets/t_personal",
-            "tickets/t_kickoff",
-            "tickets/t_with_session",
-            "tickets/t_open",
-            "tickets/t_done",
+            "tickets/t_personal", "tickets/t_kickoff", "tickets/t_with_session",
+            "tickets/t_open", "tickets/t_done",
         ]:
             result = fixture_ticket(path.split("/")[1])
-        elif path.endswith("/accept/success_condition"):
-            assert route.request.method == "POST"
-            approval = route.request.post_data_json
-            approval_attempts.append(approval)
-            if decision_response == "network":
-                route.abort("failed")
-                return
-            if decision_response == "http503":
-                route.fulfill(status=503, json={"error": {"code": "unavailable", "message": "Decision response unavailable"}})
-                return
-            if (
-                server_revision is not None
-                and approval["expected_proposal_revision"] != server_revision
-            ):
-                route.fulfill(
-                    status=409,
-                    content_type="application/json",
-                    body=json.dumps(
-                        {
-                            "error": {
-                                "code": "validation",
-                                "message": "the visible proposal changed; read it again before accepting",
-                                "detail": None,
-                            }
-                        }
-                    ),
-                )
-                return
-            approvals.append(approval)
-            ticket.update(pending_proposal=None, ticket_status="empty")
-            navigation_proposal = None
-            result = ticket
         elif path.startswith("worker-types/") and path.endswith("/manifest"):
             worker_type = path.split("/")[1]
             matches = [row for row in manifest["worker_types"] if row["worker_type"] == worker_type]
@@ -874,7 +880,8 @@ def run(browser, urls):
             result = {}
         finish_read(route, result)
 
-    page = browser.new_page()
+    context = browser.new_context()
+    page = context.new_page()
 
     def drive(expression):
         # Flush before each awaited fixture operation so an intentionally held
@@ -1455,12 +1462,12 @@ def run(browser, urls):
     page.locator("[data-revision-note]").fill(exact_revision)
     page.locator("[data-send-back]").click()
     wait_for_write(lambda: revisions)
-    assert revisions == [{"message": exact_revision, "expected_proposal_revision": 1, "decision_id": '["t_with_session",1]:send_back'}]
+    assert revisions == [{"message": exact_revision, "expected_proposal_revision": 1}]
     drive("window.__batch()")
     expect(
         page.locator('[data-ticket-id="t_with_session"] [data-approval-block][data-mode="pending"]')
     ).to_have_count(0)
-    assert revisions == [{"message": exact_revision, "expected_proposal_revision": 1, "decision_id": '["t_with_session",1]:send_back'}]
+    assert revisions == [{"message": exact_revision, "expected_proposal_revision": 1}]
     page.evaluate("window.__showTicket('t_done')")
     page.locator('[data-ticket-id="t_done"]').wait_for()
     expect(page.locator("[data-ticket-backlog-action], [data-ticket-backlogged]")).to_have_count(0)
@@ -1541,23 +1548,33 @@ def run(browser, urls):
     retry_decision(1)
     note_input.fill("A changed draft cannot replace the ambiguous decision.")
     page.locator("[data-accept]").click()
-    expect(page.locator(".error-message")).to_contain_text("original note")
+    expect(page.locator("[data-approval-block] .error-message")).to_contain_text("original note")
     assert len(approval_attempts) == 1
     page.evaluate("window.__showTicket('t_review')")
     expect(page.locator("[data-revision-note]")).to_have_value(original_note)
     expect(page.locator("[data-approval-block] [data-edit]")).to_contain_text("Retained local draft")
     retry_decision(2)
-    page.reload()
+    if shots := os.environ.get("PANELS_PROPOSAL_SCREENSHOTS"):
+        page.screenshot(path=str(Path(shots) / "decision-uncertain.png"), full_page=True, animations="disabled")
+    page.close()
+    page = context.new_page()
+    page.route("**/api/**", respond)
+    page.route("**/files/**", serve_file)
+    page.goto([__file__, *urls][1])
     page.evaluate("window.__showReview()")
+    review = page.locator('[data-review-card][data-ticket-id="t_review"]')
     expect(review).to_be_visible()
     expect(page.locator("[data-review-revision-input]")).to_have_value(original_note)
+    wait_for_write(lambda: len(approval_attempts) == 3)
     decision_response = "http503"
-    retry_decision(3)
+    retry_decision(4)
     decision_response = None
     server_revision = 999
     page.locator("[data-accept]").click()
-    expect(page.locator(".error-message")).to_contain_text("visible proposal changed")
-    assert len(approval_attempts) == 4
+    expect(page.locator("[data-approval-block] .error-message")).to_contain_text("visible proposal changed")
+    assert len(approval_attempts) == 5
+    if shots := os.environ.get("PANELS_PROPOSAL_SCREENSHOTS"):
+        page.screenshot(path=str(Path(shots) / "decision-refused.png"), full_page=True, animations="disabled")
     assert not approvals
     assert not review_note_sends
     server_revision = 2
@@ -1566,15 +1583,48 @@ def run(browser, urls):
     expect(page.get_by_role("listbox")).to_have_count(0)
     wait_for_write(lambda: approvals)
     assert len(approvals) == 1
-    assert len(approval_attempts) == 5
+    assert len(approval_attempts) == 6
     assert all(row == approval_attempts[0] for row in approval_attempts)
     assert not review_note_sends
     assert approvals[0]["next_ceiling"] == "none"
     assert approvals[0]["next_holder"] == {"kind": "owner", "id": "owner"}
     assert approvals[0]["expected_proposal_revision"] == 2
-    assert approvals[0]["decision_id"] == '["t_review",2]:approve'
     assert approvals[0]["message"] == original_note
     assert approvals[0]["edited_body"] == "Retained local draft"
+    if shots := os.environ.get("PANELS_PROPOSAL_SCREENSHOTS"):
+        page.screenshot(path=str(Path(shots) / "decision-applied.png"), full_page=True, animations="disabled")
+    # A crash after server commit can leave a journal entry after the proposal leaves Review.
+    applied_operation = next(
+        operation_id for operation_id, value in decision_receipts.items()
+        if value["ticket_id"] == "t_review" and value["outcome"] == "applied"
+        and value["expected_proposal_revision"] == 2
+    )
+    journal_key = 'panels:decision-operation:v1:["t_review",2]'
+    saved_operation = {
+        "version": 1, "ticketId": "t_review", "operationId": applied_operation,
+        "command": {"decision": "approve", "field": "success_condition", **approvals[0]},
+    }
+    page.evaluate("([key,value]) => localStorage.setItem(key, JSON.stringify(value))", [journal_key, saved_operation])
+    attempts_before_recovery = len(approval_attempts)
+    hold_decision_lookup = True
+    page.reload()
+    wait_for_held(lambda: held_decision_lookups)
+    recovery_tab = context.new_page()
+    recovery_tab.route("**/api/**", respond)
+    recovery_tab.goto([__file__, *urls][1])
+    recovery_tab.wait_for_function("""async () => {
+        const locks = await navigator.locks.query();
+        return locks.held.length === 1 && locks.pending.length === 1;
+    }""")
+    assert len(held_decision_lookups) == 1
+    hold_decision_lookup = False
+    lookup_route, saved_receipt = held_decision_lookups.pop()
+    lookup_route.fulfill(json={"receipt_contract": 1, "receipt": saved_receipt})
+    page.wait_for_function("key => localStorage.getItem(key) === null", arg=journal_key)
+    recovery_tab.wait_for_function("key => localStorage.getItem(key) === null", arg=journal_key)
+    recovery_tab.close()
+    assert len(approval_attempts) == attempts_before_recovery
+    page.evaluate("window.__showReview()")
     print(f"Review decision recovery: {time.monotonic() - decision_check_started:.3f}s", flush=True)
     expect(page.locator('[data-review-card][data-ticket-id="t_review"]')).to_have_count(0)
     remaining = page.locator('[data-review-ticket-card][data-ticket-id="t_personal_pending"]')
@@ -1644,7 +1694,7 @@ def run(browser, urls):
     approve_row = page.locator("[data-approval-block]")
     approve_row.locator("[data-accept]").click()
     expect(page.get_by_role("listbox")).to_have_count(0)
-    expect(page.locator(".error-message")).to_contain_text("visible proposal changed")
+    expect(page.locator("[data-approval-block] .error-message")).to_contain_text("visible proposal changed")
     assert len(approvals) == 1
     server_revision = 3
     proposal_editor = approve_row.locator("[data-edit]")
@@ -2419,4 +2469,4 @@ def run(browser, urls):
     # Scope changes can leave a live snapshot handler during teardown. All UI
     # assertions are complete; close the fixture without waiting for live requests.
     page.unroute_all(behavior="ignoreErrors")
-    page.close()
+    context.close()
