@@ -68,9 +68,13 @@ test('boundary duplicate waits for compaction and runs once', async () => {
   await child.finish();
   await f.core.wait_until_quiescent();
   const working = f.store.read_conversation('core')!;
-  expect(working.working_turn_compacted_through_sequence).toBe(
-    working.latest_agent_activity_sequence,
-  );
+  const compaction = f.store
+    .read_events_after('core', idle.latest_sequence)
+    .find((row) => row.payload.kind === 'context_compacted');
+  expect(compaction).toBeDefined();
+  expect(working.automatically_compacted_through_sequence).toBe(compaction!.sequence);
+  expect(working.working_turn_compacted_through_sequence).toBe(compaction!.sequence);
+  expect(working.latest_agent_activity_sequence).toBeGreaterThan(compaction!.sequence);
   expect(working.working_turn_compacted_through_sequence).toBeGreaterThan(
     idle.automatically_compacted_through_sequence,
   );
