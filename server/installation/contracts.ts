@@ -38,10 +38,7 @@ export interface HomeServicePlan {
   preflight(execution: ReleaseExecution): Promise<void>;
   start_home(execution: ReleaseExecution): Promise<void>;
   start_auxiliaries(execution: ReleaseExecution): Promise<void>;
-  stop(
-    execution: ReleaseExecution,
-    assert_owned: (path: string) => Promise<void>,
-  ): Promise<void>;
+  stop(execution: ReleaseExecution, assert_owned: (path: string) => Promise<void>): Promise<void>;
   finish_cleanup?(execution: ReleaseExecution): Promise<void>;
 }
 export interface HomeInstallHost {
@@ -67,17 +64,16 @@ export interface HomeInstallDependencies extends HomeInstallHost {
     execution: ReleaseExecution,
   ) => Promise<void>;
   readonly healthy: (port: number, revision: string, signal: AbortSignal) => Promise<boolean>;
-  readonly service: (request: HomeInstallRequest, host: HomeInstallHost) => Promise<HomeServicePlan>;
+  readonly service: (
+    request: HomeInstallRequest,
+    host: HomeInstallHost,
+  ) => Promise<HomeServicePlan>;
   readonly warning: (message: string) => void;
 }
 /** A bounded observer cannot release descriptors still used by a native cleanup. */
 export class HomeCleanupUnsettled extends Error {
   readonly settled: Promise<void>;
-  constructor(
-    message: string,
-    settled: Promise<void>,
-    cause: unknown,
-  ) {
+  constructor(message: string, settled: Promise<void>, cause: unknown) {
     super(message, { cause });
     this.settled = settled;
   }

@@ -133,7 +133,12 @@ export async function healthy(
     } catch {
       signal.throwIfAborted();
     }
-    if (result?.status === 200 && is_object(result.body) && result.body.app_sha === sha && (!require_ready || result.body.ready === true))
+    if (
+      result?.status === 200 &&
+      is_object(result.body) &&
+      result.body.app_sha === sha &&
+      (!require_ready || result.body.ready === true)
+    )
       return true;
     if (performance.now() / 1000 >= deadline) return false;
     await delay(HEALTH_POLL_SECONDS * 1000, undefined, { signal });

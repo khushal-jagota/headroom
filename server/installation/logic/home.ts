@@ -36,12 +36,10 @@ export function home_install_request(value: unknown): HomeInstallRequest {
   return request;
 }
 export function validate_home_host(request: HomeInstallRequest, host: HomeInstallHost): void {
-  if (
-    !(
-      (host.system === 'linux' && host.architecture === 'x86_64') ||
-      (host.system === 'darwin' && host.architecture === 'arm64')
-    )
-  )
+  if (!(
+    (host.system === 'linux' && host.architecture === 'x86_64') ||
+    (host.system === 'darwin' && host.architecture === 'arm64')
+  ))
     throw new Error('Use an Apple Silicon Mac or a Linux x86_64 machine');
   if (host.system === 'darwin' && !/^[A-Za-z0-9][A-Za-z0-9.-]*$/.test(request.service))
     throw new Error('Use a valid launchd label');

@@ -1,7 +1,16 @@
 import assert from 'node:assert/strict';
 import { createServer as http_server } from 'node:http';
 import { createServer } from 'node:net';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  renameSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs';
 import { join, dirname } from 'node:path';
 import { tmpdir } from 'node:os';
 import { test, vi } from 'vitest';
@@ -17,7 +26,7 @@ async function unused_port(): Promise<number> {
   await new Promise<void>((done) => server.listen(0, '127.0.0.1', done));
   const address = server.address();
   assert(address && typeof address !== 'string');
-  await new Promise<void>((done, fail) => server.close((error) => error ? fail(error) : done()));
+  await new Promise<void>((done, fail) => server.close((error) => (error ? fail(error) : done())));
   return address.port;
 }
 async function fixture() {
@@ -26,16 +35,30 @@ async function fixture() {
   mkdirSync(account);
   const foreign = join(account, 'foreign');
   writeFileSync(foreign, 'existing account data');
-  const controller = new AbortController(), owner = new ChildProcesses();
-  const request: HomeInstallRequest = { root: join(base, 'new-parent', 'home'), service: 'com.panels.test', port: await unused_port(), installer_python: '/unused/python', isolated_providers: true, archive: join(base, 'archive'), archive_sha256: 'a'.repeat(64), revision: 'b'.repeat(40) };
+  const controller = new AbortController(),
+    owner = new ChildProcesses();
+  const request: HomeInstallRequest = {
+    root: join(base, 'new-parent', 'home'),
+    service: 'com.panels.test',
+    port: await unused_port(),
+    installer_python: '/unused/python',
+    isolated_providers: true,
+    archive: join(base, 'archive'),
+    archive_sha256: 'a'.repeat(64),
+    revision: 'b'.repeat(40),
+  };
   const unit = join(account, '.config/systemd/user/com.panels.test.service');
   const events: string[] = [];
   const service: HomeServicePlan = {
     files: [{ path: unit, content: 'owned unit\n', mode: 0o600 }],
     links: [{ path: join(account, 'home.plist'), target: join(request.root, 'agents/home.plist') }],
     async preflight() {},
-    async start_home() { events.push('start'); },
-    async start_auxiliaries() { events.push('auxiliary'); },
+    async start_home() {
+      events.push('start');
+    },
+    async start_auxiliaries() {
+      events.push('auxiliary');
+    },
     async stop(execution, assert_owned) {
       events.push('stop');
       assert.notEqual(execution.child_processes, owner);
@@ -45,8 +68,14 @@ async function fixture() {
   };
   const deps: HomeInstallDependencies = {
     execution: { child_processes: owner, signal: controller.signal, deadline: null },
-    environment: { HOME: account }, account_home: account, system: 'linux', architecture: 'x86_64', uid: process.getuid!(),
-    command: async () => { throw new Error('No real commands in the fixture'); },
+    environment: { HOME: account },
+    account_home: account,
+    system: 'linux',
+    architecture: 'x86_64',
+    uid: process.getuid!(),
+    command: async () => {
+      throw new Error('No real commands in the fixture');
+    },
     async extract(_archive, destination) {
       // The private admission tree shares the nearest destination ancestor.
       assert.equal(dirname(dirname(destination)), base);
@@ -55,64 +84,127 @@ async function fixture() {
       symlinkSync(foreign, join(destination, 'foreign-link'));
       return { runtime_contract: { version: 2 } } as AppManifest;
     },
-    async admit() { assert(!existsSync(request.root)); },
-    async healthy() { return false; },
+    async admit() {
+      assert(!existsSync(request.root));
+    },
+    async healthy() {
+      return false;
+    },
     service: async () => service,
-    warning: () => { throw new Error('Isolated installation must not inspect account skills'); },
+    warning: () => {
+      throw new Error('Isolated installation must not inspect account skills');
+    },
   };
-  return { base, account, foreign, controller, owner, request, unit, events, service, deps, close: async () => { owner.seal(); await owner.settled(); rmSync(base, { recursive: true, force: true }); } };
+  return {
+    base,
+    account,
+    foreign,
+    controller,
+    owner,
+    request,
+    unit,
+    events,
+    service,
+    deps,
+    close: async () => {
+      owner.seal();
+      await owner.settled();
+      rmSync(base, { recursive: true, force: true });
+    },
+  };
 }
 
 test('failed installation uses a fresh cleanup owner after cancellation and preserves linked foreign data', async () => {
   const f = await fixture();
   try {
-    await assert.rejects(install_home(f.request, { ...f.deps, healthy: async () => { f.controller.abort(new Error('operator interrupt')); f.owner.seal(); return false; } }), /did not report ready/);
+    await assert.rejects(
+      install_home(f.request, {
+        ...f.deps,
+        healthy: async () => {
+          f.controller.abort(new Error('operator interrupt'));
+          f.owner.seal();
+          return false;
+        },
+      }),
+      /did not report ready/,
+    );
     assert.deepEqual(f.events, ['start', 'stop']);
     assert(!existsSync(f.request.root));
     assert(!existsSync(join(f.base, 'new-parent')));
     assert(!existsSync(f.unit));
     assert.equal(readFileSync(f.foreign, 'utf8'), 'existing account data');
-  } finally { await f.close(); }
+  } finally {
+    await f.close();
+  }
 });
 
 test('replacement root and changed service files retain their trees before any unlink', async () => {
   const f = await fixture();
   try {
-    const deps = { ...f.deps, healthy: async () => {
-      renameSync(f.request.root, f.request.root + '-original');
-      mkdirSync(f.request.root);
-      writeFileSync(join(f.request.root, 'foreign'), 'replacement root');
-      return false;
-    } };
+    const deps = {
+      ...f.deps,
+      healthy: async () => {
+        renameSync(f.request.root, f.request.root + '-original');
+        mkdirSync(f.request.root);
+        writeFileSync(join(f.request.root, 'foreign'), 'replacement root');
+        return false;
+      },
+    };
     await assert.rejects(install_home(f.request, deps), /Retained/);
     assert.equal(readFileSync(join(f.request.root, 'foreign'), 'utf8'), 'replacement root');
     assert(existsSync(join(f.request.root + '-original', 'app/sealed')));
     assert(existsSync(f.unit));
-  } finally { await f.close(); }
+  } finally {
+    await f.close();
+  }
   const changed = await fixture();
   try {
-    await assert.rejects(install_home(changed.request, { ...changed.deps, healthy: async () => { writeFileSync(changed.unit, 'foreign unit'); return false; } }), /Retained/);
+    await assert.rejects(
+      install_home(changed.request, {
+        ...changed.deps,
+        healthy: async () => {
+          writeFileSync(changed.unit, 'foreign unit');
+          return false;
+        },
+      }),
+      /Retained/,
+    );
     assert(existsSync(join(changed.request.root, 'app/sealed')));
     assert.equal(readFileSync(changed.unit, 'utf8'), 'foreign unit');
-  } finally { await changed.close(); }
+  } finally {
+    await changed.close();
+  }
 });
 
 test('an expired cleanup observer retains descriptor custody through the actual delayed stop', async () => {
-  const f = await fixture(), cleanup_abort = new AbortController();
+  const f = await fixture(),
+    cleanup_abort = new AbortController();
   const original_timeout = AbortSignal.timeout;
-  const timeout = vi.spyOn(AbortSignal, 'timeout').mockImplementation((milliseconds) => milliseconds === 120000 ? cleanup_abort.signal : original_timeout(milliseconds));
-  const admitted = Promise.withResolvers<void>(), hold = Promise.withResolvers<void>();
+  const timeout = vi
+    .spyOn(AbortSignal, 'timeout')
+    .mockImplementation((milliseconds) =>
+      milliseconds === 120000 ? cleanup_abort.signal : original_timeout(milliseconds),
+    );
+  const admitted = Promise.withResolvers<void>(),
+    hold = Promise.withResolvers<void>();
   let checked_after_observer = false;
-  const service = { ...f.service, async stop(_scope: unknown, assert_owned: (path: string) => Promise<void>) {
-    admitted.resolve();
-    await hold.promise;
-    await assert_owned(f.unit);
-    checked_after_observer = true;
-  } };
+  const service = {
+    ...f.service,
+    async stop(_scope: unknown, assert_owned: (path: string) => Promise<void>) {
+      admitted.resolve();
+      await hold.promise;
+      await assert_owned(f.unit);
+      checked_after_observer = true;
+    },
+  };
   let retained: HomeCleanupUnsettled | undefined;
   try {
     const result = install_home(f.request, { ...f.deps, service: async () => service });
-    const rejected = assert.rejects(result, (error: unknown) => { assert(error instanceof HomeCleanupUnsettled); retained = error; return true; });
+    const rejected = assert.rejects(result, (error: unknown) => {
+      assert(error instanceof HomeCleanupUnsettled);
+      retained = error;
+      return true;
+    });
     await admitted.promise;
     cleanup_abort.abort(new Error('scripted cleanup deadline'));
     await rejected;
@@ -132,12 +224,17 @@ test('shared health requires exact ready identity for homes while retaining the 
   // The real HTTP boundary proves ready is read from decoded health, not merely a mock return.
   const started = performance.now();
   let body: unknown = { app_sha: 'c'.repeat(40), ready: true };
-  const server = http_server((_request, response) => { response.setHeader('content-type', 'application/json'); response.end(JSON.stringify(body)); });
+  const server = http_server((_request, response) => {
+    response.setHeader('content-type', 'application/json');
+    response.end(JSON.stringify(body));
+  });
   await new Promise<void>((done) => server.listen(0, '127.0.0.1', done));
   try {
     const address = server.address();
     assert(address && typeof address !== 'string');
-    const url = `http://127.0.0.1:${address.port}/api/health`, sha = 'b'.repeat(40), signal = new AbortController().signal;
+    const url = `http://127.0.0.1:${address.port}/api/health`,
+      sha = 'b'.repeat(40),
+      signal = new AbortController().signal;
     await assert.rejects(check_home_port(address.port), /busy/);
     assert.equal(await healthy(url, sha, 0, signal, {}, true), false);
     body = { app_sha: sha, ready: false };
@@ -146,7 +243,11 @@ test('shared health requires exact ready identity for homes while retaining the 
     body = { app_sha: sha, ready: true };
     assert.equal(await healthy(url, sha, 0, signal, {}, true), true);
   } finally {
-    await new Promise<void>((done, fail) => server.close((error) => error ? fail(error) : done()));
-    console.log(`home-health-boundary seconds=${((performance.now() - started) / 1000).toFixed(3)}`);
+    await new Promise<void>((done, fail) =>
+      server.close((error) => (error ? fail(error) : done())),
+    );
+    console.log(
+      `home-health-boundary seconds=${((performance.now() - started) / 1000).toFixed(3)}`,
+    );
   }
 });

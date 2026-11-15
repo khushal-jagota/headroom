@@ -140,7 +140,10 @@ def _python(base: Path, system: str, scenario: str, port: int, monkeypatch: Any)
         ):
             patch.setenv(name, str(base / folder))
         patch.setenv("PLAN_CLAUDE_EXECUTABLE", "/custom/claude")
-        patch.setattr("planner.installation.home.platform.system", lambda: "Darwin" if system == "darwin" else "Linux")
+        patch.setattr(
+            "planner.installation.home.platform.system",
+            lambda: "Darwin" if system == "darwin" else "Linux",
+        )
         patch.setattr("planner.installation.home.subprocess.run", command)
         patch.setattr(home, "extract_app_archive", extract)
         patch.setattr(mac_home, "extract_app_archive", extract)
