@@ -72,6 +72,7 @@ def test_populated_inbox_publication_and_receipts(
     with synthetic_home_environment(homes):
         with closing(connect(str(path))) as sql:
             create_schema(sql)
+        # This direct store proof starts after ingress admission.
         make_current(str(path), IDENTITY, at_ms=100)
         with closing(connect(str(path))) as sql:
             sql.execute(
@@ -180,9 +181,15 @@ def test_populated_inbox_publication_and_receipts(
             owner = InboxStore(str(path), machine_id=machine)
             with closing(connect(str(path))) as sql:
                 before = [tuple(row) for row in sql.execute("SELECT * FROM mac_inbox_positions")]
+
+            def owner_write(
+                connection: sqlite3.Connection, item: wire.QueuedEnvelope
+            ) -> wire.JsonObject:
+                return {"machine": machine}
+
             try:
-                result = owner.accept(item, (lambda _sql, _item: {"machine": machine})
-                                      if write else no_replay, 107, identity=sender, check_files=False)
+                result = owner.accept(item, owner_write if write else no_replay,
+                                      107, identity=sender, check_files=False)
                 results.append(wire.encode_value(result))
             except PlannerError as error:
                 results.append(error.to_payload())

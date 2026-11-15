@@ -14,8 +14,12 @@ const spec = JSON.parse(readFileSync(0, 'utf8')) as unknown as {
   missing: WireValue<'FileManifest'>;
   forbidden: WireValue<'FileManifest'>;
   other_identity: WireValue<'ExecutorIdentity'>;
-  owner_cases: { machine: string; identity: WireValue<'ExecutorIdentity'>;
-    envelope: WireValue<'QueuedEnvelope'>; write: boolean }[];
+  owner_cases: {
+    machine: string;
+    identity: WireValue<'ExecutorIdentity'>;
+    envelope: WireValue<'QueuedEnvelope'>;
+    write: boolean;
+  }[];
 };
 const database = createDatabase(spec.path),
   store = new InboxStore(database, new FileStaging(spec.path));
@@ -82,18 +86,25 @@ try {
       const owner = new InboxStore(database, new FileStaging(spec.path, item.machine));
       const before = database.read((sql) => sql.all('SELECT * FROM mac_inbox_positions'));
       try {
-        results.push(owner.accept(
-          decode_value(item.envelope, 'QueuedEnvelope'),
-          item.write ? () => ({ machine: item.machine }) : no_replay, 107,
-          { identity: parse_identity(item.identity, { check_versions: false }), check_files: false },
-        ));
+        results.push(
+          owner.accept(
+            decode_value(item.envelope, 'QueuedEnvelope'),
+            item.write ? () => ({ machine: item.machine }) : no_replay,
+            107,
+            {
+              identity: parse_identity(item.identity, { check_versions: false }),
+              check_files: false,
+            },
+          ),
+        );
       } catch (error) {
         if (!(error instanceof PlannerError)) throw error;
         results.push(error.toPayload());
       }
       if (!item.write) {
         const after = database.read((sql) => sql.all('SELECT * FROM mac_inbox_positions'));
-        if (JSON.stringify(after) !== JSON.stringify(before)) throw new Error('Refusal changed receipts');
+        if (JSON.stringify(after) !== JSON.stringify(before))
+          throw new Error('Refusal changed receipts');
       }
     }
     const forbidden_staged = await store.staged_file(spec.forbidden);
@@ -107,8 +118,11 @@ try {
       if (!(error instanceof PlannerError)) throw error;
       results.push(error.toPayload());
     }
-    if (readFileSync(forbidden_staged, 'utf8') !== 'payload-0' ||
-        existsSync(await store.file_target(spec.forbidden))) throw new Error('Foreign sender published a file');
+    if (
+      readFileSync(forbidden_staged, 'utf8') !== 'payload-0' ||
+      existsSync(await store.file_target(spec.forbidden))
+    )
+      throw new Error('Foreign sender published a file');
     unlinkSync(forbidden_staged);
     const root = dirname(spec.path),
       files_root = join(root, 'files'),

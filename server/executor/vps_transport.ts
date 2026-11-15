@@ -274,7 +274,11 @@ export class VpsExecutor {
   ): Promise<WireValue<'JsonObject'>> {
     this.admit();
     this.database.read((sql) => {
-      require_current_incarnation_in_transaction(sql, identity.executor_incarnation, this.machine_id);
+      require_current_incarnation_in_transaction(
+        sql,
+        identity.executor_incarnation,
+        this.machine_id,
+      );
       require_incarnation_owner(sql, read.child.executor_incarnation, this.machine_id);
     });
     if (!READABLE_PATHS.some((prefix) => read.path.startsWith(prefix)))

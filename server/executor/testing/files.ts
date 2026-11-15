@@ -238,8 +238,13 @@ type Spec = {
 };
 async function main(raw: Spec): Promise<void> {
   if (raw.scope_only) {
-    const original = new FileStaging(raw.path), other = new FileStaging(raw.path, raw.other_machine);
-    process.stdout.write(JSON.stringify(await Promise.all([original, other].map((staging) => staging.staged_file(raw.manifest)))));
+    const original = new FileStaging(raw.path),
+      other = new FileStaging(raw.path, raw.other_machine);
+    process.stdout.write(
+      JSON.stringify(
+        await Promise.all([original, other].map((staging) => staging.staged_file(raw.manifest))),
+      ),
+    );
     return;
   }
   const spec = { ...raw, identity: parse_identity(raw.identity) };

@@ -17,7 +17,10 @@ import { same_version } from '../mac/file_metadata.ts';
 import { MAX_FILES_PER_PUBLICATION_TRANSACTION } from '../configuration.ts';
 import { as_object, decode_json, decode_value, ExecutorValidationError } from '../protocol.ts';
 import { FileStaging } from '../vps_files.ts';
-import { require_current_incarnation_in_transaction, require_incarnation_owner } from '../vps_presence_store.ts';
+import {
+  require_current_incarnation_in_transaction,
+  require_incarnation_owner,
+} from '../vps_presence_store.ts';
 import { open_child_assignment } from './child_custody.ts';
 import { is_record as is_json_object } from '../../core/records.ts';
 import { artifact_changed, PublicationGroup } from './publication.ts';
@@ -93,13 +96,21 @@ export class InboxStore {
   }
   require_sender(identity: ExecutorIdentity): void {
     this.database.read((sql) =>
-      require_current_incarnation_in_transaction(sql, identity.executor_incarnation, this.machine_id),
+      require_current_incarnation_in_transaction(
+        sql,
+        identity.executor_incarnation,
+        this.machine_id,
+      ),
     );
   }
   require_envelope(envelope: WireValue<'QueuedEnvelope'>, identity: ExecutorIdentity): void {
     const child = decode_value(InboxStore.payload_child(envelope.payload), 'ChildReference');
     this.database.read((sql) => {
-      require_current_incarnation_in_transaction(sql, identity.executor_incarnation, this.machine_id);
+      require_current_incarnation_in_transaction(
+        sql,
+        identity.executor_incarnation,
+        this.machine_id,
+      );
       this.require_child(sql, envelope, child);
     });
   }
@@ -143,7 +154,11 @@ export class InboxStore {
     now_ms: number,
     options: AcceptOptions,
   ): readonly [WireValue<'AcceptanceReceipt'>, boolean] {
-    require_current_incarnation_in_transaction(tx, options.identity.executor_incarnation, this.machine_id);
+    require_current_incarnation_in_transaction(
+      tx,
+      options.identity.executor_incarnation,
+      this.machine_id,
+    );
     const previous = this.prior_receipt(tx, envelope, options.identity);
     if (previous !== null) return [previous, false];
     const check_files = options.check_files ?? true;
@@ -355,7 +370,11 @@ export class InboxStore {
         let failed = false;
         try {
           const versions = this.database.write((tx) => {
-            require_current_incarnation_in_transaction(tx, identity.executor_incarnation, this.machine_id);
+            require_current_incarnation_in_transaction(
+              tx,
+              identity.executor_incarnation,
+              this.machine_id,
+            );
             if (this.prior_receipt(tx, envelope, identity) !== null)
               throw new PlannerError('retry_later', 'This item was saved meanwhile');
             this.require_file_owner(tx, envelope);

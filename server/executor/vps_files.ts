@@ -74,9 +74,10 @@ export class FileStaging {
   constructor(db_path: string, machine_id = ORIGINAL_MAC_MACHINE_ID) {
     this.machine_id = machine_id;
     const root = dirname(resolve_path_sync(db_path));
-    this.staging = machine_id === ORIGINAL_MAC_MACHINE_ID
-      ? join(root, 'executor-uploads')
-      : join(root, 'executor-uploads', safe_component(machine_id));
+    this.staging =
+      machine_id === ORIGINAL_MAC_MACHINE_ID
+        ? join(root, 'executor-uploads')
+        : join(root, 'executor-uploads', safe_component(machine_id));
     this.tickets = join(root, 'files', 'tickets');
   }
   async file_target(manifest: WireValue<'FileManifest'>): Promise<string> {
