@@ -1,5 +1,6 @@
 /** Per-server composition. External release and executor operations remain explicit. */
 import { dirname, join } from 'node:path';
+import { executor_platform } from '../machines/executor_credentials.ts';
 import { UpdateBarrier } from './update_barrier.ts';
 import type { Config } from '../core/config.ts';
 import { HOST } from '../core/config.ts';
@@ -96,6 +97,8 @@ export async function createEnvironmentRuntime(
   let updates: UpdateService;
   const mac = operations.create_mac({
     root: join(data_directory, 'mac-updates'),
+    platform_for: (machine_id) =>
+      context.database.read((sql) => executor_platform(sql, machine_id)),
     attempts,
     provider,
     current_app_sha: config.app_sha,

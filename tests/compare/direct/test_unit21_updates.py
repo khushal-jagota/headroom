@@ -222,10 +222,6 @@ def _compare_store(
     return actual
 
 
-@pytest.mark.xfail(
-    run=False,
-    reason="expected-open P5: #916 publication records add Linux executor metadata",
-)
 def test_attempt_store_preserves_versions_and_compare_and_swap(
     tmp_path: Path,
     request: pytest.FixtureRequest,
@@ -494,10 +490,6 @@ def test_attempt_store_waits_for_python_lock_and_rechecks_state(
             child.wait(timeout=10)
 
 
-@pytest.mark.xfail(
-    run=False,
-    reason="expected-open P5: #916 update experience carries Linux executor metadata",
-)
 def test_update_experience_and_microsecond_boundaries_match_python(
     tmp_path: Path,
     request: pytest.FixtureRequest,

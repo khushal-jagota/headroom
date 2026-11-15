@@ -17,6 +17,7 @@ from typing import Any
 from unittest.mock import patch
 
 import pytest
+from tests.compare.direct import test_unit21_updates as update_fixture
 from tests.compare.direct.test_unit21_backups import _report
 from tests.compare.direct.test_unit21_updates import _environment
 from tests.compare.json_values import json_values
@@ -59,16 +60,32 @@ def _python(request: dict[str, Any]) -> dict[str, Any]:
     provider = Provider()
 
     def make(sha: str, available: bool) -> MacUpdateService:
-        return MacUpdateService(root, attempts, provider if available else None, sha, lambda: ready)
+        result = MacUpdateService(
+            root, attempts, provider if available else None, sha, lambda: ready
+        )
+        result.platform_for = lambda machine: platforms.get(machine, "darwin")
+        return result
 
+    platforms: dict[str, str] = {}
     output: list[dict[str, Any]] = []
     with patch.object(change_signal, "emit", lambda: emitted.append(None)):
-        service = make("a" * 40, True)
+        primary = make("a" * 40, True)
         for op in request["operations"]:
             try:
                 result: Any = None
                 action = op["action"]
-                if action == "prepare":
+                service = primary.for_machine(op["machine_id"]) if "machine_id" in op else primary
+                if action == "platform":
+                    platforms[op["machine_id"]] = op["platform"]
+                elif action == "machine":
+                    result = {
+                        "cached": service is primary.for_machine(op["machine_id"]),
+                        "root": str(service.root.relative_to(root)),
+                        "archive_root": str(service.archive_root.relative_to(root)),
+                        "platform": service.platform,
+                    }
+                    result = {key: "" if value == "." else value for key, value in result.items()}
+                elif action == "prepare":
                     service.prepare(releases[op["key"]])
                 elif action == "write":
                     attempts.path.unlink(missing_ok=True)
@@ -76,7 +93,7 @@ def _python(request: dict[str, Any]) -> dict[str, Any]:
                 elif action == "ready":
                     ready = None if op["key"] is None else releases[op["key"]]
                 elif action == "restart":
-                    service = make(op["sha"], op["provider"])
+                    primary = make(op["sha"], op["provider"])
                 elif action == "check":
                     result = asdict(service.check())
                 elif action == "status":
@@ -104,7 +121,9 @@ def _python(request: dict[str, Any]) -> dict[str, Any]:
                     result = service.phase(op["id"])
                 elif action == "report_evidence":
                     path = (
-                        root / "reports" / (hashlib.sha256(op["id"].encode()).hexdigest() + ".json")
+                        service.root
+                        / "reports"
+                        / (hashlib.sha256(op["id"].encode()).hexdigest() + ".json")
                     )
                     os.utime(path, (1_800_000_000, 1_800_000_000))
                     result = {
@@ -118,12 +137,14 @@ def _python(request: dict[str, Any]) -> dict[str, Any]:
                         service.prefetch_archive(op["id"]).read_bytes()
                     ).hexdigest()
                 elif action == "expire_applied":
-                    path = root / "applied.json"
+                    path = service.root / "applied.json"
                     value = json.loads(path.read_text())
                     value["release"]["expires_at"] = "2000-01-01T00:00:00Z"
                     path.write_text(json.dumps(value))
                 elif action == "archives":
-                    result = sorted(path.name for path in (root / "archives").iterdir())
+                    result = sorted(
+                        path.name for path in (service.archive_root / "archives").iterdir()
+                    )
                 else:
                     raise AssertionError(action)
                 output.append({"result": result})
@@ -132,10 +153,6 @@ def _python(request: dict[str, Any]) -> dict[str, Any]:
     return {"output": output, "downloads": downloads, "emitted": len(emitted)}
 
 
-@pytest.mark.xfail(
-    run=False,
-    reason="expected-open P5: #916 platform selection replaces Mac-only publication details",
-)
 def test_unit21_mac_updates_retained_archive_and_leased_report_sequence(
     tmp_path: Path,
     request: pytest.FixtureRequest,
@@ -501,3 +518,54 @@ process.stdout.write(JSON.stringify(result));"""
         native_differences=observed,
         hosted_producer_compatibility="pending",
     )
+
+
+def test_unit21_machine_update_selector(tmp_path: Path, request: pytest.FixtureRequest) -> None:
+    """Gap: one-Mac coverage cannot prove isolation. Reuse the paired private-file host."""
+    began = time.perf_counter()
+    provider = MacProvider()
+    release = provider.publish()
+    archive = tmp_path / "artifact.zip"
+    provider.download_artifact(4, archive)
+    first, second = "11111111-1111-4111-8111-111111111111", "22222222-2222-4222-8222-222222222222"
+    operations: list[dict[str, Any]] = []
+
+    def add(action: str, **values: Any) -> None:
+        operations.append({"action": action, **values})
+
+    add("prepare", key="release")
+    add("ready", key="release")
+    add("write", key="attempt")
+    for machine in (first, second):
+        add("machine", machine_id=machine)
+        add("check", machine_id=machine)
+    report = dict(
+        request_id="mac_one." + first,
+        application_revision="b" * 40,
+        phase="waiting",
+        detail="first only",
+    )
+    add("report", machine_id=first, report=report)
+    add("status", machine_id=first)
+    add("status", machine_id=second)
+    add("archive", machine_id=second, id="mac_one." + second)
+    add("platform", machine_id=first, platform="linux")
+    add("machine", machine_id=first)
+    add("check", machine_id=first)
+    add("prepare", machine_id=first, key="release")
+    spec = dict(
+        releases={"release": asdict(release)},
+        attempts={"attempt": asdict(attempt(release, "preparing", mode="idle"))},
+        artifacts={"4": str(archive)},
+        operations=operations,
+        inspections={},
+    )
+    py, node = tmp_path / "python", tmp_path / "node"
+    py.mkdir()
+    node.mkdir()
+    spec = json.loads(json.dumps(spec))
+    expected = _python({**spec, "root": str(py)})
+    with patch.object(update_fixture, "COMPANION", COMPANION):
+        actual = update_fixture._node(node, {**spec, "root": str(node)}, "mac_update_sequence")
+    assert actual["parity"] == expected
+    _report(request, "unit21-machine-update-selector.json", began, children=actual["children"])
