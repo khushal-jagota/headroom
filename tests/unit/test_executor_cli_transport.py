@@ -90,3 +90,37 @@ def test_mac_preview_cli_refuses_before_any_transport(
     result = CliRunner().invoke(main, arguments)
     assert result.exit_code == 1
     assert "previews are unavailable for Tickets running on the Mac" in result.output
+
+
+def test_executor_send_back_carries_the_inspected_revision(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    """The CLI must reach IPC without replacing the caller's inspected revision."""
+    monkeypatch.setenv("PLAN_EXECUTOR_ROOT", str(tmp_path))
+
+    def accepted(operation: IpcOperation, payload: JsonObject) -> IpcResponse:
+        if operation is IpcOperation.read:
+            assert payload == {
+                "path": "/api/tickets", "params": {"detail": "full", "id": "t_target"},
+            }
+            return IpcResponse("read", {"pending_proposal": {"revision": 7}}, None)
+        assert operation is IpcOperation.write
+        assert payload == {
+            "operation": "ticket.send_back",
+            "arguments": {
+                "ticket_id": "t_target",
+                "body": {
+                    "message": "Fix the missing evidence", "expected_proposal_revision": 7,
+                    "decision_id": "t_target:7:reject",
+                },
+            },
+        }
+        return IpcResponse("request", {"id": "t_target"}, None)
+
+    monkeypatch.setattr("planner.executor.ipc_client.request", accepted)
+    result = CliRunner().invoke(
+        main, ["ticket", "proposal", "t_target", "revise",
+               "--body-file", "-"],
+        input="Fix the missing evidence",
+    )
+    assert result.exit_code == 0, result.output

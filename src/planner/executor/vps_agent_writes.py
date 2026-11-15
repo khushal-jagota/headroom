@@ -55,7 +55,11 @@ def write_ticket_mutation(
     review_transfer_notices: list[ReviewTransferNotice] | None = None,
 ) -> JsonObject:
     """Effect and receipt use the caller's open transaction; no native I/O here."""
-    from planner.tickets.api import write_create_ticket, write_patch_ticket
+    from planner.tickets.api import (
+        write_create_ticket,
+        write_patch_ticket,
+        write_reject_ticket_proposal,
+    )
 
     args = write.arguments
     body = args.get("body")
@@ -68,6 +72,8 @@ def write_ticket_mutation(
         route, method, params = "/api/tickets", "POST", {}
     elif write.operation == "ticket.propose":
         route, method = route + "/propose", "POST"
+    elif write.operation == "ticket.send_back":
+        route, method = route + "/reject", "POST"
     elif write.operation in ("ticket.block", "ticket.unblock"):
         route = "/api/collections/{collection}/{container_id}/{member_id}"
         method = "PUT" if write.operation == "ticket.block" else "DELETE"
@@ -122,6 +128,10 @@ def write_ticket_mutation(
             connection, ticket_id, body=text, ctx=RequestContext(principal), clock=clock
         )
         return views.ticket_json(ticket, clock.now_unix())
+    if write.operation == "ticket.send_back":
+        return write_reject_ticket_proposal(
+            ticket_id, body, connection, RequestContext(principal), clock,
+        )
     if write.operation == "ticket.edit":
         return write_patch_ticket(
             ticket_id,
