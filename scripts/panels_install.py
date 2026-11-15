@@ -308,8 +308,10 @@ def select_receipt(receipt: dict[str, Any], target: str, command: str) -> dict[s
             "arm64" if target == "darwin" else "x86_64",
         ):
             raise ValueError("The release target differs from this machine.")
-        if contract.get("version") != 1:
-            raise ValueError("This bootstrap needs a sealed Python release from deploy.yml.")
+        if contract.get("version") not in (1, 2):
+            raise ValueError("This bootstrap needs a sealed Python or Node home release.")
+        if contract.get("version") == 2 and target == "darwin" and contract.get("role") != "home":
+            raise ValueError("The release must be a Darwin home artifact.")
     if not isinstance(selected, dict) or not re.fullmatch(r"[0-9a-f]{40}", revision or ""):
         raise ValueError("The publication receipt has no exact application revision.")
     digest = selected.get("archive_sha256")
@@ -546,7 +548,21 @@ def main() -> None:
             environment = {
                 key: value for key, value in os.environ.items() if not key.startswith("PLAN_")
             }
-            if args.command == "home":
+            if args.command == "home" and receipt.get("manifest", {}).get("runtime_contract", {}).get("version") == 2:
+                node = "/opt/homebrew/bin/node" if target == "darwin" else shutil.which("node")
+                if node is None:
+                    raise ValueError("Install Node.js 22 or newer before installation.")
+                command = [node, str(payload / "server/installation/home_main.ts")]
+                value = {
+                    "root": str(args.root),
+                    "service": args.service,
+                    "port": args.port,
+                    "isolated_providers": args.isolated_providers,
+                    "archive": str(archive),
+                    "archive_sha256": receipt["archive_sha256"],
+                    "revision": receipt["revision"],
+                }
+            elif args.command == "home":
                 command = [
                     str(payload / ".venv/bin/python"),
                     "-I",

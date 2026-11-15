@@ -5,6 +5,7 @@ import io
 import json
 import signal
 import subprocess
+import sys
 import tarfile
 import urllib.request
 import zipfile
@@ -15,6 +16,62 @@ from unittest.mock import Mock
 
 import pytest
 from scripts import panels_install as bootstrap
+
+
+@pytest.mark.parametrize("target,command,version", [
+    ("linux", "home", 1), ("linux", "home", 2), ("darwin", "home", 1),
+    ("darwin", "home", 2), ("linux", "join", 1), ("darwin", "join", 1),
+])
+def test_local_receipt_routes_native_home_and_preserves_legacy_installer_requests(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, target: str, command: str, version: int,
+) -> None:
+    archive = tmp_path / "release.tar.gz"
+    archive.write_bytes(b"synthetic archive")
+    receipt_file, root = tmp_path / "publication.json", tmp_path / "new-home"
+    selected = {"archive_sha256": "a" * 64, "manifest": {"app_sha": "b" * 40, "runtime_contract": {
+        "version": version, "system": target, "architecture": "arm64" if target == "darwin" else "x86_64", "role": "home",
+    }}}
+    receipt = ({"mac_home": selected} if target == "darwin" and command == "home" else selected)
+    if command == "join":
+        receipt = {"manifest": {"app_sha": "b" * 40},
+                   "mac" if target == "darwin" else "linux_executor": {"archive_sha256": "a" * 64}}
+    receipt_file.write_text(json.dumps(receipt))
+    args = ["panels_install.py", command, "--root", str(root), "--archive", str(archive), "--receipt", str(receipt_file)]
+    if command == "join":
+        args += ["--home", "https://home.invalid", "--machine-id", "synthetic-machine"]
+    monkeypatch.setattr(sys, "argv", args)
+    monkeypatch.setattr(bootstrap, "host_target", lambda: target)
+    monkeypatch.setattr(bootstrap, "preflight", lambda *_: None)
+    monkeypatch.setattr(bootstrap.shutil, "which", lambda _: "/synthetic/host/node")
+    monkeypatch.setattr(bootstrap.getpass, "getpass", lambda _: "synthetic-secret")
+    extracted: list[Path] = []
+    monkeypatch.setattr(bootstrap, "extract_bootstrap", lambda _archive, destination, _digest: extracted.append(destination))
+    monkeypatch.setattr(bootstrap, "check_linux_contract", lambda _: None)
+    invoked: list[tuple[list[str], dict[str, Any]]] = []
+    monkeypatch.setattr(bootstrap, "run_installer", lambda argv, value, _env: invoked.append((argv, json.loads(value))))
+    bootstrap.main()
+    argv, value = invoked[0]
+    payload = extracted[0]
+    if command == "home":
+        expected: dict[str, Any] = {"root": str(root), "service": "com.panels.home", "port": 8767,
+                                  "isolated_providers": False, "archive": str(archive), "archive_sha256": "a" * 64, "revision": "b" * 40}
+        if version == 2:
+            assert argv == ["/opt/homebrew/bin/node" if target == "darwin" else "/synthetic/host/node", str(payload / "server/installation/home_main.ts")]
+            wrong_target = json.loads(json.dumps(receipt))
+            (wrong_target["mac_home"] if target == "darwin" else wrong_target)["manifest"]["runtime_contract"]["architecture"] = "wrong"
+            with pytest.raises(ValueError, match="target"):
+                bootstrap.select_receipt(wrong_target, target, command)
+            if target == "darwin":
+                selected["manifest"]["runtime_contract"]["role"] = "executor"  # type: ignore[index]
+                with pytest.raises(ValueError, match="home artifact"):
+                    bootstrap.select_receipt(receipt, target, command)
+        else:
+            assert argv == [str(payload / ".venv/bin/python"), "-I", "-B", "-c", "from planner.installation.home import main; main()"]
+            expected["installer_python"] = str(Path(sys.executable).resolve())
+    else:
+        assert argv == [str(payload / ("python/bin/python3" if target == "darwin" else ".venv/bin/python")), "-I", "-B", "-c", "from planner.installation.join import main; main()"]
+        expected = {"root": str(root), "label": "com.panels.executor" if target == "darwin" else "panels-executor.service", "home_url": "https://home.invalid", "machine_id": "synthetic-machine", "credential": "synthetic-secret", "isolated_providers": False, "archive": str(archive), "archive_sha256": "a" * 64, "archive_size": archive.stat().st_size, "revision": "b" * 40}
+    assert value == expected
 
 
 def test_archive_checksum_precedes_extraction(tmp_path: Path) -> None:
