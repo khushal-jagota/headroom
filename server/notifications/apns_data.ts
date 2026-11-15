@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { stringify_python_json } from '../core/http/numeric_json.ts';
 import { TASK_ALERT_IS_CURRENT } from './attention.ts';
 import { expire_stale_deliveries } from './data.ts';
 import type { TransactionSql } from '../core/database/contracts.ts';
@@ -72,7 +73,17 @@ export function queue_intent(
       intent.body,
       intent.route,
       intent.tag,
-      intent.reply === null ? null : JSON.stringify(intent.reply),
+      intent.reply === null
+        ? null
+        : stringify_python_json(
+            {
+              conversation_id: intent.reply.conversation_id,
+              message_id: intent.reply.message_id,
+              recipient_kind: intent.reply.recipient_kind,
+              recipient_id: intent.reply.recipient_id,
+            },
+            { ensure_ascii: true },
+          ),
       now,
       now,
       'owner',

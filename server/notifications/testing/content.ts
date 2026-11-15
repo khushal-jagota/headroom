@@ -81,9 +81,7 @@ export function notification_content_proof(
             Object.fromEntries(
               Object.entries(row).map(([key, value]) => [
                 key,
-                ['context_json', 'reply_json'].includes(key) && typeof value === 'string'
-                  ? JSON.parse(value)
-                  : value,
+                key === 'context_json' && typeof value === 'string' ? JSON.parse(value) : value,
               ]),
             ),
           ),
@@ -133,9 +131,7 @@ export function notification_freshness_proof(database: Database, ticket: string,
               Object.fromEntries(
                 Object.entries(row).map(([key, value]) => [
                   key,
-                  ['context_json', 'reply_json'].includes(key) && typeof value === 'string'
-                    ? JSON.parse(value)
-                    : value,
+                  key === 'context_json' && typeof value === 'string' ? JSON.parse(value) : value,
                 ]),
               ),
             ),

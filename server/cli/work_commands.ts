@@ -269,7 +269,7 @@ async function proposal(inv: Invocation): Promise<CommandResult> {
       const detail = await send(inv, 'GET', '/api/tickets', {
         params: { detail: 'full', id: tid },
       });
-      if (!detail.pending_proposal) fail_validation(inv, 'ticket has no pending proposal');
+      if (!detail.pending_proposal) fail_validation(inv, 'no pending proposal to revise');
       revision = detail.pending_proposal.revision;
     }
     const data = await send(inv, 'POST', `/api/tickets/${tid}/reject`, {
