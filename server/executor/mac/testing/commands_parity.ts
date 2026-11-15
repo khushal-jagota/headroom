@@ -121,6 +121,11 @@ const native = {
     }
     if (text.endsWith('reject')) throw new BackendPromptRejected('not admitted 🦉'.repeat(6000));
     if (text.endsWith('replay')) throw new PromptWriteFailed('delivery fate unknown 🦉');
+    if (text.endsWith('accepted'))
+      return new BackendPromptAccepted({
+        composed_content_delivered: false,
+        agent_acceptance_proven: true,
+      });
     return new BackendPromptAccepted({ composed_content_delivered: false });
   },
   async steer(turn: NativeTurn, content: { text?: string }[], values: unknown) {
