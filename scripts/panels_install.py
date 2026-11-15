@@ -548,7 +548,10 @@ def main() -> None:
             environment = {
                 key: value for key, value in os.environ.items() if not key.startswith("PLAN_")
             }
-            if args.command == "home" and receipt.get("manifest", {}).get("runtime_contract", {}).get("version") == 2:
+            if (
+                args.command == "home"
+                and receipt.get("manifest", {}).get("runtime_contract", {}).get("version") == 2
+            ):
                 node = "/opt/homebrew/bin/node" if target == "darwin" else shutil.which("node")
                 if node is None:
                     raise ValueError("Install Node.js 22 or newer before installation.")
