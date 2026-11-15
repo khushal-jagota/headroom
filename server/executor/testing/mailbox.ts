@@ -15,6 +15,7 @@ import { UpdateConflict } from '../../environments/updates/attempts.ts';
 import { ExecutorValidationError, decode_value } from '../protocol.ts';
 import { read_presence, accept_lease_in_transaction } from '../vps_presence_store.ts';
 import { ORIGINAL_MAC_MACHINE_ID } from '../../execution_identity.ts';
+import { AutomaticStartAdmission } from '../../conversation/start_admission/index.ts';
 
 type Statement = { sql: string; values: SqlValue[] };
 type Action = {
@@ -64,6 +65,15 @@ let after_put: WireTypes['ChildCommand'] | undefined, reentered: Promise<unknown
 let trace: unknown[] = [],
   throw_on: string | null = null;
 const held = new Map<string, Held>();
+let admission: AutomaticStartAdmission,
+  admission_now = 0;
+let admission_held: Promise<void>,
+  admission_observed: unknown[] = [];
+let race_statements: Statement[] | undefined,
+  race_pending = false,
+  race_applied = false,
+  race_check = false,
+  unrelated_invalidated = false;
 let presence: MacPresenceService | undefined,
   presence_mode = '';
 let callback_release: (() => void) | undefined;
@@ -99,6 +109,13 @@ const facade: Database = {
   },
   write(work, options) {
     writes++;
+    if (race_pending) {
+      race_pending = false;
+      const statements = race_statements!;
+      race_statements = undefined;
+      sql(statements);
+      race_applied = race_check = true;
+    }
     if (presence_mode === 'fail_contact') {
       callback_trace.push(['contact_failure']);
       throw Object.assign(new Error('fixture contact flush'), { code: 'EIO' });
@@ -117,6 +134,14 @@ const facade: Database = {
     let result;
     try {
       result = database.write(work, options);
+      if (race_check && result !== null && typeof result === 'object' && 'reply' in result)
+        race_check = false;
+    } catch (error) {
+      if (error instanceof data.MailboxPreparationRequired) {
+        if (race_check) unrelated_invalidated = true;
+        else if (race_statements) race_pending = true;
+      }
+      throw error;
     } finally {
       writer_ms += performance.now() - began;
     }
@@ -389,8 +414,91 @@ async function presence_control(action: Action): Promise<unknown> {
       throw new Error('Unknown presence control');
   }
 }
+async function admission_control(action: Action): Promise<unknown> {
+  switch (action.method) {
+    case 'open': {
+      admission_now = 0;
+      admission = new AutomaticStartAdmission({ limit: 2, clock: () => admission_now });
+      admission.configure_destinations((destination) => destination === machine_id);
+      for (let index = 0; index < 2; index++) {
+        admission_now = index;
+        if (
+          !admission.try_start({
+            identity: `block-${index}`,
+            work_class: 'worker',
+            destination: machine_id,
+          })
+        )
+          throw new Error('Fixture failed to saturate admission');
+      }
+      admission_now = 2;
+      admission_observed = [];
+      let notify!: () => void;
+      admission_held = new Promise<void>((resolve) => {
+        notify = resolve;
+      });
+      const observe = admission.observe.bind(admission);
+      if (action.mode === 'watch') {
+        const waiting = mailbox as unknown as {
+          observe(
+            promise: Promise<unknown>,
+            signal?: AbortSignal,
+            timeout?: number | null,
+          ): Promise<unknown>;
+        };
+        const wait = waiting.observe.bind(mailbox);
+        waiting.observe = (promise, signal, timeout) => {
+          const result = wait(promise, signal, timeout);
+          if (timeout != null) {
+            if (timeout > 1) throw new Error('Admission poll pause exceeds one second');
+            notify();
+          }
+          return result;
+        };
+      }
+      admission.observe = (turn) => {
+        const reader = createReadAccess(action.path);
+        try {
+          admission_observed.push([
+            turn,
+            reader.read(
+              (sql) =>
+                sql.get<{ count: number }>(
+                  'SELECT count(*) AS count FROM automatic_start_bindings WHERE conversation_id=? AND turn_number=?',
+                  [turn.conversation_id, turn.turn_number],
+                )!.count,
+            ),
+          ]);
+        } finally {
+          reader.close();
+        }
+        observe(turn);
+      };
+      mailbox.start_admission = admission;
+      return null;
+    }
+    case 'release':
+      admission_now++;
+      for (let index = 0; index < 2; index++) admission.finish(`block-${index}`);
+      return null;
+    case 'held':
+      await admission_held;
+      return null;
+    case 'state':
+      return {
+        reservations: admission.snapshots(),
+        observed: admission_observed,
+        race_applied,
+        unrelated_invalidated,
+      };
+    default:
+      throw new Error('Unknown admission control');
+  }
+}
 async function execute(action: Action): Promise<unknown> {
   switch (action.op) {
+    case 'admission':
+      return admission_control(action);
     case 'open':
       // The previous fixture owner already completed its explicit stop controls.
       database?.close();
@@ -492,6 +600,11 @@ async function execute(action: Action): Promise<unknown> {
       sql(action.statements);
       return null;
     case 'arm':
+      if (action.mode === 'admission_race') {
+        race_statements = action.before_sql;
+        race_applied = unrelated_invalidated = false;
+        return null;
+      }
       before_sql = action.before_sql;
       after_abort = action.after_abort ?? false;
       after_put = action.after_put;

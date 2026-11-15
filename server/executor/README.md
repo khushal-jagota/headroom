@@ -114,6 +114,8 @@ Uploads require an `UploadSource` with a real `destroy` capability. The HTTP rou
 
 Accepted poll and large-replacement latency measurements remain in DEVIATIONS. Gate 3 must compare them with the real table and backlog sizes on a copy of live data before further performance machinery is considered.
 
+The mailbox uses the core's shared automatic-start admission owner. It restores the exact turn binding before dispatch admission and holds a refused start or prompt. Stop and Cancel can withdraw that waiting turn across poll pages. Unrelated controls can move a waiting conversation suffix behind them, while a delivered row prevents that move. Withdrawn turns release their in-memory reservations after commit. Held polls cap their admission wait at one second, so a released slot needs no new mailbox write.
+
 Replacement withdraws waiting commands in the lease transaction. Delivered commands settle from the successor's journal cursor. A successful stop result stays delivered until `finish_by_proof` supplies actual child-stop evidence. `publish_settlements` wakes one command's waiters before its listener, then advances to the next command. A listener failure leaves the whole committed batch durable.
 
 Sequence, turn, and recovery counters use safe number values. Command and outcome rows use native JSON after schema validation.
