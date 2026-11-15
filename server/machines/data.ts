@@ -8,20 +8,25 @@ import { MACHINE_ICONS, MACHINE_COLORS, type Machine } from './contracts.ts';
 
 export function read_machine(sql: ReadSql, machine_id: string): Machine {
   const row = sql.get<Omit<Machine, 'is_home'> & { is_home: number }>(
-    'SELECT * FROM machines WHERE machine_id=?', [machine_id],
+    'SELECT * FROM machines WHERE machine_id=?',
+    [machine_id],
   );
   if (!row) throw new PlannerError('validation', 'Unknown machine destination', { machine_id });
   return { ...row, is_home: Boolean(row.is_home) };
 }
 
 export function list_machines(sql: ReadSql): Machine[] {
-  return sql.all<{ machine_id: string }>(
-    'SELECT machine_id FROM machines ORDER BY is_home DESC,name,machine_id',
-  ).map(({ machine_id }) => read_machine(sql, machine_id));
+  return sql
+    .all<{ machine_id: string }>(
+      'SELECT machine_id FROM machines ORDER BY is_home DESC,name,machine_id',
+    )
+    .map(({ machine_id }) => read_machine(sql, machine_id));
 }
 
 export function resolve_destination(
-  sql: ReadSql, machine_id: string | null, locale: TicketLocale | null,
+  sql: ReadSql,
+  machine_id: string | null,
+  locale: TicketLocale | null,
 ): { machine_id: string; locale: TicketLocale } {
   const selected = machine_id ?? legacy_machine_id(locale ?? 'vps');
   read_machine(sql, selected);
@@ -31,7 +36,9 @@ export function resolve_destination(
 }
 
 export function edit_machine(
-  tx: TransactionSql, machine_id: string, body: Record<string, unknown>,
+  tx: TransactionSql,
+  machine_id: string,
+  body: Record<string, unknown>,
 ): Machine {
   const old = read_machine(tx, machine_id);
   if (Object.keys(body).some((key) => !['name', 'icon', 'color'].includes(key)))
@@ -40,9 +47,17 @@ export function edit_machine(
   const icon = Object.hasOwn(body, 'icon') ? body.icon : old.icon;
   const color = Object.hasOwn(body, 'color') ? body.color : old.color;
   const display_name = validated_machine_name(name);
-  if (!MACHINE_ICONS.some((value) => value === icon) || !MACHINE_COLORS.some((value) => value === color))
+  if (
+    !MACHINE_ICONS.some((value) => value === icon) ||
+    !MACHINE_COLORS.some((value) => value === color)
+  )
     throw new PlannerError('validation', 'Unknown machine icon or color');
-  tx.run('UPDATE machines SET name=?,icon=?,color=? WHERE machine_id=?', [display_name, icon as string, color as string, machine_id]);
+  tx.run('UPDATE machines SET name=?,icon=?,color=? WHERE machine_id=?', [
+    display_name,
+    icon as string,
+    color as string,
+    machine_id,
+  ]);
   return read_machine(tx, machine_id);
 }
 

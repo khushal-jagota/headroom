@@ -31,7 +31,10 @@ function parse_lease(text: string | null): WireValue<'LeaseRequest'> | null {
     throw error;
   }
 }
-export function read_presence(sql: ReadSql, machine_id = ORIGINAL_MAC_MACHINE_ID): PresenceRecord | null {
+export function read_presence(
+  sql: ReadSql,
+  machine_id = ORIGINAL_MAC_MACHINE_ID,
+): PresenceRecord | null {
   const row = sql.get<{
     executor_incarnation: string | null;
     identity_json: string | null;

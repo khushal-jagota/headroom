@@ -1136,10 +1136,14 @@ export function create_commands(environment: NodeJS.ProcessEnv = {}): CliCommand
     argument('name', '<NAME>', text, {}),
     option('as_json', '--json', boolean, { default: false }),
   ]);
-  command('machine replace-credential', 'Revoke the old credential and print its replacement once.', [
-    argument('machine_id', '<MACHINE_ID>', text, {}),
-    option('as_json', '--json', boolean, { default: false }),
-  ]);
+  command(
+    'machine replace-credential',
+    'Revoke the old credential and print its replacement once.',
+    [
+      argument('machine_id', '<MACHINE_ID>', text, {}),
+      option('as_json', '--json', boolean, { default: false }),
+    ],
+  );
   command('ticket', 'Create, inspect, organize, and approve tickets.');
   command(
     'ticket assign',

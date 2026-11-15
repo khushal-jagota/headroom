@@ -21,7 +21,11 @@ export function can_execute_locale(sql: ReadSql, locale: TicketLocale): boolean 
     )
   );
 }
-export function mac_is_present(sql: ReadSql, now_ms: number, machine_id = ORIGINAL_MAC_MACHINE_ID): boolean {
+export function mac_is_present(
+  sql: ReadSql,
+  now_ms: number,
+  machine_id = ORIGINAL_MAC_MACHINE_ID,
+): boolean {
   return judge_presence(read_presence(sql, machine_id), now_ms).presence === 'present';
 }
 function _render_refusal(refusal: ExecutorRefusal): string {

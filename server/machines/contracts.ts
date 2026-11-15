@@ -1,6 +1,15 @@
 /** Stable execution destinations and their public display identity. */
 export const MACHINE_ICONS = ['server', 'laptop', 'desktop', 'cloud'] as const;
-export const MACHINE_COLORS = ['jade', 'orchid', 'sand', 'cyan', 'rose', 'plum', 'lime', 'stone'] as const;
+export const MACHINE_COLORS = [
+  'jade',
+  'orchid',
+  'sand',
+  'cyan',
+  'rose',
+  'plum',
+  'lime',
+  'stone',
+] as const;
 export type MachineIcon = (typeof MACHINE_ICONS)[number];
 export type MachineColor = (typeof MACHINE_COLORS)[number];
 export interface Machine {

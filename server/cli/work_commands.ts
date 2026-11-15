@@ -591,9 +591,16 @@ export async function run_work_command(inv: Invocation): Promise<CommandResult> 
     }
     case 'machine list':
       data = await send(inv, 'GET', '/api/machines');
-      return emit(data, as_json, data.machines.map((entry: Body) =>
-        `${scalar(entry.machine_id)} ${scalar(entry.name)} ${entry.available ? 'Available' : 'Away'}`,
-      ).join('\n'));
+      return emit(
+        data,
+        as_json,
+        data.machines
+          .map(
+            (entry: Body) =>
+              `${scalar(entry.machine_id)} ${scalar(entry.name)} ${entry.available ? 'Available' : 'Away'}`,
+          )
+          .join('\n'),
+      );
     case 'machine register':
       data = await send(inv, 'POST', '/api/machines', { json_body: { name: v.name } });
       return emit(data, true, '');

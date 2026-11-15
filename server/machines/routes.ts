@@ -16,9 +16,11 @@ import { register_machine, replace_credential } from './executor_credentials.ts'
 async function machine_views(services: AreaServices): Promise<{ machines: MachineView[] }> {
   const { records, present, tickets } = services.database.read((sql) => {
     const records = list_machines(sql);
-    const present = new Set(records.filter((machine) =>
-      machine.is_home || mac_is_present(sql, now_ms(), machine.machine_id),
-    ).map((machine) => machine.machine_id));
+    const present = new Set(
+      records
+        .filter((machine) => machine.is_home || mac_is_present(sql, now_ms(), machine.machine_id))
+        .map((machine) => machine.machine_id),
+    );
     const tickets = sql.all<Record<string, unknown>>(
       "SELECT t.id,t.machine_id,json_extract(n.value,'$.ticket_status') AS ticket_status FROM tickets t JOIN navigation_records n ON n.kind='ticket' AND n.id=t.id",
     );
@@ -43,9 +45,10 @@ async function machine_views(services: AreaServices): Promise<{ machines: Machin
         ...machine,
         available,
         running_workers: available ? running : null,
-        waiting_tickets: available ? 0 : rows.filter((row) =>
-          row.ticket_status === 'agent' || row.agent_state === 'working',
-        ).length,
+        waiting_tickets: available
+          ? 0
+          : rows.filter((row) => row.ticket_status === 'agent' || row.agent_state === 'working')
+              .length,
       };
     }),
   };
@@ -65,12 +68,20 @@ export const routes: FastifyPluginAsync<AreaServices> = async (app, services) =>
   app.post('/machines', (request) => {
     requireOwner(services.identity(request));
     const body = request.body;
-    if (!is_record(body) || body instanceof JsonNumber ||
-        Object.keys(body).some((key) => key !== 'name' && key !== 'platform') ||
-        typeof body.name !== 'string')
+    if (
+      !is_record(body) ||
+      body instanceof JsonNumber ||
+      Object.keys(body).some((key) => key !== 'name' && key !== 'platform') ||
+      typeof body.name !== 'string'
+    )
       throw new PlannerError('validation', 'Machine registration requires a name');
-    return services.database.write((tx) => register_machine(tx, body.name as string,
-      Object.hasOwn(body, 'platform') ? body.platform : 'darwin'));
+    return services.database.write((tx) =>
+      register_machine(
+        tx,
+        body.name as string,
+        Object.hasOwn(body, 'platform') ? body.platform : 'darwin',
+      ),
+    );
   });
   app.post<{ Params: { machine_id: string } }>('/machines/:machine_id/credential', (request) => {
     requireOwner(services.identity(request));

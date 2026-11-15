@@ -307,14 +307,20 @@ test('auto_approval_old_data_and_multi_field_edit', () => {
 test('worker model overrides use the named destination rather than the legacy Mac catalogue', () => {
   const db = fixture();
   const grant = db.write((tx) => register_machine(tx, 'Build host', 'linux'));
-  const ticket = create(db, { machine_id: grant.machine_id, employee_launch_model: 'remote-model' });
+  const ticket = create(db, {
+    machine_id: grant.machine_id,
+    employee_launch_model: 'remote-model',
+  });
   db.write((tx) => {
     for (const [machine_id, model_id] of [
       [ORIGINAL_MAC_MACHINE_ID, 'original-model'],
       [grant.machine_id, 'remote-model'],
-    ]) tx.run('INSERT INTO machine_backend_snapshots VALUES (?,?,?)', [
-      machine_id, 'codex', JSON.stringify({ models_complete: true, available_models: [{ model_id }] }),
-    ]);
+    ])
+      tx.run('INSERT INTO machine_backend_snapshots VALUES (?,?,?)', [
+        machine_id,
+        'codex',
+        JSON.stringify({ models_complete: true, available_models: [{ model_id }] }),
+      ]);
   });
   const options = { workspace_folder: '/synthetic' };
   expect(() => worker_resolve(db, ticket, { model: 'original-model' }, options)).toThrow(
