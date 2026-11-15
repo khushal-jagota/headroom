@@ -153,6 +153,7 @@ struct DecisionNoteActions: View {
     let onApprove: () -> Void
     let onSendBack: () -> Void
     @FocusState private var focused: Bool
+    @Environment(\.dynamicTypeSize) private var typeSize
     var body: some View {
         VStack(alignment: .trailing, spacing: 12) {
             HStack(alignment: .bottom, spacing: 4) {
@@ -165,18 +166,13 @@ struct DecisionNoteActions: View {
             }.padding(.leading, 16).padding(.trailing, 6).padding(.vertical, 1)
                 .background(PanelsTheme.Web.composer, in: RoundedRectangle(cornerRadius: 12))
                 .overlay(RoundedRectangle(cornerRadius: 12).stroke(focused ? PanelsTheme.Web.accent.opacity(0.6) : Color.clear, lineWidth: 1))
-            HStack(spacing: 8) {
-                Spacer(minLength: 0)
-                if showsSendBack {
-                    Button {
-                        if note.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { focused = true }
-                        else { focused = false; onSendBack() }
-                    } label: { actionLabel("Send it back", active: busyAction == "back") }
-                        .disabled(!ready || !canReturn || !noteEnabled || busyAction != nil)
-                        .accessibilityIdentifier("review.sendBack")
+            Group {
+                if typeSize.isAccessibilitySize {
+                    VStack(alignment: .trailing, spacing: 8) { actionButtons }
+                        .frame(maxWidth: .infinity, alignment: .trailing)
+                } else {
+                    HStack(spacing: 8) { Spacer(minLength: 0); actionButtons }
                 }
-                Button { focused = false; onApprove() } label: { actionLabel("Approve", active: busyAction == "approve") }
-                    .disabled(!ready || !noteEnabled || busyAction != nil).accessibilityIdentifier("review.approve")
             }.buttonStyle(DecisionButtonStyle())
             if showsSendBack && !canReturn {
                 Text("No existing Worker conversation to send a revision to.")
@@ -197,8 +193,20 @@ struct DecisionNoteActions: View {
             .onChange(of: focusRequest) { _, _ in focused = true }
             .onChange(of: blurRequest) { _, _ in focused = false }
     }
+    @ViewBuilder private var actionButtons: some View {
+        if showsSendBack {
+            Button {
+                if note.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { focused = true }
+                else { focused = false; onSendBack() }
+            } label: { actionLabel("Send it back", active: busyAction == "back") }
+                .disabled(!ready || !canReturn || !noteEnabled || busyAction != nil)
+                .accessibilityIdentifier("review.sendBack")
+        }
+        Button { focused = false; onApprove() } label: { actionLabel("Approve", active: busyAction == "approve") }
+            .disabled(!ready || !noteEnabled || busyAction != nil).accessibilityIdentifier("review.approve")
+    }
     private func actionLabel(_ title: String, active: Bool) -> some View {
-        Text(title).opacity(active ? 0 : 1).overlay { if active { RingSpinner(size: .compact, color: PanelsTheme.Web.text) } }
+        Text(title).fixedSize(horizontal: true, vertical: false).opacity(active ? 0 : 1).overlay { if active { RingSpinner(size: .compact, color: PanelsTheme.Web.text) } }
     }
 }
 
@@ -218,11 +226,19 @@ struct DecisionApprovalSheet: View {
     let holder: Principal
     let managerID: String?
     var reviewerOnly = false
+    var checkCurrent: (() async throws -> Void)? = nil
+    var confirmation: (() -> String?)? = nil
     let save: (String?, Principal) async throws -> Void
     @Environment(\.dismiss) private var dismiss
     @State private var selected: String?
+    @State private var confirmationMessage: String?
     @State private var busy = false
     @State private var error: String?
+    private var pageIdentity: String {
+        if confirmationMessage != nil { return "confirmation" }
+        if reviewerOnly || selected != nil { return "reviewers:\(selected ?? "current")" }
+        return "stages"
+    }
     private var reviewers: [(String, Principal)] {
         var values = [("User", Principal(kind: "owner", id: "owner"))]
         if let managerID { values.append(("Manager", Principal(kind: "manager", id: managerID))) }
@@ -233,7 +249,7 @@ struct DecisionApprovalSheet: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 0) {
                 HStack(spacing: 8) {
-                    if selected != nil && !reviewerOnly {
+                    if selected != nil && !reviewerOnly && confirmationMessage == nil {
                         Button { selected = nil } label: { Image(systemName: "chevron.left").frame(width: 28, height: 36) }
                             .accessibilityLabel("Back to How far")
                     }
@@ -241,12 +257,22 @@ struct DecisionApprovalSheet: View {
                         .textCase(.uppercase).tracking(0.66).panelsScaledFont(size: 11, weight: .medium)
                         .foregroundStyle(PanelsTheme.Web.tertiary)
                 }.frame(minHeight: 36).padding(.horizontal, 12)
-                if reviewerOnly || selected != nil {
+                if let confirmationMessage {
+                    Text(confirmationMessage).panelsScaledFont(size: 14)
+                        .foregroundStyle(PanelsTheme.Web.text).padding(12)
+                        .accessibilityIdentifier("decision.scopeConfirmation")
+                    Button("Done") { dismiss() }.panelsScaledFont(size: 14).padding(12)
+                        .accessibilityIdentifier("decision.scopeDone")
+                } else if reviewerOnly || selected != nil {
                     ForEach(reviewers, id: \.1) { name, principal in
                         Button {
                             busy = true; error = nil
                             Task {
-                                do { try await save(reviewerOnly ? nil : selected, principal); dismiss() }
+                                do {
+                                    try await save(reviewerOnly ? nil : selected, principal)
+                                    if let message = confirmation?() { confirmationMessage = message }
+                                    else { dismiss() }
+                                }
                                 catch { self.error = error.localizedDescription }
                                 busy = false
                             }
@@ -259,8 +285,25 @@ struct DecisionApprovalSheet: View {
                             .accessibilityIdentifier("decision.stage.\(stage.id)")
                     }
                 }
+                if confirmationMessage == nil, let checkCurrent {
+                    Button("Check current settings") {
+                        busy = true; error = nil
+                        Task {
+                            do {
+                                try await checkCurrent()
+                                if let message = confirmation?() { confirmationMessage = message }
+                                else { dismiss() }
+                            }
+                            catch { self.error = error.localizedDescription }
+                            busy = false
+                        }
+                    }.panelsScaledFont(size: 14).padding(12)
+                        .accessibilityIdentifier("decision.checkCurrent")
+                }
                 if let error { Text(error).panelsScaledFont(size: 12.5).foregroundStyle(PanelsTheme.Web.error).padding(12) }
-            }.padding(8)
+            // Replace the semantic subtree when the visible page changes; retaining
+            // it could leave accessibility clients reading the previous page's rows.
+            }.padding(8).id(pageIdentity)
         }.buttonStyle(.plain).disabled(busy).background(PanelsTheme.Web.raised)
             .presentationCornerRadius(24).presentationDragIndicator(.visible)
             .presentationDetents([.medium, .large]).interactiveDismissDisabled(busy)

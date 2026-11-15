@@ -32,10 +32,96 @@ struct DecisionGuidance: Sendable, Equatable {
     }
 }
 
+/// Ordinary scope writes have no decision receipt. They are never saved to the Outbox.
+/// Keep the exact choice for an explicit read-only check after an uncertain result.
+@MainActor @Observable final class DecisionScopeChange {
+    struct Choice: Equatable {
+        let server: String
+        let ticketID: String
+        let ceiling: String
+        let holder: Principal
+    }
+    private(set) var choice: Choice?
+    private(set) var busy = false
+    private(set) var needsCheck = false
+    private(set) var canRetry = false
+    private(set) var holdingProposal = false
+    private(set) var message: String?
+    @ObservationIgnored private var capturedAPI: APIClient?
+
+    func save(api: APIClient, ticket: TicketDetail, ceiling: String?, holder: Principal, online: Bool) async throws -> TicketDetail {
+        guard !busy else { throw APIError(status: 0, message: "A settings check is already in progress.") }
+        guard !needsCheck || canRetry else { throw APIError(status: 0, message: message ?? "Check current settings before another change.") }
+        choice = Choice(server: LocalStore.server(api.baseURL), ticketID: ticket.id,
+                        ceiling: ceiling ?? ticket.ceiling, holder: holder)
+        capturedAPI = api
+        holdingProposal = true
+        guard online else {
+            message = "Not sent while offline. Your choice is kept. No proposal approval was sent."
+            throw APIError(status: 0, message: message!)
+        }
+        busy = true
+        needsCheck = false
+        canRetry = false
+        defer { busy = false }
+        do {
+            try await api.setTicketApprovalLimit(ticket.id, ceiling: ceiling, holder: holder)
+        } catch let error as APIError where (400..<500).contains(error.status) {
+            message = "Not sent. \(error.localizedDescription) No proposal approval was sent."
+            throw APIError(status: error.status, message: message!)
+        } catch {
+            // A transport failure or server error cannot establish whether the write applied.
+            // The next request is a GET, never another PATCH.
+        }
+        needsCheck = true
+        return try await readCurrent()
+    }
+
+    func releasePresentation() { holdingProposal = false }
+
+    func check(online: Bool) async throws -> TicketDetail {
+        guard !busy else { throw APIError(status: 0, message: "A settings check is already in progress.") }
+        holdingProposal = true
+        guard online else {
+            message = "Not checked while offline. Your choice is kept. No proposal approval was sent."
+            throw APIError(status: 0, message: message!)
+        }
+        busy = true
+        defer { busy = false }
+        return try await readCurrent()
+    }
+
+    private func readCurrent() async throws -> TicketDetail {
+        guard let choice, let api = capturedAPI else { throw APIError(status: 0, message: "Choose the settings first.") }
+        let current: TicketDetail
+        do {
+            // APIClient.ticket always uses a network GET with reloadIgnoringLocalCacheData.
+            current = try await api.ticket(choice.ticketID)
+        } catch {
+            needsCheck = true
+            canRetry = false
+            message = "The change is not confirmed. Check current settings when online. No proposal approval was sent."
+            throw APIError(status: 0, message: message!)
+        }
+        let waiting = current.pendingProposal == nil ? " Refresh the Ticket for its current proposal." : " The proposal still waits."
+        guard current.ceiling == choice.ceiling, current.ceilingHolder == choice.holder else {
+            needsCheck = true
+            canRetry = true
+            message = "Current settings do not match your choice. The change is not confirmed." + waiting + " No proposal approval was sent."
+            throw APIError(status: 0, message: message!)
+        }
+        needsCheck = false
+        canRetry = false
+        message = "Current settings match your choice." + waiting + " No proposal approval was sent."
+        return current
+    }
+}
+
 /// A draft belongs to the exact proposal the person read, including its revision.
 @MainActor @Observable final class ReviewDecision {
     /// The Ticket's view stamp when the last load started; a read-ahead taken before a
     /// later change is not current when its card is shown.
+    let scopeChange = DecisionScopeChange()
     var loadedStamp: String?
     var ticket: TicketDetail?
     var manifest: ReviewWorkerManifest?
@@ -70,7 +156,7 @@ struct DecisionGuidance: Sendable, Equatable {
     var proposal: TicketProposal? { ticket?.pendingProposal }
     var canReturn: Bool { proposal?.field != "brief" && ticket?.conversationId != nil }
     var nextStage: String? { manifest?.advance[ticket?.stage ?? ""] }
-    var approvalStages: [ReviewWorkerManifest.Stage] { manifest?.stages.filter { manifest?.ceilingRange.contains($0.id) == true } ?? [] }
+    var approvalStages: [ReviewWorkerManifest.Stage] { manifest?.stages ?? [] }
     var ready: Bool { proposal != nil && !changed && !busy && !resolved && nextStage != nil && !approvalStages.isEmpty }
 
     static func matches(_ lhs: TicketProposal, _ rhs: TicketProposal) -> Bool {
@@ -124,6 +210,15 @@ struct DecisionGuidance: Sendable, Equatable {
         }
     }
 
+    func acceptScopeRead(_ current: TicketDetail) {
+        guard let existing = proposal, let incoming = current.pendingProposal, Self.matches(existing, incoming) else {
+            changed = true
+            error = "The proposal changed. Refresh Review before a decision. Your note is kept."
+            return
+        }
+        ticket = current
+    }
+
     func approvalGuidance(api: APIClient) -> DecisionGuidance? {
         guard ready, let ticket, let proposal else { return nil }
         let server = LocalStore.server(api.baseURL)
@@ -134,7 +229,8 @@ struct DecisionGuidance: Sendable, Equatable {
     }
 
     func approve(api: APIClient, ceiling: String, holder: Principal, guidance: DecisionGuidance? = nil) async -> Bool {
-        guard ready, let ticket, let proposal, approvalStages.contains(where: { $0.id == ceiling }) else { return false }
+        guard ready, let ticket, let proposal, manifest?.ceilingRange.contains(ceiling) == true,
+              manifest?.selectionApprovesPending(ceiling: ceiling, waitingStage: ticket.stage) == true else { return false }
         guard guidance == nil || guidance?.matches(server: LocalStore.server(api.baseURL), ticketID: ticket.id, proposal: proposal) == true else {
             error = "The proposal changed. Close approval and review it again."
             return false

@@ -69,7 +69,8 @@ import XCTest
         LocalStore.shared.saveDraft("An old proposal edit", server: "https://review.invalid", id: identity + ":edit")
         let decision = ReviewDecision()
         await decision.load(item: item, api: api)
-        XCTAssertEqual(decision.approvalStages.first?.id, "needs_implementation")
+        XCTAssertEqual(decision.approvalStages.map(\.id), decision.manifest?.stages.map(\.id) ?? [])
+        XCTAssertEqual(decision.nextStage, "needs_implementation")
         let accepted = await decision.approve(api: api, ceiling: "needs_implementation", holder: Principal(kind: "owner", id: "owner"))
         XCTAssertTrue(accepted)
         await settle(api)
@@ -100,6 +101,121 @@ import XCTest
         XCTAssertEqual(ReviewStub.state.protectedWrites.count, 1)
         XCTAssertTrue(ReviewStub.state.writes.isEmpty)
 
+    }
+
+    func testScopeChoiceAndReviewerOnlyChangeReadBackWithoutApprovingProposal() async throws {
+        let (decision, api, _) = try await setupDecision()
+        let ticket = try XCTUnwrap(decision.ticket)
+        let proposal = try XCTUnwrap(decision.proposal)
+        XCTAssertTrue(decision.approvalStages.contains { $0.id == ticket.stage }, "Review exposes the current stage as a scope choice even when outside the approval ceiling range")
+        let policy = try APIClient.decoder().decode(ReviewWorkerManifest.self, from: Data("""
+        {"stages":[{"id":"earlier","label":"Earlier"},{"id":"waiting","label":"Waiting"},{"id":"next","label":"Next"},{"id":"done","label":"Done"}],"advance":{"waiting":"next"},"fields":[],"ceiling_range":["earlier","waiting","next","done"]}
+        """.utf8))
+        XCTAssertFalse(policy.selectionApprovesPending(ceiling: "earlier", waitingStage: "waiting"))
+        XCTAssertFalse(policy.selectionApprovesPending(ceiling: "waiting", waitingStage: "waiting"))
+        XCTAssertTrue(policy.selectionApprovesPending(ceiling: "next", waitingStage: "waiting"))
+        XCTAssertTrue(policy.selectionApprovesPending(ceiling: "done", waitingStage: "waiting"))
+        decision.revisionDraft = "Keep this proposal note"
+        let readCount = ReviewStub.state.scopeTicketReads.count
+        let chief = Principal(kind: "chief", id: "chief")
+        let current = try await decision.scopeChange.save(api: api, ticket: ticket, ceiling: ticket.stage, holder: chief, online: true)
+        decision.acceptScopeRead(current)
+        XCTAssertEqual(current.ceiling, ticket.stage)
+        XCTAssertEqual(current.ceilingHolder, chief)
+        XCTAssertEqual(current.pendingProposal?.revision, proposal.revision)
+        XCTAssertEqual(decision.revisionDraft, "Keep this proposal note")
+        XCTAssertFalse(decision.resolved)
+        XCTAssertTrue(decision.ready)
+        XCTAssertFalse(decision.scopeChange.needsCheck)
+        XCTAssertTrue(decision.scopeChange.holdingProposal, "Keep the confirmation visible when a reviewer transfer removes the live queue card")
+        XCTAssertTrue(decision.scopeChange.message?.contains("No proposal approval was sent") == true)
+        XCTAssertEqual(ReviewStub.state.scopeTicketReads.count, readCount + 1)
+        let readRequest = try XCTUnwrap(ReviewStub.state.scopeTicketReads.last)
+        XCTAssertEqual(readRequest.cachePolicy, .reloadIgnoringLocalCacheData)
+        XCTAssertTrue(readRequest.url!.query!.contains("detail=full"))
+        let scopeWrite = try XCTUnwrap(ReviewStub.state.writes.last)
+        XCTAssertEqual(scopeWrite.httpMethod, "PATCH")
+        let scopeBody = try XCTUnwrap(JSONSerialization.jsonObject(with: XCTUnwrap(scopeWrite.httpBody)) as? [String: Any])
+        XCTAssertEqual(Set(scopeBody.keys), Set(["ceiling", "ceiling_holder"]))
+        decision.scopeChange.releasePresentation()
+        XCTAssertFalse(decision.scopeChange.holdingProposal)
+        // Changing only the reviewer omits the ceiling, but compares its captured absolute value.
+        let reviewerOnly = try await decision.scopeChange.save(api: api, ticket: current, ceiling: nil,
+            holder: Principal(kind: "owner", id: "owner"), online: true)
+        XCTAssertEqual(reviewerOnly.ceiling, current.ceiling)
+        let reviewerWrite = try XCTUnwrap(ReviewStub.state.writes.last)
+        let reviewerBody = try XCTUnwrap(JSONSerialization.jsonObject(with: XCTUnwrap(reviewerWrite.httpBody)) as? [String: Any])
+        XCTAssertNil(reviewerBody["ceiling"])
+        XCTAssertEqual(decision.scopeChange.choice?.ceiling, current.ceiling)
+        XCTAssertTrue(ReviewStub.state.protectedWrites.isEmpty)
+        XCTAssertTrue(Outbox.shared.entries("https://review.invalid").isEmpty)
+    }
+
+    func testOfflineScopeKeepsChoiceAndNoteWithoutDispatchOrReplay() async throws {
+        let (decision, api, _) = try await setupDecision()
+        let ticket = try XCTUnwrap(decision.ticket)
+        decision.revisionDraft = "Keep these words offline"
+        let readCount = ReviewStub.state.scopeTicketReads.count
+        do {
+            _ = try await decision.scopeChange.save(api: api, ticket: ticket, ceiling: ticket.stage,
+                holder: Principal(kind: "chief", id: "chief"), online: false)
+            XCTFail("An offline scope change must not dispatch")
+        } catch { XCTAssertTrue(error.localizedDescription.contains("Not sent while offline")) }
+        XCTAssertEqual(decision.scopeChange.choice?.server, "https://review.invalid")
+        XCTAssertEqual(decision.scopeChange.choice?.ceiling, ticket.stage)
+        XCTAssertEqual(decision.scopeChange.choice?.holder, Principal(kind: "chief", id: "chief"))
+        XCTAssertEqual(decision.revisionDraft, "Keep these words offline")
+        XCTAssertFalse(decision.resolved)
+        XCTAssertEqual(ReviewStub.state.scopeTicketReads.count, readCount)
+        XCTAssertTrue(ReviewStub.state.writes.isEmpty)
+        XCTAssertTrue(Outbox.shared.entries("https://review.invalid").isEmpty)
+        await Task.yield()
+        XCTAssertTrue(ReviewStub.state.writes.isEmpty, "There is no replay observer for ordinary scope choices")
+    }
+
+    func testUncertainScopeUsesFreshComparisonAndExplicitCheckNeverResends() async throws {
+        let (decision, api, _) = try await setupDecision()
+        let ticket = try XCTUnwrap(decision.ticket)
+        let chief = Principal(kind: "chief", id: "chief")
+        decision.revisionDraft = "Keep this note through an uncertain settings answer"
+        // The fixture applies the PATCH, drops its answer, then drops the first fresh read.
+        ReviewStub.state.configureScope(mode: "appliedDrop", failNextRead: true)
+        do {
+            _ = try await decision.scopeChange.save(api: api, ticket: ticket, ceiling: ticket.stage, holder: chief, online: true)
+            XCTFail("A lost read cannot confirm scope")
+        } catch { XCTAssertTrue(error.localizedDescription.contains("not confirmed")) }
+        XCTAssertTrue(decision.scopeChange.needsCheck)
+        XCTAssertEqual(ReviewStub.state.writes.count, 1)
+        let current = try await decision.scopeChange.check(online: true)
+        XCTAssertEqual(current.ceilingHolder, chief)
+        XCTAssertFalse(decision.scopeChange.needsCheck)
+        XCTAssertTrue(decision.scopeChange.message?.contains("Current settings match") == true)
+        XCTAssertEqual(ReviewStub.state.writes.count, 1, "An explicit check must only GET")
+        XCTAssertEqual(ReviewStub.state.scopeTicketReads.last?.cachePolicy, .reloadIgnoringLocalCacheData)
+        // A later explicit choice whose PATCH answer is lost must not claim a mismatched read succeeded.
+        ReviewStub.state.configureScope(mode: "unappliedDrop", failNextRead: false)
+        do {
+            _ = try await decision.scopeChange.save(api: api, ticket: current, ceiling: nil,
+                holder: Principal(kind: "owner", id: "owner"), online: true)
+            XCTFail("Different current settings cannot confirm this choice")
+        } catch { XCTAssertTrue(error.localizedDescription.contains("do not match")) }
+        XCTAssertTrue(decision.scopeChange.needsCheck)
+        do {
+            _ = try await decision.scopeChange.check(online: true)
+            XCTFail("A read-only mismatch remains unconfirmed")
+        } catch { XCTAssertTrue(error.localizedDescription.contains("not confirmed")) }
+        XCTAssertEqual(ReviewStub.state.writes.count, 2)
+        XCTAssertTrue(decision.scopeChange.canRetry, "A fresh mismatch permits a new explicit user attempt")
+        ReviewStub.state.configureScope(mode: "success", failNextRead: false)
+        _ = try await decision.scopeChange.save(api: api, ticket: current, ceiling: nil,
+            holder: Principal(kind: "owner", id: "owner"), online: true)
+        XCTAssertEqual(ReviewStub.state.writes.count, 3, "Only the explicit attempt dispatches another PATCH")
+        XCTAssertFalse(decision.scopeChange.needsCheck)
+        XCTAssertEqual(decision.revisionDraft, "Keep this note through an uncertain settings answer")
+        XCTAssertFalse(decision.resolved)
+        XCTAssertEqual(decision.proposal?.revision, ticket.pendingProposal?.revision)
+        XCTAssertTrue(ReviewStub.state.protectedWrites.isEmpty)
+        XCTAssertTrue(Outbox.shared.entries("https://review.invalid").isEmpty)
     }
 
     func testApprovalSendsOnlyTheDisplayedGuidanceSnapshotAndPreservesNewerDraft() async throws {
@@ -497,6 +613,13 @@ private final class ReviewStubState: @unchecked Sendable {
     private var operationResponse: (Int, Data)?
     private var operationRequests: [URLRequest] = []
     private var operationReceipts: [String: Data] = [:]
+    private var scopeMode = "success"
+    private var failNextScopeRead = false
+    private var ticketReadRequests: [URLRequest] = []
+    var scopeTicketReads: [URLRequest] { lock.withLock { ticketReadRequests } }
+    func configureScope(mode: String, failNextRead: Bool) {
+        lock.withLock { scopeMode = mode; failNextScopeRead = failNextRead }
+    }
     var protectedWrites: [URLRequest] { lock.withLock { operationRequests.filter { $0.httpMethod == "POST" } } }
     var protectedRequests: [URLRequest] { lock.withLock { operationRequests } }
     func setProtectedResponse(status: Int, data: Data) {
@@ -508,7 +631,7 @@ private final class ReviewStubState: @unchecked Sendable {
         set { lock.withLock { failing = newValue } }
     }
     func reset(ticket: Data, manifest: Data) {
-        lock.withLock { self.ticket = ticket; self.manifest = manifest; recorded = []; failing = false; operationResponse = nil; operationRequests = []; operationReceipts = [:] }
+        lock.withLock { self.ticket = ticket; self.manifest = manifest; recorded = []; failing = false; operationResponse = nil; operationRequests = []; operationReceipts = [:]; scopeMode = "success"; failNextScopeRead = false; ticketReadRequests = [] }
     }
     func bumpRevision() {
         lock.withLock {
@@ -522,13 +645,28 @@ private final class ReviewStubState: @unchecked Sendable {
     func response(_ input: URLRequest) -> (Int, Data) {
         lock.withLock {
             var request = input
-            if request.httpMethod == "POST" {
+            if request.httpMethod == "POST" || request.httpMethod == "PATCH" {
                 if request.httpBody == nil, let stream = request.httpBodyStream {
                     stream.open(); defer { stream.close() }
                     var data = Data(); var buffer = [UInt8](repeating: 0, count: 4096)
                     while stream.hasBytesAvailable { let count = stream.read(&buffer, maxLength: buffer.count); if count <= 0 { break }; data.append(buffer, count: count) }
                     request.httpBody = data
                 }
+            }
+            if request.httpMethod == "PATCH" {
+                recorded.append(request)
+                let body = try! JSONSerialization.jsonObject(with: request.httpBody!) as! [String: Any]
+                if scopeMode != "unappliedDrop" {
+                    var object = try! JSONSerialization.jsonObject(with: ticket) as! [String: Any]
+                    if let ceiling = body["ceiling"] { object["ceiling"] = ceiling }
+                    object["ceiling_holder"] = body["ceiling_holder"]
+                    ticket = try! JSONSerialization.data(withJSONObject: object)
+                }
+                return scopeMode == "success" ? (200, Data("{}".utf8)) : (-1, Data())
+            }
+            if request.httpMethod == "GET", request.url!.path == "/api/tickets" {
+                ticketReadRequests.append(request)
+                if failNextScopeRead { failNextScopeRead = false; return (-1, Data()) }
             }
             if request.url!.path.contains("/decision-operations/") {
                 operationRequests.append(request)
@@ -578,6 +716,10 @@ private final class ReviewStub: URLProtocol, @unchecked Sendable {
     override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
     override func startLoading() {
         let (status, data) = Self.state.response(request)
+        if status == -1 {
+            client?.urlProtocol(self, didFailWithError: URLError(.networkConnectionLost))
+            return
+        }
         client?.urlProtocol(self, didReceive: HTTPURLResponse(url: request.url!, statusCode: status, httpVersion: nil, headerFields: nil)!, cacheStoragePolicy: .notAllowed)
         client?.urlProtocol(self, didLoad: data)
         client?.urlProtocolDidFinishLoading(self)

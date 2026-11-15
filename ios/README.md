@@ -137,10 +137,16 @@ Review and Ticket share a recessed, read-only proposal card and a pinned note
 with Send it back and Approve. Review keeps dictation and adds Open ticket.
 An empty send-back note focuses the field. Approval captures the displayed note
 for that exact server and proposal. Notes retain the existing durable draft keys.
-How far precedes Who reviews; selecting the reviewer submits the decision.
+How far precedes Who reviews. A later stage submits a protected approval. An earlier
+or current stage changes the ceiling and reviewer and leaves the proposal waiting.
 When the next stage is Done, Approve takes one tap. The approver in the card
-opens reviewer-only choices. Protected decision operations and saved-work recovery
-remain unchanged. Proposal text, approved steps, and Ticket titles have no phone
+opens reviewer-only choices. Scope and reviewer changes use the existing PATCH route
+only while online. They never enter the Outbox or retry automatically. A fresh Ticket
+read compares the absolute ceiling and reviewer with the choice after an uncertain
+answer. The sheet keeps the choice and states that nothing was approved. A
+check-only action reads current settings without another PATCH. These changes have
+no operation receipt. Approve and Send it back retain protected operations and
+saved-work recovery. Proposal text, approved steps, and Ticket titles have no phone
 edit controls; other edits remain available.
 
 ## Build and run headless

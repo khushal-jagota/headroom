@@ -10,7 +10,13 @@ and copy-link actions. Blocker links keep their existing removal action.
 Pending proposals use the same recessed card and decision controls as Review.
 The note and actions stay above the conversation line. Approve opens How far,
 then Who reviews. The final stage approves with one tap. The approver control opens
-Who reviews directly and changes only the reviewer. Send it back requires a
+Who reviews directly and changes only the reviewer. Earlier or current How far
+choices change scope and leave the proposal waiting. Scope and reviewer changes
+send one online-only PATCH, never an Outbox operation. The choice stays visible
+when offline. An uncertain answer triggers a fresh Ticket read, which compares
+the absolute ceiling and reviewer. It never triggers an automatic retry. The sheet
+states that nothing was approved. A further check reads settings without another
+PATCH. These changes have no durable operation receipt. Send it back requires a
 nonempty note and an existing conversation, and does not appear for Brief.
 An empty note focuses the note field. The Ticket has no microphone in this area.
 

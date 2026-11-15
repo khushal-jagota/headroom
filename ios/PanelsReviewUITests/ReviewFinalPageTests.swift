@@ -137,15 +137,21 @@ final class ReviewFinalPageTests: XCTestCase {
         continueAfterFailure = false
         let base = try XCTUnwrap(ProcessInfo.processInfo.environment["PANELS_OFFLINE_STUB_URL"])
         XCTAssertEqual(URL(string: base)?.host, "127.0.0.1")
-        let app = XCUIApplication()
-        app.launchArguments = ["--conversation-stub", base]
-        app.launch()
+        // Recreate the application and queries for each process. Retained query snapshots
+        // in the failed review trace referred to the terminated accessibility-size process.
+        @MainActor func launch(_ arguments: [String]) -> XCUIApplication {
+            let application = XCUIApplication()
+            application.launchArguments = arguments
+            application.launch()
+            return application
+        }
+        var app = launch(["--conversation-stub", base])
         defer { app.terminate() }
-        let approve = app.buttons["review.approve"]
+        var approve: XCUIElement { app.buttons["review.approve"] }
         XCTAssertTrue(approve.waitForExistence(timeout: 12))
         capture(app, "design-review-normal")
-        let note = app.descendants(matching: .any).matching(identifier: "review.revision").firstMatch
-        let sendBack = app.buttons["review.sendBack"]
+        var note: XCUIElement { app.descendants(matching: .any).matching(identifier: "review.revision").firstMatch }
+        var sendBack: XCUIElement { app.buttons["review.sendBack"] }
         sendBack.tap()
         XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5))
         let keyboardTip = app.buttons["Continue"]
@@ -154,16 +160,16 @@ final class ReviewFinalPageTests: XCTestCase {
         XCTAssertTrue(approve.isHittable, "The keyboard must not cover pinned decisions")
         capture(app, "design-review-keyboard")
         approve.tap()
-        let stage = app.buttons["decision.stage.needs_implementation"]
-        XCTAssertTrue(stage.waitForExistence(timeout: 5))
+        var stage: XCUIElement { app.buttons["decision.stage.needs_implementation"] }
+        XCTAssertTrue(waitForDecisionStage(stage))
         capture(app, "design-how-far")
         stage.tap()
-        let reviewer = app.buttons["decision.reviewer.owner"]
+        var reviewer: XCUIElement { app.buttons["decision.reviewer.owner"] }
         XCTAssertTrue(reviewer.waitForExistence(timeout: 5))
         capture(app, "design-who-reviews")
         // Dismiss without a decision, then prove the exact note survives relaunch.
         app.swipeDown()
-        app.terminate(); app.launch()
+        app.terminate(); app = launch(["--conversation-stub", base])
         XCTAssertTrue(note.waitForExistence(timeout: 12))
         XCTAssertEqual(note.value as? String, "Keep this proposal note")
         app.buttons["review.openTicket"].tap()
@@ -177,9 +183,8 @@ final class ReviewFinalPageTests: XCTestCase {
         XCTAssertTrue(approve.waitForExistence(timeout: 8))
         // Capture the real app at the largest accessibility category, including its safe-area edge.
         app.terminate()
-        app.launchArguments = ["--conversation-stub", base,
-                               "-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryAccessibilityXXXL"]
-        app.launch()
+        app = launch(["--conversation-stub", base,
+                      "-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryAccessibilityXXXL"])
         XCTAssertTrue(approve.waitForExistence(timeout: 12))
         XCTAssertTrue(approve.isHittable, "Large text must leave pinned decisions reachable")
         capture(app, "design-review-largest-text-normal")
@@ -188,17 +193,53 @@ final class ReviewFinalPageTests: XCTestCase {
         capture(app, "design-review-largest-text-proposal")
         // Restore normal type before the final approval, without changing the saved note.
         app.terminate()
-        app.launchArguments = ["--conversation-stub", base]
-        app.launch()
+        app = launch(["--conversation-stub", base])
         XCTAssertTrue(approve.waitForExistence(timeout: 12))
         XCTAssertEqual(note.value as? String, "Keep this proposal note")
+        capture(app, "design-review-restored-normal")
+        let hierarchy = XCTAttachment(string: app.debugDescription)
+        hierarchy.name = "design-review-restored-normal-hierarchy"
+        hierarchy.lifetime = .keepAlways; add(hierarchy)
+        // An earlier-stage choice changes only settings and keeps the proposal pending.
         approve.tap()
-        XCTAssertTrue(stage.waitForExistence(timeout: 5)); stage.tap()
+        let earlierStage = app.buttons["decision.stage.needs_brief"]
+        XCTAssertTrue(waitForDecisionStage(earlierStage)); earlierStage.tap()
+        XCTAssertTrue(reviewer.waitForExistence(timeout: 5)); reviewer.tap()
+        let scopeConfirmation = app.staticTexts["decision.scopeConfirmation"]
+        XCTAssertTrue(scopeConfirmation.waitForExistence(timeout: 5))
+        XCTAssertTrue(scopeConfirmation.label.contains("No proposal approval was sent."))
+        capture(app, "design-earlier-stage-settings-confirmed")
+        app.buttons["decision.scopeDone"].tap()
+        XCTAssertTrue(approve.waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["Make the work that needs your attention easy to read."].exists)
+        XCTAssertEqual(note.value as? String, "Keep this proposal note")
+        let (beforeDecision, _) = try await URLSession.shared.data(from: URL(string: base + "/proof/writes")!)
+        XCTAssertEqual((try JSONSerialization.jsonObject(with: beforeDecision) as? [String]), [])
+        let (scopeData, _) = try await URLSession.shared.data(from: URL(string: base + "/proof/scopes")!)
+        let scopeWrites = try XCTUnwrap(try JSONSerialization.jsonObject(with: scopeData) as? [[String: Any]])
+        XCTAssertEqual(scopeWrites.count, 1)
+        let scopeBody = try XCTUnwrap(scopeWrites.first?["body"] as? [String: Any])
+        XCTAssertEqual(scopeBody["ceiling"] as? String, "needs_brief")
+        approve.tap()
+        XCTAssertTrue(waitForDecisionStage(stage)); stage.tap()
         XCTAssertTrue(reviewer.waitForExistence(timeout: 5)); reviewer.tap()
         let next = app.staticTexts["Match the iPhone app to the web"]
         XCTAssertTrue(next.waitForExistence(timeout: 8))
         let (data, _) = try await URLSession.shared.data(from: URL(string: base + "/proof/writes")!)
         XCTAssertEqual((try JSONSerialization.jsonObject(with: data) as? [String]), ["approve"])
+    }
+
+    @MainActor private func waitForDecisionStage(_ stage: XCUIElement) -> Bool {
+        // Existence alone admitted an infinite/zero frame in the earlier review run.
+        let ready = NSPredicate { _, _ in
+            MainActor.assumeIsolated {
+                guard stage.exists, stage.isHittable else { return false }
+                let frame = stage.frame
+                return frame.minX.isFinite && frame.minY.isFinite && frame.width.isFinite && frame.height.isFinite
+                    && frame.width > 0 && frame.height > 0
+            }
+        }
+        return XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: ready, object: nil)], timeout: 5) == .completed
     }
 
     @MainActor private func skipFixtureCards(_ app: XCUIApplication) throws {

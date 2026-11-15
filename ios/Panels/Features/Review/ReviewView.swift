@@ -36,7 +36,7 @@ struct ReviewView: View {
     /// live queue while on screen, and a proposal decided here whose exit has not finished.
     private func parts(of card: ReviewCard) -> [ReviewItem] {
         let held = card.parts.filter { part in
-            !queue.resolved.contains(part.id) && (part.isMessage || decisions[part.id]?.resolved == true)
+            !queue.resolved.contains(part.id) && (part.isMessage || decisions[part.id]?.resolved == true || decisions[part.id]?.scopeChange.holdingProposal == true)
         }
         let live = (queueCards.first { $0.id == card.id }?.parts ?? []).filter { part in
             !queue.resolved.contains(part.id) && !held.contains { $0.id == part.id || ($0.isMessage && $0.conversationId == part.conversationId) }
@@ -302,15 +302,25 @@ private struct ReviewCardView: View {
         // found it changed, shows again.
         .onChange(of: parts.map(\.id)) { _, ids in exiting.formIntersection(ids) }
         .sheet(item: $sheet, onDismiss: {
+            decision?.scopeChange.releasePresentation()
             if resolvedAfterDismiss { resolvedAfterDismiss = false; resolveProposal() }
         }) { selected in
             if let decision, let ticket = decision.ticket {
                 DecisionApprovalSheet(stages: decision.approvalStages, nextStage: decision.nextStage ?? "",
                                       holder: ticket.ceilingHolder, managerID: ticket.managerId,
-                                      reviewerOnly: selected == .reviewer) { ceiling, holder in
-                    if selected == .reviewer {
-                        try await store.client.setTicketApprovalLimit(ticket.id, ceiling: nil, holder: holder)
-                        await refresh()
+                                      reviewerOnly: selected == .reviewer,
+                                      checkCurrent: decision.scopeChange.needsCheck ? {
+                                          let current = try await decision.scopeChange.check(online: Outbox.shared.networkAvailable && !store.serverUnreachable)
+                                          decision.acceptScopeRead(current)
+                                          await store.refresh()
+                                      } : nil,
+                                      confirmation: { decision.scopeChange.holdingProposal ? decision.scopeChange.message : nil }) { ceiling, holder in
+                    if selected == .reviewer || ceiling.map({ decision.manifest?.selectionApprovesPending(ceiling: $0, waitingStage: ticket.stage) == false }) == true {
+                        let current = try await decision.scopeChange.save(api: store.client, ticket: ticket,
+                            ceiling: selected == .reviewer ? nil : ceiling, holder: holder,
+                            online: Outbox.shared.networkAvailable && !store.serverUnreachable)
+                        decision.acceptScopeRead(current)
+                        await store.refresh()
                     } else if let ceiling {
                         busyAction = "approve"
                         if await decision.approve(api: store.client, ceiling: ceiling, holder: holder, guidance: approvalGuidance) { complete() }
@@ -476,7 +486,7 @@ private struct ReviewDecisionDock: View {
             if voice.phase != .idle { voiceStatus.padding(.horizontal, 20).padding(.top, 8).background(PanelsTheme.Web.surface) }
             DecisionNoteActions(note: $decision.revisionDraft, showsSendBack: decision.proposal?.field != "brief",
                                 canReturn: decision.canReturn, ready: ready && decision.ready,
-                                busyAction: busyAction, error: decision.error ?? voice.error,
+                                busyAction: busyAction, error: decision.error ?? voice.error ?? decision.scopeChange.message,
                                 noteEnabled: voice.phase == .idle,
                                 accessory: AnyView(Button {
                                     Haptics.light(); blurRequest += 1

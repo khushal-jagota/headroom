@@ -18,6 +18,13 @@ struct ReviewWorkerManifest: Decodable, Sendable {
         ceilingRange = workflow.ceilingRange ?? []
     }
 
+    /// The web keeps current and earlier choices as scope edits, not proposal approval.
+    func selectionApprovesPending(ceiling: String, waitingStage: String) -> Bool {
+        guard let selected = stages.firstIndex(where: { $0.id == ceiling }),
+              let waiting = stages.firstIndex(where: { $0.id == waitingStage }) else { return false }
+        return selected > waiting
+    }
+
     func approvalStages(after stage: String) -> [Stage] {
         guard let next = advance[stage], let start = stages.firstIndex(where: { $0.id == next }) else { return [] }
         return Array(stages[start...]).filter { ceilingRange.contains($0.id) }

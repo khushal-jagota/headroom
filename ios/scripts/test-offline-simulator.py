@@ -380,8 +380,8 @@ def main() -> int:
                 "manager_id": None,
                 "conversation_id": ticket["conversation_id"],
                 "is_backlogged": False,
-                "ceiling": ticket["stage"],
-                "ceiling_holder": {"kind": "owner", "id": "owner"},
+                "ceiling": ticket["ceiling"] if DESIGN_REVIEW else ticket["stage"],
+                "ceiling_holder": ticket["ceiling_holder"] if DESIGN_REVIEW else {"kind": "owner", "id": "owner"},
                 "gating_field": "what_changes" if DESIGN_REVIEW else "wireframe",
                 "proposal_field": proposal["field"] if proposal else None,
                 "proposal_revision": proposal["revision"] if proposal else 0,
@@ -654,6 +654,9 @@ def main() -> int:
             query = parse_qs(urlparse(self.path).query)
             if path.startswith("/proof/"):
                 name = path.removeprefix("/proof/")
+                if DESIGN_REVIEW and name == "scopes":
+                    self.respond(state.get("scope_writes", []))
+                    return
                 if REPLACEMENT_SMOKE and name.startswith("replacement/"):
                     action = name.split("/", 1)[1]
                     with lock:
@@ -996,6 +999,14 @@ def main() -> int:
         def do_PATCH(self) -> None:
             path = urlparse(self.path).path
             body = json.loads(self.rfile.read(int(self.headers.get("Content-Length", "0"))) or "{}")
+            if DESIGN_REVIEW and path.startswith("/api/tickets/") and path.split("/")[3] in tickets:
+                with lock:
+                    ticket = tickets[path.split("/")[3]]
+                    assert set(body) <= {"ceiling", "ceiling_holder"}
+                    ticket.update(body)
+                    state.setdefault("scope_writes", []).append(dict(path=path, body=body))
+                    self.respond(ticket)
+                return
             if not GOALS_SMOKE or not path.startswith("/api/goals/"):
                 self.respond({}, 404)
                 return
