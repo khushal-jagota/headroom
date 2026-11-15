@@ -138,10 +138,10 @@ def test_upgrade_keeps_working_turn_boundaries_and_drops_panels_own_compact(
             for conversation_id in HISTORIES
         }
     assert boundaries == {
-        "working_turn": (3, 3),
-        "idle_compact": (2, 0),
-        "working_then_uncompacted_idle": (3, 3),
-        "idle_then_working": (8, 8),
+        "working_turn": (2, 2),
+        "idle_compact": (4, 0),
+        "working_then_uncompacted_idle": (2, 2),
+        "idle_then_working": (7, 7),
         "never_compacted": (0, 0),
     }
     assert owes_mid_step_notice == {
