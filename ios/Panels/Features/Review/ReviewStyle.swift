@@ -234,11 +234,6 @@ struct DecisionApprovalSheet: View {
     @State private var confirmationMessage: String?
     @State private var busy = false
     @State private var error: String?
-    private var pageIdentity: String {
-        if confirmationMessage != nil { return "confirmation" }
-        if reviewerOnly || selected != nil { return "reviewers:\(selected ?? "current")" }
-        return "stages"
-    }
     private var reviewers: [(String, Principal)] {
         var values = [("User", Principal(kind: "owner", id: "owner"))]
         if let managerID { values.append(("Manager", Principal(kind: "manager", id: managerID))) }
@@ -301,9 +296,7 @@ struct DecisionApprovalSheet: View {
                         .accessibilityIdentifier("decision.checkCurrent")
                 }
                 if let error { Text(error).panelsScaledFont(size: 12.5).foregroundStyle(PanelsTheme.Web.error).padding(12) }
-            // Replace the semantic subtree when the visible page changes; retaining
-            // it could leave accessibility clients reading the previous page's rows.
-            }.padding(8).id(pageIdentity)
+            }.padding(8)
         }.buttonStyle(.plain).disabled(busy).background(PanelsTheme.Web.raised)
             .presentationCornerRadius(24).presentationDragIndicator(.visible)
             .presentationDetents([.medium, .large]).interactiveDismissDisabled(busy)
