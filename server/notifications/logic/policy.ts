@@ -1,5 +1,6 @@
 import type { AttentionEdge, NotificationIntent } from '../contracts.ts';
 import { NOTIFICATION_TYPE_BY_ID } from '../contracts.ts';
+import { notification_label } from './preview.ts';
 const REASONS: Record<string, string> = {
   awaiting_reply: 'has a message for you',
   awaiting_answer: 'is waiting on your answer',
@@ -17,9 +18,20 @@ export function decide_notification(
   if (!['ticket', 'chief', 'manager'].includes(kind))
     throw new Error(`unknown notification subject kind: ${kind}`);
   if (!options.enabled) return null;
+  const message = edge.key.notification_type === 'awaiting_reply' ? edge.message : null;
+  const approval = edge.key.notification_type === 'awaiting_approval' && edge.stage_label != null;
   return {
-    title: 'Panels',
-    body: `${edge.subject_label} ${REASONS[edge.key.notification_type]}.`,
+    title: message
+      ? message.sender_label
+      : approval
+        ? notification_label(edge.subject_label)
+        : 'Panels',
+    body: message
+      ? message.preview
+      : approval
+        ? `${edge.stage_label} waits for your approval.`
+        : `${notification_label(edge.subject_label)} ${REASONS[edge.key.notification_type]}.`,
+    reply: message?.reply ?? null,
     route:
       kind === 'ticket'
         ? `/#/workspace/${edge.subject.id}`
