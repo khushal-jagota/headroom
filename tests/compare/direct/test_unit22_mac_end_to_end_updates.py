@@ -8,7 +8,9 @@ The common Node host and TLS proxy are reused; connected execution is hosted onl
 from __future__ import annotations
 
 import asyncio
+import base64
 import contextlib
+import hashlib
 from collections.abc import AsyncIterator
 from dataclasses import replace
 from pathlib import Path
@@ -16,13 +18,15 @@ from typing import Any
 
 import pytest
 from tests.compare.direct.mac_end_to_end_fixture import Harness, boot, eventually
-from tests.unit.test_mac_updates import MacProvider, attempt, mac_service, write
+from tests.unit.test_mac_updates import LinuxProvider, attempt, mac_service, release, write
 
 from planner.conversation.contracts import PromptDeliveryStarted
 from planner.conversation.events import ConversationTurnEnding, TurnEndedEventPayload
 from planner.conversation.message_content import text_message_content
 from planner.core.contracts import CHIEF_PRINCIPAL, Principal, PrincipalKind
 from planner.core.db import connect
+from planner.environments.update_attempts import UpdateConflict
+from planner.environments.update_contracts import PublishedLinuxExecutorUpdate, PublishedUpdate
 from planner.execution_identity import ChildReference, ExecutorIdentity
 from planner.executor.mac_updates import handoff_record
 from planner.executor.protocol import (
@@ -79,19 +83,25 @@ def pending(state: dict[str, Any]) -> list[QueuedEnvelope]:
     return [type_adapter(QueuedEnvelope).validate_python(row) for row in state["pending"]]
 
 
-@pytest.mark.xfail(
-    run=False,
-    reason=(
-        "expected-open P2: #916 staging protocol24 machine credentials and cleanup "
-        "leases leave the TS22 Mac unleased"
-    ),
-)
+async def admitted_linux_archive(
+    harness: Harness, revision: str,
+) -> tuple[dict[str, Any], bytes]:
+    """The existing Node files owner admits exactly the bytes served by this fixture."""
+    admitted = await harness.peer.call("runtime_archive", revision=revision)
+    payload = base64.b64decode(admitted["base64"], validate=True)
+    assert admitted["revision"] == revision
+    assert admitted["byte_count"] == len(payload)
+    assert admitted["sha256"] == hashlib.sha256(payload).hexdigest()
+    return admitted, payload
+
+
 def test_planned_runtime_swap_and_reversion_replay_original_results_after_vps_restart(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     async def run() -> None:
         async with boot(tmp_path) as harness:
             state = await harness.state()
+            archive, _ = await admitted_linux_archive(harness, "b" * 40)
             child = type_adapter(ChildReference).validate_python(state["children"][0]["reference"])
             identity = type_adapter(ExecutorIdentity).validate_python(state["identity"])
             artifact = harness.mac_root / "artifacts/tickets" / harness.ticket_id / "saved.txt"
@@ -134,6 +144,7 @@ def test_planned_runtime_swap_and_reversion_replay_original_results_after_vps_re
             async with held_items(harness, retiring=True):
                 await harness.start_mac(
                     revision="b" * 40,
+                    entrypoint=archive["entrypoint"],
                     ready_path=harness.mac_root / "ready.json",
                     handoff_path=handoff,
                 )
@@ -177,14 +188,9 @@ def test_planned_runtime_swap_and_reversion_replay_original_results_after_vps_re
     asyncio.run(run())
 
 
-@pytest.mark.xfail(
-    run=False,
-    reason=(
-        "expected-open P2: #916 staging protocol24 machine credentials and cleanup "
-        "leases leave the TS22 Mac unleased"
-    ),
-)
-def test_update_stop_settles_live_vps_before_a_failed_attempt_resumes_work(tmp_path: Path) -> None:
+def test_update_stop_settles_live_vps_before_a_failed_attempt_resumes_work(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
     async def run() -> None:
         async with boot(tmp_path) as harness:
             system = harness.system
@@ -192,11 +198,36 @@ def test_update_stop_settles_live_vps_before_a_failed_attempt_resumes_work(tmp_p
             child = type_adapter(ChildReference).validate_python(
                 initial["children"][0]["reference"]
             )
-            provider = MacProvider()
-            published = provider.publish()
-            updates = mac_service(
-                tmp_path / "server", provider, initial["identity"]["application_revision"]
+            admitted, payload = await admitted_linux_archive(harness, "b" * 40)
+            provider = LinuxProvider()
+            artifact_id = 100
+            provider.linux_archives[artifact_id] = payload
+            published = replace(
+                release(admitted["revision"]),
+                linux_executor=PublishedLinuxExecutorUpdate(
+                    artifact_id, admitted["sha256"], admitted["byte_count"],
+                ),
             )
+            updates = mac_service(
+                tmp_path / "server", provider, initial["identity"]["application_revision"],
+                ready=published,
+            )
+            updates.platform = "linux"
+
+            def validate_native_archive(path: Path, selected: PublishedUpdate) -> None:
+                # Fixture-only delegation to the real Node admission above. Python's
+                # publication service requires private Python and never serves this in production.
+                metadata = selected.linux_executor
+                if (
+                    selected.manifest.app_sha != admitted["revision"]
+                    or metadata is None
+                    or metadata.archive_sha256 != admitted["sha256"]
+                    or metadata.archive_size != admitted["byte_count"]
+                    or path.read_bytes() != payload
+                ):
+                    raise UpdateConflict("Native fixture archive differs from its admitted bytes")
+
+            monkeypatch.setattr(updates, "_validate_archive", validate_native_archive)
             updates.prepare(published)
             harness.transport_app.state.mac_updates = updates
             harness.endpoint.presence.update_check = updates.check
@@ -220,6 +251,23 @@ def test_update_stop_settles_live_vps_before_a_failed_attempt_resumes_work(tmp_p
                     return status is not None and status.phase == "ready_to_restart"
 
                 await eventually(ready, "The Mac did not report its physical update stop", 20)
+                consumer_runtime: Path = harness.mac_root / "updates/releases" / (
+                    admitted["revision"] + "-" + admitted["sha256"]
+                )
+
+                async def downloaded() -> bool:
+                    return consumer_runtime.is_dir()
+
+                await eventually(
+                    downloaded, "The consumer did not admit its prefetched archive", 20,
+                )
+                cached = await harness.peer.call(
+                    "admit_cached_runtime", revision=admitted["revision"],
+                    sha256=admitted["sha256"],
+                )
+                assert cached == {
+                    "revision": admitted["revision"], "runtime": str(consumer_runtime),
+                }
                 await harness.wait_calls(stops=1)
                 rows = pending(await harness.state())
                 saved = next(row for row in rows if row.kind is EnvelopeKind.cli_write)

@@ -31,6 +31,7 @@ from planner.conversation.contracts import (
     PromptDeliverySuppressed,
 )
 from planner.conversation.message_content import text_message_content
+from planner.core.contracts import PlannerError
 from planner.core.db import connect
 from planner.execution_identity import AskKind, ExecutorIdentity
 from planner.executor import ipc_client
@@ -38,13 +39,6 @@ from planner.executor.configuration import ITEM_BATCH_TIMEOUT_SECONDS
 from planner.executor.protocol import ChildOperation, IpcOperation, type_adapter
 
 
-@pytest.mark.xfail(
-    run=False,
-    reason=(
-        "expected-open P2: #916 staging protocol24 machine credentials and cleanup "
-        "leases leave the TS22 Mac unleased"
-    ),
-)
 def test_early_prompt_event_and_idle_publications_do_not_wait_for_retry_timer(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -99,13 +93,6 @@ def test_early_prompt_event_and_idle_publications_do_not_wait_for_retry_timer(
 
 
 @pytest.mark.parametrize("outage", ["lost_poll_reply", "already_down"])
-@pytest.mark.xfail(
-    run=False,
-    reason=(
-        "expected-open P2: #916 staging protocol24 machine credentials and cleanup "
-        "leases leave the TS22 Mac unleased"
-    ),
-)
 def test_prompt_survives_short_link_drop_once_with_attachment(tmp_path: Path, outage: str) -> None:
     async def run() -> None:
         async with boot(tmp_path) as harness:
@@ -142,13 +129,6 @@ def test_prompt_survives_short_link_drop_once_with_attachment(tmp_path: Path, ou
 
 
 @pytest.mark.parametrize("receipt_failure", ["disconnect", "silent"])
-@pytest.mark.xfail(
-    run=False,
-    reason=(
-        "expected-open P2: #916 staging protocol24 machine credentials and cleanup "
-        "leases leave the TS22 Mac unleased"
-    ),
-)
 def test_commit_before_ack_replay_returns_first_receipt_and_one_domain_event(
     tmp_path: Path, receipt_failure: str
 ) -> None:
@@ -190,13 +170,6 @@ def test_commit_before_ack_replay_returns_first_receipt_and_one_domain_event(
     asyncio.run(run())
 
 
-@pytest.mark.xfail(
-    run=False,
-    reason=(
-        "expected-open P2: #916 staging protocol24 machine credentials and cleanup "
-        "leases leave the TS22 Mac unleased"
-    ),
-)
 def test_user_input_callback_application_survives_lost_receipt_without_reanswer(
     tmp_path: Path,
 ) -> None:
@@ -238,13 +211,6 @@ def test_user_input_callback_application_survives_lost_receipt_without_reanswer(
     asyncio.run(run())
 
 
-@pytest.mark.xfail(
-    run=False,
-    reason=(
-        "expected-open P2: #916 staging protocol24 machine credentials and cleanup "
-        "leases leave the TS22 Mac unleased"
-    ),
-)
 def test_vps_input_attachment_bytes_arrive_before_native_prompt(tmp_path: Path) -> None:
     async def run() -> None:
         async with boot(tmp_path) as harness:
@@ -274,13 +240,6 @@ def test_vps_input_attachment_bytes_arrive_before_native_prompt(tmp_path: Path) 
     asyncio.run(run())
 
 
-@pytest.mark.xfail(
-    run=False,
-    reason=(
-        "expected-open P2: #916 staging protocol24 machine credentials and cleanup "
-        "leases leave the TS22 Mac unleased"
-    ),
-)
 def test_input_download_drop_retries_and_an_input_no_longer_served_fails_its_turn(
     tmp_path: Path,
 ) -> None:
@@ -332,13 +291,6 @@ def test_input_download_drop_retries_and_an_input_no_longer_served_fails_its_tur
     asyncio.run(run())
 
 
-@pytest.mark.xfail(
-    run=False,
-    reason=(
-        "expected-open P2: #916 staging protocol24 machine credentials and cleanup "
-        "leases leave the TS22 Mac unleased"
-    ),
-)
 def test_input_descriptor_must_validate_before_provider_invocation(tmp_path: Path) -> None:
     async def run() -> None:
         async with boot(tmp_path) as harness:
@@ -371,13 +323,6 @@ def test_input_descriptor_must_validate_before_provider_invocation(tmp_path: Pat
     asyncio.run(run())
 
 
-@pytest.mark.xfail(
-    run=False,
-    reason=(
-        "expected-open P2: #916 staging protocol24 machine credentials and cleanup "
-        "leases leave the TS22 Mac unleased"
-    ),
-)
 def test_kill_withdraws_a_stalled_delivery_without_a_round_trip(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -411,12 +356,25 @@ def test_kill_withdraws_a_stalled_delivery_without_a_round_trip(
                 await asyncio.sleep(0)
                 release.set()
                 assert isinstance(await asyncio.wait_for(sending, 5), PromptDeliverySuppressed)
-                await asyncio.wait_for(killing, 5)
+                with pytest.raises(PlannerError) as refused:
+                    await asyncio.wait_for(killing, 5)
+                assert refused.value.code.value == "retry_later"
                 assert not harness.endpoint.poll_release.is_set()
                 assert harness.commands("write_prompt")[-1][1] == "withdrawn"
                 harness.endpoint.poll_release.set()
                 await harness.wait_calls(stops=1, prompts=1)
                 await harness.wait_settled()
+                state = harness.system._conversations["c_scripted"]
+
+                async def retired() -> bool:
+                    return (
+                        state.retained_child_reference is None and not state.child_is_quarantined
+                    )
+
+                await eventually(retired, "The exact Stop proof did not clear retained custody")
+                if state.retirement_task is not None:
+                    await state.retirement_task
+                await harness.system.kill("c_scripted")
             finally:
                 release.set()
                 harness.endpoint.poll_release.set()
