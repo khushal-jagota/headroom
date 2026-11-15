@@ -37,6 +37,8 @@ Late stage, backup, and installer settlements cannot write records or publish re
 Node releases retain exact schema-frontier admission. Python remains the migration owner.
 Release creation and extraction can require an explicit OS, architecture, and role.
 Default home admission refuses executor markers. Explicit targets require a matching runtime marker, including Darwin home targets.
+Darwin home metadata uses a version 2 Node contract with an inventory digest and the Mac OS and library boundaries.
+P7 owns its host admission and executable proof.
 
 Startup recovery scopes workspace admission to each pass and retains pending recoveries through bounded backoff.
 A denied starts lease ends that boot pass without deleting its durable recovery rows. Recovery uses the shared P3 admission owner for supervisor priority, pacing, and outcome settlement.

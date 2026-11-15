@@ -5,6 +5,8 @@ import type { AppManifest } from '../updates/contracts.ts';
 export type {
   AppManifest,
   NodeRuntimeContract,
+  LinuxNodeRuntimeContract,
+  DarwinNodeRuntimeContract,
   PythonRuntimeContract,
   RuntimeContract,
 } from '../updates/contracts.ts';

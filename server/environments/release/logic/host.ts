@@ -22,7 +22,11 @@ export function verify_runtime_host_facts(
   contract: RuntimeContract,
   facts: RuntimeHostFacts,
 ): void {
-  if (facts.system !== contract.system || facts.architecture !== contract.architecture)
+  if (
+    contract.system !== 'linux' ||
+    facts.system !== contract.system ||
+    facts.architecture !== contract.architecture
+  )
     throw new AppValidationError('runtime requires Linux x86_64');
   const supported = contract.platforms.find(
     (item) => item.distribution === facts.distribution && item.version === facts.version,
