@@ -71,6 +71,9 @@
             }
           ]
         }
+      },
+      "capture": {
+        "holder_revision": "page_revision"
       }
     },
     {
@@ -343,7 +346,7 @@
       "area": "cli-page",
       "argv": [
         "page",
-        "show",
+        "edit",
         "--manager",
         "${manager}"
       ],
@@ -351,10 +354,10 @@
         "actor": "owner"
       },
       "exit_code": 0,
-      "proof": "Shows the populated holder page and revision.",
+      "proof": "Replaces the populated holder page through its captured revision and retains component IDs.",
+      "stdin": "{\"page\":{\"kind\":\"headroom.page\",\"version\":1,\"title\":\"CLI edited holder page\",\"summary\":\"A populated holder document.\",\"blocks\":[{\"type\":\"section\",\"id\":\"work\",\"title\":\"Work\",\"blocks\":[{\"type\":\"checklist\",\"id\":\"steps\",\"title\":\"Next steps\",\"items\":[{\"id\":\"first\",\"label\":\"CLI real checklist\",\"state\":\"open\"}]}]}]},\"expected_revision\":${holder_revision}}",
       "assert_text": [
-        "CLI domain page",
-        "CLI real checklist"
+        "CLI edited holder page"
       ]
     },
     {
@@ -369,9 +372,25 @@
       "identity": {
         "actor": "owner"
       },
+      "exit_code": 1,
+      "assert_http_status": 409,
+      "proof": "Refuses the stale page clear without replacing newer content.",
+      "stdin": "{\"page\":null,\"expected_revision\":${holder_revision}}"
+    },
+    {
+      "kind": "cli",
+      "area": "cli-page",
+      "argv": [
+        "page",
+        "show",
+        "--manager",
+        "${manager}"
+      ],
+      "identity": {
+        "actor": "owner"
+      },
       "exit_code": 0,
-      "proof": "Replaces the complete page from stdin with retained component IDs.",
-      "stdin": "{\"page\":{\"kind\":\"headroom.page\",\"version\":1,\"title\":\"CLI edited holder page\",\"summary\":\"A populated holder document.\",\"blocks\":[{\"type\":\"section\",\"id\":\"work\",\"title\":\"Work\",\"blocks\":[{\"type\":\"checklist\",\"id\":\"steps\",\"title\":\"Next steps\",\"items\":[{\"id\":\"first\",\"label\":\"CLI real checklist\",\"state\":\"open\"}]}]}]}}",
+      "proof": "Shows the populated holder page and revision after a stale clear leaves the newer document intact.",
       "assert_text": [
         "CLI edited holder page"
       ]

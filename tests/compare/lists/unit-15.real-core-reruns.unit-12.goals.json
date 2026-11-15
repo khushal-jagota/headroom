@@ -215,7 +215,8 @@
         }
       },
       "capture": {
-        "quant": "id"
+        "quant": "id",
+        "quant_revision": "revision"
       }
     },
     {
@@ -270,7 +271,18 @@
       "status": 200,
       "json": {
         "title": "Revised quantitative milestone",
-        "why": "A retained Unicode note \u2603"
+        "why": "A retained Unicode note ☃",
+        "expected_revision": "${quant_revision}"
+      }
+    },
+    {
+      "area": "goals",
+      "method": "PATCH",
+      "path": "/api/goals/${quant}",
+      "status": 409,
+      "json": {
+        "expected_revision": "${quant_revision}",
+        "title": "Stale title must not replace the newer Goal"
       }
     },
     {
@@ -354,6 +366,12 @@
       "capture": {
         "binary": "id"
       }
+    },
+    {
+      "area": "goals",
+      "method": "GET",
+      "path": "/api/resource-versions?keys=[\"/api/goals\",\"/api/goals/${quant}\"]",
+      "status": 200
     },
     {
       "area": "navigation",
