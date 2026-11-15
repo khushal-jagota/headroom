@@ -123,6 +123,8 @@ export type MailboxSettledListener = (
 export interface MailboxFetchResult {
   reply: WireValue<'MailboxPollReply'> | null;
   settled: MailboxSettlements;
+  withdrawn_turns?: readonly WireValue<'TurnToken'>[];
+  high_sequence?: number;
 }
 export interface MailboxRecordResult {
   reply: WireValue<'CommandOutcomeReply'>;

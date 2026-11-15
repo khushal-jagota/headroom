@@ -124,6 +124,7 @@ export class VpsExecutor {
     this.bind_conversations(conversations);
     this.app = app;
     this.update_barrier = update_barrier;
+    this.mailbox.start_admission = conversations.start_admission;
   }
   bind_updates(service: MacUpdateServiceContract): void {
     this.updates = service;
