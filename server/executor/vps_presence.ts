@@ -1,5 +1,6 @@
 /** The committed lease cache, incarnation fence, contact flush and memory-only stalls. */
-import type { Database } from '../core/database/contracts.ts';
+import type { Database, ReadSql } from '../core/database/contracts.ts';
+import { isDeepStrictEqual } from 'node:util';
 import { is_sqlite_error } from '../core/database/index.ts';
 import { PlannerError } from '../core/contracts.ts';
 import { is_os_error } from '../core/system_errors.ts';
@@ -12,6 +13,7 @@ import type { StallSource, TrackedWait } from '../stalls/contracts.ts';
 import { PROTOCOL_VERSION, SPOOL_FORMAT_VERSION } from '../execution_configuration.ts';
 import {
   MAC_NEEDS_UPDATE,
+  ORIGINAL_MAC_MACHINE_ID,
   ProtocolRefused,
   refusal_reason_for_versions,
   supports_executor_versions,
@@ -69,6 +71,7 @@ function empty_record(): PresenceRecord {
 }
 
 export class MacPresenceService {
+  readonly machine_id: string;
   update_check: UpdateCheck = no_update_check;
   incarnation_replaced: IncarnationReplaced | null = null;
   returned: (() => void) | null = null;
@@ -103,6 +106,7 @@ export class MacPresenceService {
     this.database = database;
     this.mailbox = mailbox;
     this.options = options;
+    this.machine_id = options.machine_id ?? ORIGINAL_MAC_MACHINE_ID;
     this.clock = options.clock ?? now_ms;
     this.resource_join = new Promise((resolve, reject) => {
       this.resolve_join = resolve;
@@ -115,7 +119,7 @@ export class MacPresenceService {
   }
   private get_record(): PresenceRecord | null {
     if (!this.record_loaded && !this.closed) {
-      this.loaded_record = this.database.read(read_presence);
+      this.loaded_record = this.database.read((sql) => read_presence(sql, this.machine_id));
       this.record_loaded = true;
       this.flushed_contact_ms = this.loaded_record?.last_contact_at_ms ?? null;
     }
@@ -219,7 +223,7 @@ export class MacPresenceService {
     ) {
       this.set_record(accepted.current);
       this.flushed_contact_ms = accepted.current.last_contact_at_ms;
-      this.observe_lease(request, accepted, now);
+      this.observe_lease(accepted.current.lease ?? request, accepted, now);
       this.schedule_presence_change();
     }
     if (announce) this.options.changes.emit();
@@ -243,14 +247,15 @@ export class MacPresenceService {
       accepted_at_vps_ms: now,
       away_after_seconds: MAC_AWAY_AFTER_SECONDS,
       update: await this.check_update(),
-      mailbox_high_sequence: this.database.read(high_sequence),
+      mailbox_high_sequence: this.database.read((sql) => high_sequence(sql, this.machine_id)),
     };
   }
   private write_lease(request: WireValue<'LeaseRequest'>) {
     return this.database.write(
       (tx) => {
         const now = this.clock();
-        const accepted = accept_lease_in_transaction(tx, request, now);
+        request = this.validated_lease(tx, request);
+        const accepted = accept_lease_in_transaction(tx, request, now, this.machine_id);
         const settled =
           accepted.replaced_incarnation === null
             ? []
@@ -259,14 +264,80 @@ export class MacPresenceService {
                 current: request.identity.executor_incarnation,
                 now_ms: now,
               });
-        const announce = lease_changes_presence_signal(accepted.previous, accepted.current, {
-          new_incarnation: accepted.new_incarnation,
-          now_ms: now,
-        });
+        const previous_lease = accepted.previous?.lease;
+        const cleanup_changed =
+          previous_lease == null ||
+          !isDeepStrictEqual(previous_lease.cleanup_uncertainties, request.cleanup_uncertainties) ||
+          previous_lease.legacy_cleanup_notice !== request.legacy_cleanup_notice;
+        const announce =
+          cleanup_changed ||
+          lease_changes_presence_signal(accepted.previous, accepted.current, {
+            new_incarnation: accepted.new_incarnation,
+            now_ms: now,
+          });
         return { accepted, settled, now, announce };
       },
       { changeSignal: 'silent' },
     );
+  }
+  private validated_lease(
+    sql: ReadSql,
+    request: WireValue<'LeaseRequest'>,
+  ): WireValue<'LeaseRequest'> {
+    const owner = (conversation_id: string): string | null => {
+      const row =
+        sql.get<{ machine_id: string }>('SELECT machine_id FROM mac_runs WHERE conversation_id=?', [
+          conversation_id,
+        ]) ??
+        sql.get<{ machine_id: string }>(
+          'SELECT i.machine_id FROM executor_child_assignments a ' +
+            'JOIN executor_incarnations i USING(executor_incarnation) ' +
+            'WHERE a.conversation_id=? LIMIT 1',
+          [conversation_id],
+        );
+      if (row !== undefined && row.machine_id !== this.machine_id)
+        throw new PlannerError('agent_forbidden', "lease references another machine's work");
+      return row?.machine_id ?? null;
+    };
+    const waiting_conversations = request.waiting_conversations.filter(
+      (waiting) => owner(waiting.conversation_id) !== null,
+    );
+    const working_turns = request.working_turns.filter((working) => {
+      if (working.turn.conversation_id !== working.child.conversation_id)
+        throw new PlannerError('validation', 'lease turn belongs to another conversation');
+      owner(working.child.conversation_id);
+      const incarnation = sql.get<{ machine_id: string }>(
+        'SELECT machine_id FROM executor_incarnations WHERE executor_incarnation=?',
+        [working.child.executor_incarnation],
+      );
+      if (incarnation !== undefined && incarnation.machine_id !== this.machine_id)
+        throw new PlannerError('agent_forbidden', 'lease child belongs to another machine');
+      return (
+        sql.get(
+          'SELECT 1 FROM mac_runs r JOIN executor_child_assignments a ' +
+            'ON a.executor_incarnation=r.executor_incarnation AND a.child_id=r.child_id ' +
+            'AND a.conversation_id=r.conversation_id WHERE r.machine_id=? ' +
+            'AND r.executor_incarnation=? AND r.child_id=? AND r.conversation_id=? ' +
+            "AND r.turn_number=? AND r.stop_state='open' AND a.closed_at_ms IS NULL",
+          [
+            this.machine_id,
+            working.child.executor_incarnation,
+            working.child.child_id,
+            working.child.conversation_id,
+            working.turn.turn_number,
+          ],
+        ) !== undefined
+      );
+    });
+    for (const uncertainty of request.cleanup_uncertainties ?? []) {
+      owner(uncertainty.conversation_id);
+      const ticket = sql.get<{ machine_id: string }>('SELECT machine_id FROM tickets WHERE id=?', [
+        uncertainty.ticket_id,
+      ]);
+      if (ticket !== undefined && ticket.machine_id !== this.machine_id)
+        throw new PlannerError('agent_forbidden', 'cleanup evidence belongs to another machine');
+    }
+    return { ...request, waiting_conversations, working_turns };
   }
   private async check_update(): Promise<WireValue<'MacUpdateCheck'>> {
     if (this.closed) return no_update_check();
@@ -319,7 +390,7 @@ export class MacPresenceService {
       this.contact();
       return;
     }
-    const announce = this.database.write((tx) => record_refusal(tx, refusal), {
+    const announce = this.database.write((tx) => record_refusal(tx, refusal, this.machine_id), {
       changeSignal: 'silent',
     });
     await Promise.resolve();
@@ -358,7 +429,9 @@ export class MacPresenceService {
       (this.flushed_contact_ms !== null && contact <= this.flushed_contact_ms)
     )
       return;
-    this.database.write((tx) => record_contact(tx, contact), { changeSignal: 'silent' });
+    this.database.write((tx) => record_contact(tx, contact, this.machine_id), {
+      changeSignal: 'silent',
+    });
     this.flushed_contact_ms = contact;
   }
   require_current({
@@ -410,6 +483,8 @@ export class MacPresenceService {
       queue_depth: record?.lease?.queue_depth ?? null,
       oldest_item_age_ms: record?.lease?.oldest_item_age_ms ?? null,
       admission_stopped: record?.lease?.admission_stopped ?? false,
+      cleanup_uncertainties: record?.lease?.cleanup_uncertainties ?? [],
+      legacy_cleanup_notice: record?.lease?.legacy_cleanup_notice ?? null,
     };
   }
   private drained(conversation_id: string): boolean {
@@ -420,6 +495,9 @@ export class MacPresenceService {
       this.clock() - record.last_lease_at_ms <= LEASE_CONTINUITY_SECONDS * 1000 &&
       record.lease.identity.executor_incarnation === record.executor_incarnation &&
       !record.lease.waiting_conversations_truncated &&
+      !(record.lease.cleanup_uncertainties ?? []).some(
+        (uncertainty) => uncertainty.conversation_id === conversation_id,
+      ) &&
       record.lease.waiting_conversations.every(
         (waiting) => waiting.conversation_id !== conversation_id,
       )
@@ -456,7 +534,8 @@ export class MacPresenceService {
       if (this.drained(entry.conversation_id)) entry.resolve();
   }
   note_conversation_activity(conversation_id: string): void {
-    this.activity_ms.set(conversation_id, this.clock());
+    if ([...this.working_turns.values()].some((turn) => turn.conversation_id === conversation_id))
+      this.activity_ms.set(conversation_id, this.clock());
   }
   private observe_lease(
     request: WireValue<'LeaseRequest'>,
@@ -481,6 +560,9 @@ export class MacPresenceService {
       if (working.tool_running) this.activity_ms.set(conversation_id, now);
     }
     this.working_turns = turns;
+    const working_conversations = new Set([...turns.values()].map((turn) => turn.conversation_id));
+    for (const conversation_id of this.activity_ms.keys())
+      if (!working_conversations.has(conversation_id)) this.activity_ms.delete(conversation_id);
   }
   tracked_waits(): readonly TrackedWait[] {
     return [...this.working_turns.values()]
@@ -489,6 +571,7 @@ export class MacPresenceService {
         kind: 'mac_turn_silent',
         wait_key: `${turn.conversation_id}:${turn.turn_number}`,
         conversation_id: turn.conversation_id,
+        machine_id: null,
         detail: `Turn ${turn.turn_number} is working on the Mac but sends nothing`,
         started_at_ms: Math.max(
           turn.first_seen_ms,

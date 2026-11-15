@@ -3,7 +3,10 @@
   "source_roots": [
     "src/planner/core/authority/",
     "src/planner/projects/",
-    "src/planner/navigation/"
+    "src/planner/navigation/",
+    "src/planner/machines/",
+    "src/planner/skills/",
+    "src/planner/tickets/"
   ],
   "seed_requests": [
     {
@@ -38,9 +41,39 @@
       "path": "/api/tickets/${ticket}/backlog",
       "json": {},
       "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/machines",
+      "status": 200,
+      "capture": {
+        "home_machine": "machines.0.machine_id",
+        "mac_machine": "machines.1.machine_id"
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/api/tickets",
+      "status": 200,
+      "json": {
+        "title": "Remote machine proof",
+        "worker_type": "coding",
+        "brief": "Wait on the selected remote machine",
+        "machine_id": "${mac_machine}",
+        "ceiling": "needs_implementation"
+      },
+      "capture": {
+        "remote_ticket": "id"
+      }
     }
   ],
   "requests": [
+    {
+      "area": "machines",
+      "method": "GET",
+      "path": "/api/skills/stale",
+      "status": 200
+    },
     {
       "method": "GET",
       "path": "/api/projects?detail=full",
@@ -244,9 +277,110 @@
       },
       "area": "authority",
       "status": 200
+    },
+    {
+      "area": "machines",
+      "method": "GET",
+      "path": "/api/machines",
+      "status": 200,
+      "capture": {
+        "machines_before": "machines"
+      }
+    },
+    {
+      "area": "machines",
+      "method": "GET",
+      "path": "/api/tickets?id=${remote_ticket}&detail=full",
+      "status": 200
+    },
+    {
+      "area": "machines",
+      "method": "PATCH",
+      "path": "/api/machines/${mac_machine}",
+      "status": 200,
+      "json": {
+        "name": "\u001cTravel Mac\u001c",
+        "icon": "laptop",
+        "color": "cyan"
+      }
+    },
+    {
+      "area": "machines",
+      "method": "GET",
+      "path": "/api/tickets?id=${remote_ticket}&detail=full",
+      "status": 200
+    },
+    {
+      "area": "machines",
+      "method": "GET",
+      "path": "/api/machines",
+      "status": 200,
+      "capture": {
+        "machines_after": "machines"
+      }
+    },
+    {
+      "area": "machines",
+      "method": "POST",
+      "path": "/api/tickets",
+      "status": 400,
+      "json": {
+        "title": "Conflicting destination",
+        "worker_type": "coding",
+        "machine_id": "${mac_machine}",
+        "locale": "vps"
+      }
+    },
+    {
+      "area": "machines",
+      "method": "POST",
+      "path": "/api/tickets",
+      "status": 200,
+      "json": {
+        "title": "Explicit home destination",
+        "worker_type": "coding",
+        "machine_id": "${home_machine}",
+        "locale": "vps"
+      },
+      "capture": {
+        "home_ticket": "id"
+      }
+    },
+    {
+      "area": "machines",
+      "method": "PATCH",
+      "path": "/api/machines/${mac_machine}",
+      "status": 400,
+      "json": {
+        "is_home": true
+      }
+    },
+    {
+      "area": "machines",
+      "method": "PATCH",
+      "path": "/api/machines/${mac_machine}",
+      "status": 400,
+      "json": {
+        "name": "Worker rename"
+      },
+      "headers": {
+        "X-Plan-Actor": "worker",
+        "X-Plan-Ticket-ID": "${ticket}"
+      }
+    },
+    {
+      "area": "machines",
+      "method": "GET",
+      "path": "/api/machines",
+      "status": 200
     }
   ],
   "probes": [
-    "/api/navigation/view/snapshot?view=%7B%22projection_version%22%3A7%2C%22scope_generation%22%3A1%2C%22locale%22%3A%22en-US%22%2C%22selected%22%3Anull%2C%22selected_conversation_id%22%3Anull%2C%22review_conversation_ids%22%3A%5B%5D%2C%22review_skipped_keys%22%3A%5B%5D%2C%22review_priority_keys%22%3A%5B%5D%2C%22windows%22%3A%5B%5D%7D"
+    "/api/navigation/view/snapshot?view=%7B%22projection_version%22%3A7%2C%22scope_generation%22%3A1%2C%22locale%22%3A%22en-US%22%2C%22selected%22%3Anull%2C%22selected_conversation_id%22%3Anull%2C%22review_conversation_ids%22%3A%5B%5D%2C%22review_skipped_keys%22%3A%5B%5D%2C%22review_priority_keys%22%3A%5B%5D%2C%22windows%22%3A%5B%5D%7D",
+    "/api/machines"
+  ],
+  "report_captures": [
+    "machines_before",
+    "machines_after"
   ]
 }

@@ -1,4 +1,9 @@
 {
+  "machine": {
+    "list": null,
+    "register": null,
+    "replace-credential": null
+  },
   "executor": {
     "run": null,
     "retry": null,

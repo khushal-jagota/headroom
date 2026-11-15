@@ -27,7 +27,8 @@ import * as codec from '../logic/fields_codec.ts';
 import * as resolution from '../logic/resolution.ts';
 import * as routing from '../logic/proposal_routing.ts';
 import * as employee from '../logic/employee_configuration.ts';
-import { resolve_ticket_locale } from '../logic/locale.ts';
+import { require_ticket_locale } from '../logic/locale.ts';
+import { resolve_destination } from '../../machines/data.ts';
 import type { Decision } from '../logic/decisions.ts';
 import type {
   Ticket,
@@ -276,6 +277,7 @@ export interface CreationOptions {
   manager_id?: string | null;
   manager_kind?: string | null;
   locale?: string | null;
+  machine_id?: string | null;
   employee_backend?: string | null;
   employee_launch_model?: string | null;
   employee_launch_reasoning_effort?: string | null;
@@ -326,12 +328,16 @@ export function resolve_ticket_draft_context(
     configured_worker_type_registry().require(o.worker_type);
   }
   const launch_configuration = requested_ticket_launch_configuration(o.worker_type, o);
-  const locale = resolve_ticket_locale(o.locale ?? null);
+  const { machine_id, locale } = resolve_destination(
+    sql,
+    o.machine_id ?? null,
+    o.locale == null ? null : require_ticket_locale(o.locale),
+  );
   require_usable_model(
     sql,
     require_conversation_backend_key(launch_configuration.employee_backend),
     launch_configuration.employee_launch_model!,
-    locale,
+    machine_id,
   );
   let p = o.project_id ?? null;
   const m = o.manager_id ?? null;
@@ -341,7 +347,7 @@ export function resolve_ticket_draft_context(
         project_id: string;
       }>('SELECT project_id FROM managers WHERE id=?', [m])?.project_id ?? null;
   placement(sql, p, m, o.blocked_by_ticket_ids ?? []);
-  return { locale, launch_configuration, project_id: p };
+  return { locale, machine_id, launch_configuration, project_id: p };
 }
 export function resolve_ticket_creation_context(
   sql: ReadSql,
@@ -410,7 +416,7 @@ export function create_ticket(tx: TransactionSql, o: CreationOptions): Ticket {
   }
   const launch = context.launch_configuration;
   tx.run(
-    "INSERT INTO tickets (id,title,worker_type,workflow_json,employee_backend,employee_launch_model,employee_launch_reasoning_effort,stage,deadline,project_id,manager_id,manager_kind,recap,ceiling,ceiling_holder,conversation_id,field_values,field_approvals,pending_proposal,pending_proposal_revision,created_at,updated_at,locale) VALUES (?,?,?,?,?,?,?,?,?,?,?,?, '',?,?,NULL,?,?,?,?,?,?,?)",
+    "INSERT INTO tickets (id,title,worker_type,workflow_json,employee_backend,employee_launch_model,employee_launch_reasoning_effort,stage,deadline,project_id,manager_id,manager_kind,recap,ceiling,ceiling_holder,conversation_id,field_values,field_approvals,pending_proposal,pending_proposal_revision,created_at,updated_at,locale,machine_id) VALUES (?,?,?,?,?,?,?,?,?,?,?,?, '',?,?,NULL,?,?,?,?,?,?,?,?)",
     [
       id,
       o.title,
@@ -433,6 +439,7 @@ export function create_ticket(tx: TransactionSql, o: CreationOptions): Ticket {
       o.now,
       o.now,
       context.locale,
+      context.machine_id,
     ],
   );
   proposal_wake(tx, read_ticket(tx, id), o.now);
@@ -995,7 +1002,7 @@ export function write_employee_configuration(
 ): Ticket {
   const backend = require_conversation_backend_key(o.employee_backend);
   const t = load_ticket_for_write(tx, id);
-  require_usable_model(tx, backend, o.employee_launch_model!, t.locale);
+  require_usable_model(tx, backend, o.employee_launch_model!, t.machine_id);
   const current = employee_launch_configuration(t),
     d = employee.normalize_employee_launch_configuration(current, o);
   if (equal(current, d)) return t;

@@ -2,6 +2,9 @@
 // protects stage/claim ordering and atomic row updates that pure decision tests omit.
 import { expect, test, vi, afterEach } from 'vitest';
 import { OWNER } from '../core/contracts.ts';
+import { ORIGINAL_MAC_MACHINE_ID } from '../execution_identity.ts';
+import { register_machine } from '../machines/executor_credentials.ts';
+import { worker_resolve } from '../runtime/conversation_start.ts';
 import { admitCommand } from '../core/authority/intake.ts';
 import * as data from '../tickets/data/index.ts';
 import * as blocks from '../core/ticket_blocks.ts';
@@ -297,4 +300,33 @@ test('auto_approval_old_data_and_multi_field_edit', () => {
       (a) => a.display_label === 'Approval unknown' && a.principal === null,
     ),
   ).toBe(true);
+});
+
+// Gap: original-Mac comparisons cannot prove that runtime overrides use another
+// destination's complete catalogue. Reuse the ordinary Ticket database without a host.
+test('worker model overrides use the named destination rather than the legacy Mac catalogue', () => {
+  const db = fixture();
+  const grant = db.write((tx) => register_machine(tx, 'Build host', 'linux'));
+  const ticket = create(db, {
+    machine_id: grant.machine_id,
+    employee_launch_model: 'remote-model',
+  });
+  db.write((tx) => {
+    for (const [machine_id, model_id] of [
+      [ORIGINAL_MAC_MACHINE_ID, 'original-model'],
+      [grant.machine_id, 'remote-model'],
+    ])
+      tx.run('INSERT INTO machine_backend_snapshots VALUES (?,?,?)', [
+        machine_id,
+        'codex',
+        JSON.stringify({ models_complete: true, available_models: [{ model_id }] }),
+      ]);
+  });
+  const options = { workspace_folder: '/synthetic' };
+  expect(() => worker_resolve(db, ticket, { model: 'original-model' }, options)).toThrow(
+    'not offered by codex on Build host',
+  );
+  expect(worker_resolve(db, ticket, { model: 'remote-model' }, options)).toMatchObject({
+    model: 'remote-model',
+  });
 });

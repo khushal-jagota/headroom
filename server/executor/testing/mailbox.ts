@@ -1,7 +1,7 @@
 /** Fixed controls over one real mailbox and application database, without a host. */
 import { createInterface } from 'node:readline';
 import { getEventListeners } from 'node:events';
-import type { Database, SqlValue } from '../../core/database/contracts.ts';
+import type { Database, SqlValue, ReadSql } from '../../core/database/contracts.ts';
 import { createDatabase, createReadAccess } from '../../core/database/index.ts';
 import { SqliteCommandMailbox } from '../vps_mailbox.ts';
 import { encode_value, encode_bounded } from '../protocol.ts';
@@ -13,11 +13,13 @@ import { MacPresenceService, no_update_check } from '../vps_presence.ts';
 import { ChangeSignal } from '../../core/changes/index.ts';
 import { UpdateConflict } from '../../environments/updates/attempts.ts';
 import { ExecutorValidationError, decode_value } from '../protocol.ts';
-import { read_presence } from '../vps_presence_store.ts';
+import { read_presence, accept_lease_in_transaction } from '../vps_presence_store.ts';
+import { ORIGINAL_MAC_MACHINE_ID } from '../../execution_identity.ts';
 
 type Statement = { sql: string; values: SqlValue[] };
 type Action = {
   op: string;
+  machine_id: string;
   path: string;
   now: number;
   method: string;
@@ -49,7 +51,8 @@ type Held = { promise: Promise<Outcome>; done: boolean };
 let database: Database,
   mailbox: SqliteCommandMailbox,
   now = 0,
-  signals = 0;
+  signals = 0,
+  machine_id = ORIGINAL_MAC_MACHINE_ID;
 let reads = 0,
   writes = 0,
   writer_ms = 0;
@@ -129,7 +132,7 @@ const facade: Database = {
   },
 };
 function owner(): void {
-  mailbox = new SqliteCommandMailbox(facade, { clock: () => now });
+  mailbox = new SqliteCommandMailbox(facade, { clock: () => now, machine_id });
   stalls = mailbox.stall_source();
   mailbox.settled_listener = (command, result) => {
     trace.push({ id: command.command_id, result: encode_value(result, 'CommandResult') });
@@ -275,6 +278,7 @@ function callback_error(): void {
 function presence_owner(): void {
   presence = new MacPresenceService(facade, mailbox, {
     changes,
+    machine_id,
     application_revision: 'fixture',
     clock: () => now,
   });
@@ -398,6 +402,46 @@ async function execute(action: Action): Promise<unknown> {
       database = createDatabase(action.path, { onChange: () => signals++ });
       owner();
       return null;
+    case 'machine':
+      if (presence) {
+        await presence.stop({ deadline: performance.now() / 1000 + 5 });
+        await presence.settled();
+        presence = undefined;
+      }
+      await mailbox.stop({ deadline: performance.now() / 1000 + 5 });
+      await mailbox.settled();
+      machine_id = action.machine_id;
+      owner();
+      return null;
+    case 'lease_store':
+      return database.write((tx) => {
+        const accepted = accept_lease_in_transaction(
+          tx,
+          action.args[0] as WireTypes['LeaseRequest'],
+          now,
+          machine_id,
+        );
+        if (accepted.replaced_incarnation !== null)
+          mailbox.replace_incarnation_in_transaction(tx, {
+            replaced: accepted.replaced_incarnation,
+            current: accepted.current.executor_incarnation!,
+            now_ms: now,
+          });
+        return accepted;
+      });
+    case 'validate_lease': {
+      if (!presence) presence_owner();
+      // Real transaction validation, without a protocol-version admission claim.
+      const validator = presence as unknown as {
+        validated_lease(
+          sql: ReadSql,
+          request: WireTypes['LeaseRequest'],
+        ): WireTypes['LeaseRequest'];
+      };
+      return database.write((tx) =>
+        validator.validated_lease(tx, action.args[0] as WireTypes['LeaseRequest']),
+      );
+    }
     case 'clock':
       now = scalar(action.now);
       return null;
