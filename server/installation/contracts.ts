@@ -64,6 +64,11 @@ export interface HomeInstallDependencies extends HomeInstallHost {
     manifest: AppManifest,
     execution: ReleaseExecution,
   ) => Promise<void>;
+  readonly initialize_database: (
+    app: string,
+    path: string,
+    execution: ReleaseExecution,
+  ) => Promise<void>;
   readonly healthy: (port: number, revision: string, signal: AbortSignal) => Promise<boolean>;
   readonly service: (
     request: HomeInstallRequest,

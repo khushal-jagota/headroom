@@ -59,6 +59,7 @@ export async function home_install_comparison(
     const active = new Set<string>(),
       jobs = new Map<string, string>(),
       effects: string[][] = [];
+    let initialized = false;
     const owner = new ChildProcesses(),
       controller = new AbortController();
     const request: HomeInstallRequest = {
@@ -94,6 +95,12 @@ export async function home_install_comparison(
         return { runtime_contract: { version: 2 } } as AppManifest;
       },
       async admit() {},
+      async initialize_database(app, path) {
+        if (app !== join(root, 'app') || path !== join(root, 'data/planner.db'))
+          throw new Error('Home initialization differs from the new installation');
+        initialized = true;
+        effects.push(['initialize-database']);
+      },
       async healthy() {
         effects.push(['health']);
         return value.scenario !== 'health-failure' && value.scenario !== 'stop-unconfirmed';
@@ -124,6 +131,7 @@ export async function home_install_comparison(
           else if (operation !== 'show-environment') {
             effects.push([...argv]);
             if (operation === 'enable') {
+              if (!initialized) throw new Error('Service activated before database initialization');
               active.add(argv.at(-1)!);
               if (value.scenario === 'auxiliary-failure' && argv.at(-1)!.endsWith('.timer'))
                 code = 1;
@@ -151,6 +159,7 @@ export async function home_install_comparison(
           } else {
             effects.push([...argv]);
             if (operation === 'bootstrap') {
+              if (!initialized) throw new Error('Service activated before database initialization');
               const path = argv.at(-1)!,
                 name = path.split('/').at(-1)!.slice(0, -6);
               jobs.set(name, path);
@@ -260,7 +269,8 @@ export async function home_install_comparison(
             .filter((name) => !name.startsWith('foreign.'))
             .sort(),
           active: value.system === 'darwin' ? [...jobs.keys()].sort() : [...active].sort(),
-          effects,
+          // Python initializes on its first server start. Native installation does it before activation.
+          effects: effects.filter(([effect]) => effect !== 'initialize-database'),
           foreign: readFileSync(
             join(agents, value.system === 'darwin' ? 'foreign.plist' : 'foreign.service'),
             'utf8',

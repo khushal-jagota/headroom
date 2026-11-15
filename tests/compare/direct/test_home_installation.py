@@ -294,6 +294,9 @@ def test_first_home_installation_parity(tmp_path: Path, monkeypatch: Any, reques
                         " Native identity writes exact version-2 fields with canonical external "
                         "installer_node. Python writes its exact legacy six-key identity. "
                         "Both records compare every common binding."
+                        " Python initializes its fresh database on first server startup. "
+                        "Native installation initializes before service activation. "
+                        "Only that initialization timing is projected from service effects."
                     ),
                 ),
                 indent=2,

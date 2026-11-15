@@ -7,12 +7,14 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  readlinkSync,
   renameSync,
   rmSync,
   symlinkSync,
   writeFileSync,
 } from 'node:fs';
 import { join, dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { tmpdir } from 'node:os';
 import { test, vi } from 'vitest';
 import type { AppManifest } from '../environments/release/contracts.ts';
@@ -24,6 +26,9 @@ import { HomeCleanupUnsettled } from './contracts.ts';
 import { write_home_job } from '../environments/updates/darwin/jobs.ts';
 import { create_darwin_home_io } from '../environments/updates/darwin/service.ts';
 import { create_darwin_home_service } from './darwin.ts';
+import { initialize_candidate_home_database } from './database.ts';
+import { require_application_schema } from '../core/database/admission.ts';
+import { createReadAccess } from '../core/database/index.ts';
 
 async function unused_port(): Promise<number> {
   const server = createServer();
@@ -57,6 +62,7 @@ async function fixture() {
     links: [{ path: join(account, 'home.plist'), target: join(request.root, 'agents/home.plist') }],
     async preflight() {},
     async start_home() {
+      assert(events.includes('initialize'));
       events.push('start');
     },
     async start_auxiliaries() {
@@ -90,6 +96,12 @@ async function fixture() {
     },
     async admit() {
       assert(!existsSync(request.root));
+    },
+    async initialize_database(app, path) {
+      assert.equal(app, join(request.root, 'app'));
+      assert.equal(path, join(request.root, 'data/planner.db'));
+      assert(existsSync(dirname(path)));
+      events.push('initialize');
     },
     async healthy() {
       return false;
@@ -175,9 +187,74 @@ test('Mac job conversion refuses pre-existing and late hard links before either 
   }
 });
 
-test('failed installation uses a fresh cleanup owner after cancellation and preserves linked foreign data', async () => {
+test('fresh database initialization closes its child before activation and failed install cleanup retains foreign data', async () => {
   const f = await fixture();
+  const candidate = fileURLToPath(new URL('../../', import.meta.url)),
+    path = join(f.base, 'fresh.sqlite'),
+    link = join(f.base, 'dangling.sqlite'),
+    absent = join(f.base, 'must-not-be-created.sqlite');
+  const spawn = f.owner.spawn.bind(f.owner);
+  let spawns = 0,
+    closes = 0;
+  f.owner.spawn = ((...args: Parameters<ChildProcesses['spawn']>) => {
+    const child = spawn(...args);
+    spawns++;
+    child.once('close', () => {
+      closes++;
+    });
+    return child;
+  }) as ChildProcesses['spawn'];
+  const began = performance.now();
   try {
+    await initialize_candidate_home_database(candidate, path, f.deps.execution, process.execPath);
+    assert.equal(spawns, 1);
+    assert.equal(closes, 1);
+    require_application_schema(path);
+    const reader = createReadAccess(path);
+    try {
+      reader.read((sql) => {
+        assert.deepEqual(
+          sql
+            .all<{ name: string }>('SELECT name FROM projects ORDER BY name')
+            .map(({ name }) => name),
+          ['Other', 'Personal', 'Tribe', 'Vylo'],
+        );
+        assert(
+          (sql.get<{ count: number }>('SELECT count(*) AS count FROM managed_skills')?.count ?? 0) >
+            0,
+        );
+        assert(
+          (sql.get<{ count: number }>('SELECT count(*) AS count FROM worker_types')?.count ?? 0) >
+            0,
+        );
+        assert(sql.get('SELECT 1 FROM chief_page WHERE singleton=1'));
+      });
+    } finally {
+      reader.close();
+    }
+    const bytes = readFileSync(path);
+    await assert.rejects(
+      initialize_candidate_home_database(candidate, path, f.deps.execution, process.execPath),
+      /already exists/,
+    );
+    assert.deepEqual(readFileSync(path), bytes);
+    symlinkSync(absent, link);
+    await assert.rejects(
+      initialize_candidate_home_database(candidate, link, f.deps.execution, process.execPath),
+      /already exists/,
+    );
+    assert.equal(readlinkSync(link), absent);
+    assert(!existsSync(absent));
+    assert.equal(spawns, 3);
+    assert.equal(closes, 3);
+    console.log(
+      JSON.stringify({
+        proof: 'candidate fresh database seed/bootstrap and exclusive refusal',
+        spawns,
+        closes,
+        seconds: (performance.now() - began) / 1000,
+      }),
+    );
     await assert.rejects(
       install_home(f.request, {
         ...f.deps,
@@ -189,7 +266,7 @@ test('failed installation uses a fresh cleanup owner after cancellation and pres
       }),
       /did not report ready/,
     );
-    assert.deepEqual(f.events, ['start', 'stop']);
+    assert.deepEqual(f.events, ['initialize', 'start', 'stop']);
     assert(!existsSync(f.request.root));
     assert(!existsSync(join(f.base, 'new-parent')));
     assert(!existsSync(f.unit));

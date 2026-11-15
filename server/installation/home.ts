@@ -460,6 +460,16 @@ export async function install_home(
       }
     }
     for (const link of service.links) await files.link(link.path, link.target);
+    current_directory(root);
+    const data = files.directory(join(root_path, 'data'));
+    await deps.initialize_database(
+      join(root_path, 'app'),
+      join(root_path, 'data/planner.db'),
+      deps.execution,
+    );
+    current_directory(root);
+    current_directory(data);
+    assert_release_execution(deps.execution);
     await service.start_home(deps.execution);
     if (!(await deps.healthy(request.port, request.revision, deps.execution.signal)))
       throw new Error(`The home did not report ready release ${request.revision}`);
