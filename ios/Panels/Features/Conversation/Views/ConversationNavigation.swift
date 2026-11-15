@@ -243,7 +243,7 @@ private struct ConversationSurface: View {
                             }
                         }.frame(width: 12)
                         let latest = model.latestMessage
-                        Text(.init(latest?.previewText ?? "Conversation"))
+                        Text(.init(model.compactPreview))
                             .font(PanelsTheme.TypeScale.small).lineLimit(1)
                             .frame(maxWidth: .infinity, alignment: .leading)
                         if latest?.own == true, let note = latest?.note, note != "Sent" {
@@ -255,7 +255,7 @@ private struct ConversationSurface: View {
                     .frame(minHeight: ConversationLayout.lineHeight).contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
-                .accessibilityLabel(model.latestMessage?.previewText ?? "Open conversation")
+                .accessibilityLabel(model.compactPreview)
                 .accessibilityIdentifier("conversation-line")
             }
         }

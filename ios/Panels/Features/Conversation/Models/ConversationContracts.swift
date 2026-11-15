@@ -103,8 +103,14 @@ struct ConversationStatus: Equatable, Codable, Sendable {
         let latestTool: Happened?
         let permissionTitleExcerpt: String?
         let planProgress: Plan
+        var latestOwnerMessagePreview: String? = nil
     }
-    struct Happened: Equatable, Codable, Sendable { let kind: String; let excerpt: String?; let title: String? }
+    struct Happened: Equatable, Codable, Sendable {
+        let kind: String
+        let excerpt: String?
+        let title: String?
+        var senderLabel: String? = nil
+    }
     struct Plan: Equatable, Codable, Sendable { let currentTextExcerpt: String? }
     var line: String {
         if authority != "current" { return "Connection status unavailable" }

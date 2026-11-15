@@ -625,16 +625,33 @@ import XCTest
 
     func testCollapsedDemandDoesNotReadOrAdmitTranscriptAndObsoleteTailCannotWin() async throws {
         let model = ConversationModel(); model.conversationID = "conv_1"
+        let retained = try APIClient.decoder().decode(ConversationSnapshot.self, from: Data(Self.snapshot([Self.item("cached", kind: "agent_message", text: "Cached reply")]).utf8)).page.items
+        model.items = retained
         let service = ConversationStub(fate: "started")
         let live: [String: Any] = ["turn_key": "turn", "reference": ["body_id": "live", "version": "v1", "byte_count": 10, "media_type": "text/plain"]]
-        let snapshot = try APIClient.decoder().decode(ConversationSnapshot.self, from: Data(Self.snapshot([Self.item("hidden", kind: "agent_message", text: "Hidden")], live: live).utf8))
+        let rest: [String: Any] = ["latest_happened": ["kind": "prompt", "sender_label": "Panels deployment recovery", "excerpt": "Inspect interrupted work"]]
+        let snapshot = try APIClient.decoder().decode(ConversationSnapshot.self, from: Data(Self.snapshot([Self.item("hidden", kind: "agent_message", text: "Hidden")], live: live, rest: rest).utf8))
         let oldGeneration = model.beginTail()
         let generation = model.beginTail()
         let obsolete = await model.applyTail(.snapshot(snapshot), transcript: true, generation: oldGeneration, using: service)
         XCTAssertFalse(obsolete)
         let admitted = await model.applyTail(.snapshot(snapshot), transcript: false, generation: generation, using: service)
         XCTAssertTrue(admitted)
-        XCTAssertTrue(model.items.isEmpty)
+        XCTAssertEqual(model.items, retained, "Status-only facts do not replace cached transcript rows")
+        XCTAssertEqual(model.compactPreview, "Panels deployment recovery: Inspect interrupted work")
+        model.status = .init(authority: "stale", turnRunning: nil, liveOutput: nil, rest: snapshot.status.rest)
+        XCTAssertEqual(model.compactPreview, "Cached reply")
+        let reply = try APIClient.decoder().decode(ConversationSnapshot.self, from: Data(Self.snapshot([], rest: ["latest_owner_message_preview": "Current reply"]).utf8))
+        let replyAdmitted = await model.applyTail(.snapshot(reply), transcript: false, generation: generation, using: service)
+        XCTAssertTrue(replyAdmitted)
+        XCTAssertEqual(model.compactPreview, "Current reply")
+        XCTAssertEqual(model.items, retained)
+        model.status = .init(authority: "stale", turnRunning: nil, liveOutput: nil, rest: reply.status.rest)
+        XCTAssertEqual(model.compactPreview, "Cached reply")
+        model.outgoing = [.init(id: "local", text: "Unsent local message", note: "Queued")]
+        XCTAssertEqual(model.compactPreview, "You: Unsent local message")
+        model.status = reply.status
+        XCTAssertEqual(model.compactPreview, "You: Unsent local message")
         let reads = await service.liveReads
         XCTAssertEqual(reads, 0, "Status-only demand never downloads transcript live output")
         let configuration = URLSessionConfiguration.ephemeral
@@ -905,8 +922,10 @@ import XCTest
         if let sender { item["sender_message_id"] = sender }
         return item
     }
-    private static func snapshot(_ items: [[String: Any]], live: [String: Any]? = nil, ownerSequence: Int = 0) -> String {
-        var status: [String: Any] = ["authority": "current", "turn_running": live != nil, "rest": ["plan_progress": [:], "latest_owner_message_sequence": ownerSequence]]
+    private static func snapshot(_ items: [[String: Any]], live: [String: Any]? = nil, ownerSequence: Int = 0, rest: [String: Any] = [:]) -> String {
+        var facts: [String: Any] = ["plan_progress": [:], "latest_owner_message_sequence": ownerSequence]
+        facts.merge(rest) { _, current in current }
+        var status: [String: Any] = ["authority": "current", "turn_running": live != nil, "rest": facts]
         if let live { status["live_output"] = live }
         let object: [String: Any] = ["page": ["items": items, "older": NSNull(), "projection_version": 4], "status": status]
         return String(decoding: try! JSONSerialization.data(withJSONObject: object), as: UTF8.self)

@@ -406,6 +406,19 @@ import UniformTypeIdentifiers
         let delivery = row.own && row.note != "Sent" ? row.note.map { " · " + $0 } ?? "" : ""
         return row.previewText + delivery
     }
+    /// The closed dock follows compact status facts without admitting transcript rows.
+    var compactPreview: String {
+        if let latest = latestMessage, latest.own, latest.note != "Sent" { return latest.previewText }
+        guard let status, status.authority == "current" else { return latestMessage?.previewText ?? "Conversation" }
+        if let happened = status.rest.latestHappened,
+           ["prompt", "agent_message", "streaming_agent_message"].contains(happened.kind),
+           let excerpt = happened.excerpt {
+            let sender = happened.kind == "prompt" ? happened.senderLabel ?? "You" : nil
+            let label = sender.map { ["owner", "You"].contains($0) ? "You" : $0 }
+            return label.map { $0 + ": " + excerpt } ?? excerpt
+        }
+        return status.rest.latestOwnerMessagePreview ?? latestMessage?.previewText ?? "Conversation"
+    }
 
     private func heldNote(_ id: String) -> String? {
         heldPrompts.first { ($0.senderMessageId ?? $0.heldPromptId) == id }?.note

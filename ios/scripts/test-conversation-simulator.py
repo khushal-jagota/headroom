@@ -246,6 +246,7 @@ def main() -> int:
                     "rest": {
                         "latest_happened": {
                             "kind": latest["kind"],
+                            "sender_label": latest.get("sender_label"),
                             "excerpt": latest["content"][0]["text"],
                         },
                         "latest_tool": None,

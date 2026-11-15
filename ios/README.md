@@ -77,7 +77,8 @@ main actor. Restored display stays stale and never supplies
 stream coverage or read credit. Conversation display retains at most 300 items
 and 512 KiB of inline and expanded bodies. Visible rows keep their neighborhood.
 Older paging remains available; Latest returns to the current edge after trimming.
-Collapsed conversations request status without transcript content. The connection
+Collapsed conversations request status without transcript content; their preview
+follows those compact facts while preserving the latest unsent local message. The connection
 cover cancels conversation dictation and keeps text already saved in the composer.
 Review voice capture instead preserves its recording for recovery.
 
