@@ -42,6 +42,28 @@ function invalid(name: string, work: () => unknown): void {
 }
 invalid('malformed-json', () => decode_json('{', 'IpcResponse'));
 invalid('missing-required-field', () => decode_value({ turn_number: 1 }, 'TurnToken'));
+const missing_cleanup = structuredClone(native.LeaseRequest);
+delete missing_cleanup.cleanup_uncertainties;
+assert.throws(() => decode_value(missing_cleanup, 'LeaseRequest'), {
+  message: 'The lease lacks Worker cleanup evidence',
+});
+refused.push('lease-cleanup-evidence-missing');
+assert.deepEqual(
+  decode_json(
+    Buffer.from(encode_bounded(missing_cleanup, 'LeaseRequest')).toString(),
+    'LeaseRequest',
+  ).cleanup_uncertainties,
+  [],
+);
+decode_value(
+  {
+    ...native.ChildCommand,
+    operation: 'recheck_cleanup',
+    turn: null,
+    arguments: native.RecheckCleanup,
+  },
+  'ChildCommand',
+);
 invalid('missing-nullable-field', () =>
   decode_value({ request_id: 'r', result: null }, 'IpcResponse'),
 );

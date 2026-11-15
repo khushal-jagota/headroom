@@ -7,7 +7,7 @@ function document(entries: readonly (readonly [string, JsonValue])[]): JsonObjec
 }
 export function native_wire_fixtures(): WireTypes {
   const identity: WireTypes['ExecutorIdentity'] = {
-    protocol_version: 22,
+    protocol_version: 26,
     application_revision: 'fixture',
     spool_format_version: 5,
     executor_incarnation: '11111111-1111-4111-8111-111111111111',
@@ -177,6 +177,13 @@ export function native_wire_fixtures(): WireTypes {
     archive_path: '/api/executor/update/prefetch/' + '1'.repeat(64),
   };
   const update_check = { schema_version: 1, target: update_target, prefetch };
+  const workspace = { machine_id: 'machine', workspace_id: 'workspace' };
+  const workspace_state = { ticket_id: 't_12345678', ended_at: null, deleted: false };
+  const cleanup_uncertainty = {
+    ticket_id: workspace_state.ticket_id,
+    conversation_id: child.conversation_id,
+    reason: 'Source cleanup remains uncertain',
+  };
   // Opaque documents contain ordinary JSON values.
   const result = document([
     ['2', 1],
@@ -208,6 +215,11 @@ export function native_wire_fixtures(): WireTypes {
     Steer: { content: pieces, sender_content: pieces, sender_label: 'Owner', kind: 'steer' },
     CancelTurn: { kind: 'cancel_running_turn' },
     StopRun: { kind: 'stop' },
+    RecheckCleanup: {
+      kind: 'recheck_cleanup',
+      source: child,
+      ticket_id: workspace_state.ticket_id,
+    },
     AnswerPermission: { ask_id: 'ask', option_id: 'allow', answer, kind: 'answer_permission_ask' },
     AnswerUserInput: {
       request_id: 'request',
@@ -264,6 +276,14 @@ export function native_wire_fixtures(): WireTypes {
     LiveReadRequest: { child, path: '/api/tickets', params: { limit: 2 } },
     WaitingConversation: waiting,
     WorkingTurn: working,
+    WorkerCleanupUncertainty: cleanup_uncertainty,
+    WorkspaceIdentity: workspace,
+    WorkspaceState: workspace_state,
+    WorkspaceStatesRequest: { ticket_ids: [workspace_state.ticket_id] },
+    WorkspaceStatesReply: { states: [workspace_state], at_vps_ms: 100 },
+    WorkspaceRegistrationRequest: { child, workspace },
+    WorkspaceRetirementRequest: { state: workspace_state, workspace, replay: true },
+    WorkspaceRetirementReply: { authorized: false },
     LeaseRequest: {
       identity,
       process_id: 42,
@@ -275,6 +295,8 @@ export function native_wire_fixtures(): WireTypes {
       working_turns: [working],
       admission_stopped: false,
       going_to_sleep: true,
+      cleanup_uncertainties: [cleanup_uncertainty],
+      legacy_cleanup_notice: 'Legacy source cleanup remains uncertain',
     },
     LeaseReply: {
       accepted_at_vps_ms: 100,

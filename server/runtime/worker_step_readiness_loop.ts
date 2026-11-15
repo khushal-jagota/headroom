@@ -257,7 +257,7 @@ export async function tell_a_worker_it_lost_its_memory(
       if (
         worker_memory.an_answer_is_already_waiting(
           await observe_conversation_operation(
-            () => options.conversation_system.held_prompts(conversation_id),
+            () => options.conversation_system.sender_message_ids_awaiting_outcome(conversation_id),
             options.signal,
           ),
         )
