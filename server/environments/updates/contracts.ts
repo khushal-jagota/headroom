@@ -47,6 +47,7 @@ export interface PublishedMacUpdate {
   archive_sha256: string;
   archive_size: number;
 }
+export type PublishedLinuxExecutorUpdate = PublishedMacUpdate;
 export interface PublishedUpdate {
   publication_run_id: number;
   artifact_id: number;
@@ -56,6 +57,7 @@ export interface PublishedUpdate {
   schema_floor: string;
   expires_at: string;
   mac: PublishedMacUpdate | null;
+  linux_executor?: PublishedLinuxExecutorUpdate | null;
 }
 export interface UpdateAttempt {
   attempt_id: string;

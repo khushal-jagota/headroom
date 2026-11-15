@@ -8,6 +8,7 @@ import { ORIGINAL_MAC_MACHINE_ID } from '../../execution_identity.ts';
 import type { ReadSql, TransactionSql } from '../../core/database/contracts.ts';
 import { isDeepStrictEqual } from 'node:util';
 import type { ChildReference } from '../../conversation/backends/contracts.ts';
+import type { AutomaticStartAdmission } from '../../conversation/start_admission/index.ts';
 import { read_facts } from '../../conversation/record/data/lifecycle.ts';
 import { conversation_event_payload_from_canonical_json } from '../../conversation/record/codec.ts';
 import { message_content_text } from '../../conversation/message_content.ts';
@@ -253,6 +254,331 @@ export interface PreparedFetch {
   commands: ReadonlyMap<string, PreparedCommand>;
   presence: FetchPresence | null;
   presence_parse: Preparation<void>;
+  held: Map<string, PreparedHeld>;
+}
+interface HeldRow {
+  sequence: string;
+  command_json: string;
+  state: string;
+  turn_number: string | null;
+}
+interface HeldBinding {
+  conversation_id: string;
+  turn_number: string;
+  executor_incarnation: string | null;
+  child_id: string | null;
+  work_class: string;
+}
+interface HeldSnapshot {
+  scope: 'controls' | 'later' | 'move';
+  controls: HeldRow[];
+  waiting: HeldRow[];
+  later?: HeldRow[];
+  suffix?: HeldRow[];
+  bindings?: HeldBinding[];
+  high?: string;
+}
+interface VisitedRows {
+  rows: HeldRow[];
+  complete: boolean;
+}
+interface HeldDependencies {
+  controls: VisitedRows;
+  waiting?: VisitedRows;
+  later?: VisitedRows;
+  bindings: { source: WireValue<'ChildCommand'>; classes: string[] }[];
+  suffix?: HeldRow[];
+  high?: string;
+}
+interface HeldWork {
+  needs: 'later' | 'move' | null;
+  stops: boolean;
+  control: boolean;
+  withdrawals: { command: WireValue<'MailboxCommand'>; outcome: PreparedOutcome }[];
+  moved: { old_sequence: number; sequence: number; text: string }[] | null;
+  high?: number;
+}
+interface PreparedHeld {
+  dependencies: HeldDependencies;
+  turn: WireValue<'TurnToken'>;
+  work: Preparation<HeldWork>;
+}
+/** Throw through the writer so discovery never commits earlier staged effects. */
+export class MailboxPreparationRequired extends Error {
+  readonly delivery: WireValue<'MailboxCommand'>;
+  readonly turn: WireValue<'TurnToken'>;
+  readonly snapshot: HeldSnapshot;
+  constructor(
+    delivery: WireValue<'MailboxCommand'>,
+    turn: WireValue<'TurnToken'>,
+    snapshot: HeldSnapshot,
+  ) {
+    super('Held mailbox delivery needs asynchronous preparation.');
+    this.delivery = delivery;
+    this.turn = turn;
+    this.snapshot = snapshot;
+  }
+}
+function held_rows(
+  sql: ReadSql,
+  delivery: WireValue<'MailboxCommand'>,
+  machine_id: string,
+  kind: 'controls' | 'waiting' | 'later' | 'suffix',
+  visited?: VisitedRows,
+): HeldRow[] {
+  if (visited !== undefined && !visited.complete && !visited.rows.length) return [];
+  const child = delivery.child_command!.child;
+  const columns =
+    'CAST(command_sequence AS TEXT) AS sequence,command_json,state,' +
+    'CAST(turn_number AS TEXT) AS turn_number ';
+  let where: string;
+  const params: (string | number)[] = [];
+  switch (kind) {
+    case 'controls':
+      where =
+        "conversation_id=? AND command_sequence>? AND state='waiting' AND operation IN ('stop','cancel_running_turn')";
+      params.push(child.conversation_id, delivery.command_sequence);
+      break;
+    case 'waiting':
+      where =
+        "conversation_id=? AND executor_incarnation=? AND child_id=? AND state='waiting' AND operation IN ('start','write_prompt')";
+      params.push(child.conversation_id, child.executor_incarnation, child.child_id);
+      break;
+    case 'later':
+      where =
+        "machine_id=? AND command_sequence>? AND conversation_id IS NOT ? AND state IN ('waiting','delivered')";
+      params.push(machine_id, delivery.command_sequence, child.conversation_id);
+      break;
+    case 'suffix':
+      where = "conversation_id=? AND command_sequence>=? AND state IN ('waiting','delivered')";
+      params.push(child.conversation_id, delivery.command_sequence);
+      break;
+  }
+  if (visited !== undefined && !visited.complete) {
+    where += ' AND command_sequence<=?';
+    params.push(counter(visited.rows.at(-1)!.sequence));
+  }
+  return sql.all<HeldRow>(
+    'SELECT ' + columns + 'FROM executor_commands WHERE ' + where + ' ORDER BY command_sequence',
+    params,
+  );
+}
+function held_snapshot(
+  sql: ReadSql,
+  delivery: WireValue<'MailboxCommand'>,
+  machine_id: string,
+  scope: HeldSnapshot['scope'] = 'controls',
+): HeldSnapshot {
+  const child = delivery.child_command!.child;
+  const snapshot: HeldSnapshot = {
+    scope,
+    controls: held_rows(sql, delivery, machine_id, 'controls'),
+    waiting: held_rows(sql, delivery, machine_id, 'waiting'),
+  };
+  if (scope !== 'controls') {
+    snapshot.later = held_rows(sql, delivery, machine_id, 'later');
+    snapshot.bindings = sql.all<HeldBinding>(
+      'SELECT conversation_id,CAST(turn_number AS TEXT) AS turn_number,executor_incarnation,child_id,work_class ' +
+        'FROM automatic_start_bindings WHERE conversation_id IN (' +
+        'SELECT conversation_id FROM executor_commands WHERE machine_id=? AND command_sequence>? ' +
+        "AND conversation_id IS NOT ? AND state IN ('waiting','delivered')) ORDER BY identity",
+      [machine_id, delivery.command_sequence, child.conversation_id],
+    );
+  }
+  if (scope === 'move') {
+    snapshot.suffix = held_rows(sql, delivery, machine_id, 'suffix');
+    if (snapshot.suffix.every((row) => row.state === 'waiting'))
+      snapshot.high = sql.get<{ value: string }>(
+        'SELECT CAST(COALESCE(MAX(command_sequence),0) AS TEXT) AS value FROM executor_commands',
+      )!.value;
+  }
+  return snapshot;
+}
+function held_dependencies_match(
+  sql: ReadSql,
+  delivery: WireValue<'MailboxCommand'>,
+  machine_id: string,
+  dependencies: HeldDependencies,
+): boolean {
+  if (
+    !equivalent(
+      held_rows(sql, delivery, machine_id, 'controls', dependencies.controls),
+      dependencies.controls.rows,
+    )
+  )
+    return false;
+  if (
+    dependencies.waiting !== undefined &&
+    !equivalent(
+      held_rows(sql, delivery, machine_id, 'waiting', dependencies.waiting),
+      dependencies.waiting.rows,
+    )
+  )
+    return false;
+  if (
+    dependencies.later !== undefined &&
+    !equivalent(
+      held_rows(sql, delivery, machine_id, 'later', dependencies.later),
+      dependencies.later.rows,
+    )
+  )
+    return false;
+  for (const { source, classes } of dependencies.bindings) {
+    const current =
+      source.operation === 'start'
+        ? sql.all<{ work_class: string }>(
+            'SELECT work_class FROM automatic_start_bindings WHERE conversation_id=? AND executor_incarnation=? AND child_id=?',
+            [
+              source.child.conversation_id,
+              source.child.executor_incarnation,
+              source.child.child_id,
+            ],
+          )
+        : sql.all<{ work_class: string }>(
+            'SELECT work_class FROM automatic_start_bindings WHERE conversation_id=? AND turn_number=?',
+            [source.turn!.conversation_id, source.turn!.turn_number],
+          );
+    if (!equivalent(current.map((binding) => binding.work_class).sort(), classes)) return false;
+  }
+  if (
+    dependencies.suffix !== undefined &&
+    !equivalent(held_rows(sql, delivery, machine_id, 'suffix'), dependencies.suffix)
+  )
+    return false;
+  return (
+    dependencies.high === undefined ||
+    dependencies.high ===
+      sql.get<{ value: string }>(
+        'SELECT CAST(COALESCE(MAX(command_sequence),0) AS TEXT) AS value FROM executor_commands',
+      )!.value
+  );
+}
+/** Decode only the prefixes that Python visits after a real admission refusal. */
+export async function prepare_held_fetch(
+  prepared: PreparedFetch,
+  needed: MailboxPreparationRequired,
+): Promise<void> {
+  const { delivery, turn, snapshot } = needed;
+  const parse = async (row: HeldRow) => {
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    return decode_json(row.command_json, 'MailboxCommand');
+  };
+  const dependencies: HeldDependencies = {
+    controls: { rows: [], complete: false },
+    bindings: [],
+  };
+  let work: Preparation<HeldWork>;
+  try {
+    const child = delivery.child_command!;
+    const result: HeldWork = {
+      needs: null,
+      stops: false,
+      control: false,
+      withdrawals: [],
+      moved: null,
+    };
+    for (const row of snapshot.controls) {
+      dependencies.controls.rows.push(row);
+      const control = (await parse(row)).child_command;
+      const control_turn =
+        control?.turn ??
+        (row.turn_number === null
+          ? null
+          : {
+              conversation_id: child.child.conversation_id,
+              turn_number: counter(row.turn_number),
+            });
+      if (
+        control != null &&
+        equivalent(control.child, child.child) &&
+        (control.operation === 'stop' || equivalent(control_turn, turn))
+      ) {
+        result.stops = true;
+        break;
+      }
+    }
+    dependencies.controls.complete = !result.stops;
+    if (result.stops) {
+      dependencies.waiting = { rows: [], complete: false };
+      for (const row of snapshot.waiting) {
+        dependencies.waiting.rows.push(row);
+        const command = await parse(row);
+        const candidate = command.child_command;
+        if (candidate == null)
+          throw new ExecutorValidationError('Held delivery has no child command.');
+        if (
+          !equivalent(candidate.turn, turn) &&
+          !(child.arguments.kind === 'start' && candidate.arguments.kind === 'start')
+        )
+          continue;
+        const value = settlement_result(command, 'refused', 'delivery_withdrawn');
+        result.withdrawals.push({ command, outcome: { result: value, text: outcome_json(value) } });
+      }
+      dependencies.waiting.complete = true;
+    } else if (snapshot.later === undefined) {
+      result.needs = 'later';
+    } else {
+      dependencies.later = { rows: [], complete: false };
+      for (const row of snapshot.later) {
+        dependencies.later.rows.push(row);
+        const command = (await parse(row)).child_command;
+        if (command == null || !['start', 'write_prompt'].includes(command.operation)) {
+          result.control = true;
+          break;
+        }
+        const bound = snapshot.bindings!.filter((binding) =>
+          command.operation === 'start'
+            ? binding.conversation_id === command.child.conversation_id &&
+              binding.executor_incarnation === command.child.executor_incarnation &&
+              binding.child_id === command.child.child_id
+            : command.turn !== null &&
+              binding.conversation_id === command.turn.conversation_id &&
+              counter(binding.turn_number) === command.turn.turn_number,
+        );
+        if (command.operation === 'start' || command.turn !== null)
+          dependencies.bindings.push({
+            source: command,
+            classes: bound.map((binding) => binding.work_class).sort(),
+          });
+        if (
+          (command.operation === 'start' || command.turn !== null) &&
+          (!bound.length || bound.some((binding) => binding.work_class === 'supervisor'))
+        ) {
+          result.control = true;
+          break;
+        }
+      }
+      dependencies.later.complete = !result.control;
+      if (result.control) {
+        if (snapshot.suffix === undefined) result.needs = 'move';
+        else {
+          dependencies.suffix = snapshot.suffix;
+          if (snapshot.suffix.every((row) => row.state === 'waiting')) {
+            dependencies.high = snapshot.high!;
+            result.high = counter(snapshot.high!);
+            result.moved = [];
+            for (const row of snapshot.suffix) {
+              const command = await parse(row);
+              const sequence = counter(++result.high);
+              result.moved.push({
+                old_sequence: counter(row.sequence),
+                sequence,
+                text: JSON.stringify(
+                  as_object({ ...command, command_sequence: sequence }, 'MailboxCommand'),
+                ),
+              });
+            }
+          }
+        }
+      }
+    }
+    work = { ok: true, value: result };
+  } catch (error) {
+    work = { ok: false, error };
+  }
+  // A supplement can describe staged prior moves. The retry replays those moves
+  // before it checks this exact snapshot again; nothing escaped the rolled-back writer.
+  prepared.held.set(delivery.command_id, { dependencies, turn, work });
 }
 function attempt<T>(work: () => T): Preparation<T> {
   try {
@@ -298,7 +624,10 @@ export function read_fetch_rows(
   return { replaced, candidates, presence };
 }
 /** Never call this while a transaction is open. Errors stay deferred until source visitation. */
-export async function prepare_fetch(rows: FetchRows): Promise<PreparedFetch> {
+export async function prepare_fetch(
+  rows: FetchRows,
+  held: PreparedFetch['held'] = new Map(),
+): Promise<PreparedFetch> {
   const commands = new Map<string, PreparedCommand>();
   for (const [replacing, selection] of [
     [true, rows.replaced],
@@ -357,7 +686,7 @@ export async function prepare_fetch(rows: FetchRows): Promise<PreparedFetch> {
     if (rows.presence?.refusal_json != null)
       decode_json(rows.presence.refusal_json, 'ExecutorRefusal');
   });
-  return { commands, presence: rows.presence, presence_parse };
+  return { commands, presence: rows.presence, presence_parse, held };
 }
 /**
  * Caller owns the writer and the poll's ingress/protocol/current-identity admission.
@@ -371,6 +700,7 @@ export function fetch(
   arrived_at: number,
   prepared: PreparedFetch,
   machine_id = ORIGINAL_MAC_MACHINE_ID,
+  start_admission: AutomaticStartAdmission | null = null,
 ): MailboxFetchResult | null {
   const rows = read_fetch_rows(tx, incarnation, after, machine_id);
   const stale = now - arrived_at > HELD_POLL_EVIDENCE_MS;
@@ -408,10 +738,16 @@ export function fetch(
   }
   const facts = new Map<string, ReturnType<typeof read_facts>>();
   const answered: WireValue<'MailboxCommand'>[] = [];
+  const moved_conversations = new Set<string | null>();
+  const withdrawn_ids = new Set<string>();
+  const withdrawn_turns: WireValue<'TurnToken'>[] = [];
+  let moved_high: number | undefined;
   let budget = MAX_MAILBOX_POLL_BYTES - 16;
   for (const row of rows.candidates) {
     const entry = prepared.commands.get(row.sequence)!;
     const command = prepared_value(entry.command);
+    if (withdrawn_ids.has(command.command_id) || moved_conversations.has(row.conversation_id))
+      continue;
     if (row.state === 'waiting') {
       if (row.conversation_id !== null && !facts.has(row.conversation_id))
         facts.set(row.conversation_id, read_facts(tx, row.conversation_id));
@@ -426,6 +762,83 @@ export function fetch(
         continue;
       }
     }
+    const child = command.child_command;
+    let start_turn = child?.turn ?? null;
+    if (child?.arguments.kind === 'start') {
+      const bound = tx.get<{ turn_number: string }>(
+        'SELECT CAST(turn_number AS TEXT) AS turn_number FROM automatic_start_bindings ' +
+          'WHERE conversation_id=? AND executor_incarnation=? AND child_id=?',
+        [child.child.conversation_id, child.child.executor_incarnation, child.child.child_id],
+      );
+      if (bound !== undefined)
+        start_turn = {
+          conversation_id: child.child.conversation_id,
+          turn_number: counter(bound.turn_number),
+        };
+    }
+    if (
+      row.state === 'waiting' &&
+      start_admission !== null &&
+      child != null &&
+      (child.arguments.kind === 'start' || child.arguments.kind === 'write_prompt') &&
+      start_turn !== null
+    ) {
+      start_admission.restore_bindings(tx, start_turn);
+      if (!start_admission.allow_dispatch(start_turn)) {
+        const held = prepared.held.get(command.command_id);
+        if (
+          held === undefined ||
+          !equivalent(held.turn, start_turn) ||
+          !held_dependencies_match(tx, command, machine_id, held.dependencies)
+        )
+          throw new MailboxPreparationRequired(
+            command,
+            start_turn,
+            held_snapshot(tx, command, machine_id),
+          );
+        const work = prepared_value(held.work);
+        if (work.needs !== null)
+          throw new MailboxPreparationRequired(
+            command,
+            start_turn,
+            held_snapshot(tx, command, machine_id, work.needs),
+          );
+        if (work.stops) {
+          for (const { command: pending, outcome } of work.withdrawals) {
+            tx.run(
+              "UPDATE executor_commands SET state='withdrawn',outcome_json=?,finished_at_ms=? WHERE command_id=? AND state='waiting'",
+              [outcome.text, now, pending.command_id],
+            );
+            withdrawn_ids.add(pending.command_id);
+            settled.push([pending, outcome.result]);
+          }
+          tx.run(
+            'DELETE FROM automatic_start_bindings WHERE conversation_id=? AND turn_number=? AND executor_incarnation=? AND child_id=?',
+            [
+              start_turn.conversation_id,
+              start_turn.turn_number,
+              child.child.executor_incarnation,
+              child.child.child_id,
+            ],
+          );
+          if (!withdrawn_turns.some((turn) => equivalent(turn, start_turn)))
+            withdrawn_turns.push(start_turn);
+          continue;
+        }
+        if (!work.control || work.moved === null) break;
+        for (const moved of work.moved)
+          tx.run(
+            'UPDATE executor_commands SET command_sequence=?,command_json=? WHERE command_sequence=?',
+            [moved.sequence, moved.text, moved.old_sequence],
+          );
+        tx.run("UPDATE sqlite_sequence SET seq=MAX(seq,?) WHERE name='executor_commands'", [
+          work.high!,
+        ]);
+        moved_high = Math.max(moved_high ?? 0, work.high!);
+        moved_conversations.add(row.conversation_id);
+        continue;
+      }
+    }
     // The source decodes even the first over-budget candidate before it stops here.
     if (answered.length && entry.bytes > budget) break;
     budget -= entry.bytes;
@@ -436,7 +849,7 @@ export function fetch(
       );
     answered.push(command);
   }
-  return { reply: { commands: answered }, settled };
+  return { reply: { commands: answered }, settled, withdrawn_turns, high_sequence: moved_high };
 }
 function result_refusal(
   row: MailboxRow | null,
