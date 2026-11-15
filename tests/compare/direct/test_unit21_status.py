@@ -66,6 +66,8 @@ def _tree(root: Path) -> dict[str, Any]:
             result[key] = {"link": os.readlink(path)}
         elif path.is_dir():
             result[key] = {"directory": True}
+        elif not path.stat().st_mode & 0o444:
+            result[key] = {"bytes": path.stat().st_size}
         else:
             result[key] = {"sha256": hashlib.sha256(path.read_bytes()).hexdigest()}
     return result
@@ -144,6 +146,8 @@ def _python(case: dict[str, Any]) -> Any:
                     path.symlink_to(mutation["target"], target_is_directory=True)
                 elif mutation["kind"] == "remove":
                     shutil.rmtree(path)
+                elif mutation["kind"] == "chmod":
+                    path.chmod(mutation["mode"])
                 else:
                     path.write_text(mutation.get("text", ""))
             return {
@@ -311,18 +315,7 @@ def test_unit21_status_populated_and_sanitized(
     assert answers[0]["backup"]["verified_snapshot_count"] == 1
 
 
-@pytest.mark.parametrize(
-    "platform",
-    [
-        "Linux",
-        pytest.param(
-            "Darwin",
-            marks=pytest.mark.xfail(
-                run=False, reason="expected-open P5: #916 Darwin log cleanup truncates native logs"
-            ),
-        ),
-    ],
-)
+@pytest.mark.parametrize("platform", ["Linux", "Darwin"])
 def test_unit21_cleanup_rechecks_changed_targets(
     tmp_path: Path, request: pytest.FixtureRequest, platform: str
 ) -> None:
@@ -344,6 +337,7 @@ def test_unit21_cleanup_rechecks_changed_targets(
         },
         {"kind": "touch", "path": str(root / "backups/.backup-freshened"), "time": EPOCH},
         {"kind": "write", "path": str(root / "logs/blocked.log.1"), "text": "retained"},
+        {"kind": "chmod", "path": str(root / "logs/rotate.log"), "mode": 0o200},
         {
             "kind": "write",
             "path": str(root / "backups/snapshot-0/database.sqlite"),
@@ -359,8 +353,8 @@ def test_unit21_cleanup_rechecks_changed_targets(
     }
     answers = _compare(tmp_path, [(root, cleanup_case)], "cleanup", request)
     assert len(answers[0]["applied"]["removed"]) == 1
-    assert len(answers[0]["applied"]["rotated"]) == 1
-    assert len(answers[0]["applied"]["review_needed"]) == 5
+    assert len(answers[0]["applied"]["rotated"]) == (2 if platform == "Darwin" else 1)
+    assert len(answers[0]["applied"]["review_needed"]) == (4 if platform == "Darwin" else 5)
     assert answers[0]["tree"]["external/keep"]
 
 

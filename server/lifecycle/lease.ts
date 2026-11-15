@@ -5,13 +5,15 @@ import { getSystemErrorMessage } from 'node:util';
 import { flock } from '../core/locks/flock.ts';
 import { ServerLifecycleAlreadyOwnedError, ServerLifecycleError } from './contracts.ts';
 import type { LifecycleLease } from './contracts.ts';
+import { lifecycle_runtime_directory } from './paths.ts';
 
 export function resolve_server_lifecycle_lease_path(port: number): string {
-  const directory = join('/tmp', `panels-${process.getuid!()}`);
+  const directory = lifecycle_runtime_directory();
   return join(directory, `server-${port}.lock`);
 }
 export function acquire_server_lifecycle_lease(path: string, port: number): LifecycleLease {
-  if (dirname(path) === dirname(resolve_server_lifecycle_lease_path(port))) {
+  const default_directory = dirname(resolve_server_lifecycle_lease_path(port));
+  if (process.platform !== 'darwin' && dirname(path) === default_directory) {
     mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
     chmodSync(dirname(path), 0o700);
   }
