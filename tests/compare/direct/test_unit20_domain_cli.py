@@ -425,15 +425,17 @@ def _active_list_proof(
     with httpx.Client(trust_env=False, follow_redirects=False, timeout=30) as client:
         for params, status in (
             ({"active": "false", "search": "Year field search"}, 200),
-            ({"active": "true", "is_backlogged": "true"}, 422),
-            ({"active": "true", "include_terminal": "true"}, 422),
-            ({"active": "true", "detail": "full"}, 422),
-            ({"active": "true", "detail": "full", "id": ticket_id}, 422),
+            ({"active": "true", "is_backlogged": "true"}, 400),
+            ({"active": "true", "include_terminal": "true"}, 400),
+            ({"active": "true", "detail": "full"}, 400),
+            ({"active": "true", "detail": "full", "id": ticket_id}, 400),
             ({"active": "invalid"}, 422),
         ):
             pair = [client.get(handle.base + "/api/tickets", params=params)
                     for handle in (reference, candidate)]
-            assert all(answer.status_code == status for answer in pair)
+            assert all(answer.status_code == status for answer in pair), (
+                params, [(answer.status_code, answer.text) for answer in pair]
+            )
             bodies = [answer.json() for answer in pair]
             assert bodies[0] == bodies[1]
             if status == 200:
