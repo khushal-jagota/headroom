@@ -106,7 +106,7 @@
           {@const visit = peekReviewVisit(navigation)}
           {@const proposalKey = reviewProposalIdentity(reviewedProposal)}
           {#key proposalKey}
-            <ReviewProposalCard identity={reviewedProposal} embedded={false} ticketId={reviewedProposal.ticket_id} field={reviewedProposal.field}
+            <ReviewProposalCard identity={reviewedProposal} embedded ticketId={reviewedProposal.ticket_id} field={reviewedProposal.field}
               title={reviewedProposal.title} onResolved={close}
               initialRevisionDraft={visit?.proposalDraft?.identity === proposalKey ? visit.proposalDraft.text : ""}
               initialEditedBody={visit?.proposalDraft?.identity === proposalKey ? visit.proposalDraft.editedBody : undefined}

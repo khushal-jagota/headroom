@@ -746,6 +746,14 @@ def run(browser, urls):
     expect(decision.locator('[data-review-revision-input]')).to_have_value("Keep this proposed revision")
     expect(decision.locator('[data-accept]')).to_be_visible()
     expect(viewer.locator("[data-conversation-pane]")).to_have_count(0)
+    if screenshots:
+        page.wait_for_timeout(1500)  # evidence only: let the route's entry fade finish
+        page.screenshot(path=str(Path(screenshots) / "proposal-artifact-desktop.png"))
+        page.set_viewport_size({"width": 390, "height": 780})
+        expect(decision.locator('[data-accept]')).to_be_visible()
+        page.wait_for_timeout(1500)
+        page.screenshot(path=str(Path(screenshots) / "proposal-artifact-phone.png"))
+        page.set_viewport_size({"width": 1400, "height": 820})
     decision.locator('[data-review-revision-input]').fill("Revised beside the artifact")
     viewer.locator('[data-ticket-artifact-close]').click()
     expect(revision).to_have_value("Revised beside the artifact")
