@@ -35,9 +35,6 @@ export function cli_mutation(method: string, path: string, body: unknown): [stri
     return ['ticket.edit', { ticket_id: patch[1], body } as JsonObject];
   if (method === 'POST' && path === '/api/messages/send')
     return ['message.send', { body } as JsonObject];
-  const help = /^\/api\/tickets\/([^/]+)\/request-help$/.exec(path);
-  if (method === 'POST' && help)
-    return ['ticket.request_help', { ticket_id: help[1], body } as JsonObject];
   throw new ExecutorValidationError(`This executor does not support ${method} ${path}`);
 }
 

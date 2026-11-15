@@ -14,6 +14,8 @@ Before record initialization, `core/start.ts` asks the endpoint for `open_runs()
 
 Durable items enter through `MacInbox`. Ordered receipts, replay, assignment authority, canonical writes, answer application, and file publication share the existing write door. A refused domain effect can roll back its savepoint while the outer refusal receipt commits. Runtime predictions are restored before the global publication finalizer, so rolled-back events do not escape through the live tail or Signal.
 
+Agent messages require an explicit recipient through `message.send`. Executor transport refuses the retired `ticket.request_help` mutation.
+
 Live batches carry only message deltas, thinking notices, and tool progress. They use the current exact child's event sink and create no durable item receipt. Completed backend prose uses the item route for journal and receipt custody. The core does not turn it into an addressed notebook message. Lifecycle changes and other durable events also use that route. Live reads enter the existing application routes under the child's assigned principal; they do not grant arbitrary owner access.
 
 ## Routes and authority

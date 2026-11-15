@@ -3,9 +3,12 @@ import { mkdtemp, mkdir, rm, symlink } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { expect, test, vi } from 'vitest';
-import { request } from './ipc_client.ts';
+import { cli_mutation, request } from './ipc_client.ts';
 
-test('refuses linked or foreign-owner sockets before child capability emission', async () => {
+test('refuses retired help and unsafe sockets before child capability emission', async () => {
+  expect(() =>
+    cli_mutation('POST', '/api/tickets/t_12345678/request-help', { message: 'Help' }),
+  ).toThrow('This executor does not support POST /api/tickets/t_12345678/request-help');
   const root = await mkdtemp(join(tmpdir(), 'mac-ipc-trust-'));
   const actual = join(root, 'actual');
   const linked_run = join(root, 'linked-run');
