@@ -158,7 +158,9 @@ export async function prove_mac_home(
   await writeFile(join(work, 'boot.stdout.log'), boot.stdout, { flag: 'wx', mode: 0o600 });
   await writeFile(join(work, 'boot.stderr.log'), boot.stderr, { flag: 'wx', mode: 0o600 });
   if (boot.code !== 0)
-    throw new Error('Mac home foreground boot proof failed. See proof-work logs.');
+    throw new Error('Mac home foreground boot proof failed. See proof-work logs.', {
+      cause: boot,
+    });
   // The fixed entry reports only after exact ready health and actual clean supervisor close.
   await copyFile(
     join(boot_root, 'boot-proof.json'),

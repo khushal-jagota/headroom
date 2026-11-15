@@ -185,7 +185,26 @@ jobs:
             PLAN_DISPATCH_ENABLED=false PLAN_TEST_MODE=1 \
             NATIVE_EVIDENCE="$native_evidence" PANELS_NATIVE_HOME_TEST=1 \
             bash --noprofile --norc -euo pipefail <<'NATIVE' 2>&1 | tee "$native_evidence/job.log"
-          trap 'native_status=$?; printf "seconds=%s\nexit_code=%s\n" "$SECONDS" "$native_status" > "$NATIVE_EVIDENCE/job-time.txt"' EXIT
+          native_finish() {
+            local native_status=$?
+            trap - EXIT
+            set +e
+            if [[ -n "${home_output:-}" && -n "${home_evidence:-}" ]]; then
+              for proof in admission.json mac-home-build.json boot-proof.json; do
+                if [[ -f "$home_output/$proof" ]]; then
+                  cp "$home_output/$proof" "$home_evidence/$proof"
+                fi
+              done
+              for log in boot.stdout.log boot.stderr.log; do
+                if [[ -f "$home_output/proof-work/$log" ]]; then
+                  cp "$home_output/proof-work/$log" "$home_evidence/$log"
+                fi
+              done
+            fi
+            printf 'seconds=%s\nexit_code=%s\n' "$SECONDS" "$native_status" > "$NATIVE_EVIDENCE/job-time.txt"
+            exit "$native_status"
+          }
+          trap native_finish EXIT
           node -e '
             const fs = require("node:fs"), os = require("node:os");
             fs.writeFileSync(process.env.NATIVE_EVIDENCE + "/platform.json", JSON.stringify({
