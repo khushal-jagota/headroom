@@ -9,6 +9,7 @@ import { SqliteProcessConversationSystem } from '../system.ts';
 import { ConversationStartRequest, PromptDispatchDecision } from '../contracts.ts';
 import { text_message_content } from '../message_content.ts';
 import { ScriptedBackendRegistry } from './scripted_registry.ts';
+import { ScriptedCustody } from './scripted_custody.ts';
 import {
   admit_notice_batch,
   all_sender_messages_are_manager_notices,
@@ -45,7 +46,10 @@ export async function run(spec: Spec) {
     workspace_root: dirname(spec.path),
   });
   let registry = new ScriptedBackendRegistry();
+  const custody = new ScriptedCustody();
+  registry.bind_runtime(custody.runtime);
   const store = new ConversationStore(database, {
+    local_child_custody: custody.inspection,
     integer_now: () => 100,
     all_are_notices: all_sender_messages_are_manager_notices,
     mark_notices_leaving_queue,
@@ -226,6 +230,7 @@ export async function run(spec: Spec) {
       await core.shutdown({ deadline: performance.now() / 1000 + SHUTDOWN_GRACE_SECONDS });
       await registry.close();
       registry = new ScriptedBackendRegistry();
+      registry.bind_runtime(custody.runtime);
       core = new SqliteProcessConversationSystem({
         store,
         delivery_model_refusal: (backend, model, ticket_id) =>
@@ -260,6 +265,7 @@ export async function run(spec: Spec) {
   } finally {
     await core.shutdown({ deadline: performance.now() / 1000 + SHUTDOWN_GRACE_SECONDS });
     await registry.close();
+    await custody.close();
     database.close();
   }
 }

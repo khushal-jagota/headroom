@@ -1,6 +1,15 @@
 import { conversation_link_lock } from '../runtime/conversation_start.ts';
-import { PlannerError, ErrorCode } from '../core/contracts.ts';
-import type { WorkspaceRetirementOperation } from '../ticket_workspaces/contracts.ts';
+import { PlannerError } from '../core/contracts.ts';
+import type {
+  WorkspaceIdentity,
+  RetirementTarget,
+  MaybePromise,
+} from '../ticket_workspaces/contracts.ts';
+import type { CleanupResult } from '../worker_supervision/contracts.ts';
+import { cleanup_result } from '../worker_supervision/inspection.ts';
+import { decode_json } from '../executor/protocol.ts';
+import { PROTOCOL_VERSION } from '../execution_configuration.ts';
+import { LEASE_CONTINUITY_SECONDS } from '../executor/configuration.ts';
 import { AutomaticStartAdmission } from './start_admission/index.ts';
 import type { StartRequest } from './start_admission/contracts.ts';
 import { turn_is_maintenance } from './runtime/state.ts';
@@ -175,6 +184,8 @@ export class SqliteProcessConversationSystem implements DeliveryServices, Conver
   private readonly retiring_workspace_tickets = new Set<string>();
   private readonly retiring_workspace_conversations = new Set<string>();
   private readonly local_child_generations = new WeakMap<BackendChild, string>();
+  private worker_cleanup_recheck:
+    ((source: ChildReference, ticket_id: string) => Promise<CleanupResult>) | null = null;
   private readonly deferred_start_conversations = new Set<string>();
   private readonly deferred_start_preparing = new Set<string>();
   private deferred_start_timer: ReturnType<typeof setTimeout> | null = null;
@@ -280,22 +291,28 @@ export class SqliteProcessConversationSystem implements DeliveryServices, Conver
     if (!record) return null;
     const state = new ConversationState(record);
     remote.restore_retained_run(this, state);
-    if (this.options.store.blocked_local_conversations.has(conversation_id)) state.child_is_quarantined = true;
+    if (this.options.store.blocked_local_conversations.has(conversation_id))
+      state.child_is_quarantined = true;
     this.conversations.set(conversation_id, state);
     return state;
   }
   ensure_local_custody(state: ConversationState): Promise<void> {
     state.custody_ready ??= (async () => {
       const id = state.record.conversation_id;
-      state.local_child_retirement_proven = await this.options.store.recorded_source_retirement_proven(id);
+      state.local_child_retirement_proven =
+        await this.options.store.recorded_source_retirement_proven(id);
       state.local_preparation_cancelled = !(await this.options.store.has_recorded_source(id));
       if (this.options.store.blocked_local_conversations.has(id)) state.child_is_quarantined = true;
     })();
     return state.custody_ready;
   }
   private workspace_is_retiring(state: ConversationState): boolean {
-    return this.retiring_workspace_conversations.has(state.record.conversation_id) ||
-      this.retiring_workspace_tickets.has(new Map(state.record.identity_environment_variables).get('PLAN_TICKET_ID') ?? '');
+    return (
+      this.retiring_workspace_conversations.has(state.record.conversation_id) ||
+      this.retiring_workspace_tickets.has(
+        new Map(state.record.identity_environment_variables).get('PLAN_TICKET_ID') ?? '',
+      )
+    );
   }
   runtime_turn(conversation_id: string): RunningTurn | null {
     return this.conversations.get(conversation_id)?.running_turn ?? null;
@@ -308,12 +325,16 @@ export class SqliteProcessConversationSystem implements DeliveryServices, Conver
         const refusal = this.options.execution_refusal(request.conversation_id);
         if (refusal !== null) throw refusal;
         const resolved = resolve_conversation_start_request(request);
-        if (this.retiring_workspace_tickets.has(new Map(resolved.role_materials?.identity_environment_variables ?? []).get('PLAN_TICKET_ID') ?? ''))
+        if (
+          this.retiring_workspace_tickets.has(
+            new Map(resolved.role_materials?.identity_environment_variables ?? []).get(
+              'PLAN_TICKET_ID',
+            ) ?? '',
+          )
+        )
           throw new Error('Ticket workspace admission is closed for retirement.');
         // The record is the first effect, before an in-memory identity can exist.
-        const record = this.options.store.create_conversation(
-          resolved,
-        );
+        const record = this.options.store.create_conversation(resolved);
         if (!this.conversations.has(record.conversation_id)) {
           const state = new ConversationState(record);
           state.local_child_retirement_proven = true;
@@ -440,7 +461,8 @@ export class SqliteProcessConversationSystem implements DeliveryServices, Conver
         const state = this.conversation_state(conversation_id);
         if (!state) return new PromptDeliveryRefused({ refusal_reason: R.no_such_conversation });
         await this.ensure_local_custody(state);
-        if (this.workspace_is_retiring(state)) throw new Error('Ticket workspace admission is closed for retirement.');
+        if (this.workspace_is_retiring(state))
+          throw new Error('Ticket workspace admission is closed for retirement.');
         return own_settlement(
           state,
           this.send_owned(state, require_message_content(content), options),
@@ -1102,7 +1124,11 @@ export class SqliteProcessConversationSystem implements DeliveryServices, Conver
   async drain_held_prompts(state: ConversationState): Promise<void> {
     if (this.shutting_down) return;
     await this.ensure_local_custody(state);
-    if (this.workspace_is_retiring(state) || this.options.store.blocked_local_conversations.has(state.record.conversation_id)) return;
+    if (
+      this.workspace_is_retiring(state) ||
+      this.options.store.blocked_local_conversations.has(state.record.conversation_id)
+    )
+      return;
     this.require_runtime_ownership();
     if (this.options.execution_refusal(state.record.conversation_id) !== null) {
       this.deprioritize_held(state);
@@ -1194,8 +1220,10 @@ export class SqliteProcessConversationSystem implements DeliveryServices, Conver
     const generation = randomUUID().replaceAll('-', '');
     const sink: CoreBackendEventSink = {
       generation,
-      record_local_child_supervision: (path) => this.options.store.record_child_supervision(state.record.conversation_id, generation, path),
-      record_local_child_custody: (identity) => this.options.store.record_child_custody(state.record.conversation_id, generation, identity),
+      record_local_child_supervision: (path) =>
+        this.options.store.record_child_supervision(state.record.conversation_id, generation, path),
+      record_local_child_custody: (identity) =>
+        this.options.store.record_child_custody(state.record.conversation_id, generation, identity),
       report: (token, event) =>
         own_settlement(
           state,
@@ -1240,7 +1268,11 @@ export class SqliteProcessConversationSystem implements DeliveryServices, Conver
     };
     return sink;
   }
-  async record_local_child_preparation(state: ConversationState, child: BackendChild, sink: CoreBackendEventSink): Promise<void> {
+  async record_local_child_preparation(
+    state: ConversationState,
+    child: BackendChild,
+    sink: CoreBackendEventSink,
+  ): Promise<void> {
     await this.ensure_local_custody(state);
     state.local_child_retirement_proven = false;
     state.local_preparation_cancelled = false;
@@ -1250,13 +1282,27 @@ export class SqliteProcessConversationSystem implements DeliveryServices, Conver
   async check_local_child_started(state: ConversationState, turn: TurnToken): Promise<boolean> {
     const child = state.child;
     const generation = child === null ? undefined : this.local_child_generations.get(child);
-    return generation !== undefined && await this.options.store.check_local_child_started(state.record.conversation_id, generation, turn.turn_number);
+    return (
+      generation !== undefined &&
+      (await this.options.store.check_local_child_started(
+        state.record.conversation_id,
+        generation,
+        turn.turn_number,
+      ))
+    );
   }
   async _confirm_local_child_stopped(state: ConversationState, child: BackendChild): Promise<void> {
     const generation = this.local_child_generations.get(child);
     if (!child.stop_outside_lock && generation !== undefined)
-      await this.options.store.record_child_custody(state.record.conversation_id, generation, null, { retired: true });
-    await this.persist(state, () => this.start_admission.retire_source(this.options.store.start_admission_database, child));
+      await this.options.store.record_child_custody(
+        state.record.conversation_id,
+        generation,
+        null,
+        { retired: true },
+      );
+    await this.persist(state, () =>
+      this.start_admission.retire_source(this.options.store.start_admission_database, child),
+    );
     state.local_child_retirement_proven = true;
     state.child_event_sink = null;
     this.child_stop_ownership.delete(child);
@@ -1656,7 +1702,185 @@ export class SqliteProcessConversationSystem implements DeliveryServices, Conver
   }
   async kill(conversation_id: string): Promise<void> {
     const state = this.conversation_state(conversation_id);
-    if (state) { await this.ensure_local_custody(state); await own_settlement(state, controls.kill(this, state)); }
+    if (state) {
+      await this.ensure_local_custody(state);
+      this.deferred_start_conversations.delete(conversation_id);
+      await own_settlement(state, controls.kill(this, state));
+    }
+  }
+  configure_worker_cleanup_recheck(
+    callback: (source: ChildReference, ticket_id: string) => Promise<CleanupResult>,
+  ): void {
+    this.worker_cleanup_recheck = callback;
+  }
+  async recheck_worker_cleanup(ticket_id: string): Promise<CleanupResult> {
+    this.require_runtime_ownership();
+    const ticket = this.options.store.start_admission_database.read((sql) => {
+      const row = sql.get<{ machine_id: string; conversation_id: string | null }>(
+        'SELECT machine_id,conversation_id FROM tickets WHERE id=?',
+        [ticket_id],
+      );
+      if (row === undefined) return null;
+      const local_ids = sql
+        .all<{ conversation_id: string }>(
+          'SELECT w.conversation_id FROM ticket_workspace_conversations w JOIN conversation_child_custody c USING(conversation_id) WHERE w.ticket_id=?',
+          [ticket_id],
+        )
+        .map((item) => item.conversation_id);
+      const presence = sql.get<{ lease_json: string | null; last_lease_at_ms: number | null }>(
+        'SELECT lease_json,last_lease_at_ms FROM mac_executor_presence WHERE machine_id=?',
+        [row.machine_id],
+      );
+      let lease: WireValue<'LeaseRequest'> | null = null;
+      let fresh = false;
+      if (presence?.lease_json !== null && presence?.lease_json !== undefined) {
+        try {
+          lease = decode_json(presence.lease_json, 'LeaseRequest');
+          fresh =
+            lease.identity.protocol_version === PROTOCOL_VERSION &&
+            presence.last_lease_at_ms !== null &&
+            Math.floor(this.unix_time_now() * 1000) - presence.last_lease_at_ms <=
+              LEASE_CONTINUITY_SECONDS * 1000;
+        } catch {
+          /* Invalid lease evidence cannot prove cleanup. */
+        }
+      }
+      const uncertain = new Set(
+        (lease?.cleanup_uncertainties ?? [])
+          .filter((item) => item.ticket_id === ticket_id)
+          .map((item) => item.conversation_id),
+      );
+      const historical = sql
+        .all<{ executor_incarnation: string; child_id: string; conversation_id: string }>(
+          "SELECT executor_incarnation,child_id,conversation_id FROM executor_child_assignments WHERE principal_kind='ticket' AND principal_id=?",
+          [ticket_id],
+        )
+        .filter((item) => uncertain.has(item.conversation_id) || uncertain.has(''));
+      return { ...row, local_ids, historical, fresh: fresh && uncertain.size === 0 };
+    });
+    if (ticket === null) return cleanup_result(false, 'The Ticket is unavailable');
+    if (ticket.machine_id !== HOME_MACHINE_ID) {
+      const state =
+        ticket.conversation_id === null ? null : this.conversation_state(ticket.conversation_id);
+      const source =
+        state === null
+          ? null
+          : (this.retained_run(state)?.reference ?? state.retained_child_reference);
+      const source_key = (item: ChildReference) =>
+        JSON.stringify([item.executor_incarnation, item.child_id, item.conversation_id]);
+      const sources = new Map(ticket.historical.map((item) => [source_key(item), item]));
+      if (source !== null) sources.set(source_key(source), source);
+      if (sources.size === 0)
+        return cleanup_result(
+          ticket.fresh,
+          ticket.fresh
+            ? 'No retained Worker source needs cleanup'
+            : 'Fresh executor cleanup evidence is unavailable',
+        );
+      if (this.worker_cleanup_recheck === null)
+        return cleanup_result(false, 'The executor cleanup checker is unavailable');
+      for (const recorded of sources.values()) {
+        const result = await this.worker_cleanup_recheck(recorded, ticket_id);
+        if (!result.complete) return result;
+      }
+      return cleanup_result(true, 'Recorded Worker cleanup is complete');
+    }
+    const ids = new Set(ticket.local_ids);
+    if (ticket.conversation_id !== null) ids.add(ticket.conversation_id);
+    for (const id of ids) {
+      const state = this.conversation_state(id);
+      if (state === null) return cleanup_result(false, 'The recorded conversation is unavailable');
+      await this.ensure_local_custody(state);
+      const result = await state.lock.run(async () => {
+        if (this.options.store.blocked_local_conversations.has(id)) {
+          const settlement = await this.options.store.settle_recorded_source(id, {
+            inspect_only: true,
+          });
+          if (settlement === null)
+            return cleanup_result(false, 'The recorded Worker cleanup is not proven');
+          await this.take_recorded_settlement(state, settlement);
+          return null;
+        }
+        if (state.running_turn !== null || state.reserved_turn !== null)
+          return cleanup_result(false, 'The Worker still has an active turn');
+        if (!(await this.options.store.has_recorded_source(id))) {
+          return state.child !== null || state.child_is_quarantined
+            ? cleanup_result(false, 'The retained Worker has no exact cleanup evidence')
+            : null;
+        }
+        if (!(await this.options.store.retire_idle_recorded_source(id, { inspect_only: true })))
+          return cleanup_result(
+            false,
+            'Worker cleanup is not proven. Stop the old process and recheck cleanup.',
+          );
+        if (state.child !== null) {
+          await this.discard_child(state, state.child);
+          if (state.child !== null || state.child_is_quarantined)
+            return cleanup_result(false, 'The retained Worker cleanup is not proven');
+        }
+        state.local_child_retirement_proven = true;
+        state.child_is_quarantined = false;
+        return null;
+      });
+      if (result !== null) return result;
+    }
+    return cleanup_result(true, 'Recorded Worker cleanup is complete');
+  }
+  private async take_recorded_settlement(
+    state: ConversationState,
+    settlement: 'undelivered' | 'retired',
+  ): Promise<void> {
+    state.local_child_retirement_proven = settlement === 'retired';
+    state.local_preparation_cancelled = settlement === 'undelivered';
+    state.child_is_quarantined = false;
+    const token = this.options.store.settled_recorded_turn(state.record.conversation_id);
+    if (token !== null)
+      await this.persist(state, () =>
+        this.start_admission.reject(this.options.store.start_admission_database, token),
+      );
+  }
+  async confirm_killed_source(state: ConversationState): Promise<void> {
+    const id = state.record.conversation_id;
+    if (this.options.store.blocked_local_conversations.has(id)) {
+      const settlement = await this.options.store.settle_recorded_source(id);
+      if (settlement === null)
+        throw new PlannerError(
+          'retry_later',
+          `${await this.options.store.recorded_source_block_reason(id)} Recheck Worker cleanup.`,
+        );
+      await this.take_recorded_settlement(state, settlement);
+    }
+    if (
+      state.child === null &&
+      !state.local_preparation_cancelled &&
+      !state.local_child_retirement_proven &&
+      (await this.options.store.has_recorded_source(id))
+    ) {
+      if (!(await this.options.store.retire_idle_recorded_source(id)))
+        throw new PlannerError(
+          'retry_later',
+          'The recorded Worker cleanup is not proven. Recheck Worker cleanup.',
+        );
+      state.local_child_retirement_proven = true;
+    }
+    const remote_receipt = this.retained_run(state)?.retirement_confirmed === true;
+    await state.lock.run(() => {
+      if (
+        state.child !== null ||
+        state.retained_child_reference !== null ||
+        state.child_is_quarantined ||
+        (state.retirement_task !== null && state.retiring_child !== null) ||
+        !(
+          remote_receipt ||
+          state.local_child_retirement_proven ||
+          state.local_preparation_cancelled
+        )
+      )
+        throw new PlannerError(
+          'retry_later',
+          'The old Worker is not proven ended. Recheck Worker cleanup.',
+        );
+    });
   }
   async promote_held_prompt(
     conversation_id: string,
@@ -1841,7 +2065,12 @@ export class SqliteProcessConversationSystem implements DeliveryServices, Conver
     );
   }
   workspace_activity(): 'idle' | 'busy' | 'unknown' {
-    if (this.shutting_down || this.workspace_admission.closed || this.options.store.blocked_local_conversations.size) return 'unknown';
+    if (
+      this.shutting_down ||
+      this.workspace_admission.closed ||
+      this.options.store.blocked_local_conversations.size
+    )
+      return 'unknown';
     if (this.workspace_admission.active) return 'busy';
     for (const state of this.conversations.values()) {
       if (
@@ -1912,7 +2141,9 @@ export class SqliteProcessConversationSystem implements DeliveryServices, Conver
       this.update_retirement = null;
       this.update_stop_failed = false;
     }
-    await Promise.all([...this.conversations.values()].map(state => this.ensure_local_custody(state)));
+    await Promise.all(
+      [...this.conversations.values()].map((state) => this.ensure_local_custody(state)),
+    );
     const background = this.options.store.read_live_background_task_ids();
     const local = [...this.conversations]
       .filter(
@@ -1926,10 +2157,11 @@ export class SqliteProcessConversationSystem implements DeliveryServices, Conver
       if (this.workspace_admission.active) return false;
       if (
         mode === 'idle' &&
-        (this.options.store.blocked_local_conversations.size > 0 || local.some(
-          (state) =>
-            this.state_has_update_work(state) || background.has(state.record.conversation_id),
-        ))
+        (this.options.store.blocked_local_conversations.size > 0 ||
+          local.some(
+            (state) =>
+              this.state_has_update_work(state) || background.has(state.record.conversation_id),
+          ))
       )
         return false;
       this.update_retirement_generation = generation;
@@ -1938,7 +2170,13 @@ export class SqliteProcessConversationSystem implements DeliveryServices, Conver
         try {
           for (const state of local) {
             if (this.update_generation !== generation) return;
-            if (state.child === null && state.local_child_retirement_proven && !this.state_has_update_work(state) && !background.has(state.record.conversation_id)) continue;
+            if (
+              state.child === null &&
+              state.local_child_retirement_proven &&
+              !this.state_has_update_work(state) &&
+              !background.has(state.record.conversation_id)
+            )
+              continue;
             await this.retire_update_child(state, generation);
           }
           for (const state of local) {
@@ -2026,13 +2264,18 @@ export class SqliteProcessConversationSystem implements DeliveryServices, Conver
     );
     return true;
   }
-  readonly retire_local_workspace: WorkspaceRetirementOperation = async (ticket_id, identity, operation) => {
-    if (this.retiring_workspace_tickets.has(ticket_id)) return { reason: 'Ticket workspace retirement is already in progress' };
+  readonly retire_local_workspace = async (
+    ticket_id: string,
+    identity: WorkspaceIdentity,
+    operation: () => MaybePromise<RetirementTarget>,
+  ): Promise<RetirementTarget> => {
+    if (this.retiring_workspace_tickets.has(ticket_id))
+      return { reason: 'Ticket workspace retirement is already in progress' };
     this.retiring_workspace_tickets.add(ticket_id);
     let ids: readonly string[] = [];
     try {
       return await conversation_link_lock(`ticket:${ticket_id}`).run(async () =>
-        this.workspace_admission.operation(async admitted => {
+        this.workspace_admission.operation(async (admitted) => {
           if (!admitted) return { reason: 'Owner update in progress' };
           ids = await this.options.store.workspace_conversation_ids(ticket_id, identity);
           for (const id of ids) this.retiring_workspace_conversations.add(id);
@@ -2128,6 +2371,18 @@ export class SqliteProcessConversationSystem implements DeliveryServices, Conver
       states,
       [...this.child_stop_ownership].map(([child, state]) => ({ child, state })),
       options,
+      async (state, child) => {
+        if (child.stop_outside_lock) return;
+        const generation = this.local_child_generations.get(child);
+        if (generation !== undefined)
+          await this.options.store.record_child_custody(
+            state.record.conversation_id,
+            generation,
+            null,
+            { retired: true },
+          );
+        state.local_child_retirement_proven = true;
+      },
     ).then(() => {
       this.child_stop_ownership.clear();
     });

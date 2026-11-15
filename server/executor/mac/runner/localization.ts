@@ -6,6 +6,7 @@ import { resolve_path_sync } from '../../../core/path_resolution.ts';
 import { inspect } from 'node:util';
 import { ServerLifecycleError } from '../../../lifecycle/contracts.ts';
 import { BackendSpawnFailed } from '../../../conversation/backends/contracts.ts';
+import { RECORD_ROOT_ENV } from '../../../worker_supervision/config.ts';
 import {
   ConversationRoleMaterials,
   ResolvedConversationStart,
@@ -109,6 +110,8 @@ export async function localize_start(
   identity.set(EXECUTOR_CAPABILITY_ENV, capability);
   identity.set(EXECUTOR_ROOT_ENV, options.paths.root);
   identity.set('PLAN_TICKET_FILES_DIR', artifacts);
+  identity.set(RECORD_ROOT_ENV, join(options.paths.run, 'worker-processes'));
+  identity.set('PLAN_EXECUTOR_SOURCE_INCARNATION', reference.executor_incarnation);
   identity.set(NATIVE_SKILLS_DIR_ENV, join(generation, 'skills'));
   return new ResolvedConversationStart({
     ...resolved,

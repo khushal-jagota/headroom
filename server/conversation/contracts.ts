@@ -321,6 +321,15 @@ export interface RecordMessageToOwnerOptions {
   recording_receipt?: NativeMessageOperation | null;
 }
 export interface ConversationSystem {
+  configure_worker_cleanup_recheck?(
+    callback: (
+      source: import('./backends/contracts.ts').ChildReference,
+      ticket_id: string,
+    ) => Promise<import('../worker_supervision/contracts.ts').CleanupResult>,
+  ): void;
+  recheck_worker_cleanup?(
+    ticket_id: string,
+  ): Promise<import('../worker_supervision/contracts.ts').CleanupResult>;
   readonly retire_local_workspace?: import('../ticket_workspaces/contracts.ts').WorkspaceRetirementOperation;
   readonly start_admission?: AutomaticStartAdmission;
   automatic_start_request?(identity: string, conversation_id: string): Promise<StartRequest>;

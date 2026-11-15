@@ -8,6 +8,7 @@ import { SqliteProcessConversationSystem } from '../system.ts';
 import { ConversationStartRequest } from '../contracts.ts';
 import { text_message_content } from '../message_content.ts';
 import { ScriptedChild } from './scripted_child.ts';
+import { ScriptedCustody } from './scripted_custody.ts';
 import { BackendStateStore } from '../backend_state.ts';
 import {
   canonical_ticket_execution_refusal,
@@ -19,7 +20,9 @@ export async function run_wait(database_path: string): Promise<unknown> {
   let armed = false;
   let attempts = 0;
   const registry = new ProcessWaitRegistry(() => 100000);
+  const custody = new ScriptedCustody();
   const store = new ConversationStore(database, {
+    local_child_custody: custody.inspection,
     integer_now: () => 100,
     transaction_participant: () => {
       if (armed && ++attempts <= 2) throw new Error('unit15b save fault');
@@ -29,7 +32,7 @@ export async function run_wait(database_path: string): Promise<unknown> {
   const factory = ({
     event_sink,
   }: Parameters<import('../backends/contracts.ts').BackendChildFactory>[0]) => {
-    const child = new ScriptedChild(event_sink);
+    const child = new ScriptedChild(event_sink, custody.runtime);
     children.push(child);
     return child;
   };
@@ -101,6 +104,7 @@ export async function run_wait(database_path: string): Promise<unknown> {
   } finally {
     await core.shutdown({ deadline: performance.now() / 1000 + SHUTDOWN_GRACE_SECONDS });
     for (const child of children) await child.terminate();
+    await custody.close();
     await store.finish_writes();
     database.close();
   }
