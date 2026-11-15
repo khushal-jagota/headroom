@@ -109,9 +109,11 @@ describe("the update card", () => {
   });
 
   it("puts the approved offer text and activity note in the dialog", () => {
-    const body = render(UpdateActions, { props: { status: { ...status, activity: "busy" }, now: 0 } }).body;
+    const body = render(UpdateActions, { props: { status: { ...status, activity: "busy", detail: "Update now stops this work: Release proof, Inbox cleanup." }, now: 0 } }).body;
     expect(body).toContain("A new version is ready for Panels and the Mac. Panels restarts, then you refresh to finish.");
-    expect(body).toContain("Work is running. Updating now interrupts it.");
+    expect(body).toContain("Update now stops this work:");
+    expect(body).toContain("Release proof");
+    expect(body).toContain("Inbox cleanup");
     expect(body).toContain("When work finishes");
     expect(body).toContain("Update now");
     expect(render(UpdateActions, { props: { status: { ...status, activity: "idle" }, now: 0 } }).body).not.toContain("When work finishes");

@@ -1,6 +1,7 @@
 <script lang="ts">
   import {goalSidebarRows,setGoalSidebarRows} from "../lib/goals/sidebarRows.svelte";
   import ManagerHeader from "../components/ManagerHeader.svelte";
+  import MachinesSettings from "../components/machines/MachinesSettings.svelte";
   import VpsPage from "../components/vps/VpsPage.svelte";
   import BackendSettings from "../components/conversation/BackendSettings.svelte";
   import ConfigRoute from "./ConfigRoute.svelte";
@@ -19,13 +20,15 @@
   <div class="settings-head">
     <nav class="settings-sections segmented" aria-label="Settings">
       <a class="segmented-option" href={href(["config"])} aria-current={section === "config" ? "page" : undefined}>Config</a>
+      <a class="segmented-option" href={href(["machines"])} aria-current={section === "machines" ? "page" : undefined}>Machines</a>
       <a class="segmented-option" href={href(["backends"])} aria-current={section === "backends" ? "page" : undefined}>Backends</a>
       <a class="segmented-option" href={href(["notifications"])} aria-current={section === "notifications" ? "page" : undefined}>Notifications</a>
-      <a class="segmented-option" href={href(["vps"])} aria-current={section === "vps" ? "page" : undefined}>VPS</a>
+      <a class="segmented-option" href={href(["vps"])} aria-current={section === "vps" ? "page" : undefined}>Home diagnostics</a>
     </nav>
   </div>
   {#if section === "config" && roleKind === "index"}<label class="sidebar-goal-setting"><input type="checkbox" checked={goalSidebarRows.on} onchange={(event)=>setGoalSidebarRows(event.currentTarget.checked)}/>Show goals in sidebar rows</label>{/if}
   {#if section === "config"}<ConfigRoute {roleKind} {roleId} href={nestedHref(href, ["config"])} />
+  {:else if section === "machines"}<MachinesSettings />
   {:else if section === "backends"}<BackendSettings />
   {:else if section === "notifications"}<NotificationsRoute />
   <!-- VPS lives in Settings (owner); #/vps still opens the same page on its own. -->

@@ -153,13 +153,22 @@ def test_mac_commands_and_retained_preview_never_inspect_vps_processes(
     from planner.tickets.data import create_ticket
 
     ticket = create_ticket(
-        tmp_db, title="Mac preview refusal", worker_type="coding", principal=OWNER_PRINCIPAL,
-        now=1, title_max_chars=200,
+        tmp_db,
+        title="Mac preview refusal",
+        worker_type="coding",
+        principal=OWNER_PRINCIPAL,
+        now=1,
+        title_max_chars=200,
     )
     prepared = record("was-on-vps", ticket.id)
     data.prepare(tmp_db, prepared)
     data.register(tmp_db, prepared, ProcessIdentity("boot", 12, 34, 56, 3001, prepared.worktree))
-    tmp_db.execute("UPDATE tickets SET locale='macos' WHERE id=?", (ticket.id,))
+    from planner.machines.contracts import ORIGINAL_MAC_MACHINE_ID
+
+    tmp_db.execute(
+        "UPDATE tickets SET locale='macos', machine_id=? WHERE id=?",
+        (ORIGINAL_MAC_MACHINE_ID, ticket.id),
+    )
     tmp_db.commit()
 
     def no_vps_process(*args: object, **kwargs: object) -> None:

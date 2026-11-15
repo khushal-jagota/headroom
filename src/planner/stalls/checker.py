@@ -27,6 +27,7 @@ from types import MappingProxyType
 from planner.core.db import commit_without_change_signal, connect
 from planner.core.task_settlement import run_on_worker_thread
 from planner.executor.vps_presence_store import read_presence
+from planner.machines.contracts import ORIGINAL_MAC_MACHINE_ID
 from planner.stalls import configuration
 from planner.stalls.contracts import (
     StallFinding,
@@ -87,7 +88,7 @@ class StallChecker:
         self._registry = registry
         self._sources = sources
         self._clock = clock
-        self._observation: PresenceObservation | None = None
+        self._observations: dict[str, PresenceObservation] = {}
         self._task: asyncio.Task[None] | None = None
 
     def start(self) -> None:
@@ -133,31 +134,90 @@ class StallChecker:
         try:
             conn.execute("BEGIN")
             try:
-                record = read_presence(conn)
+                records = {
+                    str(row[0]): read_presence(conn, str(row[0]))
+                    for row in conn.execute("SELECT machine_id FROM mac_executor_presence")
+                }
+                records.setdefault(ORIGINAL_MAC_MACHINE_ID, None)
                 source_waits = [
                     wait for source in sources for wait in source.tracked_waits(conn, now_ms)
                 ]
-                if self._observation is None:
-                    self._observation = observation_from_open_findings(read_open_findings(conn))
+                all_waits = (*registry_waits, *source_waits)
+                open_findings = read_open_findings(conn)
+                destinations: dict[str, str] = {}
+                for conversation_id in {
+                    item.conversation_id
+                    for item in all_waits
+                    if item.conversation_id
+                } | {
+                    item.conversation_id for item in open_findings if item.conversation_id
+                }:
+                    row = conn.execute(
+                        "SELECT machine_id FROM tickets WHERE conversation_id=?", (conversation_id,)
+                    ).fetchone()
+                    if row is None:
+                        row = conn.execute(
+                            "SELECT i.machine_id FROM executor_child_assignments a "
+                            "JOIN executor_incarnations i USING(executor_incarnation) "
+                            "WHERE a.conversation_id=? LIMIT 1",
+                            (conversation_id,),
+                        ).fetchone()
+                    if row is not None:
+                        destinations[conversation_id] = str(row[0])
             finally:
                 conn.execute("ROLLBACK")
-            lease_waits, observation = presence_waits(record, now_ms, self._observation)
-            waits = (*registry_waits, *source_waits, *lease_waits)
-            overdue = overdue_waits(waits, record, now_ms, observation)
+            groups: dict[str, list[TrackedWait]] = {key: [] for key in records}
+            for wait in all_waits:
+                machine_id = wait.machine_id or destinations.get(
+                    wait.conversation_id or "", ORIGINAL_MAC_MACHINE_ID
+                )
+                groups.setdefault(machine_id, []).append(wait)
+            rebuilt: dict[str, list[StallFinding]] = {}
+            for finding in open_findings:
+                key = finding.finding_key
+                if ":machine=" in key:
+                    kind, rest = key.split(":machine=", 1)
+                    machine_id, raw = rest.split(":", 1)
+                    finding = replace(finding, finding_key=f"{kind}:{raw}")
+                else:
+                    machine_id = destinations.get(
+                        finding.conversation_id or "", ORIGINAL_MAC_MACHINE_ID
+                    )
+                rebuilt.setdefault(machine_id, []).append(finding)
+            overdue: list[OverdueWait] = []
+            observations: dict[str, PresenceObservation] = {}
+            for machine_id, machine_waits in groups.items():
+                previous = self._observations.get(machine_id)
+                if previous is None:
+                    previous = observation_from_open_findings(rebuilt.get(machine_id, ()))
+                record = records.get(machine_id)
+                lease_waits, observation = presence_waits(record, now_ms, previous)
+                waits = (*machine_waits, *lease_waits)
+                found = overdue_waits(waits, record, now_ms, observation)
+                observations[machine_id] = replace(
+                    forget_present_time_before(observation, waits),
+                    open_findings=MappingProxyType(
+                        {item.wait.finding_key: item.stalled_since_ms for item in found}
+                    ),
+                )
+                for item in found:
+                    # Conversation keys are already unique. Only machine-only keys need a namespace.
+                    if machine_id != ORIGINAL_MAC_MACHINE_ID and item.wait.conversation_id is None:
+                        item = replace(
+                            item,
+                            wait=replace(
+                                item.wait, wait_key=f"machine={machine_id}:{item.wait.wait_key}"
+                            ),
+                        )
+                    overdue.append(item)
             conn.execute("BEGIN IMMEDIATE")
             try:
-                findings = _write_findings(conn, overdue, now_ms)
+                findings = _write_findings(conn, tuple(overdue), now_ms)
             except BaseException:
                 conn.execute("ROLLBACK")
                 raise
-            # No screen shows findings; the watchdog reads them on its own timer.
             commit_without_change_signal(conn)
-            self._observation = replace(
-                forget_present_time_before(observation, waits),
-                open_findings=MappingProxyType(
-                    {finding.finding_key: finding.stalled_since_ms for finding in findings}
-                ),
-            )
+            self._observations = observations
             return findings
         finally:
             conn.close()

@@ -116,7 +116,7 @@ async def ipc_service(
         executor.outbox.close()
 
 
-def write_request(child: RunningChild, identity: str, *, budget: float = 0.04) -> IpcRequest:
+def write_request(child: RunningChild, identity: str, *, budget: float = 5) -> IpcRequest:
     return IpcRequest(
         identity,
         IpcOperation.write,
@@ -185,7 +185,9 @@ def test_actual_caller_timeout_keeps_owner_and_original_snapshot_for_retry(
                     CliRunner().invoke, main, ["worker", "recap", "--json"], input="original"
                 )
                 monkeypatch.setattr(ipc_client, "socket", socket)
-                assert entered.is_set()
+                # Socket timeout can precede the background thread's first turn.
+                # Wait for the original snapshot before changing its source file.
+                assert await asyncio.to_thread(entered.wait, 5)
                 assert result.exit_code == 3, result.output
                 outcome = json.loads(result.stdout)
                 identity = outcome["submission_id"]
@@ -235,7 +237,15 @@ def test_retry_preserves_acknowledged_and_unknown_uncertainty_across_restart(
 ) -> None:
     async def run() -> None:
         async with ipc_service(tmp_path, monkeypatch) as (executor, child):
-            response = await executor.gateway.handle(write_request(child, "original"))
+            # This case checks journal state, not a deadline under host load.
+            response = await executor.gateway.handle(write_request(child, "original", budget=5))
+            assert response.unconfirmed is not None
+            publication = executor.gateway._publishing.get("original")
+            if publication is not None:
+                async with asyncio.timeout(5):
+                    await publication[1]
+            if response.unconfirmed.publication == "preparing":
+                response = await executor.gateway.handle(retry_request(child, "original"))
             assert response.unconfirmed is not None
             assert response.unconfirmed.publication == "queued"
             envelope = executor.outbox.pending()[0]
@@ -396,10 +406,20 @@ def test_post_commit_cleanup_error_keeps_identity_and_retry_observes_original(
                 raise OSError("snapshot cleanup failed after commit")
 
             monkeypatch.setattr(executor.outbox, "add", committed_then_failed)
-            response = await executor.gateway.handle(write_request(child, "original"))
+            # This case checks journal state, not a deadline under host load.
+            response = await executor.gateway.handle(write_request(child, "original", budget=5))
             assert response.error is None and response.unconfirmed is not None
             assert response.unconfirmed.submission_id == "original"
+            publication = executor.gateway._publishing.get("original")
+            if publication is not None:
+                async with asyncio.timeout(5):
+                    with pytest.raises(OSError, match="snapshot cleanup failed after commit"):
+                        await publication[1]
             original = executor.outbox.pending()[0]
+            # A committed row can precede the thread's fault and publication cleanup.
+            # Retry reports preparing until that task settles, regardless of its deadline.
+            publications = tuple(task for _, task in executor.gateway._publishing.values())
+            await asyncio.gather(*publications, return_exceptions=True)
             retried = await executor.gateway.handle(
                 replace(retry_request(child, "original"), response_deadline=time.monotonic() + 5)
             )
@@ -423,7 +443,7 @@ def test_failed_add_reports_unknown_and_never_proves_stop(
                 raise OSError(errno.ENOSPC, "outbox disk full")
 
             monkeypatch.setattr(executor.outbox, "add", fail_add)
-            response = await executor.gateway.handle(write_request(child, "lost-output"))
+            response = await executor.gateway.handle(write_request(child, "lost-output", budget=5))
             assert response.unconfirmed is not None
             assert response.unconfirmed.publication == "unknown"
             assert not executor.outbox.pending()

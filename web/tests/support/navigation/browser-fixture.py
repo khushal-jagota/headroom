@@ -4,6 +4,7 @@ import base64
 import json
 from typing import Any
 
+from planner.machines.contracts import HOME_MACHINE_ID, ORIGINAL_MAC_MACHINE_ID
 from planner.navigation.contracts import SCHEMA_VERSION, SUPPORTED_SEMANTICS
 from planner.navigation.delivery_contracts import WIRE_VERSION
 from planner.navigation.views.contracts import VIEW_PROJECTION_VERSION, VIEW_WIRE_VERSION
@@ -11,6 +12,13 @@ from planner.navigation.views.contracts import VIEW_PROJECTION_VERSION, VIEW_WIR
 # Authored host inputs are raw JSON objects. The browser validates the resulting
 # wire payload through the production parser rather than a parallel fixture schema.
 FixtureObject = dict[str, Any]
+
+MACHINE_CATALOG = {"machines": [
+    {"machine_id": HOME_MACHINE_ID, "name": "VPS", "icon": "server", "color": "jade",
+     "is_home": True, "available": True, "running_workers": 0, "waiting_tickets": 0},
+    {"machine_id": ORIGINAL_MAC_MACHINE_ID, "name": "Mac", "icon": "laptop", "color": "orchid",
+     "is_home": False, "available": True, "running_workers": 0, "waiting_tickets": 0},
+]}
 
 _navigation_revision = 0
 

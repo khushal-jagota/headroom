@@ -100,6 +100,8 @@ def diagnostic_projection(
         "ticket_status": "errored",
         "integrity_error": {"reason": issue.reason},
         "recap": str(row["recap"]),
+        "recap_updated_at": row["recap_updated_at"],
+        "recap_stage_changed": bool(row["recap_stage_changed"]),
         "conversation_id": row["conversation_id"],
         "manager_id": row["manager_id"],
         "manager_kind": row["manager_kind"],

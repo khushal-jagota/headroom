@@ -239,7 +239,9 @@ def run(browser, urls):
         const id = next--; timers.set(id,{callback:()=>callback(...args),at:now+delay}); return id;
       };
       window.clearTimeout = id => { if (!timers.delete(id)) nativeClear(id); };
+      const controlledSet = window.setTimeout, controlledClear = window.clearTimeout;
       window.__waitClock = {
+        install() { window.setTimeout=controlledSet; window.clearTimeout=controlledClear; },
         advance(ms) {
           const end=now+ms;
           for (;;) {
@@ -729,6 +731,7 @@ def run(browser, urls):
           below: Math.round(document.querySelector('header').getBoundingClientRect().top)};
       };
       window.__mountHeld = path => {
+        window.__skeletonCounter?.disconnect();
         window.__html('');
         window.__releaseHeld = null;
         window.__html('embedded', path);
@@ -740,6 +743,7 @@ def run(browser, urls):
           })));
         counter.observe(document.querySelector('[data-html-fixture]'),
           {subtree: true, childList: true});
+        window.__skeletonCounter = counter;
         return window.__frameBox();
       };
     }""")
@@ -785,13 +789,19 @@ def run(browser, urls):
     assert page.evaluate("window.__frameBox()") == {
         'height': 288, 'busy': 'false', 'skeletons': 1, 'below': settled}
 
-    # A file that arrives inside the grace draws no skeleton at all.
+    # Keep the grace clock fixed while the real iframe paints. Host scheduling
+    # cannot decide whether this case exercises the pre-grace completion path.
+    page.evaluate("window.__waitClock.install()")
     assert page.evaluate("path => window.__mountHeld(path)", 'site/index.html')['height'] == 288
     expect(frame.locator('h1')).to_have_text('Index')
     page.wait_for_function("() => window.__frameBox().busy === 'false'")
+    # Completion must cancel its timer, including after the grace would expire.
+    page.evaluate("window.__waitClock.advance(500)")
     assert page.evaluate("window.__skeletonMounts") == 0
     assert page.evaluate("window.__frameBox()") == {
         'height': 288, 'busy': 'false', 'skeletons': 0, 'below': settled}
+
+    page.evaluate("window.__waitClock.restore()")
 
     # An embedded failure names the file and collapses to a line.
     assert page.evaluate("path => window.__mountHeld(path)", 'site/missing.html')['height'] == 288

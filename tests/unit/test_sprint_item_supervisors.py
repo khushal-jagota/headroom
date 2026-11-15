@@ -532,8 +532,8 @@ def test_a_ticket_cannot_choose_who_stands_above_it(tmp_path: Path) -> None:
     assert after["manager_id"] == other["id"]
 
 
-def test_a_help_request_reaches_no_further_than_a_sent_message(tmp_path: Path) -> None:
-    """The second door that takes a recipient. It asks the same question as the first."""
+def test_worker_messages_reach_their_manager_but_not_unrelated_tickets(tmp_path: Path) -> None:
+    """Workers address their own Manager explicitly and retain the message authority boundary."""
     app, _db_path = _app(tmp_path)
     with TestClient(app) as client:
         own = _create_item(client, "Own")
@@ -552,13 +552,13 @@ def test_a_help_request_reaches_no_further_than_a_sent_message(tmp_path: Path) -
         ).json()
         itself = {"X-Plan-Actor": "worker", "X-Plan-Ticket-ID": str(mine["id"])}
         into_a_stranger = client.post(
-            f"/api/tickets/{mine['id']}/request-help",
-            json={"message": "Help.", "recipient": {"kind": "ticket", "id": stranger["id"]}},
+            "/api/messages/send",
+            json={"message": "Help.", "target": {"kind": "ticket", "id": stranger["id"]}},
             headers=itself,
         )
         up_to_its_outcome = client.post(
-            f"/api/tickets/{mine['id']}/request-help",
-            json={"message": "Help.", "recipient": {"kind": "manager", "id": own["id"]}},
+            "/api/messages/send",
+            json={"message": "Help.", "target": {"kind": "manager", "id": own["id"]}},
             headers=itself,
         )
 
@@ -593,11 +593,6 @@ def test_supervisor_peer_messages_do_not_expand_worker_or_mutation_reach(tmp_pat
             client.post(
                 "/api/messages/send",
                 json={"target": {"kind": "manager", "id": other["id"]}, "message": "Act"},
-                headers=worker,
-            ),
-            client.post(
-                f"/api/tickets/{mine['id']}/request-help",
-                json={"recipient": {"kind": "manager", "id": other["id"]}, "message": "Help"},
                 headers=worker,
             ),
             client.patch(

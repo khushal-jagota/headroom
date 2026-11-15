@@ -24,6 +24,7 @@ from planner.executor.update_configuration import (
     MAX_MAC_RUNTIME_MANIFEST_BYTES,
 )
 from planner.executor.update_contracts import MacRuntimeManifest
+from planner.platform_runtime.targets import MAC_EXECUTOR, RuntimeTarget, require_runtime_target
 
 
 def read_runtime_revision(runtime: Path, expected_revision: str | None = None) -> str:
@@ -32,11 +33,15 @@ def read_runtime_revision(runtime: Path, expected_revision: str | None = None) -
     manifest = TypeAdapter(MacRuntimeManifest).validate_python(
         json.loads((runtime / MAC_RUNTIME_MANIFEST_NAME).read_text())
     )
+    try:
+        require_runtime_target(
+            RuntimeTarget(manifest.platform, manifest.architecture, "executor"), MAC_EXECUTOR
+        )
+    except ValueError as exc:
+        raise ValueError("Mac runtime manifest differs from the approved release") from exc
     revision = manifest.application_revision
     if (
         manifest.schema_version != 1
-        or manifest.platform != "darwin"
-        or manifest.architecture != "arm64"
         or not isinstance(revision, str)
         or re.fullmatch(r"[0-9a-f]{40}", revision) is None
         or (expected_revision is not None and revision != expected_revision)

@@ -22,6 +22,7 @@ TITLE_MAX_CHARS: Final = 200
 @dataclass(frozen=True, slots=True)
 class ResolvedTicketCreationContext:
     locale: TicketLocale
+    machine_id: str
     launch_configuration: EmployeeLaunchConfiguration
     project_id: str | None
 
@@ -70,6 +71,7 @@ class TicketListFilters:
     ticket_statuses: tuple[TicketStatus, ...] = ()
     excluded_ticket_statuses: tuple[TicketStatus, ...] = ()
     include_terminal: bool = False
+    active: bool = False
     search: str | None = None
     is_backlogged: bool | None = None
     worker_types: tuple[str, ...] = ()
@@ -132,6 +134,7 @@ class CreateTicketBody(TypedDict, total=False):  # POST /tickets
     # validate against the resolved model before creation, even for direct callers.
     employee_launch_reasoning_effort: str | None
     locale: str
+    machine_id: str
     title: str  # default ""
     brief: str  # default ""; intake text for the Brief field
     deadline: str | None  # ISO date
@@ -232,6 +235,8 @@ class Ticket:  # §3.3 — column names match exactly
     manager_kind: str = field(default="chief", kw_only=True)
     manager_title: str | None
     recap: str  # writable only past the type's first worker Stage
+    recap_updated_at: int | None = field(default=None, kw_only=True)
+    recap_stage_changed: bool = field(default=False, kw_only=True)
     ceiling: str  # ceiling id; a member of the type's ceiling_range
     # An address, not an authority. It says which principal a parked proposal is for, so
     # that Review, attention and notifications can put it in front of them. It says
@@ -253,6 +258,7 @@ class Ticket:  # §3.3 — column names match exactly
     updated_at: int
     # Monotonic proposal identity. Proposal timestamps have whole-second precision, so
     # readers use this when they must distinguish a replacement filed in the same second.
+    machine_id: str = field(default="75a49e78-97de-4e28-8dc5-79646761c46f", kw_only=True)
     locale: TicketLocale = field(default=TicketLocale.vps, kw_only=True)
     is_backlogged: bool = field(default=False, kw_only=True)
     pending_proposal_revision: int = field(default=0, kw_only=True)
@@ -309,6 +315,9 @@ class TicketIntegrityIssue(TypedDict):
 
 
 class BrokenTicketProjection(TypedDict):
+    recap: str
+    recap_updated_at: int | None
+    recap_stage_changed: bool
     id: str
     title: str
     worker_type: str
