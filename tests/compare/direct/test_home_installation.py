@@ -197,9 +197,13 @@ def _python(base: Path, system: str, scenario: str, port: int, monkeypatch: Any)
     identity_path = root / "data/mac-home-installation.json"
     if identity_path.exists():
         legacy = json.loads(identity_path.read_text())
-        assert set(legacy) == {"uid", "root", "label", "home_plist", "backup_plist", "installer_python"}
+        assert set(legacy) == {
+            "uid", "root", "label", "home_plist", "backup_plist", "installer_python"
+        }
         assert isinstance(legacy["installer_python"], str)
-        identity = {key: legacy[key] for key in ("uid", "root", "label", "home_plist", "backup_plist")}
+        identity = {
+            key: legacy[key] for key in ("uid", "root", "label", "home_plist", "backup_plist")
+        }
     result = dict(
         outcome=outcome,
         root_exists=root.exists(),
@@ -287,8 +291,9 @@ def test_first_home_installation_parity(tmp_path: Path, monkeypatch: Any, reques
                         "Each host uses its selected canonical Node directory. Only that directory "
                         "is normalized from both platform PATH lists. Remaining ordered entries, "
                         "including Homebrew before custom provider directories, compare exactly."
-                        " Native identity writes exact version-2 fields with canonical external installer_node."
-                        " Python writes its exact legacy six-key identity. Both records compare every common binding."
+                        " Native identity writes exact version-2 fields with canonical external "
+                        "installer_node. Python writes its exact legacy six-key identity. "
+                        "Both records compare every common binding."
                     ),
                 ),
                 indent=2,
