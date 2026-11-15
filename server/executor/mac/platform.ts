@@ -10,6 +10,7 @@ import koffi from 'koffi';
 import { BackendCommands } from '../../conversation/snapshot/commands.ts';
 import { backend_io_is_test } from '../../conversation/snapshot/environment.ts';
 import type { OwnedOneShotChildren } from '../../lifecycle/contracts.ts';
+import { monotonic_seconds } from '../../lifecycle/configuration.ts';
 import { MAC_AGENT_PROCESS_PROBE_TIMEOUT_SECONDS } from '../configuration.ts';
 import { shell_quote } from '../../conversation/worker_unit/logic.ts';
 import { flock } from '../../core/locks/flock.ts';
@@ -634,6 +635,7 @@ export function darwin_worker_process_info(pid: number): DarwinWorkerProcessInfo
 }
 export function darwin_worker_process_snapshot(
   deadline: number,
+  clock: () => number = monotonic_seconds,
 ): ReadonlyMap<number, import('../../worker_supervision/contracts.ts').WorkerProcess> {
   const list = worker_process_native(
     'int proc_listpids(uint32_t type, uint32_t typeinfo, void *buffer, int buffersize)',
@@ -645,7 +647,7 @@ export function darwin_worker_process_snapshot(
   if (size <= 0 || size >= pids.length) throw new Error('Mac process inventory is incomplete');
   const result = new Map<number, import('../../worker_supervision/contracts.ts').WorkerProcess>();
   for (let offset = 0; offset < Math.floor(size / 4) * 4; offset += 4) {
-    if (performance.now() / 1000 >= deadline) throw new Error('Worker inspection deadline expired');
+    if (clock() >= deadline) throw new Error('Worker inspection deadline expired');
     const pid = pids.readInt32LE(offset);
     if (pid <= 0) continue;
     const info = darwin_worker_process_info(pid);

@@ -217,8 +217,13 @@ export function stop_record(path: string, options: InspectionOptions): Promise<C
               if (!(await context.primitives.is_absent(process, deadline)))
                 await context.primitives.signal(process, signal, deadline);
             while (runtime.clock() < phase_deadline) {
-              const result = await inspect_unlocked(path, settings);
-              if (result.complete) return result;
+              try {
+                const result = await inspect_unlocked(path, settings);
+                if (result.complete) return result;
+              } catch {
+                // A transient evidence failure is not a cleanup receipt. Keep
+                // polling, including escalation after the TERM phase expires.
+              }
               await pause(Math.min(50, Math.max(0, phase_deadline - runtime.clock()) * 1000));
             }
           }

@@ -1,7 +1,7 @@
 /** Synthetic journals and native contracts prove custody without a service manager or cgroup host. */
-import { mkdtemp, readFile, rm, chmod, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, rm, chmod, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, relative } from 'node:path';
 import { afterEach, expect, test, vi } from 'vitest';
 import { Deferred } from '../conversation/runtime/state.ts';
 import {
@@ -169,6 +169,18 @@ test('bootstrap commits cgroup ownership before join and missing delegation allo
   cgroups.populated = false;
   expect((await inspect_record(worker.path, { runtime: f.runtime })).complete).toBe(true);
   expect(cgroups.removed).toBe(1);
+  const removal_failure = vi
+    .spyOn(cgroups, 'remove')
+    .mockRejectedValue(new Error('cgroup path changed'));
+  const retired = { ...f.record, cgroup: cgroups.identity, cgroup_joined: true };
+  await records.write(worker.path, retired);
+  expect((await inspect_record(worker.path, { runtime: f.runtime })).complete).toBe(false);
+  expect((await records.read(worker.path)).state).toBe('complete');
+  expect((await inspect_record(worker.path, { runtime: f.runtime })).complete).toBe(true);
+  await records.write(worker.path, retired);
+  expect((await stop_record(worker.path, { runtime: f.runtime })).complete).toBe(true);
+  expect((await records.read(worker.path)).state).toBe('complete');
+  expect(removal_failure).toHaveBeenCalledTimes(2);
   const other = await setup();
   other.native.requires_containment = true;
   const uncontained = (await WorkerSupervisor.create(other.environment, other.root, {
@@ -205,7 +217,7 @@ test('reused PIDs do not authorize signals and copied journals cannot certify cl
   expect((await inspect_record(f.path, { runtime: f.runtime })).complete).toBe(false);
 });
 
-test('Linux cleanup requires an empty joined cgroup and kernel escalation leaves sibling Workers alone', async () => {
+test('Linux cleanup escalates after transient TERM evidence failure and leaves sibling Workers alone', async () => {
   let offset = 0;
   const cgroups = new Cgroups();
   const f = await setup({ cgroups, clock: () => performance.now() / 1000 + offset });
@@ -216,9 +228,17 @@ test('Linux cleanup requires an empty joined cgroup and kernel escalation leaves
   f.native.on_signal = (pid, signum) => {
     if (signum === 15) {
       f.native.table.delete(pid);
-      offset += 5.001;
+      f.native.fail = true;
     }
   };
+  const snapshot = vi.spyOn(f.native, 'snapshot').mockImplementation(async () => {
+    if (f.native.fail) {
+      f.native.fail = false;
+      offset += 5.001;
+      throw new Error('transient TERM inspection failure');
+    }
+    return new Map(f.native.table);
+  });
   const kill = vi.spyOn(cgroups, 'kill').mockImplementation(async () => {
     cgroups.populated = false;
     f.native.table.delete(99);
@@ -226,6 +246,7 @@ test('Linux cleanup requires an empty joined cgroup and kernel escalation leaves
   await records.write(f.path, { ...f.record, cgroup: cgroups.identity, cgroup_joined: true });
   expect((await stop_record(f.path, { runtime: f.runtime })).complete).toBe(true);
   expect(kill).toHaveBeenCalledExactlyOnceWith(cgroups.identity);
+  expect(snapshot).toHaveBeenCalled();
   expect(f.native.table.has(30)).toBe(true);
   expect(f.native.table.has(99)).toBe(false);
   expect(f.native.signals).toEqual([[20, 15]]);
@@ -286,10 +307,16 @@ test('native transport failure does not skip owned-process escalation and reconc
     expect(timed.complete).toBe(true);
     expect(timed.reason).toContain('Native Worker stop deadline expired');
     let joined = false;
-    const settled = pending.settled().then(() => {
+    const settled = pending.shutdown_settled.then(() => {
       joined = true;
     });
     await Promise.resolve();
+    expect(joined).toBe(false);
+    await expect(
+      pending.settled({ deadline: performance.now() / 1000 + 0.01 }),
+    ).rejects.toMatchObject({
+      name: 'ShutdownDeadlineExceeded',
+    });
     expect(joined).toBe(false);
     await f.runtime.close();
     expect(joined).toBe(false);
@@ -298,6 +325,28 @@ test('native transport failure does not skip owned-process escalation and reconc
     expect(joined).toBe(true);
   } finally {
     release.resolve();
-    await pending.settled();
+    await pending.shutdown_settled;
   }
 }, 10_000);
+
+test('Worker executable lookup separates explicit Worker paths from bare PATH lookup', async () => {
+  const f = await setup();
+  const bin = join(f.root, 'bin');
+  await mkdir(bin);
+  await writeFile(join(bin, 'synthetic-worker'), '', { mode: 0o700 });
+  await writeFile(join(f.root, 'synthetic-worker'), '', { mode: 0o700 });
+  const entry = './' + relative(process.cwd(), bin);
+  const worker = (await WorkerSupervisor.create({ ...f.environment, PATH: entry }, f.root, {
+    runtime: f.runtime,
+  }))!;
+  expect(worker.argv(['synthetic-worker', 'argument']).slice(3)).toEqual([
+    entry + '/synthetic-worker',
+    'argument',
+  ]);
+  expect(worker.argv(['bin/synthetic-worker']).at(-1)).toBe(join(bin, 'synthetic-worker'));
+  worker.environment.PATH = '';
+  expect(() => worker.argv(['synthetic-worker'])).toThrow('executable is unavailable');
+  delete worker.environment.PATH;
+  expect(worker.argv(['sh']).at(-1)).toBe('/bin/sh');
+  await worker.cancel_unspawned();
+});

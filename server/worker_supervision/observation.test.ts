@@ -120,22 +120,36 @@ test('runtime closure fences external work while admitted nested cleanup retains
     });
   });
   await entered.promise;
-  const closing = runtime.close();
+  const closing = expect(
+    runtime.close({ deadline: performance.now() / 1000 + 0.01 }),
+  ).rejects.toMatchObject({
+    name: 'ShutdownDeadlineExceeded',
+  });
+  const raw = runtime.shutdown_settled;
+  let closed = false;
+  void raw.then(() => {
+    closed = true;
+  });
   try {
     await expect(
       runtime.operation(async () => {
         external = true;
       }),
     ).rejects.toThrow('closed');
+    await closing;
+    expect(closed).toBe(false);
+    expect(runtime.shutdown_settled).toBe(raw);
     release.resolve();
     await admitted;
-    await closing;
+    await runtime.close();
+    await raw;
+    expect(closed).toBe(true);
     expect(cleaned).toBe(true);
     expect(external).toBe(false);
     await expect(runtime.operation(async () => {})).rejects.toThrow('closed');
   } finally {
     release.resolve();
     await admitted;
-    await closing;
+    await raw;
   }
 });

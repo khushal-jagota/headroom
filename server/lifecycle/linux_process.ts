@@ -96,12 +96,15 @@ export interface LinuxWorkerProcessSupport {
 let worker_support: LinuxWorkerProcessSupport | undefined;
 export function linux_worker_process_support(): LinuxWorkerProcessSupport {
   if (worker_support) return worker_support;
-  if (process.platform !== 'linux') throw new Error('Worker pidfd support requires Linux');
+  if (process.platform !== 'linux' || !['x64', 'arm64'].includes(process.arch))
+    throw new Error('Worker pidfd support requires the Linux x64 or arm64 ABI');
   const library = koffi.load('libc.so.6');
-  const open = library.func('int pidfd_open(int pid, unsigned int flags)');
-  const send = library.func(
-    'int pidfd_send_signal(int fd, int signum, void *info, unsigned int flags)',
-  );
+  // These kernel syscall numbers agree on Linux x64 and arm64. Older glibc
+  // versions expose syscall() without the later pidfd wrapper symbols.
+  const syscall = library.func('long syscall(long number, ...)');
+  const open = (pid: number) => syscall(434, 'long', pid, 'unsigned long', 0);
+  const send = (descriptor: number, signum: number) =>
+    syscall(424, 'long', descriptor, 'long', signum, 'void *', null, 'unsigned long', 0);
   const getsid = library.func('int getsid(int pid)');
   const getpgrp = library.func('int getpgrp(void)');
   const setsid = library.func('int setsid(void)');
@@ -112,7 +115,7 @@ export function linux_worker_process_support(): LinuxWorkerProcessSupport {
     });
   worker_support = {
     signal_exact(pid, birth, signum, read_current) {
-      const descriptor = open(pid, 0);
+      const descriptor = open(pid);
       if (descriptor < 0) {
         if (koffi.errno() === 3) return true;
         throw failure('Open Worker process handle');
@@ -120,7 +123,7 @@ export function linux_worker_process_support(): LinuxWorkerProcessSupport {
       try {
         const current = read_current();
         if (current === null || current.birth !== birth || current.zombie) return true;
-        if (send(descriptor, signum, null, 0) !== 0 && koffi.errno() !== 3)
+        if (send(descriptor, signum) !== 0 && koffi.errno() !== 3)
           throw failure('Signal Worker process handle');
         return true;
       } finally {

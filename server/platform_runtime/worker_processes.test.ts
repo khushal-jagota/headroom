@@ -72,16 +72,28 @@ test('Linux signals acquire the pidfd before the final birth check and never sig
   let descriptor = -1;
   fake_binding.load.mockReturnValue({
     func: (signature: string) => {
-      if (signature.includes('pidfd_open'))
-        return () => {
-          calls.push('open');
-          return (descriptor = openSync(path, 'r'));
-        };
-      if (signature.includes('pidfd_send_signal'))
-        return () => {
+      if (signature === 'long syscall(long number, ...)')
+        return (number: number, ...args: unknown[]) => {
+          if (number === 434) {
+            expect(args).toEqual(['long', 42, 'unsigned long', 0]);
+            calls.push('open');
+            return (descriptor = openSync(path, 'r'));
+          }
+          expect(number).toBe(424);
+          expect(args).toEqual([
+            'long',
+            descriptor,
+            'long',
+            15,
+            'void *',
+            null,
+            'unsigned long',
+            0,
+          ]);
           calls.push('signal');
           return 0;
         };
+      if (signature.includes('pidfd_')) throw new Error('glibc pidfd wrapper is absent');
       return () => 0;
     },
   } as unknown as ReturnType<typeof fake_binding.load>);
@@ -104,8 +116,9 @@ test('Linux signals acquire the pidfd before the final birth check and never sig
   expect(calls).toEqual(['open', 'birth']);
 });
 
-test('Darwin libproc decoding retains microseconds and refuses a truncated inventory', () => {
+test('Darwin libproc decoding retains microseconds, a shared clock, and refuses a truncated inventory', async () => {
   const original = process.platform;
+  let truncated = true;
   Object.defineProperty(process, 'platform', { value: 'darwin' });
   try {
     fake_binding.load.mockReturnValue({
@@ -119,13 +132,25 @@ test('Darwin libproc decoding retains microseconds and refuses a truncated inven
             return buffer.length;
           };
         if (signature.includes('proc_listpids'))
-          return (_type: number, _uid: number, buffer: Buffer | null) =>
-            buffer === null ? 4 : buffer.length;
+          return (_type: number, _uid: number, buffer: Buffer | null) => {
+            if (buffer === null) return 4;
+            if (truncated) return buffer.length;
+            buffer.writeInt32LE(42);
+            return 4;
+          };
         return () => 0;
       },
     } as unknown as ReturnType<typeof fake_binding.load>);
     expect(darwin_worker_process_info(42)?.birth).toBe('9007199254740993:123456');
     expect(() => darwin_worker_process_snapshot(Infinity)).toThrow('incomplete');
+    truncated = false;
+    const clock = vi.fn(() => 0);
+    expect(darwin_worker_process_snapshot(1, clock).get(42)?.birth).toBe('9007199254740993:123456');
+    expect(clock).toHaveBeenCalled();
+    const native = new DarwinWorkerProcesses({ commands: { run: vi.fn() }, clock });
+    // Both the facade and its default bridge must use the same injected clock.
+    await expect(native.snapshot(1)).resolves.toHaveProperty('size', 1);
+    await expect(native.snapshot(0)).rejects.toThrow('deadline');
   } finally {
     Object.defineProperty(process, 'platform', { value: original });
   }

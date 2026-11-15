@@ -47,7 +47,7 @@ export class DarwinWorkerProcesses implements WorkerProcessPrimitives {
     this.#clock = options.clock ?? monotonic_seconds;
     this.#native = options.native ?? {
       info: darwin_worker_process_info,
-      snapshot: darwin_worker_process_snapshot,
+      snapshot: (deadline) => darwin_worker_process_snapshot(deadline, this.#clock),
       exists: darwin_worker_process_exists,
       signal: (pid, signum) => {
         process.kill(pid, signum);

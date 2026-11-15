@@ -6,6 +6,9 @@ import { homedir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { randomUUID } from 'node:crypto';
 import { setTimeout as pause } from 'node:timers/promises';
+import { observe_shutdown } from '../conversation/shutdown.ts';
+import type { StopOptions } from '../lifecycle/contracts.ts';
+import { monotonic_seconds, SHUTDOWN_GRACE_SECONDS } from '../lifecycle/configuration.ts';
 import { observe_promise } from '../core/promise_observer.ts';
 import type { LocalChildIdentity } from '../conversation/local_child_contracts.ts';
 import type {
@@ -129,11 +132,16 @@ export class WorkerSupervisor {
   argv(original: readonly string[]): readonly string[] {
     if (!original.length) throw new Error('Worker command is empty');
     let executable = original[0];
+    const search_path = this.environment.PATH ?? '/bin:/usr/bin';
     const candidates = executable.includes('/')
       ? [isAbsolute(executable) ? executable : resolve(this.working_directory, executable)]
-      : (this.environment.PATH ?? '/bin:/usr/bin')
-          .split(':')
-          .map((entry) => resolve(this.working_directory, entry || '.', executable));
+      : search_path === ''
+        ? []
+        : search_path
+            .split(':')
+            .map((entry) =>
+              entry === '' ? executable : `${entry}${entry.endsWith('/') ? '' : '/'}${executable}`,
+            );
     executable =
       candidates.find((candidate) => {
         try {
@@ -389,7 +397,19 @@ export class WorkerSupervisor {
       ? { ...result, reason: result.reason + '; ' + diagnostics.join('; ') }
       : result;
   }
-  async settled(): Promise<void> {
+  settled(
+    options: StopOptions = { deadline: monotonic_seconds() + SHUTDOWN_GRACE_SECONDS },
+  ): Promise<void> {
+    return observe_shutdown(
+      this.shutdown_settled,
+      options,
+      'Native Worker cleanup remains unsettled',
+    );
+  }
+  get shutdown_settled(): Promise<void> {
+    return this.#settle_native();
+  }
+  async #settle_native(): Promise<void> {
     while (this.#native_stops.size) await Promise.allSettled([...this.#native_stops]);
   }
 }

@@ -1,4 +1,7 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
+import { observe_shutdown } from '../conversation/shutdown.ts';
+import type { StopOptions } from '../lifecycle/contracts.ts';
+import { monotonic_seconds, SHUTDOWN_GRACE_SECONDS } from '../lifecycle/configuration.ts';
 /** One shared observation scope. Native processes remain with the invocation owner. */
 import type {
   InspectionContext,
@@ -14,6 +17,7 @@ export class WorkerSupervisionRuntime {
   readonly observer: SharedProcessObserver;
   readonly #operations = new Set<Promise<unknown>>();
   #closed = false;
+  #closing: Promise<void> | null = null;
   readonly #scope = new AsyncLocalStorage<{ active: boolean }>();
   constructor(options: {
     primitives: WorkerProcessPrimitives;
@@ -51,8 +55,23 @@ export class WorkerSupervisionRuntime {
       .catch(() => {});
     return task;
   }
-  async close(): Promise<void> {
-    this.#closed = true;
+  get shutdown_settled(): Promise<void> {
+    return this.#closing ?? Promise.resolve();
+  }
+  close(
+    options: StopOptions = { deadline: monotonic_seconds() + SHUTDOWN_GRACE_SECONDS },
+  ): Promise<void> {
+    if (this.#closing === null) {
+      this.#closed = true;
+      this.#closing = this.#close_owned();
+    }
+    return observe_shutdown(
+      this.#closing,
+      options,
+      'Worker supervision metadata remains unsettled',
+    );
+  }
+  async #close_owned(): Promise<void> {
     await this.observer.close();
     while (this.#operations.size) await Promise.allSettled([...this.#operations]);
     await this.fresh.close();
