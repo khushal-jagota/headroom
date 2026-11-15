@@ -39,7 +39,11 @@ import {
 } from '../protocol.ts';
 import { expiry_reason } from '../logic/command_expiry.ts';
 import { counter } from '../logic/counters.ts';
-import { current_incarnation } from '../vps_presence_store.ts';
+import {
+  current_incarnation,
+  require_current_incarnation_in_transaction,
+  require_incarnation_owner,
+} from '../vps_presence_store.ts';
 import {
   open_child_assignment,
   prepare_command_in_transaction,
@@ -60,7 +64,7 @@ function result(text: string | null): WireValue<'CommandResult'> | null {
   return text === null ? null : decode_json(text, 'CommandResult');
 }
 const equivalent = isDeepStrictEqual;
-export function command_row(sql: ReadSql, command_id: string): MailboxRow | null {
+function read_command_row(sql: ReadSql, command_id: string): MailboxRow | null {
   const row = sql.get<{
     command_json: string;
     executor_incarnation: string;
@@ -79,8 +83,17 @@ export function command_row(sql: ReadSql, command_id: string): MailboxRow | null
       }
     : null;
 }
+export function command_row(
+  sql: ReadSql,
+  command_id: string,
+  machine_id = ORIGINAL_MAC_MACHINE_ID,
+): MailboxRow | null {
+  const row = read_command_row(sql, command_id);
+  if (row !== null) require_incarnation_owner(sql, row.executor_incarnation, machine_id);
+  return row;
+}
 export function settled_row(sql: ReadSql, command_id: string): MailboxRow | null {
-  const row = command_row(sql, command_id);
+  const row = read_command_row(sql, command_id);
   return row !== null && is_settled(row) ? row : null;
 }
 export function settlement_result(
@@ -114,11 +127,12 @@ function insert(
   tx: TransactionSql,
   command: WireValue<'MailboxCommand'>,
   incarnation: string,
+  machine_id: string,
 ): WireValue<'MailboxCommand'> {
   const child = command.child_command;
   tx.run(
-    'INSERT INTO executor_commands(command_id,executor_incarnation,operation,conversation_id,child_id,turn_number,command_json,state,created_at_ms) ' +
-      "VALUES (?,?,?,?,?,?,'{}','waiting',?)",
+    'INSERT INTO executor_commands(command_id,executor_incarnation,operation,conversation_id,child_id,turn_number,command_json,state,created_at_ms,machine_id) ' +
+      "VALUES (?,?,?,?,?,?,'{}','waiting',?,?)",
     [
       command.command_id,
       incarnation,
@@ -127,6 +141,7 @@ function insert(
       child?.child.child_id ?? null,
       child?.turn == null ? null : child.turn.turn_number,
       command.created_at_vps_ms,
+      machine_id,
     ],
   );
   // lastInsertRowid can already be rounded by the driver. Read text before leaving this writer.
@@ -145,9 +160,13 @@ export function insert_child_command(
   tx: TransactionSql,
   command: WireValue<'ChildCommand'>,
   now: number,
+  machine_id = ORIGINAL_MAC_MACHINE_ID,
 ): WireValue<'MailboxCommand'> | WireValue<'CommandOutcome'> {
   command = decode_value(command, 'ChildCommand');
-  const existing = command_row(tx, command.command_id);
+  require_incarnation_owner(tx, command.child.executor_incarnation, machine_id);
+  if (command.arguments.kind === 'recheck_cleanup')
+    require_incarnation_owner(tx, command.arguments.source.executor_incarnation, machine_id);
+  const existing = read_command_row(tx, command.command_id);
   if (existing !== null) {
     if (!equivalent(existing.command.child_command, command))
       throw new ExecutorValidationError('command identity reused with different content');
@@ -155,7 +174,7 @@ export function insert_child_command(
   }
   const child = command.child;
   if (
-    current_incarnation(tx) !== child.executor_incarnation ||
+    current_incarnation(tx, machine_id) !== child.executor_incarnation ||
     open_child_assignment(tx, child) === null
   )
     return {
@@ -176,14 +195,16 @@ export function insert_child_command(
       model_list_request: null,
     },
     child.executor_incarnation,
+    machine_id,
   );
 }
 export function insert_model_list_request(
   tx: TransactionSql,
   request: WireValue<'ModelListRequest'>,
   now: number,
+  machine_id = ORIGINAL_MAC_MACHINE_ID,
 ): WireValue<'MailboxCommand'> {
-  const incarnation = current_incarnation(tx);
+  const incarnation = current_incarnation(tx, machine_id);
   if (incarnation === null) throw new ExecutorValidationError('no Mac executor process is known');
   return insert(
     tx,
@@ -195,6 +216,7 @@ export function insert_model_list_request(
       model_list_request: request,
     },
     incarnation,
+    machine_id,
   );
 }
 /** Raw rows only. Protocol parsing and serialization run after the SQL scope ends. */
@@ -244,11 +266,17 @@ function prepared_value<T>(value: Preparation<T>): T {
   return value.value;
 }
 /** Caller supplies an admitted poll. This takes no new authority or owned SQL scope. */
-export function read_fetch_rows(sql: ReadSql, incarnation: string, after: number): FetchRows {
+export function read_fetch_rows(
+  sql: ReadSql,
+  incarnation: string,
+  after: number,
+  machine_id = ORIGINAL_MAC_MACHINE_ID,
+): FetchRows {
+  require_current_incarnation_in_transaction(sql, incarnation, machine_id);
   const presence =
     sql.get<FetchPresence>(
       'SELECT executor_incarnation,last_lease_at_ms,identity_json,refusal_json FROM mac_executor_presence WHERE machine_id=?',
-      [ORIGINAL_MAC_MACHINE_ID],
+      [machine_id],
     ) ?? null;
   const replaced =
     presence?.executor_incarnation === incarnation
@@ -256,16 +284,16 @@ export function read_fetch_rows(sql: ReadSql, incarnation: string, after: number
           'SELECT CAST(c.command_sequence AS TEXT) AS sequence,c.command_json,c.state,c.conversation_id,c.outcome_json IS NOT NULL AS outcome_present ' +
             'FROM executor_commands AS c INDEXED BY executor_commands_open ' +
             'JOIN executor_incarnations AS i ON i.executor_incarnation=c.executor_incarnation ' +
-            "WHERE c.state IN ('waiting','delivered') AND c.state='delivered' AND c.executor_incarnation<>? " +
+            "WHERE c.machine_id=? AND c.state IN ('waiting','delivered') AND c.state='delivered' AND c.executor_incarnation<>? " +
             'AND i.replaced_at_ms IS NOT NULL ORDER BY c.command_sequence',
-          [incarnation],
+          [machine_id, incarnation],
         )
       : [];
   const candidates = sql.all<FetchRow>(
     'SELECT CAST(command_sequence AS TEXT) AS sequence,command_json,state,conversation_id,0 AS outcome_present ' +
       'FROM executor_commands INDEXED BY executor_commands_open ' +
-      "WHERE executor_incarnation=? AND command_sequence>? AND state IN ('waiting','delivered') ORDER BY command_sequence LIMIT ?",
-    [incarnation, after, MAX_MAILBOX_POLL_COMMANDS],
+      "WHERE machine_id=? AND executor_incarnation=? AND command_sequence>? AND state IN ('waiting','delivered') ORDER BY command_sequence LIMIT ?",
+    [machine_id, incarnation, after, MAX_MAILBOX_POLL_COMMANDS],
   );
   return { replaced, candidates, presence };
 }
@@ -342,8 +370,9 @@ export function fetch(
   now: number,
   arrived_at: number,
   prepared: PreparedFetch,
+  machine_id = ORIGINAL_MAC_MACHINE_ID,
 ): MailboxFetchResult | null {
-  const rows = read_fetch_rows(tx, incarnation, after);
+  const rows = read_fetch_rows(tx, incarnation, after, machine_id);
   const stale = now - arrived_at > HELD_POLL_EVIDENCE_MS;
   // Validate every freshly selected row before the first effect, including rows beyond budget.
   if (
@@ -434,13 +463,15 @@ export function record(
   incarnation: string,
   values: readonly WireValue<'CommandResult'>[],
   now: number,
+  machine_id = ORIGINAL_MAC_MACHINE_ID,
 ): MailboxRecordResult {
+  require_current_incarnation_in_transaction(tx, incarnation, machine_id);
   const recorded: string[] = [],
     rejected: WireValue<'RejectedCommandResult'>[] = [];
   const settled: MailboxSettlement[] = [];
   for (const incoming of values) {
     const value = decode_value(incoming, 'CommandResult');
-    const row = command_row(tx, value.command_id);
+    const row = read_command_row(tx, value.command_id);
     const reason = result_refusal(row, value, incarnation);
     if (reason !== null) {
       rejected.push({ command_id: value.command_id, reason });
@@ -473,7 +504,7 @@ export function withdraw(
   reason: CommandSettlementReason,
   now: number,
 ): MailboxSettlements {
-  const row = command_row(tx, command_id);
+  const row = read_command_row(tx, command_id);
   if (row === null || row.state !== 'waiting') return [];
   const outcome = settlement_result(row.command, 'refused', reason);
   tx.run(
@@ -489,7 +520,7 @@ export function finish_by_proof(
   outcome: WireValue<'CommandOutcome'>,
   now: number,
 ): MailboxSettlements {
-  const row = command_row(tx, command_id);
+  const row = read_command_row(tx, command_id);
   if (row === null || is_settled(row)) return [];
   const value =
     row.result ??
@@ -506,11 +537,12 @@ export function replace_incarnation_in_transaction(
   replaced: string,
   _current: string,
   now: number,
+  machine_id = ORIGINAL_MAC_MACHINE_ID,
 ): MailboxSettlements {
   const settled: MailboxSettlement[] = [];
   for (const row of tx.all<{ command_json: string }>(
-    "SELECT command_json FROM executor_commands WHERE executor_incarnation=? AND state='waiting' ORDER BY command_sequence",
-    [replaced],
+    "SELECT command_json FROM executor_commands WHERE machine_id=? AND executor_incarnation=? AND state='waiting' ORDER BY command_sequence",
+    [machine_id, replaced],
   )) {
     const command = decode_json(row.command_json, 'MailboxCommand');
     const outcome = settlement_result(command, 'refused', 'executor_process_replaced');
@@ -522,10 +554,11 @@ export function replace_incarnation_in_transaction(
   }
   return settled;
 }
-export function high_sequence(sql: ReadSql): number {
+export function high_sequence(sql: ReadSql, machine_id = ORIGINAL_MAC_MACHINE_ID): number {
   return counter(
     sql.get<{ value: string }>(
-      'SELECT CAST(COALESCE(MAX(command_sequence),0) AS TEXT) AS value FROM executor_commands',
+      'SELECT CAST(COALESCE(MAX(command_sequence),0) AS TEXT) AS value FROM executor_commands WHERE machine_id=?',
+      [machine_id],
     )!.value,
   );
 }
@@ -540,8 +573,9 @@ export function open_command_ids_of(sql: ReadSql, child: ChildReference): readon
 export function command_for_input(
   sql: ReadSql,
   command_id: string,
+  machine_id = ORIGINAL_MAC_MACHINE_ID,
 ): WireValue<'ChildCommand'> | null {
-  const row = command_row(sql, command_id);
+  const row = command_row(sql, command_id, machine_id);
   return row === null || is_settled(row) ? null : (row.command.child_command ?? null);
 }
 export function start_of(
@@ -578,7 +612,10 @@ export function prompt_withdrawn_at_replacement(
   const command = row ? decode_json(row.command_json, 'MailboxCommand').child_command : null;
   return command?.arguments.kind === 'write_prompt' ? command.arguments : null;
 }
-export function prompts_written_again(sql: ReadSql): readonly PromptWrittenAgain[] {
+export function prompts_written_again(
+  sql: ReadSql,
+  machine_id = ORIGINAL_MAC_MACHINE_ID,
+): readonly PromptWrittenAgain[] {
   const rows = sql.all<{
     executor_incarnation: string;
     child_id: string;
@@ -587,10 +624,10 @@ export function prompts_written_again(sql: ReadSql): readonly PromptWrittenAgain
     command_json: string;
   }>(
     'SELECT r.executor_incarnation,r.child_id,r.conversation_id,CAST(r.turn_number AS TEXT) AS turn_number,c.command_json FROM mac_runs AS r ' +
-      'JOIN mac_executor_presence AS p ON p.machine_id=r.machine_id AND p.executor_incarnation=r.executor_incarnation ' +
+      'JOIN mac_executor_presence AS p ON p.machine_id=? AND p.executor_incarnation=r.executor_incarnation ' +
       "JOIN executor_commands AS c ON c.conversation_id=r.conversation_id AND c.turn_number=r.turn_number AND c.operation='write_prompt' " +
-      "AND c.child_id<>r.child_id AND c.state='withdrawn' AND json_extract(c.outcome_json,'$.child_outcome.result.reason')=? WHERE r.stop_state='open'",
-    ['executor_process_replaced'],
+      "AND c.child_id<>r.child_id AND c.state='withdrawn' AND json_extract(c.outcome_json,'$.child_outcome.result.reason')=? WHERE r.machine_id=? AND r.stop_state='open'",
+    [machine_id, 'executor_process_replaced', machine_id],
   );
   const found: PromptWrittenAgain[] = [];
   for (const row of rows) {
@@ -618,12 +655,17 @@ export function prompts_written_again(sql: ReadSql): readonly PromptWrittenAgain
   }
   return found;
 }
-export function late_steers_left_by_a_restart(sql: ReadSql): readonly LateSteerAfterRestart[] {
+export function late_steers_left_by_a_restart(
+  sql: ReadSql,
+  machine_id = ORIGINAL_MAC_MACHINE_ID,
+): readonly LateSteerAfterRestart[] {
   const uncertain = sql.all<{ conversation_id: string; sequence: string; payload: string }>(
     "SELECT e.conversation_id,CAST(e.sequence AS TEXT) AS sequence,e.payload FROM conversation_events AS e WHERE e.kind='prompt_delivery_uncertain' " +
+      'AND EXISTS(SELECT 1 FROM executor_commands own WHERE own.conversation_id=e.conversation_id AND own.machine_id=?) ' +
       "AND json_extract(e.payload,'$.mode')='steer' AND NOT EXISTS (SELECT 1 FROM conversation_events AS later WHERE later.conversation_id=e.conversation_id " +
       "AND later.sequence>e.sequence AND later.kind IN ('prompt','prompt_delivery_refused','prompt_delivery_uncertain','prompt_discarded') " +
       "AND json_extract(later.payload,'$.sender_message_id')=json_extract(e.payload,'$.sender_message_id')) ORDER BY e.conversation_id,e.sequence",
+    [machine_id],
   );
   const found: LateSteerAfterRestart[] = [];
   const used = new Set<string>();
@@ -673,7 +715,11 @@ export function late_steers_left_by_a_restart(sql: ReadSql): readonly LateSteerA
   }
   return found;
 }
-export function tracked_waits(sql: ReadSql, _now: number): readonly TrackedWait[] {
+export function tracked_waits(
+  sql: ReadSql,
+  _now: number,
+  machine_id = ORIGINAL_MAC_MACHINE_ID,
+): readonly TrackedWait[] {
   const waits: TrackedWait[] = [];
   for (const row of sql.all<{
     command_id: string;
@@ -682,13 +728,15 @@ export function tracked_waits(sql: ReadSql, _now: number): readonly TrackedWait[
     state: string;
     created_at_ms: number;
   }>(
-    "SELECT command_id,operation,conversation_id,state,created_at_ms FROM executor_commands WHERE state IN ('waiting','delivered') ORDER BY command_sequence",
+    "SELECT command_id,operation,conversation_id,state,created_at_ms FROM executor_commands WHERE machine_id=? AND state IN ('waiting','delivered') ORDER BY command_sequence",
+    [machine_id],
   )) {
     if (row.state === 'waiting')
       waits.push({
         kind: 'mac_command_unfetched',
         wait_key: row.command_id,
         conversation_id: row.conversation_id,
+        machine_id: null,
         detail: `The Mac has not fetched a ${row.operation} command`,
         started_at_ms: row.created_at_ms,
       });
@@ -697,19 +745,22 @@ export function tracked_waits(sql: ReadSql, _now: number): readonly TrackedWait[
         kind: 'mac_stop_unproven',
         wait_key: row.command_id,
         conversation_id: row.conversation_id,
+        machine_id: null,
         detail: 'A stop has no proof that the agent stopped',
         started_at_ms: row.created_at_ms,
       });
   }
   for (const row of sql.all<{ command_id: string; conversation_id: string; created_at_ms: number }>(
     'SELECT c.command_id,c.conversation_id,c.created_at_ms FROM executor_commands AS c JOIN mac_runs AS r ON r.conversation_id=c.conversation_id ' +
-      'AND r.child_id=c.child_id AND r.executor_incarnation=c.executor_incarnation JOIN mac_executor_presence AS p ON p.machine_id=r.machine_id ' +
-      "AND p.executor_incarnation=r.executor_incarnation WHERE c.operation='stop' AND c.state='finished' AND r.stop_state='stopping'",
+      'AND r.child_id=c.child_id AND r.executor_incarnation=c.executor_incarnation JOIN mac_executor_presence AS p ON p.machine_id=? ' +
+      "AND p.executor_incarnation=r.executor_incarnation WHERE r.machine_id=? AND c.operation='stop' AND c.state='finished' AND r.stop_state='stopping'",
+    [machine_id, machine_id],
   ))
     waits.push({
       kind: 'mac_stop_unproven',
       wait_key: row.command_id,
       conversation_id: row.conversation_id,
+      machine_id: null,
       detail: 'A stop failed, and the agent may still be running',
       started_at_ms: row.created_at_ms,
     });
@@ -717,7 +768,11 @@ export function tracked_waits(sql: ReadSql, _now: number): readonly TrackedWait[
 }
 /** Stateless reads use the caller's SQL scope and are independent of mailbox admission. */
 export class MailboxStallSource implements StallSource {
+  readonly machine_id: string;
+  constructor(machine_id = ORIGINAL_MAC_MACHINE_ID) {
+    this.machine_id = machine_id;
+  }
   tracked_waits(sql: ReadSql, now: number): readonly TrackedWait[] {
-    return tracked_waits(sql, now);
+    return tracked_waits(sql, now, this.machine_id);
   }
 }

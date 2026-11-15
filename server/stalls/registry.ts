@@ -16,6 +16,7 @@ export class ProcessWaitRegistry implements WaitRegistry {
   ): TrackedWaitHandle {
     const id = this.next_id++;
     this.entries.set(id, {
+      machine_id: null,
       kind,
       wait_key,
       conversation_id: options.conversation_id ?? null,
