@@ -43,10 +43,11 @@ from planner.executor import protocol as wire
 from planner.executor import vps_files
 from planner.executor.configuration import FILE_CHUNK_BYTES, FILE_TRANSFER_STALL_SECONDS
 from planner.executor.store import ExecutorStore
-from planner.executor.vps_inbox import MacInbox
+from planner.executor.vps_inbox import InboxStore, MacInbox
 from planner.executor.vps_mailbox import SqliteCommandMailbox
 from planner.executor.vps_presence import MacPresenceService
 from planner.executor.vps_runs import MacRuns
+from planner.machines.contracts import ORIGINAL_MAC_MACHINE_ID
 
 ROOT = Path(__file__).resolve().parents[3]
 CONTENT = b"result bytes"
@@ -55,6 +56,39 @@ IDENTITY = mac_identity("11111111-1111-4111-8111-111111111111")
 
 def _typed(name: str, value: Any) -> Any:
     return wire.type_adapter(getattr(wire, name)).validate_json(json.dumps(value))
+
+
+def test_machine_upload_staging_paths(tmp_path: Path) -> None:
+    """Identical manifests use separate private staging paths, with the legacy path intact."""
+    path = tmp_path / "state.sqlite"
+    other = "44444444-4444-4444-8444-444444444444"
+    manifest = wire.FileManifest(
+        wire.FileScope.ticket, "t_12345678", "out/result.txt",
+        hashlib.sha256(CONTENT).hexdigest(), len(CONTENT),
+    )
+    expected = [
+        str(InboxStore(str(path), machine_id=machine)._staged_file(manifest))
+        for machine in (ORIGINAL_MAC_MACHINE_ID, other)
+    ]
+    homes = create_synthetic_homes(tmp_path)
+    run = subprocess.run(
+        ["node", str(ROOT / "server/executor/testing/files.ts")],
+        input=json.dumps(dict(
+            scope_only=True, path=str(path), other_machine=other,
+            manifest=wire.as_object(manifest),
+        )),
+        cwd=ROOT,
+        env={
+            **homes, "PATH": os.environ.get("PATH", "/usr/bin:/bin"),
+            "PLAN_SERVER_URL": "http://127.0.0.1:1",
+        },
+        text=True, capture_output=True, timeout=15, check=False,
+    )
+    assert run.returncode == 0, run.stderr
+    assert json.loads(run.stdout) == expected
+    assert Path(expected[0]).parent == tmp_path / "executor-uploads"
+    assert Path(expected[1]).parent == tmp_path / "executor-uploads" / other
+    assert Path(expected[0]).name == Path(expected[1]).name
 
 
 async def _error(work: Any) -> Any:

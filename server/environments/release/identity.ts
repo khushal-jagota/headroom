@@ -5,7 +5,12 @@ import { access, lstat, readdir, readFile, readlink, stat } from 'node:fs/promis
 import { dirname, extname, join, relative, sep } from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
 import { path_is_within } from '../../core/path_containment.ts';
-import type { AppManifest, AppValidationOptions, RuntimeContract } from './contracts.ts';
+import type {
+  AppManifest,
+  AppValidationOptions,
+  RuntimeContract,
+  RuntimeTarget,
+} from './contracts.ts';
 import { AppValidationError } from './contracts.ts';
 import {
   FILE_CHUNK_BYTES,
@@ -17,7 +22,8 @@ import {
 } from './configuration.ts';
 import { expand_path, resolved_path } from '../paths.ts';
 import { parse_optional_runtime_contract } from '../updates/logic/runtime_contract.ts';
-import { manifest_identity } from './logic/manifest.ts';
+import { manifest_identity, require_runtime_target } from './logic/manifest.ts';
+import { is_record } from '../../core/records.ts';
 export { validate_app_sha } from './logic/manifest.ts';
 
 function missing(error: unknown): boolean {
@@ -144,6 +150,31 @@ export async function validate_app_manifest(
     root = dirname(manifest_path);
   if (!(await file(manifest_path)))
     throw new AppValidationError(`app manifest is missing: ${manifest_path}`);
+  const marker = join(root, 'mac-runtime.json');
+  let marker_exists = true;
+  try {
+    await stat(marker);
+  } catch (error) {
+    if (missing(error)) marker_exists = false;
+    else throw error;
+  }
+  if (marker_exists) {
+    const target = decode(await readFile(marker));
+    if (!is_record(target)) throw new TypeError('runtime target manifest must be an object');
+    if (options.expected_target === undefined) {
+      if (target.role === 'executor')
+        throw new AppValidationError('an executor artifact cannot replace a home');
+    } else
+      require_runtime_target(
+        {
+          system: target.platform,
+          architecture: target.architecture,
+          role: target.role,
+        } as RuntimeTarget,
+        options.expected_target,
+      );
+  } else if (options.expected_target !== undefined)
+    throw new AppValidationError('executor artifact lacks its target manifest');
   try {
     await stat(join(root, '.git'));
     throw new AppValidationError('app root must not contain Git metadata');

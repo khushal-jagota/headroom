@@ -1,5 +1,5 @@
 /** Source application identity rules without filesystem or runtime probes. */
-import type { AppManifest } from '../contracts.ts';
+import type { AppManifest, RuntimeTarget } from '../contracts.ts';
 import { AppValidationError } from '../contracts.ts';
 import { APP_FORMAT } from '../configuration.ts';
 
@@ -38,4 +38,17 @@ export function manifest_identity(
     source_digest: raw.source_digest as string,
     artifact_digest: raw.artifact_digest as string,
   };
+}
+
+/** Artifact identity includes its OS, architecture, and installation role. */
+export function require_runtime_target(actual: RuntimeTarget, expected: RuntimeTarget): void {
+  if (
+    actual.system !== expected.system ||
+    actual.architecture !== expected.architecture ||
+    actual.role !== expected.role
+  )
+    throw new AppValidationError(
+      `runtime target ${actual.system ?? 'None'}/${actual.architecture ?? 'None'}/${actual.role ?? 'None'} ` +
+        `does not match ${expected.system}/${expected.architecture}/${expected.role}`,
+    );
 }

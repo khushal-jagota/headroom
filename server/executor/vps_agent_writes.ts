@@ -205,7 +205,11 @@ export class AgentWrites {
     mode: PromptDeliveryMode;
   } {
     return this.store.database.write((tx) => {
-      require_current_incarnation_in_transaction(tx, identity.executor_incarnation);
+      require_current_incarnation_in_transaction(
+        tx,
+        identity.executor_incarnation,
+        this.store.machine_id,
+      );
       const previous = this.store.prior_receipt(tx, envelope, identity);
       if (previous !== null) return { previous, recipient: principal, message: '', mode: 'queue' };
       const body = write.arguments.body;

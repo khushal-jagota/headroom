@@ -29,6 +29,76 @@ from planner.executor.vps_presence import MacPresenceService
 from planner.machines.contracts import ORIGINAL_MAC_MACHINE_ID
 
 
+def test_catalog_machine_storage(tmp_path: Path) -> None:
+    """Storage ownership uses the existing peer without protocol admission or a host."""
+    homes = create_synthetic_homes(tmp_path)
+    path, candidate = tmp_path / "source.sqlite", tmp_path / "candidate.sqlite"
+    other = "44444444-4444-4444-8444-444444444444"
+    snapshots = [
+        BackendSnapshot(
+            Backend.codex, True, None, str(index), None, (BackendModel(name),),
+            (), name, None, None, (), True,
+        )
+        for index, name in enumerate(("original", "named"))
+    ]
+
+    async def reference() -> dict[str, Any]:
+        values = []
+        for machine_id, snapshot in zip((ORIGINAL_MAC_MACHINE_ID, other), snapshots, strict=True):
+            mailbox = SqliteCommandMailbox(str(path), machine_id=machine_id)
+            presence = MacPresenceService(str(path), mailbox, machine_id=machine_id)
+            relay = VpsCatalogRelay(
+                cast(Any, SimpleNamespace(
+                    db_path=str(path), machine_id=machine_id, owns_conversation=lambda _: False,
+                )),
+                presence,
+                mailbox,
+            )
+            try:
+                values.append(wire.encode_value(relay.retained(Backend.codex)))
+                relay._keep(Backend.codex, snapshot)
+                values.append(wire.encode_value(relay.retained(Backend.codex)))
+            finally:
+                await relay.close()
+                await presence.close()
+                await mailbox.close()
+        with closing(connect(str(path))) as conn:
+            rows = [
+                dict(row) for row in conn.execute(
+                    "SELECT * FROM machine_backend_snapshots ORDER BY machine_id,backend_key"
+                )
+            ]
+        return dict(
+            values=values,
+            rows=[{**row, "snapshot_json": json.loads(row["snapshot_json"])} for row in rows],
+        )
+
+    with synthetic_home_environment(homes), closing(connect(str(path))) as conn:
+        create_schema(conn)
+        conn.execute("INSERT INTO machines VALUES (?,'Other','laptop','blue',0)", (other,))
+        conn.commit()
+        with sqlite3.connect(candidate) as target:
+            conn.backup(target)
+        expected = asyncio.run(reference())
+    run = subprocess.run(
+        ["node", str(ROOT / "server/executor/testing/catalog.ts")],
+        input=json.dumps(dict(
+            scope_only=True, path=str(candidate), other_machine=other,
+            snapshots=[wire.as_object(value) for value in snapshots],
+        )),
+        cwd=ROOT,
+        env={
+            **homes, "PATH": os.environ.get("PATH", "/usr/bin:/bin"),
+            "PLAN_SERVER_URL": "http://127.0.0.1:1",
+        },
+        text=True, capture_output=True, timeout=15, check=False,
+    )
+    assert run.returncode == 0, run.stderr
+    assert json.loads(run.stdout) == expected
+    assert expected["values"][0] is expected["values"][2] is None
+    assert len(expected["rows"]) == 2
+
+
 @pytest.mark.xfail(
     run=False,
     reason=(
