@@ -318,6 +318,25 @@ def test_scratch_git_work_and_fresh_apply_checks_match_python(
     expected = _normalize(_python_git(_git_fixture(python_root), monkeypatch), python_root)
     actual = _normalize(_node(node_root, "probe_scratch_git", _git_fixture(node_root)), node_root)
     assert actual == expected
+    assert actual["remaining"] == {
+        "clean": False,
+        "dirty": True,
+        "unpublished": True,
+        "active": True,
+        "recent": True,
+        "unknown": True,
+        "invalid": True,
+        "no-remote": True,
+        "late-dirty": False,  # Detached after admission, then kept in retirement storage.
+        "published": False,
+        "off-head": True,
+        "submodule": True,
+        "mixed": True,
+    }
+    assert len(actual["result"]["removed"]) == 2
+    retained_late_work = list((node_root / "files/.ticket-retired").glob("*/worktree/late.txt"))
+    assert len(retained_late_work) == 1
+    assert retained_late_work[0].read_text() == "fresh change"
     _report(request, "unit-21-scratch-git.json", started, actual)
 
 

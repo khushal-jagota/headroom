@@ -1,5 +1,7 @@
-import { rm, unlink } from 'node:fs/promises';
-import { dirname, sep } from 'node:path';
+import { constants } from 'node:fs';
+import { unlink, open, lstat, readdir, rmdir, readFile } from 'node:fs/promises';
+import type { FileHandle } from 'node:fs/promises';
+import { basename, dirname, join, resolve, sep } from 'node:path';
 import { path_is_within } from '../../core/path_containment.ts';
 import type { WorkspaceOptions, WorkspaceState } from '../contracts.ts';
 import { admit, checkouts, entry_stat, git, ticket_match, ticket_mentions } from './shared.ts';
@@ -26,6 +28,7 @@ export async function reason_to_keep(
   options: WorkspaceOptions = {},
 ): Promise<string | null> {
   root = admit(root, options);
+  if (process.platform !== 'linux') return 'safe removal is not supported on this platform yet';
   if (
     (await entry_stat(root))?.isSymbolicLink() ||
     (await entry_stat(dirname(root)))?.isSymbolicLink()
@@ -108,6 +111,80 @@ export async function reason_to_keep(
     }
   return null;
 }
+
+/** Linux procfs supplies fd-relative names without another native binding.
+ * Every directory is opened without following its final component. Descendant
+ * names resolve through that held descriptor even if an ancestor is replaced.
+ */
+async function remove_anchored(
+  root: string,
+  signal?: AbortSignal,
+  identity?: { dev: number; ino: number },
+  parent_identity?: { dev: number; ino: number },
+  ancestors?: ReadonlyMap<string, { dev: number; ino: number }>,
+): Promise<void> {
+  const flags = constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW;
+  const fd_path = (handle: FileHandle) => `/proc/self/fd/${handle.fd}`;
+  let parent = await open('/', flags);
+  try {
+    let cursor = '/';
+    for (const part of dirname(resolve(root)).split('/').filter(Boolean)) {
+      signal?.throwIfAborted();
+      const next = await open(`${fd_path(parent)}/${part}`, flags);
+      await parent.close();
+      parent = next;
+      cursor = join(cursor, part);
+      const expected = ancestors?.get(cursor);
+      if (expected) {
+        const actual = await parent.stat();
+        if (actual.dev !== expected.dev || actual.ino !== expected.ino)
+          throw new Error('Workspace ancestor directory changed before removal');
+      }
+    }
+    async function remove_entry(
+      parent: FileHandle,
+      name: string,
+      identity?: { dev: number; ino: number },
+    ): Promise<void> {
+      signal?.throwIfAborted();
+      const path = `${fd_path(parent)}/${name}`;
+      const expected = await lstat(path);
+      if (identity && (expected.dev !== identity.dev || expected.ino !== identity.ino))
+        throw new Error('Workspace directory identity changed before removal');
+      if (!expected.isDirectory()) {
+        // unlink never follows the final component, including a replacement link.
+        await unlink(path);
+        return;
+      }
+      const directory = await open(path, flags);
+      try {
+        const opened = await directory.stat();
+        if (opened.dev !== expected.dev || opened.ino !== expected.ino)
+          throw new Error('Workspace directory changed before removal');
+        for (const child of await readdir(fd_path(directory))) await remove_entry(directory, child);
+        const attached = await lstat(path);
+        if (!attached.isDirectory() || attached.dev !== opened.dev || attached.ino !== opened.ino)
+          throw new Error('Workspace directory changed during removal');
+        // rmdir does not follow a final symlink or recurse into a replacement.
+        await rmdir(path);
+      } finally {
+        await directory.close();
+      }
+    }
+    if (parent_identity) {
+      const attached_parent = await parent.stat();
+      if (
+        attached_parent.dev !== parent_identity.dev ||
+        attached_parent.ino !== parent_identity.ino
+      )
+        throw new Error('Workspace parent directory changed before removal');
+    }
+    await remove_entry(parent, basename(root), identity);
+  } finally {
+    await parent.close();
+  }
+}
+
 export async function cleanup_ticket_folder(
   root: string,
   options: WorkspaceOptions & {
@@ -116,12 +193,28 @@ export async function cleanup_ticket_folder(
     before_remove?: (path: string) => string | null | Promise<string | null>;
   } = {},
 ): Promise<string | null> {
+  root = admit(root, options);
+  const root_identity = await lstat(root),
+    parent_identity = await lstat(dirname(root));
   const reason = await reason_to_keep(root, options.states, options.active_ticket_ids, options);
   if (reason !== null) return reason;
   if (options.before_remove) {
     const reason = await options.before_remove(root);
     if (reason !== null) return reason;
   }
+  const attached_root = await lstat(root),
+    attached_parent = await lstat(dirname(root));
+  if (
+    attached_root.dev !== root_identity.dev ||
+    attached_root.ino !== root_identity.ino ||
+    attached_parent.dev !== parent_identity.dev ||
+    attached_parent.ino !== parent_identity.ino
+  )
+    return 'Workspace directory changed before removal';
+  const custody = new Map([
+    [root, root_identity],
+    [dirname(root), parent_identity],
+  ]);
   for (const checkout of (await checkouts(root)).reverse())
     if ((await entry_stat(checkout + '/.git'))?.isFile()) {
       const common = await git(
@@ -130,15 +223,23 @@ export async function cleanup_ticket_folder(
         options,
       );
       if (common.returncode) return `Git cannot locate the repository for ${checkout}`;
-      const removed = await git(
-        common.stdout.trim(),
-        ['worktree', 'remove', '--force', checkout],
-        options,
-      );
-      if (removed.returncode)
-        return `Git cannot remove the worktree ${checkout}: ${removed.stderr.trim()}`;
+      const metadata = await git(checkout, ['rev-parse', '--absolute-git-dir'], options);
+      if (metadata.returncode) return `Git cannot locate worktree metadata for ${checkout}`;
+      const admin = resolve(metadata.stdout.trim()),
+        common_root = resolve(common.stdout.trim());
+      if (dirname(admin) !== join(common_root, 'worktrees'))
+        return `Git cannot verify worktree metadata for ${checkout}`;
+      if (await entry_stat(join(admin, 'locked'))) return `Git worktree is locked: ${checkout}`;
+      const admin_identity = await lstat(admin);
+      const backlink = await readFile(join(admin, 'gitdir'), 'utf8');
+      if (!admin_identity.isDirectory() || resolve(backlink.trim()) !== resolve(checkout, '.git'))
+        return `Git cannot verify worktree metadata for ${checkout}`;
+      const checkout_identity = await lstat(checkout);
+      // Git's own worktree remove recursively deletes by pathname. Delete the
+      // checkout and its exact validated registration through held descriptors.
+      await remove_anchored(checkout, options.signal, checkout_identity, undefined, custody);
+      await remove_anchored(admin, options.signal, admin_identity);
     }
-  if ((await entry_stat(root))?.isDirectory()) await rm(root, { recursive: true });
-  else await unlink(root);
+  await remove_anchored(root, options.signal, root_identity, parent_identity);
   return null;
 }

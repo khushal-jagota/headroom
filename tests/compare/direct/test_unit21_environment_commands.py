@@ -178,6 +178,8 @@ def test_unit21_environment_command_function_parity(
             (scratch / ".git").write_text("gitdir: missing\n")
             workspace = source.parent / "files/tickets/t_12345678"
             workspace.mkdir(parents=True)
+            eligible_workspace = source.parent / "files/tickets/t_abcdefgh"
+            eligible_workspace.mkdir()
             (workspace / ".git").write_text("gitdir: missing\n")
             with sqlite3.connect(source) as connection:
                 connection.execute("CREATE TABLE tickets(id TEXT,worker_step_claim TEXT)")
@@ -185,6 +187,24 @@ def test_unit21_environment_command_function_parity(
                     "CREATE TABLE ticket_workspace_lifecycle"
                     "(ticket_id TEXT,ended_at INTEGER,deleted INTEGER)"
                 )
+                connection.execute("INSERT INTO tickets VALUES('t_abcdefgh',NULL)")
+                connection.execute(
+                    "INSERT INTO ticket_workspace_lifecycle VALUES('t_abcdefgh',0,0)"
+                )
+                for ddl in (
+                    "CREATE TABLE ticket_workspace_conversations"
+                    "(conversation_id TEXT,ticket_id TEXT,machine_id TEXT,workspace_id TEXT)",
+                    "CREATE TABLE conversation_child_custody(conversation_id TEXT,state TEXT)",
+                    "CREATE TABLE ticket_workspace_retirements"
+                    "(ticket_id TEXT,machine_id TEXT,workspace_id TEXT,authorized_at INTEGER,"
+                    "UNIQUE(ticket_id,machine_id,workspace_id))",
+                    "CREATE TABLE conversations"
+                    "(conversation_id TEXT,identity_environment_variables TEXT)",
+                    "CREATE TABLE conversation_lifecycle_facts"
+                    "(conversation_id TEXT,kind TEXT,status TEXT)",
+                    "CREATE TABLE conversation_background_tasks(conversation_id TEXT)",
+                ):
+                    connection.execute(ddl)
                 connection.execute("INSERT INTO tickets VALUES('t_12345678',NULL)")
                 connection.execute(
                     "INSERT INTO ticket_workspace_lifecycle VALUES('t_12345678',0,0)"
@@ -233,7 +253,7 @@ def test_unit21_environment_command_function_parity(
             dict(command="status", args=dict(json=True)),
             dict(command="status", args=dict(json=False)),
             dict(command="cleanup", args=dict(apply=False, json=True)),
-            dict(command="cleanup", args=dict(apply=True, json=False)),
+            dict(command="cleanup", args=dict(apply=True, json=True)),
             dict(
                 command="backup",
                 args=dict(
@@ -308,6 +328,11 @@ def test_unit21_environment_command_function_parity(
             for key, value in environment.items():
                 private.setenv(key, value)
             expected = _python(root, calls, monkeypatch)
+            if scope == "scratch":
+                assert not eligible_workspace.exists(), (
+                    "Python must exercise real synthetic removal"
+                )
+                eligible_workspace.mkdir()
             # Both functions see the same original app/status state and private paths.
             (root / "app/manifest.json").unlink()
             bindings = json.loads(
@@ -424,6 +449,31 @@ def test_unit21_environment_command_function_parity(
                 assert result["stdout"] == "" and result["stderr"]
                 native_manifest_failures.append({"case": index, "python": expected[index]})
                 expected_commands[index] = dict(exit_code=1, stdout="", stderr="")
+        retirement_fence_difference = None
+        if scope == "scratch":
+            index = next(
+                i
+                for i, call in enumerate(calls)
+                if call["command"] == "cleanup" and call["args"]["apply"]
+            )
+            python_cleanup = json.loads(expected_commands[index]["stdout"])
+            native_cleanup = json.loads(actual["results"][index]["stdout"])
+            python_result = python_cleanup["ticket_workspaces_result"]
+            native_result = native_cleanup["ticket_workspaces_result"]
+            retained = {
+                "path": str(eligible_workspace),
+                "reason": "Conversation runtime is unavailable",
+            }
+            assert python_result["removed"] == [str(eligible_workspace)]
+            assert native_result["removed"] == []
+            assert native_result["skipped"] == [*python_result["skipped"], retained]
+            assert eligible_workspace.is_dir()
+            retirement_fence_difference = {"python": python_result, "typescript": native_result}
+            python_cleanup["ticket_workspaces_result"] = native_result
+            expected_commands[index] = {
+                **expected_commands[index],
+                "stdout": json.dumps(python_cleanup) + "\n",
+            }
         assert stable(actual["results"][:-1]) == stable(expected_commands[:-1])
         assert expected[-1] == {"thrown": "DatabaseError"}
         assert actual["results"][-1] == {"thrown": "SqliteError"}
@@ -518,6 +568,7 @@ def test_unit21_environment_command_function_parity(
                     "results": actual["results"],
                     "raw_results": actual["raw_results"],
                     "native_manifest_failures": native_manifest_failures,
+                    "pending_custody_retirement_fence": retirement_fence_difference,
                     "operators": actual["operators"],
                     "scratch_owned": actual["scratch_owned"],
                     "cold_imports": actual["cold"],

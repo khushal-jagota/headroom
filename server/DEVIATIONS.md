@@ -795,3 +795,25 @@ TypeScript treats `.panels-workspace.json.<32 lowercase hex characters>.tmp` as 
 Ticket ownership marker in public reads, links, and listings, including aliases. Python
 currently reserves only the final marker and `.panels-workspace.json.tmp`. The temporary
 file contains the same private ownership data, so the Ticket workspace port hides it too.
+
+## Pending P3 custody: CLI workspace retirement
+
+The Manager authorizes the same temporary unavailable-runtime fence for CLI apply and
+scheduled cleanup. Both retain eligible Ticket workspaces and retirement replay until P3
+supplies durable child custody and its merged retirement API. Dry-run inventories and host
+maintenance remain active. The populated CLI comparison records Python removal and
+TypeScript retention explicitly, while it compares the remaining inventory and host result.
+
+
+## Known gap: Mac workspace removal
+
+Linux removes eligible workspaces through open directory descriptors with no-follow
+checks. This also removes only the validated Git registration for each linked checkout.
+Node 22 recursive `fs.rm` and Git `worktree remove` both delete through pathnames, so
+neither command proves protection from directory replacement during removal.
+
+Mac and other platforms without the Linux descriptor path preserve eligible folders with
+`safe removal is not supported on this platform yet` in the inventory. Retirement retries
+also preserve their folders and scratch snapshots. This is a known parity gap, not an
+accepted parity result. The Manager explicitly requires preservation until a safe platform
+adapter exists. No native binding is added by this port.

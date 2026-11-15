@@ -89,6 +89,8 @@ export async function environment_cleanup(
       ...resources.scratch_options,
       extra_roots: layout?.folders ?? [],
       apply: args.apply,
+      // P3 owns child custody. CLI and scheduled cleanup retain work until that API lands.
+      retire_local_children: () => ({ reason: 'Conversation runtime is unavailable' }),
       snapshot_ticket_scratch: (ticket) => snapshot_ticket_scratch(ticket, deps.home),
       prune_ticket_scratch: (ticket, names) => prune_ticket_scratch(ticket, names, deps.home),
     });

@@ -79,7 +79,10 @@ P4 restored its four cases. The scratch comparisons now use workspace lifecycle 
 thirteen populated synthetic workspaces, fresh remote verification, and retained shutdown ownership.
 They compare the complete inventory, including allocated bytes. Random physical workspace and
 retirement identifiers normalize to placeholders. The command proof preserves operator output and
-owned Git settlement. The synthetic-root guard rejects outside paths and symlink escapes before cleanup.
+owned Git settlement. Until P3 supplies custody, the CLI proof explicitly records Python removal
+and TypeScript retention behind the temporary runtime fence. Mac removal is a known gap:
+TypeScript inventories and preserves those folders because safe removal is not supported there yet.
+The synthetic-root guard rejects outside paths and symlink escapes before cleanup.
 
 ### P5 — Platform runtime, updates, and installation
 

@@ -37,7 +37,9 @@ export function linked(
   registerReadFunction(sql, 'artifact_field_rank', (field) =>
     fields.includes(String(field)) ? fields.indexOf(String(field)) : fields.length,
   );
-  registerReadFunction(sql, 'artifact_visible', (target) => Number(!seen.has(String(target))));
+  registerReadFunction(sql, 'artifact_visible', (target) =>
+    Number(!seen.has(String(target)) && !private_link(String(target))),
+  );
   registerReadFunction(sql, 'artifact_known_field', (field) =>
     Number(fields.includes(String(field))),
   );

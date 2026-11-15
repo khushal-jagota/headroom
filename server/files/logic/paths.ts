@@ -1,4 +1,4 @@
-import { dirname, join, extname, relative, resolve } from 'node:path';
+import { dirname, join, extname, relative, isAbsolute } from 'node:path';
 import { path_is_within } from '../../core/path_containment.ts';
 import { lstatSync, realpathSync, readlinkSync, statSync } from 'node:fs';
 import type { OwnerKind } from '../contracts.ts';
@@ -15,22 +15,29 @@ export function is_private_ticket_name(name: string): boolean {
 }
 export function private_ticket_path(ownerRoot: string, path: string): boolean {
   if (is_private_ticket_name(path.split('/')[0]!)) return true;
-  function resolve_alias(target: string, depth = 0): string {
+  function resolve_alias(target: string, base = '/', depth = 0): string {
     if (depth > 40) throw new Error('Too many symbolic links');
-    let cursor = '/';
-    const parts = resolve(target).split('/').filter(Boolean);
-    for (let index = 0; index < parts.length; index++) {
-      cursor = join(cursor, parts[index]!);
+    try {
+      return realpathSync.native(isAbsolute(target) ? target : `${base}/${target}`);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+    }
+    let cursor = isAbsolute(target) ? '/' : base;
+    // Process each symlink before the following '..'. Lexical normalization loses that order.
+    for (const part of target.split('/')) {
+      if (!part || part === '.') continue;
+      if (part === '..') {
+        cursor = dirname(cursor);
+        continue;
+      }
+      const candidate = join(cursor, part);
       try {
-        if (lstatSync(cursor).isSymbolicLink())
-          return resolve_alias(
-            resolve(dirname(cursor), readlinkSync(cursor), ...parts.slice(index + 1)),
-            depth + 1,
-          );
+        cursor = lstatSync(candidate).isSymbolicLink()
+          ? resolve_alias(readlinkSync(candidate), cursor, depth + 1)
+          : candidate;
       } catch (error) {
-        if ((error as NodeJS.ErrnoException).code === 'ENOENT')
-          return join(cursor, ...parts.slice(index + 1));
-        throw error;
+        if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+        cursor = candidate;
       }
     }
     return cursor;

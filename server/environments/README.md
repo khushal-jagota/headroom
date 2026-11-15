@@ -197,8 +197,8 @@ Part 4's hosted rehearsal supplies the real process, installer, supervisor, and 
 Ticket workspace cleanup starts outside test mode, with a ten-minute initial wait independent of dispatcher admission.
 The matching-database gate selects legacy scratch roots for inventory. Those roots remain for owner review.
 The workspace owner inventories complete Ticket folders before removal and applies the seven-day lifecycle clock.
-CLI cleanup checks durable child custody before it detaches an exact physical workspace.
-Scheduled cleanup retains a runtime-unavailable fence until the conversation supervision owner supplies its retirement operation.
+CLI and scheduled cleanup retain a runtime-unavailable fence until the conversation supervision owner supplies custody and its retirement operation.
+Linux folder removal uses held directory handles and no-follow opens. Mac cleanup inventories and preserves folders with an unsupported-safe-removal reason.
 Its close fences new work at the shared deadline. An already dispatched filesystem removal or a Git child that ignores TERM can outlive that join.
 Production environment activation remains off until Part 4 supplies the real adapters.
 
