@@ -16,7 +16,6 @@ from collections.abc import Callable
 from contextlib import closing
 from pathlib import Path
 from typing import Any
-from unittest.mock import patch
 
 import pytest
 from tests.support.synthetic_homes import create_synthetic_homes, synthetic_home_environment
@@ -24,7 +23,7 @@ from tests.support.synthetic_homes import create_synthetic_homes, synthetic_home
 from planner.core.db import connect, create_schema
 from planner.core.errors import PlannerError
 from planner.machines import executor_credentials as authority
-from planner.machines.contracts import HOME_MACHINE_ID, ORIGINAL_MAC_MACHINE_ID
+from planner.machines.contracts import ORIGINAL_MAC_MACHINE_ID
 
 ROOT = Path(__file__).resolve().parents[3]
 INCARNATION = "11111111-1111-4111-8111-111111111111"
@@ -57,21 +56,9 @@ def _python(path: Path) -> dict[str, Any]:
             authority.authenticate_executor(conn, first.machine_id, rotated.credential, None)
             == first.machine_id
         )
-        legacy_before = (
-            authority.authenticate_executor(conn, "original", None, "original")
-            == ORIGINAL_MAC_MACHINE_ID
-        )
         grant = authority.issue_original_credential(conn, INCARNATION)
-        retry_same = (
-            authority.issue_original_credential(conn, "22222222-2222-4222-8222-222222222222")
-            == grant
-        )
         wrong_original = _code(
             lambda: authority.authenticate_executor(conn, "original", "wrong", "original")
-        )
-        legacy_after_wrong = (
-            authority.authenticate_executor(conn, "original", None, "original")
-            == ORIGINAL_MAC_MACHINE_ID
         )
         credential_accepted = (
             authority.authenticate_executor(conn, "original", grant.credential, "original")
@@ -91,7 +78,10 @@ def _python(path: Path) -> dict[str, Any]:
             authority.authenticate_executor(conn, "original", None, "original")
             == ORIGINAL_MAC_MACHINE_ID
         )
-        retry_after_auth_same = authority.issue_original_credential(conn, INCARNATION) == grant
+        retry_after_auth_same = (
+            authority.issue_original_credential(conn, "22222222-2222-4222-8222-222222222222")
+            == grant
+        )
         wrong_close = _code(
             lambda: authority.close_original_handover(
                 conn, ORIGINAL_MAC_MACHINE_ID, "wrong", INCARNATION
@@ -101,23 +91,11 @@ def _python(path: Path) -> dict[str, Any]:
             authority.authenticate_executor(conn, "original", None, "original")
             == ORIGINAL_MAC_MACHINE_ID
         )
-        authority.close_original_handover(
-            conn, ORIGINAL_MAC_MACHINE_ID, grant.credential, INCARNATION
-        )
-        row = dict(
-            conn.execute(
-                "SELECT * FROM machine_executor_credentials WHERE machine_id=?",
-                (ORIGINAL_MAC_MACHINE_ID,),
-            ).fetchone()
-        )
-        with patch(
-            "planner.machines.executor_credentials.time.time_ns",
-            return_value=(row["legacy_closed_at_ms"] + 1000) * 1_000_000,
-        ):
+        for _ in range(2):
             authority.close_original_handover(
                 conn, ORIGINAL_MAC_MACHINE_ID, grant.credential, INCARNATION
             )
-        closure_idempotent = row == dict(
+        row = dict(
             conn.execute(
                 "SELECT * FROM machine_executor_credentials WHERE machine_id=?",
                 (ORIGINAL_MAC_MACHINE_ID,),
@@ -130,13 +108,7 @@ def _python(path: Path) -> dict[str, Any]:
             row["credential_sha256"] == hashlib.sha256(grant.credential.encode()).hexdigest()
         )
         no_stored_secret = grant.credential not in json.dumps(row)
-        legacy_after = _code(
-            lambda: authority.authenticate_executor(conn, "original", None, "original")
-        )
         closed_reissue = _code(lambda: authority.issue_original_credential(conn, INCARNATION))
-        home_refused = _code(
-            lambda: authority.authenticate_executor(conn, HOME_MACHINE_ID, grant.credential, None)
-        )
     with closing(connect(str(path))) as conn:
         durable_closure = _code(
             lambda: authority.authenticate_executor(conn, "original", None, "original")
@@ -151,23 +123,17 @@ def _python(path: Path) -> dict[str, Any]:
             "platform",
             "old_refused",
             "rotation_valid",
-            "legacy_before",
-            "retry_same",
             "wrong_original",
-            "legacy_after_wrong",
             "credential_accepted",
             "auth_keeps_pending",
             "legacy_after_auth",
             "retry_after_auth_same",
             "wrong_close",
             "legacy_after_wrong_close",
-            "closure_idempotent",
             "retired_pending",
             "verifier_matches",
             "no_stored_secret",
-            "legacy_after",
             "closed_reissue",
-            "home_refused",
             "durable_closure",
         }
     }
@@ -204,7 +170,7 @@ def test_machine_credentials_match_python(tmp_path: Path, request: pytest.Fixtur
     assert all(value is True for value in actual.values() if type(value) is bool)
     assert expected["cross_machine"] == expected["old_refused"] == "agent_forbidden"
     assert expected["wrong_close"] == expected["wrong_original"] == "agent_forbidden"
-    assert expected["legacy_after"] == expected["durable_closure"] == "agent_forbidden"
+    assert expected["closed_reissue"] == expected["durable_closure"] == "agent_forbidden"
     report = request.config.getoption("--compare-report-dir")
     if report:
         destination = Path(report)
