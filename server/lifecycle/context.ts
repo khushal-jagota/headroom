@@ -6,6 +6,7 @@ import { lifecycle_launch_settings, loadConfig } from '../core/config.ts';
 import { expand_path, resolved_path } from '../environments/paths.ts';
 import { resolve_server_lifecycle_lease_path } from './lease.ts';
 import { ServerLifecycleError } from './contracts.ts';
+import { native_control_socket_path } from './paths.ts';
 import type {
   ApplicationLaunch,
   ManagedEntrypointArguments,
@@ -46,7 +47,7 @@ export async function resolve_unit_lifecycle_context(
     : resolve_server_lifecycle_lease_path(config.port);
   return {
     runtime_directory: args.runtime_directory,
-    control_socket_path,
+    control_socket_path: native_control_socket_path(control_socket_path),
     lease_path,
     port: config.port,
     config_path,

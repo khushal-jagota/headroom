@@ -496,7 +496,7 @@ export class ServerServices {
       if (normal_starting) return normal_starting;
       normal_starting = Promise.resolve().then(async () => {
         if (this.lifetime.isClosing()) return;
-        publish_worker_skills(this.config);
+        await publish_worker_skills(this.config);
         await this.executor.value?.start();
         this.assert_startup_open();
         this.areas.startRecordReplay(conversation.core?.workspace_admission);

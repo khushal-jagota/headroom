@@ -512,3 +512,175 @@ def test_service_command_limits_kill_and_reap_only_the_scripted_child(
             ),
         },
     )
+
+
+def test_darwin_populated_native_observations_match_python(
+    tmp_path: Path,
+    request: pytest.FixtureRequest,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Existing Linux fixtures do not prove Darwin births, socket generations or native rates."""
+    import base64
+    import ctypes
+    import errno
+    from dataclasses import asdict
+    from unittest.mock import patch
+
+    from tests.unit.test_darwin_metrics import Reader
+    from tests.unit.test_darwin_preview import inspector, tcp
+
+    from planner.platform_runtime.darwin.metrics import DarwinCollector
+    from planner.platform_runtime.darwin.preview import _Paths, _SocketFD
+    from planner.platform_runtime.darwin.worker_processes import _BSDInfo
+    from planner.previews.contracts import PreviewError
+
+    started = time.perf_counter()
+    reader = Reader()
+    subject, library = inspector(tmp_path)
+    preview_seconds = [1]
+    original_info = library.proc_pidinfo
+
+    def info(pid: int, flavor: int, arg: int, target: Any, size: int) -> int:
+        length = original_info(pid, flavor, arg, target, size)
+        if flavor == 3:
+            ctypes.cast(target, ctypes.POINTER(_BSDInfo)).contents.start_sec = preview_seconds[0]
+        return length
+
+    monkeypatch.setattr(library, "proc_pidinfo", info)
+    library.descriptors[12][0].protocol_info.tcp.internet.generation = 2**62 + 567
+    now = [100.0]
+    stat = os.statvfs_result((4096, 4096, 100, 25, 25, 0, 0, 0, 0, 255))
+    collector = DarwinCollector(
+        reader=reader,
+        wall_clock=lambda: now[0],
+        monotonic=lambda: now[0],
+        statvfs=lambda _: stat,
+        loadavg=lambda: (1, 2, 3),
+    )
+    actions, expected = [], []
+    identity = None
+
+    def binary(value: ctypes.Structure) -> str:
+        raw = ctypes.string_at(ctypes.addressof(value), ctypes.sizeof(value))
+        return base64.b64encode(raw).decode()
+
+    for index, operation in enumerate(
+        ("discover", "connected", "check", "check", "discover", "discover", "check", "discover")
+    ):
+        now[0] = 100.0 + index * 2
+        reader.ticks = 24_000_000 + index * 48_000_000
+        reader.host_ticks = (100 + index * 100, 0, 0, 100 + index * 100)
+        reader.observed = [11, 12, 13, 14]
+        reader.denied_task, reader.denied_bsd, reader.reused = {12}, {13}, {14}
+        if index == 1:
+            library.descriptors[12].append(tcp(state=4, generation=568))
+        if index == 2:
+            library.birth += 1
+            reader.start += 1
+        if index == 3:
+            reader.boot = "boot-b"
+        if index == 4:
+            library.descriptors[13] = [tcp()]
+            library.unreadable.add(13)
+        if index == 7:
+            preview_seconds[0] = 9_007_199_255
+        library.truncate = index == 5
+        library.error = errno.EPERM if index == 6 else 0
+        bsd = {}
+        reader.reads.clear()
+        for pid in reader.observed:
+            try:
+                bsd[str(pid)] = [binary(reader.bsd(pid)), binary(reader.bsd(pid))]
+            except OSError:
+                bsd[str(pid)] = []
+        tasks = {
+            str(pid): None if pid in reader.denied_task else binary(reader.task(pid))
+            for pid in reader.observed
+        }
+        preview = {}
+        for pid, sockets in library.descriptors.items():
+            info_value = _BSDInfo(
+                pid=pid, uid=os.getuid(), start_sec=preview_seconds[0], start_usec=library.birth
+            )
+            paths = _Paths()
+            paths.cwd.path = os.fsencode(tmp_path)
+            values = []
+            for socket in sockets:
+                value = _SocketFD()
+                value.socket = socket
+                values.append(binary(value))
+            preview[str(pid)] = {
+                "info": binary(info_value), "paths": binary(paths), "sockets": values
+            }
+        actions.append(
+            {
+                "now": now[0],
+                "boot": reader.boot,
+                "cpu": reader.host_ticks,
+                "pids": reader.observed,
+                "bsd": bsd,
+                "task": tasks,
+                "preview": preview,
+                "operation": operation,
+                "unreadable": list(library.unreadable),
+                "truncated": library.truncate,
+                "socket_error": bool(library.error),
+                "failure_status": index >= 5,
+            }
+        )
+        evidence: dict[str, Any] | str
+        try:
+            if operation == "discover":
+                identity = subject.discover(3001, tmp_path)
+                evidence = asdict(identity)
+            elif operation == "connected":
+                assert identity is not None
+                subject.connected(identity, 45678)
+                evidence = "accepted"
+            else:
+                assert identity is not None
+                subject.check(identity)
+                evidence = "accepted"
+        except PreviewError as error:
+            evidence = {"status_code": error.status_code} if index >= 5 else str(error)
+        reader.reads.clear()
+        with patch("planner.platform_runtime.darwin.metrics.os.cpu_count", return_value=4):
+            sample = collector.collect(include_slow=index == 0)
+        expected.append({"preview": evidence, "sample": sample})
+    specification = tmp_path / "native.json"
+    specification.write_text(json.dumps({"worktree": str(tmp_path), "actions": actions}))
+    companion = ROOT / "server/previews/darwin_parity.ts"
+    result = subprocess.run(
+        [
+            "node",
+            "--input-type=module",
+            "-e",
+            "import{readFileSync}from'node:fs';const m=await import(process.argv[1]);"
+            "const input=JSON.parse(readFileSync(process.argv[2],'utf8'));"
+            "process.stdout.write(await m.native_parity(input));",
+            companion.as_uri(),
+            str(specification),
+        ],
+        cwd=ROOT,
+        env=_environment(tmp_path),
+        capture_output=True,
+        text=True,
+        timeout=15,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    assert json.loads(result.stdout) == expected
+    _report(
+        request,
+        "darwin-home-native-observations.json",
+        {
+            "complete": True,
+            "seconds": time.perf_counter() - started,
+            "snapshots": len(actions),
+            "boundary": (
+                "Existing populated libproc and metrics fixtures. "
+                "No native Mac library or host on the VPS."
+            ),
+            "result": expected,
+        },
+    )

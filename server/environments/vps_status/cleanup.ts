@@ -180,6 +180,13 @@ export async function apply_cleanup_inventory(
       review_needed.push(candidate.path);
       continue;
     }
+    if (inventory.dependencies.platform_name() === 'Darwin') {
+      const { truncate_native_log } = await import('./native_log.ts');
+      signal?.throwIfAborted();
+      if (truncate_native_log(candidate, inventory.policy)) rotated.push(candidate.path);
+      else review_needed.push(candidate.path);
+      continue;
+    }
     const rotatedPath = candidate.path + '.1';
     if ((await entry_exists(rotatedPath)) || !(await contained(candidate.root, rotatedPath))) {
       review_needed.push(candidate.path);

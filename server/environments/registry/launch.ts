@@ -4,7 +4,7 @@ import { statSync } from 'node:fs';
 import { join } from 'node:path';
 import { expand_path } from '../paths.ts';
 import { managed_skills_home } from '../../skills/files.ts';
-import { publish_native_backend_skills } from '../../skills/native_publication.ts';
+import { provision_account_skills } from '../../skills/account.ts';
 import type { OperatorPathInputs } from '../command_contracts.ts';
 import type { EnvironmentRunOptions, ResolvedEnvironmentInstance } from './contracts.ts';
 import { validate_environment_values } from './logic.ts';
@@ -64,7 +64,7 @@ export function provision_environment_skills(
     claude_home: string;
   },
   paths: OperatorPathInputs,
-): void {
+): string | null {
   const parent = paths.admit_path(paths.expand_path(options.database_parent));
   const root = paths.admit_path(managed_skills_home(parent));
   const homes = [options.hermes_home, options.codex_home, options.claude_home].map((value) => {
@@ -83,6 +83,5 @@ export function provision_environment_skills(
     throw Object.assign(new Error(`managed Panels skills not found: ${root}`), {
       code: 'ENOENT',
     });
-  for (const home of homes)
-    publish_native_backend_skills(home, root, { policy: { kind: 'server' } });
+  return provision_account_skills(parent, homes);
 }

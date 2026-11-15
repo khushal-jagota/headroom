@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import { syncBuiltinESMExports } from 'node:module';
 import { PassThrough } from 'node:stream';
 import {
+  chmod,
   lstat,
   readdir,
   readFile,
@@ -25,11 +26,12 @@ import { apply_cleanup_inventory, collect_cleanup_inventory, inventory_body } fr
 import { DEFAULT_VPS_STATUS_POLICY } from '../configuration.ts';
 import type { StatusConfig, VpsStatusDependencies, VpsStatusPolicy } from '../contracts.ts';
 interface Mutation {
-  kind: 'touch' | 'symlink' | 'write' | 'remove';
+  kind: 'touch' | 'symlink' | 'write' | 'remove' | 'chmod';
   path: string;
   target?: string;
   text?: string;
   time?: number;
+  mode?: number;
 }
 interface Probe {
   root: string;
@@ -71,7 +73,8 @@ async function tree(root: string): Promise<Record<string, unknown>> {
       else if (entry.isDirectory()) {
         result[key] = { directory: true };
         await walk(child, key + '/');
-      } else
+      } else if (!(entry.mode & 0o444)) result[key] = { bytes: entry.size };
+      else
         result[key] = {
           sha256: createHash('sha256')
             .update(await readFile(child))
@@ -133,6 +136,7 @@ export async function probe_status(cases: readonly Probe[]): Promise<unknown[]> 
             await rm(mutation.path, { recursive: true });
             await symlink(mutation.target!, mutation.path);
           } else if (mutation.kind === 'remove') await rm(mutation.path, { recursive: true });
+          else if (mutation.kind === 'chmod') await chmod(mutation.path, mutation.mode!);
           else await writeFile(mutation.path, mutation.text ?? '');
         }
         answers.push({

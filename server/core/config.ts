@@ -60,6 +60,9 @@ export const EXTERNAL_RUNTIME_ENVIRONMENT_KEYS: ReadonlySet<string> = new Set([
   'PLAN_APNS_TEAM_ID',
   'PLAN_APNS_BUNDLE_IDS',
   'PLAN_HERMES_HOME',
+  'CODEX_HOME',
+  'CLAUDE_CONFIG_DIR',
+  'PLAN_PROVISION_ACCOUNT_SKILLS',
   'PLAN_HERMES_PYTHON',
   'PLAN_CLAUDE_EXECUTABLE',
   'PLAN_SERVER_CONTROL_SOCKET',
@@ -96,6 +99,7 @@ export interface Config {
   app_sha: string | null;
   credential_key_path: string;
   measure_source_timeout_seconds: number;
+  provision_account_skills?: boolean | null;
   workspace_root: string | null;
   ticket_scratch_root: string | null;
   ticket_scratch_database: string | null;
@@ -384,6 +388,13 @@ export function loadConfig(
   return {
     apns: load_apns_config(env),
     db_path,
+    provision_account_skills:
+      raw('provision_account_skills', 'PLAN_PROVISION_ACCOUNT_SKILLS') == null
+        ? null
+        : parseConfigBoolean(
+            raw('provision_account_skills', 'PLAN_PROVISION_ACCOUNT_SKILLS'),
+            'provision_account_skills',
+          ),
     automatic_tickets_created_after,
     port: integer('port', 'PLAN_PORT', 8767),
     tick_seconds: integer('tick_seconds', 'PLAN_TICK_SECONDS', 60),
