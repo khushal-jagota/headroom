@@ -2,6 +2,18 @@
 
 This file records intentional differences that the migration Manager accepted. No new difference enters this file without that acceptance. Close an entry when Python adopts the same behavior.
 
+## Pending staging port: mailbox authority and protocol
+
+These are open P2/P3 boundaries, not accepted final parity. The populated mailbox
+exchange remains expected-open P2 with its original comparisons intact.
+
+- Python refuses reports from a successor incarnation while the old process remains current.
+  TypeScript returns a batch receipt with `command_of_another_executor_process` instead.
+- Python emits `StartRun.arguments.supervision_protocol=24`. TypeScript omits it. P2 owns this wire gap.
+- Python includes `machine_id=null` on internal mailbox stall waits. TypeScript omits it. P3 owns this metadata gap.
+
+No field projection hides these differences. The retained proof must pass after the port.
+
 ## Native TypeScript presentation
 
 The owner accepts native diagnostics, CLI human text and help layout, and HTTP JSON number spelling.

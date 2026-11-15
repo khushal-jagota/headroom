@@ -25,6 +25,13 @@ P4 also owns the retired scratch policy and its deleted Git fixtures. The three 
 Its operator parameter still compares the other commands. The deferred parameter adds no
 runtime host and executes no fixture work.
 
+The populated `test_unit22_mailbox_exchange` remains expected-open P2. Python now
+refuses a successor-incarnation report with a current-process authority error.
+TypeScript still returns a batch receipt with `command_of_another_executor_process`.
+Python also emits `StartRun.arguments.supervision_protocol=24`, while TypeScript omits it.
+Its internal stall waits include `machine_id=null`, which the P3 TypeScript port still lacks.
+The full original proof remains intact. No field projection counts these gaps as parity.
+
 ## Add an area
 
 Add two files with the same name:
