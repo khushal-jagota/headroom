@@ -68,5 +68,6 @@ and exit 3 for unconfirmed acceptance. `executor health` and `quiesce` use that 
 too. `executor permissions` previews lexical scopes and accesses directories only
 with `--check`. `executor run` binds the runtime supervisor or versioned Mac host
 child from the shared runtime settings.
+`executor credential --file FILE` installs a private machine credential through the shared credential file helpers without an HTTP or IPC request.
 
 This package does not switch the installed wrapper or deploy an application.

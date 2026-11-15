@@ -358,6 +358,11 @@ export function create_commands(environment: NodeJS.ProcessEnv = {}): CliCommand
   );
   command('executor', 'Run the native Mac executor through the app HTTPS service.');
   command(
+    'executor credential',
+    'Install a registration or replacement credential into this executor root.',
+    [option('source', '--file <FILE>', readable_path('file', true), { required: true })],
+  );
+  command(
     'executor health',
     "Print this executor's identity, process, last accepted lease and any refusal.",
   );
