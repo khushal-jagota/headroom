@@ -83,7 +83,7 @@ private struct WorkspacePreview: View {
                 if let ticket { TicketActivityMark(locale: ticket.locale, signal: signal, completed: ticket.stage == "done" || ticket.stage == "cancelled") }
                 else { ConversationSignalMark(signal: signal) }
             }
-            if !stageLine.isEmpty { Text(TicketMachine.activityUnknown(ticket?.locale, health: store.executorHealth) ? "Current activity on Mac is unknown." : stageLine).panelsScaledFont(size: 15).foregroundStyle(PanelsTheme.muted) }
+            if !stageLine.isEmpty { Text(TicketMachine.activityUnknown(ticket?.locale, health: store.executorHealth) ? TicketMachine.unknownActivityText(ticket?.locale) : stageLine).panelsScaledFont(size: 15).foregroundStyle(PanelsTheme.muted) }
             if let recap, !recap.isEmpty {
                 Text(recap).panelsScaledFont(size: 16).lineLimit(5)
                     .frame(maxWidth: .infinity, alignment: .leading).padding(12)
@@ -93,20 +93,26 @@ private struct WorkspacePreview: View {
         }
         .foregroundStyle(PanelsTheme.strong).padding(20).frame(width: 330, alignment: .leading)
         .background(PanelsTheme.raised)
-        .task {
+        .task(id: store.baseURL.absoluteString + "|" + String(describing: route)) {
+            let generation = store.resources.admissionGeneration
             recap = ticket?.recapPreview
             do {
+                let nextRecap: String?
+                var nextStage = stageLine
                 switch route {
-                case .chief: recap = store.chief?.recap ?? ""
-                case .orchestrator(let id): recap = try await store.client.manager(id).recap
+                case .chief: nextRecap = store.chief?.recap ?? ""
+                case .orchestrator(let id): nextRecap = try await store.resources.read(ManagerResources.content(id)).recap
                 case .ticket(let id):
-                    if let ticket {
-                        stageLine = try await store.client.workspaceStageSentence(ticket)
-                    }
-                    recap = try await store.client.ticket(id).recap
-                default: break
+                    if let ticket { nextStage = try await store.client.workspaceStageSentence(ticket) }
+                    nextRecap = try await store.resources.read(TicketResources.detail(id)).detail.recap
+                default: return
                 }
-            } catch { loadError = "Preview couldn’t refresh. \(error.localizedDescription)" }
+                guard !Task.isCancelled, generation == store.resources.admissionGeneration else { return }
+                recap = nextRecap; stageLine = nextStage
+            } catch {
+                guard !Task.isCancelled, generation == store.resources.admissionGeneration else { return }
+                loadError = "Preview couldn’t refresh. \(error.localizedDescription)"
+            }
         }
     }
 }

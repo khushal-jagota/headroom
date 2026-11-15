@@ -13,15 +13,21 @@ Items about one Ticket share a card. A card is as old as its oldest item. Messag
 
 Review reads other records. Membership and order come from the navigation index, which tracks attention without a read of every conversation. Actions use the ordinary writers: decisions use the proposal resolver, replies use Send Message, and read marks update the conversation. Each action clears only what that card showed. The next card is whatever is now oldest.
 
-The proposal on a card is the same approval surface as on the Ticket page. Both keep one note box beside Approve and Send it back. The note goes with either decision. Skipping a card defers it for this visit only.
+The proposal on a card is the same approval surface as on the Ticket page. Both keep one note box beside Approve and Send it back. The note goes with either explicit decision. Text entry never chooses a proposal decision. Both decisions use the displayed proposal revision, so a replacement proposal cannot receive the old decision. Skipping a card defers it for this visit only.
 
-An approval note must reach the Worker before approval proceeds. The browser keeps its message identity for that exact proposal across revisits and reloads. If delivery is uncertain, another Approve checks the same message without duplicate delivery. A confirmed note stays confirmed if approval itself fails.
+Approve and Send back submit the complete note with the exact visible proposal. The successful decision saves one attributed instruction for the Worker. A stale proposal fails without a success message. Retries keep the same decision identity and cannot duplicate the decision or its instruction.
+
+The conversation system delivers that instruction and shows it in Full history as a system message. It names the authenticated User, Chief, or Manager and the proposal. A busy Worker receives it through the existing queue. Queue admission does not prove receipt. Undelivered notes survive stage changes and restart. An uncertain delivery stops automatic replay. The existing explicit Worker Restart authorizes recovery, including another attempt when the previous delivery remains uncertain.
+
+Protected decision operations retain the exact command and its outcome with the Ticket transition. A lost response can be recovered without a second decision. A receipt proves the transition, not delivery of a note or guidance into a conversation. Edited approval text and send-back guidance must fit the canonical limit before any receipt stores them. Receipt lookup reveals only the caller’s own operations. Unknown and other actors’ operations return the same supported absence. A new operation can change the Ticket, so submission refuses an unavailable identity without exposing its saved contents.
 
 If the index is not yet trustworthy, Review says it is unavailable instead of showing an empty queue that might be wrong.
 
+On iPhone, Review and its badge share a snapshot of saved outgoing work. Only changes to outgoing work refresh that snapshot. Hidden Review screens do no store work. The visible queue uses memory and preserves the current decision and reply rules. If a conversation is replaced, its open card becomes historical and read-only. Its displayed messages and draft stay intact.
+
 ## Where it shows up
 
-Review is a primary destination in the browser, with a count. [Notifications](notifications.md) are a separate path. They tell Khushal that something newly needs him, and link to the Ticket.
+Review is a primary destination in the browser, with a count, and the initial tab on iPhone. The final page lets Khushal message Chief and revisit skipped items. Its composer shares Chief’s draft and keeps each send tied to its original destination. Check delivery reads the existing attempt without another send. [Notifications](notifications.md) are a separate path. They tell Khushal that something newly needs him, and link to the Ticket.
 
 ## Decisions that shape it
 
@@ -33,5 +39,6 @@ Review is a primary destination in the browser, with a count. [Notifications](no
 
 - `src/planner/navigation/`: the index, and Review's membership and ordering (`review.py`, `review_logic.py`).
 - `web/src/routes/ReviewRoute.svelte` and `web/src/components/Review*.svelte`: the pass and its cards.
+- `ios/Panels/Features/Review/`: the native pass and its saved-work snapshot.
 
-_Last verified: 2026-11-08._
+_Last verified: 2026-11-14._

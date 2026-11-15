@@ -188,6 +188,23 @@ class GoalFixture:
             "next_refresh_at": int(time.time()) + 86400,
         }
 
+    @staticmethod
+    def checked(route, goal, body):
+        """Every goal write captures the accepted revision; a stale one conflicts."""
+        assert "expected_revision" in body, body
+        if body["expected_revision"] != goal["revision"]:
+            route.fulfill(
+                status=409,
+                json={
+                    "error": {
+                        "code": "revision_conflict",
+                        "message": "this document changed; read it again before saving",
+                    }
+                },
+            )
+            return None
+        return {key: value for key, value in body.items() if key != "expected_revision"}
+
     def accept(self, route, path, body):
         self.version += 1
         if path.endswith("/manual-writes"):
@@ -211,7 +228,9 @@ class GoalFixture:
         else:
             identity = path.split("/")[3]
             goal = self.goals[identity]
-            assert "expected_revision" not in body, body
+            body = self.checked(route, goal, body)
+            if body is None:
+                return
             goal.update(body)
             goal["revision"] += 1
             if goal["primary_checklist_block_id"]:
@@ -626,8 +645,10 @@ def touch_overlap(browser, url):
     last = long_panel.get_by_role("checkbox", name="Long item 29", exact=True)
     # A normal tap must stay quiet: no pending-save text, no panel height change.
     before = long_panel.bounding_box()
+    last_box = last.bounding_box()
     last.tap()
     expect(last).to_have_attribute("aria-checked", "true")
+    last_checked = last.get_attribute("aria-checked")
     expect(long_panel.get_by_text("Saving checklist…")).to_have_count(0)
     after = long_panel.bounding_box()
     assert before and after and before["height"] == after["height"]
@@ -641,8 +662,8 @@ def touch_overlap(browser, url):
             path=str(Path(evidence) / "goal-preview-short-phone.png"), animations="disabled"
         )
         (Path(evidence) / "goal-preview-short-phone.json").write_text(json.dumps({
-            "preview": box, "footer": footer, "lastControl": last.bounding_box(),
-            "checked": last.get_attribute("aria-checked"), "nativeTap": True,
+            "preview": box, "footer": footer, "lastControl": last_box,
+            "checked": last_checked, "nativeTap": True,
         }, indent=2))
     page.touchscreen.tap(5, 5)
     expect(long_panel).to_have_count(0)
@@ -1614,16 +1635,10 @@ def authored_goal_presentation(browser, url):
                 )
                 card = text.locator('[data-file-preview-kind="markdown"]')
                 card.scroll_into_view_if_needed()
-                if phone:
-                    expect(card.locator(".pv-name")).to_be_visible()
-                else:
-                    expect(card.get_by_role(
-                        "heading", name="Wren intake", exact=True
-                    )).to_be_visible()
-                    expect(card).to_contain_text("The release identity is Wren iOS.")
-                    expect(card.locator(".file-preview-natural p")).to_have_css(
-                        "white-space", "normal"
-                    )
+                # Embedded, the Markdown artifact is a link; its document opens on press.
+                expect(card.locator("a.file-preview-artifact-link")).to_be_visible()
+                assert card.locator(".markdown-block").count() == 0
+                if not phone:
                     prose_geometry = text.locator(".markdown-block > p").first.evaluate("""p => {
                         const source = p.querySelector('strong').nextSibling;
                         const top = phrase => {
@@ -1638,8 +1653,8 @@ def authored_goal_presentation(browser, url):
                     }""")
                     assert abs(prose_geometry["secondLine"] - prose_geometry["firstLine"]
                                - prose_geometry["lineHeight"]) <= 1, prose_geometry
-                link = card.locator("a.pv-name:visible")
-                expect(link).to_have_text("intake.md")
+                link = card.locator("a.file-preview-artifact-link:visible")
+                expect(link).to_have_text("Wren intake")
                 original = page.url
                 link.click()
                 viewer = page.locator("[data-ticket-artifact]")
@@ -1887,9 +1902,10 @@ class NativeGoalEditFixture(GoalFixture):
             )
             return
         goal = self.goals[path.split("/")[3]]
-        goal.update(
-            copy.deepcopy(body)
-        )
+        body = self.checked(route, goal, body)
+        if body is None:
+            return
+        goal.update(copy.deepcopy(body))
         goal["revision"] += 1
         self.version += 1
         selected = next(
@@ -2010,7 +2026,8 @@ def native_goal_edits(browser, url):
                     urlsplit(response.url).path == f"/api/goals/{goal_id}"
                     and response.request.method == "PATCH"
                     and response.request.post_data_json == {
-                        field: value
+                        field: value,
+                        "expected_revision": revision,
                     }
                 )
             ) as response:
@@ -2039,7 +2056,7 @@ def native_goal_edits(browser, url):
             assert len(fixture.writes) == before + 1, fixture.writes[before:]
             path, body = fixture.writes[-1]
             assert path == f"/api/goals/{goal_id}", (path, body)
-            assert body == {field: value}, body
+            assert body == {field: value, "expected_revision": revision}, body
             for key, accepted in configuration.items():
                 assert fixture.goals[goal_id][key] == accepted, (field, key)
 
@@ -2237,14 +2254,20 @@ def native_goal_edits(browser, url):
                     expect(why).to_have_text("Remote accepted purpose")
                     expect(title).to_have_text("Local draft after refresh")
                     count = len(fixture.writes)
+                    accepted_revision = fixture.goals[identity]["revision"]
                     title.press("Enter")
                     wait_writes(count + 1)
-                    expect(goal.locator(".error-line")).to_have_count(0)
-                    assert fixture.writes[-1][1] == {"title": "Local draft after refresh"}
+                    # The draft was captured before the background change, so the
+                    # save conflicts, keeps the draft, and changes no saved record.
+                    assert fixture.writes[-1][1]["expected_revision"] == accepted_revision - 1
+                    expect(goal.locator(".error-line")).to_have_count(1)
+                    expect(title).to_have_text("Local draft after refresh")
+                    assert fixture.goals[identity]["title"] == "Remote accepted title"
                     assert len(fixture.writes) == count + 1
                     expect(title).to_have_text("Local draft after refresh")
                     title.press("Escape")
-                    expect(title).to_have_text("Local draft after refresh")
+                    expect(title).to_have_text("Remote accepted title")
+                    expect(goal.locator(".error-line")).to_have_count(0)
 
                     # Failed structured drafts retain their selected value. Explicit
                     # retry uses the same payload; discard restores accepted data.
@@ -2271,10 +2294,17 @@ def native_goal_edits(browser, url):
                     expect(state).to_have_value("true")
                     assert len(fixture.writes) == count
 
-                    # Background changes do not require a revision token for this edit.
+                    # A background change after focus conflicts with the captured revision.
+                    # Discarding the edit recovers, and the next edit saves.
                     state.focus()
                     fixture.goals[identity]["revision"] += 1
                     fixture.version += 1
+                    state.select_option("false")
+                    expect(goal.locator(".error-line").first).to_contain_text("changed")
+                    goal.get_by_role("button", name="Discard edit", exact=True).click()
+                    expect(state).to_have_value("true")
+                    refresh()
+                    state.focus()
                     field_write("active", False, lambda: state.select_option("false"))
                     expect(state).to_have_value("false")
                     assert fixture.goals[identity]["active"] is False
@@ -2481,7 +2511,9 @@ def native_goal_edits(browser, url):
             text = goal.locator('[data-block="text"]').first
             markdown = text.get_by_role("textbox", name="Text", exact=True)
             count = len(fixture.writes)
-            link = text.locator('[data-file-preview-kind="markdown"] a.pv-name:visible')
+            link = text.locator(
+                '[data-file-preview-kind="markdown"] a.file-preview-artifact-link:visible'
+            )
             (link.tap if phone else link.click)()
             viewer = page.locator("[data-ticket-artifact]")
             expect(viewer.get_by_role("heading", name="Wren intake", exact=True)).to_be_visible()
@@ -3200,6 +3232,11 @@ def checklist_deadline_controls(browser, url):
                 fixture.goals["checklist"]["revision"] += 1
                 fixture.version += 1
                 native.press("Enter")
+                expect(date_control(panel).get_by_role("alert")).to_contain_text("changed")
+                assert accepted_item().get("deadline") == "2026-11-04"
+                date_control(panel).get_by_role("button", name="Discard edit", exact=True).click()
+                native.fill("2026-11-06")
+                native.press("Enter")
                 wait_fixture(
                     lambda: accepted_item().get("deadline") == "2026-11-06",
                     "Date edit after external change",
@@ -3211,7 +3248,10 @@ def checklist_deadline_controls(browser, url):
                     lambda: accepted_item().get("deadline") == "2026-11-07",
                     "New explicit edit",
                 )
-                assert "expected_revision" not in fixture.writes[-1][1]
+                assert (
+                    fixture.writes[-1][1]["expected_revision"]
+                    == fixture.goals["checklist"]["revision"] - 1
+                )
                 assert accepted_item("review")["detail"] == "Accepted neighboring context"
                 expect(date_control(panel).get_by_role("alert")).to_have_count(0)
                 if output:

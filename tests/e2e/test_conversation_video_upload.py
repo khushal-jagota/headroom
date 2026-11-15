@@ -110,11 +110,11 @@ def test_video_upload_early_send_and_native_range_playback(
         held_transfers.pop().continue_()
     assert transfer.value.status == 200, transfer.value.text()
     expect(pending).to_have_count(0, timeout=WAIT_MS)
-    page.locator("[data-media-play]").last.click()
-    player = page.locator("video").last
+    page.locator('[data-media-open="video"]').last.click()
+    player = page.locator("[data-media-viewer] video")
     expect(player).to_be_visible(timeout=WAIT_MS)
     page.wait_for_function(
-        '() => { const v = document.querySelector("video");'
+        '() => { const v = document.querySelector("[data-media-viewer] video");'
         'return v && v.readyState >= 1 && v.duration >= 3.9; }',
         timeout=WAIT_MS,
     )
@@ -129,7 +129,7 @@ def test_video_upload_early_send_and_native_range_playback(
     assert ranged.content == video.read_bytes()[:32]
     player.evaluate("(video) => { video.currentTime = 2; }")
     page.wait_for_function(
-        '() => { const v = document.querySelector("video");'
+        '() => { const v = document.querySelector("[data-media-viewer] video");'
         'return v && !v.seeking && v.currentTime >= 1.9; }',
         timeout=WAIT_MS,
     )

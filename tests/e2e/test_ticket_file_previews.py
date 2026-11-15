@@ -273,7 +273,7 @@ def test_html_artifact_interacts_loads_sibling_assets_and_refreshes_in_place(
         if f"/files/tickets/{ticket_id}/" in request.url and request.url.endswith(".html")
         else None,
     )
-    page.locator("a.pv-name:visible").filter(has_text="index.html").first.click()
+    page.locator('a.file-preview-artifact-link:visible[href*="index.html"]').first.click()
     artifact_address = (
         f"{server.base}/#/workspace/{ticket_id}"
         f"?source=ticket&ticket={ticket_id}&path=previews%2Findex.html"
@@ -448,7 +448,7 @@ def test_html_artifact_interacts_loads_sibling_assets_and_refreshes_in_place(
     page.goto(f"{server.base}/#/workspace/manager/{manager['id']}")
     page.locator("[data-goal-band]").wait_for(timeout=WAIT_MS)
     page.locator("[data-goal-band]").evaluate("node => { node.open = true; }")
-    page.locator("a.pv-name:visible").filter(has_text="index.html").first.click()
+    page.locator('a.file-preview-artifact-link:visible[href*="index.html"]').first.click()
     for width, height, layout in ((1440, 1000, "desktop"), (390, 844, "mobile")):
         page.set_viewport_size({"width": width, "height": height})
         page.locator("[data-ticket-artifact]").frame_locator("iframe").get_by_role(
@@ -479,7 +479,7 @@ def test_html_artifact_interacts_loads_sibling_assets_and_refreshes_in_place(
     )
     expect(page.locator("[data-conversation-unread-preview]")).to_contain_text("Dock artifact")
     page.locator("[data-conversation-expand]").click(timeout=WAIT_MS)
-    page.locator("a.pv-name:visible").filter(has_text="index.html").first.click()
+    page.locator('a.file-preview-artifact-link:visible[href*="index.html"]').first.click()
     for width, height, layout in ((1440, 1000, "desktop"), (390, 844, "mobile")):
         page.set_viewport_size({"width": width, "height": height})
         page.locator("[data-ticket-artifact]").frame_locator("iframe").get_by_role(
@@ -538,9 +538,9 @@ def test_a_video_preview_shows_a_poster_then_plays_and_seeks(
     )
     _open_ticket_field(page, "what_changes")
     preview = page.locator('[data-file-preview-kind="video"]').first
-    play = preview.locator("[data-media-play]")
+    play = preview.locator('[data-media-open="video"]')
     play.wait_for(timeout=WAIT_MS)
-    # The approved poster loads metadata before play, without activating the player.
+    # The approved poster loads metadata before play, without a player.
     poster = preview.locator("video.file-preview-video-poster")
     expect(poster).to_have_attribute("preload", "metadata")
     page.wait_for_function(
@@ -550,18 +550,17 @@ def test_a_video_preview_shows_a_poster_then_plays_and_seeks(
     )
     assert poster.evaluate("node => node.paused")
     expect(preview.locator("video[controls]")).to_have_count(0)
-    # The reader can still see which file the player is.
-    name = page.locator('[data-file-preview-kind="video"] .file-preview-name-link').first
-    assert name.is_visible(), "the poster must still name its file"
-    assert "clip.mp4" in name.inner_text()
+    # The poster names its file and shows the duration it read.
+    expect(play).to_have_attribute("aria-label", "Play clip.mp4")
+    expect(play.locator(".file-preview-media-duration")).to_be_visible()
 
-    # It plays on the first action.
+    # It plays in the expanded view on the first action.
     play.click()
-    video = preview.locator("video[controls]")
-    expect(poster).to_have_count(0)
+    video = page.locator("[data-media-viewer] video[controls]")
+    expect(video).to_be_visible()
     video.evaluate("node => { node.muted = true; return node.play(); }")
     page.wait_for_function(
-        "() => { const v = document.querySelector('video');"
+        "() => { const v = document.querySelector('[data-media-viewer] video');"
         " return v !== null && v.readyState >= 3; }",
         timeout=WAIT_MS,
     )
@@ -569,7 +568,7 @@ def test_a_video_preview_shows_a_poster_then_plays_and_seeks(
     # And it seeks.
     video.evaluate("node => { node.currentTime = 2.0; }")
     page.wait_for_function(
-        "() => { const v = document.querySelector('video');"
+        "() => { const v = document.querySelector('[data-media-viewer] video');"
         " return v !== null && v.currentTime >= 1.9 && v.readyState >= 3; }",
         timeout=WAIT_MS,
     )

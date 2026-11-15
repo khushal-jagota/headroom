@@ -13,6 +13,7 @@ from planner.core.config import DB_BUSY_TIMEOUT_MS, Config
 from planner.core.errors import PlannerError
 from planner.measure_sources.contracts import RuntimeLimits, SourceRuntime
 from planner.measure_sources.dispatcher import SourceDispatcher
+from planner.measure_sources.local_time import latest_due_slot
 from planner.measure_sources.run_actions import admit_scheduled_run
 
 _LOG = logging.getLogger(__name__)
@@ -45,14 +46,18 @@ class SourceScheduleParticipant:
         if self._stopped:
             return
         rows = conn.execute(
-            "SELECT id FROM measure_sources WHERE enabled=1 AND local_time=? ORDER BY id",
-            (local_now.strftime("%H:%M"),),
+            "SELECT id,local_time,created_at FROM measure_sources WHERE enabled=1 ORDER BY id",
         ).fetchall()
         for row in rows:
             if self._stopped:
                 break
+            slot = latest_due_slot(
+                str(row["local_time"]), local_now, system_local=True
+            )
+            if slot is None or slot.timestamp() < int(row["created_at"]) // 60 * 60:
+                continue
             try:
-                admit_scheduled_run(conn, str(row[0]), local_now=local_now, now=now)
+                admit_scheduled_run(conn, str(row[0]), local_now=slot, now=now)
             except PlannerError:
                 _LOG.error("source schedule admission refused", extra={"source_id": str(row[0])})
         return

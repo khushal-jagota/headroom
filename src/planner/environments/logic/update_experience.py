@@ -65,8 +65,8 @@ def resolve(
     if attempt is None:
         return idle
     if attempt.state == "waiting":
-        if attempt.mode == "idle":
-            return "waiting", ("cancel", "update_now"), None, None
+        if attempt.mode == "idle" or attempt.detail:
+            return "waiting", ("cancel", "update_now"), attempt.detail, attempt.deadline_at
         return "updating", (), None, attempt.deadline_at
     if attempt.state in {"preparing", "installing"}:
         return "updating", (), None, attempt.deadline_at

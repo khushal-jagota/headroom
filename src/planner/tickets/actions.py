@@ -24,6 +24,7 @@ def create_ticket(
     worker_type: str | None,
     workflow: TicketWorkflowDefinition | None = None,
     locale: str | None = None,
+    machine_id: str | None = None,
     employee_backend: str | None = None,
     employee_launch_model: str | None = None,
     employee_launch_reasoning_effort: str | None = None,
@@ -52,6 +53,7 @@ def create_ticket(
         worker_type=worker_type,
         workflow=workflow,
         locale=locale,
+        machine_id=machine_id,
         employee_backend=employee_backend,
         employee_launch_model=employee_launch_model,
         employee_launch_reasoning_effort=employee_launch_reasoning_effort,
@@ -121,6 +123,8 @@ def reject_ticket_proposal(
     ticket_id: str,
     *,
     message: str | None,
+    expected_proposal_revision: int | None = None,
+    decision_id: str | None = None,
     ctx: RequestContext,
     clock: Clock,
 ) -> Ticket:
@@ -129,17 +133,12 @@ def reject_ticket_proposal(
         admission.validate_revision_guidance(message)
     principal = ctx.principal
     now = clock.now_unix()
-    ticket = tickets_data.require_reject(
-        conn,
-        ticket_id,
-        principal=principal,
-        has_guidance=message is not None,
-    )
     return tickets_data.reject_proposal(
         conn,
         ticket_id,
         message=message,
         principal=principal,
         now=now,
-        expected_proposal=ticket.pending_proposal,
+        expected_proposal_revision=expected_proposal_revision,
+        decision_id=decision_id,
     )

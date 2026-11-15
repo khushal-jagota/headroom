@@ -16,6 +16,23 @@ export function setRailFocus(on: boolean): void {
   try { localStorage.setItem(KEY, on ? "1" : "0"); } catch { /* the switch still works this visit */ }
 }
 
+/** Shift+F flips the switch, unless an editable control owns the key. Plain F belongs to the conversation lens. */
+export function keyTogglesRailFocus(event: KeyboardEvent): boolean {
+  if (
+    event.defaultPrevented
+    || event.repeat
+    || event.altKey
+    || event.ctrlKey
+    || event.metaKey
+    || !event.shiftKey
+    || event.key.toLowerCase() !== "f"
+  ) return false;
+  const target = event.target;
+  return !(target instanceof Element && target.closest(
+    "input, textarea, select, [contenteditable]:not([contenteditable=\"false\"]), [role=\"textbox\"]"
+  ));
+}
+
 /** The Ticket groups Focus takes out of the sidebar. */
 export const FOCUS_HIDDEN_GROUPS: ReadonlySet<string> = new Set(["agent", "status_awaiting_approval"]);
 

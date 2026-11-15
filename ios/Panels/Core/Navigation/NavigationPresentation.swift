@@ -24,6 +24,7 @@ struct NavigationSignal: Equatable, Sendable {
 }
 
 struct NavigationTicket: Sendable {
+    let locale: String?
     let id: String
     let title: String
     let workerType: String?
@@ -120,8 +121,8 @@ enum NavigationReviewCard: Equatable, Sendable {
 extension NavigationPresentation {
     /// The Review badge: the view's card count, less the cards that a decision not yet
     /// sent will clear. A Ticket card that also holds a message stays in Review after its
-    /// proposal is decided, so it stays counted. A card outside the view is not known to
-    /// hold a message, so its decision clears it.
+    /// proposal is decided, so it stays counted. Callers supply only exact known
+    /// proposal identities in the current Review window; outside cards stay counted.
     func reviewBadge(count: Int, pendingDecisionTickets: Set<String>) -> Int {
         let staying = Set(review.compactMap { card -> String? in
             if case .ticket(let id, _, _, _, let messages) = card, !messages.isEmpty { return id }
@@ -188,7 +189,7 @@ struct NavigationPresentation: Sendable {
             let projectId = parent == nil ? row.projectId : parentRow?.projectId
             let project = projectId.flatMap { projects[$0] }
             if row.integrityError != nil {
-                return NavigationTicket(id: id, title: row.title, workerType: row.workerType, stage: row.stage, ticketStatus: "errored",
+                return NavigationTicket(locale: row.locale, id: id, title: row.title, workerType: row.workerType, stage: row.stage, ticketStatus: "errored",
                     isBacklogged: row.isBacklogged, blocked: false, terminal: false, createdAt: row.createdAt, activityAt: row.updatedAt,
                     conversationId: row.conversationId, signal: NavigationSignal(facts), awaitingReply: facts?.messageForOwner,
                     awaitingAnswer: facts?.awaitingAnswer, awaitingApproval: false, awaitingAgentApproval: false, assigned: false,
@@ -197,7 +198,7 @@ struct NavigationPresentation: Sendable {
             }
             let owner = row.ceilingHolder == ViewPrincipal(kind: "owner", id: "owner")
             let parked = row.ticketStatus == "awaiting_approval"
-            return NavigationTicket(id: id, title: row.title, workerType: row.workerType, stage: row.stage, ticketStatus: row.ticketStatus,
+            return NavigationTicket(locale: row.locale, id: id, title: row.title, workerType: row.workerType, stage: row.stage, ticketStatus: row.ticketStatus,
                 isBacklogged: row.isBacklogged, blocked: row.blocked ?? false, terminal: row.terminal ?? false, createdAt: row.createdAt,
                 activityAt: row.updatedAt, conversationId: row.conversationId, signal: NavigationSignal(facts),
                 awaitingReply: facts?.messageForOwner, awaitingAnswer: facts?.awaitingAnswer,

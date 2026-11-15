@@ -76,17 +76,23 @@ struct ArtifactViewerView: View {
         .navigationDestination(item: $linkedArtifact) { target in
             ArtifactViewerView(owner: target.owner, path: target.path, title: target.title, showsConversation: showsConversation, conversationOwner: activeConversationOwner)
         }
-        .task(id: activeConversationOwner) {
+        .task(id: store.baseURL.absoluteString + "|" + String(describing: activeConversationOwner)) {
             guard showsConversation else { return }
+            let generation = store.resources.admissionGeneration
             do {
+                let resolved: String?
                 switch activeConversationOwner {
-                case .ticket(let id): conversationID = try await store.client.ticket(id).conversationId
-                case .manager(let id): conversationID = try await store.client.manager(id).manager.conversationId
-                case .goal: break
-                case .chief: conversationID = try await store.client.chiefConversation().conversationId
-                case .goal: conversationID = try await store.client.currentConversation(activeConversationOwner)
+                case .ticket(let id): resolved = try await store.resources.read(TicketResources.detail(id)).detail.conversationId
+                case .manager(let id): resolved = try await store.resources.read(ManagerResources.detail(id)).manager.conversationId
+                case .goal: return
+                case .chief: resolved = try await store.client.chiefConversation().conversationId
                 }
-            } catch { /* The owner send door remains available when detail cannot be read. */ }
+                guard !Task.isCancelled, generation == store.resources.admissionGeneration else { return }
+                conversationID = resolved
+            } catch {
+                guard !Task.isCancelled, generation == store.resources.admissionGeneration else { return }
+                conversationID = nil
+            }
         }
         .task(id: loadVersion) { await load() }
         .task(id: waitingForPreview) {

@@ -10,7 +10,7 @@ The app icon uses the Chief of Staff portrait from
 Its opaque 1024×1024 PNG lives in `Panels/Assets.xcassets/AppIcon.appiconset`;
 `project.yml` selects `AppIcon` for the Panels target.
 
-Workspace is the initial tab. Review, Workspace and More each own a navigation
+Review is the initial tab. Notification links retain their destination. Review, Workspace and More each own a navigation
 stack and retain their place when switching tabs. More groups Work and System in
 a native list, with deployment status in a Panels server row above them. Active
 deployment status adds a dot to More; healthy idle has no dot. The tab bar is visible on these three roots; the shared `AppRoute`
@@ -42,31 +42,45 @@ fresh stream, whose first frame is a fresh snapshot. A stream that was current
 reconnects after one second, as the web does; failures retry after 1, 2, 4 and
 then 8 seconds and show Reconnecting. Then saved work drains, as before.
 
-Chief settings and deployment status are outside the view, and deployment status
-is not a navigation change at all, so those two keep the payload-free change
-stream and the resource-version API: a wake probes both versions, at most once a
-second, and unchanged versions need no body read. A body is accepted with the
-version from the same server snapshot. A failed or unknown version check keeps a
-full read, and servers without that API keep ordinary reads. Manual refresh reads
-both again and reconnects a view stream that is not current.
+Ordinary responses have one shared owner per server and exact resource key. Mounted
+screens acquire handles for their documents. A payload-free change signal probes
+active keys and reads changed bodies. Each body carries its own epoch and revision.
+Generation checks reject late responses after a newer probe or server change.
+Explicit refresh and confirmed writes reconcile affected reads immediately.
+Typed decoding and response-cache reads run off the main actor. Handles reuse
+accepted decoded values, and identical response bytes do not republish content.
+Foreground return and reconnect reconcile active demand. Domain deadlines cover
+calendar changes without a database write.
 
-A detail page reads its own detail when it opens, after a return to the
-foreground or a recovered connection, and otherwise only when its own records in
-the view change or leave it: a Ticket and its step pages on the Ticket record;
-an orchestrator on its record and its children window; Chief on its record, its
-active children and its settings. Working and unread marks on those pages come
-from the view, so a mark change needs no detail read. A Review proposal reloads
-when its Ticket's record changes. Settled reads again when the settled count
-changes. An inline artifact list reads on expansion and when its owner's file
-count changes. Settings, Usage, Feedback and Ideas read when opened, on return
-to the foreground, after a recovered connection and on pull-to-refresh.
+Goals, their readings, holder pages, and catalogs use this owner. Local edits and
+manual commands remain separate from accepted responses. The app session owns unfinished
+Goal and holder edits across route changes until Save or explicit discard. Unsaved
+conflict drafts do not survive app termination.
+Charts keep previous accepted readings, marked stale, while a newer projection loads.
+Goal details use the
+addressed document revision; lists retain their shared revision. Readings also
+retain shared measure and calendar dependencies, including datasets and formulas.
+Ticket, Chief, Manager, settings, and deployment details use domain registrations.
+Unversioned reads use their scoped navigation stamps where available. Volatile
+unversioned reads retain a bounded signal fallback. Failed automatic reads back off;
+explicit retry remains immediate. Artifact inventory still reads
+on selection; previews retain Reload. Metrics retain their foreground sampling.
 
-`ResourceRefreshTests` adds one host test for the stream, which no earlier test
-reached: a patch applies without a read, a gap opens a fresh stream, a new detail
-scope opens its own stream, a withdrawal opens none, and a record's reload stamp
-moves only with that record. It reuses the existing URLProtocol fixture in the
-offline host package. The offline simulator stub serves the events stream as a
-snapshot frame each second.
+Inactive resource responses have count, byte, and age bounds. The serial cache
+writer coalesces bounded replacement work. Live publication does not wait for disk.
+Restored responses remain stale. Cache errors do not clear durable user-work errors.
+Drafts and commands stay outside this replaceable queue.
+
+Navigation and conversation owners checkpoint admitted display at five-second
+intervals during updates and on background entry. Checkpoint encoding runs off the
+main actor. Restored display stays stale and never supplies
+stream coverage or read credit. Conversation display retains at most 300 items
+and 512 KiB of inline and expanded bodies. Visible rows keep their neighborhood.
+Older paging remains available; Latest returns to the current edge after trimming.
+Collapsed conversations request status without transcript content; their preview
+follows those compact facts while preserving the latest unsent local message. The connection
+cover cancels conversation dictation and keeps text already saved in the composer.
+Review voice capture instead preserves its recording for recovery.
 
 The view code lives in `Core/Navigation`. The wire subset is hand-written Codable,
 pinned to projection 7 and wire 3, and ignores fields the server adds. Ticket,
@@ -77,8 +91,8 @@ snapshot) is a pure unit that each stream applies to its own snapshot.
 The server bounds a view to 256 rows and 60 per window. Mounted screens share
 that budget the way the web owner shares it. Workspace asks for every card's tickets in one
 scope, so with many cards each loads fewer rows; a card cut short ends with
-“+N more”, which opens its page. Orchestrator and Chief pages keep
-their own detail reads, which also supply goals, recaps and artifacts. Settled
+“+N more”, which opens its page. Orchestrator and Chief pages acquire shared
+resource handles for their goals, recaps, and detail documents. Settled
 keeps its paged list read, and reads only while open; its count comes from the
 view.
 
@@ -120,7 +134,7 @@ Run these commands from the repository root:
 
 ```sh
 PANELS_DEVICE=5BEBCEA8-BDF2-4F47-9CAA-0E25C1D147B6
-PANELS_PROOF=/Users/khushaljagota/Coding/firstmate/data/pios-foundation
+PANELS_PROOF=/path/to/proof-directory
 xcrun simctl bootstatus "$PANELS_DEVICE" -b
 xcodebuild -project ios/Panels.xcodeproj -scheme Panels \
   -configuration Debug -sdk iphonesimulator \
@@ -186,15 +200,50 @@ xcodebuild -project ios/Panels.xcodeproj -scheme Panels \
   -parallel-testing-enabled NO test
 ```
 
-`PanelsNotificationUITests` holds the notification and opt-in conversation UI
-scenarios. `PanelsTests/Fixtures` contains response samples from read-only GETs on
-2026-10-22; the full Ticket sample includes the current saved workflow controls.
-Tests protect two previously uncovered
-wire-contract risks: snake-case/nullable/grouping and page decoding; and the
-review/detail/artifact response shapes. One tiny parser test protects heartbeat
-comments being mistaken for changes. Setup is one fixture loader, with no backend
-or browser host. Simulator launch and screenshot are a separate smoke check; they
-do not prove physical-device haptics, frame rate, or every navigation flow.
+## Permanent screen tests and one-off reviews
+
+A permanent screen test runs on every release. Admit it only for a core journey
+that a real screen must prove. Keep one or two tests per journey. Merge overlapping
+walks into one walk. Use host or model tests for logic, state, wording, and layout.
+Use one-off Simulator reviews for appearance and visual polish.
+
+`PanelsNotifications` runs `PanelsTests` and the five permanent methods in
+`PanelsNotificationUITests`. `Panels` runs the unit target. The permanent list is:
+
+| Method | Core journey |
+| --- | --- |
+| `ConversationOperationTests/testOperationsAgainstLocalStub` | Open a conversation, read, reply, and paste and send one image. |
+| `ReviewMessagesTests/testUnreadReplyRefusalQueueAndHistoricalNavigation` | Reach Review from Workspace, reply, and follow the conversation route. |
+| `ReviewMessagesTests/testStackedTicketCard` | Act on a Review item and return to skipped work. |
+| `OfflineOperationTests/testDroppedConnectionRequiresExplicitRecoveryAndSlowColdLoad` | Recover uncertain delivery with an explicit Send again confirmation. |
+| `ServerReachabilityTests/testUnreachableServerReplacesContentAndRecovers` | See the unreachable-server cover and recover without a relaunch. |
+
+Discover the native tests before a release run. Discovery must find all five
+methods. A selection that executes zero tests fails, even if Xcode returns success.
+
+`PanelsReviewUITests` and the separate `PanelsReview` scheme contain one-off walks.
+They stay outside the permanent release suite. The existing fixture harnesses select
+that scheme with `--review`. These walks cover specialist attachment previews,
+Latest scrolling, detail navigation, large text, Goal edits, notification routing,
+Review composer appearance, and a live read-only Workspace review. The live walk
+contains historical selectors; review its comments before use. A one-off walk is a
+review tool, not a permanent gate. Record its result and diagnose failures.
+
+A route without a screen test still needs a one-off check when a change touches it.
+Keep physical-device gaps on the phone checklist, including server entry and Save,
+airplane-mode delivery, Goal edit and Save, and notification taps.
+
+A flaky test is a defect in the test or the product. Find and fix its cause.
+Do not use retries, longer timeouts, or load allowances to obtain a pass.
+After a tap, wait for its result with `waitForExistence` or
+`waitForNonExistence`. Share the transition deadline across related assertions.
+Bind each row by its own stable identifier. Do not bind a changing list through
+`firstMatch` or a row position.
+
+`PanelsTests/Fixtures` contains response samples from read-only GETs on
+2026-10-22. Host tests cover wire contracts and model behavior without a browser
+or backend host. Simulator results do not prove physical-device haptics, frame
+rate, delivery through APNs, or every navigation route.
 
 ## Services and ownership
 
@@ -314,7 +363,9 @@ The app never renews the server's activity lease. Stale readings keep their samp
 time and show “No feed”. Pull-to-refresh also reloads history.
 
 Settings reads agent launch defaults, role skills, schedules and notification
-preferences. Server preferences are read-only; management remains on the web.
+preferences. Notification switches change the same server preferences as the web.
+A failed save retains the confirmed value and offers Retry. Other configuration
+remains read-only; management stays on the web.
 The Server sheet changes only this app's stored HTTPS address. Its save closure
 can be replaced by a stub. Native notification permission, APNs token handling and tap routing are implemented.
 Server delivery remains disabled until the APNs endpoint and Apple signing are
@@ -330,8 +381,7 @@ on macOS without a simulator:
 ios/scripts/test-system-models.sh
 ```
 
-For this delivery, firstmate explicitly deferred all simulator testing and Gemini
-motion review. Verification is a generic iOS Simulator SDK compile, these host
+For this delivery, all simulator testing and Gemini motion review were deferred. Verification is a generic iOS Simulator SDK compile, these host
 unit tests, and decoding eight read-only endpoint snapshots. No iOS interaction,
 motion, or physical haptic behavior is claimed as verified.
 
@@ -346,8 +396,8 @@ browser host. The read-only simulator walkthrough is an external capture harness
 not an added UI suite. Haptics still need physical-device verification.
 
 After Feedback and the system screens were integrated, Ideas was rebased while
-preserving every More destination. Firstmate requested compile-only verification
-and the existing host tests for that integration; no simulator was used for the
+preserving every More destination. Verification was compile-only
+plus the existing host tests for that integration; no simulator was used for the
 rebase checks.
 ## Workspace home
 
@@ -600,8 +650,7 @@ tests passed. A stub-only, locked PanelsLaneB pass captured Workspace and the
 Orchestrator title with simultaneous working/unread marks; its accessibility
 snapshot also confirms the inline artifact list expanded. The temporary UI driver
 stopped on row selector mismatches before opening the file or sending a message.
-Firstmate accepted the captures and requested compile-only verification after
-rebasing. No live-server writes, simulator lifecycle changes, new permanent tests,
+Verification after rebasing was compile-only. No live-server writes, simulator lifecycle changes, new permanent tests,
 or physical-device validation were performed.
 
 ## Main release synchronization (2026-10-23)
@@ -717,7 +766,7 @@ Tailscale identity, microphone permissions, and actual APNs delivery.
 
 ## Mac execution release compatibility
 
-Ticket detail and Review identify the Ticket's machine. Workspace rows and their
+Ticket detail and Review identify the Ticket's machine. Navigation preserves that identity through generated Ticket wire fields and the native presentation adapter. An unknown or missing machine identity cannot authorize a working mark. Workspace rows and their
 long-press previews omit machine labels. The server's
 executor health decides whether a Mac working mark is current. A disconnected or
 reconciling Mac retains unread messages but shows activity as unknown. The full
@@ -746,6 +795,14 @@ Push registration remains disabled. Dock previews and inline attachment parity
 remain separate work. The compatibility checks use Foundation host tests, in-memory
 HTTP stubs, backend checks and one unsigned generic iOS compile. They do not prove
 physical-device behavior or a live Mac/VPS round trip from the iPhone.
+
+The offline and conversation fixture scripts accept `--server-only` for a caller-owned
+verification turn. This mode starts only the loopback fixture and writes
+`fixture-ready.json` under its output directory. The caller supplies the test runner
+environment, assigned device, build products and deadline. Fixture videos default off.
+Optional native proof endpoints require the owned device and an active deadline.
+Send TERM to the recorded fixture process to close its listeners. This mode permits
+one build for multiple fixture cases without another simulator or build host.
 
 ## Goals
 
@@ -796,3 +853,21 @@ The existing simulator fixture host supports `PANELS_GOALS_SMOKE=1` and
 a separate task bundle ID, lane lock name and output directory through its
 `PANELS_OFFLINE_DEVICE`, `PANELS_OFFLINE_BUNDLE`, `PANELS_OFFLINE_LANE` and
 `PANELS_OFFLINE_OUTPUT` settings. It uses loopback data and no live writes.
+
+## Decision notes
+
+Ticket and Review keep Approve and Send back on the protected outbox path. Both
+carry the complete note with the exact proposal revision and stable operation
+identity. The shared server action saves the decision and attributed instruction
+together. Full history shows the actual Worker prompt as a system message.
+
+When a current guidance draft exists, the approval sheet displays its exact text
+as a read-only note. The confirmation submits that displayed snapshot. It never
+adds an undisplayed draft or reads a replacement note after the tap. This adds no
+note editor or separate chat send. Proposal edits remain separate from notes.
+
+Send back preserves whitespace, line breaks, and Unicode. A whitespace-only note
+still cannot be sent. The outbox clears a note draft only after an applied receipt,
+and only when its text and saved timestamp still match the captured draft. Offline,
+refused, stale, and uncertain decisions retain drafts. Newer edits survive an older
+receipt, including edits that restore the same text.

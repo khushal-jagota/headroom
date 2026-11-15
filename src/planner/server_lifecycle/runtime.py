@@ -6,18 +6,20 @@ stop through one callback after source invalidation and before conversation drai
 
 from __future__ import annotations
 
+import asyncio
 import sqlite3
 from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
 from contextlib import AsyncExitStack, asynccontextmanager
 
 from planner.conversation.backends.codex_app_server.login import CodexLoginRejectionMemory
-from planner.conversation.backends.contracts import BackendChildFactory
+from planner.conversation.backends.contracts import BackendChildFactory, RetainedBackendChildFactory
 from planner.conversation.contracts import ConversationBackendKey
 from planner.conversation.runtime_composition import (
     ConversationRuntime,
     SignalRuntimeComposition,
     build_conversation_runtime,
 )
+from planner.conversation.storage import read_retained_run_evidence
 from planner.navigation.delivery import DeliveryRuntime
 from planner.navigation.signal_runtime import SignalNavigationBinding
 
@@ -49,7 +51,24 @@ async def application_runtime(
                 composition.bootstrap(startup_audit=startup_audit)
                 binding = SignalNavigationBinding(composition.coordinator, navigation_delivery)
                 cleanup.callback(binding.close)
+                retained_runs = tuple(
+                    run
+                    for factory in {
+                        id(value): value for value in backend_child_factories.values()
+                    }.values()
+                    if isinstance(factory, RetainedBackendChildFactory)
+                    for run in factory.retained_runs()
+                )
+                retained_ids = tuple({run.reference.conversation_id for run in retained_runs})
+                retained_evidence = await asyncio.to_thread(
+                    read_retained_run_evidence,
+                    db_path,
+                    retained_ids,
+                    db_busy_timeout_ms,
+                )
                 conversation = build_conversation_runtime(
+                    retained_run_evidence=retained_evidence,
+                    retained_runs=retained_runs,
                     db_path=db_path,
                     db_busy_timeout_ms=db_busy_timeout_ms,
                     sse_heartbeat_ms=sse_heartbeat_ms,
@@ -59,6 +78,7 @@ async def application_runtime(
                     signal_composition=composition,
                     defer_view_cleanup=defer_view_cleanup,
                 )
+                del retained_evidence, retained_runs
                 try:
                     composition.initialize()
                     binding.attach()

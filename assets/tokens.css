@@ -23,6 +23,16 @@
 }
 
 :root {
+  /* Machine identity colors stay separate from action and attention. */
+  --machine-jade: #83b7a7;
+  --machine-orchid: #bd99bf;
+  --machine-sand: #b8ad97;
+  --machine-cyan: #6fc9d0;
+  --machine-rose: #d393aa;
+  --machine-plum: #a784d4;
+  --machine-lime: #b9c77c;
+  --machine-stone: #c6c6c6;
+
   /* Surfaces — two general neutral planes and one deliberately recessed plane.
    * Ink remains for knockout marks and the retired Day card. */
   --surface-1: #121212;
@@ -61,6 +71,34 @@
     rgb(255 255 255 / 6%)
   );
   --scrim: rgb(10 9 8 / 55%);
+
+  /* Artifacts and media in a conversation. An HTML or Markdown artifact is a link in
+   * its sentence; pictures and videos keep their own shape and open one at a time in
+   * a near-black expanded view. Media overlays sit on arbitrary pictures, so they are
+   * fixed black and white rather than surface tones. */
+  --link-artifact: #a9bde6;
+  --link-artifact-weight: 500;
+  --link-artifact-underline-offset: 3px;
+  --media-max-width: min(100%, 28rem);
+  --media-max-height: 20rem;
+  --media-max-height-phone: 280px;
+  --media-min-width: 120px;
+  --media-grid-width: min(100%, 28rem);
+  --media-play-size: 56px;
+  --media-play-size-grid: 44px;
+  --media-play-fill: rgb(0 0 0 / 55%);
+  --media-play-edge: rgb(255 255 255 / 25%);
+  --media-overlay-text: #fff;
+  --media-duration-fill: rgb(0 0 0 / 60%);
+  --media-duration-pad-block: 2px;
+  --media-duration-line-height: 1.5;
+  --media-edge: color-mix(in srgb, var(--text-strong) 10%, transparent);
+  --media-viewer-fill: rgb(0 0 0 / 96%);
+  --media-viewer-blur: 12px;
+  --media-viewer-button-size: 40px;
+  --media-viewer-button-fill: rgb(255 255 255 / 8%);
+  --media-viewer-chrome-height: 140px;
+  --media-viewer-layer: 1000;
 
   /* Text tokens, older names. Each lands on one of the five Direction v2 tones (the
    * "Direction v2 roles" block below), so every existing use speaks the same ladder:

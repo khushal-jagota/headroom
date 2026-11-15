@@ -31,20 +31,29 @@ def _machine(**found: str) -> Callable[[str], str | None]:
 
 
 
-def test_every_agent_is_told_where_panels_is_answering() -> None:
+def test_every_agent_is_told_where_panels_is_answering(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """The `panels` CLI in an agent's shell talks to Panels over HTTP.
 
     It has no other way to learn the port, and getting it wrong is an agent that cannot
     read its own Ticket. All three carry it, because a Ticket's worker can be any of them.
     """
+    monkeypatch.delenv("PLAN_DB_PATH", raising=False)
+    monkeypatch.delenv("PLAN_WORKER_PROCESS_ROOT", raising=False)
+    configured_root = tmp_path / "configured-home" / "worker-processes"
     launches = production_backend_launches(
-        panels_server_url=SERVER_URL,
+        panels_server_url=SERVER_URL, worker_process_root=configured_root,
         executable_path=_machine(codex="/usr/local/bin/codex", claude="/usr/local/bin/claude"),
     )
 
     assert dict(launches.hermes.environment_overrides)["PLAN_SERVER_URL"] == SERVER_URL
     assert dict(launches.codex.environment_overrides)["PLAN_SERVER_URL"] == SERVER_URL
     assert dict(launches.claude.environment_overrides)["PLAN_SERVER_URL"] == SERVER_URL
+    for launch in (launches.hermes, launches.codex, launches.claude):
+        assert dict(launch.environment_overrides)["PLAN_WORKER_PROCESS_ROOT"] == str(
+            configured_root
+        )
 
 
 def test_release_changes_do_not_replace_external_cli_selection(

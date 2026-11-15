@@ -67,6 +67,7 @@ def _row_to_manager(row: sqlite3.Row) -> Manager:
         title=row["title"],
         goal=row["goal"],
         recap=row["recap"],
+        recap_updated_at=row["recap_updated_at"],
         project_id=row["project_id"],
         project_name=row["project_name"],
         settled=bool(row["settled"]),
@@ -245,6 +246,10 @@ def update_manager(
 
         assignments = list(stored_edits)
         values: list[str | int | None] = [stored_edits[field] for field in assignments]
+        if "recap" in stored_edits:
+            assignments.append("recap_updated_at")
+            recap = stored_edits["recap"]
+            values.append(now if recap is not None and recap.strip() else None)
         if assignments:
             set_clause = ", ".join(f"{field} = ?" for field in assignments)
             conn.execute(

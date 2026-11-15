@@ -41,7 +41,9 @@ A missing value stays missing. Headroom does not show an older reading as curren
 
 ## Who edits a goal
 
-Khushal, Chief, and the holding Manager all edit through one writer. Each edit applies to the current saved record. A failed edit retains its draft for an explicit retry. The holder changes the page, completion, and active state without an approval step. Goals have no Ticket stages.
+Khushal, Chief, and the holding Manager all edit through one writer. An edit with a captured revision cannot replace a newer saved record. A failed edit retains its draft for an explicit retry. The holder changes the page, completion, and active state without an approval step. Goals have no Ticket stages.
+
+Checklist controls wait for the same document's pending write and refreshed values before accepting another change.
 
 Khushal edits most text on a separate Goal page in place. On Manager and Chief pages, the same text is read-only. Checklist wording belongs to the holder. Checklist items can carry their own deadlines, which Khushal sets from the page. Item deadlines are colored, but they do not change the goal's own deadline or result.
 
@@ -73,3 +75,10 @@ Deletion removes the goal, its page and files, and its own completion and outcom
 - `web/src/components/goals/` and `web/src/lib/goals/`: the page, rail, previews, and overview.
 
 _Last verified: 2026-11-11._
+
+The iPhone shares accepted Goal lists, documents, readings, and holder pages through
+one resource owner. Each mounted page retains its unfinished edits separately.
+A document edit invalidates that Goal and the global list. Reading freshness keeps
+shared measurement, dataset, formula, and local-calendar dependencies. A measurement
+change can therefore refresh several active Goals. An inactive Goal does not fetch
+because another page changed.

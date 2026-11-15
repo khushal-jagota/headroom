@@ -16,6 +16,7 @@ from planner.execution_configuration import PROTOCOL_VERSION, SPOOL_FORMAT_VERSI
 from planner.execution_identity import MAC_NEEDS_UPDATE, ExecutorIdentity
 from planner.executor.protocol import ExecutorRefusal
 from planner.executor.vps_presence_store import record_refusal
+from planner.machines.data import legacy_machine_id
 from planner.runtime import worker_memory
 from planner.runtime.worker_step_readiness_loop import tell_a_worker_it_lost_its_memory
 from planner.worker_types.configuration import configured_worker_type_registry
@@ -54,7 +55,10 @@ def _refuse_old_mac(db_path: str) -> None:
 def test_notice_scan_uses_current_locale_admission(
     tmp_db: Connection, memory_ticket: str, locale: str, state: str
 ) -> None:
-    tmp_db.execute("UPDATE tickets SET locale=? WHERE id=?", (locale, memory_ticket))
+    tmp_db.execute(
+        "UPDATE tickets SET locale=?,machine_id=? WHERE id=?",
+        (locale, legacy_machine_id(locale), memory_ticket),
+    )
     tmp_db.commit()
     db_path = _db_path(tmp_db)
     if state != "absent":
@@ -93,18 +97,20 @@ def test_mac_refusal_during_held_prompt_await_prevents_send(
 
     monkeypatch.setattr(world, "connect", tracked_connect)
 
-    async def held_prompts(conversation_id: str) -> tuple[()]:
+    async def awaiting_outcome(conversation_id: str) -> frozenset[str]:
         held_reads.append(conversation_id)
         assert not connections[-1].in_transaction
         await asyncio.sleep(0)
         # Away no longer revokes admission; a refusal does.
         _refuse_old_mac(db_path)
-        return ()
+        return frozenset()
 
     async def send(*args: object, **kwargs: object) -> None:
         raise AssertionError("send after admission was refused during held-prompt read")
 
-    monkeypatch.setattr(world.conversations, "held_prompts", held_prompts)
+    monkeypatch.setattr(
+        world.conversations, "sender_message_ids_awaiting_outcome", awaiting_outcome
+    )
     monkeypatch.setattr(world.conversations, "send", send)
     assert not asyncio.run(
         tell_a_worker_it_lost_its_memory(

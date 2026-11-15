@@ -8,12 +8,13 @@ from __future__ import annotations
 
 import os
 import re
+import time
 from collections.abc import Callable
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
 import httpx
-from playwright.sync_api import BrowserContext, Locator, Page, expect
+from playwright.sync_api import APIResponse, BrowserContext, Locator, Page, Route, expect
 from tests.e2e.harness import WAIT_MS, ApiHelper, JsonObject, ServerHandle
 from tests.support.server_fixtures import signal_server as signal_server
 
@@ -481,7 +482,7 @@ def test_goal_page_persistence_external_refresh_and_owned_conversation(
         assert date_saved.value.ok
         body = date_saved.value.request.post_data_json
         assert isinstance(body, dict)
-        assert "expected_revision" not in body
+        assert body["expected_revision"] == before["revision"]
         accepted = api.get(server, path)
         expected_page = before["page"]
         expected_page["blocks"][0]["items"][1]["deadline"] = value
@@ -500,13 +501,65 @@ def test_goal_page_persistence_external_refresh_and_owned_conversation(
     persist_item_deadline("2031-10-30")
     persist_item_deadline("2031-11-02")
     persist_item_deadline(None)
-    # An ordinary checklist still saves without contributing to effective completion.
-    with page.expect_response(
-        lambda response: response.url.endswith(path) and response.request.method == "PATCH",
-        timeout=WAIT_MS,
-    ) as ordinary:
+    # Reuse this connected edit to prove that another checklist cannot submit an
+    # old displayed revision while the preceding write or its query refresh waits.
+    held_patch: list[tuple[Route, APIResponse]] = []
+    held_reads: list[Route] = []
+    holding_refresh = False
+
+    def hold_patch(route: Route) -> None:
+        nonlocal holding_refresh
+        if route.request.method != "PATCH":
+            route.fallback()
+            return
+        response = route.fetch()
+        holding_refresh = True
+        held_patch.append((route, response))
+
+    def hold_goal_refresh(route: Route) -> None:
+        key = parse_qs(urlparse(route.request.url).query).get("key", [None])[0]
+        if key == path and holding_refresh:
+            held_reads.append(route)
+        else:
+            route.fallback()
+
+    def await_intercepted(ready: Callable[[], bool]) -> None:
+        deadline = time.monotonic() + WAIT_MS / 1000
+        while not ready() and time.monotonic() < deadline:
+            # Pump Playwright's synchronous event loop until the named request is held.
+            page.wait_for_timeout(10)
+        assert ready(), "The expected goal request was not intercepted"
+
+    primary_checkbox = primary.get_by_role("checkbox", name="Review the draft", exact=True)
+    page.route("**" + path, hold_patch)
+    page.route("**/api/resource-body?*", hold_goal_refresh)
+    try:
         page.get_by_role("checkbox", name="Keep source notes", exact=True).click(timeout=WAIT_MS)
-    assert ordinary.value.ok
+        await_intercepted(lambda: bool(held_patch))
+        expect(primary_checkbox).to_be_disabled(timeout=WAIT_MS)
+        ordinary_route, ordinary_response = held_patch.pop()
+        with page.expect_response(
+            lambda response: response.url.endswith(path) and response.request.method == "PATCH",
+            timeout=WAIT_MS,
+        ) as ordinary:
+            ordinary_route.fulfill(response=ordinary_response)
+        assert ordinary.value.ok
+        await_intercepted(lambda: bool(held_reads))
+        expect(primary_checkbox).to_be_disabled(timeout=WAIT_MS)
+        holding_refresh = False
+        for route in held_reads:
+            route.continue_()
+        held_reads.clear()
+        expect(primary_checkbox).to_be_enabled(timeout=WAIT_MS)
+    finally:
+        holding_refresh = False
+        for route, held_response in held_patch:
+            route.fulfill(response=held_response)
+        for route in held_reads:
+            route.continue_()
+        page.unroute("**" + path, hold_patch)
+        page.unroute("**/api/resource-body?*", hold_goal_refresh)
+    # An ordinary checklist saves without contributing to effective completion.
     current = api.get(server, path)
     assert current["page"]["blocks"][3]["items"][0]["state"] == "done"
     assert current["completed"] is False
@@ -578,7 +631,7 @@ def test_goal_page_persistence_external_refresh_and_owned_conversation(
     assert overview_saved.value.ok
     overview_body = overview_saved.value.request.post_data_json
     assert isinstance(overview_body, dict)
-    assert "expected_revision" not in overview_body
+    assert overview_body["expected_revision"] == overview_revision
     overview_accepted = api.get(server, path)
     assert overview_accepted["revision"] == overview_revision + 1
     assert overview_accepted["page"]["blocks"][0]["items"][1]["state"] == "done"
@@ -677,6 +730,7 @@ def test_goal_page_persistence_external_refresh_and_owned_conversation(
     assert titled.value.ok, titled.value.text()
     assert titled.value.request.post_data_json == {
         "title": "Owner title",
+        "expected_revision": before_title["revision"],
     }
     accepted_title = api.get(server, path)
     assert accepted_title["title"] == "Owner title"
@@ -695,7 +749,7 @@ def test_goal_page_persistence_external_refresh_and_owned_conversation(
         return row
 
     # An external revision reaches the mounted page without replacing a focused
-    # draft. The later title-only save wins and preserves the remotely edited page.
+    # draft. A stale save refuses the captured revision before a fresh edit succeeds.
     title_editor.fill("Unaccepted local title", timeout=WAIT_MS)
     page.locator("[data-goal-page]").evaluate(
         "node => node.dataset.nativeEditProof = 'retained'"
@@ -744,11 +798,29 @@ def test_goal_page_persistence_external_refresh_and_owned_conversation(
         timeout=WAIT_MS,
     ) as local_title:
         title_editor.press("Enter", timeout=WAIT_MS)
-    assert local_title.value.status == 200, local_title.value.text()
+    assert local_title.value.status == 409, local_title.value.text()
     assert local_title.value.request.post_data_json == {
         "title": "Unaccepted local title",
+        "expected_revision": current["revision"],
     }
     error = page.locator("[data-goal-page] .goal-heading .error-line")
+    expect(error).to_be_visible(timeout=WAIT_MS)
+    expect(title_editor).to_have_text("Unaccepted local title", timeout=WAIT_MS)
+    assert api.get(server, path) == remote.json()
+    title_editor.press("Escape", timeout=WAIT_MS)
+    expect(title_editor).to_have_text("Chief title", timeout=WAIT_MS)
+    expect(error).to_have_count(0, timeout=WAIT_MS)
+    title_editor.fill("Unaccepted local title", timeout=WAIT_MS)
+    with page.expect_response(
+        lambda reply: reply.url.endswith(path) and reply.request.method == "PATCH",
+        timeout=WAIT_MS,
+    ) as fresh_title:
+        title_editor.press("Enter", timeout=WAIT_MS)
+    assert fresh_title.value.status == 200, fresh_title.value.text()
+    assert fresh_title.value.request.post_data_json == {
+        "title": "Unaccepted local title",
+        "expected_revision": remote.json()["revision"],
+    }
     expect(error).to_have_count(0, timeout=WAIT_MS)
     expect(title_editor).to_have_text("Unaccepted local title", timeout=WAIT_MS)
     accepted_local = api.get(server, path)

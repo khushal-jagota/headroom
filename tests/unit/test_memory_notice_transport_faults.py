@@ -233,9 +233,9 @@ async def _notice_bench(
                 (ticket.id,),
             )
             conn.execute(
-                "UPDATE conversations SET automatically_compacted_through_sequence=? "
-                "WHERE conversation_id='c'",
-                (compacted.sequence,),
+                "UPDATE conversations SET automatically_compacted_through_sequence=?, "
+                "working_turn_compacted_through_sequence=? WHERE conversation_id='c'",
+                (compacted.sequence, compacted.sequence),
             )
             assert worker_memory.conversation_holds_an_unanswered_memory_loss(conn, "c")
         if busy:

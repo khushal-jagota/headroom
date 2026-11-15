@@ -26,3 +26,27 @@ extension APIClient {
         return TicketsResponse(tickets: rows, page: page.page)
     }
 }
+
+enum ChiefResources {
+    static let roster = ResourceRegistration<ChiefRoster>(key: "/api/workers", versioned: false, signalRefreshInterval: ResourceLimits.fallbackSeconds)
+    static let settings = ResourceRegistration<ChiefDetail>(key: "/api/workers/chief-of-staff/settings")
+    static let deployment = ResourceRegistration<DeploymentStatus>(key: "/api/deployment-status")
+    static let executorHealth = ResourceRegistration<ExecutorHealth>(key: "/api/executor/health", versioned: false, signalRefreshInterval: ResourceLimits.fallbackSeconds)
+}
+
+enum HolderTicketResources {
+    static func page(_ holder: GoalHolder, filter: TicketFilter, offset: Int) -> ResourceRegistration<TicketsResponse> {
+        var parts = URLComponents()
+        parts.path = "/api/tickets"
+        var query = [URLQueryItem(name: "detail", value: "summary"), .init(name: "limit", value: "30"), .init(name: "offset", value: String(offset))]
+        switch filter {
+        case .active: query.append(.init(name: "is_backlogged", value: "false"))
+        case .backlogged: query.append(.init(name: "is_backlogged", value: "true"))
+        case .done: query += [.init(name: "include_terminal", value: "true"), .init(name: "stage", value: "done")]
+        }
+        query.append(.init(name: "manager_kind", value: holder.kind.rawValue))
+        if let id = holder.id { query.append(.init(name: "manager_id", value: id)) }
+        parts.queryItems = query
+        return ResourceRegistration(key: parts.string!, versioned: false)
+    }
+}

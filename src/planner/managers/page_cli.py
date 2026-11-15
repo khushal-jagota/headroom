@@ -52,9 +52,9 @@ def edit_page(manager_id: str | None, chief: bool, as_json: bool) -> None:
     """Read {page: DOCUMENT} from stdin. See page schema before a whole-document edit."""
     route = _route(manager_id, chief, as_json)
     body = stdin_object(as_json)
-    if set(body) != {"page"}:
+    if "page" not in body or set(body) - {"page", "expected_revision"}:
         http.fail_validation(
-            "Provide exactly the page field. Use null to clear the holder document.",
+            "Provide page and optional expected_revision. Use null to clear the holder document.",
             as_json, recovery="panels page schema",
         )
     _emit(http.send("PATCH", route, as_json=as_json, json_body=body), as_json)

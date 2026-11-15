@@ -12,6 +12,7 @@ from tests.support.in_memory_conversation_system import InMemoryConversationSyst
 from tests.support.principals import OWNER_PRINCIPAL
 from tests.support.ticket_workflows import preset_workflow_json
 
+from planner.cli.main import _format_ticket_summaries
 from planner.conversation.contracts import PromptDeliveryStarted
 from planner.core.clock import RealClock
 from planner.core.db import connect, create_schema
@@ -81,6 +82,13 @@ def test_audit_records_one_fault_and_preserves_other_tickets(
         displayed = cast(BrokenTicketProjection, workspace)["integrity_error"]["reason"]
         assert displayed and "SENSITIVE_TEST" not in displayed
         assert data.read_ticket(conn, "healthy").title == "Healthy Ticket"
+        if column == "workflow_json":
+            # The CLI reads diagnostic rows too, without the broken workflow decoder.
+            diagnostic = dict(integrity.diagnostic_projection(conn, "broken"))
+            assert diagnostic["recap_updated_at"] is None
+            assert diagnostic["recap_stage_changed"] is False
+            assert "Original recap (recap age unknown)" in _format_ticket_summaries([diagnostic])
+
         assert {
             row["id"]
             for row in views.list_tickets(

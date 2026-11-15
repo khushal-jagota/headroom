@@ -330,6 +330,8 @@ def run(browser, urls):
                 )
                 return
             result = {"worker_types": matches}
+        elif path == "machines":
+            result = fixture["MACHINE_CATALOG"]
         elif path == "worker-types":
             result = manifest
         elif path.startswith("tickets/") and "/accept/" in path:
@@ -510,7 +512,7 @@ def run(browser, urls):
             page.set_viewport_size({"width": width, "height": 1000})
             page.emulate_media(reduced_motion="reduce")
             if host_kind == "ticket":
-                expect(page.locator("[data-ticket-identity]")).to_have_text("Panels · Coding")
+                expect(page.locator("[data-ticket-identity]")).to_have_text("VPS Panels · Coding")
                 page.locator("[data-stage-fold]").evaluate("(element) => element.open = true")
             assert page.evaluate(
                 "Math.max(document.documentElement.scrollWidth, document.body.scrollWidth) <= innerWidth + 1"
@@ -630,6 +632,7 @@ def run(browser, urls):
     choose("needs_what_changes")
     wait_count(approvals, 1)
     assert approvals[-1]["body"] == {
+        "decision_id": '["t_coding",4]:approve', "message": None,
         "next_ceiling": "needs_what_changes",
         "next_holder": {"kind": "owner", "id": "owner"},
         "expected_proposal_revision": expected_revision,
@@ -699,6 +702,7 @@ def run(browser, urls):
             "ticket_id": ticket_id,
             "field": "consequences",
             "body": {
+                "decision_id": f'["{ticket_id}",{expected_revision}]:approve', "message": None,
                 "next_ceiling": "none",
                 "next_holder": expected_holder,
                 "expected_proposal_revision": expected_revision,
@@ -792,6 +796,7 @@ def run(browser, urls):
         choose("needs_implementation", principal["id"])
         wait_count(approvals, count + 1)
         assert approvals[-1]["body"] == {
+            "decision_id": f'["{identity}",1]:approve', "message": None,
             "next_ceiling": "needs_implementation",
             "next_holder": principal,
             "expected_proposal_revision": 1,
@@ -833,6 +838,7 @@ def run(browser, urls):
     choose("needs_implementation", "owner")
     wait_count(approvals, count + 1)
     assert approvals[-1]["body"] == {
+        "decision_id": '["t_lifecycle",7]:approve', "message": None,
         "next_ceiling": "needs_implementation",
         "next_holder": {"kind": "owner", "id": "owner"},
         "expected_proposal_revision": 7,

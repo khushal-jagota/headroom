@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import os
+import platform
 import re
 import zipfile
 from datetime import UTC, datetime
@@ -23,6 +24,7 @@ from planner.environments.runtime_contracts import (
 )
 from planner.environments.update_attempts import parse_release
 from planner.environments.update_contracts import PublishedUpdate
+from planner.platform_runtime.targets import LINUX_HOME, MAC_HOME, RuntimeTarget
 
 # Each trusted publishing workflow may publish exactly one runtime contract version.
 TRUSTED_RELEASE_WORKFLOWS = {
@@ -32,9 +34,18 @@ TRUSTED_RELEASE_WORKFLOWS = {
 
 
 class GitHubUpdateProvider:
-    def __init__(self, repository: str, token_file: Path | None) -> None:
+    def __init__(
+        self, repository: str, token_file: Path | None, *, target: RuntimeTarget | None = None
+    ) -> None:
         if re.fullmatch(r"[\w.-]+/[\w.-]+", repository) is None:
             raise ValueError("Invalid update repository")
+        self.target = target or (
+            MAC_HOME
+            if platform.system().lower() == "darwin" and platform.machine() == "arm64"
+            else LINUX_HOME
+        )
+        if self.target not in (LINUX_HOME, MAC_HOME):
+            raise ValueError("Updates require a supported home runtime target")
         self.repository = repository
         self.token_file = token_file
         self._publication_cache: PublishedUpdate | None = None
@@ -127,7 +138,8 @@ class GitHubUpdateProvider:
             f"actions/runs/{run_id}/artifacts", params={"per_page": 100}
         ).json()["artifacts"]
         by_name = {a["name"]: a for a in artifacts if not a["expired"]}
-        proof, app = by_name.get("panels-publication-proof"), by_name.get("panels-app")
+        proof = by_name.get("panels-publication-proof")
+        app = by_name.get("panels-mac-home" if self.target == MAC_HOME else "panels-app")
         if proof is None or app is None:
             return None
         cached = self._publication_cache
@@ -142,6 +154,11 @@ class GitHubUpdateProvider:
             archive = self._get(f"actions/artifacts/{proof['id']}/zip").content
             with zipfile.ZipFile(BytesIO(archive)) as zipped:
                 payload = json.loads(zipped.read("publication.json"))
+            if self.target == MAC_HOME:
+                home = payload.get("mac_home")
+                if not isinstance(home, dict):
+                    return None
+                payload = {**payload, **home, "mac": None}
             payload["proof_artifact_id"] = proof["id"]
             release = parse_release(payload)
         if (
@@ -156,9 +173,15 @@ class GitHubUpdateProvider:
             raise ValueError("Publication identity differs from trusted repository evidence.")
         if datetime.fromisoformat(release.expires_at.replace("Z", "+00:00")) <= datetime.now(UTC):
             return None
-        if release.manifest.runtime_contract is None:
+        contract = release.manifest.runtime_contract
+        if contract is None:
             return None
-        if release.manifest.runtime_contract.version != contract_version:
+        if (contract.system, contract.architecture) != (
+            self.target.system,
+            self.target.architecture,
+        ):
+            raise ValueError("Publication runtime target differs from this home")
+        if contract.version != contract_version:
             raise ValueError("This workflow does not publish this runtime contract version.")
         self._publication_cache = release
         return release

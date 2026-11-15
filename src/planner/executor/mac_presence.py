@@ -11,17 +11,20 @@ this one stops admission and exits with code 1, and launchd starts a fresh one.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import os
+import re
 from collections.abc import Callable
 from dataclasses import dataclass
 from functools import partial
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 from planner.core.contracts import ErrorCode
 from planner.execution_identity import ExecutorIdentity
 from planner.executor.clock import now_ms
-from planner.executor.configuration import LEASE_INTERVAL_SECONDS
+from planner.executor.configuration import LEASE_INTERVAL_SECONDS, MAX_WORKSPACE_STATE_IDS
 from planner.executor.diagnostics import ConnectionPhase, connection_diagnostics
 from planner.executor.mac_http import failure_name, lease_refusal_code
 from planner.executor.protocol import (
@@ -30,15 +33,26 @@ from planner.executor.protocol import (
     LeaseRequest,
     MacLocalStatus,
 )
+from planner.ticket_workspaces.contracts import TICKET_ID_PATTERN, WorkspaceState
 
 if TYPE_CHECKING:
     from planner.executor.contracts import CommandJournalApi, MacHttpClient
-    from planner.executor.mac_agent_processes import AgentProcesses
     from planner.executor.mac_outbox import MacOutbox
     from planner.executor.mac_runner import MacRunner
     from planner.executor.mac_updates import MacUpdateController
 
 _LOG = logging.getLogger(__name__)
+
+
+def _local_workspace_ticket_ids(root: Path) -> tuple[str, ...]:
+    if not root.is_dir() or root.is_symlink():
+        return ()
+    owners: set[str] = set()
+    for folder in root.iterdir():
+        match = re.match(rf"^({TICKET_ID_PATTERN})(?:-|$)", folder.name)
+        if match and folder.is_dir() and not folder.is_symlink():
+            owners.add(match.group(1))
+    return tuple(sorted(owners))
 
 
 @dataclass
@@ -91,13 +105,13 @@ class MacLeaseLoop:
         runner: MacRunner,
         journal: CommandJournalApi,
         updates: MacUpdateController,
-        agent_processes: AgentProcesses | None,
         replaced: Callable[[], None],
     ) -> None:
         self.client, self.presence, self.outbox = client, presence, outbox
         self.runner, self.journal, self.updates = runner, journal, updates
-        self.agent_processes = agent_processes
         self._replaced = replaced
+        self._next_workspace_cleanup = 0.0
+        self._workspace_cleanup_task: asyncio.Task[None] | None = None
 
     async def _request(self) -> LeaseRequest:
         backlog = await asyncio.to_thread(self.outbox.lease_backlog)
@@ -113,6 +127,8 @@ class MacLeaseLoop:
             working_turns=self.runner.working_turns(),
             admission_stopped=self.runner.admission_stopped,
             going_to_sleep=self.presence.going_to_sleep,
+            cleanup_uncertainties=self.runner.cleanup_uncertainties,
+            legacy_cleanup_notice=self.runner.legacy_cleanup_notice,
         )
 
     async def lease_once(self) -> bool:
@@ -148,6 +164,15 @@ class MacLeaseLoop:
             return True
         self.presence.accepted()
         self.updates.offer(result.update)
+        # Workspace reads and slow cleanup have their own task and cadence.
+        # Neither local inventory nor lifecycle history enters a presence lease.
+        loop = asyncio.get_running_loop()
+        if loop.time() >= self._next_workspace_cleanup and (
+            self._workspace_cleanup_task is None or self._workspace_cleanup_task.done()
+        ):
+            self._next_workspace_cleanup = loop.time() + 600
+            self._workspace_cleanup_task = asyncio.create_task(self._cleanup_workspaces())
+
         try:
             if cursor is not None and await asyncio.to_thread(
                 partial(
@@ -164,21 +189,39 @@ class MacLeaseLoop:
             _LOG.warning("lease follow-up failed error=%s", failure_name(error))
         return True
 
-    async def _record_agents(self) -> None:
-        """Record the agents' processes each lease interval, with or without the VPS, so
-        a start that hangs while the link is down is still ended after a crash."""
-        if self.agent_processes is None:
-            return
+    async def _cleanup_workspaces(self) -> None:
         try:
-            await asyncio.to_thread(self.agent_processes.record_children)
-        except Exception as error:  # Priority and cleanup are best effort.
-            _LOG.warning("agent processes were not recorded error=%s", failure_name(error))
+            # Startup and explicit Ticket actions refresh their own cleanup proof.
+            # Retained history belongs to this slow task, never the lease request.
+            await self.runner.refresh_worker_cleanup()
+            ticket_ids = await asyncio.to_thread(
+                _local_workspace_ticket_ids, self.runner.paths.artifacts
+            )
+            states: list[WorkspaceState] = []
+            at_vps_ms: int | None = None
+            for offset in range(0, max(len(ticket_ids), 1), MAX_WORKSPACE_STATE_IDS):
+                reply = await self.client.workspace_states(
+                    ticket_ids[offset : offset + MAX_WORKSPACE_STATE_IDS]
+                )
+                states.extend(reply.states)
+                at_vps_ms = (
+                    reply.at_vps_ms if at_vps_ms is None else min(at_vps_ms, reply.at_vps_ms)
+                )
+            assert at_vps_ms is not None
+            await self.runner.cleanup_workspaces(tuple(states), at_vps_ms // 1000)
+        except Exception as error:
+            _LOG.warning("Ticket workspace cleanup failed error=%s", failure_name(error))
 
     async def run(self) -> None:
         loop = asyncio.get_running_loop()
-        while True:
-            started = loop.time()
-            if not await self.lease_once():
-                return
-            await self._record_agents()
-            await asyncio.sleep(max(0.0, started + LEASE_INTERVAL_SECONDS - loop.time()))
+        try:
+            while True:
+                started = loop.time()
+                if not await self.lease_once():
+                    return
+                await asyncio.sleep(max(0.0, started + LEASE_INTERVAL_SECONDS - loop.time()))
+        finally:
+            if self._workspace_cleanup_task is not None:
+                self._workspace_cleanup_task.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await self._workspace_cleanup_task

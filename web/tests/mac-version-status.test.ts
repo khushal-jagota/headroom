@@ -50,10 +50,10 @@ describe("Mac version evidence", () => {
   it("shows both versions and labels refusal as historical, disconnected contact", () => {
     const html = render(MacStatus, { props: { health: refused } }).body;
     expect(html).toContain("Mac needs update");
-    expect(html).toContain("Mac: old-mac-revi · protocol 18 · outbox 5");
+    expect(html).toContain("Machine: old-mac-revi · protocol 18 · outbox 5");
     expect(html).toContain("Server: new-server-r · protocol 19 · outbox 5");
     expect(html).toContain("Last refusal:");
-    expect(html).toContain("The Mac is not connected.");
+    expect(html).toContain("Machine is not connected.");
     expect(html).toContain("Last contact:");
   });
   it("refuses an old WebSocket Mac without a Mac version to show", () => {
@@ -65,7 +65,7 @@ describe("Mac version evidence", () => {
   it("shows a Mac Ticket paused while the Mac sleeps, not as an update refusal", () => {
     const ticket = { locale: "macos" as const, ticket_status: "agent", conversation_signal: { working: true } };
     const html = render(MacStatus, { props: { health: { ...away("asleep"), refusal: refused.refusal, since_ms: Date.now() }, ticket } }).body;
-    expect(html).toContain("Paused: the Mac is away");
+    expect(html).toContain("Paused: Machine is away");
     expect(html).toMatch(/Asleep since \d{2}:\d{2}</);
     expect(html).not.toContain("Mac needs update");
   });
@@ -97,4 +97,18 @@ describe("Mac version evidence", () => {
     expect(html).toContain("Last refusal:");
     expect(html).toContain("Last contact:");
   });
+});
+
+
+it("keeps mapped cleanup and legacy evidence visible while the executor is present", () => {
+  const html = render(MacStatus, { props: { health: {
+    ...present,
+    cleanup_uncertainties: [{ticket_id:"affected-ticket", conversation_id:"source", reason:"Recorded tool remains"}],
+    legacy_cleanup_notice: "An older process record needs operator review",
+  } } }).body;
+  expect(html).toContain("Worker cleanup not proven");
+  expect(html).toContain("Recorded tool remains");
+  expect(html).toContain("#/workspace/affected-ticket");
+  expect(html).toContain("Affected Ticket");
+  expect(html).toContain("An older process record needs operator review");
 });

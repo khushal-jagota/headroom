@@ -12,7 +12,7 @@ scripted `RetainedBackendChildFactory` (the executor half has its own tests). Re
 from __future__ import annotations
 
 import json
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from dataclasses import replace
 from pathlib import Path
 from sqlite3 import Connection
@@ -60,10 +60,23 @@ from planner.conversation.logic.retained_turn import UndeliveredTurnPrompt
 from planner.conversation.message_content import message_content_text, text_message_content
 from planner.conversation.message_files import ConversationMessageFiles
 from planner.core.db import connect, create_schema
+from planner.execution_configuration import PROTOCOL_VERSION
 from planner.execution_identity import ChildReference
+from planner.machines.contracts import HOME_MACHINE_ID, ORIGINAL_MAC_MACHINE_ID
 from planner.runtime.worker_memory import new_memory_notice_message_id
 
 RECOVERY_TEXT = "Inspect the interrupted work and continue the current authorized step."
+
+
+def _present_harness(
+    db_path: Path, *, factory_wrapper: Callable[[BackendChildFactory], BackendChildFactory]
+) -> _Harness:
+    """The retained-factory bench models a present executor, like server wiring does."""
+    harness = _Harness(db_path, factory_wrapper=factory_wrapper)
+    harness.system.start_admission.configure_destinations(
+        lambda destination: destination in {HOME_MACHINE_ID, ORIGINAL_MAC_MACHINE_ID}
+    )
+    return harness
 
 
 class _MacChild(_FakeBackendChild):
@@ -164,7 +177,7 @@ def world(tmp_path: Path) -> Iterator[tuple[Path, _MacRuns]]:
 async def _first_server_with_running_turns(
     db_path: Path, runs: _MacRuns, *conversation_ids: str, sender_message_id: str | None = None
 ) -> _Harness:
-    harness = _Harness(db_path, factory_wrapper=runs.wrap)
+    harness = _present_harness(db_path, factory_wrapper=runs.wrap)
     for conversation_id in conversation_ids:
         await harness.system.start_conversation(
             ConversationStartRequest(
@@ -237,7 +250,7 @@ def test_a_vps_restart_adopts_the_running_mac_turn_live(
             request_id = (await first.request_user_input("mac")).request_id
         await first.system.shutdown()
 
-        restarted = _Harness(db_path, factory_wrapper=runs.wrap)
+        restarted = _present_harness(db_path, factory_wrapper=runs.wrap)
         try:
             assert runs.recovered == [runs.runs["mac"].reference]
             assert await restarted.system.is_running("mac")
@@ -356,7 +369,7 @@ def test_a_vps_restart_keeps_a_stopping_or_replaced_run_quarantined(
             else replace(run, incarnation_current=False)
         )
 
-        restarted = _Harness(db_path, factory_wrapper=runs.wrap)
+        restarted = _present_harness(db_path, factory_wrapper=runs.wrap)
         try:
             assert runs.recovered == []
             assert _facts(db_path, "mac")["1"] is (
@@ -398,7 +411,7 @@ def test_a_vps_restart_ends_what_the_mac_never_received(world: tuple[Path, _MacR
         assert await first.store.reserve_turn("mac") == 2
         await first.system.shutdown()
 
-        restarted = _Harness(db_path, factory_wrapper=runs.wrap)
+        restarted = _present_harness(db_path, factory_wrapper=runs.wrap)
         try:
             facts = _facts(db_path, "mac")
             assert facts["1"] is LifecycleStatus.running
@@ -432,15 +445,15 @@ def _link_mac_tickets(db_path: Path, *conversation_ids: str) -> None:
             )
         # A compatible Mac process is known, so Mac Tickets may run.
         identity = {
-            "protocol_version": 22,
+            "protocol_version": PROTOCOL_VERSION,
             "application_revision": "test",
             "spool_format_version": 5,
             "executor_incarnation": "inc-2",
         }
         conn.execute(
-            "INSERT INTO mac_executor_presence(singleton,executor_incarnation,identity_json,"
-            "last_contact_at_ms,last_lease_at_ms,continuous_since_ms) VALUES (1,'inc-2',?,1,1,1)",
-            (json.dumps(identity),),
+            "INSERT INTO mac_executor_presence(machine_id,executor_incarnation,identity_json,"
+            "last_contact_at_ms,last_lease_at_ms,continuous_since_ms) VALUES (?,'inc-2',?,1,1,1)",
+            (ORIGINAL_MAC_MACHINE_ID, json.dumps(identity)),
         )
         conn.commit()
     finally:
@@ -453,7 +466,10 @@ def _record_open_runs(db_path: Path, *references: ChildReference) -> None:
     try:
         for reference in references:
             conn.execute(
-                "INSERT INTO mac_runs VALUES (?,?,?,'ticket',?,1,0,'open')",
+                "INSERT INTO "
+                "mac_runs(conversation_id,executor_incarnation,child_id,principal_kind,"
+                "principal_id,turn_number,delivery_uncertain,stop_state) VALUES (?,?,?,"
+                "'ticket',?,1,0,'open')",
                 (
                     reference.conversation_id,
                     reference.executor_incarnation,
@@ -585,7 +601,7 @@ def test_a_drain_left_by_a_vps_restart_still_recovers_ahead_of_waiting_messages(
         runs.incarnation = "inc-2"
         runs.runs["mac"] = replace(runs.runs["mac"], incarnation_current=False)
 
-        restarted = _Harness(db_path, factory_wrapper=runs.wrap)
+        restarted = _present_harness(db_path, factory_wrapper=runs.wrap)
         try:
             queued = await restarted.system.send(
                 "mac", text_message_content("waited"), sender_label="owner"
@@ -699,7 +715,7 @@ def test_a_vps_crash_between_closing_the_run_and_ending_the_turn_still_recovers(
             runs.runs["mac"], retirement_confirmed=True, incarnation_current=False
         )
 
-        restarted = _Harness(db_path, factory_wrapper=runs.wrap)
+        restarted = _present_harness(db_path, factory_wrapper=runs.wrap)
         try:
             await run_automatic_recovery(restarted.system, restarted.store)
             await restarted.settle()
@@ -918,7 +934,7 @@ def test_a_vps_crash_before_a_never_ran_prompt_is_written_again_still_delivers_i
         runs.runs["mac"] = replace(
             runs.runs["mac"], retirement_confirmed=True, incarnation_current=False
         )
-        restarted = _Harness(db_path, factory_wrapper=runs.wrap)
+        restarted = _present_harness(db_path, factory_wrapper=runs.wrap)
         try:
             await run_automatic_recovery(restarted.system, restarted.store)
             await restarted.settle()
@@ -960,7 +976,7 @@ def test_a_vps_crash_after_the_fresh_child_is_registered_gives_it_the_prompt_at_
         runs.runs["mac"] = RetainedBackendRun(
             fresh, TurnToken("mac", 1), False, False, incarnation_current=True
         )
-        restarted = _Harness(db_path, factory_wrapper=runs.wrap)
+        restarted = _present_harness(db_path, factory_wrapper=runs.wrap)
         try:
             assert await restarted.system.is_running("mac")
             await restarted.system.resume_undelivered_prompt(

@@ -16,6 +16,7 @@ import dataclasses
 import json
 import os
 import sys
+import time
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -39,6 +40,7 @@ from planner.datasets.cli import dataset as dataset_group
 from planner.environments.cli import environment as environment_group
 from planner.executor.cli import executor_group
 from planner.goals.cli import goal as goal_group
+from planner.installation.join_cli import machine_join_command
 from planner.list_reads.configuration import DEFAULT_LIST_LIMIT
 from planner.managers.page_cli import page as page_group
 from planner.measure_sources.cli import measure_source as measure_source_group
@@ -48,6 +50,7 @@ from planner.previews.cli import preview as preview_group
 from planner.server_lifecycle.cli import serve as serve_command
 from planner.stalls.cli import stalls_group
 from planner.tickets.contracts import TicketLocale
+from planner.tickets.logic.recap import recap_preview
 from planner.worker_settings.contracts import SkillPatch
 from planner.worker_types.contracts import BRIEF_FIELD_ID
 
@@ -238,6 +241,8 @@ def _ticket_record(
         "title",
         "worker_type",
         "locale",
+        "machine_id",
+        "machine_name",
         "employee_backend",
         "employee_launch_model",
         "employee_launch_reasoning_effort",
@@ -355,6 +360,29 @@ def _format_tickets(tickets: list[dict[str, Any]]) -> str:
     )
 
 
+def _format_recap(item: dict[str, Any]) -> str:
+    recap = str(item["recap"])
+    if not recap.strip():
+        return "no recap"
+    updated_at = item["recap_updated_at"]
+    if updated_at is None:
+        freshness = "recap age unknown"
+    else:
+        age = max(0, int(time.time()) - int(updated_at))
+        if age < 60:
+            elapsed = f"{age}s"
+        elif age < 3600:
+            elapsed = f"{age // 60}m"
+        elif age < 86400:
+            elapsed = f"{age // 3600}h"
+        else:
+            elapsed = f"{age // 86400}d"
+        freshness = f"recap {elapsed} old"
+    if item.get("recap_stage_changed"):
+        freshness += ", stage changed since"
+    return f"{recap_preview(recap)} ({freshness})"
+
+
 def _format_ticket_summaries(tickets: list[dict[str, Any]]) -> str:
     return _lines(
         tickets,
@@ -363,7 +391,7 @@ def _format_ticket_summaries(tickets: list[dict[str, Any]]) -> str:
             f"{ticket['title']}"
             + (" | backlogged" if ticket.get("is_backlogged") else "")
             + (f" | {ticket['project']}" if ticket["project"] else "")
-            + (f"\n  {ticket['recap_preview']}" if ticket["recap_preview"] else "")
+            + f"\n  {_format_recap(ticket)}"
         ),
     )
 
@@ -921,6 +949,52 @@ def project_set(
     http.emit(data, as_json, f"{data['id']} {field} set")
 
 
+# --- machine ------------------------------------------------------------------
+
+
+@main.group("machine")
+def machine() -> None:
+    """Read named execution destinations."""
+
+
+machine.add_command(machine_join_command)
+
+
+@machine.command("register")
+@click.argument("name")
+@json_option
+def machine_register(name: str, as_json: bool) -> None:
+    """Register an extra machine and print its credential once."""
+    data = http.send(
+        "POST", "/api/machines", as_json=as_json, json_body={"name": name}
+    )
+    http.emit(data, True, "")
+
+
+@machine.command("replace-credential")
+@click.argument("machine_id")
+@json_option
+def machine_replace_credential(machine_id: str, as_json: bool) -> None:
+    """Revoke the old credential and print its replacement once."""
+    data = http.send(
+        "POST", f"/api/machines/{quote(machine_id, safe='')}/credential", as_json=as_json
+    )
+    http.emit(data, True, "")
+
+
+@machine.command("list")
+@json_option
+def machine_list(as_json: bool) -> None:
+    """List stable destination identities and their current availability."""
+    data = http.send("GET", "/api/machines", as_json=as_json)
+    rows = [
+        f"{entry['machine_id']} {entry['name']} "
+        f"{'Available' if entry['available'] else 'Away'}"
+        for entry in data["machines"]
+    ]
+    http.emit(data, as_json, "\n".join(rows))
+
+
 # --- ticket -------------------------------------------------------------------
 
 
@@ -935,11 +1009,27 @@ def ticket() -> None:
     required=True,
     help="Read one Ticket create object from this file, or - for standard input.",
 )
-@click.option("--locale", type=click.Choice(_LOCALES), default=None)
+@click.option(
+    "--machine-id",
+    default=None,
+    help="Destination identity from panels machine list. Defaults to the home.",
+)
+@click.option(
+    "--locale",
+    type=click.Choice(_LOCALES),
+    default=None,
+    help="Legacy alias for the original home or Mac.",
+)
 @json_option
-def ticket_create(input_json: str, locale: str | None, as_json: bool) -> None:
+def ticket_create(
+    input_json: str, machine_id: str | None, locale: str | None, as_json: bool
+) -> None:
     """Create one Ticket from one JSON object through the existing atomic writer."""
     body = _read_json_object(input_json, as_json, "Ticket create input")
+    if machine_id is not None:
+        if "machine_id" in body:
+            http.fail_validation("machine_id accepts one input source", as_json)
+        body["machine_id"] = machine_id
     if locale is not None:
         if "locale" in body:
             http.fail_validation("locale accepts one input source", as_json)
@@ -1028,6 +1118,7 @@ def ticket_delete(ticket_id: str | None, force: bool, as_json: bool) -> None:
 
 
 @ticket.command("list")
+@click.option("--active", is_flag=True, help="Only unfinished, non-backlogged Tickets.")
 @click.option(
     "--backlogged/--not-backlogged",
     "is_backlogged",
@@ -1065,6 +1156,7 @@ def ticket_delete(ticket_id: str | None, force: bool, as_json: bool) -> None:
 @bounded_options
 @json_option
 def ticket_list(
+    active: bool,
     is_backlogged: bool | None,
     worker_type: tuple[str, ...],
     stage: tuple[str, ...],
@@ -1083,6 +1175,7 @@ def ticket_list(
     params = _drop_none(
         {
             "is_backlogged": is_backlogged,
+            "active": active or None,
             "worker_type": list(worker_type) or None,
             "stage": list(stage) or None,
             "exclude_stage": list(exclude_stage) or None,
@@ -1199,6 +1292,7 @@ def _approve_ticket_proposal(
     kickoff_title: str | None,
     kickoff_note_file: str | None,
     as_json: bool,
+    expected_proposal_revision: int | None = None,
 ) -> None:
     tid = resolve_ticket_id(ticket_id, as_json)
     detail = http.send(
@@ -1223,6 +1317,13 @@ def _approve_ticket_proposal(
             as_json,
             no_route="No panels approval call is available until a proposal exists.",
         )
+    revision = (
+        proposal["revision"] if expected_proposal_revision is None else expected_proposal_revision
+    )
+    if revision != proposal["revision"]:
+        http.fail_validation(
+            "the visible proposal changed; read it again before accepting", as_json
+        )
     if ceiling is None:
         http.fail_validation("approval requires --ceiling", as_json)
     if kickoff_title is not None:
@@ -1235,6 +1336,8 @@ def _approve_ticket_proposal(
             json_body={"title": kickoff_title},
         )
     field_payload: dict[str, Any] = {
+        "expected_proposal_revision": revision,
+        "decision_id": f"{tid}:{revision}:accept",
         "next_ceiling": ceiling,
         "next_holder": (
             resolve_holder(holder, as_json) if holder is not None else caller_principal()
@@ -1260,17 +1363,30 @@ def _approve_ticket_proposal(
 
 
 def _revise_ticket_proposal(
-    ticket_id: str | None, message: str | None, body_file: str | None, as_json: bool
+    ticket_id: str | None, message: str | None, body_file: str | None, as_json: bool,
+    expected_proposal_revision: int | None = None,
 ) -> None:
     tid = resolve_ticket_id(ticket_id, as_json)
     if (message is None) == (body_file is None):
         http.fail_validation("reject requires exactly one of --message or --body-file", as_json)
     text = message if message is not None else _read_source(body_file or "", as_json)
+    if expected_proposal_revision is None:
+        detail = http.send(
+            "GET", "/api/tickets", as_json=as_json, params={"detail": "full", "id": tid}
+        )
+        proposal = detail["pending_proposal"]
+        if proposal is None:
+            http.fail_validation("no pending proposal to revise", as_json)
+        expected_proposal_revision = proposal["revision"]
     data = http.send(
         "POST",
         f"/api/tickets/{tid}/reject",
         as_json=as_json,
-        json_body={"message": text},
+        json_body={
+            "message": text,
+            "expected_proposal_revision": expected_proposal_revision,
+            "decision_id": f"{tid}:{expected_proposal_revision}:reject",
+        },
     )
     http.emit(data, as_json, f"{tid} proposal rejected")
 
@@ -1328,6 +1444,19 @@ def ticket_history(
         "has_more": page["has_more"],
     }
     http.emit(data, as_json, f"{tid} {len(data['events'])} history events")
+
+
+@ticket.command("recheck-worker-cleanup")
+@click.argument("ticket_id")
+@json_option
+def ticket_recheck_worker_cleanup(ticket_id: str, as_json: bool) -> None:
+    """Recheck exact Worker cleanup without starting work or discarding evidence."""
+    data = http.send(
+        "POST", f"/api/tickets/{ticket_id}/recheck-worker-cleanup",
+        as_json=as_json, json_body={},
+    )
+    state = "complete" if data["complete"] else "not proven"
+    http.emit(data, as_json, f"Worker cleanup {state}: {data['reason']}")
 
 
 @ticket.command("restart-worker")
@@ -1524,7 +1653,10 @@ def manager_list(
         _format_bounded(
             _lines(
                 data["managers"],
-                lambda i: f"{i['id']} {i['title']} [{'settled' if i['settled'] else 'active'}]",
+                lambda i: (
+                    f"{i['id']} {i['title']} [{'settled' if i['settled'] else 'active'}]"
+                    f"\n  {_format_recap(i)}"
+                ),
             ),
             data["page"],
         ),
@@ -1634,6 +1766,30 @@ def manager_remove_ticket(item_id: str, ticket_id: str, as_json: bool) -> None:
     http.emit(data, as_json, f"{ticket_id} removed from {item_id}")
 
 
+def _request_recap(kind: str, identity: str, as_json: bool) -> None:
+    data = http.send(
+        "POST", "/api/recap-requests", as_json=as_json,
+        json_body={"target": {"kind": kind, "id": identity}},
+    )
+    http.emit(data, as_json, f"Recap requested from {identity}.")
+
+
+@ticket.command("request-recap")
+@click.argument("ticket_id")
+@json_option
+def ticket_request_recap(ticket_id: str, as_json: bool) -> None:
+    """Ask a Ticket below you for a fresh recap."""
+    _request_recap("ticket", ticket_id, as_json)
+
+
+@manager.command("request-recap")
+@click.argument("item_id")
+@json_option
+def manager_request_recap(item_id: str, as_json: bool) -> None:
+    """Ask a Manager below you for a fresh recap."""
+    _request_recap("manager", item_id, as_json)
+
+
 @manager.command("workspace")
 @click.argument("item_id")
 @json_option
@@ -1656,13 +1812,19 @@ def manager_workspace(item_id: str, as_json: bool) -> None:
             f"Schema: panels page schema\nEdit: panels page edit --manager {item_id}"
         )
     human = (
-        f"{data['title']} ({item_id})\nPurpose: {data['goal']}\nRecap: {data['recap']}\n\n"
+        f"{data['title']} ({item_id})\nPurpose: {data['goal']}\nRecap: {_format_recap(data)}\n\n"
         f"{visible}\nOwn page revision: {data['page_revision']}\n"
         "Edits replace the complete document. Artifacts are supporting files.\n\n"
-        "Held goals:\n" + _lines(goals, lambda goal: f"{goal['id']} {goal['title']}")
-        + "\n\nArtifacts:\n" + _lines(data["artifacts"], lambda artifact: str(artifact["path"]))
-        + "\n\nTickets:\n" + _lines(
-            data["tickets"], lambda ticket: f"{ticket['id']} {ticket['title']} [{ticket['stage']}]"
+        "Held goals:\n"
+        + _lines(goals, lambda goal: f"{goal['id']} {goal['title']}")
+        + "\n\nArtifacts:\n"
+        + _lines(data["artifacts"], lambda artifact: str(artifact["path"]))
+        + "\n\nTickets:\n"
+        + _lines(
+            data["tickets"], lambda ticket: (
+                f"{ticket['id']} {ticket['title']} [{ticket['stage']}]"
+                f"\n  {_format_recap(ticket)}"
+            )
         )
     )
     http.emit(data, as_json, human)
@@ -1859,73 +2021,6 @@ def worker_propose(
     _submit_ticket_proposal(ticket_id, body_file, recap, recap_file, as_json)
 
 
-def _request_ticket_help(
-    ticket_id: str | None,
-    owner: bool,
-    chief: bool,
-    recipient_ticket_id: str | None,
-    recipient_manager_id: str | None,
-    as_json: bool,
-) -> None:
-    tid = resolve_ticket_id(ticket_id, as_json)
-    selected = sum(
-        int(value)
-        for value in (
-            owner,
-            chief,
-            recipient_ticket_id is not None,
-            recipient_manager_id is not None,
-        )
-    )
-    if selected > 1:
-        http.fail_validation("request-help accepts at most one recipient", as_json)
-    recipient = None
-    if owner:
-        recipient = {"kind": "owner", "id": "owner"}
-    elif chief:
-        recipient = {"kind": "chief", "id": "chief"}
-    elif recipient_ticket_id is not None:
-        recipient = {"kind": "ticket", "id": recipient_ticket_id}
-    elif recipient_manager_id is not None:
-        recipient = {"kind": "manager", "id": recipient_manager_id}
-    message = read_worker_stdin_body(as_json, "help message")
-    body: dict[str, Any] = {"message": message}
-    if recipient is not None:
-        body["recipient"] = recipient
-    data = http.send("POST", f"/api/tickets/{tid}/request-help", as_json=as_json, json_body=body)
-    http.emit(data, as_json, f"help message {data['fate']}")
-
-
-@worker.command("request-help")
-@click.argument("ticket_id", required=False, envvar=_TICKET_ID_ENV)
-@click.option("--owner", is_flag=True, help="Ask Khushal for help.")
-@click.option("--chief", is_flag=True, help="Ask the Chief of Staff for help.")
-@click.option("--ticket", "recipient_ticket_id", default=None, help="Ask another Ticket worker.")
-@click.option(
-    "--manager",
-    "recipient_manager_id",
-    default=None,
-    help="Ask a Manager.",
-)
-@json_option
-def worker_request_help(
-    ticket_id: str | None,
-    owner: bool,
-    chief: bool,
-    recipient_ticket_id: str | None,
-    recipient_manager_id: str | None,
-    as_json: bool,
-) -> None:
-    _request_ticket_help(
-        ticket_id,
-        owner,
-        chief,
-        recipient_ticket_id,
-        recipient_manager_id,
-        as_json,
-    )
-
-
 @worker.command("recap")
 @click.argument("ticket_id", required=False, envvar=_TICKET_ID_ENV)
 @click.option("--body-file", default=None, help="Removed: pipe recap text on stdin instead.")
@@ -1945,6 +2040,10 @@ def worker_recap(ticket_id: str | None, body_file: str | None, as_json: bool) ->
 @click.option("--edit-file", default=None, help="Edited accepted body, or - for stdin.")
 @click.option("--kickoff-title", default=None, help="Edited Kickoff title.")
 @click.option("--kickoff-note-file", default=None, help="Edited Kickoff note, or - for stdin.")
+@click.option(
+    "--expected-proposal-revision", type=click.IntRange(1), default=None,
+    help="The revision of the proposal you inspected. Omission pins the command-time read.",
+)
 @json_option
 def ticket_proposal(
     proposal_args: tuple[str, ...],
@@ -1953,6 +2052,7 @@ def ticket_proposal(
     edit_file: str | None,
     kickoff_title: str | None,
     kickoff_note_file: str | None,
+    expected_proposal_revision: int | None,
     as_json: bool,
 ) -> None:
     """Submit, accept, or revise the current Ticket proposal."""
@@ -1969,11 +2069,15 @@ def ticket_proposal(
     accept_options = (ceiling, holder, edit_file, kickoff_title, kickoff_note_file)
     if action != "accept" and any(value is not None for value in accept_options):
         http.fail_validation(f"{action} does not accept proposal approval options", as_json)
+    if action == "submit" and expected_proposal_revision is not None:
+        http.fail_validation("submit does not accept --expected-proposal-revision", as_json)
     if action == "submit":
         _submit_ticket_proposal(ticket_id, None, None, None, as_json)
         return
     if action == "revise":
-        _revise_ticket_proposal(ticket_id, None, "-", as_json)
+        _revise_ticket_proposal(
+            ticket_id, None, "-", as_json, expected_proposal_revision
+        )
         return
     _approve_ticket_proposal(
         ticket_id,
@@ -1983,37 +2087,7 @@ def ticket_proposal(
         kickoff_title,
         kickoff_note_file,
         as_json,
-    )
-
-
-@ticket.command("request-help")
-@click.argument("ticket_id", required=False)
-@click.option("--owner", is_flag=True, help="Ask Khushal for help.")
-@click.option("--chief", is_flag=True, help="Ask the Chief of Staff for help.")
-@click.option("--ticket", "recipient_ticket_id", default=None, help="Ask another Worker.")
-@click.option(
-    "--manager",
-    "recipient_manager_id",
-    default=None,
-    help="Ask a Manager.",
-)
-@json_option
-def ticket_request_help(
-    ticket_id: str | None,
-    owner: bool,
-    chief: bool,
-    recipient_ticket_id: str | None,
-    recipient_manager_id: str | None,
-    as_json: bool,
-) -> None:
-    """Record that this Ticket needs help and send the stdin message to one recipient."""
-    _request_ticket_help(
-        ticket_id,
-        owner,
-        chief,
-        recipient_ticket_id,
-        recipient_manager_id,
-        as_json,
+        expected_proposal_revision,
     )
 
 
@@ -2052,16 +2126,13 @@ _PUBLIC_COMMAND_HELP = {
     ("ticket", "proposal"): "Submit, accept, or revise the current Ticket proposal.",
     ("ticket", "complete"): "Complete one user-owned Stage directly.",
     ("ticket", "history"): "Read the current Worker conversation for one Ticket.",
+    ("ticket", "recheck-worker-cleanup"): "Recheck exact Worker cleanup without starting work.",
     (
         "ticket",
         "restart-worker",
     ): "Restart one dead Worker through the existing recovery route.",
     ("ticket", "block"): "Add one blocking Ticket relationship.",
     ("ticket", "unblock"): "Remove one blocking Ticket relationship.",
-    (
-        "ticket",
-        "request-help",
-    ): "Record and send one Ticket help request from standard input.",
     ("manager", "create"): "Create one Manager.",
     ("manager", "list"): (
         "List Managers as bounded summaries with the settled boolean. "

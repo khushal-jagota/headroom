@@ -24,6 +24,7 @@ from collections.abc import Callable
 from contextlib import closing
 from dataclasses import dataclass
 from pathlib import Path
+from sys import platform
 from typing import Final, Literal, cast
 
 from planner.notifications import data as notifications_data
@@ -187,8 +188,18 @@ def run_watchdog(
     reading = read_database(db_path)
     due = due_alarms(reading, now_ms)
     state_path = state_dir / WATCHDOG_STATE_FILE_NAME
-    already_alarmed = _read_state(state_path)
+    already_alarmed, observed_at_ms = _read_state(state_path)
     due_keys = {alarm.alarm_key for alarm in due}
+    # launchd starts a fresh process on every interval. Persist the observation,
+    # so login or a missed stretch grants one interval, not one grace per process.
+    if platform == "darwin" and (
+        observed_at_ms is None
+        or now_ms < observed_at_ms
+        or now_ms - observed_at_ms > 2 * configuration.WATCHDOG_INTERVAL_SECONDS * 1000
+    ):
+        due = tuple(
+            alarm for alarm in due if not alarm.alarm_key.startswith("checker_heartbeat_stale:")
+        )
     raised = tuple(alarm for alarm in due if alarm.alarm_key not in already_alarmed)
     recorded = already_alarmed & due_keys
     pushes_delivered = 0
@@ -212,26 +223,37 @@ def run_watchdog(
             _LOG.exception("stall alarm Chief message failed")
         if pushes_delivered or chief_accepted:
             recorded |= {alarm.alarm_key for alarm in raised}
-    if recorded != already_alarmed:
-        _write_state(state_path, recorded)
+    if recorded != already_alarmed or platform == "darwin":
+        _write_state(state_path, recorded, now_ms if platform == "darwin" else None)
     return WatchdogRun(due, raised, pushes_delivered, chief_accepted)
 
 
-def _read_state(path: Path) -> frozenset[str]:
+def _read_state(path: Path) -> tuple[frozenset[str], int | None]:
     try:
         stored = json.loads(path.read_text(encoding="utf-8"))
     except FileNotFoundError:
-        return frozenset()
+        return frozenset(), None
     except (OSError, ValueError):
         # Losing the record costs at most one repeated alarm per open stall.
         _LOG.exception("stall watchdog state unreadable; starting again")
-        return frozenset()
+        return frozenset(), None
     keys = stored.get("alarmed") if isinstance(stored, dict) else None
-    return frozenset(key for key in keys or () if isinstance(key, str))
+    observed = stored.get("observed_at_ms") if isinstance(stored, dict) else None
+    return (
+        frozenset(key for key in keys or () if isinstance(key, str)),
+        observed if type(observed) is int else None,
+    )
 
 
-def _write_state(path: Path, alarmed: set[str] | frozenset[str]) -> None:
+def _write_state(
+    path: Path,
+    alarmed: set[str] | frozenset[str],
+    observed_at_ms: int | None,
+) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_name(path.name + ".tmp")
-    temporary.write_text(json.dumps({"alarmed": sorted(alarmed)}), encoding="utf-8")
+    state: dict[str, object] = {"alarmed": sorted(alarmed)}
+    if observed_at_ms is not None:
+        state["observed_at_ms"] = observed_at_ms
+    temporary.write_text(json.dumps(state), encoding="utf-8")
     os.replace(temporary, path)

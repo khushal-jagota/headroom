@@ -129,7 +129,7 @@ def test_signature_failure_stops_admission(tmp_path: Path, monkeypatch: pytest.M
 
     monkeypatch.setattr(verify, "_codesign", invalid)
     with pytest.raises(subprocess.CalledProcessError):
-        verify.verify_app(app, "a" * 40)
+        verify.verify_app(app, "-")
 
 
 def test_update_checks_both_designated_requirements(
@@ -252,3 +252,39 @@ def test_build_protects_selected_installed_app(
     with pytest.raises(ValueError, match="outside the installed app"):
         build_app(tmp_path, installed / "nested.app", "fixture", installed_app=installed)
     assert not installed.exists()
+
+
+def test_ad_hoc_replacement_checks_both_signatures_without_certificate_continuity(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import plistlib
+
+    from planner.environments.mac_app import verify
+    from planner.environments.mac_app.build import bundle_metadata
+
+    apps = [tmp_path / "candidate.app", tmp_path / "previous.app"]
+    for app in apps:
+        (app / "Contents").mkdir(parents=True)
+        (app / "Contents/Info.plist").write_bytes(plistlib.dumps(bundle_metadata("fixture")))
+    monkeypatch.setattr(subprocess, "run", lambda *args, **kwargs: None)
+    calls: list[tuple[str, ...]] = []
+    signature = "Signature=adhoc\n"
+
+    def codesign(*arguments: str) -> str:
+        calls.append(arguments)
+        if "-r-" in arguments:
+            # Launcher replacement changes the byte-bound designated requirement.
+            return "designated => " + (
+                "new-cdhash" if arguments[-1] == str(apps[0]) else "old-cdhash"
+            )
+        return signature
+
+    monkeypatch.setattr(verify, "_codesign", codesign)
+    verify.verify_app(apps[0], "-", apps[1])
+    for app in apps:
+        assert ("--verify", "--strict", "--verbose=2", str(app)) in calls
+    assert not any("-R" in call for call in calls)
+    signature = "Authority=Apple Development: fixture\n"
+    with pytest.raises(ValueError, match="ad-hoc signature"):
+        verify.verify_app(apps[0], "-")

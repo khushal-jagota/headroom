@@ -24,6 +24,13 @@ def test_actual_managed_launcher_applies_only_explicit_owner_configuration(tmp_p
         "src/planner/environments/app.py",
         "src/planner/environments/app_launcher.py",
         "src/planner/environments/runtime_contracts.py",
+        "src/planner/platform_runtime/__init__.py",
+        "src/planner/platform_runtime/contracts.py",
+        "src/planner/platform_runtime/selection.py",
+        "src/planner/platform_runtime/targets.py",
+        "src/planner/platform_runtime/paths.py",
+        "src/planner/platform_runtime/linux/__init__.py",
+        "src/planner/platform_runtime/linux/runtime_contracts.py",
         "src/planner/core/__init__.py",
         "src/planner/core/config.py",
         "src/planner/core/contracts.py",
@@ -59,6 +66,7 @@ def test_actual_managed_launcher_applies_only_explicit_owner_configuration(tmp_p
     )
     python.write_text(
         "#!/bin/sh\nset -eu\n"
+        'if [ "$1" = "-B" ]; then shift; fi\n'
         'if [ "$1" = "-c" ]; then\n'
         + "  printf '%s\\n' "
         + shlex.quote(str(app / "src/planner/__init__.py"))

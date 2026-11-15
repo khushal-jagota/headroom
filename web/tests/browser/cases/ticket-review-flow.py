@@ -169,7 +169,8 @@ def run(browser, urls):
     review_sibling_transferred = False
     review_message_sends = []
     review_note_sends = []
-    review_note_fate = None
+    decision_response = None
+    approval_attempts = []
     review_held = []
     review_send_fate = "refused"
     review_message_mode = False
@@ -475,7 +476,9 @@ def run(browser, urls):
             path = path.removesuffix("/workspace")
         if path.startswith("tickets?"):
             path = "tickets/" + parse_qs(path.split("?", 1)[1])["id"][0]
-        if path == "updates":
+        if path == "machines":
+            result = fixture["MACHINE_CATALOG"]
+        elif path == "updates":
             result = {
                 "state": "up_to_date", "allowed_actions": [], "activity": "unknown",
                 "available": None, "attempt": None, "app_sha": "fixture", "detail": None,
@@ -656,17 +659,9 @@ def run(browser, urls):
                     "pending_user_input": None,
                     "composer_catalog": [],
                 }
-        elif path == "tickets/t_review/conversation/send" and review_note_fate is None:
-            result = {"conversation_id": "ticket-delivered-local", "fate": "started"}
         elif path == "tickets/t_review/conversation/send":
             review_note_sends.append(route.request.post_data_json)
-            if review_note_fate == "network":
-                route.abort("failed")
-                return
-            if review_note_fate == "http503":
-                route.fulfill(status=503, json={"error": {"code": "unavailable", "message": "Delivery response unavailable"}})
-                return
-            result = {"conversation_id": "review-worker", "fate": review_note_fate}
+            result = {"conversation_id": "ticket-delivered-local", "fate": "started"}
         elif path == "tickets/t_review/conversation/reset":
             result = {}
         elif path.endswith("/conversation/start-values"):
@@ -813,6 +808,13 @@ def run(browser, urls):
         elif path.endswith("/accept/success_condition"):
             assert route.request.method == "POST"
             approval = route.request.post_data_json
+            approval_attempts.append(approval)
+            if decision_response == "network":
+                route.abort("failed")
+                return
+            if decision_response == "http503":
+                route.fulfill(status=503, json={"error": {"code": "unavailable", "message": "Decision response unavailable"}})
+                return
             if (
                 server_revision is not None
                 and approval["expected_proposal_revision"] != server_revision
@@ -938,6 +940,24 @@ def run(browser, urls):
         expect(field).to_have_value(draft + "\n")
         field.fill(draft)
 
+    def assert_proposal_note_keys_leave_a_draft(field, draft):
+        """Text entry must not select either proposal decision or send a plain note."""
+        def writes():
+            return len(approval_attempts) + len(revisions) + len(review_note_sends)
+
+        assert_enter_rules_leave_a_draft(field, draft, writes)
+        before = writes()
+        field.press("End")
+        field.press("Enter")
+        expect(field).to_have_value(draft + "\n")
+        for key in ("Control+Enter", "Meta+Enter"):
+            field.fill(draft)
+            field.press(key)
+            assert field.input_value().rstrip("\n") == draft
+        page.wait_for_timeout(100)
+        assert writes() == before
+        field.fill(draft)
+
     def wait_for_held(predicate):
         # A held route never finishes its request, so poll the fixture while the
         # driver hands the route to its handler. Callers assert.
@@ -963,7 +983,7 @@ def run(browser, urls):
         absent=False,
     )
     expect(page.locator("[data-project-fact]")).to_have_text("One")
-    expect(page.locator("[data-ticket-identity]")).to_have_text("One · Coding")
+    expect(page.locator("[data-ticket-identity]")).to_have_text("VPS One · Coding")
     expect(page.locator(".ticket-title [contenteditable]")).to_have_text("Review ticket")
     expect(page.locator("[data-ticket-backlog-action]")).to_have_text("Backlog ticket")
     page.locator("[data-ticket-backlog-action]").click()
@@ -1008,7 +1028,7 @@ def run(browser, urls):
     runtime_working = True
     drive("window.__batch()")
     expect(page.locator(".ticket-title [contenteditable]")).to_have_text("Canonical masthead")
-    expect(page.locator("[data-ticket-identity]")).to_have_text("Current Project · Personal")
+    expect(page.locator("[data-ticket-identity]")).to_have_text("VPS Current Project · Personal")
     expect(page.locator(".ticket-title [data-conversation-id]")).to_have_attribute(
         "data-conversation-id", "masthead-current"
     )
@@ -1117,7 +1137,7 @@ def run(browser, urls):
         "data-section-stage", "needs_success_condition"
     )
     expect(page.locator("[data-approval-block] [contenteditable]")).to_have_text("A result")
-    expect(page.locator("[data-ticket-identity]")).to_have_text("One · Coding")
+    expect(page.locator("[data-ticket-identity]")).to_have_text("VPS One · Coding")
     expect(page.locator("[data-parent-link]")).to_have_count(0)
     assert (
         page.locator(
@@ -1387,6 +1407,14 @@ def run(browser, urls):
     assert page.locator('[data-field="consequences"] [contenteditable]').count() == 0
     personal_outcome.fill("Completed by user")
     personal_outcome.press("Tab")
+    expect(page.locator('[data-ticket-section="t_personal"]')).to_have_attribute(
+        "data-section-stage", "needs_consequences"
+    )
+    # Completion moves the value into lazy history. Open it before checking the saved body.
+    page.locator("[data-stage-fold]").evaluate("node => { node.open = true; }")
+    page.locator('[data-stage-fold] [data-field="outcome"]').evaluate(
+        "node => { node.open = true; }"
+    )
     page.wait_for_function("document.body.textContent.includes('Completed by user')")
     assert writes[-1] == {"personal_outcome": {"body": "Completed by user"}}
     page.evaluate("window.__showTicket('t_kickoff')")
@@ -1423,16 +1451,16 @@ def run(browser, urls):
     page.locator("[data-send-back]").click()
     expect(page.locator("[data-revision-note]")).to_be_focused()
     exact_revision = "Keep the agreed scope.\nPreserve the attributed details."
-    assert_enter_rules_leave_a_draft(page.locator("[data-revision-note]"), "Draft note", lambda: len(revisions))
+    assert_proposal_note_keys_leave_a_draft(page.locator("[data-revision-note]"), "Draft note")
     page.locator("[data-revision-note]").fill(exact_revision)
-    page.locator("[data-revision-note]").press("Enter")
+    page.locator("[data-send-back]").click()
     wait_for_write(lambda: revisions)
-    assert revisions == [{"message": exact_revision}]
+    assert revisions == [{"message": exact_revision, "expected_proposal_revision": 1, "decision_id": '["t_with_session",1]:send_back'}]
     drive("window.__batch()")
     expect(
         page.locator('[data-ticket-id="t_with_session"] [data-approval-block][data-mode="pending"]')
     ).to_have_count(0)
-    assert revisions == [{"message": exact_revision}]
+    assert revisions == [{"message": exact_revision, "expected_proposal_revision": 1, "decision_id": '["t_with_session",1]:send_back'}]
     page.evaluate("window.__showTicket('t_done')")
     page.locator('[data-ticket-id="t_done"]').wait_for()
     expect(page.locator("[data-ticket-backlog-action], [data-ticket-backlogged]")).to_have_count(0)
@@ -1488,88 +1516,66 @@ def run(browser, urls):
     assert choices == ["owner", "outcome_kept", "chief"], choices
     expect(approve_row.get_by_role("option", name="Manager", exact=True)).to_have_count(1)
     approve_row.get_by_role("listbox").press("Escape")
-    # The real card must recover the original message receipt before it can approve.
-    # Mocked HTTP boundaries isolate this browser ownership/persistence regression.
-    note_check_started = time.monotonic()
-    original_note = "Keep the existing approval boundary."
+    # An ambiguous decision keeps its exact request across Ticket, Review, and reload.
+    # The existing browser host proves that these controls never pre-send plain chat.
+    decision_check_started = time.monotonic()
+    review_note_sends.clear()
+    original_note = "  Keep the existing approval boundary.\n\nPreserve café and all whitespace.  "
     note_input = page.locator("[data-review-revision-input]")
-    assert_enter_rules_leave_a_draft(note_input, original_note, lambda: len(review_note_sends) + len(revisions))
+    assert_proposal_note_keys_leave_a_draft(note_input, original_note)
     note_input.fill(original_note)
-    review_note_fate = "uncertain"
-
-    def assert_original_note_identity():
-        first = review_note_sends[0]
-        immutable = ("sender_message_id", "sent_at_unix_milliseconds", "content", "mode", "sender_label")
-        assert all({key: row[key] for key in immutable} == {key: first[key] for key in immutable} for row in review_note_sends)
-        assert first["conversation_id"] in (None, "review-worker")
-        assert all(row["conversation_id"] == "review-worker" for row in review_note_sends[1:])
-
-    def retry_note(expected_count):
-        page.locator("[data-accept]").click()
-        wait_for_write(lambda: len(review_note_sends) == expected_count)
-        assert len(review_note_sends) == expected_count
-        expect(page.locator("[data-accept]")).to_be_enabled()
-        assert not approvals
-        assert_original_note_identity()
-
-    retry_note(1)
-    expect(page.locator("[data-review-note-pending] .error-message")).to_be_visible()
-    retry_note(2)
-    if os.environ.get("PANELS_UNCERTAIN_NOTE_SCREENSHOT"):
-        page.screenshot(path=os.environ["PANELS_UNCERTAIN_NOTE_SCREENSHOT"], full_page=True, animations="disabled")
-    note_input.fill("A changed note cannot discard the unresolved instruction.")
-    retry_note(3)
-    note_input.fill("")
-    retry_note(4)
-    expect(review).to_contain_text(original_note)
-    # The Ticket page must recover the same receipt and block approval too.
-    page.evaluate("window.__showTicket('t_review')")
-    expect(page.locator("[data-review-card]")).to_have_count(0)
-    expect(page.locator("[data-revision-note]")).to_have_value(original_note)
-    expect(page.locator("[data-send-back]")).to_have_count(1)
-    retry_note(5)
-    page.evaluate("window.__showReview()")
-    expect(review).to_be_visible()
-    page.reload()
-    page.evaluate("window.__showReview()")
-    expect(review).to_be_visible()
-    retry_note(6)
-    review_note_fate = "http503"
-    retry_note(7)
-    review_note_fate = "network"
-    retry_note(8)
-    # A recovered positive receipt allows acceptance. If that acceptance fails,
-    # its next attempt must not send the already confirmed note again.
-    review_note_fate = "started"
-    server_revision = 999
-    page.locator("[data-accept]").click()
-    expect(page.locator(".error-message")).to_contain_text("visible proposal changed")
-    assert len(review_note_sends) == 9
-    assert_original_note_identity()
-    assert review_note_sends[0]["content"] == [{"piece": "text", "text": original_note}]
-    assert not approvals
-    server_revision = 2
-    page.reload()
-    page.evaluate("window.__showReview()")
-    expect(review).to_be_visible()
-    print(f"Review uncertain note recovery: {time.monotonic() - note_check_started:.3f}s", flush=True)
     retained_editor = page.locator("[data-approval-block] [data-edit]")
     retained_editor.click()
     retained_editor.fill("Retained local draft")
     retained_editor.press("Tab")
-    drive("window.__batch()")
-    expect(retained_editor).to_contain_text("Retained local draft")
-    # This fixture's Coding manifest ends after Success. Approval therefore keeps
-    # the saved reviewer and the retained local edit without another scope choice.
-    approve_row.locator("[data-accept]").click()
+    decision_response = "network"
+
+    def retry_decision(expected_count):
+        page.locator("[data-accept]").click()
+        wait_for_write(lambda: len(approval_attempts) == expected_count)
+        expect(page.locator("[data-accept]")).to_be_enabled()
+        assert not approvals
+        assert not review_note_sends
+        assert all(row == approval_attempts[0] for row in approval_attempts)
+
+    retry_decision(1)
+    note_input.fill("A changed draft cannot replace the ambiguous decision.")
+    page.locator("[data-accept]").click()
+    expect(page.locator(".error-message")).to_contain_text("original note")
+    assert len(approval_attempts) == 1
+    page.evaluate("window.__showTicket('t_review')")
+    expect(page.locator("[data-revision-note]")).to_have_value(original_note)
+    expect(page.locator("[data-approval-block] [data-edit]")).to_contain_text("Retained local draft")
+    retry_decision(2)
+    page.reload()
+    page.evaluate("window.__showReview()")
+    expect(review).to_be_visible()
+    expect(page.locator("[data-review-revision-input]")).to_have_value(original_note)
+    decision_response = "http503"
+    retry_decision(3)
+    decision_response = None
+    server_revision = 999
+    page.locator("[data-accept]").click()
+    expect(page.locator(".error-message")).to_contain_text("visible proposal changed")
+    assert len(approval_attempts) == 4
+    assert not approvals
+    assert not review_note_sends
+    server_revision = 2
+    # This fixture ends after Success, so approval retains its reviewer without a scope choice.
+    page.locator("[data-accept]").click()
     expect(page.get_by_role("listbox")).to_have_count(0)
     wait_for_write(lambda: approvals)
     assert len(approvals) == 1
-    assert len(review_note_sends) == 9
+    assert len(approval_attempts) == 5
+    assert all(row == approval_attempts[0] for row in approval_attempts)
+    assert not review_note_sends
     assert approvals[0]["next_ceiling"] == "none"
     assert approvals[0]["next_holder"] == {"kind": "owner", "id": "owner"}
     assert approvals[0]["expected_proposal_revision"] == 2
+    assert approvals[0]["decision_id"] == '["t_review",2]:approve'
+    assert approvals[0]["message"] == original_note
     assert approvals[0]["edited_body"] == "Retained local draft"
+    print(f"Review decision recovery: {time.monotonic() - decision_check_started:.3f}s", flush=True)
     expect(page.locator('[data-review-card][data-ticket-id="t_review"]')).to_have_count(0)
     remaining = page.locator('[data-review-ticket-card][data-ticket-id="t_personal_pending"]')
     expect(remaining).to_have_count(1)
@@ -1699,7 +1705,7 @@ def run(browser, urls):
     saved_artifacts = page.locator('[data-stage-fold] [data-field="brief"]')
     # A Manager file link is a preview card like a Ticket or goal file link (staging, PR 613).
     # The HTML plan's card names it with a link that opens the Manager file in place.
-    html_link = saved_artifacts.locator(".pv-name").filter(has_text="plan.html")
+    html_link = saved_artifacts.locator(".file-preview-artifact-link").filter(has_text="HTML plan")
     assert html_link.get_attribute("href").startswith("#/preview?source=manager&")
     original_url = page.url
 
@@ -1752,7 +1758,7 @@ def run(browser, urls):
         page.screenshot(path=os.environ["PANELS_ARTIFACT_SCREENSHOT"], full_page=True)
     viewer.get_by_role("button", name="Close", exact=True).click()
     # The proposal's Manager file link is its card; the card's name opens it in place.
-    page.locator("[data-approval-block] .pv-name").filter(has_text="plan.md").click()
+    page.locator("[data-approval-block] .file-preview-artifact-link").filter(has_text="Markdown plan").click()
     expect(viewer).to_have_attribute("aria-label", "plan.md")
     # The document's own Manager image link is its image, shown in the document (PR 613).
     nested = viewer.locator('[data-file-preview-kind="image"] img')
@@ -1766,7 +1772,7 @@ def run(browser, urls):
     # on a raw Markdown link in a field leaves the field holding the focus. This link
     # lives in the mounted preview slot, which is contenteditable="false", so it is a real
     # focusable anchor. Do not move this proof back onto one of the raw links.
-    open_link = saved_artifacts.locator(".pv-name").filter(has_text="plan.md")
+    open_link = saved_artifacts.locator(".file-preview-artifact-link").filter(has_text="Ticket document")
     open_link.click()
     expect(viewer).to_have_attribute("aria-label", "plan.md")
     expect(viewer).to_be_focused()
@@ -1932,7 +1938,9 @@ def run(browser, urls):
         "Unread message 121"
     )
     message_card.locator('[data-review-message-sequence="121"]').scroll_into_view_if_needed()
-    expect(message_card.locator('[data-review-message-sequence="121"] iframe')).to_have_count(1)
+    latest = message_card.locator('[data-review-message-sequence="121"]')
+    expect(latest.locator('a.file-preview-artifact-link')).to_have_text('HTML plan')
+    expect(latest.locator('iframe')).to_have_count(0)
     assert review_read == 0, "Showing review must not mark messages read"
     reply = message_card.locator("[data-review-reply]")
     assert_enter_rules_leave_a_draft(reply, "Keep these words", lambda: len(review_message_sends))

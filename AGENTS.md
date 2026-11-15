@@ -30,6 +30,7 @@ There is no immutable spec. `SPEC.md` was a starting point and has been retired:
 - **docs/** — a top-level view of each system: what it is for, how it works, and roughly how, with just enough detail to sense-check the design. `docs/README.md` is the map, and `docs/AGENTS.md` holds the rules. Plain language that a smart non-engineer can read. When you change a system, update its page in the same change at the same depth: trim before you add, and never add a page for a feature. A doc that describes removed machinery is a bug. History is git's.
 
 ## Verification
+- For iPhone work, follow [permanent screen tests and one-off reviews](ios/README.md#permanent-screen-tests-and-one-off-reviews). Keep the five admitted screen methods separate from the review scheme.
 - Apply the test-admission policy in **PRINCIPLES.md** during existing plan and implementation review. Record each added test's distinct risk, existing coverage gap, chosen layer, reused setup, and any new connected case or browser host cost.
 - **A check follows a piece of work, not a file and not an edit.** Finish what you set out to do, then run the narrowest check that proves it. A broad suite re-run when nothing since could have changed it proves nothing, and at a hundred repetitions it is not a detail of the work, it is most of the wall clock.
 - There is no single command that checks everything. Run `ruff`, `mypy` and `pytest` yourself, pointed at what your work touched, and read the output. A tool that is missing or a suite that skipped says so on screen, which a wrapper reporting one number does not.
@@ -51,17 +52,15 @@ There is no immutable spec. `SPEC.md` was a starting point and has been retired:
 
 ## Worktree and server flow
 
-- Create the Ticket branch and isolated worktree from current `staging`. Do the work
-  in that worktree.
-- Put the worktree at `~/projects/panels/repository-worktrees/<ticket-id>`, or
-  `<ticket-id>-<name>` for an extra one, and start its branch name with
-  `ticket/<ticket-id>`. Put every other file that must outlive one run in
-  `~/projects/panels/task-tmp/<ticket-id>/`. Panels removes all of these after the
-  Ticket is done or deleted. It keeps uncommitted changes and commits that no remote
-  has. See `docs/environments.md`.
-- Fetch the remote target before you create the branch. State in the proposal the
-  commit you created the worktree from and the commit your final checks ran against.
-  A stale local ref passes every check against the wrong tree.
+- Panels creates the Ticket branch and worktree before the Worker starts. Use that
+  worktree through resume and restart. Do not create or remove Ticket worktrees.
+- Each Ticket folder has `worktree/` for code, dependencies, and scratch, and
+  `artifacts/` for documents and evidence. Use the paths in the Worker prompt.
+  Panels clears both seven days after the Ticket ends, subject to remote-work safety.
+  See `docs/environments.md`.
+- Workers still install dependencies, commit, push, open pull requests, and perform
+  approved merges. Fetch the integration target before integration. State the base
+  and final checked commits in the implementation evidence.
 - Set up the worktree's dependencies, environment inputs, generated prerequisites,
   and local runtime state, then verify that its source, dependencies, configuration,
   and state resolve to that worktree.
@@ -92,7 +91,7 @@ There is no immutable spec. `SPEC.md` was a starting point and has been retired:
   Setup requires absent `.venv` and Node dependency directories and never deletes them.
   Every web script also checks before its dependency executable starts.
   No flag or environment variable bypasses the guard. If dependencies share deployed
-  storage, create a fresh worktree with independent dependencies. Do not delete through
+  storage, report the unsafe workspace so that Panels can replace it. Do not delete through
   an unresolved link or mount. If valid independent dependencies receive a false refusal,
   fix the detector and add a regression check. If evidence is unavailable, restore the
   evidence or fix its acquisition before retry. See `docs/deployment.md` for diagnostics.
@@ -125,13 +124,13 @@ There is no immutable spec. `SPEC.md` was a starting point and has been retired:
   running services, survey current port use, select available ports, start the
   services, and stop them when that active work is finished. If a port is taken during
   startup, select another and retry.
-- The worktree's database and other local state may remain for later use until
-  Consequences.
+- Keep the worktree's database and other local state in the Ticket workspace.
+  Panels owns their removal after the Ticket ends.
 - At Consequences, push the Ticket branch and open an ordinary pull request into
   `staging`. Write an ordinary note about the change. Wait for `mypy (merged tree)`
   to pass, merge the pull request explicitly, and verify that it merged.
-  Then remove the Ticket's services, local runtime
-  state, worktree, and branch. If an old direct push to `origin/staging` is rejected,
+  Stop the services you started. Leave workspace removal to Panels.
+  If an old direct push to `origin/staging` is rejected,
   use this pull request route. If GitHub refuses the merge because of conflicts,
   bring current `staging` into the Ticket branch. Resolve the conflicts, verify the
   resulting revision, and push the branch. Wait for a fresh `mypy (merged tree)`
