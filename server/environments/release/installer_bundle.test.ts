@@ -289,13 +289,16 @@ it('copies a complete selected closure once and refuses changed source or an app
     // Recipe parsers cannot prove that the producer copies the graph's bound source data.
     // Reuse this filesystem lifetime to exercise its real pre-native composition phase.
     const checkout = fileURLToPath(new URL('../../../', import.meta.url));
-    const payload = join(root, 'payload'), modules = join(root, 'payload-modules'),
-      providers = join(root, 'payload-providers'), web = join(root, 'payload-web');
+    const payload = join(root, 'payload'),
+      modules = join(root, 'payload-modules'),
+      providers = join(root, 'payload-providers'),
+      web = join(root, 'payload-web');
     const put = (path: string, bytes: string) => {
       mkdirSync(dirname(path), { recursive: true });
       writeFileSync(path, bytes);
     };
-    const dependencies = JSON.parse(readFileSync(join(checkout, 'server/package.json'), 'utf8')).dependencies as Record<string, string>;
+    const dependencies = JSON.parse(readFileSync(join(checkout, 'server/package.json'), 'utf8'))
+      .dependencies as Record<string, string>;
     for (const [name, version] of Object.entries(dependencies))
       put(join(modules, name, 'package.json'), JSON.stringify({ name, version }));
     const sqlite = join(checkout, 'server/node_modules/better-sqlite3');
@@ -319,14 +322,29 @@ it('copies a complete selected closure once and refuses changed source or an app
     const schema_path = 'server/core/database/application_schema.json';
     const schema_bytes = readFileSync(join(checkout, schema_path));
     const payload_began = performance.now();
-    await compose_mac_home_payload({ exported_source: checkout, app: payload,
-      production_node_modules: modules, agent_backends_root: providers, web_dist: web }, execution);
+    await compose_mac_home_payload(
+      {
+        exported_source: checkout,
+        app: payload,
+        production_node_modules: modules,
+        agent_backends_root: providers,
+        web_dist: web,
+      },
+      execution,
+    );
     assert.deepEqual(await read_migration_graph(payload), original_graph);
     assert.deepEqual(readFileSync(join(payload, schema_path)), schema_bytes);
-    assert.deepEqual([...migration_frontier(original_graph)], [JSON.parse(schema_bytes.toString()).alembicRevision]);
+    assert.deepEqual(
+      [...migration_frontier(original_graph)],
+      [JSON.parse(schema_bytes.toString()).alembicRevision],
+    );
     for (const name of MAC_HOME_REQUIRED_FILES.filter((name) => name !== INSTALLER_RECIPE_PATH))
       assert(lstatSync(join(payload, name)).isFile(), 'composed payload lacks ' + name);
-    for (const name of ['src/planner/skills/panels/SKILL.md', 'src/planner/worker_types/shipped_worker_types.json', 'pyproject.toml'])
+    for (const name of [
+      'src/planner/skills/panels/SKILL.md',
+      'src/planner/worker_types/shipped_worker_types.json',
+      'pyproject.toml',
+    ])
       assert.deepEqual(readFileSync(join(payload, name)), readFileSync(join(checkout, name)));
     for (const [name, bytes] of Object.entries(package_bytes)) {
       assert.equal(readFileSync(join(modules, name), 'utf8'), bytes, 'copy changed its input');
@@ -336,7 +354,12 @@ it('copies a complete selected closure once and refuses changed source or an app
     }
     assert.deepEqual(await read_migration_graph(checkout), original_graph);
     assert.deepEqual(readFileSync(join(checkout, schema_path)), schema_bytes);
-    console.log(JSON.stringify({ proof: 'actual home payload composition and bound migration source', seconds: (performance.now() - payload_began) / 1000 }));
+    console.log(
+      JSON.stringify({
+        proof: 'actual home payload composition and bound migration source',
+        seconds: (performance.now() - payload_began) / 1000,
+      }),
+    );
     await write_installer_file_manifest(app, 'a'.repeat(40), execution);
     const recipe = parse_installer_file_manifest(
       JSON.parse(readFileSync(join(app, INSTALLER_RECIPE_PATH), 'utf8')),

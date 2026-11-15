@@ -42,8 +42,13 @@ export async function compose_mac_home_payload(
   options: MacHomePayloadOptions,
   execution: ReleaseExecution,
 ): Promise<void> {
-  const { exported_source: exported, app, production_node_modules: modules,
-    agent_backends_root: providers, web_dist: web } = options;
+  const {
+    exported_source: exported,
+    app,
+    production_node_modules: modules,
+    agent_backends_root: providers,
+    web_dist: web,
+  } = options;
   await production_packages(exported, modules);
   const copy = async (from: string, to: string) => {
     assert_release_execution(execution);
@@ -64,9 +69,13 @@ export async function compose_mac_home_payload(
     recursive: true,
     verbatimSymlinks: true,
     filter(path) {
-      const name = relative(server, path), parts = name.split('/');
-      return !parts.some((part) => ['node_modules', 'testing', 'tests', '.git'].includes(part)) &&
-        !name.endsWith('.test.ts') && name !== 'test_host.ts';
+      const name = relative(server, path),
+        parts = name.split('/');
+      return (
+        !parts.some((part) => ['node_modules', 'testing', 'tests', '.git'].includes(part)) &&
+        !name.endsWith('.test.ts') &&
+        name !== 'test_host.ts'
+      );
     },
   });
   await copy(modules, join(app, 'server/node_modules'));

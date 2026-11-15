@@ -65,8 +65,16 @@ export async function build_mac_home(
       dependencies,
       execution,
     );
-    await compose_mac_home_payload({ exported_source: exported, app,
-      production_node_modules: modules, agent_backends_root: providers, web_dist: web }, execution);
+    await compose_mac_home_payload(
+      {
+        exported_source: exported,
+        app,
+        production_node_modules: modules,
+        agent_backends_root: providers,
+        web_dist: web,
+      },
+      execution,
+    );
     await validate_app_tree(app);
     await write_app_entrypoints(app, options.requested_sha, dependencies, execution);
     await writeFile(
