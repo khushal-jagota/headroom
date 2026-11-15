@@ -9,7 +9,7 @@ export function createGoalPageContext(source:{
  readings:()=>GoalReadingsResponse|null|undefined;
  narrow:()=>boolean;
  sessions:()=>ReturnType<typeof createGoalRequestSessions>;
-},capabilities:Pick<PageContext,'updateBlock'|'manualSession'|'authorText'>={}):PageContext{
+},capabilities:Pick<PageContext,'updateBlock'|'manualSession'|'authorText'|'subscribeWriting'>={}):PageContext{
  return {
   get goalId(){return source.goalId();},
   get revision(){return source.goal()?.revision??0;},

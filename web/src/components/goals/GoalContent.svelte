@@ -44,7 +44,7 @@
  // Each host fixes text authoring when this content mounts. Data controls stay available.
  setContext<PageContext>(PAGE_CONTEXT,createGoalPageContext({
   goalId:()=>id,goal:()=>goal,readings:()=>readings.data,narrow:()=>narrow,sessions:()=>sessions,
- },{manualSession:measureId=>sessions.manual(id,measureId),updateBlock,authorText:untrack(()=>textEditable)?authorText:undefined}));
+ },{subscribeWriting:listener=>editor.subscribeWriting(listener),manualSession:measureId=>sessions.manual(id,measureId),updateBlock,authorText:untrack(()=>textEditable)?authorText:undefined}));
  async function change(patch:GoalEditBody){try{await save(patch);error=null;}catch(e){error=e;}}
  let display=$derived(resolveGoalPrimaryDisplay(goal));
  let checklist=$derived(display.checklist);

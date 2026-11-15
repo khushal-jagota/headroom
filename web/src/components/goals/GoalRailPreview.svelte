@@ -41,6 +41,7 @@
  setContext<PageContext>(PAGE_CONTEXT,createGoalPageContext({
   goalId:()=>goalId,goal:()=>goal,readings:()=>readings.data,narrow:()=>true,sessions:()=>sessions,
  },{
+  subscribeWriting:editor.subscribeWriting,
   updateBlock:editor.updateBlock,
   manualSession:(measureId)=>sessions.manual(goalId,measureId)
  }));

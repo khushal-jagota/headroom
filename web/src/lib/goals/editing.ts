@@ -1,4 +1,5 @@
 import { fetchJson } from '../api';
+import { tick } from 'svelte';
 import { queryClient } from '../queryClient';
 import { updatePageBlock } from './presentation';
 import { goalQueries } from './queries';
@@ -19,10 +20,20 @@ const http: EditorIO = {
 
 // Only unfinished commands live here. Accepted documents remain in server queries.
 const tails = new Map<string, Promise<unknown>>();
+const writingListeners = new Map<string, Set<(writing: boolean) => void>>();
+function publishWriting(id: string) {
+  for (const listener of writingListeners.get(id) ?? []) listener(tails.has(id));
+}
 function enqueue<T>(id: string, command: () => Promise<T>): Promise<T> {
   const next = (tails.get(id) ?? Promise.resolve()).catch(() => undefined).then(command);
   tails.set(id, next);
-  void next.finally(() => { if (tails.get(id) === next) tails.delete(id); }).catch(() => undefined);
+  publishWriting(id);
+  void next.finally(async () => {
+    // Query observers update synchronously; let their accepted props reach controls
+    // before another click can capture a document revision.
+    await tick();
+    if (tails.get(id) === next) { tails.delete(id); publishWriting(id); }
+  }).catch(() => undefined);
   return next;
 }
 
@@ -42,6 +53,16 @@ export function createPageEditor<Document, Patch extends {expected_revision?: nu
   }
   return {
     getAccepted: io.read,
+    subscribeWriting(listener: (writing: boolean) => void) {
+      const listeners = writingListeners.get(id) ?? new Set<(writing: boolean) => void>();
+      writingListeners.set(id, listeners);
+      listeners.add(listener);
+      listener(tails.has(id));
+      return () => {
+        listeners.delete(listener);
+        if (!listeners.size) writingListeners.delete(id);
+      };
+    },
     write: (patch: Patch) => enqueue(id, async () => accept({
       ...patch, expected_revision: patch.expected_revision ?? io.revision(await io.read()),
     })),
