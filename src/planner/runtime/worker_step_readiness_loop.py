@@ -287,9 +287,6 @@ async def _admitted_start_ready_worker_step(
                 return compose_worker_step_prompt(
                     current_ticket,
                     worker_type_definition=worker_type_definition,
-                    memory_was_lost=worker_memory.conversation_holds_an_unanswered_memory_loss(
-                        conn, conversation_id
-                    ),
                 )
 
             prompt = await run_on_worker_thread(prepare_prompt)

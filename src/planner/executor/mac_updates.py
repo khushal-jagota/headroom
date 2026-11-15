@@ -28,11 +28,16 @@ if sys.platform == "linux":
 else:
     from planner.environments.mac_runtime import extract_runtime, read_runtime_revision
 from planner.execution_identity import ExecutorIdentity
-from planner.executor.configuration import EXECUTOR_ID_HEADER, ExecutorPaths
+from planner.executor.configuration import (
+    EXECUTOR_HANDOVER_CLOSE_PATH,
+    EXECUTOR_ID_HEADER,
+    ExecutorPaths,
+)
 from planner.executor.mac_presence import MacPresence
 from planner.executor.mac_runner import MacRunner
 from planner.executor.runtime_bootstrap import atomic_record, read_record
 from planner.executor.update_configuration import (
+    MAC_HANDOVER_CLOSE_RETRY_MAX_SECONDS,
     MAC_RUNTIME_HANDOFF_ENV,
     MAC_RUNTIME_READY_ENV,
     MAC_UPDATE_POLL_SECONDS,
@@ -106,6 +111,7 @@ class MacUpdateController:
         self._runtime_gate_pending = (
             runner.planned_update_replay or os.environ.get(MAC_RUNTIME_READY_ENV) is not None
         )
+        self._kept_by_supervisor = False
         self._lock = asyncio.Lock()
         # The newest target a lease reply offered, applied by run() in its own task.
         self.latest: MacUpdateCheck | None = None
@@ -411,15 +417,8 @@ class MacUpdateController:
         sends it first, in its own order, so no conversation waits on another's."""
         if not self._runtime_gate_pending or self.prepared_request is not None:
             return
-        if os.environ.get(MAC_RUNTIME_READY_ENV) is not None:
-            selected = read_record(self.root / "selection.json")
-            if (
-                self.confirmed_request is None
-                or selected is None
-                or selected.get("request_id") != self.confirmed_request
-                or (self.root / "pending.json").exists()
-            ):
-                return
+        if not self.kept_by_supervisor():
+            return
         # Custody goes first: once work can start, a restart must come back as a new
         # process, so the VPS ends that work's runs instead of trusting them.
         if not self._release_custody():
@@ -427,6 +426,46 @@ class MacUpdateController:
         self.runner.finish_planned_replay()
         self.runner.resume_after_cancelled_update()
         self._runtime_gate_pending = False
+
+    def kept_by_supervisor(self) -> bool:
+        """Whether the fixed supervisor's decision to keep this runtime is final.
+
+        A runtime started without a ready marker is the supervisor's kept selection or
+        its baseline. A trial is kept once selection.json names this attempt and this
+        revision and no attempt is pending. Every supervisor reverts only before that.
+        """
+        if self._kept_by_supervisor or os.environ.get(MAC_RUNTIME_READY_ENV) is None:
+            return True
+        selected = read_record(self.root / "selection.json")
+        # The keep is final, so it holds even if the home later offers this revision
+        # under another request ID.
+        self._kept_by_supervisor = (
+            self.confirmed_request is not None
+            and selected is not None
+            and selected.get("request_id") == self.confirmed_request
+            and selected.get("application_revision") == self.presence.identity.application_revision
+            and not (self.root / "pending.json").exists()
+        )
+        return self._kept_by_supervisor
+
+    async def close_handover_once_kept(self) -> None:
+        """Close the original Mac's old authority once the supervisor keeps this runtime.
+
+        Before that, the supervisor can still revert to a runtime that has only the old
+        authority. The home ignores a repeat, and a machine without that authority.
+        Failures back off, so an unreachable home costs one attempt a minute at most.
+        """
+        delay = MAC_UPDATE_POLL_SECONDS
+        while True:
+            try:
+                if self.presence.leased() and self.kept_by_supervisor():
+                    async with self.session_factory() as session:
+                        await self._json(session, "POST", EXECUTOR_HANDOVER_CLOSE_PATH)
+                    return
+                delay = MAC_UPDATE_POLL_SECONDS
+            except (OSError, ValueError, ConnectionError, aiohttp.ClientError):
+                delay = min(delay * 2, MAC_HANDOVER_CLOSE_RETRY_MAX_SECONDS)
+            await asyncio.sleep(delay)
 
     def release_handoff_custody(self) -> None:
         """Once the saved output has drained, a restart no longer needs the handoff."""

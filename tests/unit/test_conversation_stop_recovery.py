@@ -388,9 +388,13 @@ def test_kill_refuses_a_remote_stop_without_a_retirement_receipt(
 
 
 def test_retained_evidence_keeps_open_questions_and_memory_notice_origin(
-    stopped: tuple[_Harness, _StopFactory],
+    stopped: tuple[_Harness, _StopFactory], monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from tests.unit.test_conversation_system import _send_memory_notice
+    from tests.unit.test_conversation_system import _link_worker_ticket, _send_memory_notice
+
+    from planner.runtime import worker_memory
+
+    monkeypatch.setattr(worker_memory, "ticket_needs_memory_notice", lambda *_: True)
 
     from planner.conversation.events import UserInputRequestedEventPayload
     from planner.conversation.lifecycle import (
@@ -407,6 +411,7 @@ def test_retained_evidence_keeps_open_questions_and_memory_notice_origin(
 
     async def exercise() -> None:
         await _start(harness, "c")
+        _link_worker_ticket(harness.db_path, "c")
         await _send_memory_notice(harness, "c")
         request = await harness.request_user_input("c")
         token = harness.backend("c").live_turn_token

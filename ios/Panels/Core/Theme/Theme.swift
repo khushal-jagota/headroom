@@ -17,6 +17,54 @@ enum PanelsTheme {
     static let success = Color(hex: 0x7fa564)
     static let error = Color(hex: 0xd85d5d)
     static let border = Color.white.opacity(0.10)
+    /// The approved web presentation, scoped to Workspace and proposal decisions.
+    enum Web {
+        static let surface = Color(hex: 0x121212)
+        static let surface2 = Color(hex: 0x1a1a1a)
+        static let raised = Color(hex: 0x242424)
+        static let recessed = Color(hex: 0x0e0e0e)
+        static let composer = Color(hex: 0x2a2a2a)
+        static let rail = Color(hex: 0x1b1b1b)
+        static let selected = Color(hex: 0x353535)
+        static let hover = Color(hex: 0x272727)
+        static let strong = Color(hex: 0xececec)
+        static let text = Color(hex: 0xdadada)
+        static let secondary = Color(hex: 0xa7a7a7)
+        static let tertiary = Color(hex: 0x8c8c8c)
+        static let faint = Color(hex: 0x626262)
+        static let railTitle = Color(hex: 0xc2c2c2)
+        static let railRow = Color(hex: 0x949494)
+        static let border = Color.white.opacity(0.08)
+        static let code = Color.white.opacity(0.03)
+        static let accent = PanelsTheme.accent
+        static let success = PanelsTheme.success
+        static let attention = PanelsTheme.Goal.attention
+        static let error = Color(hex: 0xc97c77)
+        static let pageTitleSize: CGFloat = 26
+        static let bodySize: CGFloat = 14
+        static let rowSize: CGFloat = 13.5
+        static let smallSize: CGFloat = 12.5
+        static let cardRadius: CGFloat = 12
+        static let cardPadding: CGFloat = 20
+        enum Rail {
+            static let inset: CGFloat = 8
+            static let gap: CGFloat = 8
+            static let padding: CGFloat = 4
+            static let textInset: CGFloat = 10
+            static let titleSize: CGFloat = 18
+            static let titleLine: CGFloat = 24
+            static let headingSize: CGFloat = 11
+            static let headingLine: CGFloat = 16
+            static let groupGap: CGFloat = 12
+            static let headingGap: CGFloat = 2
+            static let rowHeight: CGFloat = 24
+            static let rowLine: CGFloat = 20
+            static let markColumn: CGFloat = 16
+            static let hazeHeight: CGFloat = 70
+            static let settledHeight: CGFloat = 32
+            static let settledRowHeight: CGFloat = 28
+        }
+    }
     enum Space { static let xs: CGFloat = 4; static let sm: CGFloat = 8; static let md: CGFloat = 12; static let lg: CGFloat = 16; static let xl: CGFloat = 24; static let xxl: CGFloat = 32; static let hero: CGFloat = 48 }
     enum Radius { static let sm: CGFloat = 4; static let md: CGFloat = 8; static let lg: CGFloat = 12 }
     enum TypeScale {

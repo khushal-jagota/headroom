@@ -40,6 +40,8 @@ By default a new Ticket's ceiling is on Brief and its holder is whoever created 
 
 On a collaborative stage, the person can also complete the gate directly, without a Worker proposal. That uses the same resolver and still moves one stage. A reply typed into the conversation never decides a proposal. Approval and Send back enforce any supplied proposal revision in the same write as the decision. Protected decision receipts retain an exact command and its outcome for the Ticket's lifetime. Repeating that command returns its saved result, even after the Ticket advances.
 
+The browser and iPhone use protected decisions on Review and Ticket pages. The older accept and reject routes remain available to the CLI and existing callers through the same proposal writers. Those routes do not provide receipt recovery.
+
 Each settled stage remembers who approved it: a named person or agent, or auto-accepted when it settled below the ceiling. Editing the text clears that approval.
 
 ## Ceiling, holder, and assignment
@@ -95,4 +97,4 @@ The Ticket page is the inspector: the stage ladder, the current gate with its pr
 - `src/planner/tickets/logic/`: the stage machine, proposal routing, and the resolver (`machine.py`, `proposal_routing.py`, `resolution.py`).
 - `web/src/routes/TicketRoute.svelte` and `web/src/components/WorkerProposalCard.svelte`: the Ticket page and its gate.
 
-_Last verified: 2026-11-14._
+_Last verified: 2026-11-15._

@@ -575,19 +575,20 @@ def test_decision_notes_reach_backend_and_full_history(
         "Second line: check the approved scope.  ",
         "  Approved with this condition: preserve Unicode 雪.\n\nDo not omit the final line.  ",
     )
-    decisions: list[dict[str, object]] = []
-    for action, note in zip(("reject", "accept/what_changes"), notes, strict=True):
+    operation_ids: list[str] = []
+    decision_url = f"{server.base}/api/tickets/{ticket_id}/decision-operations/"
+    for action, note in zip(("send_back", "approve"), notes, strict=True):
         detail = httpx.get(
-            server.base + f"/api/tickets?detail=full&id={ticket_id}", timeout=10,
+            server.base + f"/api/tickets?detail=full&id={ticket_id}",
+            timeout=10,
         ).json()
         card.locator("[data-revision-note]").fill(note)
-        def is_decision(result: Response, expected_action: str = action) -> bool:
-            return result.request.method == "POST" and result.url.endswith(
-                f"/tickets/{ticket_id}/{expected_action}"
-            )
+
+        def is_decision(result: Response) -> bool:
+            return result.request.method == "POST" and result.url.startswith(decision_url)
 
         with page.expect_response(is_decision) as decision:
-            if action == "reject":
+            if action == "send_back":
                 card.locator("[data-send-back]").click()
             else:
                 card.locator("[data-accept]").click()
@@ -597,19 +598,47 @@ def test_decision_notes_reach_backend_and_full_history(
         assert decision.value.ok, decision.value.text()
         payload = decision.value.request.post_data_json
         assert isinstance(payload, dict)
+        assert payload["decision"] == action
+        assert payload["field"] == "what_changes"
         assert payload["message"] == note
         assert payload["expected_proposal_revision"] == detail["pending_proposal"]["revision"]
-        assert payload["decision_id"]
-        decisions.append(payload)
+        result = decision.value.json()
+        assert result["receipt_contract"] == 1
+        receipt = result["receipt"]
+        operation_id = decision.value.url.removeprefix(decision_url)
+        assert operation_id
+        assert receipt["operation_id"] == operation_id
+        assert receipt["ticket_id"] == ticket_id
+        assert receipt["decision"] == action
+        assert receipt["field"] == "what_changes"
+        assert receipt["expected_proposal_revision"] == detail["pending_proposal"]["revision"]
+        assert receipt["outcome"] == "applied"
+        assert receipt["error"] is None
+        assert (
+            receipt["transition"]["pending_proposal_revision"]
+            == receipt["expected_proposal_revision"]
+        )
+        canonical = httpx.get(
+            server.base + f"/api/tickets?detail=full&id={ticket_id}",
+            timeout=10,
+        ).json()
+        for field in (
+            "stage",
+            "ceiling",
+            "ceiling_holder",
+            "ticket_status",
+        ):
+            assert receipt["transition"][field] == canonical[field]
+        operation_ids.append(operation_id)
         # The existing proof turn (and then the send-back prompt) keeps the Worker
         # busy. Flush through the real service, then release that turn to deliver.
         _post(server, f"/api/test/signals/{conversation_id}/deliver-decisions")
         _post(server, f"/api/test/signals/{conversation_id}/finish")
         delivered = wait_for_backend_text(note)
-        if action == "reject":
+        if action == "send_back":
             _propose(server, ticket_id, "The revised proposal is ready.")
             expect(card).to_be_visible(timeout=WAIT_MS)
-    assert decisions[0]["decision_id"] != decisions[1]["decision_id"]
+    assert operation_ids[0] != operation_ids[1]
     events = httpx.get(
         server.base + f"/api/conversation/conversations/{conversation_id}/events", timeout=10,
     ).json()["events"]

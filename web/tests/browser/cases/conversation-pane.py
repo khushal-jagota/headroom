@@ -4410,10 +4410,14 @@ def _short_lens_restoration(browser, url):
 def _chat_charts(browser, url):
     """The real transcript must mount shared charts, not only parse their specs."""
     import os
+    import sys
     import time
     from pathlib import Path
 
     from playwright.sync_api import expect
+
+    # Match the native document-edge shortcut used by descendant_keyboard_case.
+    home_key = "Home" if sys.platform == "darwin" else "Control+Home"
 
     started = time.perf_counter()
     page = browser.new_page(viewport={"width": 1100, "height": 1100})
@@ -4515,7 +4519,7 @@ def _chat_charts(browser, url):
         # and use a reader gesture so automatic following yields to manual navigation.
         groups = page.locator("[data-markdown-window]")
         expect(groups).not_to_have_count(0)
-        thread.press("Control+Home")
+        thread.press(home_key)
         expect(page.get_by_role("heading", name="Long message chart", exact=True)).to_be_visible(timeout=10000)
         # Visit enough groups to exceed the shared four-view retention budget.
         # A direct jump retains the chart by design and does not prove eviction.
@@ -4523,7 +4527,7 @@ def _chat_charts(browser, url):
             groups.nth(index).scroll_into_view_if_needed()
             expect(groups.nth(index).locator(":scope > *")).not_to_have_count(0)
         expect(chart_hosts).to_have_count(0, timeout=10000)
-        thread.press("Control+Home")
+        thread.press(home_key)
         expect(page.get_by_role("heading", name="Long message chart", exact=True)).to_be_visible(timeout=10000)
         expect(chart_hosts).to_have_count(1)
         page.evaluate("window.__chatChartProbe.remove()")

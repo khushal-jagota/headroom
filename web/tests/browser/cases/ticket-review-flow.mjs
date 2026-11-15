@@ -14,6 +14,7 @@ const index = join(scratchRoot, `${stem}.html`);
 import { QueryClientProvider } from '@tanstack/svelte-query';
 import { queryClient as client } from '../src/lib/queryClient';
 import TicketRoute from '../src/routes/TicketRoute.svelte';
+import DecisionRecovery from '../src/components/DecisionRecovery.svelte';
 import ReviewRoute from '../src/routes/ReviewRoute.svelte';
 import ReviewProposalCard from '../src/components/ReviewProposalCard.svelte';
 import FilePreviewRoute from '../src/routes/FilePreviewRoute.svelte';
@@ -93,6 +94,7 @@ $effect(() => navigation.owner.setDemand('historical-review-fixture', review && 
 (window as any).__showConfig = () => { config = true; };
 </script>
 <QueryClientProvider {client}>
+<DecisionRecovery />
 {#if config}<ConfigRoute roleKind="worker" roleId="coding" />
 {:else if preview}{#key previewArrival}<FilePreviewRoute />{/key}
 {:else if review}{#if reviewTicketId === "t_personal_pending"}{#if historicalIdentity}<ReviewProposalCard identity={historicalIdentity} ticketId={reviewTicketId} field={reviewField} />{/if}{:else}<ShellStatus connectionState="connected" /><ReviewRoute />{/if}

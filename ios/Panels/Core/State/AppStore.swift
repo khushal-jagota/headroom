@@ -50,6 +50,7 @@ import Observation
     private(set) var presentation: NavigationPresentation?
     private(set) var viewRequest = ViewRequest(windows: NavigationScope.baseWindows)
     private var demands: [String: [ViewWindowRequest]] = [:]
+    private var reviewConversationDemands: [String: [String]] = [:]
     /// Detail screens that named a selected owner, most recent last.
     private var selections: [(name: String, owner: ViewOwner)] = []
     private var running = false
@@ -170,9 +171,11 @@ import Observation
     /// changed demand opens a stream for the new scope at once, and the last coherent
     /// view stays on screen until its snapshot arrives. A withdrawal only narrows the
     /// next stream, so leaving a screen puts no view read in front of the next screen's own.
-    func setNavigationDemand(_ name: String, _ windows: [ViewWindowRequest]?) {
-        guard demands[name] != windows else { return }
+    func setNavigationDemand(_ name: String, _ windows: [ViewWindowRequest]?, reviewConversationIDs: [String] = []) {
+        let conversations = Array(Set(reviewConversationIDs)).sorted()
+        guard demands[name] != windows || reviewConversationDemands[name, default: []] != conversations else { return }
         demands[name] = windows
+        reviewConversationDemands[name] = windows == nil || conversations.isEmpty ? nil : conversations
         updateScope(opening: windows != nil)
     }
 
@@ -193,14 +196,16 @@ import Observation
     }
 
     func withdrawNavigationDemand(_ name: String) {
-        guard demands[name] != nil || selections.contains(where: { $0.name == name }) else { return }
+        guard demands[name] != nil || reviewConversationDemands[name] != nil || selections.contains(where: { $0.name == name }) else { return }
         demands[name] = nil
+        reviewConversationDemands[name] = nil
         selections.removeAll { $0.name == name }
         updateScope(opening: false)
     }
 
     private func updateScope(opening: Bool) {
-        let next = NavigationScope.request(demands: demands, selected: selections.last?.owner, previous: viewRequest)
+        let next = NavigationScope.request(demands: demands, selected: selections.last?.owner,
+            reviewConversationIDs: reviewConversationDemands.values.flatMap { $0 }, previous: viewRequest)
         guard next != viewRequest else { return }
         viewRequest = next
         guard running, opening else { return }
