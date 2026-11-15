@@ -5,6 +5,7 @@ import { observe_shutdown, is_shutdown_business_cancellation } from '../conversa
 import { ServerLifecycleError } from '../lifecycle/contracts.ts';
 import type { StopOptions } from '../lifecycle/contracts.ts';
 import type { StallSource } from '../stalls/contracts.ts';
+import type { AutomaticStartAdmission } from '../conversation/start_admission/index.ts';
 import type {
   CommandSettlementReason,
   MailboxCounter,
@@ -116,6 +117,7 @@ export function observe_executor_wait<T>(
  * This mailbox checks persisted incarnation fences. Its caller owns the shared database lifetime.
  */
 export class SqliteCommandMailbox {
+  start_admission: AutomaticStartAdmission | null = null;
   settled_listener: MailboxSettledListener | null = null;
   private readonly waiters = new Map<string, Set<Deferred<WireValue<'CommandResult'>>>>();
   private readonly operations = new Set<Promise<unknown>>();
@@ -256,6 +258,7 @@ export class SqliteCommandMailbox {
       const deadline = performance.now() / 1000 + Math.max(wait_seconds, 0);
       const arrived = this.clock();
       const cursor = after;
+      let prepared: data.PreparedFetch | undefined;
       while (!this.closed) {
         check_aborted(options.signal);
         const wake = deferred<void>();
@@ -268,29 +271,45 @@ export class SqliteCommandMailbox {
           );
           if (this.closed) break;
           check_aborted(options.signal);
-          const prepared = await data.prepare_fetch(rows);
+          prepared = await data.prepare_fetch(rows, prepared?.held);
           if (this.closed) break;
           check_aborted(options.signal);
-          const result = this.database.write(
-            (tx) =>
-              data.fetch(
-                tx,
-                identity.executor_incarnation,
-                cursor,
-                this.clock(),
-                arrived,
-                prepared,
-                this.machine_id,
-              ),
-            { changeSignal: 'silent' },
-          );
+          let result;
+          try {
+            const ready = prepared;
+            result = this.database.write(
+              (tx) =>
+                data.fetch(
+                  tx,
+                  identity.executor_incarnation,
+                  cursor,
+                  this.clock(),
+                  arrived,
+                  ready,
+                  this.machine_id,
+                  this.start_admission,
+                ),
+              { changeSignal: 'silent' },
+            );
+          } catch (error) {
+            if (!(error instanceof data.MailboxPreparationRequired)) throw error;
+            await data.prepare_held_fetch(prepared, error);
+            continue;
+          }
           if (result === null) continue;
+          if (result.high_sequence !== undefined)
+            this.high = Math.max(this.high ?? 0, result.high_sequence);
+          for (const turn of result.withdrawn_turns ?? []) this.start_admission?.observe(turn);
           this.publish_settlements(result.settled);
           const remaining = deadline - performance.now() / 1000;
           if (result.reply === null) return { commands: [] };
           if (result.reply.commands.length || remaining <= 0) return result.reply;
           if (this.closed) break;
-          await this.observe(wake.promise, options.signal, remaining);
+          await this.observe(
+            wake.promise,
+            options.signal,
+            this.start_admission === null ? remaining : Math.min(remaining, 1),
+          );
         } finally {
           this.poll_waits.delete(wake);
           wake.resolve(undefined);

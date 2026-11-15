@@ -17,7 +17,7 @@ from contextlib import closing, suppress
 from copy import deepcopy
 from dataclasses import replace
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 from unittest.mock import patch
 from uuid import UUID
 
@@ -38,6 +38,8 @@ from planner.conversation.lifecycle import (
 )
 from planner.conversation.lifecycle_storage import apply_facts
 from planner.conversation.message_content import text_message_content
+from planner.conversation.start_admission import AutomaticStartAdmission
+from planner.conversation.start_admission.contracts import StartRequest
 from planner.core import change_signal
 from planner.core.db import connect, create_schema
 from planner.environments.update_attempts import UpdateConflict
@@ -183,6 +185,7 @@ def _observe(path: Path) -> dict[str, Any]:
                 "typeof(continuous_since_ms) AS continuous_type,"
                 "typeof(going_to_sleep_at_ms) AS sleep_type FROM mac_executor_presence"
             ),
+            "bindings": "SELECT * FROM automatic_start_bindings ORDER BY identity",
             "incarnations": (
                 "SELECT *,typeof(first_leased_at_ms) AS first_type,"
                 "typeof(replaced_at_ms) AS replaced_type "
@@ -445,6 +448,8 @@ class _Source:
         self.trace: list[Any] = []
         self.throw_on: str | None = None
         self.before: list[dict[str, Any]] | None = None
+        self.before_fetch: list[dict[str, Any]] | None = None
+        self.admission_race = False
         self.abort = False
         self.after_put: dict[str, Any] | None = None
         self.reentered: Any = None
@@ -512,6 +517,10 @@ class _Source:
             ) -> Any:
                 if fetch:
                     self.fetches += 1
+                    if self.before_fetch is not None:
+                        statements, self.before_fetch = self.before_fetch, None
+                        self._sql(statements)
+                        self.admission_race = True
                 result = original(*args)
                 ready = self.ready
                 if ready is not None:
@@ -694,8 +703,59 @@ class _Source:
             p._write_lease = write  # type: ignore[method-assign]
         return None
 
+    async def _admission_control(self, action: dict[str, Any]) -> Any:
+        method = action["method"]
+        if method == "open":
+            self.admission_now = 0.0
+            admission = AutomaticStartAdmission(limit=2, clock=lambda: self.admission_now)
+            admission.configure_destinations(lambda destination: destination == self.machine_id)
+            for index in range(2):
+                self.admission_now = float(index)
+                assert admission.try_start(
+                    StartRequest(f"block-{index}", "worker", self.machine_id)
+                )
+            self.admission_now = 2.0
+            self.admission_observed: list[Any] = []
+            self.admission_held: asyncio.Future[None] = self.loop.create_future()
+            held = self.admission_held
+            observe = admission.observe
+            if action.get("mode") == "watch":
+                wait = self.mailbox._put_event.wait
+
+                async def waiting() -> Literal[True]:
+                    if not held.done():
+                        held.set_result(None)
+                    return await wait()
+
+                self.mailbox._put_event.wait = waiting  # type: ignore[method-assign]
+
+            def observed(turn: Any) -> None:
+                with closing(connect(str(self.path))) as connection:
+                    count = connection.execute(
+                        "SELECT count(*) FROM automatic_start_bindings "
+                        "WHERE conversation_id=? AND turn_number=?",
+                        (turn.conversation_id, turn.turn_number),
+                    ).fetchone()[0]
+                self.admission_observed.append([wire.encode_value(turn), count])
+                observe(turn)
+
+            admission.observe = observed  # type: ignore[method-assign]
+            self.mailbox.start_admission = self.admission = admission
+        elif method == "release":
+            self.admission_now += 1
+            for index in range(2):
+                self.admission.finish(f"block-{index}")
+        elif method == "held":
+            await asyncio.wait_for(self.admission_held, 5)
+        elif method == "state":
+            return {"reservations": self.admission.snapshots(), "observed": self.admission_observed,
+                    "race_applied": self.admission_race, "unrelated_invalidated": False}
+        return None
+
     async def execute(self, action: dict[str, Any]) -> Any:
         op = action["op"]
+        if op == "admission":
+            return await self._admission_control(action)
         if op == "machine":
             if self.presence is not None:
                 await self.presence.close()
@@ -758,6 +818,9 @@ class _Source:
         elif op == "sql":
             self._sql(action["statements"])
         elif op == "arm":
+            if action.get("mode") == "admission_race":
+                self.before_fetch = action["before_sql"]
+                return None
             self.before, self.abort = action.get("before_sql"), action.get("after_abort", False)
             self.after_put = action.get("after_put")
         elif op == "reentrant":
@@ -1962,7 +2025,145 @@ async def _machine_phases(paired: Any, paths: list[Path], errors: list[Any]) -> 
                 if row["executor_incarnation"] == OLD)["replaced_at_ms"] is None
     assert all(row["state"] == "waiting" for row in final["rows"]
                if row["command_id"] in ("scope-a1", "scope-a2"))
-    return {"errors": errors, "global_sequences": sequences}
+    admission = await _admission_phases(paired, paths, other, replacement)
+    return {"errors": errors, "global_sequences": sequences, "admission": admission}
+
+
+async def _admission_phases(
+    paired: Any, paths: list[Path], other: str, other_process: str
+) -> Any:
+    def state() -> Any:
+        expected = _semantic_snapshot(_observe(paths[0]))
+        assert _semantic_snapshot(_observe(paths[1])) == expected
+        return expected
+
+    async def p(op: str, **args: Any) -> Any:
+        result = await paired(dict(op=op, **args))
+        state()
+        return result
+
+    async def call(method: str, *args: Any) -> Any:
+        return await p("call", method=method, args=args)
+
+    async def put(name: str, operation: str, conversation: str, **changes: Any) -> Any:
+        return await call("put", _command(name, operation, conversation, **changes))
+
+    async def bound(conversation: str) -> Any:
+        await p("sql", statements=[_statement(
+            "INSERT INTO automatic_start_bindings VALUES (?,'worker',?,?,?,?,?)",
+            "ad-" + conversation, ORIGINAL_MAC_MACHINE_ID, conversation, TURN, OLD, conversation,
+        )])
+        return await put("ad-" + conversation, "start", conversation, turn=None)
+
+    def row(name: str) -> Any:
+        return next(item for item in state()["rows"] if item["command_id"] == name)
+
+    await p("machine", machine_id=ORIGINAL_MAC_MACHINE_ID)
+    # Settle retained delivered rows before the unchanged-state admission assertions.
+    await call("poll", IDENTITY, await call("high"), 0)
+    await p("admission", method="open", path=str(paths[1]))
+    delivered = await put("ad-delivered", "write_prompt", "basic")
+    await p("sql", statements=[_statement(
+        "UPDATE executor_commands SET state='delivered',delivered_at_ms=? WHERE command_id=?",
+        NOW, "ad-delivered",
+    )])
+    delivered_row = row("ad-delivered")
+    start = await bound("basic")
+    await put("ad-wrong-cancel", "cancel_running_turn", "basic",
+              turn={"conversation_id": "basic", "turn_number": TURN + 1})
+    before = state()
+    assert (await call("poll", IDENTITY, delivered["command_sequence"], 0))["commands"] == []
+    assert state() == before
+    gate = await p("admission", method="state")
+    assert any(item["request"]["identity"] == "ad-basic" and item["turn"] == {
+        "conversation_id": "basic", "turn_number": TURN,
+    } for item in gate["reservations"])
+    for index in range(30):
+        await put(f"ad-cancel-pad-{index}", "steer", "basic")
+    prompt = await put("ad-cancel-prompt", "write_prompt", "basic")
+    await put("ad-cancel", "cancel_running_turn", "basic")
+    assert prompt["command_sequence"] - start["command_sequence"] == 32
+    await p("arm", mode="admission_race", before_sql=[
+        _statement("INSERT INTO executor_commands(command_id,executor_incarnation,operation,"
+                   "command_json,state,created_at_ms,machine_id) "
+                   "VALUES ('ad-unrelated-race',?,'read_model_list','{}','waiting',?,?)",
+                   other_process, NOW, other),
+        _statement("UPDATE executor_commands SET command_json=json_object('command_sequence',"
+                   "command_sequence,'command_id',command_id,'created_at_vps_ms',created_at_ms,"
+                   "'child_command',NULL,'model_list_request',json_object('backend_key','codex',"
+                   "'refresh',json('false'))) WHERE command_id='ad-unrelated-race'"),
+    ])
+    await call("poll", IDENTITY, delivered["command_sequence"], 0)
+    assert row("ad-basic")["state"] == row("ad-cancel-prompt")["state"] == "withdrawn"
+    assert row("ad-delivered") == delivered_row
+    gate = await p("admission", method="state")
+    assert gate["observed"] == [[{"conversation_id": "basic", "turn_number": TURN}, 0]]
+    assert gate["race_applied"] is True and gate["unrelated_invalidated"] is False
+    assert all(item["request"]["identity"] != "ad-basic" for item in gate["reservations"])
+
+    cursor = await call("high")
+    await bound("recover")
+    await put("ad-stop-prompt", "write_prompt", "recover")
+    await put("ad-stop", "stop", "recover", turn=None)
+    reply = await call("poll", IDENTITY, cursor, 0)
+    assert [item["command_id"] for item in reply["commands"]] == ["ad-stop"]
+    assert row("ad-recover")["state"] == row("ad-stop-prompt")["state"] == "withdrawn"
+    observed = (await p("admission", method="state"))["observed"]
+    assert observed[-1] == [{"conversation_id": "recover", "turn_number": TURN}, 0]
+
+    cursor = await call("high")
+    await bound("pending")
+    await put("ad-fetched-suffix", "write_prompt", "pending")
+    await p("sql", statements=[_statement(
+        "UPDATE executor_commands SET state='delivered',delivered_at_ms=? WHERE command_id=?",
+        NOW, "ad-fetched-suffix",
+    )])
+    await put("ad-blocked-control", "cancel_running_turn", "stop")
+    before = state()
+    assert (await call("poll", IDENTITY, cursor, 0))["commands"] == []
+    assert state() == before
+
+    cursor = await call("high")
+    start = await bound("failed")
+    await put("ad-move-prompt", "write_prompt", "failed")
+    for index in range(14):
+        await put(f"ad-move-pad-{index}", "steer", "failed")
+    await bound("race")
+    await put("ad-race-prompt", "write_prompt", "race")
+    for index in range(14):
+        await put(f"ad-race-pad-{index}", "steer", "race")
+    control = await put("ad-unrelated-control", "cancel_running_turn", "stop")
+    assert control["command_sequence"] - start["command_sequence"] == 32
+    assert (await call("poll", IDENTITY, cursor, 0))["commands"] == []
+    moved, second_moved = row("ad-failed"), row("ad-race")
+    assert control["command_sequence"] < int(moved["sequence"]) < int(second_moved["sequence"])
+    for item in (moved, second_moved):
+        assert item["command_json"]["command_sequence"] == int(item["sequence"])
+    assert await call("high") == max(int(item["sequence"]) for item in state()["rows"]
+                                     if item["machine_id"] == ORIGINAL_MAC_MACHINE_ID)
+    # Remove only the second fixture suffix and binding to isolate memory-only release.
+    await p("sql", statements=[
+        _statement("DELETE FROM executor_commands WHERE conversation_id='race' "
+                   "AND executor_incarnation=? AND command_sequence>?", OLD, cursor),
+        _statement("DELETE FROM automatic_start_bindings WHERE identity='ad-race'"),
+    ])
+    reply = await call("poll", IDENTITY, cursor, 0)
+    assert [item["command_id"] for item in reply["commands"]] == ["ad-unrelated-control"]
+    await p("admission", method="open", mode="watch", path=str(paths[1]))
+    ready = await p("begin", key="ad-release", method="poll",
+                    args=[IDENTITY, control["command_sequence"], 5])
+    assert ready["pending"] is True
+    await p("admission", method="held")
+    released_at = time.perf_counter()
+    await paired(dict(op="admission", method="release"))
+    released = await paired(dict(op="join", key="ad-release"))
+    state()
+    assert time.perf_counter() - released_at < 3
+    assert released["ok"] is True
+    assert released["value"]["commands"][0]["command_id"] == "ad-failed"
+    return {"postcommit_observations": observed,
+            "moved_sequences": [moved["sequence"], second_moved["sequence"]],
+            "released_commands": len(released["value"]["commands"])}
 
 
 async def _presence_phases(source: _Source, node: Any, paired: Any, paths: list[Path]) -> Any:
