@@ -1,0 +1,32 @@
+{
+  "page": {
+    "kind": "headroom.page",
+    "version": 1,
+    "title": "Native plan",
+    "summary": "",
+    "blocks": [
+      {
+        "type": "text",
+        "id": "native-text",
+        "text": "Native submitted"
+      }
+    ]
+  },
+  "cases": [
+    {
+      "kind": "goal",
+      "path": "/api/goals/{goal_id}",
+      "expected_revision": 5
+    },
+    {
+      "kind": "chief",
+      "path": "/api/chief/page",
+      "expected_revision": 4
+    },
+    {
+      "kind": "manager",
+      "path": "/api/managers/{manager_id}/page",
+      "expected_revision": 4
+    }
+  ]
+}

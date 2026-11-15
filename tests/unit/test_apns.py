@@ -18,7 +18,12 @@ from tests.unit.test_notifications import _subscribe, _ticket
 from planner.core.clock import TestClock as MutableClock
 from planner.core.clock import parse_fake_now
 from planner.core.config import load_config
-from planner.core.db import connect, create_schema
+from planner.core.db import (
+    connect,
+    create_schema,
+    schema_migration_transaction,
+    upgrade_schema_connection,
+)
 from planner.notifications import apns_data, data
 from planner.notifications.apns import TokenAPNsAdapter
 from planner.notifications.contracts import (
@@ -26,6 +31,7 @@ from planner.notifications.contracts import (
     APNsDevice,
     EdgeKey,
     NotificationIntent,
+    NotificationReply,
     PendingAPNsDelivery,
 )
 from planner.notifications.runtime import NotificationLoop
@@ -80,7 +86,10 @@ def test_apns_wire_payload_signing_environments_and_log_privacy(
     caplog.set_level(logging.INFO, logger="httpx")
     try:
         for environment in ("development", "production"):
-            delivery = _delivery(environment)
+            delivery = replace(_delivery(environment), intent=NotificationIntent(
+                "📋" * 59 + "…", "界" * 239 + "…", "/#/workspace/t_42", "panels-ticket-t_42",
+                NotificationReply("c_original", "c_original:7", "ticket", "t_42"),
+            ))
             assert adapter.send(delivery, server_url=ORIGIN + "/", now=NOW).delivered
         assert [request.url.host for request in requests] == [
             "api.sandbox.push.apple.com",
@@ -96,12 +105,15 @@ def test_apns_wire_payload_signing_environments_and_log_privacy(
         assert len(request.headers["apns-collapse-id"].encode()) <= 64
         assert json.loads(request.content) == {
             "aps": {
-                "alert": {"title": "Work · Needs approval", "body": "A proposal is waiting."},
+                "alert": {"title": "📋" * 59 + "…", "body": "界" * 239 + "…"},
                 "sound": "default",
                 "thread-id": "panels-ticket-t_42",
+                "category": "PANELS_MESSAGE_REPLY",
             },
             "server_url": ORIGIN,
             "route": "/#/workspace/t_42",
+            "reply": {"conversation_id": "c_original", "message_id": "c_original:7",
+                      "recipient_kind": "ticket", "recipient_id": "t_42"},
         }
         assert len(request.content) < 4096
         provider_token = request.headers["authorization"].removeprefix("bearer ")
@@ -331,3 +343,47 @@ def test_missing_credentials_skip_network_and_do_not_claim_delivery(tmp_path: Pa
             ) == ("pending", 0)
     finally:
         loop.stop()
+
+
+def test_notification_context_upgrade_preserves_queued_native_delivery(tmp_path: Path) -> None:
+    """The additive upgrade must retain old queue state without inventing a reply target."""
+    database = str(tmp_path / "old-native-queue.db")
+    with schema_migration_transaction(database) as connection:
+        upgrade_schema_connection(connection, "native_shared_decision_notes")
+    with closing(connect(database)) as conn:
+        conn.execute("INSERT INTO agents(agent_key) VALUES ('chief_of_staff')")
+        apns_data.register_device(conn, device_token=TOKEN, bundle_id="app.panels.ios",
+                                  environment="development", now=NOW)
+        conn.execute(
+            "INSERT INTO notification_attention_edges "
+            "(subject_kind,subject_id,notification_type,generation,occurred_at,decided) "
+            "VALUES ('agent','chief_of_staff','awaiting_reply',1,?,1)", (NOW,),
+        )
+        # Delivery admission also requires the source edge to remain active.
+        conn.execute(
+            "INSERT INTO notification_attention_state "
+            "(subject_kind,subject_id,notification_type,active,generation) "
+            "VALUES ('agent','chief_of_staff','awaiting_reply',1,1)"
+        )
+        conn.execute(
+            "INSERT INTO notification_apns_deliveries "
+            "(subject_kind,subject_id,notification_type,generation,device_id,title,body,route,tag,"
+            "created_at,status,attempts,next_attempt_at) SELECT "
+            "'agent','chief_of_staff','awaiting_reply',1,device_id,'Panels','Old words',"
+            "'/#/agents/chief-of-staff','original-tag',?,'retry',1,? "
+            "FROM notification_apns_devices", (NOW, NOW),
+        )
+        conn.commit()
+    with schema_migration_transaction(database) as connection:
+        upgrade_schema_connection(connection, "head")
+    with closing(connect(database)) as conn:
+        (delivery,) = apns_data.pending_deliveries(conn, NOW)
+        assert (delivery.intent.title, delivery.intent.body, delivery.intent.reply) == (
+            "Panels", "Old words", None,
+        )
+        assert delivery.attempts == 1
+        context = conn.execute(
+            "SELECT context_json FROM notification_attention_edges"
+        ).fetchone()[0]
+        assert context is None
+        assert conn.execute("PRAGMA foreign_key_check").fetchall() == []

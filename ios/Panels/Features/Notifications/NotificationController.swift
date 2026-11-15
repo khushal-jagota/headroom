@@ -1,5 +1,8 @@
+import Foundation
 import Observation
+#if canImport(UIKit)
 import UIKit
+#endif
 import UserNotifications
 
 @MainActor @Observable final class NotificationController {
@@ -16,18 +19,39 @@ import UserNotifications
     private var client: APIClient?
     private let registrationEnabled: Bool
     private let environment: String
+    private let replyOutbox: Outbox
+    private let selectedServer: () -> URL
+    private let postLocalNotification: (UNNotificationRequest) async -> Void
 
     init(registrationEnabled: Bool = (Bundle.main.object(forInfoDictionaryKey: "PanelsAPNsRegistrationEnabled") as? String) == "YES",
-         environment: String = Bundle.main.object(forInfoDictionaryKey: "PanelsAPNsEnvironment") as? String ?? "development") {
+         environment: String = Bundle.main.object(forInfoDictionaryKey: "PanelsAPNsEnvironment") as? String ?? "development",
+         replyOutbox: Outbox? = nil,
+         selectedServer: @escaping () -> URL = { AppStore.configuredBaseURL },
+         postLocalNotification: @escaping (UNNotificationRequest) async -> Void = { request in
+             try? await UNUserNotificationCenter.current().add(request)
+         }) {
         self.registrationEnabled = registrationEnabled
         self.environment = environment
+        self.replyOutbox = replyOutbox ?? .shared
+        self.selectedServer = selectedServer
+        self.postLocalNotification = postLocalNotification
+    }
+
+    private var permissionAllowsDelivery: Bool {
+        if authorization == .authorized || authorization == .provisional { return true }
+#if canImport(UIKit)
+        if authorization == .ephemeral { return true }
+#endif
+        return false
     }
 
     func refresh(using client: APIClient) async {
         self.client = client
         authorization = await UNUserNotificationCenter.current().notificationSettings().authorizationStatus
-        if authorization == .authorized || authorization == .provisional || authorization == .ephemeral {
+        if permissionAllowsDelivery {
+#if canImport(UIKit)
             UIApplication.shared.registerForRemoteNotifications()
+#endif
             await registerTokenIfPossible()
         } else if registrationEnabled, !registering, let registeredDevice, let registeredServer {
             // Remove the last successful registration when permission is revoked.
@@ -73,6 +97,45 @@ import UserNotifications
         pendingOpen = open
     }
 
+    func receivedReply(_ reply: NotificationReply?, text: String, notificationID: String) async {
+        guard let reply else {
+            await reportUnsentReply("This notification cannot receive a reply. Open the conversation in Panels.", notificationID: notificationID)
+            return
+        }
+        // A text response launches the app without requiring a SwiftUI scene.
+        // Read the same selected server that an ordinary launch uses.
+        let selected = selectedServer()
+        let api = client.flatMap { LocalStore.server($0.baseURL) == LocalStore.server(selected) ? $0 : nil }
+            ?? APIClient(baseURL: selected)
+        do {
+            try replyOutbox.enqueueNotificationReply(reply, text: text, notificationID: notificationID, api: api)
+        } catch {
+            await reportUnsentReply("Reply was not sent: \(error.localizedDescription)", notificationID: notificationID)
+            return
+        }
+        // Persist first. iOS grants a short action-handling window, not a
+        // repeating background worker. The foreground drainer resumes leftovers.
+        await withTaskGroup(of: Void.self) { group in
+            group.addTask { await self.replyOutbox.drain(api: api) }
+            group.addTask { try? await Task.sleep(for: .seconds(NotificationActions.backgroundAttemptSeconds)) }
+            _ = await group.next()
+            group.cancelAll()
+        }
+    }
+
+    private func reportUnsentReply(_ error: String, notificationID: String) async {
+        routingError = error
+        let content = UNMutableNotificationContent()
+        content.title = "Reply not sent"
+        content.body = "Your reply was not sent. Open Panels to reply."
+        content.sound = .default
+        // A tap opens the selected server's Review. Do not reuse an invalid or
+        // different-server payload, and never place reply text or errors here.
+        content.userInfo = ["server_url": selectedServer().absoluteString, "route": "/#/review"]
+        let request = UNNotificationRequest(identifier: notificationID + ".reply-not-sent", content: content, trigger: nil)
+        await postLocalNotification(request)
+    }
+
     func consumeOpen(for serverURL: URL) -> NotificationDestination? {
         guard let open = pendingOpen else { return nil }
         pendingOpen = nil
@@ -89,7 +152,7 @@ import UserNotifications
             return
         }
         guard let deviceToken, let client, !registering,
-              authorization == .authorized || authorization == .provisional || authorization == .ephemeral else { return }
+              permissionAllowsDelivery else { return }
         guard ["development", "production"].contains(environment), let bundleID = Bundle.main.bundleIdentifier else {
             registrationMessage = "Push configuration is incomplete."
             return
@@ -113,9 +176,15 @@ import UserNotifications
     }
 }
 
+#if canImport(UIKit)
 final class PanelsNotificationDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCenterDelegate {
     func application(_ application: UIApplication, didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil) -> Bool {
-        UNUserNotificationCenter.current().delegate = self
+        let center = UNUserNotificationCenter.current()
+        center.delegate = self
+        let reply = UNTextInputNotificationAction(identifier: NotificationActions.reply, title: "Reply",
+            options: [.authenticationRequired], textInputButtonTitle: "Send", textInputPlaceholder: "Reply")
+        center.setNotificationCategories([UNNotificationCategory(identifier: NotificationActions.messageCategory,
+            actions: [reply], intentIdentifiers: [])])
         return true
     }
     func application(_ application: UIApplication, didRegisterForRemoteNotificationsWithDeviceToken deviceToken: Data) {
@@ -134,10 +203,16 @@ final class PanelsNotificationDelegate: NSObject, UIApplicationDelegate, UNUserN
         // Decode before crossing actors; UNNotificationResponse stays on its
         // callback executor. UIKit's response completion must run on main too:
         // the async protocol bridge completed off-main and crashed on resume.
-        let open = isDefaultTap ? NotificationRouting.parse(response.notification.request.content.userInfo) : nil
+        let userInfo = response.notification.request.content.userInfo
+        let open = isDefaultTap ? NotificationRouting.parse(userInfo) : nil
+        let text = response.actionIdentifier == NotificationActions.reply ? (response as? UNTextInputNotificationResponse)?.userText : nil
+        let reply = text == nil ? nil : NotificationRouting.reply(userInfo)
+        let notificationID = response.notification.request.identifier
         Task { @MainActor in
             if isDefaultTap { NotificationController.shared.receivedTap(open) }
+            if let text { await NotificationController.shared.receivedReply(reply, text: text, notificationID: notificationID) }
             completionHandler()
         }
     }
 }
+#endif

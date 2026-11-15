@@ -3,12 +3,23 @@ import SwiftUI
 struct SettingsView: View {
     @Environment(AppStore.self) private var store
     @State private var section = "Config"
-    @State private var workers: SettingsWorkers?
-    @State private var skills: [ManagedSkill] = []
-    @State private var schedules: [SettingsSchedule]?
-    @State private var notifications: SettingsNotifications?
-    @State private var error: String?
-    @State private var loading = false
+    @State private var notificationEditor = NotificationPreferenceEditor()
+    private var workerResource: ResourceHandle<SettingsWorkers> { store.resources.handle(SettingsResources.workers) }
+    private var skillResource: ResourceHandle<SettingsSkills> { store.resources.handle(SettingsResources.skills) }
+    private var scheduleResource: ResourceHandle<SettingsSchedules> { store.resources.handle(SettingsResources.schedules) }
+    private var notificationResource: ResourceHandle<SettingsNotifications> { store.resources.handle(SettingsResources.notifications) }
+    private var workers: SettingsWorkers? { workerResource.value }
+    private var skills: [ManagedSkill] { skillResource.value?.skills ?? [] }
+    private var schedules: [SettingsSchedule]? { scheduleResource.value?.schedules }
+    private var notifications: SettingsNotifications? { notificationResource.value }
+    private var error: String? {
+        switch section {
+        case "Config": return workerResource.error ?? skillResource.error
+        case "Scheduled": return scheduleResource.error
+        default: return notificationResource.error
+        }
+    }
+    private var loading: Bool { !hasData && error == nil }
     @State private var showingServer = false
 
     var body: some View {
@@ -34,9 +45,13 @@ struct SettingsView: View {
             }.listRowBackground(PanelsTheme.raised)
         }
         .panelsNavigationTitle("Settings").panelsScreen()
-        .task(id: "\(store.baseURL):\(section):\(store.connectionSession)") { await load() }
+        .resourceDemand(workerResource, active: section == "Config")
+        .resourceDemand(skillResource, active: section == "Config")
+        .resourceDemand(scheduleResource, active: section == "Scheduled")
+        .resourceDemand(notificationResource, active: section == "Notifications")
         .panelsRefreshable { await load() }
         .onChange(of: section) { _, _ in Haptics.selection() }
+        .onChange(of: store.baseURL) { _, _ in notificationEditor.resetError() }
         .sheet(isPresented: $showingServer) {
             ServerAddressSheet(initialAddress: store.baseURL.absoluteString) { store.configure(baseURL: $0) }
         }
@@ -109,19 +124,31 @@ struct SettingsView: View {
     private var notificationPreferences: some View {
         Group {
             NotificationDeviceSettings()
+            if let error = notificationEditor.error {
+                Section {
+                    LoadErrorView(message: error) {
+                        await notificationEditor.retry(using: store.client, resources: store.resources)
+                    }
+                }
+            }
             if let notifications {
                 ForEach(notifications.subjects, id: \.key) { subject in
                     Section {
                         ForEach(subject.types) { preference in
-                            HStack(alignment: .top, spacing: PanelsTheme.Space.md) {
+                            Toggle(isOn: Binding(get: { preference.enabled }, set: { enabled in
+                                Task {
+                                    await notificationEditor.save(subjectKey: subject.key, type: preference.id, enabled: enabled,
+                                                                  using: store.client, resources: store.resources)
+                                }
+                            })) {
                                 VStack(alignment: .leading, spacing: PanelsTheme.Space.xs) {
                                     Text(preference.label).font(PanelsTheme.TypeScale.itemTitle)
                                     Text(preference.description).font(PanelsTheme.TypeScale.small).foregroundStyle(PanelsTheme.muted)
                                 }
-                                Spacer(minLength: 0)
-                                Text(preference.enabled ? "On" : "Off")
-                                    .foregroundStyle(preference.enabled ? PanelsTheme.accent : PanelsTheme.faint)
-                            }.accessibilityElement(children: .combine)
+                            }
+                            .tint(PanelsTheme.accent)
+                            .disabled(notificationEditor.isSaving)
+                            .accessibilityIdentifier("notification-preference-\(subject.key)-\(preference.id)")
                         }
                     } header: { Text(subject.label).panelsSectionHeading(.notification) }.listRowBackground(PanelsTheme.raised)
                 }
@@ -129,26 +156,16 @@ struct SettingsView: View {
         }
     }
     @MainActor private func load() async {
-        loading = true
-        defer { loading = false }
-        do {
-            switch section {
-            case "Config":
-                async let workerRead = store.client.settingsWorkers()
-                async let skillRead = store.client.settingsSkills()
-                let result = try await (workerRead, skillRead)
-                try Task.checkCancellation()
-                workers = result.0; skills = result.1.skills
-            case "Scheduled":
-                let result = try await store.client.settingsSchedules()
-                try Task.checkCancellation(); schedules = result.schedules
-            default:
-                let result = try await store.client.settingsNotifications()
-                try Task.checkCancellation(); notifications = result
-            }
-            error = nil
-        } catch { if !Task.isCancelled { self.error = error.localizedDescription } }
+        switch section {
+        case "Config":
+            async let workers: Void = workerResource.refresh()
+            async let skills: Void = skillResource.refresh()
+            _ = await (workers, skills)
+        case "Scheduled": await scheduleResource.refresh()
+        default: await notificationResource.refresh()
+        }
     }
+
 }
 
 private struct SettingsAgentDetail: View {

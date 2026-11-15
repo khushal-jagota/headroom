@@ -27,6 +27,7 @@ struct ReviewItem: Identifiable, Sendable {
     var field: String = ""
     let title: String
     let waitingSince: Double
+    let proposalRevision: Int?
     var conversationId: String? = nil
     var addressId: String? = nil
     var ownerKind: String? = nil
@@ -37,7 +38,7 @@ struct ReviewItem: Identifiable, Sendable {
     /// False when the owner has moved on to another conversation: read only.
     var addressCurrent = true
     var isMessage: Bool { reviewItemType == "message" }
-    var id: String { isMessage ? "message:\(conversationId ?? ""):\(waitingSince)" : "\(ticketId):\(field):\(waitingSince)" }
+    var id: String { isMessage ? "message:\(conversationId ?? ""):\(waitingSince)" : "\(ticketId):\(field):\(waitingSince)" + (proposalRevision.map { ":revision:\($0)" } ?? "") }
     var owner: ConversationOwner? {
         switch ownerKind {
         case "chief": return .chief
@@ -47,8 +48,9 @@ struct ReviewItem: Identifiable, Sendable {
         default: return nil
         }
     }
-    init(reviewItemType: String, ticketId: String = "", field: String = "", title: String, waitingSince: Double, conversationId: String? = nil, ownerKind: String? = nil, ownerId: String? = nil, ownerReadThroughSequence: Int = 0, addressCurrent: Bool = true) {
+    init(reviewItemType: String, ticketId: String = "", field: String = "", title: String, waitingSince: Double, proposalRevision: Int? = nil, conversationId: String? = nil, ownerKind: String? = nil, ownerId: String? = nil, ownerReadThroughSequence: Int = 0, addressCurrent: Bool = true) {
         self.reviewItemType = reviewItemType; self.ticketId = ticketId; self.field = field; self.title = title; self.waitingSince = waitingSince
+        self.proposalRevision = proposalRevision.flatMap { $0 > 0 ? $0 : nil }
         self.conversationId = conversationId; self.ownerKind = ownerKind; self.ownerId = ownerId
         self.ownerReadThroughSequence = ownerReadThroughSequence; self.addressCurrent = addressCurrent
     }

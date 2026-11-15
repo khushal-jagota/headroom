@@ -32,7 +32,9 @@ Ticket and Manager lists include each recap and its age. Missing recaps and unkn
 
 `ticket request-recap ID` and `manager request-recap ID` ask for a fresh recap within the caller's supervision scope. See [conversations](conversations.md).
 
-A Manager workspace read identifies the document that the browser displays and gives its edit command. It keeps the purpose, recap, held goals, artifacts, and Tickets distinct. `page show` and `page edit` select a Manager or Chief. `page schema` describes their shared document format. A sole held goal remains a goal edit through `goal`. A page edit replaces the complete document, so an agent preserves unrelated content.
+A Manager workspace read identifies the document that the browser displays and gives its edit command. It keeps the purpose, recap, held goals, artifacts, and Tickets distinct. `page show` and `page edit` select a Manager or Chief. `page schema` describes their shared document format. A sole held goal remains a goal edit through `goal`. A page edit replaces the complete document, so an agent preserves unrelated content. Optional captured revisions protect Goal and holder-page edits from replacing newer documents.
+
+Proposal accept and revise commands pin the revision from their own read. Optional `--expected-proposal-revision N` instead protects the proposal that the caller inspected earlier. Existing invocations remain valid. Older clients can omit revisions, but omission cannot protect an earlier read.
 
 ## What the CLI feeds
 

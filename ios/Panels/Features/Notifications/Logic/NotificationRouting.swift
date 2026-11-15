@@ -12,7 +12,7 @@ enum NotificationRouting {
     }
 
     static func origin(_ raw: String) -> URL? {
-        guard let parts = URLComponents(string: raw), parts.scheme == "https",
+        guard let parts = URLComponents(string: raw), allowedScheme(parts),
               let host = parts.host, !host.isEmpty,
               parts.user == nil, parts.password == nil,
               parts.query == nil, parts.fragment == nil,
@@ -22,6 +22,41 @@ enum NotificationRouting {
         normalized.path = ""
         if normalized.port == 443 { normalized.port = nil }
         return normalized.url
+    }
+
+    private static func allowedScheme(_ parts: URLComponents) -> Bool {
+        if parts.scheme == "https" { return true }
+#if DEBUG
+        // The one-off fixture host is the only HTTP notification origin. This
+        // does not let a payload choose a host or alter the selected server.
+        if parts.scheme == "http", ["localhost", "127.0.0.1"].contains(parts.host), let url = parts.url,
+           LocalStore.server(url) == LocalStore.server(AppStore.configuredBaseURL) { return true }
+#endif
+        return false
+    }
+
+    static func reply(_ userInfo: [AnyHashable: Any]) -> NotificationReply? {
+        guard let server = userInfo["server_url"] as? String, let serverURL = origin(server),
+              let reply = userInfo["reply"] as? [String: Any],
+              let conversation = reply["conversation_id"] as? String, identifier(conversation),
+              let message = reply["message_id"] as? String, !message.isEmpty, message.utf8.count <= 400,
+              !message.unicodeScalars.contains(where: CharacterSet.controlCharacters.contains),
+              let kind = reply["recipient_kind"] as? String,
+              let recipient = reply["recipient_id"] as? String, identifier(recipient) else { return nil }
+        let owner: ConversationOwner
+        switch kind {
+        case "chief" where recipient == "chief": owner = .chief
+        case "manager": owner = .manager(recipient)
+        case "ticket": owner = .ticket(recipient)
+        default: return nil
+        }
+        return NotificationReply(serverURL: serverURL, conversationID: conversation, messageID: message, owner: owner)
+    }
+
+    private static func identifier(_ text: String) -> Bool {
+        !text.isEmpty && text.count <= 200 && text.unicodeScalars.allSatisfy {
+            CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "_-")).contains($0)
+        }
     }
 
     static func destination(_ route: String) -> NotificationDestination? {

@@ -1292,6 +1292,7 @@ def _approve_ticket_proposal(
     kickoff_title: str | None,
     kickoff_note_file: str | None,
     as_json: bool,
+    expected_proposal_revision: int | None = None,
 ) -> None:
     tid = resolve_ticket_id(ticket_id, as_json)
     detail = http.send(
@@ -1316,6 +1317,13 @@ def _approve_ticket_proposal(
             as_json,
             no_route="No panels approval call is available until a proposal exists.",
         )
+    revision = (
+        proposal["revision"] if expected_proposal_revision is None else expected_proposal_revision
+    )
+    if revision != proposal["revision"]:
+        http.fail_validation(
+            "the visible proposal changed; read it again before accepting", as_json
+        )
     if ceiling is None:
         http.fail_validation("approval requires --ceiling", as_json)
     if kickoff_title is not None:
@@ -1328,8 +1336,8 @@ def _approve_ticket_proposal(
             json_body={"title": kickoff_title},
         )
     field_payload: dict[str, Any] = {
-        "expected_proposal_revision": proposal["revision"],
-        "decision_id": f"{tid}:{proposal['revision']}:accept",
+        "expected_proposal_revision": revision,
+        "decision_id": f"{tid}:{revision}:accept",
         "next_ceiling": ceiling,
         "next_holder": (
             resolve_holder(holder, as_json) if holder is not None else caller_principal()
@@ -1355,25 +1363,29 @@ def _approve_ticket_proposal(
 
 
 def _revise_ticket_proposal(
-    ticket_id: str | None, message: str | None, body_file: str | None, as_json: bool
+    ticket_id: str | None, message: str | None, body_file: str | None, as_json: bool,
+    expected_proposal_revision: int | None = None,
 ) -> None:
     tid = resolve_ticket_id(ticket_id, as_json)
     if (message is None) == (body_file is None):
         http.fail_validation("reject requires exactly one of --message or --body-file", as_json)
     text = message if message is not None else _read_source(body_file or "", as_json)
-    detail = http.send("GET", "/api/tickets", as_json=as_json, params={"detail": "full", "id": tid})
-    proposal = detail.get("pending_proposal")
-    if not proposal:
-        http.fail_validation("ticket has no pending proposal", as_json)
-    revision = proposal["revision"]
+    if expected_proposal_revision is None:
+        detail = http.send(
+            "GET", "/api/tickets", as_json=as_json, params={"detail": "full", "id": tid}
+        )
+        proposal = detail["pending_proposal"]
+        if proposal is None:
+            http.fail_validation("no pending proposal to revise", as_json)
+        expected_proposal_revision = proposal["revision"]
     data = http.send(
         "POST",
         f"/api/tickets/{tid}/reject",
         as_json=as_json,
         json_body={
             "message": text,
-            "expected_proposal_revision": revision,
-            "decision_id": f"{tid}:{revision}:reject",
+            "expected_proposal_revision": expected_proposal_revision,
+            "decision_id": f"{tid}:{expected_proposal_revision}:reject",
         },
     )
     http.emit(data, as_json, f"{tid} proposal rejected")
@@ -2028,6 +2040,10 @@ def worker_recap(ticket_id: str | None, body_file: str | None, as_json: bool) ->
 @click.option("--edit-file", default=None, help="Edited accepted body, or - for stdin.")
 @click.option("--kickoff-title", default=None, help="Edited Kickoff title.")
 @click.option("--kickoff-note-file", default=None, help="Edited Kickoff note, or - for stdin.")
+@click.option(
+    "--expected-proposal-revision", type=click.IntRange(1), default=None,
+    help="The revision of the proposal you inspected. Omission pins the command-time read.",
+)
 @json_option
 def ticket_proposal(
     proposal_args: tuple[str, ...],
@@ -2036,6 +2052,7 @@ def ticket_proposal(
     edit_file: str | None,
     kickoff_title: str | None,
     kickoff_note_file: str | None,
+    expected_proposal_revision: int | None,
     as_json: bool,
 ) -> None:
     """Submit, accept, or revise the current Ticket proposal."""
@@ -2052,11 +2069,15 @@ def ticket_proposal(
     accept_options = (ceiling, holder, edit_file, kickoff_title, kickoff_note_file)
     if action != "accept" and any(value is not None for value in accept_options):
         http.fail_validation(f"{action} does not accept proposal approval options", as_json)
+    if action == "submit" and expected_proposal_revision is not None:
+        http.fail_validation("submit does not accept --expected-proposal-revision", as_json)
     if action == "submit":
         _submit_ticket_proposal(ticket_id, None, None, None, as_json)
         return
     if action == "revise":
-        _revise_ticket_proposal(ticket_id, None, "-", as_json)
+        _revise_ticket_proposal(
+            ticket_id, None, "-", as_json, expected_proposal_revision
+        )
         return
     _approve_ticket_proposal(
         ticket_id,
@@ -2066,6 +2087,7 @@ def ticket_proposal(
         kickoff_title,
         kickoff_note_file,
         as_json,
+        expected_proposal_revision,
     )
 
 
