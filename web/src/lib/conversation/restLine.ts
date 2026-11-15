@@ -269,11 +269,12 @@ function whatThisRowSays(row: TranscriptRow, ownSenderLabel: string): Happened |
     case "tool_call":
       return { who: null, text: toolCallSentence(row) };
     case "turn_ended":
-      // A turn that simply finished is not news — what it said before finishing is. A
-      // turn that failed or was interrupted is the news, and the reason travels with it.
-      return row.ending === "completed"
-        ? null
-        : { who: null, text: oneLine(turnEndingSentence(row.ending, row.errorSummary)) };
+      // A turn that finished or was interrupted is not news — what it said before is, and
+      // the transcript already says an interrupted turn stopped. A turn that failed is the
+      // news, and the reason travels with it.
+      return row.ending === "failed"
+        ? { who: null, text: oneLine(turnEndingSentence(row.ending, row.errorSummary)) }
+        : null;
     case "turn_stopped":
       return { who: null, text: TURN_STOPPED_SENTENCE };
     case "permission_ask":
