@@ -1,5 +1,6 @@
 /** Durable record primitives. Event append is completed with its projection in PR2. */
 import { randomUUID } from 'node:crypto';
+import { HOME_MACHINE_ID } from '../../../execution_identity.ts';
 import { capture_savepoint_rollback } from '../../../core/database/index.ts';
 import type {
   Database,
@@ -1044,6 +1045,21 @@ export class ConversationStore
     return this.#write((tx) => {
       const taken = this.take_background_tasks_in_transaction(tx, conversation_id, options);
       return { value: taken, payloads: [], always_announce: taken.length > 0 };
+    });
+  }
+
+  update_work_metadata(): ReadonlyMap<string, readonly [string, string]> {
+    return this.database.read((sql) => {
+      const result = new Map<string, readonly [string, string]>();
+      for (const row of sql.all<{ conversation_id: string; title: string; machine_id: string }>(
+        'SELECT conversation_id,title,machine_id FROM tickets WHERE conversation_id IS NOT NULL',
+      ))
+        result.set(row.conversation_id, [row.title, row.machine_id]);
+      for (const row of sql.all<{ conversation_id: string; title: string }>(
+        "SELECT a.conversation_id,m.title FROM agents a JOIN managers m ON a.agent_key='manager_' || m.id WHERE a.conversation_id IS NOT NULL",
+      ))
+        result.set(row.conversation_id, [row.title, HOME_MACHINE_ID]);
+      return result;
     });
   }
 

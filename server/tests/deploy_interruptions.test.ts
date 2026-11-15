@@ -1,5 +1,6 @@
 /** These risks are not reached by the core's no-participant recovery tests. */
-import { afterEach, expect, test } from 'vitest';
+import { afterEach, expect, test, vi } from 'vitest';
+import { recover_conversations } from '../conversation/deploy_interruptions/coordinator.ts';
 import { SHUTDOWN_GRACE_SECONDS } from '../lifecycle/configuration.ts';
 import { mkdtempSync, mkdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -258,5 +259,38 @@ test('restart reports only the task IDs captured before this process starts work
     ).toHaveLength(1);
   } finally {
     await core.shutdown({ deadline: performance.now() / 1000 + SHUTDOWN_GRACE_SECONDS });
+  }
+});
+
+// Startup recovery must release admission when Update closes starts during a pass.
+test('startup recovery leaves admission available to the update after a refused send', async () => {
+  const f = setup();
+  try {
+    await f.start();
+    f.database.write((tx) => {
+      tx.run(
+        "INSERT INTO conversation_lifecycle_facts VALUES ('core','turn','1',1,'turn','running',NULL)",
+      );
+      reconcile(tx, [manifest()], 100);
+    });
+    expect(f.database.read(select_recoveries).size).toBe(1);
+    const send = f.core.send.bind(f.core);
+    const offered = vi.spyOn(f.core, 'send').mockImplementation((...args) => {
+      expect(f.core.workspace_admission.active).toBe(true);
+      expect(f.core.workspace_admission.close_starts()).toBe(true);
+      return send(...args);
+    });
+    await recover_conversations(f.core, f.database, { startup: true });
+    expect(offered).toHaveBeenCalledTimes(1);
+    expect(f.core.workspace_admission.active).toBe(false);
+    expect(
+      f.core.workspace_admission.claim(() => {}, { idle: () => true, require_idle: true }),
+    ).toBe(true);
+    await recover_conversations(f.core, f.database, { startup: true });
+    expect(offered).toHaveBeenCalledTimes(1);
+    expect(f.database.read(select_recoveries).size).toBe(1);
+    expect(f.children).toHaveLength(0);
+  } finally {
+    await f.core.shutdown({ deadline: performance.now() / 1000 + SHUTDOWN_GRACE_SECONDS });
   }
 });

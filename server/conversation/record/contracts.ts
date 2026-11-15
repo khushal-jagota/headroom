@@ -293,6 +293,7 @@ export interface ConversationRecordStore {
     options?: RecordingSettlementOptions,
   ): Promise<T>;
   finish_writes(): Promise<void>;
+  update_work_metadata(): ReadonlyMap<string, readonly [string, string]>;
   create_conversation(start: ResolvedConversationStart): ConversationRecord;
   read_conversation(conversation_id: string): ConversationRecord | null;
   read_conversation_records(conversation_ids: readonly string[]): readonly ConversationRecord[];

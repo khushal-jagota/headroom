@@ -3,6 +3,7 @@ import { observe_shutdown } from '../conversation/shutdown.ts';
 import { is_shutdown_business_cancellation } from './shutdown.ts';
 /** Local process core. Registered as ConversationSystem after the turn-control slice lands. */
 import { randomUUID } from 'node:crypto';
+import { HOME_MACHINE_ID } from '../execution_identity.ts';
 import { performance } from 'node:perf_hooks';
 import { isDeepStrictEqual } from 'node:util';
 import {
@@ -173,6 +174,14 @@ export class SqliteProcessConversationSystem implements DeliveryServices, Conver
     import('./backends/contracts.ts').BackendChild,
     ConversationState
   >();
+  private update_generation: symbol | null = null;
+  private update_admission_owned = false;
+  private update_metadata: ReadonlyMap<string, readonly [string, string]> | null = null;
+  private update_retirement: Promise<void> | null = null;
+  private update_retirement_generation: symbol | null = null;
+  private update_retirement_pending = false;
+  private update_stop_failed = false;
+  private acknowledged_event_failures = new Map<string, number>();
   private idle_janitor: IdleChildJanitor | null = null;
   private background_tasks_left_by_previous_process: ReadonlyMap<string, readonly string[]>;
   constructor(options: ConversationCoreOptions) {
@@ -241,19 +250,22 @@ export class SqliteProcessConversationSystem implements DeliveryServices, Conver
     return this.conversations.get(conversation_id)?.running_turn ?? null;
   }
   async start_conversation(request: ConversationStartRequest): Promise<void> {
-    return this.workspace_admission.operation(async (admitted) => {
-      if (!admitted) throw new Error('Workspace admission is closed for an owner update.');
-      this.require_runtime_ownership();
-      const refusal = this.options.execution_refusal(request.conversation_id);
-      if (refusal !== null) throw refusal;
-      // The record is the first effect, before an in-memory identity can exist.
-      const record = this.options.store.create_conversation(
-        resolve_conversation_start_request(request),
-      );
-      if (!this.conversations.has(record.conversation_id)) {
-        this.conversations.set(record.conversation_id, new ConversationState(record));
-      }
-    });
+    return this.workspace_admission.operation(
+      async (admitted) => {
+        if (!admitted) throw new Error('Workspace admission is closed for an owner update.');
+        this.require_runtime_ownership();
+        const refusal = this.options.execution_refusal(request.conversation_id);
+        if (refusal !== null) throw refusal;
+        // The record is the first effect, before an in-memory identity can exist.
+        const record = this.options.store.create_conversation(
+          resolve_conversation_start_request(request),
+        );
+        if (!this.conversations.has(record.conversation_id)) {
+          this.conversations.set(record.conversation_id, new ConversationState(record));
+        }
+      },
+      { starts: true },
+    );
   }
   persist<T>(
     state: ConversationState,
@@ -360,20 +372,23 @@ export class SqliteProcessConversationSystem implements DeliveryServices, Conver
     content: MessageContent,
     options: SendOptions,
   ): Promise<PromptDeliveryFate> {
-    return this.workspace_admission.operation(async (admitted) => {
-      if (!admitted) throw new Error('Workspace admission is closed for an owner update.');
-      if (options.record_refusal && options.sender_message_id == null)
-        throw new Error('record_refusal requires a sender_message_id');
-      this.require_runtime_ownership();
-      const refusal = this.options.execution_refusal(conversation_id);
-      if (refusal !== null) throw refusal;
-      const state = this.conversation_state(conversation_id);
-      if (!state) return new PromptDeliveryRefused({ refusal_reason: R.no_such_conversation });
-      return own_settlement(
-        state,
-        this.send_owned(state, require_message_content(content), options),
-      );
-    });
+    return this.workspace_admission.operation(
+      async (admitted) => {
+        if (!admitted) throw new Error('Workspace admission is closed for an owner update.');
+        if (options.record_refusal && options.sender_message_id == null)
+          throw new Error('record_refusal requires a sender_message_id');
+        this.require_runtime_ownership();
+        const refusal = this.options.execution_refusal(conversation_id);
+        if (refusal !== null) throw refusal;
+        const state = this.conversation_state(conversation_id);
+        if (!state) return new PromptDeliveryRefused({ refusal_reason: R.no_such_conversation });
+        return own_settlement(
+          state,
+          this.send_owned(state, require_message_content(content), options),
+        );
+      },
+      { starts: true },
+    );
   }
   private async send_owned(
     state: ConversationState,
@@ -543,6 +558,7 @@ export class SqliteProcessConversationSystem implements DeliveryServices, Conver
   async queue(state: ConversationState, message: Message): Promise<PromptDeliveryFate> {
     const admission = await state.lock.run(async () => {
       if (
+        state.being_killed ||
         state.child_is_quarantined ||
         state.phase !== 'idle' ||
         state.held_prompts.length > 0 ||
@@ -889,6 +905,7 @@ export class SqliteProcessConversationSystem implements DeliveryServices, Conver
     if (this.options.execution_refusal(state.record.conversation_id) !== null) return;
     const taken = await state.lock.run(() => {
       if (
+        state.being_killed ||
         state.child_is_quarantined ||
         state.phase !== 'idle' ||
         state.held_prompts.length === 0 ||
@@ -909,7 +926,7 @@ export class SqliteProcessConversationSystem implements DeliveryServices, Conver
           set_phase(state, 'idle');
           return null;
         }
-        if (state.child_is_quarantined || state.held_prompts.length === 0) {
+        if (state.being_killed || state.child_is_quarantined || state.held_prompts.length === 0) {
           set_phase(state, 'idle');
           return null;
         }
@@ -993,6 +1010,7 @@ export class SqliteProcessConversationSystem implements DeliveryServices, Conver
           try {
             await take();
           } catch (error) {
+            state.backend_event_failures += 1;
             console.error(
               `conversation ${state.record.conversation_id} could not take in a backend event`,
               error,
@@ -1557,6 +1575,166 @@ export class SqliteProcessConversationSystem implements DeliveryServices, Conver
         return 'busy';
     }
     return this.options.store.read_live_background_task_ids().size > 0 ? 'busy' : 'idle';
+  }
+  private state_has_update_work(state: ConversationState): boolean {
+    return !!(
+      state.lock.locked ||
+      state.phase !== 'idle' ||
+      state.reserved_turn ||
+      state.running_turn ||
+      state.held_prompts.length ||
+      state.admitted_sender_messages.size ||
+      state.sender_messages_being_delivered.size ||
+      state.steer_settlements.size ||
+      state.late_steers.size ||
+      state.backend_event_pump ||
+      state.backend_events.length ||
+      state.child_is_quarantined ||
+      state.settlement_tasks.size
+    );
+  }
+  update_waiting_work(): readonly string[] {
+    const background = this.options.store.read_live_background_task_ids();
+    const metadata = this.update_metadata ?? this.options.store.update_work_metadata();
+    return [
+      ...new Set(
+        [...this.conversations]
+          .filter(
+            ([identity, state]) => this.state_has_update_work(state) || background.has(identity),
+          )
+          .map(
+            ([identity, state]) =>
+              metadata.get(identity)?.[0] ?? `${state.record.backend_key} conversation`,
+          ),
+      ),
+    ];
+  }
+  async prepare_update(mode: 'idle' | 'now'): Promise<boolean> {
+    this.require_runtime_ownership();
+    if (!this.update_admission_owned) {
+      if (!this.workspace_admission.close_starts())
+        throw new Error('Another operation owns workspace admission.');
+      this.update_admission_owned = true;
+      this.update_generation = Symbol('update');
+      this.update_metadata = this.options.store.update_work_metadata();
+      this.update_stop_failed = false;
+    }
+    const generation = this.update_generation!;
+    if (this.update_retirement !== null && this.update_retirement_generation !== generation) {
+      if (this.update_retirement_pending) return false;
+      this.update_retirement = null;
+    }
+    if (this.update_stop_failed) {
+      this.update_retirement = null;
+      this.update_stop_failed = false;
+    }
+    const background = this.options.store.read_live_background_task_ids();
+    const local = [...this.conversations]
+      .filter(
+        ([identity, state]) =>
+          (this.update_metadata?.get(identity)?.[1] ?? HOME_MACHINE_ID) === HOME_MACHINE_ID &&
+          state.retained_child_reference === null &&
+          !state.child?.stop_outside_lock,
+      )
+      .map(([, state]) => state);
+    if (this.update_retirement === null) {
+      if (this.workspace_admission.active) return false;
+      if (
+        mode === 'idle' &&
+        local.some(
+          (state) =>
+            this.state_has_update_work(state) || background.has(state.record.conversation_id),
+        )
+      )
+        return false;
+      this.update_retirement_generation = generation;
+      this.update_retirement_pending = true;
+      this.update_retirement = (async () => {
+        try {
+          for (const state of local) {
+            if (this.update_generation !== generation) return;
+            await this.retire_update_child(state, generation);
+          }
+          for (const state of local) {
+            while (state.backend_event_pump) await state.backend_event_pump;
+            await Promise.all([...state.settlement_tasks]);
+          }
+          await this.options.store.finish_writes();
+        } catch (error) {
+          if (this.update_generation === generation) this.update_stop_failed = true;
+          throw error;
+        } finally {
+          this.update_retirement_pending = false;
+        }
+      })();
+      void this.update_retirement.catch(() => {});
+    }
+    await this.update_retirement;
+    if (this.update_generation !== generation) return false;
+    if (this.workspace_admission.closed) return true;
+    return this.workspace_admission.claim(() => {}, {
+      idle: () => local.every((state) => !this.state_has_update_work(state)),
+      require_idle: true,
+    });
+  }
+  private update_event_failed(state: ConversationState): boolean {
+    return (
+      state.backend_event_failures >
+      (this.acknowledged_event_failures.get(state.record.conversation_id) ?? 0)
+    );
+  }
+  private async retire_update_child(state: ConversationState, generation: symbol): Promise<void> {
+    state.being_killed = true;
+    try {
+      const lease = await this.acquire_settled(state);
+      let child: BackendChild | null;
+      try {
+        if (this.update_generation !== generation) return;
+        await controls.discard_all(this, state);
+        child = state.child;
+        if (child) this.child_stop_ownership.set(child, state);
+      } finally {
+        lease.release();
+      }
+      if (child !== null) {
+        await this.native_operation(() => child.stop());
+        while (state.backend_event_pump) await state.backend_event_pump;
+        const event_failed = this.update_event_failed(state);
+        await state.lock.run(async () => {
+          this.child_stop_ownership.delete(child);
+          state.child_is_quarantined = false;
+          if (state.child === child) {
+            state.child = null;
+            state.child_event_sink = null;
+          }
+          if (state.running_turn)
+            await this.end_turn(state, state.running_turn, 'interrupted', null);
+          set_phase(state, state.running_turn ? 'running' : 'idle');
+        });
+        if (event_failed) throw new Error('A backend result did not settle before the update.');
+      }
+      // A canceled attempt cannot discard messages admitted after Cancel.
+      if (this.update_generation === generation) await this.kill(state.record.conversation_id);
+      if (this.update_generation === generation && this.update_event_failed(state))
+        throw new Error('A backend result did not settle before the update.');
+    } catch (error) {
+      if (state.child) state.child_is_quarantined = true;
+      throw error;
+    } finally {
+      state.being_killed = false;
+      if (this.update_generation !== generation) await this.drain_held_prompts(state);
+    }
+  }
+  cancel_update(): boolean {
+    this.workspace_admission.reopen();
+    this.update_admission_owned = false;
+    this.update_generation = null;
+    this.update_stop_failed = false;
+    this.update_metadata = null;
+    this.acknowledged_event_failures = new Map(
+      [...this.conversations].map(([identity, state]) => [identity, state.backend_event_failures]),
+    );
+    return true;
   }
   async run_with_workspace_admission(
     operation: () => void,

@@ -184,6 +184,7 @@ function changedMessage(): never {
 export class InMemoryConversationSystem implements ConversationSystem {
   private readonly _conversations = new Map<string, ConversationState>();
   readonly workspace_admission = new WorkspaceAdmission();
+  private update_generation: symbol | null = null;
 
   workspace_activity(): 'idle' | 'busy' | 'unknown' {
     if (this.workspace_admission.closed) return 'unknown';
@@ -196,6 +197,47 @@ export class InMemoryConversationSystem implements ConversationSystem {
       return 'busy';
     return 'idle';
   }
+  async prepare_update(mode: 'idle' | 'now'): Promise<boolean> {
+    if (this.update_generation === null) {
+      if (!this.workspace_admission.close_starts())
+        throw new Error('Another operation owns workspace admission.');
+      this.update_generation = Symbol('update');
+    }
+    const generation = this.update_generation;
+    if (
+      this.workspace_admission.active ||
+      (mode === 'idle' && this.workspace_activity() !== 'idle')
+    )
+      return false;
+    if (mode === 'now') {
+      for (const identity of this._conversations.keys()) {
+        if (this.update_generation !== generation) return false;
+        await this.kill(identity);
+      }
+    }
+    if (this.update_generation !== generation) return false;
+    return (
+      this.workspace_admission.closed ||
+      this.workspace_admission.claim(() => {}, {
+        idle: () => this.workspace_activity() === 'idle',
+        require_idle: true,
+      })
+    );
+  }
+  update_waiting_work(): readonly string[] {
+    return [
+      ...new Set(
+        [...this._conversations.values()]
+          .filter((state) => state.running_turn || state.held_prompts.length)
+          .map((state) => `${state.resolved_start.backend_key} conversation`),
+      ),
+    ];
+  }
+  cancel_update(): boolean {
+    this.update_generation = null;
+    this.workspace_admission.reopen();
+    return true;
+  }
   async run_with_workspace_admission(
     operation: () => void,
     options: { require_idle: boolean },
@@ -206,7 +248,7 @@ export class InMemoryConversationSystem implements ConversationSystem {
     });
   }
   async start_conversation(request: ConversationStartRequest): Promise<void> {
-    if (this.workspace_admission.closed)
+    if (this.workspace_admission.closed || this.workspace_admission.starts_closed)
       throw new Error('Workspace admission is closed for an owner update.');
     const resolved = resolve_conversation_start_request(request);
     if (this._conversations.has(resolved.conversation_id))
@@ -234,7 +276,7 @@ export class InMemoryConversationSystem implements ConversationSystem {
     content: MessageContent,
     options: SendOptions,
   ): Promise<PromptDeliveryFate> {
-    if (this.workspace_admission.closed)
+    if (this.workspace_admission.closed || this.workspace_admission.starts_closed)
       throw new Error('Workspace admission is closed for an owner update.');
     require_message_content(content);
     const {

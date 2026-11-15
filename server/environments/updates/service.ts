@@ -3,6 +3,8 @@ import { randomUUID } from 'node:crypto';
 import { lstatSync, statSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { resolved_path } from '../paths.ts';
+import type { UpdateBarrier } from '../update_barrier.ts';
+import { observe_promise } from '../../core/promise_observer.ts';
 import type { ChangeSignal } from '../../core/changes/index.ts';
 import type { StopOptions } from '../../lifecycle/contracts.ts';
 import { observe_shutdown } from '../../conversation/shutdown.ts';
@@ -19,6 +21,7 @@ import {
   UPDATE_AVAILABILITY_REFRESH_SECONDS,
   UPDATE_HEALTH_TIMEOUT_SECONDS,
   UPDATE_INSTALL_DEADLINE_SECONDS,
+  UPDATE_DRAIN_SECONDS,
 } from './configuration.ts';
 import type {
   InstallerOperations,
@@ -35,12 +38,16 @@ import type {
 
 export const ACTIVITY_CHANGED_DETAIL =
   'Work started before the update began. Confirm active work to update now.';
+export const WAIT_DETAIL =
+  'Work still waits for a safe point after five minutes. ' +
+  'Leave the update pending, cancel it, or choose Update now.';
+export const STOP_TIMEOUT_DETAIL =
+  'Work did not stop safely in five minutes. The update remains paused.';
 export const RESTARTED_DETAIL = 'Panels restarted before the update began, so nothing changed.';
 const states = (...values: UpdateAttemptState[]): ReadonlySet<UpdateAttemptState> =>
   new Set(values);
 const epoch = instant('1970-01-01T00:00:00+00:00');
 const timestamp = (seconds: number): string => add_seconds(epoch, seconds).iso;
-class Stopped extends Error {}
 
 export interface UpdateServiceOptions {
   provider: UpdateProvider | null;
@@ -56,6 +63,7 @@ export interface UpdateServiceOptions {
   staging: ReleaseStaging;
   installer: InstallerOperations;
   mac: MacUpdateOperations;
+  update_barrier?: UpdateBarrier;
   can_refresh?: () => boolean;
   now?: () => number;
   record_now?: () => string;
@@ -128,12 +136,68 @@ export class UpdateService {
   private stopping: Promise<void> | undefined;
   private shutdown_settlement: Promise<void> | undefined;
   private observer: NodeJS.Timeout | null = null;
+  private waiting_for_work = false;
+  private advance_requested = false;
+  private unsubscribe_work: (() => void) | null = null;
+  private preparation_generation = 0;
+  private preparation_attempt_id: string | null = null;
+  private installer_starting: { attempt_id: string; until: number } | null = null;
   constructor(options: UpdateServiceOptions) {
     this.options = options;
     this.attempts = options.attempts;
     this.current_app_sha = options.current_app_sha;
     this.now = options.now ?? (() => Date.now() / 1000);
     this.record_now = options.record_now ?? utc_now;
+  }
+  owns_preparation(attempt_id: string): boolean {
+    if (
+      (this.preparation_attempt_id === attempt_id && this.advancing !== null) ||
+      (this.installer_starting?.attempt_id === attempt_id &&
+        this.now() < this.installer_starting.until)
+    )
+      return true;
+    if (this.paused_attempt_id === attempt_id && this.options.update_barrier?.frozen) {
+      const current = this.attempts.read();
+      return current?.attempt_id === attempt_id && current.state === 'waiting';
+    }
+    return false;
+  }
+  installer_observed(attempt_id: string): void {
+    if (this.installer_starting?.attempt_id === attempt_id) this.installer_starting = null;
+  }
+  recover_orphaned_attempt(attempt_id: string, generation: number): number | null {
+    const barrier = this.options.update_barrier;
+    const current = this.attempts.read();
+    if (
+      barrier === undefined ||
+      barrier.generation !== generation ||
+      (current?.attempt_id ?? '') !== attempt_id ||
+      this.owns_preparation(attempt_id) ||
+      (this.paused_attempt_id !== null && this.paused_attempt_id !== attempt_id)
+    )
+      return null;
+    if (current !== null && !states('done', 'failed').has(current.state)) {
+      this.attempts.change(attempt_id, states(current.state), (record) => ({
+        ...record,
+        state: 'failed',
+        detail: states('waiting', 'preparing').has(record.state)
+          ? RESTARTED_DETAIL
+          : 'The previous update did not complete. Try again.',
+      }));
+    }
+    const released = barrier.reopen_if_current(generation);
+    if (released !== null) this.reopen_trial_work(attempt_id);
+    return released;
+  }
+  reopen_trial_work(attempt_id: string): void {
+    if (
+      (this.attempts.read()?.attempt_id ?? '') !== attempt_id ||
+      (this.paused_attempt_id !== null && this.paused_attempt_id !== attempt_id) ||
+      this.options.update_barrier?.frozen
+    )
+      return;
+    this.options.runtime.conversation()?.cancel_update();
+    this.paused_attempt_id = null;
   }
   ready_release(): PublishedUpdate | null {
     if (this.ready === null || this.ready.manifest.app_sha === this.current_app_sha) return null;
@@ -205,6 +269,7 @@ export class UpdateService {
   private settled_attempt(): UpdateAttempt | null {
     const attempt = this.attempts.read();
     if (attempt === null) return null;
+    if (this.options.update_barrier?.frozen) return attempt;
     const ended = settle(attempt, this.current_app_sha, timestamp(this.now()));
     if (ended === null) return attempt;
     this.options.runtime.assert_database_owned();
@@ -230,7 +295,7 @@ export class UpdateService {
     const reported = attempt?.mac_attempt_id
       ? this.options.mac.reported_at(attempt.mac_attempt_id)
       : null;
-    const [state, allowed_actions, detail, deadline_at] = resolve(
+    const [state, allowed_actions, resolved_detail, deadline_at] = resolve(
       attempt,
       available,
       this.current_app_sha,
@@ -242,6 +307,18 @@ export class UpdateService {
         now: timestamp(this.now()),
       },
     );
+    let detail = resolved_detail;
+    const waiting_work =
+      state === 'available' || state === 'waiting' ? (system?.update_waiting_work() ?? []) : [];
+    if (state === 'waiting' && detail === null)
+      detail = 'New work waits. Panels saves admitted work before the update.';
+    if (waiting_work.length) {
+      const names = waiting_work.join(', ');
+      detail =
+        state === 'available'
+          ? `Update now stops this work: ${names}.`
+          : `${detail ?? 'The update waits for a safe point.'} Work before the update: ${names}.`;
+    }
     return {
       state,
       allowed_actions,
@@ -257,15 +334,45 @@ export class UpdateService {
     if (
       this.paused_attempt_id === null ||
       (attempt?.attempt_id === this.paused_attempt_id &&
-        states('preparing', 'installing').has(attempt.state))
+        states('waiting', 'preparing', 'installing').has(attempt.state))
     )
       return;
     this.paused_attempt_id = null;
     const system = this.options.runtime.conversation();
     if (system !== null) {
-      system.workspace_admission.reopen();
+      system.cancel_update();
       this.options.changes.emit();
     }
+    this.release_barrier();
+  }
+  private release_barrier(): void {
+    const barrier = this.options.update_barrier;
+    if (barrier === undefined) return;
+    barrier.remove(barrier.reopen());
+  }
+  private owns_attempt(attempt_id: string, state: UpdateAttemptState): boolean {
+    const current = this.attempts.read();
+    return current?.attempt_id === attempt_id && current.state === state;
+  }
+  private drain_deadline(): string {
+    return timestamp(this.now() + UPDATE_DRAIN_SECONDS);
+  }
+  private remaining_drain(attempt: UpdateAttempt): number {
+    return attempt.deadline_at === null
+      ? UPDATE_DRAIN_SECONDS * 1000
+      : Math.max(
+          1,
+          Number(instant(attempt.deadline_at).epochMicroseconds) / 1000 - this.now() * 1000,
+        );
+  }
+  private async observe_work<T>(promise: Promise<T>, timeout: number) {
+    const actual = promise.then(
+      () => {},
+      () => {},
+    );
+    this.work.add(actual);
+    void actual.finally(() => this.work.delete(actual));
+    return observe_promise(promise, timeout);
   }
   private deadline(): string {
     return timestamp(this.now() + UPDATE_INSTALL_DEADLINE_SECONDS);
@@ -295,7 +402,7 @@ export class UpdateService {
       updated_at: now,
       release,
       detail: null,
-      deadline_at: mode === 'now' ? this.deadline() : null,
+      deadline_at: this.drain_deadline(),
       backup: null,
       steps: { pressed: now },
       mac_attempt_id: release.mac === null ? null : randomUUID().replaceAll('-', ''),
@@ -307,7 +414,14 @@ export class UpdateService {
   cancel(attempt_id: string): void {
     this.require_running();
     this.options.runtime.assert_database_owned();
-    this.attempts.remove(attempt_id, states('waiting'));
+    this.attempts.remove(attempt_id, states('waiting', 'preparing'));
+    this.preparation_generation++;
+    this.options.runtime.conversation()?.cancel_update();
+    this.paused_attempt_id = null;
+    this.release_barrier();
+    this.waiting_for_work = false;
+    this.advance_requested = false;
+    this.advancing = null;
   }
   update_now(attempt_id: string, options: { confirm_activity: boolean }): UpdateAttempt {
     this.require_running();
@@ -318,7 +432,8 @@ export class UpdateService {
       ...current,
       mode: 'now',
       confirm_activity: true,
-      deadline_at: this.deadline(),
+      detail: null,
+      deadline_at: this.drain_deadline(),
     }));
     this.schedule_advance();
     return attempt;
@@ -344,6 +459,14 @@ export class UpdateService {
     this.stopping = this.shutdown_settlement = undefined;
     this.options.runtime.assert_database_owned();
     this.running = true;
+    this.unsubscribe_work =
+      this.options.runtime.conversation()?.workspace_admission.subscribe_operations_finished(() => {
+        if (!this.running || !this.waiting_for_work) return;
+        this.waiting_for_work = false;
+        queueMicrotask(() => {
+          if (this.running) this.schedule_advance();
+        });
+      }) ?? null;
     const attempt = this.attempts.read();
     if (attempt?.state === 'preparing')
       this.fail(attempt.attempt_id, states('preparing'), RESTARTED_DETAIL);
@@ -367,6 +490,10 @@ export class UpdateService {
     const deadline = options.deadline;
     this.running = false;
     this.incarnation++;
+    this.waiting_for_work = false;
+    this.advance_requested = false;
+    this.unsubscribe_work?.();
+    this.unsubscribe_work = null;
     if (this.observer !== null) clearInterval(this.observer);
     this.observer = null;
     this.shutdown_settlement = Promise.allSettled([...this.work]).then(() => {});
@@ -390,13 +517,14 @@ export class UpdateService {
     if (attempt === null) return false;
     if (states('preparing', 'installing').has(attempt.state)) return true;
     if (attempt.state !== 'waiting') return false;
-    const system = this.options.runtime.conversation();
-    if (attempt.mode === 'idle' && (system === null || system.workspace_activity() !== 'idle'))
-      return false;
     this.schedule_advance();
     return true;
   }
   schedule_advance(): void {
+    if (this.advancing !== null) {
+      this.advance_requested = true;
+      return;
+    }
     void this.advance().catch((error: unknown) =>
       console.error('Update advance did not complete', error),
     );
@@ -405,82 +533,153 @@ export class UpdateService {
     if (!this.running) return Promise.resolve();
     if (this.advancing !== null) return this.advancing;
     const incarnation = this.incarnation;
+    const generation = this.preparation_generation;
     const flight = Promise.resolve()
-      .then(() => this.advance_waiting(incarnation))
+      .then(() => this.advance_waiting(incarnation, generation))
       .finally(() => {
-        if (this.advancing === flight) this.advancing = null;
+        if (this.advancing === flight) {
+          this.advancing = null;
+          if (this.advance_requested && this.active(incarnation)) {
+            this.advance_requested = false;
+            queueMicrotask(() => this.schedule_advance());
+          }
+        }
         this.work.delete(flight);
       });
     this.advancing = flight;
     this.work.add(flight);
     return flight;
   }
-  private async advance_waiting(incarnation: number): Promise<void> {
-    if (!this.active(incarnation)) return;
+  private async advance_waiting(incarnation: number, generation: number): Promise<void> {
+    const active = () => this.active(incarnation) && this.preparation_generation === generation;
+    if (!active()) return;
     const attempt = this.attempts.read();
     const system = this.options.runtime.conversation();
+    this.waiting_for_work = false;
+    if (attempt?.state !== 'waiting' || system === null) return;
+    const attempt_id = attempt.attempt_id;
     if (
-      !this.active(incarnation) ||
-      attempt?.state !== 'waiting' ||
-      system === null ||
-      (attempt.mode === 'idle' && system.workspace_activity() !== 'idle')
+      attempt.detail &&
+      !(attempt.mode === 'idle' && attempt.deadline_at === null && attempt.detail === WAIT_DETAIL)
     )
       return;
-    const attempt_id = attempt.attempt_id;
+    if (
+      attempt.deadline_at !== null &&
+      BigInt(Math.floor(this.now() * 1_000_000)) >= instant(attempt.deadline_at).epochMicroseconds
+    ) {
+      this.attempts.change(attempt_id, states('waiting'), (current) => ({
+        ...current,
+        detail: current.mode === 'idle' ? WAIT_DETAIL : STOP_TIMEOUT_DETAIL,
+        deadline_at: null,
+      }));
+      return;
+    }
+    if (
+      attempt.mode === 'now' &&
+      !attempt.confirm_activity &&
+      this.paused_attempt_id === null &&
+      system.workspace_activity() !== 'idle'
+    ) {
+      this.fail(attempt_id, states('waiting'), ACTIVITY_CHANGED_DETAIL);
+      return;
+    }
+    this.paused_attempt_id = this.preparation_attempt_id = attempt_id;
+    this.waiting_for_work = true;
     try {
-      const admitted = await system.run_with_workspace_admission(
-        () => {
-          if (!this.active(incarnation)) throw new Stopped();
-          this.options.runtime.assert_database_owned();
-          try {
-            this.options.runtime.database.write((tx) => {
-              build_worker_runtime_definitions(
-                read_definitions(tx),
-                new Set(
-                  tx
-                    .all<{ skill_name: string }>(
-                      'SELECT skill_name FROM managed_skills ORDER BY skill_name',
-                    )
-                    .map((row) => row.skill_name),
-                ),
-              );
-              audit_ticket_registry_integrity(tx);
-            });
-          } catch (error) {
-            this.fail(
-              attempt_id,
-              states('waiting'),
-              'The Ticket integrity check refused the update before Panels stopped. Resolve the saved Ticket or Worker type error, then try again: ' +
-                String(error instanceof Error ? error.message : error),
-            );
-            throw new UpdateConflict('Ticket integrity refused the update.');
-          }
-          // A commit step can refuse the audit. Finish that door before the
-          // external record changes, within this same synchronous admission claim.
-          if (!this.active(incarnation)) throw new Stopped();
-          this.attempts.change(attempt_id, states('waiting'), (current) => ({
-            ...current,
-            state: 'preparing',
-            steps: { ...current.steps, work_paused: this.record_now() },
-          }));
-        },
-        { require_idle: attempt.mode === 'idle' || !attempt.confirm_activity },
+      // Enter synchronously: Cancel must not race a separately queued admission close.
+      const prepared = await this.observe_work(
+        system.prepare_update(attempt.confirm_activity ? attempt.mode : 'idle'),
+        this.remaining_drain(attempt),
       );
-      if (!this.active(incarnation)) return;
-      if (!admitted) {
-        if (attempt.mode === 'now')
-          this.fail(attempt_id, states('waiting'), ACTIVITY_CHANGED_DETAIL);
+      if (!active() || !this.owns_attempt(attempt_id, 'waiting')) return;
+      if (!prepared.completed) {
+        this.attempts.change(attempt_id, states('waiting'), (current) => ({
+          ...current,
+          detail: STOP_TIMEOUT_DETAIL,
+        }));
         return;
       }
-      this.paused_attempt_id = attempt_id;
+      if (!prepared.value) return;
     } catch (error) {
-      if (error instanceof UpdateConflict || error instanceof Stopped) return;
-      throw error;
+      if (!active() || !this.owns_attempt(attempt_id, 'waiting')) return;
+      console.warn('Update safe-point check stopped', error);
+      this.attempts.change(attempt_id, states('waiting'), (current) => ({
+        ...current,
+        detail: `Work could not reach a safe point: ${error instanceof Error ? error.message : String(error)}. The update remains paused.`,
+      }));
+      return;
     }
     try {
+      this.options.runtime.assert_database_owned();
+      try {
+        this.options.runtime.database.write((tx) => {
+          build_worker_runtime_definitions(
+            read_definitions(tx),
+            new Set(
+              tx
+                .all<{ skill_name: string }>(
+                  'SELECT skill_name FROM managed_skills ORDER BY skill_name',
+                )
+                .map((row) => row.skill_name),
+            ),
+          );
+          audit_ticket_registry_integrity(tx);
+        });
+      } catch (error) {
+        this.fail(
+          attempt_id,
+          states('waiting'),
+          'The Ticket integrity check refused the update before Panels stopped. Resolve the saved Ticket or Worker type error, then try again: ' +
+            String(error instanceof Error ? error.message : error),
+        );
+        throw new UpdateConflict('Ticket integrity refused the update.');
+      }
+      if (!active()) return;
+      this.attempts.change(attempt_id, states('waiting'), (current) => ({
+        ...current,
+        state: 'preparing',
+        steps: { ...current.steps, work_paused: this.record_now() },
+      }));
+    } catch (error) {
+      if (!(error instanceof UpdateConflict)) throw error;
+      this.waiting_for_work = false;
+      this.reopen_after_unstarted(this.attempts.read());
+      return;
+    }
+    this.waiting_for_work = false;
+    try {
+      const barrier = this.options.update_barrier;
+      if (barrier !== undefined) {
+        const barrier_generation = barrier.close();
+        barrier.persist(attempt_id, barrier_generation);
+        if (!active() || !this.owns_attempt(attempt_id, 'preparing')) return;
+        const drained = await this.observe_work(barrier.drain(), this.remaining_drain(attempt));
+        if (!active() || !this.owns_attempt(attempt_id, 'preparing')) return;
+        if (!drained.completed) {
+          this.attempts.change(attempt_id, states('preparing'), (current) => ({
+            ...current,
+            state: 'waiting',
+            detail:
+              'Accepted result saves still wait. ' +
+              'Choose Update now to retry after they finish, or cancel the update.',
+          }));
+          return;
+        }
+      }
+      if (!active() || !this.owns_attempt(attempt_id, 'preparing')) return;
+      // This claim seals Cancel before the first snapshot or installer effect.
+      this.attempts.change(attempt_id, states('preparing'), (current) => ({
+        ...current,
+        state: 'installing',
+      }));
       await this.start_installer(attempt_id, incarnation);
     } catch (error) {
-      if (!this.active(incarnation)) return;
+      if (
+        !active() ||
+        (!this.owns_attempt(attempt_id, 'installing') &&
+          !this.owns_attempt(attempt_id, 'preparing'))
+      )
+        return;
       console.error('Update did not start its installer', error);
       this.fail(
         attempt_id,
@@ -527,7 +726,7 @@ export class UpdateService {
       health_timeout_seconds: UPDATE_HEALTH_TIMEOUT_SECONDS,
     });
     if (!this.active(incarnation)) return;
-    this.attempts.change(attempt_id, states('preparing'), (current) => ({
+    this.attempts.change(attempt_id, states('installing'), (current) => ({
       ...current,
       state: 'installing',
       backup,
@@ -540,12 +739,14 @@ export class UpdateService {
     }));
     if (!this.active(incarnation)) return;
     await this.options.installer.launch(attempt_id, command);
+    this.installer_starting = { attempt_id, until: this.now() + 5 };
   }
   private fail(
     attempt_id: string,
     expected: ReadonlySet<UpdateAttemptState>,
     detail: string,
   ): void {
+    this.waiting_for_work = false;
     this.options.runtime.assert_database_owned();
     try {
       this.attempts.change(attempt_id, expected, (current) => ({

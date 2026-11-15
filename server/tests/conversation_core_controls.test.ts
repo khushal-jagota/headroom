@@ -13,6 +13,7 @@ import {
 import { TurnEnded } from '../conversation/backends/contracts.ts';
 import { text_message_content } from '../conversation/message_content.ts';
 import { Deferred } from '../conversation/runtime/state.ts';
+import { save_attempt } from '../conversation/runtime/save_attempt.ts';
 
 const writers: ReturnType<typeof spawn>[] = [];
 afterEach(async () => {
@@ -404,4 +405,77 @@ test('shutdown retains an active BUSY save and cancels generic backoff', async (
     conversation_id: 'core',
   });
   expect(f.store.read_events_after('core', 0)).toEqual([]);
+});
+
+// Update preparation must retain final native output while the save itself retries.
+test('update retirement retains final callbacks through the save cut', async () => {
+  let hold_write = false;
+  const attempted = new Deferred<void>();
+  const f = setup({
+    core: {
+      save_attempt: (id, work, mutations) => {
+        if (hold_write) {
+          attempted.resolve();
+          throw Object.assign(new Error('synthetic writer contention'), { code: 'SQLITE_BUSY' });
+        }
+        return save_attempt(id, work, mutations);
+      },
+    },
+  });
+  await f.start();
+  await f.send();
+  const child = await f.child;
+  await child.configure('stop', {
+    barrier: 'update-stop',
+    events: [{ event: { kind: 'CommandReplyReported', values: { reply_text: 'saved at stop' } } }],
+  });
+  hold_write = true;
+  let ready = false;
+  const prepared = f.core.prepare_update('now').then((value) => {
+    ready = value;
+    return value;
+  });
+  await child.wait_for_barrier('update-stop');
+  await attempted.promise;
+  await child.release('update-stop');
+  expect(f.core.workspace_admission.starts_closed).toBe(true);
+  expect(f.core.workspace_admission.closed).toBe(false);
+  expect(ready).toBe(false);
+  await expect(f.send('refused start', 'refused')).rejects.toThrow('Workspace admission is closed');
+  hold_write = false;
+  expect(await prepared).toBe(true);
+  const events = f.store.read_events_after('core', 0);
+  expect(events.map((row) => row.kind)).toEqual(['prompt', 'command_reply', 'turn_ended']);
+  expect(events[1].payload).toMatchObject({ reply_text: 'saved at stop' });
+  expect(f.core.workspace_admission.closed).toBe(true);
+  f.core.cancel_update();
+  expect(await f.send('after update failure', 'next')).toBeInstanceOf(PromptDeliveryStarted);
+  await f.core.shutdown({ deadline: performance.now() / 1000 + SHUTDOWN_GRACE_SECONDS });
+});
+
+// Cancel must invalidate the old preparation without dropping newly admitted messages.
+test('Cancel retains late retirement and does not authorize its old snapshot', async () => {
+  const f = setup();
+  await f.start();
+  await f.send();
+  const child = await f.child;
+  await child.configure('stop', { barrier: 'canceled-update-stop' });
+  const old_preparation = f.core.prepare_update('now');
+  await child.wait_for_barrier('canceled-update-stop');
+  expect(f.core.cancel_update()).toBe(true);
+  expect(await f.send('after Cancel', 'new-work')).toBeInstanceOf(PromptDeliveryQueued);
+  // A retry cannot take the output cut while the canceled stop still owns its child.
+  expect(await f.core.prepare_update('now')).toBe(false);
+  f.core.cancel_update();
+  await child.release('canceled-update-stop');
+  expect(await old_preparation).toBe(false);
+  await f.core.wait_until_quiescent();
+  expect(f.children).toHaveLength(2);
+  expect((await f.children[1].inspect()).delivered_text).toEqual(['after Cancel']);
+  expect(f.store.read_events_after('core', 0).map((row) => row.kind)).toEqual([
+    'prompt',
+    'turn_ended',
+    'prompt',
+  ]);
+  await f.core.shutdown({ deadline: performance.now() / 1000 + SHUTDOWN_GRACE_SECONDS });
 });

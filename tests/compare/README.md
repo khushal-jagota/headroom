@@ -10,7 +10,7 @@ The foundation fixes schema, machine keys, and stale fixtures. The cases below r
 They remain collected with `xfail(run=False)` and do not count as parity. Remove each mark when its package restores the proof.
 No comparison field is hidden. Deferred parameters add no active host or runtime cost.
 
-Collected case counts: P2 43, P3 8, P4 4, P5 11, P6 4, shared P3/P4/P5 1.
+Collected case counts: P2 43, P3 8, P4 4, P5 10, P6 4, shared P3/P4/P5 1.
 
 ### Shared P3/P4/P5 — Populated CLI sequence
 
@@ -96,7 +96,6 @@ This exact case reopens after the last of those packages lands. Its comparison r
 | --- | --- |
 | [`test_unit20_cli.py::test_unit20_every_help_and_group_usage`](direct/test_unit20_cli.py) | expected-open P5: #916 executor credential/install CLI catalog remains unported |
 | [`test_unit20_cli.py::test_unit20_declarations_match_fresh_python`](direct/test_unit20_cli.py) | expected-open P5: #916 executor credential/install CLI catalog remains unported |
-| [`test_unit21_installer.py::test_installer_algorithm_and_configured_paths`](direct/test_unit21_installer.py) | expected-open P5: #916 Linux installer adds the durable update barrier |
 | [`test_unit21_mac_updates.py::test_unit21_mac_updates_retained_archive_and_leased_report_sequence`](direct/test_unit21_mac_updates.py) | expected-open P5: #916 platform selection replaces Mac-only publication details |
 | [`test_unit21_release.py::test_unit21_release_identity_archive_and_frontier[host-admission]`](direct/test_unit21_release.py) | expected-open P5: #916 port Linux host admission Node version policy |
 | [`test_unit21_status.py::test_unit21_cleanup_rechecks_changed_targets[Darwin]`](direct/test_unit21_status.py) | expected-open P5: #916 Darwin log cleanup truncates native logs |

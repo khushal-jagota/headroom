@@ -1,3 +1,6 @@
+import { dirname, join } from 'node:path';
+import { publish_worker_skills } from '../worker_settings/startup.ts';
+import { UpdateBarrier } from '../environments/update_barrier.ts';
 import type { FastifyInstance, FastifyListenOptions } from 'fastify';
 import { createAreasRuntime } from '../areas.ts';
 import { createApp } from '../app.ts';
@@ -113,6 +116,9 @@ export class ServerServices {
   video_cleanup_timer: ReturnType<typeof setInterval> | undefined;
   video_cleanup_work: Promise<unknown> | undefined;
   recovery: Promise<void> | undefined;
+  readonly update_barrier: UpdateBarrier;
+  private normal_work_timer: ReturnType<typeof setInterval> | undefined;
+  private normal_work_release: Promise<void> | undefined;
   #ownership_current = true;
   #signalRevoked = false;
   readonly config: Config;
@@ -123,6 +129,7 @@ export class ServerServices {
     this.config = config;
     this.options = options;
     this.lifetime = lifetime;
+    this.update_barrier = new UpdateBarrier(join(dirname(config.db_path), 'update-barrier.json'));
   }
 
   requireOwnership = (): void => {
@@ -184,6 +191,7 @@ export class ServerServices {
       one_shot_children,
       child_processes,
       executor,
+      update_barrier: this.update_barrier,
     };
     const open_runs = options.readOpenRuns?.(before_record) ?? new Map();
     areas.initialize(
@@ -390,13 +398,14 @@ export class ServerServices {
       signalAuthority: publication,
       conversationSystem,
       workspaceAdmission: conversationSystem?.workspace_admission,
+      updateBarrier: this.update_barrier,
       executor,
     });
     this.app.own(app);
     this.assert_startup_open();
     if (executor) {
       if (!core) throw new Error('Configured executor requires the invocation conversation core.');
-      executor.configure(core, app);
+      executor.configure(core, app, this.update_barrier);
     }
     await app.ready();
     this.assert_startup_open();
@@ -426,21 +435,23 @@ export class ServerServices {
         });
     }, CLEANUP_INTERVAL_SECONDS * 1000);
     this.video_cleanup_timer.unref();
-    const recovery = Promise.resolve().then(() =>
-      core.workspace_admission.operation(async (admitted) => {
-        if (!admitted) return;
-        await notify_chief_of_integrity_faults(
-          context.database,
-          core,
-          context.clock,
-          integrity_issues,
-        );
-        if (core.workspace_admission.closed) return;
-        await core.tell_agents_of_background_tasks_lost_at_restart();
-        if (core.workspace_admission.closed) return;
-        await run_automatic_recovery(core, context.database);
-      }),
-    );
+    const recovery = Promise.resolve().then(async () => {
+      await core.workspace_admission.operation(
+        async (admitted) => {
+          if (!admitted) return;
+          await notify_chief_of_integrity_faults(
+            context.database,
+            core,
+            context.clock,
+            integrity_issues,
+          );
+          if (core.workspace_admission.starts_closed) return;
+          await core.tell_agents_of_background_tasks_lost_at_restart();
+        },
+        { starts: true },
+      );
+      await run_automatic_recovery(core, context.database);
+    });
     this.recovery = recovery;
     void recovery.then(
       () => {
@@ -454,6 +465,12 @@ export class ServerServices {
     );
   }
 
+  stop_normal_work_release(): Promise<void> | undefined {
+    clearInterval(this.normal_work_timer);
+    this.normal_work_timer = undefined;
+    return this.normal_work_release;
+  }
+
   async setup(): Promise<string> {
     const { context, integrity_issues } = this.create_record();
     const conversation = this.create_conversation(context);
@@ -461,24 +478,75 @@ export class ServerServices {
     this.assert_startup_open();
     const { app, background } = await this.create_http(context, conversation, environments);
     this.assert_startup_open();
-    await this.executor.value?.start();
+    environments?.recover_update_barrier?.();
+    const startup_frozen = this.update_barrier.frozen;
+    if (startup_frozen)
+      conversation.core?.workspace_admission.claim(() => {}, {
+        idle: () => true,
+        require_idle: false,
+      });
+    let normal_started = false;
+    let normal_starting: Promise<void> | undefined;
+    const release_normal_work = (): Promise<void> => {
+      if (normal_starting) return normal_starting;
+      normal_starting = Promise.resolve().then(async () => {
+        if (this.lifetime.isClosing()) return;
+        publish_worker_skills(this.config);
+        await this.executor.value?.start();
+        this.assert_startup_open();
+        this.areas.startRecordReplay(conversation.core?.workspace_admission);
+        this.assert_startup_open();
+        await this.areas.startNavigationServices();
+        this.assert_startup_open();
+        this.start_recovery(context, conversation, integrity_issues);
+        this.environmentsStarting = Promise.resolve().then(() => {
+          if (!this.lifetime.isClosing()) return environments?.start();
+        });
+        await this.environmentsStarting;
+        this.assert_startup_open();
+        if (conversation.core && !this.config.test_mode) {
+          await conversation.core.start_idle_child_janitor();
+          this.assert_startup_open();
+        }
+        await background.start();
+        this.assert_startup_open();
+        normal_started = true;
+      });
+      return normal_starting;
+    };
+    await this.areas.startPreviewServices();
     this.assert_startup_open();
-    this.areas.startRecordReplay(conversation.core?.workspace_admission);
-    this.assert_startup_open();
-    await this.areas.startRouteServices();
-    this.assert_startup_open();
-    this.start_recovery(context, conversation, integrity_issues);
-    this.environmentsStarting = Promise.resolve().then(() => {
-      if (!this.lifetime.isClosing()) return environments?.start();
-    });
-    await this.environmentsStarting;
-    this.assert_startup_open();
-    if (conversation.core && !this.config.test_mode) {
-      await conversation.core.start_idle_child_janitor();
-      this.assert_startup_open();
-    }
-    await background.start();
-    this.assert_startup_open();
+    if (!startup_frozen) await release_normal_work();
+    let next_probe = 0;
+    let resume_pending = startup_frozen;
+    this.normal_work_timer = setInterval(() => {
+      if (this.lifetime.isClosing() || this.normal_work_release) return;
+      // External installer writes have no application change signal. Probe retained
+      // ownership again even when the attempt and marker files do not change.
+      const now = performance.now();
+      if (this.update_barrier.frozen) resume_pending = true;
+      this.update_barrier.refresh();
+      if (this.update_barrier.frozen && now < next_probe) return;
+      next_probe = now + 2000;
+      this.normal_work_release = Promise.resolve()
+        .then(async () => {
+          this.update_barrier.refresh();
+          if (this.update_barrier.frozen) environments?.recover_update_barrier?.();
+          if (this.update_barrier.frozen || this.lifetime.isClosing()) return;
+          if (resume_pending) {
+            environments?.reopen_update_work?.();
+            resume_pending = false;
+          }
+          if (!normal_started) await release_normal_work();
+        })
+        .catch((error: unknown) => {
+          console.error('Normal work could not resume after the update trial', error);
+        })
+        .finally(() => {
+          this.normal_work_release = undefined;
+        });
+    }, 250);
+    this.normal_work_timer.unref();
     const inherited = process.env.PLAN_SERVER_LISTENER_FD;
     if (inherited !== undefined) {
       const fd = Number(inherited);

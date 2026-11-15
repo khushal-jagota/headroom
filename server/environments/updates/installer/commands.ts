@@ -104,7 +104,12 @@ export async function run_installer_command(
     fence();
     child = value.child_processes.spawn(argv[0]!, argv.slice(1), {
       env: { ...value.environment },
-      stdio: ['ignore', options.output, options.output],
+      stdio: [
+        'ignore',
+        options.output,
+        options.output,
+        ...(options.lifetime_lock_fd === undefined ? [] : [options.lifetime_lock_fd]),
+      ],
       shell: false,
     });
     child.once('exit', () => {
@@ -237,7 +242,7 @@ export function create_installer_effects(
         return { kind: 'unavailable', detail: error_detail(error).message };
       }
     },
-    async restore(snapshot) {
+    async restore(snapshot, lifetime_lock_fd) {
       assert_installer_path(snapshot, execution.environment);
       const value = phase(execution, DATABASE_RESTORE_TIMEOUT_SECONDS);
       const selected = await runtime(request, value),
@@ -269,7 +274,11 @@ export function create_installer_effects(
               request.database,
               '--live-stopped',
             ];
-      await run_installer_command(argv, value, { check: true, output: 'inherit' });
+      await run_installer_command(argv, value, {
+        check: true,
+        output: 'inherit',
+        lifetime_lock_fd,
+      });
     },
     healthy(sha) {
       assert_installer_health_url(request.health_url, execution.environment);

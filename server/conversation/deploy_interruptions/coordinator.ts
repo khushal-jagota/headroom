@@ -24,33 +24,49 @@ export async function recover_conversations(
   options: {
     conversation_ids?: readonly string[];
     mode?: PromptDeliveryMode;
+    startup?: boolean;
   } = {},
 ): Promise<void> {
-  const selected = database.read(select_recoveries);
-  await Promise.all(
-    [...selected]
-      .filter(
-        ([id]) => options.conversation_ids === undefined || options.conversation_ids.includes(id),
+  const admission = options.startup ? system.workspace_admission : null;
+  const selection = admission?.operation({ starts: true });
+  let selected: ReturnType<typeof select_recoveries>;
+  try {
+    if (selection && !selection.admitted) return;
+    selected = database.read(select_recoveries);
+  } finally {
+    selection?.release();
+  }
+  // This scope owns actual recovery attempts, never a later retry delay.
+  const pass = admission?.operation({ starts: true });
+  try {
+    if (pass && !pass.admitted) return;
+    for (const [conversation_id, references] of selected) {
+      if (
+        options.conversation_ids !== undefined &&
+        !options.conversation_ids.includes(conversation_id)
       )
-      .map(async ([conversation_id, references]) => {
-        if (execution_refusal(database, conversation_id) !== null) return;
-        if (await system.is_running(conversation_id)) return;
-        try {
-          await system.send(conversation_id, text_message_content(RECOVERY_PROMPT), {
-            sender_label: 'Panels deployment recovery',
-            mode: options.mode ?? PromptDeliveryMode.queue,
-            sender_message_id: recovery_message_identity(
-              references.map((ref) => ref.interruption_id),
-            ),
-            record_refusal: true,
-            recovery_references: references,
-          });
-        } catch (error) {
-          if (error instanceof DOMException && error.name === 'AbortError') throw error;
-          console.error(`Automatic recovery failed for conversation ${conversation_id}`, error);
-        }
-      }),
-  );
+        continue;
+      if (execution_refusal(database, conversation_id) !== null) continue;
+      if (await system.is_running(conversation_id)) continue;
+      try {
+        await system.send(conversation_id, text_message_content(RECOVERY_PROMPT), {
+          sender_label: 'Panels deployment recovery',
+          mode: options.mode ?? PromptDeliveryMode.queue,
+          sender_message_id: recovery_message_identity(
+            references.map((ref) => ref.interruption_id),
+          ),
+          record_refusal: true,
+          recovery_references: references,
+        });
+      } catch (error) {
+        if (error instanceof DOMException && error.name === 'AbortError') throw error;
+        if (options.startup && system.workspace_admission.starts_closed) return;
+        console.error(`Automatic recovery failed for conversation ${conversation_id}`, error);
+      }
+    }
+  } finally {
+    pass?.release();
+  }
 }
 export async function record_unknown_recovery_deliveries(
   system: SqliteProcessConversationSystem,
@@ -111,6 +127,11 @@ export async function run_automatic_recovery(
   system: SqliteProcessConversationSystem,
   database: Database,
 ): Promise<void> {
-  await record_unknown_recovery_deliveries(system, database);
-  await recover_conversations(system, database);
+  await system.workspace_admission.operation(
+    async (admitted) => {
+      if (admitted) await record_unknown_recovery_deliveries(system, database);
+    },
+    { starts: true },
+  );
+  await recover_conversations(system, database, { startup: true });
 }

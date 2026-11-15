@@ -9,6 +9,7 @@ import {
 } from 'node:fs';
 import { join } from 'node:path';
 import { is_object } from '../codec.ts';
+import { release_installer_barrier, with_installer_lifetime } from '../../update_barrier.ts';
 import { assert_installer_path, PREVIOUS_APP_PREFIX, STAGED_APP_PREFIX } from './configuration.ts';
 import { error_detail } from './commands.ts';
 import { InstallationRecord } from './record.ts';
@@ -94,6 +95,7 @@ async function roll_back(
   previous_moved: boolean,
   new_app_moved: boolean,
   signal: AbortSignal,
+  lifetime_lock_fd: number,
 ): Promise<1> {
   signal.throwIfAborted();
   const from_sha = field(attempt, 'from_sha'),
@@ -115,7 +117,7 @@ async function roll_back(
     record.record('rollback_app_restored');
     if (restore_data) {
       signal.throwIfAborted();
-      await effects.restore(backup);
+      await effects.restore(backup, lifetime_lock_fd);
       signal.throwIfAborted();
       record.record('rollback_database_restored');
     }
@@ -137,6 +139,7 @@ async function roll_back(
     );
     return 1;
   }
+  release_installer_barrier(request.data_directory, request.attempt_id);
   record.record('rollback_healthy');
   record.record(
     'failed',
@@ -150,6 +153,28 @@ export async function install(
   effects: InstallerEffects,
   io: InstallerIO,
   signal: AbortSignal,
+): Promise<0 | 1 | 2> {
+  signal.throwIfAborted();
+  assert_installer_path(request.current_root);
+  assert_installer_path(request.database);
+  assert_installer_path(request.data_directory);
+  const owned = await with_installer_lifetime(
+    request.data_directory,
+    request.attempt_id,
+    (descriptor) => install_locked(request, effects, io, signal, descriptor),
+  );
+  if (!owned.acquired) {
+    io.stderr('Another installer still owns this update.\n');
+    return 2;
+  }
+  return owned.result;
+}
+async function install_locked(
+  request: InstallerRequest,
+  effects: InstallerEffects,
+  io: InstallerIO,
+  signal: AbortSignal,
+  lifetime_lock_fd: number,
 ): Promise<0 | 1 | 2> {
   signal.throwIfAborted();
   assert_installer_path(request.current_root);
@@ -226,8 +251,10 @@ export async function install(
       previous_moved,
       new_app_moved,
       signal,
+      lifetime_lock_fd,
     );
   }
+  release_installer_barrier(request.data_directory, request.attempt_id);
   record.record('healthy');
   record.record('done', 'done');
   assert_installer_path(request.current_root);

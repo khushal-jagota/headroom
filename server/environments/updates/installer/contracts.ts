@@ -29,7 +29,7 @@ export type CaptureOutcome =
 export interface InstallerEffects {
   service(action: 'stop' | 'start'): Promise<void>;
   capture(): Promise<CaptureOutcome>;
-  restore(snapshot: string): Promise<void>;
+  restore(snapshot: string, lifetime_lock_fd?: number): Promise<void>;
   healthy(sha: string): Promise<boolean>;
 }
 export interface InstallerIO {
@@ -38,4 +38,5 @@ export interface InstallerIO {
 export interface InstallerCommandOptions {
   readonly check: boolean;
   readonly output: 'inherit' | 'ignore';
+  readonly lifetime_lock_fd?: number;
 }
