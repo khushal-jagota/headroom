@@ -37,9 +37,9 @@ Late stage, backup, and installer settlements cannot write records or publish re
 Node releases retain exact schema-frontier admission. Python remains the migration owner.
 
 Startup recovery scopes workspace admission to each pass and retains pending recoveries through bounded backoff.
-A denied starts lease ends that boot pass without deleting its durable recovery rows. Only the paced admission call waits for P3's owner.
+A denied starts lease ends that boot pass without deleting its durable recovery rows. Recovery uses the shared P3 admission owner for supervisor priority, pacing, and outcome settlement.
 P3 also owns the recorded custody proofs that block idle updates, skip already retired children, and confirm local retirement.
-Until that owner lands, TypeScript retains native child stop and final-event drainage. The custody difference remains expected-open.
+Until those custody proofs land, TypeScript retains native child stop and final-event drainage. The custody difference remains expected-open.
 First-home installation, enrollment, Linux executor archives and updates, and Darwin home support remain later P5 slices.
 
 The real-core proofs now cover idle-update admission after a native turn completes, HTTP write refusal without database mutation,

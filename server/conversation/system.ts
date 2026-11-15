@@ -175,6 +175,9 @@ export class SqliteProcessConversationSystem implements DeliveryServices, Conver
   shutting_down = false;
   private shutdown_task: Promise<void> | null = null;
   private readonly shutdown_controller = new AbortController();
+  get shutdown_signal(): AbortSignal {
+    return this.shutdown_controller.signal;
+  }
   private readonly native_waiters = new Set<() => void>();
   private readonly native_settlements = new Set<Promise<void>>();
   private readonly child_stop_ownership = new Map<
@@ -1920,6 +1923,9 @@ export class SqliteProcessConversationSystem implements DeliveryServices, Conver
         while (state.backend_event_pump) await state.backend_event_pump;
         const event_failed = this.update_event_failed(state);
         await state.lock.run(async () => {
+          await this.persist(state, () =>
+            this.start_admission.retire_source(this.options.store.start_admission_database, child),
+          );
           this.child_stop_ownership.delete(child);
           state.child_is_quarantined = false;
           if (state.child === child) {

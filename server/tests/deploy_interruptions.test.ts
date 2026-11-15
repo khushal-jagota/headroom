@@ -1,6 +1,7 @@
 /** These risks are not reached by the core's no-participant recovery tests. */
 import { afterEach, expect, test, vi } from 'vitest';
 import { recover_conversations } from '../conversation/deploy_interruptions/coordinator.ts';
+import { Deferred } from '../conversation/runtime/state.ts';
 import { SHUTDOWN_GRACE_SECONDS } from '../lifecycle/configuration.ts';
 import { mkdtempSync, mkdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -293,4 +294,33 @@ test('startup recovery leaves admission available to the update after a refused 
   } finally {
     await f.core.shutdown({ deadline: performance.now() / 1000 + SHUTDOWN_GRACE_SECONDS });
   }
+});
+
+// The application owns cancellation of its real pacing wait, so shutdown cannot wait sixty seconds.
+test('core shutdown cancels a recovery backoff through its existing signal', async () => {
+  const f = setup();
+  const attempted = new Deferred<void>();
+  await f.start();
+  f.database.write((tx) => {
+    tx.run(
+      "INSERT INTO conversation_lifecycle_facts VALUES ('core','turn','1',1,'turn','running',NULL)",
+    );
+    reconcile(tx, [manifest()], 100);
+  });
+  f.core.start_admission.configure_destinations(() => false);
+  const try_start = f.core.start_admission.try_start.bind(f.core.start_admission);
+  vi.spyOn(f.core.start_admission, 'try_start').mockImplementation((request) => {
+    const result = try_start(request);
+    attempted.resolve();
+    return result;
+  });
+  const recovered = recover_conversations(f.core, f.database, {
+    startup: true,
+    signal: f.core.shutdown_signal,
+  }).catch((error: unknown) => error);
+  await attempted.promise;
+  await f.core.shutdown({ deadline: performance.now() / 1000 + SHUTDOWN_GRACE_SECONDS });
+  expect(await recovered).toMatchObject({ name: 'AbortError' });
+  expect(f.core.workspace_admission.active).toBe(false);
+  expect(f.children).toHaveLength(0);
 });

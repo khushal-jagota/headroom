@@ -347,21 +347,29 @@ def test_unit19_startup_manifest_and_lost_task_prompts(
     assert observations[0] == observations[1]
 
 
-@pytest.mark.parametrize("canceled_first", [False, True], ids=["closure", "canceled-first"])
+@pytest.mark.parametrize("scenario", ["closure", "canceled-first", "paced", "already-running"])
 def test_unit19_recovery_refused_during_update_keeps_pending_rows(
     tmp_path: Path,
     request: pytest.FixtureRequest,
-    canceled_first: bool,
+    scenario: str,
 ) -> None:
     """The pending loop releases admission and keeps populated durable recovery evidence."""
+    from planner.conversation.contracts import PromptDeliveryRefused, PromptDeliveryUncertain
     from planner.conversation.deploy_interruptions.coordinator import recover_conversations
+    from planner.conversation.start_admission import AutomaticStartAdmission
+    from planner.conversation.start_admission.contracts import StartRequest
+    from planner.conversation.system import SqliteProcessConversationSystem
     from planner.conversation.workspace_admission import WorkspaceAdmission
+    from planner.machines.contracts import HOME_MACHINE_ID
 
+    canceled_first = scenario == "canceled-first"
+    paced = scenario == "paced"
+    already_running = scenario == "already-running"
     started = time.perf_counter()
     homes = create_synthetic_homes(tmp_path)
     paths = [tmp_path / f"closure-{side}.sqlite" for side in ("python", "typescript")]
     _seed_recovery(paths[0], homes)
-    if canceled_first:
+    if canceled_first or paced:
         with closing(sqlite3.connect(paths[0])) as conn:
             conn.execute(
                 "INSERT INTO conversations(conversation_id,backend_key,workspace_folder,access,"
@@ -379,19 +387,25 @@ def test_unit19_recovery_refused_during_update_keeps_pending_rows(
                 "worker_step_claim,worker_step_claim_revision,workflow_json "
                 "FROM tickets WHERE id='t'"
             )
+            if paced:
+                conn.execute("DELETE FROM tickets WHERE id='t2'")
             conn.commit()
     with closing(sqlite3.connect(paths[0])) as source, closing(sqlite3.connect(paths[1])) as target:
         source.backup(target)
     manifest = _recovery_manifest()
-    if canceled_first:
+    if canceled_first or paced:
         manifest = replace(
             manifest,
+            deployment_id="sort-proof" if paced else manifest.deployment_id,
             turns=(
                 *manifest.turns,
                 replace(
                     manifest.turns[0],
                     conversation_id="c2",
-                    owner_id="t2",
+                    owner_id=None if paced else "t2",
+                    owner_kind="unknown" if paced else "ticket",
+                    claim_revision=None if paced else 7,
+                    claim=None if paced else "out",
                     display_name="Other work",
                 ),
             ),
@@ -399,6 +413,30 @@ def test_unit19_recovery_refused_during_update_keeps_pending_rows(
 
     async def reference() -> dict[str, Any]:
         admission = WorkspaceAdmission()
+        now = [0.0]
+        starts = AutomaticStartAdmission(clock=lambda: now[0])
+        if paced:
+            starts.try_start(StartRequest("prior", "worker", HOME_MACHINE_ID))
+            starts.finish("prior")
+        trace = []
+        for name in ("try_start", "finish", "finish_unbound", "uncertain"):
+            native = getattr(starts, name)
+
+            def observed(argument: Any, _name: str = name, _native: Any = native) -> Any:
+                result = _native(argument)
+                trace.append(
+                    [
+                        _name,
+                        argument if isinstance(argument, str) else argument.identity,
+                        None if isinstance(argument, str) else argument.work_class,
+                        result,
+                    ]
+                )
+                if _name == "try_start":
+                    now[0] += 1
+                return result
+
+            setattr(starts, name, observed)
         offers = 0
         offered_with_admission = []
         offered_ids = []
@@ -410,13 +448,19 @@ def test_unit19_recovery_refused_during_update_keeps_pending_rows(
                 return data.select_recoveries(conn)
 
             async def is_running(_identity: str) -> bool:
-                return False
+                return already_running
 
-            async def send(conversation_id: str, *_args: Any, **_options: Any) -> None:
+            async def send(conversation_id: str, *_args: Any, **_options: Any) -> Any:
                 nonlocal offers
                 offers += 1
                 offered_ids.append(conversation_id)
                 offered_with_admission.append(admission.active)
+                if paced:
+                    return (
+                        PromptDeliveryUncertain()
+                        if conversation_id == "c2"
+                        else PromptDeliveryRefused("no_such_conversation")
+                    )
                 if canceled_first:
                     if offers == 1:
                         raise asyncio.CancelledError("one recovery canceled")
@@ -424,14 +468,29 @@ def test_unit19_recovery_refused_during_update_keeps_pending_rows(
                 admission.close_starts()
                 raise RuntimeError("Workspace admission is closed for an owner update.")
 
+            request_factory: Any = SqliteProcessConversationSystem.automatic_start_request
+
+            async def automatic_start_request(identity: str, conversation_id: str) -> Any:
+                return await request_factory(
+                    SimpleNamespace(_store=SimpleNamespace(_db_path=str(paths[0]))),
+                    identity,
+                    conversation_id,
+                )
+
             system = SimpleNamespace(
-                workspace_admission=admission, is_running=is_running, send=send
+                workspace_admission=admission,
+                is_running=is_running,
+                send=send,
+                start_admission=starts,
+                automatic_start_request=automatic_start_request,
             )
             store: Any = SimpleNamespace(select_deployment_recoveries=select)
 
             def snapshot() -> dict[str, Any]:
                 return {
                     "offers": offers,
+                    "trace": trace,
+                    "snapshots": [asdict(entry) for entry in starts.snapshots()],
                     "offered_with_admission": offered_with_admission,
                     "offered_ids": offered_ids,
                     "active": admission.active,
@@ -463,7 +522,7 @@ def test_unit19_recovery_refused_during_update_keeps_pending_rows(
 
             await recover_conversations(system, store, startup=True)
             after_refusal = snapshot()
-            if not canceled_first:
+            if not canceled_first and not paced and not already_running:
                 await recover_conversations(system, store, startup=True)
             return {"after_refusal": after_refusal, "after_denied_pass": snapshot()}
 
@@ -476,6 +535,8 @@ def test_unit19_recovery_refused_during_update_keeps_pending_rows(
                     "path": str(paths[1]),
                     "manifest": asdict(manifest),
                     "canceled_first": canceled_first,
+                    "paced": paced,
+                    "already_running": already_running,
                 }
             )
         )
@@ -496,21 +557,30 @@ def test_unit19_recovery_refused_during_update_keeps_pending_rows(
                 text=True,
             )
         )
-    assert expected["after_refusal"]["offers"] == (2 if canceled_first else 1)
-    assert expected["after_refusal"]["offered_with_admission"] == (
-        [True, True] if canceled_first else [True]
-    )
-    assert expected["after_refusal"]["active"] is False
-    if canceled_first:
-        assert set(expected["after_refusal"]["offered_ids"]) == {"c", "c2"}
+    first = expected["after_refusal"]
+    assert first["offers"] == (0 if already_running else 2 if canceled_first or paced else 1)
+    assert first["offered_with_admission"] == [True] * first["offers"]
+    assert first["active"] is False
+    if canceled_first or paced:
+        assert set(first["offered_ids"]) == {"c", "c2"}
+    if paced:
+        assert list(first["pending"]) == ["c", "c2"]
+        assert first["offered_ids"][0] == "c2"
+        assert [row[3] for row in first["trace"] if row[0] == "try_start"] == [
+            False,
+            False,
+            True,
+            True,
+        ]
+        assert {row[0] for row in first["trace"]} >= {"uncertain", "finish"}
+    elif already_running or canceled_first:
+        assert any(row[0] == "finish_unbound" for row in first["trace"])
     assert len(expected["after_denied_pass"]["pending"]["c"]) == 1
-    assert len(expected["after_denied_pass"]["rows"]) == (2 if canceled_first else 1)
+    assert len(expected["after_denied_pass"]["rows"]) == (2 if canceled_first or paced else 1)
     assert expected["after_denied_pass"]["deliveries"] == []
     report = {
         "kind": "direct",
-        "case": "unit19-recovery-canceled-first"
-        if canceled_first
-        else "unit19-recovery-update-closure",
+        "case": "unit19-recovery-" + scenario,
         "equal": actual == expected,
         "python": expected,
         "typescript": actual,
@@ -520,12 +590,7 @@ def test_unit19_recovery_refused_during_update_keeps_pending_rows(
     if destination:
         output = Path(destination)
         output.mkdir(parents=True, exist_ok=True)
-        (
-            output
-            / (
-                "unit19-recovery-canceled-first.json"
-                if canceled_first
-                else "unit19-recovery-update-closure.json"
-            )
-        ).write_text(json.dumps(report, indent=2) + "\n")
+        (output / ("unit19-recovery-" + scenario + ".json")).write_text(
+            json.dumps(report, indent=2) + "\n"
+        )
     assert actual == expected

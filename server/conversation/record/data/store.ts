@@ -3,7 +3,6 @@ import { write_bindings } from '../../start_admission/index.ts';
 import type { AdmissionDatabase, StartRequest } from '../../start_admission/contracts.ts';
 /** Durable record primitives. Event append is completed with its projection in PR2. */
 import { randomUUID } from 'node:crypto';
-import { HOME_MACHINE_ID } from '../../../execution_identity.ts';
 import { capture_savepoint_rollback } from '../../../core/database/index.ts';
 import type {
   Database,

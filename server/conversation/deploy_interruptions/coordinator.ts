@@ -6,7 +6,12 @@ import {
 } from '../runtime/configuration.ts';
 import type { Database } from '../../core/database/contracts.ts';
 import type { ConversationSystem, DeploymentRecoveryReference } from '../contracts.ts';
-import { PromptDeliveryMode } from '../contracts.ts';
+import {
+  PromptDeliveryMode,
+  PromptDeliveryRefused,
+  PromptDeliverySuppressed,
+  PromptDeliveryUncertain,
+} from '../contracts.ts';
 import type { SqliteProcessConversationSystem } from '../system.ts';
 import { text_message_content } from '../message_content.ts';
 import { PromptDeliveryUncertainEventPayload } from '../events.ts';
@@ -30,6 +35,7 @@ export async function recover_conversations(
     conversation_ids?: readonly string[];
     mode?: PromptDeliveryMode;
     startup?: boolean;
+    signal?: AbortSignal;
   } = {},
 ): Promise<void> {
   const admission = options.startup ? system.workspace_admission : null;
@@ -47,21 +53,38 @@ export async function recover_conversations(
   let delay = DEPLOY_RECOVERY_FIRST_RETRY_SECONDS;
   async function resume(conversation_id: string): Promise<boolean> {
     if (execution_refusal(database, conversation_id) !== null) return true;
-    if (await system.is_running(conversation_id)) return true;
+    const starts = system.start_admission;
     const references = selected.get(conversation_id)!;
-    // P3 supplies paced try_start here. Keep its request ownership out of P5.
+    const identity = recovery_message_identity(references.map((ref) => ref.interruption_id));
+    if (await system.is_running(conversation_id)) {
+      starts?.finish_unbound(identity);
+      return true;
+    }
+    if (starts) {
+      if (!system.automatic_start_request)
+        throw new Error('Automatic start request factory is required');
+      if (!starts.try_start(await system.automatic_start_request(identity, conversation_id)))
+        return false;
+    }
+    let offered = false;
     try {
-      await system.send(conversation_id, text_message_content(RECOVERY_PROMPT), {
+      const fate = await system.send(conversation_id, text_message_content(RECOVERY_PROMPT), {
         sender_label: 'Panels deployment recovery',
         mode: options.mode ?? PromptDeliveryMode.queue,
-        sender_message_id: recovery_message_identity(references.map((ref) => ref.interruption_id)),
+        sender_message_id: identity,
         record_refusal: true,
         recovery_references: references,
       });
+      offered = true;
+      if (fate instanceof PromptDeliveryRefused || fate instanceof PromptDeliverySuppressed)
+        starts?.finish(identity);
+      else if (fate instanceof PromptDeliveryUncertain) starts?.uncertain(identity);
     } catch (error) {
       if (error instanceof DOMException && error.name === 'AbortError') throw error;
       if (options.startup && system.workspace_admission.starts_closed) return false;
       console.error(`Automatic recovery failed for conversation ${conversation_id}`, error);
+    } finally {
+      if (!offered) starts?.finish_unbound(identity);
     }
     return true;
   }
@@ -69,7 +92,36 @@ export async function recover_conversations(
     // Only a pass owns admission. A denied pass leaves canonical recovery rows untouched.
     const pass = admission?.operation({ starts: true });
     try {
-      if (pass && !pass.admitted) return;
+      if (pass && !pass.admitted) {
+        for (const id of pending)
+          system.start_admission?.finish_unbound(
+            recovery_message_identity(selected.get(id)!.map((ref) => ref.interruption_id)),
+          );
+        return;
+      }
+      if (system.start_admission) {
+        if (!system.automatic_start_request)
+          throw new Error('Automatic start request factory is required');
+        const requests = new Map(
+          await Promise.all(
+            pending.map(
+              async (id) =>
+                [
+                  id,
+                  await system.automatic_start_request!(
+                    recovery_message_identity(selected.get(id)!.map((ref) => ref.interruption_id)),
+                    id,
+                  ),
+                ] as const,
+            ),
+          ),
+        );
+        pending.sort(
+          (left, right) =>
+            Number(requests.get(left)!.work_class !== 'supervisor') -
+            Number(requests.get(right)!.work_class !== 'supervisor'),
+        );
+      }
       const remaining: string[] = [];
       for (const conversation_id of pending) {
         // A canceled conversation cannot cancel another conversation's recovery.
@@ -82,7 +134,13 @@ export async function recover_conversations(
       pass?.release();
     }
     if (pending.length) {
-      await pause(delay * 1000);
+      try {
+        await pause(delay * 1000, undefined, { signal: options.signal });
+      } catch (error) {
+        if (options.signal?.aborted)
+          throw new DOMException('The operation was aborted', 'AbortError');
+        throw error;
+      }
       delay = Math.min(delay * 2, DEPLOY_RECOVERY_MAX_RETRY_SECONDS);
     }
   }
@@ -152,5 +210,5 @@ export async function run_automatic_recovery(
     },
     { starts: true },
   );
-  await recover_conversations(system, database, { startup: true });
+  await recover_conversations(system, database, { startup: true, signal: system.shutdown_signal });
 }
