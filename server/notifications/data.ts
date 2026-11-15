@@ -221,11 +221,13 @@ export function queue_deliveries(sql: TransactionSql, now: number): number {
   prune_missing_subjects(sql);
   const preferences = resolved_preferences(sql);
   const subscriptions = active_subscription_ids(sql);
-  const rows = sql.all<EdgeKey & {
-    occurred_at: number;
-    context_json: string | null;
-    task_alert_is_current: number;
-  }>(
+  const rows = sql.all<
+    EdgeKey & {
+      occurred_at: number;
+      context_json: string | null;
+      task_alert_is_current: number;
+    }
+  >(
     `SELECT subject_kind,subject_id,notification_type,generation,occurred_at,context_json,${TASK_ALERT_IS_CURRENT} AS task_alert_is_current
      FROM notification_attention_edges d WHERE decided=0 AND subject_kind IN ('ticket','manager','agent')
      ORDER BY occurred_at,subject_kind,subject_id,notification_type,generation`,
@@ -331,11 +333,20 @@ export function delivery_is_current(sql: ReadSql, edge: EdgeKey, now: number): b
      JOIN notification_attention_edges e USING(subject_kind,subject_id,notification_type,generation)
      WHERE a.subject_kind=? AND a.subject_id=? AND a.notification_type=?
        AND a.generation=? AND a.active=1 AND e.occurred_at>?`,
-    [edge.subject_kind, edge.subject_id, edge.notification_type, edge.generation,
-      now - NOTIFICATION_FRESHNESS_SECONDS],
+    [
+      edge.subject_kind,
+      edge.subject_id,
+      edge.notification_type,
+      edge.generation,
+      now - NOTIFICATION_FRESHNESS_SECONDS,
+    ],
   );
 }
-export function pending_deliveries(sql: TransactionSql, now: number, limit = 50): PendingDelivery[] {
+export function pending_deliveries(
+  sql: TransactionSql,
+  now: number,
+  limit = 50,
+): PendingDelivery[] {
   expire_stale_deliveries(sql, now);
   return sql
     .all<

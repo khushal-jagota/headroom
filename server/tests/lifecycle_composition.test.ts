@@ -182,69 +182,138 @@ function done<T>() {
 
 test('both delivery channels expire at 300 seconds and reject inactive or superseded attention', () => {
   const began = performance.now();
-  const { context, database } = setup(), time = context.clock.nowUnix();
+  const { context, database } = setup(),
+    time = context.clock.nowUnix();
   const tickets = ['current', 'inactive', 'superseded'].map((body) =>
-    propose(database, create(database, { now: time }), body, time));
+    propose(database, create(database, { now: time }), body, time),
+  );
   database.write((sql) => {
     notificationData.initialize_notifications(sql, time);
-    notificationData.register_subscription(sql, { endpoint: 'https://fresh.invalid', p256dh: 'key', auth: 'auth', now: time });
-    apnsData.register_device(sql, { device_token: 'aa', bundle_id: 'invalid.panels', environment: 'development', now: time });
+    notificationData.register_subscription(sql, {
+      endpoint: 'https://fresh.invalid',
+      p256dh: 'key',
+      auth: 'auth',
+      now: time,
+    });
+    apnsData.register_device(sql, {
+      device_token: 'aa',
+      bundle_id: 'invalid.panels',
+      environment: 'development',
+      now: time,
+    });
     notificationData.queue_deliveries(sql, time);
   });
-  const pending = (at: number) => database.write((sql) => [
-    notificationData.pending_deliveries(sql, at), apnsData.pending_deliveries(sql, at),
-  ].map((rows) => rows.map((row) => row.edge.subject_id).sort()));
-  expect(pending(time + 299)).toEqual([tickets.map((t) => t.id).sort(), tickets.map((t) => t.id).sort()]);
-  database.write((sql) => {
-    sql.run("UPDATE notification_attention_state SET active=0 WHERE subject_id=? AND notification_type='awaiting_approval'", [tickets[1]!.id]);
-    sql.run("UPDATE notification_attention_state SET generation=generation+1 WHERE subject_id=? AND notification_type='awaiting_approval'", [tickets[2]!.id]);
-  });
-  const sources = () => database.read((sql) => [
-    sql.all('SELECT * FROM notification_attention_state ORDER BY subject_kind,subject_id,notification_type'),
-    sql.all('SELECT * FROM notification_attention_edges ORDER BY subject_kind,subject_id,notification_type,generation'),
+  const pending = (at: number) =>
+    database.write((sql) =>
+      [notificationData.pending_deliveries(sql, at), apnsData.pending_deliveries(sql, at)].map(
+        (rows) => rows.map((row) => row.edge.subject_id).sort(),
+      ),
+    );
+  expect(pending(time + 299)).toEqual([
+    tickets.map((t) => t.id).sort(),
+    tickets.map((t) => t.id).sort(),
   ]);
+  database.write((sql) => {
+    sql.run(
+      "UPDATE notification_attention_state SET active=0 WHERE subject_id=? AND notification_type='awaiting_approval'",
+      [tickets[1]!.id],
+    );
+    sql.run(
+      "UPDATE notification_attention_state SET generation=generation+1 WHERE subject_id=? AND notification_type='awaiting_approval'",
+      [tickets[2]!.id],
+    );
+  });
+  const sources = () =>
+    database.read((sql) => [
+      sql.all(
+        'SELECT * FROM notification_attention_state ORDER BY subject_kind,subject_id,notification_type',
+      ),
+      sql.all(
+        'SELECT * FROM notification_attention_edges ORDER BY subject_kind,subject_id,notification_type,generation',
+      ),
+    ]);
   const before = sources();
   expect(pending(time + 299)).toEqual([[tickets[0]!.id], [tickets[0]!.id]]);
   // Renew the retry itself: the original edge still expires at the inclusive boundary.
   database.write((sql) => {
     for (const table of ['notification_deliveries', 'notification_apns_deliveries'])
-      sql.run(`UPDATE ${table} SET created_at=?,status='retry' WHERE subject_id=?`, [time + 299, tickets[0]!.id]);
+      sql.run(`UPDATE ${table} SET created_at=?,status='retry' WHERE subject_id=?`, [
+        time + 299,
+        tickets[0]!.id,
+      ]);
   });
   expect(pending(time + 300)).toEqual([[], []]);
   expect(sources()).toEqual(before);
   // Conversely a fresh edge cannot revive an old retry.
   database.write((sql) => {
-    sql.run("UPDATE notification_attention_edges SET occurred_at=? WHERE subject_id=? AND notification_type='awaiting_approval'", [time + 300, tickets[0]!.id]);
+    sql.run(
+      "UPDATE notification_attention_edges SET occurred_at=? WHERE subject_id=? AND notification_type='awaiting_approval'",
+      [time + 300, tickets[0]!.id],
+    );
     for (const table of ['notification_deliveries', 'notification_apns_deliveries'])
-      sql.run(`UPDATE ${table} SET created_at=?,status='retry' WHERE subject_id=?`, [time, tickets[0]!.id]);
+      sql.run(`UPDATE ${table} SET created_at=?,status='retry' WHERE subject_id=?`, [
+        time,
+        tickets[0]!.id,
+      ]);
   });
   expect(pending(time + 300)).toEqual([[], []]);
   for (const table of ['notification_deliveries', 'notification_apns_deliveries'])
-    expect(database.read((sql) => sql.all(`SELECT DISTINCT status FROM ${table}`))).toEqual([{ status: 'expired' }]);
-  console.info(`Notification freshness selector proof: ${(performance.now() - began).toFixed(3)} ms`);
+    expect(database.read((sql) => sql.all(`SELECT DISTINCT status FROM ${table}`))).toEqual([
+      { status: 'expired' },
+    ]);
+  console.info(
+    `Notification freshness selector proof: ${(performance.now() - began).toFixed(3)} ms`,
+  );
 });
 
-test.each(['web', 'apns'] as const)('%s rechecks the clock before each selected send', async (transport) => {
-  const began = performance.now();
-  const { context, database } = setup(), time = context.clock.nowUnix();
-  for (const body of ['First', 'Second']) propose(database, create(database, { now: time }), body, time);
-  database.write((sql) => {
-    notificationData.initialize_notifications(sql, time);
-    if (transport === 'web') notificationData.register_subscription(sql, { endpoint: 'https://fresh.invalid', p256dh: 'key', auth: 'auth', now: time });
-    else apnsData.register_device(sql, { device_token: 'aa', bundle_id: 'invalid.panels', environment: 'development', now: time });
-  });
-  const send = vi.fn(async () => {
-    (context.clock as TestClock).set(new Date((time + 300) * 1000).toISOString());
-    return { delivered: true };
-  });
-  const loop = new NotificationLoop({ database, clock: context.clock, canonical_origin: 'https://fresh.invalid',
-    adapter: { send }, apns_adapter: transport === 'apns' ? { send, close() {} } : null });
-  expect(await loop.poll_once()).toBe(1);
-  expect(send).toHaveBeenCalledOnce();
-  const table = transport === 'web' ? 'notification_deliveries' : 'notification_apns_deliveries';
-  expect(database.read((sql) => sql.all(`SELECT status FROM ${table} ORDER BY status`))).toEqual([{ status: 'delivered' }, { status: 'expired' }]);
-  console.info(`Notification ${transport} pre-send clock proof: ${(performance.now() - began).toFixed(3)} ms`);
-});
+test.each(['web', 'apns'] as const)(
+  '%s rechecks the clock before each selected send',
+  async (transport) => {
+    const began = performance.now();
+    const { context, database } = setup(),
+      time = context.clock.nowUnix();
+    for (const body of ['First', 'Second'])
+      propose(database, create(database, { now: time }), body, time);
+    database.write((sql) => {
+      notificationData.initialize_notifications(sql, time);
+      if (transport === 'web')
+        notificationData.register_subscription(sql, {
+          endpoint: 'https://fresh.invalid',
+          p256dh: 'key',
+          auth: 'auth',
+          now: time,
+        });
+      else
+        apnsData.register_device(sql, {
+          device_token: 'aa',
+          bundle_id: 'invalid.panels',
+          environment: 'development',
+          now: time,
+        });
+    });
+    const send = vi.fn(async () => {
+      (context.clock as TestClock).set(new Date((time + 300) * 1000).toISOString());
+      return { delivered: true };
+    });
+    const loop = new NotificationLoop({
+      database,
+      clock: context.clock,
+      canonical_origin: 'https://fresh.invalid',
+      adapter: { send },
+      apns_adapter: transport === 'apns' ? { send, close() {} } : null,
+    });
+    expect(await loop.poll_once()).toBe(1);
+    expect(send).toHaveBeenCalledOnce();
+    const table = transport === 'web' ? 'notification_deliveries' : 'notification_apns_deliveries';
+    expect(database.read((sql) => sql.all(`SELECT status FROM ${table} ORDER BY status`))).toEqual([
+      { status: 'delivered' },
+      { status: 'expired' },
+    ]);
+    console.info(
+      `Notification ${transport} pre-send clock proof: ${(performance.now() - began).toFixed(3)} ms`,
+    );
+  },
+);
 
 // Both provider loops must recheck a previously selected obligation after an earlier send defers it.
 test.each(['web', 'apns'] as const)(

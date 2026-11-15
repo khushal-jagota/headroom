@@ -1,6 +1,9 @@
 /** Attention provenance through the real area composition and scripted core. */
 import { createDatabase } from '../../core/database/index.ts';
-import { notification_content_proof, notification_freshness_proof } from '../../notifications/testing/content.ts';
+import {
+  notification_content_proof,
+  notification_freshness_proof,
+} from '../../notifications/testing/content.ts';
 import { SHUTDOWN_GRACE_SECONDS } from '../../lifecycle/configuration.ts';
 import { loadConfig } from '../../core/config.ts';
 import { createAreasRuntime } from '../../areas.ts';
@@ -131,8 +134,13 @@ export async function exercise(spec: {
       spec.preview_cases,
     );
     const freshness = notification_freshness_proof(database, spec.ticket, now);
-    return { ...result, notification_content: content.proof, content_seconds: content.seconds,
-      notification_freshness: freshness.proof, freshness_seconds: freshness.seconds };
+    return {
+      ...result,
+      notification_content: content.proof,
+      content_seconds: content.seconds,
+      notification_freshness: freshness.proof,
+      freshness_seconds: freshness.seconds,
+    };
   } finally {
     await core.shutdown({ deadline: performance.now() / 1000 + SHUTDOWN_GRACE_SECONDS });
     for (const child of children) await child.terminate();

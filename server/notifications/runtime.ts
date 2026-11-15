@@ -68,7 +68,9 @@ export class NotificationLoop {
           subject: this.options.canonical_origin || 'https://localhost',
         });
         if (this.expired) return sent;
-        database.write((sql) => data.record_delivery_result(sql, delivery, { ...result, now: send_now }));
+        database.write((sql) =>
+          data.record_delivery_result(sql, delivery, { ...result, now: send_now }),
+        );
       }
       if (this.stop_requested) return sent;
       const native = database.write((sql) => apns_data.pending_deliveries(sql, now));
