@@ -520,7 +520,9 @@ def test_darwin_populated_native_observations_match_python(
 ) -> None:
     """Existing Linux fixtures do not prove Darwin births, socket generations or native rates."""
     import base64
+    import ctypes
     import errno
+    from dataclasses import asdict
     from unittest.mock import patch
 
     from tests.unit.test_darwin_metrics import Reader
@@ -529,13 +531,14 @@ def test_darwin_populated_native_observations_match_python(
     from planner.platform_runtime.darwin.metrics import DarwinCollector
     from planner.platform_runtime.darwin.preview import _Paths, _SocketFD
     from planner.platform_runtime.darwin.worker_processes import _BSDInfo
+    from planner.previews.contracts import PreviewError
 
     started = time.perf_counter()
     reader = Reader()
     subject, library = inspector(tmp_path)
     library.descriptors[12][0].protocol_info.tcp.internet.generation = 2**62 + 567
     now = [100.0]
-    stat = SimpleNamespace(f_blocks=100, f_bavail=25, f_frsize=4096)
+    stat = os.statvfs_result((4096, 4096, 100, 25, 25, 0, 0, 0, 0, 255))
     collector = DarwinCollector(
         reader=reader,
         wall_clock=lambda: now[0],
@@ -545,8 +548,11 @@ def test_darwin_populated_native_observations_match_python(
     )
     actions, expected = [], []
     identity = None
-    def binary(value: object) -> str:
-        return base64.b64encode(bytes(value)).decode()
+
+    def binary(value: ctypes.Structure) -> str:
+        raw = ctypes.string_at(ctypes.addressof(value), ctypes.sizeof(value))
+        return base64.b64encode(raw).decode()
+
     for index, operation in enumerate(
         ("discover", "connected", "check", "check", "discover", "discover", "check")
     ):
@@ -605,19 +611,20 @@ def test_darwin_populated_native_observations_match_python(
                 "failure_status": index >= 5,
             }
         )
+        evidence: dict[str, Any] | str
         try:
             if operation == "discover":
                 identity = subject.discover(3001, tmp_path)
-                from dataclasses import asdict
-
                 evidence = asdict(identity)
             elif operation == "connected":
+                assert identity is not None
                 subject.connected(identity, 45678)
                 evidence = "accepted"
             else:
+                assert identity is not None
                 subject.check(identity)
                 evidence = "accepted"
-        except Exception as error:
+        except PreviewError as error:
             evidence = {"status_code": error.status_code} if index >= 5 else str(error)
         reader.reads.clear()
         with patch("planner.platform_runtime.darwin.metrics.os.cpu_count", return_value=4):
