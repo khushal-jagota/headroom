@@ -11,6 +11,7 @@ from dataclasses import asdict
 from pathlib import Path
 
 import pytest
+from tests.support.delegated_cgroup import require_delegated_cgroup
 
 from planner.conversation.local_child_contracts import LocalHostBootIdentity
 from planner.worker_supervision import (
@@ -29,7 +30,7 @@ def test_launch_priority_and_recorded_detached_tool_cleanup(
 ) -> None:
     """One real launch proves priority before exec and custody after a tool detaches."""
 
-    _require_delegated_cgroup()
+    require_delegated_cgroup()
     monkeypatch.setattr(config, "OBSERVATION_SECONDS", 0.1)
 
     async def run() -> None:
@@ -308,7 +309,7 @@ def test_native_stop_cancellation_cannot_extend_deadline(
 @pytest.mark.skipif(sys.platform != "linux", reason="Linux native orphan pidfd cleanup proof")
 def test_restart_reconciles_worker_after_its_parent_crashes(tmp_path: Path) -> None:
     """A new supervisor uses durable evidence after the original owner dies."""
-    _require_delegated_cgroup()
+    require_delegated_cgroup()
     import json
     import subprocess
 
@@ -1336,7 +1337,7 @@ def test_unobserved_detached_children_end_without_killing_other_workers(
 
     if not shutil.which("tmux") or not shutil.which("screen"):
         pytest.skip("tmux and screen are required for the detached-child proof")
-    _require_delegated_cgroup()
+    require_delegated_cgroup()
     monkeypatch.setattr(config, "OBSERVATION_SECONDS", 60)
 
     async def run() -> None:
@@ -1442,18 +1443,6 @@ def test_missing_linux_cgroup_support_preserves_cleanup_fence(
     assert not result.complete
     assert records.read(path)["state"] != "complete"
     assert "delegation denied" in inspect_record(path, context=context).reason
-
-
-def _require_delegated_cgroup() -> None:
-    from uuid import uuid4
-
-    from planner.platform_runtime.linux import worker_cgroups
-
-    try:
-        identity = worker_cgroups.create(uuid4().hex)
-        worker_cgroups.remove(identity)
-    except (OSError, ValueError, StopIteration) as error:
-        pytest.skip(f"Delegated cgroup v2 is required: {error}")
 
 
 def test_missing_cgroup_requires_the_original_readable_hierarchy(

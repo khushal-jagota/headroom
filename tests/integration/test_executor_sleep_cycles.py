@@ -24,6 +24,7 @@ import asyncio
 import json
 from pathlib import Path
 
+from tests.support.delegated_cgroup import require_delegated_cgroup
 from tests.support.executor_sleep_cycles import CycleSchedule, run_sleep_cycles
 
 SHORT = CycleSchedule(
@@ -44,6 +45,7 @@ SHORT = CycleSchedule(
 
 
 def test_three_sleep_cycles_lose_and_duplicate_nothing(tmp_path: Path) -> None:
+    require_delegated_cgroup()
     reports = asyncio.run(run_sleep_cycles(tmp_path / "out", 3, schedule=SHORT))
 
     assert [r.violations for r in reports] == [[], [], []]

@@ -37,6 +37,7 @@ from tests.support.conversation_system_under_test import (
     ConversationSystemUnderTest,
     open_conversation_system_under_test,
 )
+from tests.support.delegated_cgroup import require_delegated_cgroup
 
 from planner.conversation import worker_scratch
 from planner.conversation.backends.contracts import (
@@ -682,6 +683,7 @@ def test_configured_home_worker_root_reaches_real_hermes_transport_without_ambie
     tmp_path: Path, executor_transport_home: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """The curated Hermes environment must retain the configured supervision root."""
+    require_delegated_cgroup()
     import threading
 
     from tests.support.conversation_scripted_acp_agent import scripted_acp_agent_launch

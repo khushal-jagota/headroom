@@ -20,6 +20,7 @@ from tests.support.conversation_scripted_acp_agent import (
     ScriptedAcpAgentControl,
     scripted_acp_agent_launch,
 )
+from tests.support.delegated_cgroup import require_delegated_cgroup
 from tests.support.executor_catalog import SingleMachineCatalog
 from tests.support.executor_presence import mac_identity, make_current
 from tests.support.executor_turns import MacRemoteChildFactory
@@ -78,6 +79,9 @@ from planner.tickets.contracts import TicketLocale
 def test_native_worker_context_reaches_actual_provider_prompts(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, backend: ConversationBackendKey
 ) -> None:
+    if backend is ConversationBackendKey.hermes:
+        require_delegated_cgroup()
+
     async def exercise() -> None:
         for name, directory in (
             ("CODEX_HOME", "codex"),
