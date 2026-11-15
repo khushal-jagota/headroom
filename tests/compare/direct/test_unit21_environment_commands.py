@@ -249,7 +249,7 @@ def test_unit21_environment_command_function_parity(
         cleanup.callback(denied.chmod, 0o700)
         denied.chmod(0)
         (root / "corrupt.sqlite").write_bytes(b"not a SQLite database\n")
-        calls = [
+        calls: list[dict[str, Any]] = [
             dict(command="status", args=dict(json=True)),
             dict(command="status", args=dict(json=False)),
             dict(command="cleanup", args=dict(apply=False, json=True)),
