@@ -5,6 +5,7 @@ import { basename, dirname, join } from 'node:path';
 import { path_is_within } from '../core/path_containment.ts';
 import { PlannerError } from '../core/contracts.ts';
 import { resolve_path_sync } from '../core/path_resolution.ts';
+import { PRIVATE_TICKET_NAMES } from '../files/logic/paths.ts';
 import type { ExecutorIdentity } from '../execution_identity.ts';
 import type { ConversationMessageFiles } from '../conversation/message_files.ts';
 import { MessageFileMissing } from '../conversation/record/message_files.ts';
@@ -84,6 +85,8 @@ export class FileStaging {
       throw new ExecutorValidationError('invalid file length or digest');
     if (manifest.scope !== 'ticket')
       throw new ExecutorValidationError('Mac uploads must belong to a Ticket');
+    if (PRIVATE_TICKET_NAMES.has(manifest.relative_path.split('/')[0]!))
+      throw new ExecutorValidationError('Ticket worktree is private');
     return contained_path(this.tickets, `${manifest.owner_id}/${manifest.relative_path}`);
   }
   async staged_file(manifest: WireValue<'FileManifest'>): Promise<string> {

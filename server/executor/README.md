@@ -94,6 +94,8 @@ Hashing and copying use asynchronous file operations with 256 KiB blocks and saf
 
 FileStaging is constructed before the inbox. An upload's held source parent and checked leaf pass through the inbox's second authorization into staging installation. The parent remains owned through cleanup, even if its former pathname changes. A later authorized inbox item publishes staged bytes through bounded synchronous rename groups inside the writer, after authority and version rechecks. Every source and destination parent opens before that writer. Exclusive hold links are created in retained destination parents before publication, then removed asynchronously with directory flushes after success or partial failure. Destination parents remain held through the receipt's unchanged-version check.
 
+Executor uploads refuse private Ticket names at the first path segment. Mac capture skips those names only at the Ticket root. Both boundaries use the file system's shared `PRIVATE_TICKET_NAMES` set. Nested artifact names remain valid.
+
 Hard-link holds defer overwritten-inode cleanup until after the publication writer.
 A same-user destination swap after the check inside the writer and before rename is undetected. It can release large data on the event loop.
 Hard crashes can leave `.hold-*`, `.incoming-*`, and `.tmp-*` files. No startup sweeper removes them.
