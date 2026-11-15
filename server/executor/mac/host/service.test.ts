@@ -88,6 +88,10 @@ test('quiesce cancels a catalog probe before native dispatch and joins HTTP befo
         'LeaseReply',
       );
     }
+    override async workspace_states() {
+      assert.equal(http_closed, false);
+      return { states: [], at_vps_ms: 1700000000000 };
+    }
     async poll_commands(_after: number, _hold: number, signal: AbortSignal) {
       assert.equal(http_closed, false);
       signal.throwIfAborted();

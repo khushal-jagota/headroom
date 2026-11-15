@@ -13,7 +13,11 @@ import {
   expand_executor_path,
   python_executor_root,
 } from './platform.ts';
-export { MAC_AWAY_AFTER_SECONDS, MAX_WORKSPACE_STATES_BYTES } from '../configuration.ts';
+export {
+  MAC_AWAY_AFTER_SECONDS,
+  MAX_WORKSPACE_STATES_BYTES,
+  MAX_WORKSPACE_STATE_IDS,
+} from '../configuration.ts';
 
 export const MAX_ENVELOPE_BYTES = 1024 * 1024;
 export const MAX_TOOL_DETAIL_CHARACTERS = 64 * 1024;
@@ -30,6 +34,7 @@ export const OUTBOX_RETRY_MAX_SECONDS = 60;
 export const CONNECTION_FAILURE_LOG_INTERVAL_SECONDS = 60;
 export const LAUNCH_AGENT_RESTART_THROTTLE_SECONDS = 10;
 export const LEASE_INTERVAL_SECONDS = 10;
+export const WORKSPACE_CLEANUP_INTERVAL_SECONDS = 600;
 export const LEASE_TIMEOUT_SECONDS = 10;
 export const LEASE_CONTINUITY_SECONDS = 25;
 export const MAX_LEASE_WAITING_CONVERSATIONS = 64;

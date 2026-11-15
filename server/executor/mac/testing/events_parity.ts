@@ -27,6 +27,7 @@ import {
   record_commands,
   pending_envelopes,
   close_fixture_owners,
+  unexpected_workspaces,
 } from './runner_fixture.ts';
 import type { FixtureStores } from './runner_fixture.ts';
 
@@ -134,6 +135,7 @@ try {
   stores = await open_fixture_stores(join(root, 'spool'), now, on_failure, options);
   const { store, journal } = stores;
   const runner_options: MacRunnerOptions = {
+    ...unexpected_workspaces,
     incarnation: 'inc',
     journal,
     outbox: store,

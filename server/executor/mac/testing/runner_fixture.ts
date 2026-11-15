@@ -11,7 +11,27 @@ import { open_command_journal } from '../storage/journal.ts';
 import type { AsyncCommandJournal } from '../storage/journal_contracts.ts';
 import { read_canonical_body } from '../mailbox/poll.ts';
 import { observe_shutdown } from '../../../conversation/shutdown.ts';
-import { Deferred } from '../../../conversation/runtime/state.ts';
+import { Deferred, FifoLock } from '../../../conversation/runtime/state.ts';
+import type { MacRunnerOptions } from '../runner/lifecycle_contracts.ts';
+
+const unexpected_workspace_operation = (): never => {
+  throw new Error('Workspace operations are outside this fixture');
+};
+export const unexpected_workspaces: Pick<MacRunnerOptions,
+  'workspace_git' | 'register_workspace' | 'retire_workspace' | 'retirement_is_committed'> = {
+  workspace_git: {
+    environment: {},
+    children: {
+      signal: new AbortController().signal,
+      spawn: unexpected_workspace_operation,
+      seal() {},
+      async settled() {},
+    },
+  },
+  register_workspace: async () => unexpected_workspace_operation(),
+  retire_workspace: async () => unexpected_workspace_operation(),
+  retirement_is_committed: async () => unexpected_workspace_operation(),
+};
 
 export const gate = () => new Deferred<void>();
 
@@ -24,6 +44,9 @@ export function native_fixture_options(
   return {
     paths: input.paths,
     workspace_home: input.workspace_home,
+    workspace_lock: new FifoLock(),
+    workspace_git: unexpected_workspaces.workspace_git,
+    register_workspace: unexpected_workspaces.register_workspace,
     factory: input.factory,
     on_failure: input.on_failure,
     native_skill_home: input.native_skill_home,

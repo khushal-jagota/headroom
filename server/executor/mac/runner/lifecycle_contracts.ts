@@ -3,7 +3,8 @@ import type {
   BackendEventSink,
   BackendEventValue,
 } from '../../../conversation/backends/contracts.ts';
-import type { BackendEvent, ChildReference, TurnToken } from '../../wire.generated.ts';
+import type { BackendEvent, ChildCommand, ChildReference, CommandOutcome, TurnToken } from '../../wire.generated.ts';
+import type { WorkspaceIdentity, WorkspaceOptions, WorkspaceState } from '../../../ticket_workspaces/contracts.ts';
 import type { MailboxRunner } from '../mailbox/contracts.ts';
 import type { OutboxStore } from '../storage/outbox.ts';
 import type {
@@ -44,7 +45,12 @@ export interface MacRunnerEventsContract {
 }
 export interface MacRunnerOptions {
   readonly incarnation: string;
-  readonly native: Omit<MacNativeChildrenOptions, 'event_sink'>;
+  readonly native: Omit<MacNativeChildrenOptions,
+    'event_sink' | 'workspace_lock' | 'workspace_git' | 'register_workspace'>;
+  readonly workspace_git: NonNullable<WorkspaceOptions['git_execution']>;
+  readonly register_workspace: (child: ChildReference, workspace: WorkspaceIdentity) => Promise<void>;
+  readonly retire_workspace: (state: WorkspaceState, workspace: WorkspaceIdentity) => Promise<boolean>;
+  readonly retirement_is_committed: (state: WorkspaceState, workspace: WorkspaceIdentity) => Promise<boolean>;
   readonly journal: MacCommandDependencies['journal'];
   readonly outbox: OutboxStore;
   readonly inputs: MacCommandDependencies['inputs'];
@@ -59,6 +65,8 @@ export interface MacRunnerContract
     MacRunnerEventsContract,
     MacRunnerLifetimeContract {
   readonly native_children: MacNativeChildrenContract;
+  cleanup_workspaces(states: readonly WorkspaceState[], now: number): Promise<void>;
+  stop_and_publish(command: ChildCommand): Promise<CommandOutcome>;
   seal_admission(): void;
   authenticate(child_id: string | null, capability: string | null): MacRunningChild;
   withdraw(command_id: string): boolean;

@@ -1,6 +1,7 @@
 /** Native starts and stops retain custody independently of command/result retries. */
 import { same_reference } from '../../child_reference.ts';
 import { randomBytes, timingSafeEqual } from 'node:crypto';
+import { join } from 'node:path';
 import { BackendSpawnFailed } from '../../../conversation/backends/contracts.ts';
 import { FifoLock } from '../../../conversation/runtime/state.ts';
 import { observe_shutdown } from '../../../conversation/shutdown.ts';
@@ -15,6 +16,8 @@ import type {
 } from './contracts.ts';
 import { MacChildAdmissionRefused, MacPermissionDenied } from './contracts.ts';
 import { remember_model_catalog_failure } from '../../../conversation/backends/catalog_cleanup.ts';
+import { workspace_identity } from '../../../ticket_workspaces/filesystem.ts';
+import { same_workspace } from './workspaces.ts';
 interface Entry {
   reference: ChildReference;
   ticket_id: string;
@@ -123,36 +126,64 @@ export class MacNativeChildren implements MacNativeChildrenContract {
           `Canonical skill bootstrap failed: ${error instanceof Error ? error.message : String(error)}`,
         );
       }
-      this.assert_start(entry);
-      const localized_start = await localize_start(input, entry.reference, capability, generation, {
-        ...this.options,
-        on_failure: (error) => this.record_failure(error),
+      const prepared = await this.options.workspace_lock.run(async () => {
+        this.assert_start(entry);
+        const localized_start = await localize_start(input, entry.reference, capability, generation, {
+          ...this.options,
+          on_failure: (error) => this.record_failure(error),
+        });
+        this.assert_start(entry);
+        const managed = new Map(
+          input.resolved_start.role_materials?.identity_environment_variables ?? [],
+        ).get('PLAN_TICKET_WORKSPACE_MANAGED') === '1';
+        const workspace = managed
+          ? workspace_identity(join(this.options.paths.artifacts, entry.ticket_id)) : null;
+        return { localized_start, workspace };
       });
-      this.assert_start(entry);
-      const native = this.options.factory(localized_start)({
-        resolved_start: localized_start,
-        event_sink: this.options.event_sink(entry.reference),
-        message_files: this.options.message_files,
+      if (prepared.workspace !== null) {
+        try {
+          await this.options.register_workspace(entry.reference, prepared.workspace);
+        } catch (error) {
+          throw new BackendSpawnFailed(
+            `Mac workspace registration failed: ${error instanceof Error ? error.message : String(error)}`,
+          );
+        }
+      }
+      const child = await this.options.workspace_lock.run(() => {
+        this.assert_start(entry);
+        if (prepared.workspace !== null && !same_workspace(
+          workspace_identity(join(this.options.paths.artifacts, entry.ticket_id)),
+          prepared.workspace,
+        ))
+          throw new BackendSpawnFailed('Ticket workspace changed before native start');
+        const localized_start = prepared.localized_start;
+        const native = this.options.factory(localized_start)({
+          resolved_start: localized_start,
+          event_sink: this.options.event_sink(entry.reference),
+          message_files: this.options.message_files,
+        });
+        const child: MacRunningChild = {
+          reference: entry.reference,
+          capability,
+          native,
+          ticket_id: entry.ticket_id,
+          launch_input: input,
+          localized_start,
+          workspace: prepared.workspace,
+          lock: new FifoLock(),
+          active_turn: null,
+          open_tool_calls: new Set(),
+          background_task_ids: new Set(),
+          model: localized_start.model,
+          reasoning_effort: localized_start.reasoning_effort,
+        };
+        entry.child = child;
+        return child;
       });
-      const child: MacRunningChild = {
-        reference: entry.reference,
-        capability,
-        native,
-        ticket_id: entry.ticket_id,
-        launch_input: input,
-        localized_start,
-        lock: new FifoLock(),
-        active_turn: null,
-        open_tool_calls: new Set(),
-        background_task_ids: new Set(),
-        model: localized_start.model,
-        reasoning_effort: localized_start.reasoning_effort,
-      };
-      entry.child = child;
       await child.lock.run(async () => {
         this.assert_start(entry);
         invoking();
-        await native.start(localized_start, {
+        await child.native.start(child.localized_start, {
           vendor_session_cursor: input.vendor_session_cursor ?? null,
         });
       });
