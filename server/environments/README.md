@@ -48,6 +48,8 @@ Executor update reads select a cached service for each machine through the regis
 Each machine keeps separate request IDs and reports. Darwin machines share archive bytes, and Linux storage stays separate.
 Native first-home installation lives in `server/installation/`. It admits sealed Node home releases,
 creates private state and a new service family, and requires exact ready health before backup jobs start.
+Before activation, the admitted candidate creates a fresh database with its own schema seed and bootstrap.
+Any existing database entry causes refusal. Updates never call this initializer.
 Rollback authenticates created files and loaded service identities. Uncertain stop retains the installation.
 The flat JSON stdin entry is `server/installation/home_main.ts`.
 Linux executor archive production and low-level installation use the shared native builder, target admission, and process owners in `linux_executor/`.
@@ -58,7 +60,8 @@ P7 adds configured account skill homes with shared ownership locks, Darwin APP c
 Home-machine preview eligibility, native Darwin preview evidence and metrics, and in-place Darwin log cleanup.
 Real Darwin ABI acceptance runs in the existing hosted lifecycle workflow. First-install service acceptance uses
 the same Mac job and the scheduled/manual Linux server job with private apps and isolated providers.
-Darwin archive admission, foreground boot, and copied updates await their final hosted acceptance run.
+The Mac job exercises sealed archive admission, foreground boot, launchd installation, and copied update rollback.
+Its artifacts record the tested revision, actual results, process retirement, and retained failure evidence.
 
 The real-core proofs now cover idle-update admission after a native turn completes, HTTP write refusal without database mutation,
 continued reads, and admission reopening after installer launch failure. They use ordinary routes and scripted external operations.
