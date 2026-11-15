@@ -4,6 +4,7 @@ import { createHash } from 'node:crypto';
 import { join } from 'node:path';
 import { performance } from 'node:perf_hooks';
 import { create_mac_adapter_host } from '../adapters.ts';
+import { create_worker_supervision_runtime } from '../../../worker_supervision/composition.ts';
 import { MacNativeChildren } from '../runner/start_stop.ts';
 import { MacChildAdmissionRefused } from '../runner/contracts.ts';
 import { MacCatalog } from '../catalog/index.ts';
@@ -49,6 +50,7 @@ const one_shots: OwnedOneShotChildren = {
   seal() {},
   settled: async () => {},
 };
+const worker_supervision = create_worker_supervision_runtime({ one_shot_children: one_shots });
 const environment = {
   HOME: join(root, 'home'),
   CODEX_HOME: join(root, 'native/codex'),
@@ -71,6 +73,7 @@ for (const [override, installed] of [
     panels_server_url: 'http://127.0.0.1:9',
     child_processes: children,
     one_shot_children: one_shots,
+    worker_supervision,
     environment: { ...environment, PLAN_CLAUDE_EXECUTABLE: override },
     executable_path: (name) => (installed ? join(root, 'bin', name) : null),
   });
@@ -516,6 +519,7 @@ try {
   await catalog.settled();
 }
 if (faults.length) throw new AggregateError(faults, 'Composition proof resource failure.');
+await worker_supervision.close();
 process.stdout.write(
   JSON.stringify({
     parity: normalize({

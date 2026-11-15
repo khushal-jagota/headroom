@@ -54,6 +54,8 @@ import type {
 } from './start.ts';
 import type { VpsExecutorRegistry } from '../executor/registry.ts';
 import { ServiceResources } from './service_resources.ts';
+import { create_worker_supervision_runtime } from '../worker_supervision/composition.ts';
+import type { WorkerSupervisionRuntime } from '../worker_supervision/runtime.ts';
 
 interface ServerLifetime {
   media_lifetime: AbortController;
@@ -66,6 +68,7 @@ interface ServerLifetime {
 
 /** Service constructors reserve custody before any factory or asynchronous continuation. */
 export class ServerServices {
+  readonly worker_supervision: WorkerSupervisionRuntime;
   readonly resources = new ServiceResources();
   readonly environments = this.resources.service<EnvironmentRuntime>(
     'environment services',
@@ -131,6 +134,9 @@ export class ServerServices {
     this.options = options;
     this.lifetime = lifetime;
     this.update_barrier = new UpdateBarrier(join(dirname(config.db_path), 'update-barrier.json'));
+    this.worker_supervision = create_worker_supervision_runtime({
+      one_shot_children: lifetime.one_shot_children,
+    });
   }
 
   requireOwnership = (): void => {
@@ -194,6 +200,7 @@ export class ServerServices {
       child_processes,
       executor,
       update_barrier: this.update_barrier,
+      worker_supervision: this.worker_supervision,
     };
     const open_runs = options.readOpenRuns?.(before_record) ?? new Map();
     areas.initialize(

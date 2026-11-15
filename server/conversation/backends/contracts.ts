@@ -18,6 +18,7 @@ import type { MessageContent } from '../message_content.ts';
 import type { ConversationMessageFiles } from '../message_files.ts';
 import type { StopOptions } from '../../lifecycle/contracts.ts';
 import type { TurnToken as WireTurnToken } from '../../executor/wire.generated.ts';
+import type { LocalChildIdentity } from '../local_child_contracts.ts';
 export interface TurnToken {
   readonly conversation_id: string;
   readonly turn_number: number;
@@ -308,9 +309,12 @@ export type BackendEventValue =
   | BackendStreamEnded;
 export interface BackendEventSink {
   report(turn: TurnToken | null, event: BackendEventValue): Promise<void>;
+  record_local_child_supervision?(path: string): Promise<void>;
+  record_local_child_custody?(identity: LocalChildIdentity): Promise<void>;
 }
 export interface BackendChild {
   readonly stop_outside_lock: boolean;
+  local_child_identity?(): Promise<LocalChildIdentity | null>;
   withdraw_delivery(): Promise<boolean>;
   detach(options?: StopOptions): Promise<void>;
   /** Actual already-started stop work, without an observer deadline. */

@@ -1,7 +1,6 @@
-"""Fresh Python comparison of complete Codex child environments and launch requests.
+"""Fresh Python startup parity with fenced processes and a synthetic scratch boundary.
 
-All provider and service-manager launches stop at fences. Only the owned Node
-export evaluator starts, with synthetic environment values and synthetic homes.
+Only the existing Node evaluator starts. P4 proves real scratch disk policy and removal.
 """
 
 from __future__ import annotations
@@ -13,6 +12,7 @@ import subprocess
 import sys
 import time
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, cast
 from unittest.mock import patch
 
@@ -22,10 +22,9 @@ ROOT = Path(__file__).resolve().parents[3]
 
 
 def _python(spec: dict[str, Any]) -> dict[str, Any]:
-    # P3 replaces this retired launch fixture. This helper belongs to its expected-open case.
-    from planner.conversation.worker_unit import WorkerUnit  # type: ignore[import-not-found]
-
     from planner.conversation.backends.codex_app_server import client
+    from planner.conversation.worker_scratch import WorkerScratch
+    from planner.worker_supervision import WorkerSupervisor
 
     async def run() -> dict[str, Any]:
         cases = []
@@ -36,97 +35,117 @@ def _python(spec: dict[str, Any]) -> dict[str, Any]:
                 )
                 error = None
             except client.CodexLoginIsDuplicated as failure:
-                environment = None
-                error = str(failure)
+                environment, error = None, str(failure)
             cases.append({"name": item["name"], "environment": environment, "error": error})
-        launches = []
-        for item in spec["launches"]:
-            calls: list[dict[str, Any]] = []
-            unit_stops = 0
 
-            async def version(
-                backend: str,
-                executable: str,
-                _calls: list[dict[str, Any]] = calls,
-                **keywords: Any,
-            ) -> None:
+        async def launch(item: dict[str, Any]) -> dict[str, Any]:
+            calls: list[dict[str, Any]] = []
+
+            async def version(backend: str, executable: str, **keywords: Any) -> None:
                 assert backend == "codex"
-                _calls.append(
+                calls.append(
                     {
                         "operation": "version",
                         "executable": executable,
-                        "environment": keywords["environment"],
+                        "environment": dict(keywords["environment"]),
                         "working_directory": str(keywords["working_directory"]),
                     }
                 )
+                if item["failure"] == "version":
+                    raise OSError("synthetic version failure")
 
-            async def create(
-                environment: dict[str, str],
-                working_directory: Path,
-                _calls: list[dict[str, Any]] = calls,
-                _item: dict[str, Any] = item,
-            ) -> WorkerUnit:
-                _calls.append(
+            async def cancel() -> None:
+                calls.append({"operation": "cancel-unspawned"})
+
+            async def stop(**_keywords: Any) -> SimpleNamespace:
+                calls.append({"operation": "supervisor-stop"})
+                return SimpleNamespace(complete=True)
+
+            async def create(environment: dict[str, str], working_directory: Path) -> Any:
+                calls.append(
                     {
-                        "operation": "unit-create",
-                        "environment": environment,
+                        "operation": "supervisor-create",
+                        "environment": dict(environment),
                         "working_directory": str(working_directory),
                     }
                 )
-                directory = Path(_item["unit_directory"])
-                temporary = str(directory / "t")
-                return WorkerUnit(
-                    name="panels-worker-" + "1" * 32 + ".service",
-                    directory=directory,
+                supervisor = SimpleNamespace(
+                    path=Path(item["directory"]) / "record.json",
+                    working_directory=working_directory,
+                    environment={**environment, "PLAN_WORKER_PROCESS_ROOT": item["directory"]},
+                    cancel_unspawned=cancel,
+                    stop=stop,
+                )
+                supervisor.argv = WorkerSupervisor.argv.__get__(supervisor)
+                return supervisor
+
+            async def close() -> None:
+                calls.append({"operation": "scratch-close"})
+
+            async def scratch(environment: dict[str, str]) -> Any:
+                calls.append({"operation": "scratch-create", "environment": dict(environment)})
+                if item["failure"] == "scratch":
+                    raise RuntimeError("synthetic scratch failure")
+                temporary = str(Path(item["directory"]) / "scratch")
+                return SimpleNamespace(
                     environment={
                         **environment,
                         "TMPDIR": temporary,
                         "TMP": temporary,
                         "TEMP": temporary,
                     },
-                    working_directory=working_directory,
-                    slice_name="unit17-synthetic.slice",
+                    aclose=close,
                 )
 
-            async def stop(unit: WorkerUnit) -> None:
-                nonlocal unit_stops
-                unit_stops += 1
+            async def reporter(path: str) -> None:
+                calls.append({"operation": "supervision-report", "path": path})
+                if item["failure"] == "reporter":
+                    raise RuntimeError("synthetic reporter failure")
 
-            async def spawn(
-                *arguments: str,
-                _calls: list[dict[str, Any]] = calls,
-                **keywords: Any,
-            ) -> None:
-                _calls.append(
+            async def spawn(*arguments: str, **keywords: Any) -> None:
+                calls.append(
                     {
                         "operation": "spawn",
                         "argv": list(arguments),
-                        "environment": keywords["env"],
+                        "environment": dict(keywords["env"]),
                         "working_directory": keywords["cwd"],
                     }
                 )
+                if item["worker_ticket_id"]:
+                    assert arguments == (
+                        sys.executable,
+                        "-I",
+                        "-m",
+                        "planner.worker_supervision.launch",
+                        str(Path(item["directory"]) / "record.json"),
+                        *item["argv"],
+                    )
                 raise OSError("synthetic stop before spawn")
 
             with (
                 patch.object(client, "ensure_cli_compatible", version),
-                patch.object(WorkerUnit, "create", create),
-                patch.object(WorkerUnit, "stop", stop),
+                patch.object(WorkerSupervisor, "create", create),
+                patch.object(WorkerScratch, "create", scratch),
                 patch.object(asyncio, "create_subprocess_exec", spawn),
             ):
                 wire = client.CodexAppServerClient(
                     handler=cast(client.CodexServerMessageHandler, object()),
                     description="startup-parity",
                 )
+                failure = None
                 try:
                     await wire.start(
                         argv=item["argv"],
                         environment=client.child_environment(),
                         working_directory=Path(item["working_directory"]),
                         worker_ticket_id=item["worker_ticket_id"],
+                        supervision_reporter=reporter,
                     )
-                except client.CodexChildWouldNotStart as error:
-                    assert str(error) == "synthetic stop before spawn"
-            launches.append({"name": item["name"], "calls": calls, "unit_stops": unit_stops})
+                except Exception as error:
+                    failure = str(error)
+            return {"name": item["name"], "calls": calls, "failure": failure}
+
+        launches = [await launch(item) for item in spec["launches"]]
         return {
             "cases": cases,
             "launches": launches,
@@ -134,24 +153,23 @@ def _python(spec: dict[str, Any]) -> dict[str, Any]:
             "service_manager_calls": 0,
         }
 
-    with patch.dict(os.environ, spec["ambient"], clear=True):
+    def forbidden(*_args: Any, **_keywords: Any) -> Any:
+        raise AssertionError("Unexpected native launch")
+
+    with (
+        patch.dict(os.environ, spec["ambient"], clear=True),
+        patch("subprocess.Popen", forbidden),
+        patch.object(asyncio, "create_subprocess_shell", forbidden),
+    ):
         return asyncio.run(run())
 
 
-@pytest.mark.xfail(
-    run=False,
-    reason=(
-        "expected-open P3: #916 replaces WorkerUnit launch with supervision"
-    ),
-)
 def test_unit17_startup_environment(tmp_path: Path, request: pytest.FixtureRequest) -> None:
-    """Protect account inheritance, copied-token refusal, and exact native argv."""
+    """Protect complete environments, explicit Worker identity, and no-child cleanup order."""
     started = time.perf_counter()
     home = tmp_path / "home"
     home.mkdir()
-    ambient = home / "codex"
-    alternate = home / "alternate"
-    alias = home / "alias"
+    ambient, alternate, alias = home / "codex", home / "alternate", home / "alias"
     for path in (ambient, alternate):
         path.mkdir()
         (path / "auth.json").write_text(
@@ -177,11 +195,11 @@ def test_unit17_startup_environment(tmp_path: Path, request: pytest.FixtureReque
         "CLAUDE_CONFIG_DIR": str(home / "claude"),
         "HERMES_HOME": str(home / "hermes"),
         "TMPDIR": str(tmp_path),
+        "PLAN_TICKET_ID": "inherited-worker",
         "CODEX_SYNTHETIC_ACCOUNT_OPTION": "preserve unchanged",
         "QUOTED": "quote\" slash\\ dollar$ backtick` percent% single' snowman☃",
     }
     spec = {
-        "operation": "startup",
         "ambient": environment,
         "cases": [
             {"name": "inherited", "overrides": [], "identity": []},
@@ -190,11 +208,7 @@ def test_unit17_startup_environment(tmp_path: Path, request: pytest.FixtureReque
                 "overrides": [["ORDER", "override"], ["EMPTY", ""]],
                 "identity": [["ORDER", "identity"], ["PLAN_TICKET_ID", "synthetic"]],
             },
-            {
-                "name": "same-home-alias",
-                "overrides": [["CODEX_HOME", str(alias)]],
-                "identity": [],
-            },
+            {"name": "same-home-alias", "overrides": [["CODEX_HOME", str(alias)]], "identity": []},
             {
                 "name": "copied-secret-changed-account-metadata",
                 "overrides": [["CODEX_HOME", str(alternate)]],
@@ -207,9 +221,16 @@ def test_unit17_startup_environment(tmp_path: Path, request: pytest.FixtureReque
                 "argv": [str(executable), "app-server", "--literal=$HOME"],
                 "working_directory": str(tmp_path),
                 "worker_ticket_id": identity,
-                "unit_directory": str(tmp_path / "private % 'quoted'"),
+                "directory": str(tmp_path / name),
+                "failure": failure,
             }
-            for name, identity in (("owner", None), ("worker", "synthetic-worker"))
+            for name, identity, failure in (
+                ("owner", None, "spawn"),
+                ("worker", "synthetic-worker", "spawn"),
+                ("preflight", "synthetic-worker", "version"),
+                ("scratch-failure", "synthetic-worker", "scratch"),
+                ("reporter-failure", "synthetic-worker", "reporter"),
+            )
         ],
     }
     expected = _python(spec)
@@ -220,8 +241,7 @@ def test_unit17_startup_environment(tmp_path: Path, request: pytest.FixtureReque
             "node",
             "--input-type=module",
             "-e",
-            "import {readFileSync} from 'node:fs'; "
-            "import {pathToFileURL} from 'node:url'; "
+            "import {readFileSync} from 'node:fs'; import {pathToFileURL} from 'node:url'; "
             "const {run_part1_parity}=await import(pathToFileURL(process.argv[2]).href); "
             "process.stdout.write(JSON.stringify(await run_part1_parity("
             "JSON.parse(readFileSync(process.argv[1],'utf8')))));",
@@ -236,46 +256,26 @@ def test_unit17_startup_environment(tmp_path: Path, request: pytest.FixtureReque
         check=True,
     )
     actual = json.loads(completed.stdout)
-    python_script = ROOT / "src/planner/conversation/tool_shell_startup.bash"
-    typescript_script = ROOT / "server/conversation/tool_shell_startup.bash"
-    script_bytes_equal = python_script.read_bytes() == typescript_script.read_bytes()
-    environment_differences = []
-    for python_launch, typescript_launch in zip(
-        expected["launches"], actual["launches"], strict=True
-    ):
-        for python_call, typescript_call in zip(
-            python_launch["calls"], typescript_launch["calls"], strict=True
-        ):
-            python_environment = python_call["environment"]
-            typescript_environment = typescript_call["environment"]
-            differences = {
-                name: {
-                    "python": python_environment.get(name),
-                    "typescript": typescript_environment.get(name),
-                }
-                for name in python_environment.keys() | typescript_environment.keys()
-                if python_environment.get(name) != typescript_environment.get(name)
-            }
-            environment_differences.append(
-                {
-                    "launch": python_launch["name"],
-                    "operation": python_call["operation"],
-                    "variables": differences,
-                }
-            )
+
+    def comparable(value: dict[str, Any], prefix: int) -> dict[str, Any]:
+        copied: dict[str, Any] = json.loads(json.dumps(value))
+        for launch in copied["launches"]:
+            for call in launch["calls"]:
+                if call["operation"] == "spawn" and launch["name"] == "worker":
+                    call["argv"] = ["<native-bootstrap>", *call["argv"][prefix:]]
+        return copied
+
     report = {
         "case": "unit17-startup-environment",
         "python": expected,
         "typescript": actual,
         "seconds": time.perf_counter() - started,
-        "real_children": ["owned Node export evaluator"],
-        "normalization_rules": [],
-        "environment_differences": environment_differences,
-        "tool_shell_scripts": {
-            "python": str(python_script),
-            "typescript": str(typescript_script),
-            "exact_bytes_equal": script_bytes_equal,
-        },
+        "real_children": ["owned Node evaluator"],
+        "scratch_boundary": "Synthetic create/close; P4 proves disk policy and physical removal",
+        "normalization_rules": [
+            "Exact raw bootstrap asserted in each language; "
+            "replace only Python -I/-m versus Node launch.ts prefix"
+        ],
     }
     destination = request.config.getoption("--compare-report-dir")
     if destination:
@@ -284,29 +284,39 @@ def test_unit17_startup_environment(tmp_path: Path, request: pytest.FixtureReque
         (directory / "unit17-startup-environment.json").write_text(
             json.dumps(report, indent=2) + "\n"
         )
-    assert script_bytes_equal
-    assert actual["cases"] == expected["cases"]
-    assert actual["provider_processes_started"] == expected["provider_processes_started"] == 0
-    assert actual["service_manager_calls"] == expected["service_manager_calls"] == 0
-    for difference in environment_differences:
-        assert difference["variables"] == (
-            {
-                "BASH_ENV": {
-                    "python": str(python_script),
-                    "typescript": str(typescript_script),
-                }
-            }
-            if sys.platform == "linux"
-            else {}
-        )
-    for python_launch, typescript_launch in zip(
-        expected["launches"], actual["launches"], strict=True
-    ):
-        assert typescript_launch["name"] == python_launch["name"]
-        assert typescript_launch["unit_stops"] == python_launch["unit_stops"]
-        for python_call, typescript_call in zip(
-            python_launch["calls"], typescript_launch["calls"], strict=True
-        ):
-            assert {
-                key: value for key, value in typescript_call.items() if key != "environment"
-            } == {key: value for key, value in python_call.items() if key != "environment"}
+    assert comparable(actual, 2) == comparable(expected, 4)
+    expected_operations = {
+        "owner": ["version", "spawn"],
+        "worker": [
+            "version",
+            "supervisor-create",
+            "scratch-create",
+            "supervision-report",
+            "spawn",
+            "cancel-unspawned",
+            "supervisor-stop",
+            "scratch-close",
+        ],
+        "preflight": ["version"],
+        "scratch-failure": [
+            "version",
+            "supervisor-create",
+            "scratch-create",
+            "cancel-unspawned",
+            "supervisor-stop",
+        ],
+        "reporter-failure": [
+            "version",
+            "supervisor-create",
+            "scratch-create",
+            "supervision-report",
+            "cancel-unspawned",
+            "supervisor-stop",
+            "scratch-close",
+        ],
+    }
+    for launch in actual["launches"]:
+        assert [call["operation"] for call in launch["calls"]] == expected_operations[
+            launch["name"]
+        ]
+        assert launch["failure"] is not None
