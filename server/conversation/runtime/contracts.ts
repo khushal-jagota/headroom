@@ -9,7 +9,7 @@ import type {
   PromptDeliveryRefusalReason,
   PromptQueueReason,
 } from '../contracts.ts';
-import type { BackendChildFactory, TurnToken } from '../backends/contracts.ts';
+import type { BackendChildFactory, BackendEventSink, BackendChild, TurnToken } from '../backends/contracts.ts';
 import type { ConversationLiveTailFrame } from '../events.ts';
 import type { MessageContent } from '../message_content.ts';
 import type { ConversationMessageFiles } from '../message_files.ts';
@@ -132,6 +132,9 @@ export interface ConversationCoreOptions {
 }
 
 /** Only synchronous persistence effects enter a retry. Provider calls never do. */
+export interface CoreBackendEventSink extends BackendEventSink {
+  readonly generation: string;
+}
 export interface DeliveryServices {
   readonly start_admission: AutomaticStartAdmission;
   accept_automatic_start(
@@ -146,7 +149,10 @@ export interface DeliveryServices {
   readonly shutting_down: boolean;
   make_sink(
     state: import('./state.ts').ConversationState,
-  ): import('../backends/contracts.ts').BackendEventSink;
+  ): CoreBackendEventSink;
+  ensure_local_custody(state: import('./state.ts').ConversationState): Promise<void>;
+  record_local_child_preparation(state: import('./state.ts').ConversationState, child: BackendChild, sink: CoreBackendEventSink): Promise<void>;
+  check_local_child_started(state: import('./state.ts').ConversationState, turn: TurnToken): Promise<boolean>;
   persist<T>(
     state: import('./state.ts').ConversationState,
     work: () => T,
