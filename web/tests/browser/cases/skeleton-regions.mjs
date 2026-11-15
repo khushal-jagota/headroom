@@ -85,10 +85,11 @@ export async function prepare({scratchRoot}) {
   {#if nestedShown}<section data-nested-checklists style="width:360px"><PageDocument document={nestedDocument} supplementary showHeader={false}/></section>{/if}
   {#if htmlMode}<section data-html-fixture style="height:500px">
     {#if htmlMode === 'full'}<FileDocument target={{kind:'ticket-file',ticketId:'t_owner',path:htmlPath}} />
-    {:else}<FilePreview target={{kind:'ticket-file',ticketId:'t_owner',path:htmlPath}} />{/if}
+    {:else if htmlMode === 'link'}<p>See <FilePreview target={{kind:'ticket-file',ticketId:'t_owner',path:htmlPath}} /> now.</p>
+    {:else}<FilePreview target={{kind:'ticket-file',ticketId:'t_owner',path:htmlPath}} mode="full" />{/if}
   </section>{/if}
   {#if previewPath}<section data-card-fixture class="chat-thread"><div class="chat-u">
-    {#if previewConversation}<ConversationFileCard href="/api/conversation/conversations/proof/files/proof.txt" fileName="proof.txt" mediaType="text/plain" byteCount={1024} />
+    {#if previewConversation}<ConversationFileCard href="/api/conversation/conversations/proof/files/proof.txt" fileName="proof.txt" byteCount={1024} />
     {:else}<FilePreview target={{kind:'ticket-file',ticketId:'t_card',path:previewPath}} mode={previewFull ? 'full' : 'embedded'} download={!previewFull && (previewPath.endsWith('.png') || previewPath === 'missing.md') ? {href:'/files/tickets/t_card/'+previewPath,fileName:previewPath} : undefined} />{/if}
   </div></section>{/if}
   <header>Persistent heading</header>
