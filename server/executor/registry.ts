@@ -27,6 +27,12 @@ import type { MacRemoteChild } from './vps_remote_child.ts';
 import { VpsExecutor } from './vps_transport.ts';
 import type { VpsExecutorOptions } from './vps_transport.ts';
 
+declare module 'fastify' {
+  interface FastifyInstance {
+    executor_registry?: VpsExecutorRegistry | null;
+  }
+}
+
 export class VpsExecutorRegistry {
   readonly db_path: string;
   private readonly database: Database;
