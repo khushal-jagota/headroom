@@ -71,6 +71,60 @@ const window: UsageSummaryInput = {
 const now = Date.parse('2026-08-01T12:00:00Z');
 const rates = { 'test-model': { input_cost_per_token: 0.01, output_cost_per_token: 0.02 } };
 
+// Gap: per-file parser proofs cannot prove global suppression before date filtering.
+test('a covered parent outside the window suppresses its copied compaction in either source order', async () => {
+  const stamp = '2026-08-01T10:00:00Z';
+  const usage = {
+    input_tokens: 100,
+    cached_input_tokens: 30,
+    output_tokens: 20,
+    total_tokens: 120,
+  };
+  const line = (type: string, payload: object) =>
+    JSON.stringify({ type, timestamp: stamp, payload }) + '\n';
+  const context =
+    line('session_meta', { id: 'session' }) + line('turn_context', { model: 'test-model' });
+  const response = line('token_usage_record', {
+    response_id: 'response',
+    usage,
+    thread_token_usage: usage,
+  });
+  const marker = line('compacted', { compaction_response_id: 'response' });
+  const count = line('event_msg', {
+    type: 'token_count',
+    info: { last_token_usage: usage, total_token_usage: usage },
+  });
+  const nextDay = { ...window, sinceDay: '2026-08-02' as UsageSummaryInput['sinceDay'] };
+  for (const coveredFirst of [false, true]) {
+    const paths = fixture();
+    const parent = join(paths.root, 'parent');
+    const copy = join(paths.root, 'copy');
+    mkdirSync(parent);
+    mkdirSync(copy);
+    writeFileSync(join(parent, 'session.jsonl'), context + response + count + marker);
+    writeFileSync(
+      join(copy, 'session.jsonl'),
+      (context + response + marker).replaceAll(stamp, '2026-08-02T10:00:00Z'),
+    );
+    // Each source has one file, so the source order fixes both traversal orders.
+    const directories = coveredFirst ? [parent, copy] : [copy, parent];
+    const options = { now: () => now, ratesFetcher: () => rates };
+    const isolated = new UsageService(join(paths.root, 'copy-state'), [['codex', copy]], options);
+    const combined = new UsageService(
+      paths.state,
+      directories.map((dir) => ['codex', dir] as const),
+      options,
+    );
+    try {
+      const control = await isolated.readSummary(nextDay);
+      expect(control.buckets[0]?.totals.outputTokens).toBe(20);
+      expect((await combined.readSummary(nextDay)).buckets).toEqual([]);
+    } finally {
+      await Promise.all([isolated.finish_operations(), combined.finish_operations()]);
+    }
+  }
+});
+
 // Gap: ordinary IANA names cannot prove the accepted installed-but-ICU-unknown fallback.
 test('an installed custom zone uses the accepted UTC fallback without admitting missing keys', async () => {
   const paths = fixture();

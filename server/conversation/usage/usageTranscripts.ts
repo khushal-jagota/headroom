@@ -26,6 +26,9 @@ export interface UsageRecord {
   readonly sessionId: string;
   readonly totals: UsageTokenTotals;
   readonly reportedCostUsd: number | null;
+  readonly cacheCreation1hTokens?: number;
+  readonly serviceTier?: string | null;
+  readonly compactionCovered?: boolean;
   /**
    * Key for cross-file de-duplication, or `null` when the record is inherently
    * unique and needs no dedup.
@@ -90,7 +93,9 @@ export function totalTokens(totals: UsageTokenTotals): number {
 export function mightCarryUsage(line: string, provider: UsageProviderKind): boolean {
   if (provider === 'claude') return line.includes('"usage"');
   if (provider === 'grok') return line.includes('"turn_completed"');
-  return line.includes('"token_count"');
+  return ['token_count', 'token_usage_record', 'compacted', 'thread_settings_applied'].some(
+    (marker) => line.includes(`"${marker}"`),
+  );
 }
 
 /**
@@ -150,8 +155,16 @@ export function parseClaudeLine(line: string): UsageRecord | null {
     messageId === null && requestId === null ? null : `${messageId ?? ''}:${requestId ?? ''}`;
 
   const cost = record['costUSD'];
+  const creation = usageRecord['cache_creation'];
+  const cacheCreation1hTokens = is_record(creation)
+    ? Math.min(
+        int(usageRecord['cache_creation_input_tokens']),
+        int(creation['ephemeral_1h_input_tokens']),
+      )
+    : 0;
 
   return {
+    ...(cacheCreation1hTokens ? { cacheCreation1hTokens } : {}),
     provider: 'claude',
     timestampMs,
     model,
@@ -180,6 +193,19 @@ export function parseClaudeLine(line: string): UsageRecord | null {
  * from the most recent `turn_context`. Sessions that switch models mid-run
  * attribute correctly from the switch onward.
  */
+type UsageCounters = Record<string, number>;
+interface CompactionSnapshot {
+  current: UsageCounters;
+  previous: UsageCounters | null;
+  last: UsageCounters;
+}
+interface CompactionCandidate {
+  usage: UsageCounters;
+  cumulative: UsageCounters;
+  covered: boolean;
+  record: UsageRecord;
+}
+
 export interface CodexScanState {
   model: string;
   sessionId: string;
@@ -188,6 +214,11 @@ export interface CodexScanState {
   /** While true, leading usage events are re-stamped copies of parent history. */
   suppressingForkCopies: boolean;
   forkCopyAnchorMs: number;
+  serviceTier: string | null;
+  compactions: Record<string, CompactionCandidate>;
+  compactionMarkers: Record<string, CompactionSnapshot[]>;
+  completedCompactions: string[];
+  cumulativeUsage: UsageCounters | null;
 }
 
 export function initialCodexScanState(): CodexScanState {
@@ -198,6 +229,11 @@ export function initialCodexScanState(): CodexScanState {
     sawSessionMeta: false,
     suppressingForkCopies: false,
     forkCopyAnchorMs: 0,
+    serviceTier: null,
+    compactions: Object.create(null),
+    compactionMarkers: Object.create(null),
+    completedCompactions: [],
+    cumulativeUsage: null,
   };
 }
 
@@ -219,6 +255,74 @@ function isForkedSessionMeta(payload: Record<string, unknown>): boolean {
   const spawn = (subagent as Record<string, unknown>)['thread_spawn'];
   if (!is_record(spawn)) return false;
   return typeof (spawn as Record<string, unknown>)['parent_thread_id'] === 'string';
+}
+
+const COUNTERS = [
+  'input_tokens',
+  'cached_input_tokens',
+  'cache_write_input_tokens',
+  'output_tokens',
+  'reasoning_output_tokens',
+  'total_tokens',
+];
+function usageCounters(value: unknown): UsageCounters {
+  if (!is_record(value)) return {};
+  return Object.fromEntries(
+    COUNTERS.filter((key) => key in value).map((key) => [key, int(value[key])]),
+  );
+}
+function equalCounters(a: UsageCounters, b: UsageCounters | null): boolean {
+  return (
+    b !== null &&
+    Object.keys(a).length === Object.keys(b).length &&
+    Object.entries(a).every(([key, value]) => b[key] === value)
+  );
+}
+function snapshotCovers(candidate: CompactionCandidate, snapshot: CompactionSnapshot): boolean {
+  const { current, previous, last } = snapshot;
+  if (!Object.keys(current).length || equalCounters(current, previous)) return false;
+  if (Object.keys(candidate.cumulative).length) {
+    return Object.entries(candidate.cumulative).every(([key, value]) => current[key] === value);
+  }
+  if (
+    previous !== null &&
+    Object.keys(candidate.usage).length &&
+    equalCounters(last, candidate.usage)
+  ) {
+    return ['input_tokens', 'output_tokens'].every(
+      (key) =>
+        key in current &&
+        key in previous &&
+        key in candidate.usage &&
+        current[key]! - previous[key]! === candidate.usage[key],
+    );
+  }
+  return false;
+}
+function compactionRecord(state: CodexScanState, responseId: string): UsageRecord | null {
+  const candidate = Object.hasOwn(state.compactions, responseId)
+    ? state.compactions[responseId]
+    : undefined;
+  if (!candidate || !Object.hasOwn(state.compactionMarkers, responseId)) return null;
+  delete state.compactions[responseId];
+  delete state.compactionMarkers[responseId];
+  state.completedCompactions.push(responseId);
+  return candidate.covered
+    ? { ...candidate.record, totals: { ...EMPTY_TOTALS }, compactionCovered: true }
+    : candidate.record;
+}
+function observeCompactionOverlap(state: CodexScanState, info: Record<string, unknown>): void {
+  const current = usageCounters(info['total_token_usage']);
+  const snapshot = {
+    current,
+    previous: state.cumulativeUsage,
+    last: usageCounters(info['last_token_usage']),
+  };
+  for (const snapshots of Object.values(state.compactionMarkers)) snapshots.push(snapshot);
+  for (const candidate of Object.values(state.compactions)) {
+    candidate.covered ||= snapshotCovers(candidate, snapshot);
+  }
+  if (Object.keys(current).length) state.cumulativeUsage = current;
 }
 
 /**
@@ -265,6 +369,77 @@ export function parseCodexLine(line: string, state: CodexScanState): UsageRecord
     return null;
   }
 
+  if (payloadType === 'thread_settings_applied') {
+    const settings = payloadRecord['thread_settings'];
+    if (is_record(settings) && 'service_tier' in settings) {
+      state.serviceTier =
+        typeof settings['service_tier'] === 'string' ? settings['service_tier'] : null;
+    }
+    return null;
+  }
+  if (record['type'] === 'compacted') {
+    const responseId = payloadRecord['compaction_response_id'];
+    if (
+      typeof responseId !== 'string' ||
+      !responseId ||
+      state.completedCompactions.includes(responseId)
+    )
+      return null;
+    if (!Object.hasOwn(state.compactionMarkers, responseId))
+      state.compactionMarkers = { ...state.compactionMarkers, [responseId]: [] };
+    return compactionRecord(state, responseId);
+  }
+  if (record['type'] === 'token_usage_record') {
+    const responseId = payloadRecord['response_id'];
+    const usage = usageCounters(payloadRecord['usage']);
+    const timestampMs = parseTimestampMs(record['timestamp']);
+    if (
+      typeof responseId !== 'string' ||
+      !responseId ||
+      !Object.keys(usage).length ||
+      timestampMs === null ||
+      !state.model ||
+      state.completedCompactions.includes(responseId) ||
+      Object.hasOwn(state.compactions, responseId)
+    )
+      return null;
+    const inclusive = usage['input_tokens'] ?? 0;
+    const cached = usage['cached_input_tokens'] ?? 0;
+    const creation = usage['cache_write_input_tokens'] ?? 0;
+    const output = usage['output_tokens'] ?? 0;
+    const candidate: CompactionCandidate = {
+      usage,
+      cumulative: usageCounters(payloadRecord['thread_token_usage']),
+      covered: false,
+      record: {
+        provider: 'codex',
+        timestampMs,
+        model: typeof payloadRecord['model'] === 'string' ? payloadRecord['model'] : state.model,
+        sessionId:
+          typeof payloadRecord['session_id'] === 'string'
+            ? payloadRecord['session_id']
+            : state.sessionId,
+        totals: {
+          uncachedInputTokens: Math.max(0, inclusive - cached - creation),
+          cachedInputTokens: cached,
+          cacheCreationTokens: creation,
+          outputTokens: output,
+          reasoningTokens: Math.min(output, usage['reasoning_output_tokens'] ?? 0),
+        },
+        reportedCostUsd: null,
+        dedupeKey: 'codex:compaction:' + responseId,
+        serviceTier:
+          typeof payloadRecord['service_tier'] === 'string'
+            ? payloadRecord['service_tier']
+            : state.serviceTier,
+      },
+    };
+    state.compactions = { ...state.compactions, [responseId]: candidate };
+    candidate.covered =
+      Object.hasOwn(state.compactionMarkers, responseId) &&
+      state.compactionMarkers[responseId]!.some((snapshot) => snapshotCovers(candidate, snapshot));
+    return compactionRecord(state, responseId);
+  }
   if (payloadType !== 'token_count') return null;
 
   const info = payloadRecord['info'];
@@ -314,6 +489,7 @@ export function parseCodexLine(line: string, state: CodexScanState): UsageRecord
   };
 
   if (totalTokens(totals) === 0) return null;
+  observeCompactionOverlap(state, info);
 
   return {
     provider: 'codex',
