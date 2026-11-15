@@ -40,7 +40,9 @@ Startup recovery scopes workspace admission to each pass and retains pending rec
 A denied starts lease ends that boot pass without deleting its durable recovery rows. Recovery uses the shared P3 admission owner for supervisor priority, pacing, and outcome settlement.
 P3 also owns the recorded custody proofs that block idle updates, skip already retired children, and confirm local retirement.
 Until those custody proofs land, TypeScript retains native child stop and final-event drainage. The custody difference remains expected-open.
-First-home installation, enrollment, Linux executor archives and updates, and Darwin home support remain later P5 slices.
+Executor update reads select a cached service for each machine through the registered platform.
+Each machine keeps separate request IDs and reports. Darwin machines share archive bytes, and Linux storage stays separate.
+First-home installation, enrollment, Linux executor archive production and offers, and Darwin home support remain later P5 slices.
 
 The real-core proofs now cover idle-update admission after a native turn completes, HTTP write refusal without database mutation,
 continued reads, and admission reopening after installer launch failure. They use ordinary routes and scripted external operations.

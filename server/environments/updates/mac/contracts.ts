@@ -28,6 +28,10 @@ export interface MacUpdateHealthRead {
 }
 export interface MacUpdateCompositionContext {
   readonly root: string;
+  readonly machine_id?: string;
+  readonly archive_root?: string;
+  readonly platform?: string;
+  readonly platform_for?: (machine_id: string) => string;
   readonly attempts: FileUpdateAttemptStore;
   readonly provider: UpdateProvider | null;
   readonly current_app_sha: string | null;
@@ -37,6 +41,7 @@ export interface MacUpdateCompositionContext {
   emit_change(): void;
 }
 export interface MacUpdateServiceContract {
+  for_machine(machine_id: string): MacUpdateServiceContract;
   prepare(release: PublishedUpdate): Promise<void>;
   check(): MacUpdateCheck;
   status(): MacUpdateStatus | null;
