@@ -4,13 +4,36 @@ import { readFileSync } from 'node:fs';
 import { connect } from 'node:http2';
 import type { ClientHttp2Session } from 'node:http2';
 import { importPKCS8, SignJWT } from 'jose';
-import type { APNsAdapter, APNsConfig, APNsResult, PendingAPNsDelivery } from './contracts.ts';
+import type {
+  APNsAdapter,
+  APNsConfig,
+  APNsResult,
+  NotificationIntent,
+  PendingAPNsDelivery,
+} from './contracts.ts';
 import {
   APNS_DELIVERY_TTL_SECONDS,
+  MESSAGE_REPLY_CATEGORY,
   APNS_JWT_LIFETIME_SECONDS,
   APNS_PAYLOAD_MAX_BYTES,
   APNS_TIMEOUT_SECONDS,
 } from './config.ts';
+/** One payload assembly point for the native text-reply contract. */
+export function notification_payload(intent: NotificationIntent, origin: string): Buffer {
+  return Buffer.from(
+    JSON.stringify({
+      aps: {
+        alert: { title: intent.title, body: intent.body },
+        sound: 'default',
+        'thread-id': intent.tag,
+        ...(intent.reply === null ? {} : { category: MESSAGE_REPLY_CATEGORY }),
+      },
+      server_url: origin,
+      route: intent.route,
+      ...(intent.reply === null ? {} : { reply: intent.reply }),
+    }),
+  );
+}
 export function canonical_server_origin(raw: string | null | undefined): string | null {
   if (!raw) return null;
   // Preserve the spelling of the authority, including an explicit default port.
@@ -60,17 +83,7 @@ export class TokenAPNsAdapter implements APNsAdapter {
     if (!origin || !this.config.bundle_ids.includes(device.bundle_id))
       return { delivered: false, error: 'Native delivery configuration does not match' };
     const intent = delivery.intent;
-    const payload = Buffer.from(
-      JSON.stringify({
-        aps: {
-          alert: { title: intent.title, body: intent.body },
-          sound: 'default',
-          'thread-id': intent.tag,
-        },
-        server_url: origin,
-        route: intent.route,
-      }),
-    );
+    const payload = notification_payload(intent, origin);
     if (payload.length > APNS_PAYLOAD_MAX_BYTES)
       return { delivered: false, error: 'Native notification payload exceeds the size limit' };
     const host =

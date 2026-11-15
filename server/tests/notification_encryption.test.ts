@@ -30,7 +30,7 @@ test('the production Web Push request decrypts with its subscription keys', () =
       p256dh: publicKey.toString('base64url'),
       auth: auth.toString('base64url'),
     },
-    intent,
+    { ...intent, reply: null },
     {
       private_key: vapid.privateKey.export({ format: 'der', type: 'pkcs8' }).toString('base64url'),
       public_key: Buffer.concat([
