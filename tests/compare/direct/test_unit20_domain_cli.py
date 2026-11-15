@@ -431,17 +431,18 @@ def _active_list_proof(
             ({"active": "true", "detail": "full", "id": ticket_id}, 400),
             ({"active": "invalid"}, 422),
         ):
-            pair = [client.get(handle.base + "/api/tickets", params=params)
+            query = {"detail": "summary", **params}
+            pair = [client.get(handle.base + "/api/tickets", params=query)
                     for handle in (reference, candidate)]
             assert all(answer.status_code == status for answer in pair), (
-                params, [(answer.status_code, answer.text) for answer in pair]
+                query, [(answer.status_code, answer.text) for answer in pair]
             )
             bodies = [answer.json() for answer in pair]
             assert bodies[0] == bodies[1]
             if status == 200:
                 assert len(bodies[0]["tickets"]) == bodies[0]["page"]["match_count"] == 2
                 assert any(row["is_backlogged"] for row in bodies[0]["tickets"])
-            envelopes.append({"query": params, "status": status, "body": bodies[0]})
+            envelopes.append({"query": query, "status": status, "body": bodies[0]})
     return {"answers": answers, "envelopes": envelopes, "seconds": time.perf_counter() - started}
 
 
