@@ -75,6 +75,7 @@ def _stage_fixture(root: Path, node: bool) -> tuple[Path, dict[str, Any]]:
     (app / "mac-runtime.json").write_text(
         json.dumps(dict(platform="darwin", architecture="arm64", role="home"))
     )
+
     document = json.loads((app / "manifest.json").read_text())
     document["runtime_contract"] = contract
     document["source_digest"] = digest_app_source(app)
@@ -375,4 +376,133 @@ def test_darwin_publication_and_target_staging(
                 "No new backend or browser host. P5 retained provider case stays unchanged."
             ),
         ),
+    )
+
+
+def test_mac_home_receipt_binds_archive_and_native_evidence(
+    tmp_path: Path, request: pytest.FixtureRequest
+) -> None:
+    """Gap: provider selection cannot prove its receipt producer binds evidence bytes.
+
+    Reuse the inert Darwin archive and existing Node RPC/archive child. This proves
+    static receipt admission, with no Mac execution or extra connected host.
+    """
+    started = time.perf_counter()
+    artifact, receipt = _stage_fixture(tmp_path / "payload", True)
+    archive = artifact.parent / "panels-app.tar.gz"
+    manifest = receipt["manifest"]
+    identity = dict(requested_sha=SHA, archive_sha256=receipt["archive_sha256"], manifest=manifest)
+    admission = dict(**identity, status="passed", seconds=0.1)
+    boot = dict(
+        **identity,
+        health=dict(app_sha=SHA, ready=True),
+        supervisor_exit=dict(code=0, signal=None),
+        seconds=0.2,
+    )
+    build = dict(
+        version=1,
+        manifest=manifest,
+        archive=str(archive),
+        archive_sha256=receipt["archive_sha256"],
+        archive_size=archive.stat().st_size,
+        inventory_sha256=manifest["runtime_contract"]["inventory_sha256"],
+        node_version="22.18.0",
+        build_run=dict(source_sha=SHA, run_id="501", run_attempt="2"),
+    )
+    cases = []
+    for name in (
+        "valid",
+        "wrong-sha",
+        "wrong-attempt",
+        "archive-hash",
+        "proof-hash",
+        "unready",
+        "unclean",
+    ):
+        current, candidate_boot = deepcopy(build), deepcopy(boot)
+        if name == "wrong-sha":
+            current["build_run"]["source_sha"] = "a" * 40
+        elif name == "wrong-attempt":
+            current["build_run"]["run_attempt"] = "1"
+        elif name == "archive-hash":
+            current["archive_sha256"] = "0" * 64
+        elif name == "unready":
+            candidate_boot["health"]["ready"] = False
+        elif name == "unclean":
+            candidate_boot["supervisor_exit"]["code"] = 1
+        members = {
+            "admission.json": json.dumps(admission).encode(),
+            "boot-proof.json": json.dumps(candidate_boot).encode(),
+        }
+        for key, filename in (("admission", "admission.json"), ("boot", "boot-proof.json")):
+            current[key] = dict(
+                filename=filename, sha256=hashlib.sha256(members[filename]).hexdigest()
+            )
+        if name == "proof-hash":
+            current["boot"]["sha256"] = "0" * 64
+        members["mac-home-build.json"] = json.dumps(current).encode()
+        evidence = tmp_path / (name + ".zip")
+        with zipfile.ZipFile(evidence, "w", zipfile.ZIP_DEFLATED) as packed:
+            for filename, content in members.items():
+                packed.writestr(filename, content)
+        cases.append(
+            dict(
+                name=name,
+                options=dict(
+                    mac_home_artifact_zip=str(artifact),
+                    mac_home_build_artifact_zip=str(evidence),
+                    mac_home_artifact_id="504",
+                    mac_home_build_artifact_id="505",
+                    mac_home_build_result="success",
+                ),
+            )
+        )
+    cases.extend(
+        (
+            dict(name="omitted", options={}),
+            dict(name="partial", options=dict(mac_home_artifact_id="504")),
+        )
+    )
+    actual = _node(
+        tmp_path,
+        dict(
+            root=str(tmp_path),
+            source_run=dict(
+                repository="owner/repository",
+                source_sha=SHA,
+                event="push",
+                ref="refs/heads/main",
+                workflow_path=".github/workflows/publish-typescript-release.yml",
+                workflow_ref="owner/repository/.github/workflows/publish-typescript-release.yml@refs/heads/main",
+                run_id="501",
+                run_attempt="2",
+            ),
+            cases=cases,
+        ),
+        "probe_home_receipt",
+    )
+    assert actual["spawned"] == actual["closed"] == 1
+    assert actual["answers"][0] == dict(
+        name="valid",
+        result=dict(
+            artifact_id=504,
+            archive_sha256=receipt["archive_sha256"],
+            manifest=manifest,
+        ),
+        error=None,
+    )
+    assert [row["error"] for row in actual["answers"][1:]] == [
+        "Mac home build differs from the current publication attempt",
+        "Mac home build differs from the current publication attempt",
+        "Mac home archive bytes changed",
+        "Mac home proof bytes changed",
+        "Mac home lacks successful native admission and clean boot proof",
+        "Mac home lacks successful native admission and clean boot proof",
+        None,
+        "Mac home receipt inputs must be supplied together",
+    ]
+    _report(
+        request,
+        "darwin-home-receipt.json",
+        dict(complete=True, seconds=time.perf_counter() - started, cases=actual),
     )

@@ -9,6 +9,7 @@ import {
   source_run,
 } from './publication_identity.ts';
 import { write_publication_receipt } from './publication_receipt.ts';
+import { MAC_HOME_RECEIPT_FIELDS, mac_home_receipt_options } from './mac_home_receipt.ts';
 
 try {
   process.exitCode = await with_publication_entry(async (execution, register_output) => {
@@ -27,7 +28,7 @@ try {
       !is_object(request) ||
       required.some((key) => !(key in request)) ||
       Object.keys(request).some(
-        (key) => !required.includes(key) && !linux_executor_fields.includes(key),
+        (key) => !required.includes(key) && !linux_executor_fields.includes(key) && !MAC_HOME_RECEIPT_FIELDS.some((field) => field === key),
       ) ||
       (linux_executor_fields.some((key) => key in request) &&
         !linux_executor_fields.every((key) => key in request))
@@ -55,6 +56,7 @@ try {
         ),
         mac_artifact_id: publication_id(request.mac_artifact_id, 'Mac artifact ID'),
         mac_build_result: publication_text(request.mac_build_result, 'Mac build result'),
+        ...mac_home_receipt_options(request),
         ...('linux_executor_artifact_zip' in request
           ? {
               linux_executor_artifact_zip: publication_text(

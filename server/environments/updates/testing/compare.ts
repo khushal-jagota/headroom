@@ -12,7 +12,7 @@ export {
   probe_node_frontier,
 } from './service.ts';
 export { probe_update_provider } from './provider.ts';
-export { probe_home_target_staging } from './home_targets.ts';
+export { probe_home_target_staging, probe_home_receipt } from './home_targets.ts';
 import type {
   ContendedStoreRequest,
   StoreProbeAnswer,
