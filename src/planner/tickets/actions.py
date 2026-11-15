@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import sqlite3
+from collections.abc import Iterator
+from contextlib import contextmanager
 
 from planner.core import ticket_blocks
 from planner.core.authctx import RequestContext
 from planner.core.clock import Clock
-from planner.core.contracts import Principal
+from planner.core.contracts import ErrorCode, PlannerError, Principal
 from planner.tickets import data as tickets_data
 from planner.tickets.contracts import Ticket
 from planner.tickets.logic import admission
@@ -118,6 +120,24 @@ def file_current_proposal(
     )
 
 
+@contextmanager
+def revision_write(conn: sqlite3.Connection) -> Iterator[None]:
+    """A send-back never waits behind another SQLite writer."""
+    timeout = int(conn.execute("PRAGMA busy_timeout").fetchone()[0])
+    conn.execute("PRAGMA busy_timeout=0")
+    try:
+        yield
+    except sqlite3.OperationalError as exc:
+        code = getattr(exc, "sqlite_errorcode", 0)
+        if code & 0xFF in (sqlite3.SQLITE_BUSY, sqlite3.SQLITE_LOCKED):
+            raise PlannerError(
+                ErrorCode.retry_later, "database busy; retry this revision", {"retryable": True}
+            ) from exc
+        raise
+    finally:
+        conn.execute(f"PRAGMA busy_timeout={timeout}")
+
+
 def reject_ticket_proposal(
     conn: sqlite3.Connection,
     ticket_id: str,
@@ -133,12 +153,13 @@ def reject_ticket_proposal(
         admission.validate_revision_guidance(message)
     principal = ctx.principal
     now = clock.now_unix()
-    return tickets_data.reject_proposal(
-        conn,
-        ticket_id,
-        message=message,
-        principal=principal,
-        now=now,
-        expected_proposal_revision=expected_proposal_revision,
-        decision_id=decision_id,
-    )
+    with revision_write(conn):
+        return tickets_data.reject_proposal(
+            conn,
+            ticket_id,
+            message=message,
+            principal=principal,
+            now=now,
+            expected_proposal_revision=expected_proposal_revision,
+            decision_id=decision_id,
+        )

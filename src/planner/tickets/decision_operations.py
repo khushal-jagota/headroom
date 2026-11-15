@@ -156,8 +156,9 @@ def _apply(
             message=command.get("message"), decision_id=operation_id,
         )
     else:
+        data.require_rejection_revision(current_ticket, command["expected_proposal_revision"])
         proposal = current_ticket.pending_proposal
-        if proposal is None or proposal.field != field:
+        if proposal is not None and proposal.field != field:
             raise _validation("proposal field is not the current gate")
         ticket = data.reject_proposal(
             conn, ticket_id, principal=actor, now=now, message=command.get("message"),

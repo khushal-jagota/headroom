@@ -503,3 +503,65 @@ def test_two_connections_race_one_operation_and_one_decision_message(
     settled = data.read_ticket(tmp_db, original.id)
     assert settled.pending_proposal is None
     assert settled.pending_proposal_revision == original.pending_proposal_revision
+
+
+def test_send_back_old_revision_refused_after_resolution_and_replacement(
+    tmp_db: sqlite3.Connection,
+) -> None:
+    """A new operation with an old revision cannot affect the replacement proposal."""
+    original = _park(tmp_db)
+    _conversation_on_a_ticket(tmp_db, original.id)
+    original = data.read_ticket(tmp_db, original.id)
+    command = _command(original, "send_back")
+    applied = decision_operations.apply(
+        tmp_db, original.id, "first-send-back", command, actor=OWNER_PRINCIPAL, now=3,
+    )
+    assert applied["receipt"] is not None
+    assert applied["receipt"]["outcome"] == "applied"
+    resolved = decision_operations.apply(
+        tmp_db, original.id, "retry-with-new-id", command, actor=OWNER_PRINCIPAL, now=4,
+    )
+    assert resolved["receipt"] is not None
+    assert resolved["receipt"]["error"] is not None
+    assert resolved["receipt"]["error"]["detail"]["result"] == "already_resolved"
+    replacement = data.file_current_proposal(
+        tmp_db, original.id, body="replacement",
+        principal=Principal(PrincipalKind.ticket, original.id), now=5,
+    )
+    stale = decision_operations.apply(
+        tmp_db, original.id, "stale-send-back", command, actor=OWNER_PRINCIPAL, now=6,
+    )
+    assert stale["receipt"] is not None
+    assert stale["receipt"]["error"] is not None
+    assert stale["receipt"]["error"]["detail"] == {
+        "ticket_id": original.id,
+        "result": "stale",
+        "current_revision": replacement.pending_proposal_revision,
+    }
+    assert data.read_ticket(tmp_db, original.id).pending_proposal == replacement.pending_proposal
+    assert tmp_db.execute(
+        "SELECT COUNT(*) FROM ticket_decision_messages WHERE ticket_id=?", (original.id,)
+    ).fetchone()[0] == 1
+
+
+def test_send_back_busy_writer_fails_fast_and_leaves_no_receipt(tmp_db: sqlite3.Connection) -> None:
+    """A locked writer cannot stall send-back or leave a durable refusal receipt."""
+    original = _park(tmp_db)
+    _conversation_on_a_ticket(tmp_db, original.id)
+    original = data.read_ticket(tmp_db, original.id)
+    command = _command(original, "send_back")
+    db_path = str(tmp_db.execute("PRAGMA database_list").fetchone()[2])
+    path = f"/api/tickets/{original.id}/decision-operations/busy-operation"
+    with TestClient(_app(tmp_db)) as client, closing(connect(db_path)) as blocker:
+        blocker.execute("BEGIN IMMEDIATE")
+        refused = client.post(path, json=command)
+        assert refused.status_code == 503
+        assert refused.json()["error"]["code"] == "retry_later"
+        assert refused.json()["error"]["detail"] == {"retryable": True}
+        blocker.rollback()
+        assert client.get(path).json()["receipt"] is None
+        accepted = client.post(path, json=command)
+        assert accepted.status_code == 200
+        assert accepted.json()["receipt"]["outcome"] == "applied"
+    assert _count(tmp_db) == 1
+    assert data.read_ticket(tmp_db, original.id).pending_proposal is None

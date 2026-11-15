@@ -66,23 +66,27 @@ def send(
     as_json: bool,
     json_body: Any | None = None,
     params: dict[str, Any] | None = None,
+    retry_transport: bool = False,
 ) -> Any:
     """Execute one request and apply the failure half of the exit contract. Transport
     failure -> stderr + exit 2. Non-2xx (or a 2xx body that still carries an "error"
     key) -> stderr + exit 1. On 2xx: return the parsed JSON body to the caller."""
     if os.environ.get("PLAN_EXECUTOR_ROOT"):
         return _executor_send(method, path, as_json=as_json, json_body=json_body, params=params)
-    try:
-        resp = httpx.request(
-            method,
-            _url(path),
-            json=json_body,
-            params=params,
-            headers=_headers(),
-            timeout=_TIMEOUT,
-        )
-    except httpx.TransportError as exc:
-        _fail_connection(exc, as_json)
+    for attempt in range(2 if retry_transport else 1):
+        try:
+            resp = httpx.request(
+                method,
+                _url(path),
+                json=json_body,
+                params=params,
+                headers=_headers(),
+                timeout=_TIMEOUT,
+            )
+            break
+        except httpx.TransportError as exc:
+            if not retry_transport or attempt:
+                _fail_connection(exc, as_json)
     try:
         data: Any = resp.json()
     except ValueError:

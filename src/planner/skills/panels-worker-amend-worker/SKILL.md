@@ -87,3 +87,6 @@ The writes are not yours to make. Hand them up and verify the result.
 A seeding pass on a fresh deploy does not apply your amendment: seeding declines a table that already holds rows. Only the explicit write does it.
 
 A good Consequences is short and verified: what changed, what the live store reports now, who ran the write, and what waits on a repository change.
+
+To send a proposal back, read its revision with `panels ticket show ID proposal`, then run
+`panels ticket proposal ID revise --revision N < GUIDANCE_FILE`. Keep that revision on retries.

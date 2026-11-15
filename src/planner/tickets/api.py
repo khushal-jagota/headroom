@@ -505,6 +505,11 @@ def _parse_required_principal(raw: object, field: str) -> Principal:
 def apply_decision_operation(
     ticket_id: str, operation_id: str, raw: dict[str, Any], conn: DbConn, ctx: Ctx, clk: Clk,
 ) -> JsonDict:
+    if raw.get("decision") == "send_back":
+        with tickets_actions.revision_write(conn):
+            return dict(decision_operations.apply(
+                conn, ticket_id, operation_id, raw, actor=ctx.principal, now=clk.now_unix(),
+            ))
     return dict(decision_operations.apply(
         conn, ticket_id, operation_id, raw, actor=ctx.principal, now=clk.now_unix(),
     ))
@@ -1135,10 +1140,13 @@ def reject_ticket_proposal(
     clk: Clk,
 ) -> JsonDict:
     """Send a parked proposal back, with guidance for the executing agent or without."""
+    revision = _expected_proposal_revision(raw)
+    if revision is None:
+        raise PlannerError(ErrorCode.validation, "expected_proposal_revision is required")
     body = RejectionBody(
         message=body_opt_str(raw, "message"),
         decision_id=body_opt_str(raw, "decision_id"),
-        expected_proposal_revision=_expected_proposal_revision(raw),
+        expected_proposal_revision=revision,
     )
     now = clk.now_unix()
     ticket = tickets_actions.reject_ticket_proposal(

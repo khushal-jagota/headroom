@@ -203,3 +203,6 @@ Managers and their stable Item aliases remain.
 One-time cancellation applies only to the reviewed obsolete planning cohort. Do not
 cancel ordinary unfinished work or represent obsolete work as Done.
 
+
+To send a proposal back, read its revision with `panels ticket show ID proposal`, then run
+`panels ticket proposal ID revise --revision N < GUIDANCE_FILE`. Keep that revision on retries.

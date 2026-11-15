@@ -34,7 +34,7 @@ Ticket and Manager lists include each recap and its age. Missing recaps and unkn
 
 A Manager workspace read identifies the document that the browser displays and gives its edit command. It keeps the purpose, recap, held goals, artifacts, and Tickets distinct. `page show` and `page edit` select a Manager or Chief. `page schema` describes their shared document format. A sole held goal remains a goal edit through `goal`. A page edit replaces the complete document, so an agent preserves unrelated content. Optional captured revisions protect Goal and holder-page edits from replacing newer documents.
 
-Proposal accept and revise commands pin the revision from their own read. Optional `--expected-proposal-revision N` instead protects the proposal that the caller inspected earlier. Existing invocations remain valid. Older clients can omit revisions, but omission cannot protect an earlier read.
+Proposal acceptance pins a command-time read unless `--expected-proposal-revision N` names an earlier read. To send a proposal back, read its revision with `panels ticket show ID proposal`, then run `panels ticket proposal ID revise --revision N < GUIDANCE_FILE`. The CLI retries a lost HTTP response with that same revision, so it cannot apply the guidance to a replacement proposal. Extra-machine executors do not support sending proposals back; they refuse the command before sending it.
 
 ## What the CLI feeds
 

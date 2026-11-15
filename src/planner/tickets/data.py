@@ -1671,6 +1671,21 @@ def require_reject(
     return ticket
 
 
+def require_rejection_revision(ticket: Ticket, expected_revision: int) -> None:
+    """Refuse a revision that no longer names the pending proposal."""
+    detail = {"ticket_id": ticket.id, "current_revision": ticket.pending_proposal_revision}
+    if ticket.pending_proposal is None:
+        raise PlannerError(
+            ErrorCode.validation, "proposal already resolved; no pending proposal",
+            {**detail, "result": "already_resolved"},
+        )
+    if ticket.pending_proposal_revision != expected_revision:
+        raise PlannerError(
+            ErrorCode.validation, "the visible proposal changed; read it again before sending back",
+            {**detail, "result": "stale"},
+        )
+
+
 def reject_proposal(
     conn: sqlite3.Connection,
     ticket_id: str,
@@ -1699,14 +1714,8 @@ def reject_proposal(
         )
         if decision_messages.is_replay(conn, decision_id, request):
             return ticket
-        if (
-            expected_proposal_revision is not None
-            and ticket.pending_proposal_revision != expected_proposal_revision
-        ):
-            raise PlannerError(
-                ErrorCode.validation,
-                "the visible proposal changed; read it again before sending back",
-            )
+        if expected_proposal_revision is not None:
+            require_rejection_revision(ticket, expected_proposal_revision)
         current_proposal = ticket.pending_proposal
         if expected_proposal is not None and current_proposal != expected_proposal:
             raise PlannerError(
