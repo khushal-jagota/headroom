@@ -62,10 +62,13 @@ import XCTest
         return (decision, api, item)
     }
 
-    func testEditedApprovalCarriesExactRevisionAndNextGate() async throws {
-        let (decision, api, _) = try await setupDecision()
-        let revision = try XCTUnwrap(decision.proposal?.revision)
-        decision.draft = "Edited proposal\n\nWith context."
+    func testReadOnlyApprovalIgnoresLegacyEditsAndCarriesExactRevisionAndNextGate() async throws {
+        let (original, api, item) = try await setupDecision()
+        let revision = try XCTUnwrap(original.proposal?.revision)
+        let identity = DecisionGuidance.draftIdentity(ticketID: item.ticketId, proposal: try XCTUnwrap(original.proposal))
+        LocalStore.shared.saveDraft("An old proposal edit", server: "https://review.invalid", id: identity + ":edit")
+        let decision = ReviewDecision()
+        await decision.load(item: item, api: api)
         XCTAssertEqual(decision.approvalStages.first?.id, "needs_implementation")
         let accepted = await decision.approve(api: api, ceiling: "needs_implementation", holder: Principal(kind: "owner", id: "owner"))
         XCTAssertTrue(accepted)
@@ -74,7 +77,13 @@ import XCTest
         XCTAssertTrue(request.url!.path.contains("/decision-operations/"))
         let body = try XCTUnwrap(JSONSerialization.jsonObject(with: request.httpBody!) as? [String: Any])
         XCTAssertEqual(body["expected_proposal_revision"] as? Int, revision)
-        try assertProtectedDecisionBody(body, named: "approve", decision: "approve", field: "wireframe")
+        let command = try APIClient.decoder().decode(DecisionCommand.self, from: XCTUnwrap(request.httpBody))
+        XCTAssertEqual(command.decision, "approve")
+        XCTAssertEqual(command.field, "wireframe")
+        XCTAssertNil(command.editedBody, "Read-only proposals never submit a legacy edit")
+        XCTAssertEqual(command.nextCeiling, "needs_implementation")
+        XCTAssertEqual(command.nextHolder?.kind, "owner")
+        XCTAssertEqual(command.nextHolder?.id, "owner")
         let saved = try XCTUnwrap(Outbox.shared.entries("https://review.invalid").last)
         XCTAssertEqual(saved.ticketTitle, decision.ticket?.title)
         XCTAssertEqual(saved.proposalFieldLabel, "Proposal")
@@ -90,12 +99,7 @@ import XCTest
         XCTAssertFalse(repeated)
         XCTAssertEqual(ReviewStub.state.protectedWrites.count, 1)
         XCTAssertTrue(ReviewStub.state.writes.isEmpty)
-        // The Ticket page has a separate serializer for the same decision contract.
-        try await api.acceptTicketProposal(try XCTUnwrap(decision.ticket), proposal: try XCTUnwrap(decision.proposal),
-                                           ceiling: "needs_implementation", holder: Principal(kind: "owner", id: "owner"), editedBody: decision.draft)
-        let ticketRequest = try XCTUnwrap(ReviewStub.state.writes.last)
-        let ticketBody = try XCTUnwrap(JSONSerialization.jsonObject(with: ticketRequest.httpBody!) as? [String: Any])
-        try assertSharedDecisionBody(ticketBody, named: "ticket_approve")
+
     }
 
     func testApprovalSendsOnlyTheDisplayedGuidanceSnapshotAndPreservesNewerDraft() async throws {
@@ -153,7 +157,7 @@ import XCTest
 
     func testChangedProposalKeepsDraftAndCannotBeSentBackOrApproved() async throws {
         let (decision, api, item) = try await setupDecision()
-        decision.draft = "Keep my unsaved edit"
+        decision.revisionDraft = "Keep my unsaved note"
         let exactOld = ReviewItem(reviewItemType: "proposal", ticketId: item.ticketId, field: item.field,
             title: item.title, waitingSince: item.waitingSince, proposalRevision: try XCTUnwrap(decision.proposal?.revision))
         ReviewStub.state.bumpRevision()
@@ -165,14 +169,14 @@ import XCTest
         XCTAssertTrue(strictOld.changed, "A same-second replacement cannot bind the old queue item")
         XCTAssertNil(strictOld.ticket, "Neither cached nor live replacement may populate the old item")
         XCTAssertTrue(decision.changed)
-        XCTAssertEqual(decision.draft, "Keep my unsaved edit")
+        XCTAssertEqual(decision.revisionDraft, "Keep my unsaved note")
         let returned = await decision.sendBack(api: api, message: "Revise it")
         let approved = await decision.approve(api: api, ceiling: "needs_implementation", holder: Principal(kind: "owner", id: "owner"))
         XCTAssertFalse(returned); XCTAssertFalse(approved)
         XCTAssertTrue(ReviewStub.state.writes.isEmpty)
         await decision.load(item: item, api: api, discardDraft: true)
         XCTAssertTrue(decision.ready)
-        XCTAssertEqual(decision.draft, decision.proposal?.body)
+        XCTAssertEqual(decision.revisionDraft, "")
         ReviewStub.state.bumpRevision()
         let staleGesture = await decision.approve(api: api, ceiling: "needs_implementation", holder: Principal(kind: "owner", id: "owner"))
         XCTAssertTrue(staleGesture) // Saved locally; the protected server compares this exact revision.
@@ -228,16 +232,7 @@ import XCTest
         await replacement.load(item: item, api: api, discardDraft: true)
         XCTAssertNil(replacement.error, "A replacement proposal must not inherit an old decision error")
         XCTAssertEqual(replacement.revisionDraft, "")
-        // Workspace uses its own adapter and must carry the same visible revision.
-        do {
-            try await api.returnTicketProposal(decision.ticket!.id, message: "Workspace guidance", expectedProposalRevision: decision.proposal!.revision)
-            XCTFail("Changed work must require another review")
-        } catch let error as APIError {
-            XCTAssertEqual(error.localizedDescription, "This changed, review again")
-        }
-        let workspaceRequest = try XCTUnwrap(ReviewStub.state.writes.last)
-        let workspaceBody = try XCTUnwrap(JSONSerialization.jsonObject(with: workspaceRequest.httpBody!) as? [String: Any])
-        try assertSharedDecisionBody(workspaceBody, named: "ticket_send_back")
+
     }
 
     func testRestoredSendBackCarriesOriginalRevisionAndHoldsServerRefusal() async throws {
@@ -435,11 +430,10 @@ import XCTest
         XCTAssertFalse(decision.ready)
     }
 
-    func testStaleReviewModelCannotOverwriteNewTranscriptionWhenEditingProposal() async throws {
+    func testStaleReviewModelCannotOverwriteNewTranscriptionOnNoteAppearance() async throws {
         let (decision, _, _) = try await setupDecision()
         let id = try XCTUnwrap(decision.revisionDraftID)
         LocalStore.shared.saveDraft("Recovered recording", server: "https://review.invalid", id: id)
-        decision.draft += " An edit."
         decision.revisionDraft = "" // SwiftUI may set the existing binding value on appearance.
         XCTAssertEqual(LocalStore.shared.draft(server: "https://review.invalid", id: id), "Recovered recording")
         decision.refreshVoiceDraft()

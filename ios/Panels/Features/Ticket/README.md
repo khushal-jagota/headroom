@@ -1,56 +1,46 @@
 # Ticket page
 
-The ticket page reads the full ticket endpoint and worker-type manifest. The
-manifest supplies labels, step ordering, completion counts, approval limits and
-the next stage after accepting a proposal. Only the conversation's live working
-signal animates a spinner when there is no unread message. The project/type line
-and its activity mark sit between Back and actions in the native navigation bar,
-with unread taking precedence. The full title scrolls into that bar.
+The Ticket page reads its full detail and saved workflow. Older records use the
+worker-type manifest. The workflow supplies stage names, completion counts,
+approval limits, and the next stage. The parent name precedes the read-only title.
+The recap shows three lines, with Show more and Show less. Its context menu keeps
+Copy, Edit, and Ask for a fresh recap. The action menu keeps recap, backlog/resume,
+and copy-link actions. Blocker links keep their existing removal action.
 
-The recap shows eight lines with a fade and expands on tap. Long-press it to copy,
-edit or request a fresh recap. Long-press the title to rename it. The action menu
-contains recap, backlog/resume and copy-link actions. Blocker links open their
-tickets and offer removal in a context menu. Backlog/resume carry the record hash.
+Pending proposals use the same recessed card and decision controls as Review.
+The note and actions stay above the conversation line. Approve opens How far,
+then Who reviews. The final stage approves with one tap. The approver control opens
+Who reviews directly and changes only the reviewer. Send it back requires a
+nonempty note and an existing conversation, and does not appear for Brief.
+An empty note focuses the note field. The Ticket has no microphone in this area.
 
-The stage card shows the current work, a proposal with approval and send-back
-actions, or the current field for reading on a Yours step. Yours means the current
-Stage is user-owned; it does not ask the reader to fill in a field. A pending
-conversation ask is the separate Needs your answer state. Approval opens a native
-sheet; accepting sends the displayed proposal revision and defaults to the next
-gate, without advancing twice. A reviewer-only scope change omits the ceiling.
-Editors remain open on errors. If a current guidance draft exists, the approval
-sheet displays its exact text as a read-only note. Confirmation sends only that
-displayed snapshot with its proposal and server identity. A hidden or stale draft
-cannot supply the note. Send-back requires a nonempty note and an existing
-conversation, and is unavailable for Brief. Pristine tickets can edit worker setup
-using the existing backend/model catalogue. There are no backend changes.
+A note belongs to the exact server, Ticket, proposal field, creation time, and
+revision. It survives redraws and relaunch. Approval captures the visible note
+before its sheet opens. A newer draft stays separate from that snapshot. Both
+decisions use the existing protected Outbox operation. Saved and uncertain decisions
+stay locked. Refusals stay visible, and a changed proposal needs a fresh read.
+Proposal text is selectable and read-only. The phone never submits edited proposal
+text. Existing saved operations and their retention rules stay intact.
 
-Steps start collapsed behind a count row matching Artifacts. Tapping the row opens
-or closes the list inline with the same disclosure behavior. Step rows push dedicated reading pages using the shared artifact
-Markdown content renderer. A step with a pending proposal shows that proposal
-and Awaiting approval, even before a canonical field value exists. Managed links use the shared artifact target parser. Complex GFM tables
-remain plain text. Completed fields offer Edit/Done. Managed artifact links preserve their actual ticket or manager owner.
-The artifact count row opens the shared artifact list; it is hidden when empty.
-The conversation slot remains the foundation placeholder, with no transcript or
-composer. File inventory refreshes on arrival and pull-to-refresh.
+Otherwise the stage card shows the stage and its approval limit. The approval-limit
+sheet retains its existing behavior. Done shows only Done. User-owned field values
+remain readable. Worker setup, Artifacts, and the conversation line keep their
+existing actions.
 
-The page uses native pushes and sheets. Recap expansion respects Reduce Motion.
-Navigation, disclosure and menus are silent; writes acknowledge success or failure
-through the shared haptic helper. Simulator captures cannot verify physical haptics.
+Steps start collapsed behind a completed-count row. An approved step opens its
+read-only value inline in a recessed well. Values use the shared Markdown renderer,
+including horizontally scrollable code and tables. The phone has no step editor
+or Ticket rename action. Managed artifact links keep their actual owner and use
+the existing in-app viewer.
 
 ## Focused checks
 
-`PanelsTests/TicketTests.swift` reuses the foundation's full-ticket fixture and one
-URLProtocol stub. Five small tests add no server or browser host:
-
-- Manifest ordering and renamed labels cover completion counts and approval floors
-  that the foundation's decoding tests cannot establish.
-- Lifecycle/scope payloads cover record hashes, recap targets and omitted ceilings.
-- Editor/proposal payloads cover the new write endpoints, displayed proposal revision,
-  unchanged versus edited bodies and explicit null worker defaults.
-- Stale-record and refused/uncertain recap outcomes must not appear successful.
-- Cross-ticket artifact routes must preserve ownership rather than use this ticket.
-
-The external capture harness is task proof, not a maintained test suite. It uses
-real data on the locked PanelsLaneB and exercises only read-only navigation,
-expansion and cancellation. Every mutation is tested only against the stub.
+`PanelsTests/TicketTests.swift` uses the existing full-ticket fixture and URLProtocol
+stub. It covers workflow ordering, approval limits, retained narrow edit payloads,
+record conflicts, recap delivery, and artifact ownership. The note-state case
+covers the new split between the scrolling proposal and pinned controls: exact
+proposal restoration and a frozen note snapshot with a newer local draft. It
+requires no server or browser host. Review decision tests cover protected operation
+bytes and receipts. The one-off Simulator review provides appearance and interaction
+evidence without a permanent layout test. Simulator captures do not prove physical
+haptics or live-server behavior.

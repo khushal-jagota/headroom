@@ -21,8 +21,7 @@ struct TicketView: View {
     @State private var stepsOpen = false
     @State private var recapEditorOpen = false
     @State private var configurationOpen = false
-    @State private var renaming = false
-    @State private var titleDraft = ""
+    @State private var decision = TicketDecisionState()
     @State private var linkedArtifact: AppRoute?
     private var owner: ArtifactOwner { ArtifactOwner(kind: .ticket, id: ticketID) }
     private var presentation: TicketPresentation? {
@@ -47,7 +46,13 @@ struct TicketView: View {
                 .frame(maxWidth: .infinity)
         }
         .toolbar(.hidden, for: .navigationBar)
-        .panelsScreen()
+        .scrollContentBackground(.hidden).textCase(nil)
+        .background(PanelsTheme.Web.surface).foregroundStyle(PanelsTheme.Web.text)
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            if let presentation, let proposal = detail?.pendingProposal, proposal.field == presentation.currentField {
+                TicketDecisionDock(presentation: presentation, proposal: proposal, decision: decision)
+            }
+        }
         .conversationNavigation(owner: .ticket(ticketID), conversationID: detail?.conversationId, title: detail?.title ?? "Ticket", openConversationID: openConversationID, refreshError: error, retry: { await load() })
         .panelsRefreshable { await load(); await loadArtifacts() }
         .screenLoadState("ticket", hasContent: detail != nil, error: error, showsRefreshError: false) { await load() }
@@ -102,21 +107,20 @@ struct TicketView: View {
 
     private func masthead(_ detail: TicketDetail) -> some View {
         VStack(alignment: .leading, spacing: PanelsTheme.Space.md) {
-            if renaming {
-                TextField("Title", text: $titleDraft, axis: .vertical).font(PanelsTheme.TypeScale.detailTitle)
-                Button("Save title") {
-                    Task { await perform { try await store.client.renameTicket(ticketID, title: titleDraft); renaming = false; return nil } }
-                }.disabled(busy || titleDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                Button("Cancel") { renaming = false }
-            } else {
-                TicketMachineLabel(locale: detail.locale)
-                AgentPageTitle(title: detail.title, signal: TicketMachine.signal(store.presentation?.ticketsById[ticketID]?.signal.conversationSignal ?? detail.conversationSignal, locale: detail.locale, health: store.executorHealth, completed: presentation?.terminal == true))
-                    .contextMenu { Button("Rename", systemImage: "pencil") { titleDraft = detail.title; renaming = true } }
-            }
+            Text(detail.managerTitle ?? "Chief of Staff")
+                .panelsScaledFont(size: PanelsTheme.Web.smallSize)
+                .foregroundStyle(PanelsTheme.Web.tertiary)
+            Text(detail.title)
+                .panelsScaledFont(size: PanelsTheme.Web.pageTitleSize, relativeTo: .title, weight: .semibold)
+                .tracking(-0.26).lineSpacing(1)
+                .foregroundStyle(PanelsTheme.Web.strong)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .textSelection(.enabled)
+            TicketMachineLabel(locale: detail.locale)
             Group {
                 if detail.recap.isEmpty {
                     Button("+ add orientation") { recapEditorOpen = true }.foregroundStyle(PanelsTheme.faint)
-                } else { TicketExpandableText(text: detail.recap, emptyText: "") }
+                } else { TicketRecapText(text: detail.recap) }
             }
                 .contextMenu {
                     Button("Copy", systemImage: "doc.on.doc") { UIPasteboard.general.string = detail.recap; Haptics.success() }
@@ -150,53 +154,68 @@ struct TicketView: View {
         }
     }
 
-    private func stageCard(_ presentation: TicketPresentation) -> some View {
-        VStack(alignment: .leading, spacing: PanelsTheme.Space.lg) {
-            if let proposal = detail?.pendingProposal, proposal.field == presentation.currentField {
-                TicketProposalCard(presentation: presentation, proposal: proposal) { await load(); await store.refresh() }
+    @ViewBuilder private func stageCard(_ presentation: TicketPresentation) -> some View {
+        if let proposal = detail?.pendingProposal, proposal.field == presentation.currentField {
+            VStack(alignment: .leading, spacing: PanelsTheme.Space.sm) {
+                TicketProposalCard(presentation: presentation, proposal: proposal, decision: decision) { await load(); await store.refresh() }
                     .id("\(proposal.field):\(proposal.revision)")
-            } else {
-                Text(TicketMachine.activityUnknown(presentation.ticket.locale, health: store.executorHealth) ? TicketMachine.unknownActivityText(presentation.ticket.locale) : presentation.heading).font(PanelsTheme.TypeScale.heading)
-                    .foregroundStyle(presentation.ticket.agentState == "errored" ? PanelsTheme.error : PanelsTheme.strong)
+                workerSetup(presentation)
+            }
+        } else {
+        VStack(alignment: .leading, spacing: PanelsTheme.Space.sm) {
+                Text(presentation.terminal ? "Done" : presentation.currentStage?.label ?? presentation.heading)
+                    .panelsScaledFont(size: 15, weight: .semibold)
+                    .foregroundStyle(presentation.ticket.agentState == "errored" ? PanelsTheme.Web.error : PanelsTheme.Web.strong)
                     .accessibilityAddTraits(.isHeader)
-                if !presentation.terminal && presentation.ticket.stage != "needs_brief" {
+                if !presentation.terminal {
                     Button { scopeOpen = true } label: {
                         HStack(alignment: .firstTextBaseline, spacing: PanelsTheme.Space.sm) {
                             Text("Approved until **\(presentation.ceilingLabel)**, then **\(presentation.holderLabel(presentation.ticket.ceilingHolder))** reviews")
                                 .multilineTextAlignment(.leading)
                             Image(systemName: "chevron.down").font(PanelsTheme.TypeScale.caption)
-                        }.font(PanelsTheme.TypeScale.small).frame(minHeight: 44, alignment: .leading).frame(maxWidth: .infinity, alignment: .leading)
+                        }.panelsScaledFont(size: PanelsTheme.Web.bodySize)
+                            .foregroundStyle(PanelsTheme.Web.secondary)
+                            .frame(minHeight: 44, alignment: .leading).frame(maxWidth: .infinity, alignment: .leading)
                     }.buttonStyle(.plain).disabled(busy).accessibilityIdentifier("ticket-approval-limit")
                 }
-            }
-            if presentation.ticket.assigned == true || presentation.currentStage?.ownershipMode == "user", let field = presentation.currentField,
+            if !presentation.terminal, presentation.ticket.assigned == true || presentation.currentStage?.ownershipMode == "user", let field = presentation.currentField,
                presentation.ticket.pendingProposal?.field != field {
                 TicketExpandableText(text: presentation.ticket.fieldValues[field] ?? "", emptyText: "Not written yet.")
             }
-            if presentation.ticket.employeeConfigurationEditable {
-                Button { configurationOpen = true } label: {
-                    Text([presentation.ticket.employeeBackend.capitalized, presentation.ticket.employeeLaunchModel, presentation.ticket.employeeLaunchReasoningEffort?.capitalized].compactMap { $0 }.joined(separator: " · "))
-                        .font(PanelsTheme.TypeScale.small).frame(minHeight: 44)
-                }.buttonStyle(.plain)
-            }
+            workerSetup(presentation)
         }.padding(20).frame(maxWidth: .infinity, alignment: .leading)
-            .background(presentation.ticket.pendingProposal != nil || presentation.ticket.assigned == true ? PanelsTheme.raised : PanelsTheme.surface, in: RoundedRectangle(cornerRadius: PanelsTheme.Radius.lg))
+            .background(Color.white.opacity(0.045), in: RoundedRectangle(cornerRadius: PanelsTheme.Web.cardRadius))
+        }
+    }
+
+    @ViewBuilder private func workerSetup(_ presentation: TicketPresentation) -> some View {
+        if !presentation.terminal, presentation.ticket.employeeConfigurationEditable {
+            Button { configurationOpen = true } label: {
+                Text([presentation.ticket.employeeBackend.capitalized, presentation.ticket.employeeLaunchModel, presentation.ticket.employeeLaunchReasoningEffort?.capitalized].compactMap { $0 }.joined(separator: " · "))
+                    .font(PanelsTheme.TypeScale.small).frame(minHeight: 44)
+            }.buttonStyle(.plain)
+        }
     }
 
     private func steps(_ presentation: TicketPresentation) -> some View {
         VStack(spacing: 0) {
-            Rectangle().fill(PanelsTheme.border).frame(height: 0.5)
+            Rectangle().fill(PanelsTheme.Web.border).frame(height: 1)
             Button { stepsOpen.toggle() } label: {
-                HStack { Text("Steps"); Spacer(); Text(presentation.manifest.fields.count.formatted()).foregroundStyle(PanelsTheme.faint) }
-                    .font(.body).foregroundStyle(PanelsTheme.text).frame(minHeight: 50).contentShape(Rectangle())
+                HStack {
+                    Text("Steps").fontWeight(.semibold)
+                    Spacer()
+                    Text("\(presentation.completedCount) of \(presentation.manifest.fields.count) done").foregroundStyle(PanelsTheme.Web.tertiary)
+                }.panelsScaledFont(size: PanelsTheme.Web.smallSize)
+                    .foregroundStyle(PanelsTheme.Web.secondary).frame(minHeight: 44).padding(.horizontal, 8).contentShape(Rectangle())
             }.buttonStyle(.plain)
                 .accessibilityLabel("Steps")
                 .accessibilityValue("\(presentation.manifest.fields.count) steps, \(stepsOpen ? "expanded" : "collapsed")")
             if stepsOpen {
-                VStack(alignment: .leading, spacing: PanelsTheme.Space.sm) {
+                VStack(alignment: .leading, spacing: 0) {
                     ForEach(presentation.manifest.fields) { field in TicketStepRow(field: field, presentation: presentation) }
                 }
             }
+            Rectangle().fill(PanelsTheme.Web.border).frame(height: 1)
         }
     }
 

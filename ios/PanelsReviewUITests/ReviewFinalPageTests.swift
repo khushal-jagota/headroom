@@ -132,6 +132,75 @@ final class ReviewFinalPageTests: XCTestCase {
         capture(app, "review-card-draft-retained")
     }
 
+    /// One-off keyboard and decision-flow review on the existing fixture host.
+    @MainActor func testPinnedDesignDecisions() async throws {
+        continueAfterFailure = false
+        let base = try XCTUnwrap(ProcessInfo.processInfo.environment["PANELS_OFFLINE_STUB_URL"])
+        XCTAssertEqual(URL(string: base)?.host, "127.0.0.1")
+        let app = XCUIApplication()
+        app.launchArguments = ["--conversation-stub", base]
+        app.launch()
+        defer { app.terminate() }
+        let approve = app.buttons["review.approve"]
+        XCTAssertTrue(approve.waitForExistence(timeout: 12))
+        capture(app, "design-review-normal")
+        let note = app.descendants(matching: .any).matching(identifier: "review.revision").firstMatch
+        let sendBack = app.buttons["review.sendBack"]
+        sendBack.tap()
+        XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5))
+        let keyboardTip = app.buttons["Continue"]
+        if keyboardTip.exists { keyboardTip.tap() }
+        note.typeText("Keep this proposal note")
+        XCTAssertTrue(approve.isHittable, "The keyboard must not cover pinned decisions")
+        capture(app, "design-review-keyboard")
+        approve.tap()
+        let stage = app.buttons["decision.stage.needs_implementation"]
+        XCTAssertTrue(stage.waitForExistence(timeout: 5))
+        capture(app, "design-how-far")
+        stage.tap()
+        let reviewer = app.buttons["decision.reviewer.owner"]
+        XCTAssertTrue(reviewer.waitForExistence(timeout: 5))
+        capture(app, "design-who-reviews")
+        // Dismiss without a decision, then prove the exact note survives relaunch.
+        app.swipeDown()
+        app.terminate(); app.launch()
+        XCTAssertTrue(note.waitForExistence(timeout: 12))
+        XCTAssertEqual(note.value as? String, "Keep this proposal note")
+        app.buttons["review.openTicket"].tap()
+        XCTAssertTrue(app.buttons["ticket-actions"].waitForExistence(timeout: 8))
+        XCTAssertTrue(approve.waitForExistence(timeout: 8))
+        capture(app, "design-ticket-pinned")
+        XCTAssertEqual(note.value as? String, "Keep this proposal note")
+        app.buttons["detail-back"].tap()
+        // Open ticket uses Workspace's existing navigation stack.
+        app.tabBars.buttons["Review"].tap()
+        XCTAssertTrue(approve.waitForExistence(timeout: 8))
+        // Capture the real app at the largest accessibility category, including its safe-area edge.
+        app.terminate()
+        app.launchArguments = ["--conversation-stub", base,
+                               "-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryAccessibilityXXXL"]
+        app.launch()
+        XCTAssertTrue(approve.waitForExistence(timeout: 12))
+        XCTAssertTrue(approve.isHittable, "Large text must leave pinned decisions reachable")
+        capture(app, "design-review-largest-text-normal")
+        app.scrollViews.firstMatch.swipeUp()
+        XCTAssertTrue(approve.isHittable, "The pinned decision must remain reachable while the proposal scrolls")
+        capture(app, "design-review-largest-text-proposal")
+        // Restore normal type before the final approval, without changing the saved note.
+        app.terminate()
+        app.launchArguments = ["--conversation-stub", base]
+        app.launch()
+        XCTAssertTrue(approve.waitForExistence(timeout: 12))
+        XCTAssertEqual(note.value as? String, "Keep this proposal note")
+        approve.tap()
+        XCTAssertTrue(stage.waitForExistence(timeout: 5)); stage.tap()
+        XCTAssertTrue(reviewer.waitForExistence(timeout: 5)); reviewer.tap()
+        let next = app.staticTexts["Match the iPhone app to the web"]
+        XCTAssertTrue(next.waitForExistence(timeout: 8))
+        let (data, _) = try await URLSession.shared.data(from: URL(string: base + "/proof/writes")!)
+        XCTAssertEqual((try JSONSerialization.jsonObject(with: data) as? [String]), ["approve"])
+    }
+
     @MainActor private func skipFixtureCards(_ app: XCUIApplication) throws {
         for element in [app.staticTexts["First unread message"], app.buttons["review.approve"], app.staticTexts["Historical message"]] {
             XCTAssertTrue(element.waitForExistence(timeout: 8))

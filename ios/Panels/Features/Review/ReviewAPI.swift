@@ -132,11 +132,6 @@ extension APIClient {
         return try Self.decoder().decode(Response.self, from: data).transcript
     }
 
-    func renameReviewTicket(_ id: String, title: String) async throws {
-        struct Body: Encodable { let title: String }
-        _ = try await reviewWrite("/api/tickets/\(id)", method: "PATCH", body: Body(title: title))
-    }
-
     func reviewWrite<T: Encodable>(_ path: String, method: String = "POST", body: T) async throws -> Data {
         var request = try self.request(try url(path))
         request.httpMethod = method

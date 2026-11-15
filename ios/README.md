@@ -112,8 +112,8 @@ body. A failed reload retains the previous document and image.
 ## Typography
 
 Shared text roles in `Core/Theme/Theme.swift` follow the mobile web's weights.
-Review titles and completion text use medium (500); ticket and manager titles
-use semibold (600). Proposal decisions use medium, while message actions and
+Review and Ticket titles use the approved web base of 26 points and semibold (600).
+Completion text remains medium. Proposal decisions use medium, while message actions and
 message prose remain regular. Feedback text and notification labels use medium. Ideas capture and configuration headings use medium;
 artifact filenames remain regular. Section headings follow their web surface:
 regular for navigation and VPS, medium for configuration and Usage.
@@ -121,9 +121,27 @@ regular for navigation and VPS, medium for configuration and Usage.
 `panelsNavigationTitle` sets the weight on each native navigation item. Usage
 keeps its semibold heading; other utility pages use medium. This retains native
 navigation geometry and restores the destination's style on back navigation.
-Font sizes and Dynamic Type remain native. Markdown headings retain their
+Workspace, proposals, and Ticket use web base sizes with Dynamic Type scaling.
+Other font roles remain native. Artifact Markdown headings retain their
 existing rendered body size, with the web's bold h1/h4–h6 and semibold h2/h3;
 the inline renderer accepts the shared font so its body default cannot mask it.
+
+## Workspace and proposal decisions
+
+Workspace uses the web sidebar bubbles and compact rows. Focus is always on:
+Agent and agent-approval groups retain only Tickets with an unread owner message.
+Empty groups disappear; the card header stays. Chief and Manager pages retain
+full lists. Goal tags and their haze use the same worst-status order as the web.
+
+Review and Ticket share a recessed, read-only proposal card and a pinned note
+with Send it back and Approve. Review keeps dictation and adds Open ticket.
+An empty send-back note focuses the field. Approval captures the displayed note
+for that exact server and proposal. Notes retain the existing durable draft keys.
+How far precedes Who reviews; selecting the reviewer submits the decision.
+When the next stage is Done, Approve takes one tap. The approver in the card
+opens reviewer-only choices. Protected decision operations and saved-work recovery
+remain unchanged. Proposal text, approved steps, and Ticket titles have no phone
+edit controls; other edits remain available.
 
 ## Build and run headless
 

@@ -1,7 +1,7 @@
 import Foundation
 import Observation
 
-/// The approval sheet displays this exact note and submits only this proposal-bound snapshot.
+/// A decision submits only this proposal-bound snapshot of the visible note.
 struct DecisionGuidance: Sendable, Equatable {
     let server: String
     let ticketID: String
@@ -39,7 +39,6 @@ struct DecisionGuidance: Sendable, Equatable {
     var loadedStamp: String?
     var ticket: TicketDetail?
     var manifest: ReviewWorkerManifest?
-    var draft = "" { didSet { persistDraft(draft, old: oldValue, suffix: ":edit") } }
     var revisionDraft = "" { didSet { persistDraft(revisionDraft, old: oldValue, suffix: ":guidance") } }
     private var draftServer: String?
     private var draftIdentity: String?
@@ -54,7 +53,6 @@ struct DecisionGuidance: Sendable, Equatable {
         guard draftIdentity != id || discard else { return }
         restoringDrafts = true
         draftServer = LocalStore.server(api.baseURL); draftIdentity = id
-        draft = discard ? proposal.body : LocalStore.shared.draft(server: draftServer!, id: id + ":edit") ?? proposal.body
         revisionDraft = LocalStore.shared.draft(server: draftServer!, id: id + ":guidance") ?? ""
         restoringDrafts = false
     }
@@ -71,8 +69,9 @@ struct DecisionGuidance: Sendable, Equatable {
 
     var proposal: TicketProposal? { ticket?.pendingProposal }
     var canReturn: Bool { proposal?.field != "brief" && ticket?.conversationId != nil }
-    var approvalStages: [ReviewWorkerManifest.Stage] { manifest?.approvalStages(after: ticket?.stage ?? "") ?? [] }
-    var ready: Bool { proposal != nil && !changed && !busy && !resolved && !approvalStages.isEmpty }
+    var nextStage: String? { manifest?.advance[ticket?.stage ?? ""] }
+    var approvalStages: [ReviewWorkerManifest.Stage] { manifest?.stages.filter { manifest?.ceilingRange.contains($0.id) == true } ?? [] }
+    var ready: Bool { proposal != nil && !changed && !busy && !resolved && nextStage != nil && !approvalStages.isEmpty }
 
     static func matches(_ lhs: TicketProposal, _ rhs: TicketProposal) -> Bool {
         lhs.field == rhs.field && lhs.createdAt == rhs.createdAt && lhs.revision == rhs.revision
@@ -102,9 +101,9 @@ struct DecisionGuidance: Sendable, Equatable {
                 error = "This proposal is no longer waiting. Refresh Review for the latest queue."
                 return
             }
-            if let existing = proposal, !Self.matches(existing, incoming), (draft != existing.body || !revisionDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty), !discardDraft {
+            if let existing = proposal, !Self.matches(existing, incoming), !revisionDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, !discardDraft {
                 changed = true
-                error = "The proposal changed while you were editing. Your draft is kept below. Reload to read the new version."
+                error = "The proposal changed. Your note is kept below. Reload to read the new version."
                 return
             }
             let lifecycle: ReviewWorkerManifest
@@ -125,18 +124,6 @@ struct DecisionGuidance: Sendable, Equatable {
         }
     }
 
-    func rename(api: APIClient, title: String) async -> Bool {
-        guard !busy, let ticket, !title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return false }
-        busy = true
-        defer { busy = false }
-        do {
-            try await api.renameReviewTicket(ticket.id, title: title)
-            self.ticket = try await api.ticket(ticket.id)
-            error = nil
-            return true
-        } catch { self.error = error.localizedDescription; return false }
-    }
-
     func approvalGuidance(api: APIClient) -> DecisionGuidance? {
         guard ready, let ticket, let proposal else { return nil }
         let server = LocalStore.server(api.baseURL)
@@ -153,7 +140,7 @@ struct DecisionGuidance: Sendable, Equatable {
             return false
         }
         let body = ReviewApproval(expectedProposalRevision: proposal.revision,
-                                  editedBody: draft == proposal.body ? nil : draft,
+                                  editedBody: nil,
                                   nextCeiling: ceiling, nextHolder: holder)
         return enqueue(PendingWork(id: UUID().uuidString, created: .now, kind: .approval,
             ticketID: ticket.id, proposal: proposal, approval: body, guidance: guidance?.text, draftID: guidance?.draftID, decisionDraftUpdatedAt: guidance?.draftUpdatedAt,
