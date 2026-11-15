@@ -1,7 +1,9 @@
 /** Protocol-22 Mac client. Each request retains its loop's independent session owner. */
 import type { ExecutorIdentity } from '../../../execution_identity.ts';
+import { is_os_error } from '../../../core/system_errors.ts';
 import { observe_shutdown } from '../../../conversation/shutdown.ts';
 import type { StopOptions } from '../../../lifecycle/contracts.ts';
+import { read_credential, write_credential } from '../../credential_file.ts';
 import { decode_bounded, encode_bounded, ExecutorValidationError } from '../../protocol.ts';
 import type {
   CommandOutcomeReply,
@@ -14,7 +16,7 @@ import type { CanonicalReader } from '../storage/journal_contracts.ts';
 import * as settings from '../configuration.ts';
 import type { MacHttpOptions, HttpRequest } from './contracts.ts';
 import { HttpSessions, read_bounded } from './sessions.ts';
-import { http_error } from './errors.ts';
+import { ExecutorHttpError, HttpTimeout, http_error } from './errors.ts';
 export { ExecutorHttpError, failure_name } from './errors.ts';
 export const CONNECTORS = {
   lease: settings.MAC_LEASE_CONNECTOR,
@@ -25,10 +27,67 @@ export const CONNECTORS = {
   reads: settings.MAC_READS_CONNECTOR,
   live: settings.MAC_LIVE_CONNECTOR,
 };
+const AUTHENTICATION_HEADERS = new Set([
+  'X-Panels-Executor-ID',
+  'X-Panels-Executor-Credential',
+  'X-Panels-Executor-Platform',
+]);
+const CERTIFICATE_ERRORS = new Set([
+  'CERT_HAS_EXPIRED',
+  'CERT_NOT_YET_VALID',
+  'CERT_REJECTED',
+  'CERT_SIGNATURE_FAILURE',
+  'CERT_UNTRUSTED',
+  'CRL_HAS_EXPIRED',
+  'CRL_NOT_YET_VALID',
+  'DEPTH_ZERO_SELF_SIGNED_CERT',
+  'SELF_SIGNED_CERT_IN_CHAIN',
+  'UNABLE_TO_GET_CRL',
+  'UNABLE_TO_GET_ISSUER_CERT',
+  'UNABLE_TO_GET_ISSUER_CERT_LOCALLY',
+  'UNABLE_TO_VERIFY_LEAF_SIGNATURE',
+]);
+function credential_failure(error: unknown): boolean {
+  if (
+    error instanceof ExecutorHttpError ||
+    error instanceof HttpTimeout ||
+    error instanceof ExecutorValidationError ||
+    is_os_error(error)
+  )
+    return true;
+  if (!(error instanceof Error) || !('code' in error) || typeof error.code !== 'string')
+    return false;
+  return /^(?:ERR_TLS_|ERR_SSL_|HPE_)/u.test(error.code) || CERTIFICATE_ERRORS.has(error.code);
+}
+function granted_credential(body: Uint8Array): string {
+  let value: unknown;
+  try {
+    value = JSON.parse(new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(body));
+  } catch (error) {
+    if (
+      error instanceof SyntaxError ||
+      (error instanceof TypeError &&
+        'code' in error &&
+        error.code === 'ERR_ENCODING_INVALID_ENCODED_DATA')
+    )
+      throw new ExecutorValidationError('The home returned an invalid machine credential');
+    throw error;
+  }
+  if (
+    value === null ||
+    typeof value !== 'object' ||
+    Array.isArray(value) ||
+    !('credential' in value) ||
+    typeof value.credential !== 'string'
+  )
+    throw new ExecutorValidationError('The home returned an invalid machine credential');
+  return value.credential;
+}
 export class MacHttpClient {
   readonly sessions: HttpSessions;
-  readonly headers: Readonly<Record<string, string>>;
   readonly server_url: string;
+  private request_headers: Readonly<Record<string, string>>;
+  private readonly identity: Readonly<ExecutorIdentity>;
   constructor(
     server_url: string,
     executor_id: string,
@@ -36,13 +95,63 @@ export class MacHttpClient {
     options: MacHttpOptions = {},
   ) {
     this.server_url = settings.validate_server_url(server_url).replace(/\/$/, '');
-    this.headers = Object.freeze({
+    this.identity = { ...identity };
+    this.request_headers = Object.freeze({
       'X-Panels-Executor-ID': executor_id,
       'X-Panels-Executor-Incarnation': identity.executor_incarnation,
       'X-Panels-Executor-Protocol': String(identity.protocol_version),
+      'X-Panels-Executor-Platform': process.platform,
       'Accept-Encoding': 'identity',
     });
     this.sessions = new HttpSessions(this.server_url, CONNECTORS, options);
+  }
+  get headers(): Readonly<Record<string, string>> {
+    return this.request_headers;
+  }
+  authentication_headers(): Readonly<Record<string, string>> {
+    return Object.fromEntries(
+      Object.entries(this.headers).filter(([name]) => AUTHENTICATION_HEADERS.has(name)),
+    );
+  }
+  async ensure_credential(path: string): Promise<void> {
+    return this.sessions.own('lease', async (require_open) => {
+      const saved = await read_credential(path);
+      require_open();
+      const headers = { ...this.headers };
+      delete headers['X-Panels-Executor-Credential'];
+      this.request_headers = Object.freeze(headers);
+      let credential: string;
+      try {
+        const identity = this.identity;
+        const reply = await this.json({
+          loop: 'lease',
+          method: 'POST',
+          path: '/api/executor/credential',
+          timeout: settings.LEASE_TIMEOUT_SECONDS,
+          body: Buffer.from(
+            JSON.stringify({
+              protocol_version: identity.protocol_version,
+              application_revision: identity.application_revision,
+              spool_format_version: identity.spool_format_version,
+              executor_incarnation: identity.executor_incarnation,
+            }),
+          ),
+        });
+        require_open();
+        if (reply.status !== 200) throw http_error(reply.status, reply.body);
+        const granted = granted_credential(reply.body);
+        if (granted !== saved) await write_credential(path, granted);
+        credential = granted;
+      } catch (error) {
+        if (saved === null || !credential_failure(error)) throw error;
+        require_open();
+        credential = saved;
+      }
+      this.request_headers = Object.freeze({
+        ...this.headers,
+        'X-Panels-Executor-Credential': credential,
+      });
+    });
   }
   private json(input: HttpRequest, limit = settings.MAX_ENVELOPE_BYTES) {
     return this.sessions.request(

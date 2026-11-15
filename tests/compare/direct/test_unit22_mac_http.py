@@ -12,11 +12,11 @@ import time
 from pathlib import Path
 from typing import Any, cast
 
-import pytest
 from aiohttp import web
 from tests.support.synthetic_homes import create_synthetic_homes
 
 from planner.executor import protocol as p
+from planner.executor.credential_file import read_credential
 from planner.executor.diagnostics import ConnectionDiagnostics, ConnectionPhase
 from planner.executor.mac_http import ExecutorHttpError, MacHttpClient, failure_name
 
@@ -142,7 +142,7 @@ def fixtures(content: bytes) -> tuple[dict[str, str], dict[str, Any]]:
 
 
 async def reference(
-    origin: str, ca: Path, roots: dict[str, str], source: Path, target: Path
+    origin: str, ca: Path, roots: dict[str, str], source: Path, target: Path, credential_root: Path
 ) -> dict[str, Any]:
     context = ssl.create_default_context(cafile=str(ca))
     client = MacHttpClient(
@@ -170,6 +170,40 @@ async def reference(
             results.append(dict(failure=failure_name(error)))
 
     try:
+        credential_root.mkdir(mode=0o700)
+        credential = credential_root / "machine-credential.json"
+
+        def saved() -> Any:
+            return dict(headers=client.authentication_headers(), saved=read_credential(credential),
+                        mode=credential.stat().st_mode & 0o777,
+                        files=sorted(path.name for path in credential_root.iterdir()))
+
+        for _ in range(3):
+            await client.ensure_credential(credential)
+            results.append(saved())
+        credential_root.chmod(0o500)
+        try:
+            await client.ensure_credential(credential)
+        finally:
+            credential_root.chmod(0o700)
+        results.append(saved())
+        await client.ensure_credential(credential)
+        results.append(saved())
+        unsaved = MacHttpClient(
+            origin, "synthetic-executor", typed("ExecutorIdentity", IDENTITY), ssl_context=context
+        )
+        try:
+            await save(lambda: unsaved.ensure_credential(credential_root / "absent.json"))
+        finally:
+            await unsaved.close()
+        boundary = credential_root / "boundary.json"
+        base = json.dumps(dict(credential="a" * 43, padding=""), separators=(",", ":"))
+        document = json.dumps(dict(credential="a" * 43, padding="😀" * (4096 - len(base))),
+                              ensure_ascii=False, separators=(",", ":"))
+        boundary.write_text(document)
+        results.append(dict(unicode_boundary=read_credential(boundary)))
+        boundary.write_text(document + " ")
+        await save(lambda: client.ensure_credential(boundary))
         for index in range(4):
             await save(
                 lambda: client.lease(value("LeaseRequest")),
@@ -204,13 +238,6 @@ async def reference(
     return dict(results=results, logs=logs)
 
 
-@pytest.mark.xfail(
-    run=False,
-    reason=(
-        "expected-open P2: #916 staging protocol24 requires lease cleanup_uncertainties "
-        "absent from the TS22 wire schema"
-    ),
-)
 def test_unit22_mac_http(tmp_path: Path, record_property: Any) -> None:
     started = time.monotonic()
     ca, key = tmp_path / "ca.pem", tmp_path / "key.pem"
@@ -242,6 +269,7 @@ def test_unit22_mac_http(tmp_path: Path, record_property: Any) -> None:
     source = tmp_path / "source"
     source.write_bytes(content)
     roots, replies = fixtures(content)
+    credential_roots = [tmp_path / "python-credential", tmp_path / "node-credential"]
     traces: list[list[Any]] = [[], []]
     phase = 0
     counts: dict[str, int] = {}
@@ -275,6 +303,8 @@ def test_unit22_mac_http(tmp_path: Path, record_property: Any) -> None:
                 name: request.headers.get(name)
                 for name in (
                     "X-Panels-Executor-ID",
+                    "X-Panels-Executor-Credential",
+                    "X-Panels-Executor-Platform",
                     "X-Panels-Executor-Incarnation",
                     "X-Panels-Executor-Protocol",
                     "Accept-Encoding",
@@ -296,6 +326,16 @@ def test_unit22_mac_http(tmp_path: Path, record_property: Any) -> None:
             index = counts.get(path, 0)
             counts[path] = index + 1
             status = 200
+            if path == "/api/executor/credential":
+                assert headers["X-Panels-Executor-Credential"] is None
+                if index in (0, 1, 3, 4):
+                    return web.json_response({"credential": ("a" if index == 0 else
+                                                             "b" if index == 1 else "c") * 43})
+                return web.json_response({"error": {"code": "unavailable", "message": "retry"}},
+                                         status=503)
+            if headers["X-Panels-Executor-Credential"] is not None:
+                stored = read_credential(credential_roots[phase] / "machine-credential.json")
+                assert stored == headers["X-Panels-Executor-Credential"]
             if path == "/api/executor/lease":
                 if index == 0:
                     reply = encoded("LeaseReply", typed("LeaseReply", replies["lease"]))
@@ -347,7 +387,9 @@ def test_unit22_mac_http(tmp_path: Path, record_property: Any) -> None:
         port = cast(asyncio.Server, site._server).sockets[0].getsockname()[1]
         origin = f"https://127.0.0.1:{port}"
         try:
-            expected = await reference(origin, ca, roots, source, tmp_path / "python-target")
+            expected = await reference(
+                origin, ca, roots, source, tmp_path / "python-target", credential_roots[0]
+            )
             counts.clear()
             phase = 1
             spec = tmp_path / "spec.json"
@@ -361,6 +403,7 @@ def test_unit22_mac_http(tmp_path: Path, record_property: Any) -> None:
                         target=str(tmp_path / "node-target"),
                         identity=IDENTITY,
                         roots=roots,
+                        credential_root=str(credential_roots[1]),
                     )
                 )
             )
@@ -418,7 +461,7 @@ def test_unit22_mac_http(tmp_path: Path, record_property: Any) -> None:
             assert actual == expected
             assert traces[0] == traces[1]
             assert (tmp_path / "node-target").read_bytes() == content
-            assert len(traces[0]) == 14
+            assert len(traces[0]) == 20
         finally:
             await runner.cleanup()
 

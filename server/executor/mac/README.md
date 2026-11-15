@@ -39,6 +39,13 @@ The Mac executor uses `FilesService` for byte copies, hashes, directory creation
 Each caller owns its service instance and must pass the shared absolute shutdown deadline to `stop()`.
 The host retains separate file services for conversation transfers and runtime updates.
 
+`MacHttpClient.ensure_credential(path)` asks the home for its pending credential before it uses a saved credential.
+The private credential file uses exclusive mode-0600 creation, atomic rename, and file and directory flushes.
+The client saves a changed grant before it sends authenticated requests. Expected bootstrap failures retain a valid saved credential.
+Session shutdown joins credential file work, and a replaced session refuses further bootstrap requests.
+Update reports and archive downloads obtain current authentication headers for each request.
+The host startup does not call this API yet. Server credential routing and runtime protocol activation remain separate port slices.
+
 The public methods return promises:
 
 - `file_digest(path)` and `verified_version(path, sha256, byte_count)` read regular files.

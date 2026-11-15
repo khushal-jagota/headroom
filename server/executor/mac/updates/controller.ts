@@ -40,7 +40,7 @@ export interface MacUpdateControllerOptions {
   outbox: { pending_count(): number };
   /** The host owns this separate worker and closes it after controller settlement. */
   files: FilesService;
-  executor_id: string;
+  authentication_headers(): Readonly<Record<string, string>>;
   runtime: MacUpdateRuntimeSettings;
   session_factory(): HttpSessions;
   request_exit(): void;
@@ -161,7 +161,7 @@ export class MacUpdateController {
         read_timeout: settings.REQUEST_TIMEOUT_SECONDS,
         signal: this.signal,
       },
-      { 'X-Panels-Executor-ID': this.options.executor_id },
+      this.options.authentication_headers(),
       async (response) => {
         if (response.statusCode !== 200) throw new Error('Mac update channel refused the request.');
         return JSON.parse(
@@ -217,7 +217,7 @@ export class MacUpdateController {
           read_timeout: settings.REQUEST_TIMEOUT_SECONDS,
           signal: this.signal,
         },
-        { 'X-Panels-Executor-ID': this.options.executor_id },
+        this.options.authentication_headers(),
         async (response) => {
           if (response.statusCode !== 200) throw new Error('Mac runtime archive is unavailable.');
           if (response.headers['content-encoding'])

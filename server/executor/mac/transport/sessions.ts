@@ -85,6 +85,29 @@ export class HttpSessions {
     this.sessions.set(loop, session);
     return session;
   }
+  private retain<T>(session: Session, operation: Promise<T>): Promise<T> {
+    session.actual.add(operation);
+    void operation.then(
+      () => session.actual.delete(operation),
+      () => session.actual.delete(operation),
+    );
+    return operation;
+  }
+  /** File work shares the captured session's settlement without an HTTP deadline. */
+  async own<T>(loop: MacLoop, work: (require_open: () => void) => Promise<T>): Promise<T> {
+    const session = this.session(loop);
+    const require_open = () => {
+      if (this.closed || session.closing || this.sessions.get(loop) !== session)
+        throw new ServerLifecycleError('Mac HTTP session is stopped or replaced.');
+    };
+    return this.retain(
+      session,
+      Promise.resolve().then(() => {
+        require_open();
+        return work(require_open);
+      }),
+    );
+  }
   request<T>(
     request: HttpRequest,
     headers: Readonly<Record<string, string>>,
@@ -102,18 +125,11 @@ export class HttpSessions {
       resolve = yes;
       reject = no;
     });
-    const operation = this.perform(session, request, headers, consume, resolve, reject);
-    session.actual.add(operation);
-    void operation.then(
-      (value) => {
-        resolve(value);
-        session.actual.delete(operation);
-      },
-      (error: unknown) => {
-        reject(error);
-        session.actual.delete(operation);
-      },
+    const operation = this.retain(
+      session,
+      this.perform(session, request, headers, consume, resolve, reject),
     );
+    void operation.then(resolve, reject);
     return reply;
   }
   private async perform<T>(

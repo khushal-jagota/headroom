@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { dirname, join } from 'node:path';
 import { MacHttpClient } from '../transport/http.ts';
+import { read_credential } from '../../credential_file.ts';
 import { MacFileTransport } from '../transport/files.ts';
 import { FilesService } from '../files.ts';
 import { decode_bounded, encode_bounded } from '../../protocol.ts';
@@ -22,6 +23,7 @@ interface Spec {
   target: string;
   identity: ExecutorIdentity;
   roots: Record<string, string>;
+  credential_root: string;
 }
 function fixture_origin(value: string, owned: string): string {
   // Compare the allocated listener before constructing any client or opening a socket.
@@ -75,6 +77,44 @@ export async function run(spec: Spec): Promise<unknown> {
     }
   };
   try {
+    fs.mkdirSync(spec.credential_root, { mode: 0o700 });
+    const credential = join(spec.credential_root, 'machine-credential.json');
+    const saved = async () => ({
+      headers: client.authentication_headers(),
+      saved: await read_credential(credential),
+      mode: fs.statSync(credential).mode & 0o777,
+      files: fs.readdirSync(spec.credential_root).sort(),
+    });
+    for (let i = 0; i < 3; i++) {
+      await client.ensure_credential(credential);
+      results.push(await saved());
+    }
+    fs.chmodSync(spec.credential_root, 0o500);
+    try {
+      await client.ensure_credential(credential);
+    } finally {
+      fs.chmodSync(spec.credential_root, 0o700);
+    }
+    results.push(await saved());
+    await client.ensure_credential(credential);
+    results.push(await saved());
+    const unsaved = new MacHttpClient(origin, 'synthetic-executor', spec.identity, options);
+    try {
+      await save(() => unsaved.ensure_credential(join(spec.credential_root, 'absent.json')));
+    } finally {
+      await unsaved.stop({ deadline: performance.now() / 1000 + 5 });
+      await unsaved.settled();
+    }
+    const boundary = join(spec.credential_root, 'boundary.json');
+    const base = JSON.stringify({ credential: 'a'.repeat(43), padding: '' });
+    const document = JSON.stringify({
+      credential: 'a'.repeat(43),
+      padding: '😀'.repeat(4096 - base.length),
+    });
+    fs.writeFileSync(boundary, document);
+    results.push({ unicode_boundary: await read_credential(boundary) });
+    fs.writeFileSync(boundary, document + ' ');
+    await save(() => client.ensure_credential(boundary));
     for (let i = 0; i < 4; i++)
       await save(
         () => client.lease(root('LeaseRequest')),
@@ -160,6 +200,33 @@ export async function run(spec: Spec): Promise<unknown> {
   );
   assert.equal((await independent_lease).toString(), 'lease complete');
   assert.equal((await held_poll).toString(), 'poll complete');
+  let release_file!: () => void,
+    followup_request = false;
+  const file_gate = new Promise<void>((resolve) => {
+    release_file = resolve;
+  });
+  const preparation = sessions.own('lease', async (require_open) => {
+    await file_gate;
+    require_open();
+    followup_request = true;
+    return sessions.request(
+      { loop: 'lease', method: 'POST', path: '/owned-after-reset' },
+      {},
+      (response) => read_bounded(response, 1024),
+    );
+  });
+  void preparation.catch(() => {});
+  await Promise.resolve();
+  let reset_settled = false;
+  const resetting = sessions.reset().then(() => {
+    reset_settled = true;
+  });
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  assert.equal(reset_settled, false, 'reset retains owned work outside HTTP deadlines');
+  release_file();
+  await assert.rejects(preparation, ServerLifecycleError);
+  assert.equal(followup_request, false, 'captured session cannot admit a request after reset');
+  await resetting;
   let release!: () => void, entered!: () => void;
   const gate = new Promise<void>((resolve) => {
     release = resolve;
