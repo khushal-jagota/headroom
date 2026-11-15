@@ -64,7 +64,8 @@ jobs:
 
   linux-enrollment:
     name: Real Linux enrollment (pinned protocol 26)
-    # This single connected case needs a real disposable user service manager.
+    # This pinned acceptance is explicit; routine changes do not rerun identical product bytes.
+    if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     steps:

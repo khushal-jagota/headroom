@@ -80,10 +80,10 @@ def members(name: str) -> dict[int, str | None]:
     return result
 
 
-def port_free(port: int) -> None:
-    with socket.socket() as listener:
-        listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        listener.bind(("127.0.0.1", port))
+def assert_no_listener(port: int) -> None:
+    result = run(["ss", "-ltnH", f"sport = :{port}"])
+    if result.stdout.strip():
+        raise RuntimeError(f"TCP listener remains on port {port}: {result.stdout.strip()}")
 
 
 def main() -> None:
@@ -414,11 +414,15 @@ def main() -> None:
                 report["ca_trust_restored"] = True
             except Exception as error:
                 cleanup_errors.append(f"CA environment: {error}")
+        report["listener_cleanup"] = {
+            "method": "ss -ltnH sport = :PORT; require no listener rows",
+            "ports": [port for port in [home_port, proxy_port] if port is not None],
+        }
         for port in [home_port, proxy_port]:
             if port is not None:
                 try:
-                    port_free(port)
-                except OSError as error:
+                    assert_no_listener(port)
+                except Exception as error:
                     cleanup_errors.append(f"Listener {port}: {error}")
         cleanup_errors.extend(
             "Unsettled command after interruption: " + command for command in UNSETTLED_COMMANDS
