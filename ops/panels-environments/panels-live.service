@@ -26,6 +26,7 @@ OOMScoreAdjust=-500
 MemoryAccounting=yes
 MemoryLow=1G
 CPUWeight=100
+Delegate=yes
 
 [Install]
 WantedBy=default.target

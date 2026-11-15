@@ -113,7 +113,7 @@ def _node(spec: dict[str, Any], root: Path) -> dict[str, Any] | list[dict[str, A
 
 @pytest.mark.xfail(
     run=False,
-    reason="expected-open P3: replace the retired WorkerUnit byte fixture with worker supervision",
+    reason="expected-open P3: #916 replaces WorkerUnit launch bytes with supervision",
 )
 def test_unit18_containment_bytes(tmp_path: Path, request: pytest.FixtureRequest) -> None:
     """Protect exact systemd escaping without any service-manager connection."""

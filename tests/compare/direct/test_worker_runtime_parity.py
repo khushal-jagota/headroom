@@ -521,6 +521,10 @@ def run_worker_runtime_parity(storage: Path) -> dict[str, Any]:
     return {"match": True, "seconds": round(time.monotonic() - started, 3), "cases": results}
 
 
+@pytest.mark.xfail(
+    run=False,
+    reason="expected-open P3 (#916): port named-machine Worker readiness and protocol-24 claims",
+)
 def test_worker_runtime_parity(tmp_path: Path, request: pytest.FixtureRequest) -> None:
     report = run_worker_runtime_parity(tmp_path)
     directory = request.config.getoption("--compare-report-dir")

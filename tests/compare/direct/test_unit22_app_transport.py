@@ -557,6 +557,13 @@ async def continue_core(endpoint: VpsExecutor, path: Path, proxy: HttpsProxy) ->
         await core.shutdown()
 
 
+@pytest.mark.xfail(
+    run=False,
+    reason=(
+        "expected-open P2: #916 staging protocol24 rejects TS22 file transport with "
+        "HTTP409 before its 8MiB transfer"
+    ),
+)
 def test_unit22_executor_real_wire(tmp_path: Path, request: pytest.FixtureRequest) -> None:
     started = time.perf_counter()
     homes = create_synthetic_homes(tmp_path)

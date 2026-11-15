@@ -14,6 +14,7 @@ from planner.worker_supervision.contracts import WorkerProcess
 
 class LinuxWorkerProcesses:
     owns_isolated_session_members = True
+    requires_containment = True
 
     def host_boot(self, deadline: float) -> LocalHostBootIdentity:
         if time.monotonic() >= deadline:

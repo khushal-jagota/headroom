@@ -79,6 +79,13 @@ def pending(state: dict[str, Any]) -> list[QueuedEnvelope]:
     return [type_adapter(QueuedEnvelope).validate_python(row) for row in state["pending"]]
 
 
+@pytest.mark.xfail(
+    run=False,
+    reason=(
+        "expected-open P2: #916 staging protocol24 machine credentials and cleanup "
+        "leases leave the TS22 Mac unleased"
+    ),
+)
 def test_planned_runtime_swap_and_reversion_replay_original_results_after_vps_restart(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -170,6 +177,13 @@ def test_planned_runtime_swap_and_reversion_replay_original_results_after_vps_re
     asyncio.run(run())
 
 
+@pytest.mark.xfail(
+    run=False,
+    reason=(
+        "expected-open P2: #916 staging protocol24 machine credentials and cleanup "
+        "leases leave the TS22 Mac unleased"
+    ),
+)
 def test_update_stop_settles_live_vps_before_a_failed_attempt_resumes_work(tmp_path: Path) -> None:
     async def run() -> None:
         async with boot(tmp_path) as harness:

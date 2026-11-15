@@ -489,6 +489,18 @@ def build_executor_router() -> APIRouter:
             service.report(report, endpoint.health() if isinstance(endpoint, VpsExecutor) else None)
         except (ValidationError, UpdateConflict, OSError, ValueError) as error:
             raise HTTPException(409, str(error)) from error
+        credential = request.headers.get(EXECUTOR_CREDENTIAL_HEADER)
+        if report.phase == "current" and credential is not None:
+            # The supervisor keeps the trial runtime only after this confirmation, so the
+            # old authority closes here and never sooner. A failed closure confirms nothing.
+            def close_handover() -> None:
+                with runtime_connection(database_path(request)) as conn:
+                    executor_credentials.close_original_handover(
+                        conn, service.machine_id, credential,
+                        request.headers.get(EXECUTOR_INCARNATION_HEADER),
+                    )
+
+            await run_on_worker_thread(close_handover)
         return {"confirmed": report.phase == "current"}
 
     # --- 10: the old WebSocket, refused ---------------------------------------------------

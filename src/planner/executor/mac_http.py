@@ -226,10 +226,19 @@ class MacHttpClient:
         }
 
     async def ensure_credential(self, path: Path) -> None:
+        """Ask the home first, and fall back to the saved file.
+
+        While the original Mac's handover is open, the home answers with its pending
+        credential: the saved one, or a new one after a home database restore. Once it
+        closes, or for any other machine, the home refuses. Only an explicit grant
+        replaces the file, so an unreachable home never stops a start that has one.
+        """
         from planner.executor.credential_file import read_credential, write_credential
 
-        credential = await asyncio.to_thread(read_credential, path)
-        if credential is None:
+        saved = await asyncio.to_thread(read_credential, path)
+        # The credential route refuses a request that already carries a credential.
+        self._headers.pop(EXECUTOR_CREDENTIAL_HEADER, None)
+        try:
             status, body = await self._json(
                 "lease", "POST", EXECUTOR_CREDENTIAL_PATH,
                 timeout=LEASE_TIMEOUT_SECONDS,
@@ -243,12 +252,18 @@ class MacHttpClient:
             if status != 200:
                 raise _error(status, body)
             value = json.loads(body)
-            credential = value.get("credential") if isinstance(value, dict) else None
-            if not isinstance(credential, str):
+            granted = value.get("credential") if isinstance(value, dict) else None
+            if not isinstance(granted, str):
                 raise ValueError("The home returned an invalid machine credential")
-            # Save before authenticating: the home repeats this pending credential
-            # after a lost reply or failed save, until its first authenticated request.
-            await asyncio.to_thread(write_credential, path, credential)
+            if granted != saved:
+                # Save before authenticating: the home repeats this pending credential
+                # after a lost reply or failed save, until the handover closes.
+                await asyncio.to_thread(write_credential, path, granted)
+            credential = granted
+        except (ExecutorHttpError, ValueError, OSError, TimeoutError, aiohttp.ClientError):
+            if saved is None:
+                raise
+            credential = saved
         self._headers[EXECUTOR_CREDENTIAL_HEADER] = credential
 
     def _session(self, loop: MacLoop) -> aiohttp.ClientSession:

@@ -1053,7 +1053,7 @@ def containment_evidence(python: dict[str, Any], typescript: dict[str, Any]) -> 
 
 @pytest.mark.xfail(
     run=False,
-    reason="expected-open P3: replace the retired WorkerUnit core fixture with worker supervision",
+    reason="expected-open P3: #916 replaces WorkerUnit custody with supervision",
 )
 def test_unit18_adapter_real_core_parity(tmp_path: Path, request: pytest.FixtureRequest) -> None:
     """Protect native admission, cancellation, asks, and real-core persisted outcomes."""

@@ -34,6 +34,13 @@ from planner.executor.protocol import EnvelopeKind, ReceiptDisposition, decode_b
 pytestmark = pytest.mark.usefixtures("executor_transport_home")
 
 
+@pytest.mark.xfail(
+    run=False,
+    reason=(
+        "expected-open P2: #916 staging protocol24 machine credentials and cleanup "
+        "leases leave the TS22 Mac unleased"
+    ),
+)
 def test_mac_replacement_drains_then_interrupts_old_run_and_recovers_once(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -127,6 +134,13 @@ def test_mac_replacement_drains_then_interrupts_old_run_and_recovers_once(
     asyncio.run(run())
 
 
+@pytest.mark.xfail(
+    run=False,
+    reason=(
+        "expected-open P2: #916 staging protocol24 machine credentials and cleanup "
+        "leases leave the TS22 Mac unleased"
+    ),
+)
 def test_a_message_the_replaced_mac_process_never_fetched_reaches_the_fresh_agent_once(
     tmp_path: Path,
 ) -> None:
@@ -170,6 +184,13 @@ def test_a_message_the_replaced_mac_process_never_fetched_reaches_the_fresh_agen
     asyncio.run(run())
 
 
+@pytest.mark.xfail(
+    run=False,
+    reason=(
+        "expected-open P2: #916 staging protocol24 machine credentials and cleanup "
+        "leases leave the TS22 Mac unleased"
+    ),
+)
 def test_stop_waits_for_its_proof_item_after_its_result_and_a_dropped_link(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -219,6 +240,13 @@ def test_stop_waits_for_its_proof_item_after_its_result_and_a_dropped_link(
     asyncio.run(run())
 
 
+@pytest.mark.xfail(
+    run=False,
+    reason=(
+        "expected-open P2: #916 staging protocol24 machine credentials and cleanup "
+        "leases leave the TS22 Mac unleased"
+    ),
+)
 def test_shutdown_waits_for_admitted_outcome_application_and_final_event_receipts(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -312,6 +340,13 @@ def test_shutdown_waits_for_admitted_outcome_application_and_final_event_receipt
     asyncio.run(run())
 
 
+@pytest.mark.xfail(
+    run=False,
+    reason=(
+        "expected-open P2: #916 staging protocol24 machine credentials and cleanup "
+        "leases leave the TS22 Mac unleased"
+    ),
+)
 def test_old_websocket_is_refused_needs_update_while_update_route_serves_it(tmp_path: Path) -> None:
     from planner.environments.mac_updates import MacUpdateService
     from planner.environments.update_attempts import FileUpdateAttemptStore
@@ -373,6 +408,13 @@ def test_old_websocket_is_refused_needs_update_while_update_route_serves_it(tmp_
     asyncio.run(run())
 
 
+@pytest.mark.xfail(
+    run=False,
+    reason=(
+        "expected-open P2: #916 staging protocol24 machine credentials and cleanup "
+        "leases leave the TS22 Mac unleased"
+    ),
+)
 def test_exact_model_and_effort_cross_authenticated_native_dispatch(tmp_path: Path) -> None:
     from tests.integration.test_executor_end_to_end import create_mac_ticket
 

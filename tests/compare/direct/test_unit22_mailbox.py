@@ -881,7 +881,7 @@ def _semantic_snapshot(snapshot: dict[str, Any]) -> dict[str, Any]:
 
 @pytest.mark.xfail(
     run=False,
-    reason="expected-open P2: port successor-incarnation report authority and receipts",
+    reason="expected-open P2: #916 port successor-incarnation report authority and receipts",
 )
 def test_unit22_mailbox_exchange(tmp_path: Path, request: pytest.FixtureRequest) -> None:
     async def exercise() -> dict[str, Any]:
