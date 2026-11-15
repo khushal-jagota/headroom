@@ -359,6 +359,12 @@ def test_notification_context_upgrade_preserves_queued_native_delivery(tmp_path:
             "(subject_kind,subject_id,notification_type,generation,occurred_at,decided) "
             "VALUES ('agent','chief_of_staff','awaiting_reply',1,?,1)", (NOW,),
         )
+        # Delivery admission also requires the source edge to remain active.
+        conn.execute(
+            "INSERT INTO notification_attention_state "
+            "(subject_kind,subject_id,notification_type,active,generation) "
+            "VALUES ('agent','chief_of_staff','awaiting_reply',1,1)"
+        )
         conn.execute(
             "INSERT INTO notification_apns_deliveries "
             "(subject_kind,subject_id,notification_type,generation,device_id,title,body,route,tag,"
