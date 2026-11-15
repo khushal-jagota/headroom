@@ -260,6 +260,7 @@ def test_darwin_home_update_matches_populated_python(
             "python": legacy_identity,
             "typescript": actual["v2_identity"],
         },
+        "launch_control": actual["launch_control"],
         "boundary": (
             "Existing installed-home fixture and recording native service/process/health "
             "dependencies. No new host."
@@ -276,6 +277,9 @@ def test_darwin_home_update_matches_populated_python(
             json.dumps(report, indent=2) + "\n"
         )
     assert actual["outcomes"] == expected
+    assert actual["launch_control"] == {
+        "foreign_idle_job_refused": True, "unsettled_bootout_retained": True,
+    }
     assert actual["v2_identity"]["version"] == 2
     assert actual["v2_identity"]["installer_node"] == str(
         Path(shutil.which("node") or "node").resolve()

@@ -9,7 +9,7 @@ import { read_owned_home_file } from './identity.ts';
 import { create_darwin_home_io, DarwinHomeService } from './service.ts';
 import { read_home_job, write_home_job } from './jobs.ts';
 import { DARWIN_HOME_COMMAND_SECONDS, DARWIN_HOME_OBSERVATION_SECONDS } from './configuration.ts';
-import { launchd_field } from './logic/launchd.ts';
+import { authenticate_loaded_job } from './logic/launchd.ts';
 import type { DarwinHomeIO } from './contracts.ts';
 
 export async function current_darwin_home(application_root: string, node: string, execution: ReleaseExecution, environment: Readonly<NodeJS.ProcessEnv>, io?: DarwinHomeIO): Promise<DarwinHomeService> {
@@ -47,14 +47,18 @@ export async function launch_darwin_installer(service: DarwinHomeService, attemp
   catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
   if (previous) {
     const job = await read_home_job(path, io), prefix = identity.label + '.update-';
+    if (!read_owned_home_file(path, io.uid).equals(previous)) throw new Error('Previous installer plist changed before control');
     if (!job.Label.startsWith(prefix)) throw new Error('Previous installer job identity differs from this home');
     installer_attempt_id(job.Label.slice(prefix.length));
     const target = `${identity.domain}/${job.Label}`;
     const loaded = await io.command(['/bin/launchctl', 'print', target], io.execution, DARWIN_HOME_OBSERVATION_SECONDS, true);
     if (loaded.code === 0) {
-      if (launchd_field(loaded.stdout, 'pid') !== null) throw new Error('The previous installer still runs');
-      if (launchd_field(loaded.stdout, 'path') !== path) throw new Error('Previous installer job has a foreign plist');
+      if (authenticate_loaded_job(loaded.stdout, path, job, ['HOME', 'PATH'], realpathSync) !== null)
+        throw new Error('The previous installer still runs');
       await io.command(['/bin/launchctl', 'bootout', target], io.execution, DARWIN_HOME_COMMAND_SECONDS);
+      const after = await io.command(['/bin/launchctl', 'print', target], io.execution, DARWIN_HOME_OBSERVATION_SECONDS, true);
+      if (after.code === 0 || !after.stderr.includes('Could not find service'))
+        throw new Error('Previous installer job retirement is not confirmed');
     } else if (!loaded.stderr.includes('Could not find service')) throw new Error('Previous installer job status is uncertain');
   }
   await write_home_job(path, {

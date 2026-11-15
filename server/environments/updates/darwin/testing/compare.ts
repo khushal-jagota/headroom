@@ -2,6 +2,7 @@
 import assert from 'node:assert/strict';
 import {
   copyFileSync,
+  mkdirSync,
   existsSync,
   readFileSync,
   realpathSync,
@@ -18,6 +19,7 @@ import {
   DarwinHomeService,
 } from '../service.ts';
 import type { DarwinHomeJob, DarwinHomeProcess } from '../contracts.ts';
+import { launch_darwin_installer } from '../launch.ts';
 
 const LABEL = 'com.panels.proof',
   FROM = 'a'.repeat(40),
@@ -31,6 +33,7 @@ export async function darwin_updates(input: { cases: Case[]; account_home: strin
   const outcomes = [],
     records = [];
   let v2_identity: unknown;
+  let launch_control: unknown;
   for (const spec of input.cases) {
     const { root, scenario } = spec;
     const events: string[][] = [];
@@ -52,6 +55,10 @@ export async function darwin_updates(input: { cases: Case[]; account_home: strin
       child_reads = 0,
       generation = 1,
       foreign = false;
+    let previous_installer: DarwinHomeJob | undefined;
+    let launch_control_mode: 'foreign' | 'unsettled' | undefined;
+    const loaded_text = (path: string, value: DarwinHomeJob, pid?: number) =>
+      `path = ${path}\nprogram = ${value.ProgramArguments[0]}\nworking directory = ${value.WorkingDirectory}\n${pid === undefined ? '' : `pid = ${pid}\n`}arguments = {\n${value.ProgramArguments.join('\n')}\n}\nenvironment = {\n${Object.entries(value.EnvironmentVariables).map(([key, value]) => `${key} => ${value}`).join('\n')}\n}\n`;
     const processes = new ChildProcesses();
     const execution = {
       child_processes: processes,
@@ -92,6 +99,13 @@ export async function darwin_updates(input: { cases: Case[]; account_home: strin
             assert.equal(argv[0], '/bin/launchctl');
             const operation = argv[1]!,
               label = argv.at(-1)!.split('/').at(-1)!;
+            if (launch_control_mode && label === previous_installer?.Label) {
+              if (operation === 'print') {
+                stdout = loaded_text(join(root, 'data/update-agent/installer.plist'), previous_installer);
+                if (launch_control_mode === 'foreign') stdout = stdout.replace(`program = ${previous_installer.ProgramArguments[0]}`, 'program = /foreign/node');
+              } else { assert.equal(operation, 'bootout'); events.push([operation, label]); }
+              return { code, stdout, stderr };
+            }
             if (operation === 'print') {
               const pid = jobs.get(label);
               if (pid === undefined) {
@@ -100,11 +114,7 @@ export async function darwin_updates(input: { cases: Case[]; account_home: strin
               } else {
                 const path = join(root, 'agents', label + '.plist'),
                   value = decoded(path);
-                stdout = `path = ${path}\nprogram = ${value.ProgramArguments[0]}\nworking directory = ${root}\npid = ${pid}\narguments = {\n${value.ProgramArguments.join('\n')}\n}\nenvironment = {\n${Object.entries(
-                  value.EnvironmentVariables,
-                )
-                  .map(([key, value]) => `${key} => ${value}`)
-                  .join('\n')}\n}\n`;
+                stdout = loaded_text(path, value, pid);
                 if (foreign && label === LABEL)
                   stdout = stdout.replaceAll(join(root, 'app/bin/panels'), '/foreign/panels');
               }
@@ -153,6 +163,33 @@ export async function darwin_updates(input: { cases: Case[]; account_home: strin
         await assert.rejects(service.stop());
         assert.equal(events.length, 0, 'foreign job authentication must precede every bootout');
         foreign = false;
+        // An idle prior updater needs the same loaded-command binding as a running home.
+        const previous_path = join(root, 'data/update-agent/installer.plist');
+        mkdirSync(join(root, 'data/update-agent'), { mode: 0o700 });
+        previous_installer = { Label: LABEL + '.update-old', ProgramArguments: [realpathSync(process.execPath), '/old/installer'], WorkingDirectory: join(root, 'data'), EnvironmentVariables: { HOME: input.account_home, PATH: '/usr/bin:/bin' } };
+        const previous_bytes = JSON.stringify(previous_installer);
+        writeFileSync(previous_path, previous_bytes, { mode: 0o600 });
+        const original_parent = inventory.get(process.ppid);
+        jobs.set(LABEL, process.ppid);
+        inventory.set(process.ppid, { pid: process.ppid, parent: 1, uid: io.uid, birth: '1:parent' });
+        try {
+          const attempt = 'ownership', copy = join(root, 'data/update-installer-' + attempt);
+          const command = [service.identity.installer_node, join(copy, 'runtime/server/environments/updates/installer/main.ts'), join(copy, 'request.json')];
+          launch_control_mode = 'foreign';
+          await assert.rejects(launch_darwin_installer(service, attempt, command), /different program/);
+          assert.equal(events.length, 0);
+          launch_control_mode = 'unsettled';
+          await assert.rejects(launch_darwin_installer(service, attempt, command), /retirement is not confirmed/);
+          assert.deepEqual(events, [['bootout', previous_installer.Label]]);
+          assert.equal(readFileSync(previous_path, 'utf8'), previous_bytes);
+          launch_control = { foreign_idle_job_refused: true, unsettled_bootout_retained: true };
+        } finally {
+          launch_control_mode = undefined;
+          jobs.set(LABEL, 123);
+          if (original_parent) inventory.set(process.ppid, original_parent);
+          else inventory.delete(process.ppid);
+          events.length = 0;
+        }
         for (const suffix of ['.maintenance', '.stall-watchdog']) {
           unlinkSync(join(root, 'agents', LABEL + suffix + '.plist'));
           inventory.delete(jobs.get(LABEL + suffix)!);
@@ -222,5 +259,5 @@ export async function darwin_updates(input: { cases: Case[]; account_home: strin
       await processes.settled();
     }
   }
-  return { outcomes, records, v2_identity };
+  return { outcomes, records, v2_identity, launch_control };
 }
