@@ -64,23 +64,25 @@ export async function createEnvironmentRuntime(
   const scratch_layout = config.test_mode
     ? null
     : await layout_for(config.ticket_scratch_root, config.ticket_scratch_database, database);
-  const scratch = create_ticket_scratch_runtime({
-    layout: scratch_layout,
-    db_path: database,
-    test_mode: config.test_mode,
-    now_unix: () => context.clock.nowUnix(),
-    assert_database_owned: context.require_runtime_ownership,
-    clean_workspaces: (db, now, options) =>
-      clean_for_database(db, now, {
-        ...options,
-        extra_roots: scratch_layout?.folders ?? [],
-        git_execution: { children: context.one_shot_children, environment: process.env },
-        snapshot_ticket_scratch,
-        prune_ticket_scratch,
-        // P3 owns live child retirement. Until its merged API arrives, retain custody.
-        retire_local_children: () => ({ reason: 'Conversation runtime is unavailable' }),
-      }),
-  });
+  const scratch = config.test_mode
+    ? null
+    : create_ticket_scratch_runtime({
+        layout: scratch_layout,
+        db_path: database,
+        test_mode: config.test_mode,
+        now_unix: () => context.clock.nowUnix(),
+        assert_database_owned: context.require_runtime_ownership,
+        clean_workspaces: (db, now, options) =>
+          clean_for_database(db, now, {
+            ...options,
+            extra_roots: scratch_layout?.folders ?? [],
+            git_execution: { children: context.one_shot_children, environment: process.env },
+            snapshot_ticket_scratch,
+            prune_ticket_scratch,
+            // P3 owns live child retirement. Until its merged API arrives, retain custody.
+            retire_local_children: () => ({ reason: 'Conversation runtime is unavailable' }),
+          }),
+      });
   const metrics = new MetricsRuntime({
     path: await store_path(database),
     config: load_metrics_config(),

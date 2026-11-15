@@ -62,7 +62,7 @@ def _python(root: Path, calls: list[dict[str, Any]], monkeypatch: pytest.MonkeyP
         ),
     )
     results: list[Any] = []
-    monkeypatch.setattr(cli.time, "time", lambda: 1_800_000_000)
+    monkeypatch.setattr(time, "time", lambda: 1_800_000_000)
     for call in calls:
         if "manifest" in call:
             (root / "app/manifest.json").write_text(call["manifest"])

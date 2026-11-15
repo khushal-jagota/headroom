@@ -15,7 +15,7 @@ import subprocess
 import time
 from dataclasses import asdict
 from pathlib import Path
-from typing import Any
+from typing import Any, TypedDict
 
 import pytest
 from tests.support.synthetic_homes import create_synthetic_homes
@@ -159,6 +159,12 @@ def _normalize(value: Any, root: Path) -> Any:
     return value
 
 
+class LayoutGate(TypedDict):
+    root: str | None
+    database: str
+    db_path: str
+
+
 def test_scratch_database_gate_and_ticket_rules_match_python(
     tmp_path: Path, request: pytest.FixtureRequest
 ) -> None:
@@ -171,7 +177,7 @@ def test_scratch_database_gate_and_ticket_rules_match_python(
     database = _database(tmp_path, states)
     alias = tmp_path / "alias.sqlite"
     alias.symlink_to(database)
-    gates = [
+    gates: list[LayoutGate] = [
         {"root": str(tmp_path), "database": str(database), "db_path": str(alias)},
         {"root": str(tmp_path), "database": str(database), "db_path": str(tmp_path / "other.db")},
         {"root": None, "database": str(database), "db_path": str(database)},
@@ -189,9 +195,8 @@ def test_scratch_database_gate_and_ticket_rules_match_python(
             else None
             for g in gates
         ],
-        "states": list(states.items()),
+        "states": [(key, asdict(value)) for key, value in states.items()],
     }
-    expected["states"] = [(key, asdict(value)) for key, value in states.items()]
     actual = _node(
         tmp_path, "probe_scratch_rules", {**_value(tmp_path, states, database), "gates": gates}
     )
