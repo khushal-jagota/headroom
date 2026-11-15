@@ -355,7 +355,7 @@ test('notification deadline fences late web and native results and bounds adapte
     p256dh: '',
     auth: '',
   };
-  const intent = { title: '', body: '', route: '', tag: '' };
+  const intent = { title: '', body: '', route: '', tag: '', reply: null };
   const edge = {
     subject_kind: 'ticket',
     subject_id: 'one',

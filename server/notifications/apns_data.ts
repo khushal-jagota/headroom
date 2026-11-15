@@ -5,6 +5,7 @@ import type {
   APNsResult,
   EdgeKey,
   NotificationIntent,
+  NotificationReply,
   PendingAPNsDelivery,
 } from './contracts.ts';
 import {
@@ -58,8 +59,8 @@ export function queue_intent(
 ): void {
   sql.run(
     `INSERT OR IGNORE INTO notification_apns_deliveries
-    (subject_kind,subject_id,notification_type,generation,device_id,title,body,route,tag,created_at,status,attempts,next_attempt_at)
-    SELECT ?,?,?,?,device_id,?,?,?,?,?,'pending',0,? FROM notification_apns_devices WHERE owner_id=?`,
+    (subject_kind,subject_id,notification_type,generation,device_id,title,body,route,tag,reply_json,created_at,status,attempts,next_attempt_at)
+    SELECT ?,?,?,?,device_id,?,?,?,?,?,?,'pending',0,? FROM notification_apns_devices WHERE owner_id=?`,
     [
       edge.subject_kind,
       edge.subject_id,
@@ -69,6 +70,7 @@ export function queue_intent(
       intent.body,
       intent.route,
       intent.tag,
+      intent.reply === null ? null : JSON.stringify(intent.reply),
       now,
       now,
       'owner',
@@ -82,7 +84,11 @@ export function pending_deliveries(sql: TransactionSql, now: number): PendingAPN
     [now - APNS_DELIVERY_TTL_SECONDS],
   );
   return sql
-    .all<EdgeKey & APNsDevice & NotificationIntent & { attempts: number; created_at: number }>(
+    .all<
+      EdgeKey &
+        APNsDevice &
+        NotificationIntent & { attempts: number; created_at: number; reply_json: string | null }
+    >(
       `SELECT d.*,s.device_token,s.bundle_id,s.environment,s.registration_version,s.updated_at
      FROM notification_apns_deliveries d JOIN notification_apns_devices s USING(device_id)
      WHERE d.status IN ('pending','retry') AND d.next_attempt_at<=?
@@ -107,7 +113,13 @@ export function pending_deliveries(sql: TransactionSql, now: number): PendingAPN
         registration_version: row.registration_version,
         updated_at: row.updated_at,
       },
-      intent: { title: row.title, body: row.body, route: row.route, tag: row.tag },
+      intent: {
+        title: row.title,
+        body: row.body,
+        route: row.route,
+        tag: row.tag,
+        reply: row.reply_json === null ? null : (JSON.parse(row.reply_json) as NotificationReply),
+      },
       attempts: row.attempts,
       created_at: row.created_at,
     }));

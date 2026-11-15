@@ -52,10 +52,6 @@ class RecordingPush:
         pass
 
 
-@pytest.mark.xfail(
-    run=False,
-    reason="expected-open P6: #928 NotificationIntent adds nullable reply to watchdog sends",
-)
 def test_checker_and_watchdog_match_python(tmp_path: Path) -> None:
     started = time.monotonic()
     seed = tmp_path / "seed.db"

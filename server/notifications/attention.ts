@@ -1,5 +1,6 @@
 import type { ReadSql, TransactionSql } from '../core/database/contracts.ts';
 import { capture_gate } from '../attention/history.ts';
+import { optional_edge_context_json } from './context.ts';
 import { workflow_from_row } from '../worker_types/store.ts';
 export interface ConversationAttention {
   unread_message: boolean;
@@ -194,8 +195,15 @@ export function record_attention(
     generation++;
     sql.run(
       `INSERT INTO notification_attention_edges
-      (subject_kind,subject_id,notification_type,generation,occurred_at) VALUES (?,?,?,?,?)`,
-      [subject_kind, subject_id, notification_type, generation, now],
+      (subject_kind,subject_id,notification_type,generation,occurred_at,context_json) VALUES (?,?,?,?,?,?)`,
+      [
+        subject_kind,
+        subject_id,
+        notification_type,
+        generation,
+        now,
+        optional_edge_context_json(sql, subject_kind, subject_id, notification_type),
+      ],
     );
   }
   sql.run(

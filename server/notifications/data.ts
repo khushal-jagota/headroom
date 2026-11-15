@@ -2,6 +2,7 @@ import { createHash, generateKeyPairSync } from 'node:crypto';
 import type { ReadSql, TransactionSql } from '../core/database/contracts.ts';
 import type {
   AttentionEdge,
+  NotificationMessage,
   EdgeKey,
   PendingDelivery,
   PushSubscription,
@@ -215,8 +216,8 @@ export function queue_deliveries(sql: TransactionSql, now: number): number {
   prune_missing_subjects(sql);
   const preferences = resolved_preferences(sql);
   const subscriptions = active_subscription_ids(sql);
-  const rows = sql.all<EdgeKey & { occurred_at: number }>(
-    `SELECT subject_kind,subject_id,notification_type,generation,occurred_at
+  const rows = sql.all<EdgeKey & { occurred_at: number; context_json: string | null }>(
+    `SELECT subject_kind,subject_id,notification_type,generation,occurred_at,context_json
      FROM notification_attention_edges WHERE decided=0 AND subject_kind IN ('ticket','manager','agent')
      ORDER BY occurred_at,subject_kind,subject_id,notification_type,generation`,
   );
@@ -246,10 +247,20 @@ export function queue_deliveries(sql: TransactionSql, now: number): number {
         : subject.kind === 'manager'
           ? 'managers'
           : 'chief_of_staff';
+    const context =
+      edge.context_json === null
+        ? {}
+        : (JSON.parse(edge.context_json) as {
+            subject_label?: string;
+            stage_label?: string;
+            message?: NotificationMessage;
+          });
     const attention: AttentionEdge = {
       key: edge,
       subject,
-      subject_label: label,
+      subject_label: context.subject_label ?? label,
+      stage_label: context.stage_label ?? null,
+      message: context.message ?? null,
       occurred_at: edge.occurred_at,
     };
     const intent = decide_notification(attention, {
@@ -322,7 +333,7 @@ export function pending_deliveries(sql: ReadSql, now: number, limit = 50): Pendi
         p256dh: row.p256dh,
         auth: row.auth,
       },
-      intent: { title: row.title, body: row.body, route: row.route, tag: row.tag },
+      intent: { title: row.title, body: row.body, route: row.route, tag: row.tag, reply: null },
       attempts: row.attempts,
     }));
 }

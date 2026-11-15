@@ -1,5 +1,6 @@
 /** Attention provenance through the real area composition and scripted core. */
 import { createDatabase } from '../../core/database/index.ts';
+import { notification_content_proof } from '../../notifications/testing/content.ts';
 import { SHUTDOWN_GRACE_SECONDS } from '../../lifecycle/configuration.ts';
 import { loadConfig } from '../../core/config.ts';
 import { createAreasRuntime } from '../../areas.ts';
@@ -22,6 +23,7 @@ export async function exercise(spec: {
   ticket: string;
   workspace: string;
   start: number;
+  preview_cases: string[];
 }): Promise<unknown> {
   let now = spec.start - 86400;
   const database = createDatabase(spec.database);
@@ -101,7 +103,7 @@ export async function exercise(spec: {
       conversation_lifecycle_facts: 'conversation_id,turn_number,kind,operation,identity',
       conversation_view_lookups: 'conversation_id,lookup_kind,source_sequence,lookup_id',
     };
-    return database.read((sql) => ({
+    const result = database.read((sql) => ({
       fates,
       native_text,
       rows: Object.fromEntries(
@@ -121,6 +123,14 @@ export async function exercise(spec: {
         spec.start + 86401,
       ),
     }));
+    const content = notification_content_proof(
+      database,
+      store,
+      spec.ticket,
+      now,
+      spec.preview_cases,
+    );
+    return { ...result, notification_content: content.proof, content_seconds: content.seconds };
   } finally {
     await core.shutdown({ deadline: performance.now() / 1000 + SHUTDOWN_GRACE_SECONDS });
     for (const child of children) await child.terminate();
