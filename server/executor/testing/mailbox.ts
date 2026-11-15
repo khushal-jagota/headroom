@@ -670,7 +670,7 @@ async function execute(action: Action): Promise<unknown> {
           now_ms: now,
         });
       });
-      mailbox.publish_settlements(settled);
+      await mailbox.publish_settlements(settled);
       return null;
     }
     case 'reopen':

@@ -130,10 +130,7 @@ export class MacRuns {
   }
   private own<T>(work: () => Promise<T>, background = false): Promise<T> {
     if (this.sealed) return Promise.reject(new ServerLifecycleError('Executor runs are closed.'));
-    const task = Promise.resolve().then(() => {
-      this.continue_work();
-      return work();
-    });
+    const { promise: task, resolve, reject } = Promise.withResolvers<T>();
     this.tasks.add(task);
     void task.then(
       () => this.tasks.delete(task),
@@ -145,6 +142,11 @@ export class MacRuns {
         }
       },
     );
+    try {
+      resolve(work());
+    } catch (error) {
+      reject(error);
+    }
     return task;
   }
   require_conversations(): MacRunConversations {
@@ -416,13 +418,24 @@ export class MacRuns {
   private command_settled = (
     command: WireValue<'MailboxCommand'>,
     result: WireValue<'CommandResult'>,
-  ): void => {
+  ): void | Promise<void> => {
     const child = command.child_command,
       outcome = result.child_outcome;
+    if (this.sealed || child == null || outcome == null) return;
     if (
-      this.sealed ||
-      child == null ||
-      outcome == null ||
+      child.operation === 'write_prompt' &&
+      child.turn !== null &&
+      outcome.disposition === 'succeeded' &&
+      same_reference(outcome.child, child.child) &&
+      outcome.result.agent_acceptance_proven === true
+    ) {
+      const turn = child.turn;
+      return this.own(
+        () => this.require_conversations().confirm_remote_prompt_accepted(child.child, turn),
+        true,
+      );
+    }
+    if (
       child.operation !== 'cancel_running_turn' ||
       outcome.disposition === 'succeeded' ||
       outcome.result.reason === CommandSettlementReason.executor_process_replaced

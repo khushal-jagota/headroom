@@ -227,7 +227,7 @@ export class MacPresenceService {
       this.schedule_presence_change();
     }
     if (announce) this.options.changes.emit();
-    this.mailbox.publish_settlements(settled);
+    await this.mailbox.publish_settlements(settled);
     this.wake_drains();
     if (accepted.replaced_incarnation !== null) this.drains_owed = true;
     if (!this.closed && this.drains_owed && this.incarnation_replaced !== null) {

@@ -300,7 +300,7 @@ export class SqliteCommandMailbox {
           if (result.high_sequence !== undefined)
             this.high = Math.max(this.high ?? 0, result.high_sequence);
           for (const turn of result.withdrawn_turns ?? []) this.start_admission?.observe(turn);
-          this.publish_settlements(result.settled);
+          await this.publish_settlements(result.settled);
           const remaining = deadline - performance.now() / 1000;
           if (result.reply === null) return { commands: [] };
           if (result.reply.commands.length || remaining <= 0) return result.reply;
@@ -336,7 +336,7 @@ export class SqliteCommandMailbox {
         ),
       );
       await Promise.resolve();
-      this.publish_settlements(settled);
+      await this.publish_settlements(settled);
       return reply;
     });
     return this.observe(operation, options.signal);
@@ -367,11 +367,25 @@ export class SqliteCommandMailbox {
     });
   }
   /** Publish only committed rows, including work admitted by another owner before stop. */
-  publish_settlements(settlements: MailboxSettlements): void {
+  async publish_settlements(settlements: MailboxSettlements): Promise<void> {
+    const pending: Promise<void>[] = [];
+    // A listener can await another receipt in this committed batch.
     for (const [command, result] of settlements) {
       for (const future of this.waiters.get(command.command_id) ?? []) future.resolve(result);
-      this.settled_listener?.(command, result);
+      try {
+        const work = this.settled_listener?.(command, result);
+        if (work !== undefined) pending.push(work);
+      } catch (error) {
+        pending.push(Promise.reject(error));
+        break;
+      }
     }
+    const failures = (await Promise.allSettled(pending)).flatMap((result) =>
+      result.status === 'rejected' ? [result.reason] : [],
+    );
+    if (failures.length === 1) throw failures[0];
+    if (failures.length > 1)
+      throw new AggregateError(failures, 'Executor mailbox settlement publication failed.');
   }
   async withdraw_waiting(
     command_id: string,
@@ -385,7 +399,7 @@ export class SqliteCommandMailbox {
         { changeSignal: 'silent' },
       );
       await Promise.resolve();
-      this.publish_settlements(settled);
+      await this.publish_settlements(settled);
       return Boolean(settled.length);
     });
     return this.observe(operation, options.signal);
@@ -401,7 +415,7 @@ export class SqliteCommandMailbox {
         data.finish_by_proof(tx, command_id, outcome, this.clock()),
       );
       await Promise.resolve();
-      this.publish_settlements(settled);
+      await this.publish_settlements(settled);
     });
     return this.observe(operation, options.signal);
   }

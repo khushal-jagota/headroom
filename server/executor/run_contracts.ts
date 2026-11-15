@@ -5,6 +5,7 @@ import type {
   TurnToken,
 } from '../conversation/backends/contracts.ts';
 import type { UndeliveredTurnPrompt } from '../conversation/record/contracts.ts';
+import type { WireValue } from './contracts.ts';
 export interface MacRunConversations {
   emit_answer(turn: TurnToken, emit: () => Promise<unknown>): Promise<void>;
   retire_replaced_remote_child(
@@ -22,5 +23,9 @@ export interface MacRunConversations {
     not_delivered: Promise<boolean>,
   ): Promise<void>;
   confirm_remote_child_termination(reference: ChildReference): Promise<void>;
+  confirm_remote_prompt_accepted(
+    reference: ChildReference,
+    turn: WireValue<'TurnToken'>,
+  ): Promise<void>;
   stop_interrupted_remote_child(reference: ChildReference, child: BackendChild): Promise<void>;
 }

@@ -63,7 +63,15 @@ def test_unit22_mac_leases(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> N
             child=CHILD, turn=dict(conversation_id="conversation", turn_number=3), tool_running=True
         ),
     )
-    runner = SimpleNamespace(admission_stopped=False, working_turns=lambda: (working,))
+    runner = SimpleNamespace(
+        admission_stopped=False,
+        working_turns=lambda: (working,),
+        cleanup_uncertainties=(typed("WorkerCleanupUncertainty", dict(
+            ticket_id="cleanup-ticket", conversation_id="cleanup-conversation",
+            reason="Previous Worker cleanup is not proven",
+        )),),
+        legacy_cleanup_notice="Legacy Worker cleanup requires owner review",
+    )
     backlog = OutboxBacklog(
         7,
         11,
@@ -119,6 +127,11 @@ def test_unit22_mac_leases(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> N
     payload = dict(
         identity=encoded("ExecutorIdentity", presence.identity),
         working=encoded("WorkingTurn", working),
+        cleanup_uncertainties=[
+            json.loads(encoded("WorkerCleanupUncertainty", item))
+            for item in runner.cleanup_uncertainties
+        ],
+        legacy_cleanup_notice=runner.legacy_cleanup_notice,
         replies=[
             encoded("LeaseReply" if index == 0 else "LeaseRefused", reply)
             for index, reply in enumerate(replies)

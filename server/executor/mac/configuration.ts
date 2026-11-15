@@ -13,7 +13,7 @@ import {
   expand_executor_path,
   python_executor_root,
 } from './platform.ts';
-export { MAC_AWAY_AFTER_SECONDS } from '../configuration.ts';
+export { MAC_AWAY_AFTER_SECONDS, MAX_WORKSPACE_STATES_BYTES } from '../configuration.ts';
 
 export const MAX_ENVELOPE_BYTES = 1024 * 1024;
 export const MAX_TOOL_DETAIL_CHARACTERS = 64 * 1024;
