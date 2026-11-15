@@ -1,5 +1,6 @@
 /** Adapter protocols do not prove real selection or the catalog's composed DB barrier. */
 import { afterEach, expect, test, vi } from 'vitest';
+import { VpsExecutorRegistry } from '../executor/registry.ts';
 import { dirname, join, resolve } from 'node:path';
 import { mkdirSync, realpathSync } from 'node:fs';
 import subprocess from 'node:child_process';
@@ -303,7 +304,9 @@ test('default production startup binds the real installer and environment runtim
       node_executable: process.execPath,
       admitted_legacy_null_sha: null,
     });
-    expect(executor).toBeNull();
+    expect(executor).toBeInstanceOf(VpsExecutorRegistry);
+    expect(executor!.configured()).toBe(false);
+    expect(executor!.health_payload()).toBeNull();
     expect(inputs.child_processes).toBe(mac_context.child_processes);
     expect(inputs.signal).toBe(mac_context.signal);
     expect(inputs.signal).toBe(backend.mock.calls[0]![0].one_shot_children!.signal);
