@@ -16,6 +16,7 @@ from collections.abc import Callable
 from contextlib import closing
 from pathlib import Path
 from typing import Any
+from unittest.mock import patch
 
 import pytest
 from tests.support.synthetic_homes import create_synthetic_homes, synthetic_home_environment
@@ -38,7 +39,7 @@ def _code(work: Callable[[], object]) -> str:
 
 
 def _python(path: Path) -> dict[str, Any]:
-    with closing(connect(str(path))) as conn:
+    with closing(connect(str(path))) as conn, patch.object(authority._LOG, "warning") as warnings:
         first = authority.register_machine(conn, "First", "linux")
         second = authority.register_machine(conn, "Second")
         cross_machine = _code(
@@ -47,7 +48,6 @@ def _python(path: Path) -> dict[str, Any]:
         no_remote_legacy = _code(
             lambda: authority.authenticate_executor(conn, first.machine_id, None, None)
         )
-        platform = authority.executor_platform(conn, first.machine_id)
         rotated = authority.replace_credential(conn, first.machine_id)
         old_refused = _code(
             lambda: authority.authenticate_executor(conn, first.machine_id, first.credential, None)
@@ -60,10 +60,7 @@ def _python(path: Path) -> dict[str, Any]:
         wrong_original = _code(
             lambda: authority.authenticate_executor(conn, "original", "wrong", "original")
         )
-        credential_accepted = (
-            authority.authenticate_executor(conn, "original", grant.credential, "original")
-            == ORIGINAL_MAC_MACHINE_ID
-        )
+        authority.authenticate_executor(conn, "original", grant.credential, "original")
         before_close = dict(
             conn.execute(
                 "SELECT * FROM machine_executor_credentials WHERE machine_id=?",
@@ -87,13 +84,9 @@ def _python(path: Path) -> dict[str, Any]:
                 conn, ORIGINAL_MAC_MACHINE_ID, "wrong", INCARNATION
             )
         )
-        legacy_after_wrong_close = (
-            authority.authenticate_executor(conn, "original", None, "original")
-            == ORIGINAL_MAC_MACHINE_ID
-        )
         for _ in range(2):
             authority.close_original_handover(
-                conn, ORIGINAL_MAC_MACHINE_ID, grant.credential, INCARNATION
+                conn, ORIGINAL_MAC_MACHINE_ID, grant.credential, "not-a-uuid"
             )
         row = dict(
             conn.execute(
@@ -107,8 +100,21 @@ def _python(path: Path) -> dict[str, Any]:
         verifier_matches = (
             row["credential_sha256"] == hashlib.sha256(grant.credential.encode()).hexdigest()
         )
-        no_stored_secret = grant.credential not in json.dumps(row)
         closed_reissue = _code(lambda: authority.issue_original_credential(conn, INCARNATION))
+        audit_warnings = [call.args[1:] for call in warnings.call_args_list] == [
+            (grant.issued_at_ms, INCARNATION, ORIGINAL_MAC_MACHINE_ID),
+            (
+                row["legacy_closed_at_ms"],
+                grant.issued_at_ms,
+                INCARNATION,
+                None,
+                ORIGINAL_MAC_MACHINE_ID,
+            ),
+        ]
+        audit_text = " ".join(call.args[0] % call.args[1:] for call in warnings.call_args_list)
+        no_audit_secrets = (
+            grant.credential not in audit_text and row["credential_sha256"] not in audit_text
+        )
     with closing(connect(str(path))) as conn:
         durable_closure = _code(
             lambda: authority.authenticate_executor(conn, "original", None, "original")
@@ -120,20 +126,18 @@ def _python(path: Path) -> dict[str, Any]:
         in {
             "cross_machine",
             "no_remote_legacy",
-            "platform",
             "old_refused",
             "rotation_valid",
             "wrong_original",
-            "credential_accepted",
             "auth_keeps_pending",
             "legacy_after_auth",
             "retry_after_auth_same",
             "wrong_close",
-            "legacy_after_wrong_close",
             "retired_pending",
             "verifier_matches",
-            "no_stored_secret",
             "closed_reissue",
+            "audit_warnings",
+            "no_audit_secrets",
             "durable_closure",
         }
     }

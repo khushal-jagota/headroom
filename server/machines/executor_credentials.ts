@@ -1,6 +1,6 @@
-/** Credential authority runs within the caller's serialized database write. */
+/** Credential authority shares the database write door; audits follow committed transitions. */
 import { createHash, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
-import type { ReadSql, TransactionSql } from '../core/database/contracts.ts';
+import type { ReadSql, TransactionSql, WriteDoor } from '../core/database/contracts.ts';
 import { PlannerError } from '../core/contracts.ts';
 import { HOME_MACHINE_ID, ORIGINAL_MAC_MACHINE_ID, valid_uuid } from '../execution_identity.ts';
 import type { MachineCredentialGrant } from './contracts.ts';
@@ -66,23 +66,43 @@ export function authenticate_executor(
 
 /** The executor owner calls this only after the credentialed current-update report succeeds. */
 export function close_original_handover(
-  tx: TransactionSql,
+  database: WriteDoor,
   machine_id: string,
   credential: string,
   authenticated_incarnation: string | null,
 ): void {
-  const row = tx.get<{
-    credential_sha256: string | null;
-    legacy_closed_at_ms: number | null;
-  }>(
-    'SELECT credential_sha256,legacy_closed_at_ms FROM machine_executor_credentials WHERE machine_id=?',
-    [machine_id],
-  );
-  if (!row || !matches(row.credential_sha256, credential)) throw forbidden();
-  if (row.legacy_closed_at_ms === null)
+  const confirmation = database.write((tx) => {
+    const row = tx.get<{
+      credential_sha256: string | null;
+      legacy_closed_at_ms: number | null;
+      issued_at_ms: number | null;
+      issued_incarnation: string | null;
+    }>(
+      'SELECT credential_sha256,legacy_closed_at_ms,issued_at_ms,issued_incarnation FROM machine_executor_credentials WHERE machine_id=?',
+      [machine_id],
+    );
+    if (!row || !matches(row.credential_sha256, credential)) throw forbidden();
+    if (row.legacy_closed_at_ms !== null) return null;
+    const closed_at_ms = Date.now();
     tx.run(
       'UPDATE machine_executor_credentials SET legacy_closed_at_ms=?,pending_credential=NULL WHERE machine_id=?',
-      [Date.now(), machine_id],
+      [closed_at_ms, machine_id],
+    );
+    return {
+      closed_at_ms,
+      issued_at_ms: row.issued_at_ms,
+      issued_incarnation: row.issued_incarnation,
+      authenticated_incarnation:
+        authenticated_incarnation !== null && valid_uuid(authenticated_incarnation)
+          ? authenticated_incarnation
+          : null,
+      machine_id,
+    };
+  });
+  if (confirmation !== null)
+    console.warn(
+      'Original executor credential confirmed; legacy authority permanently closed',
+      confirmation,
     );
 }
 
@@ -101,32 +121,47 @@ function issue(
 }
 
 export function issue_original_credential(
-  tx: TransactionSql,
+  database: WriteDoor,
   incarnation: string,
 ): MachineCredentialGrant {
   if (!valid_uuid(incarnation)) throw new TypeError('incarnation must be UUID');
-  const row = tx.get<{
-    legacy_closed_at_ms: number | null;
-    pending_credential: string | null;
-    issued_at_ms: number | null;
-  }>(
-    'SELECT legacy_closed_at_ms,pending_credential,issued_at_ms FROM machine_executor_credentials WHERE machine_id=?',
-    [ORIGINAL_MAC_MACHINE_ID],
-  );
-  if (!row || row.legacy_closed_at_ms !== null) throw forbidden();
-  if (row.pending_credential !== null)
+  const { grant, issued } = database.write((tx) => {
+    const row = tx.get<{
+      legacy_closed_at_ms: number | null;
+      pending_credential: string | null;
+      issued_at_ms: number | null;
+    }>(
+      'SELECT legacy_closed_at_ms,pending_credential,issued_at_ms FROM machine_executor_credentials WHERE machine_id=?',
+      [ORIGINAL_MAC_MACHINE_ID],
+    );
+    if (!row || row.legacy_closed_at_ms !== null) throw forbidden();
+    if (row.pending_credential !== null)
+      return {
+        grant: {
+          machine_id: ORIGINAL_MAC_MACHINE_ID,
+          credential: row.pending_credential,
+          issued_at_ms: row.issued_at_ms!,
+        },
+        issued: false,
+      };
+    const issued_at_ms = Date.now();
+    const credential = randomBytes(32).toString('base64url');
+    tx.run(
+      'UPDATE machine_executor_credentials SET credential_sha256=?,issued_at_ms=?,issued_incarnation=?,pending_credential=? WHERE machine_id=?',
+      [digest(credential), issued_at_ms, incarnation, credential, ORIGINAL_MAC_MACHINE_ID],
+    );
     return {
-      machine_id: ORIGINAL_MAC_MACHINE_ID,
-      credential: row.pending_credential,
-      issued_at_ms: row.issued_at_ms!,
+      grant: { machine_id: ORIGINAL_MAC_MACHINE_ID, credential, issued_at_ms },
+      issued: true,
     };
-  const issued_at_ms = Date.now();
-  const credential = randomBytes(32).toString('base64url');
-  tx.run(
-    'UPDATE machine_executor_credentials SET credential_sha256=?,issued_at_ms=?,issued_incarnation=?,pending_credential=? WHERE machine_id=?',
-    [digest(credential), issued_at_ms, incarnation, credential, ORIGINAL_MAC_MACHINE_ID],
-  );
-  return { machine_id: ORIGINAL_MAC_MACHINE_ID, credential, issued_at_ms };
+  });
+  if (issued)
+    console.warn('Original executor credential issued; awaiting first credential authentication', {
+      issued_at_ms: grant.issued_at_ms,
+      issued_incarnation: incarnation,
+      machine_id: grant.machine_id,
+    });
+  return grant;
 }
 
 export function register_machine(
