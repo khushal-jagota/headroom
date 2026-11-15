@@ -438,8 +438,42 @@ def _admission_rules(root: Path) -> tuple[dict[str, Any], dict[str, Any]]:
                 expected_reports.append(None)
             except AppValidationError as error:
                 expected_reports.append(str(error))
-    return dict(host_cases=hosts, reports=reports), dict(
-        hosts=expected_hosts, reports=expected_reports
+    from planner.platform_runtime.darwin.runtime import DarwinRuntime
+    from planner.platform_runtime.darwin.runtime_contracts import DarwinRuntimeContract
+
+    darwin = DarwinRuntimeContract("3.12.12", "a" * 64)
+    darwin_contract = darwin.as_dict()
+    darwin_contract.pop("python_version")
+    darwin_contract.update(version=2, minimum_node_version="22.18.0")
+    darwin_hosts = [
+        dict(system=system, architecture=architecture, version=version)
+        for system, architecture, version in (
+            ("darwin", "arm64", "15.0"), ("darwin", "arm64", "16.2.1"),
+            ("darwin", "arm64", "14.9"), ("linux", "arm64", "15.0"),
+            ("darwin", "x86_64", "15.0"), ("darwin", "arm64", "unreadable"),
+        )
+    ]
+    expected_darwin = []
+    for item in darwin_hosts:
+        with (
+            patch("planner.platform_runtime.darwin.runtime.platform.system",
+                  return_value=item["system"]),
+            patch("planner.platform_runtime.darwin.runtime.platform.machine",
+                  return_value=item["architecture"]),
+            patch("planner.platform_runtime.darwin.runtime.platform.mac_ver",
+                  return_value=(item["version"], (), "")),
+            patch("planner.platform_runtime.darwin.runtime.shutil.which",
+                  return_value="/synthetic/node"),
+            patch.object(admission, "_run_probe", return_value="v22.18.0"),
+        ):
+            try:
+                DarwinRuntime().verify_host(darwin, state=root)
+                expected_darwin.append(True)
+            except AppValidationError:
+                expected_darwin.append(False)
+    return dict(host_cases=hosts, reports=reports, darwin_contract=darwin_contract,
+                darwin_hosts=darwin_hosts), dict(
+        hosts=expected_hosts, reports=expected_reports, darwin_hosts=expected_darwin
     )
 
 

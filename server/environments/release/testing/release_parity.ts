@@ -53,6 +53,8 @@ import { resolve_provider } from '../native/providers.ts';
 import { RuntimeContractError } from '../../updates/logic/runtime_contract.ts';
 import { complete_node_runtime } from '../native_inventory.ts';
 import { require_host_node, verify_runtime_host_facts } from '../logic/host.ts';
+import { verify_darwin_host_facts } from '../logic/darwin_host.ts';
+import type { DarwinNodeRuntimeContract } from '../contracts.ts';
 import type { RuntimeHostFacts } from '../logic/host.ts';
 import { validate_node_probe_report } from '../admission.ts';
 import { run_runtime_probe } from '../admission_process.ts';
@@ -636,6 +638,8 @@ export async function admission_rules_parity(
   spec: {
     host_cases: { version: 1 | 2; node: string; facts: RuntimeHostFacts }[];
     reports: unknown[];
+    darwin_contract: DarwinNodeRuntimeContract;
+    darwin_hosts: { system: string; architecture: string; version: string }[];
   },
 ): Promise<unknown> {
   const v1 = (await validate_app_manifest(join(root, 'app/manifest.json'))).runtime_contract!;
@@ -663,7 +667,17 @@ export async function admission_rules_parity(
       reports.push(error.message);
     }
   }
-  return { hosts, reports };
+  const darwin_hosts = spec.darwin_hosts.map((item) => {
+    try {
+      verify_darwin_host_facts(spec.darwin_contract, item.system, item.architecture, item.version);
+      require_host_node('v22.18.0', spec.darwin_contract);
+      return true;
+    } catch (error) {
+      if (!(error instanceof AppValidationError)) throw error;
+      return false;
+    }
+  });
+  return { hosts, reports, darwin_hosts };
 }
 
 export async function native_loader_parity(spec: {

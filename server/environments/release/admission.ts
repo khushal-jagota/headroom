@@ -1,7 +1,7 @@
 /** Candidate package, worker, and tool admission belongs to the invocation child owner. */
 import { access, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { isAbsolute, join } from 'node:path';
+import { dirname, isAbsolute, join } from 'node:path';
 import { constants } from 'node:fs';
 import { isDeepStrictEqual } from 'node:util';
 import { path_is_within } from '../../core/path_containment.ts';
@@ -14,7 +14,7 @@ import type {
   NodeRuntimeContract,
   RuntimeTarget,
 } from './contracts.ts';
-import { AppValidationError } from './contracts.ts';
+import { AppValidationError, MAC_HOME } from './contracts.ts';
 import { validate_app_manifest } from './identity.ts';
 import {
   os_release_values,
@@ -50,7 +50,11 @@ export async function candidate_tool_path(
   return actual;
 }
 async function host_node(): Promise<string> {
-  const found = await find_release_executable('node', { PATH: HOST_PATH });
+  const path =
+    process.platform === 'darwin'
+      ? dirname(process.execPath) + ':/opt/homebrew/bin:' + HOST_PATH
+      : HOST_PATH;
+  const found = await find_release_executable('node', { PATH: path });
   if (found === null) throw new AppValidationError('runtime host prerequisite is missing: node');
   return realpath(found);
 }
@@ -60,6 +64,24 @@ async function verify_host(
   deadline: number,
   owner: OwnedChildProcesses,
 ): Promise<string> {
+  if (contract.system === 'darwin') {
+    if (process.platform !== 'darwin' || process.arch !== 'arm64')
+      throw new AppValidationError('runtime requires macOS arm64');
+    const { verify_darwin_host_facts } = await import('./logic/darwin_host.ts');
+    const version = await run_runtime_probe(
+      ['/usr/bin/sw_vers', '-productVersion'],
+      state,
+      deadline,
+      owner,
+    );
+    verify_darwin_host_facts(contract, process.platform, process.arch, version);
+    const node = await host_node();
+    require_host_node(
+      await run_runtime_probe([node, '--version'], state, deadline, owner),
+      contract,
+    );
+    return node;
+  }
   if (
     contract.system !== 'linux' ||
     process.platform !== contract.system ||
@@ -126,6 +148,21 @@ export function native_tool_commands(
   node = 'node',
 ): string[][] {
   const modules = join(root, 'agent_backends/node_modules');
+  if (contract.system === 'darwin') {
+    const vendor = join(modules, '@openai/codex-darwin-arm64/vendor/aarch64-apple-darwin');
+    return [
+      [node, join(modules, '@anthropic-ai/claude-code/cli-wrapper.cjs'), '--version'],
+      [node, join(modules, '@openai/codex/bin/codex.js'), '--version'],
+      ...[
+        join(modules, '@anthropic-ai/claude-code-darwin-arm64/claude'),
+        join(modules, '@anthropic-ai/claude-code/bin/claude.exe'),
+        join(root, 'server/node_modules/@anthropic-ai/claude-agent-sdk-darwin-arm64/claude'),
+        join(vendor, 'bin/codex'),
+        join(vendor, 'codex-path/rg'),
+      ].map((path) => [path, '--version']),
+      [join(vendor, 'bin/codex-code-mode-host'), '--help'],
+    ];
+  }
   const vendor = join(modules, '@openai/codex-linux-x64/vendor/x86_64-unknown-linux-musl');
   const site = join(root, '.venv/lib/python3.12/site-packages');
   const runtime =
@@ -205,7 +242,8 @@ export async function admit_runtime(
   // The caller validates artifact bytes. Admission separately rebinds receipt, contract and inventory before code.
   const bound = await validate_app_manifest(join(root, 'manifest.json'), {
     expected_sha: manifest.app_sha,
-    expected_target,
+    expected_target:
+      expected_target ?? (manifest.runtime_contract.system === 'darwin' ? MAC_HOME : undefined),
     require_runtime: true,
     verify_artifact_digest: false,
   });
@@ -232,6 +270,8 @@ export async function admit_runtime(
     await writeFile(join(state, 'config.yaml'), '{}\n', { mode: 0o600 });
     const contract = manifest.runtime_contract;
     const node = await verify_host(contract, state, deadline, child_processes);
+    if (contract.system === 'darwin' && path_is_within(root, node))
+      throw new AppValidationError('Mac home requires a host Node outside its application');
     current(deadline);
     if (contract.version === 2) {
       const report = await run_runtime_json_probe(
@@ -242,6 +282,7 @@ export async function admit_runtime(
           '-e',
           NATIVE_NODE_PROBE,
           root,
+          contract.system,
         ],
         state,
         deadline,

@@ -4,7 +4,7 @@ import { SYSTEM_LIBRARY_DIRECTORIES } from './native/configuration.ts';
 export const NATIVE_NODE_PROBE = String.raw`
 import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
-import { basename, dirname, join } from 'node:path';
+import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { Worker } from 'node:worker_threads';
 import { closeSync, existsSync, openSync, readFileSync, realpathSync, statSync, unlinkSync } from 'node:fs';
@@ -16,8 +16,11 @@ const root = realpathSync(process.argv[1]);
 const state = realpathSync(process.cwd());
 const version = /^22\.(\d+)\.(\d+)$/.exec(process.versions.node);
 assert(version && Number(version[1]) >= 18, 'runtime requires Node 22 >=22.18.0');
-assert.equal(process.platform, 'linux');
-assert.equal(process.arch, 'x64');
+const system = process.argv[2] ?? 'linux';
+assert(['linux', 'darwin'].includes(system));
+assert.equal(process.platform, system);
+assert.equal(process.arch, system === 'darwin' ? 'arm64' : 'x64');
+const system_library = path => system === 'darwin' && ['/usr/lib/', '/System/Library/'].some(prefix => path.startsWith(prefix));
 const { path_is_within } = await import(${JSON.stringify(new URL('../../core/path_containment.ts', import.meta.url).href)});
 const system_directories = new Set(${JSON.stringify(SYSTEM_LIBRARY_DIRECTORIES)}
   .filter((path) => existsSync(path)).map((path) => realpathSync(path)));
@@ -37,11 +40,17 @@ const date = new Intl.DateTimeFormat('en-US', {
 }).format(new Date(0));
 assert.equal(date, '01/01/1970');
 const host_node = realpathSync(process.execPath);
-const loaded = () => [...new Set(readFileSync('/proc/self/maps', 'utf8').split('\n')
-  .map((line) => line.trim().split(/\s+/))
-  .filter((parts) => parts[1]?.includes('x') && parts[5]?.startsWith('/'))
-  .map((parts) => realpathSync(parts.slice(5).join(' ')))
-  .filter((path) => path !== host_node))].sort();
+const loaded = () => {
+  const names = system === 'darwin' ? process.report.getReport().sharedObjects
+    : readFileSync('/proc/self/maps', 'utf8').split('\n')
+      .map((line) => line.trim().split(/\s+/))
+      .filter((parts) => parts[1]?.includes('x') && parts[5]?.startsWith('/'))
+      .map((parts) => parts.slice(5).join(' '));
+  assert(Array.isArray(names) && names.every(path => typeof path === 'string' && path.startsWith('/')));
+  // The dyld cache can supply system images without an individual on-disk file.
+  return [...new Set(names.map(path => system_library(resolve(path)) ? resolve(path) : realpathSync(path))
+    .filter(path => path !== host_node))].sort();
+};
 // All trusted host-only operations precede this baseline. No candidate module ran yet.
 const baseline = new Set(loaded());
 const worker = realpathSync(join(root, 'server/conversation/usage/usageWorker.ts'));
@@ -69,7 +78,7 @@ try {
   assert.equal(database.prepare('SELECT value FROM proof').get().value, 42);
 } finally { database.close(); }
 const koffi = modules.get('koffi').default;
-const libc = koffi.load('libc.so.6');
+const libc = koffi.load(system === 'darwin' ? '/usr/lib/libSystem.B.dylib' : 'libc.so.6');
 assert.equal(libc.func('int getpid()')(), process.pid);
 const flock = libc.func('int flock(int fd, int operation)');
 const lock_path = join(state, 'native-probe.lock');
@@ -101,7 +110,7 @@ const loaded_libraries = loaded();
 for (const path of loaded_libraries) {
   // Native addons are candidate payloads, never glibc or a permitted host baseline addon.
   if (path.endsWith('.node')) assert(path_is_within(root, path), 'addon loaded outside candidate: ' + path);
-  else assert(baseline.has(path) || path_is_within(root, path) || (system_directories.has(dirname(path)) && glibc.has(basename(path))),
+  else assert(baseline.has(path) || path_is_within(root, path) || system_library(path) || (system_directories.has(dirname(path)) && glibc.has(basename(path))),
     'new library loaded outside candidate: ' + path);
 }
 assert(loaded_libraries.some((path) => path.endsWith('.node') && path_is_within(root, path)),

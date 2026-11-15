@@ -6,7 +6,7 @@ import { path_is_within } from '../../core/path_containment.ts';
 import { is_file } from '../backup/evidence.ts';
 import { shell_quote } from '../../conversation/worker_unit/logic.ts';
 import { EXTERNAL_RUNTIME_ENVIRONMENT_KEYS } from '../../core/config.ts';
-import { AppValidationError } from './contracts.ts';
+import { AppValidationError, MAC_HOME } from './contracts.ts';
 import type {
   PackagedLauncherArguments,
   ReleaseBuildDependencies,
@@ -42,11 +42,17 @@ export async function write_app_entrypoints(
   validate_app_sha(app_sha);
   const input = dependencies.public_cli_entrypoint;
   await validate_public_cli_entrypoint(root, input);
+  const darwin_loader_environment =
+    process.platform === 'darwin'
+      ? ' DYLD_INSERT_LIBRARIES DYLD_LIBRARY_PATH DYLD_FRAMEWORK_PATH'
+      : '';
   const prefix =
     '#!/bin/sh\nset -eu\n' +
     'case "$0" in */*) script_dir=${0%/*};; *) script_dir=.;; esac\n' +
     'root=$(CDPATH= cd -- "$script_dir/.." && pwd -P)\n' +
-    'unset NODE_OPTIONS NODE_PATH LD_PRELOAD LD_LIBRARY_PATH\n';
+    'unset NODE_OPTIONS NODE_PATH LD_PRELOAD LD_LIBRARY_PATH' +
+    darwin_loader_environment +
+    '\n';
   assert_release_execution(execution);
   await mkdir(join(root, 'bin'), { recursive: true });
   assert_release_execution(execution);
@@ -74,6 +80,7 @@ export async function build_app_launch_env(
   const root = await resolved_path(app_root);
   const manifest = await validate_app_manifest(join(root, 'manifest.json'), {
     require_runtime: true,
+    ...(process.platform === 'darwin' ? { expected_target: MAC_HOME } : {}),
   });
   if (manifest.runtime_contract?.version !== 2)
     throw new AppValidationError('Node launcher requires a version-2 runtime contract');
@@ -96,6 +103,8 @@ export async function launch_app(
   args: PackagedLauncherArguments,
   ambient: Readonly<Record<string, string>>,
 ): Promise<never> {
+  if (process.platform === 'darwin' && args.mode === 'managed-linux')
+    throw new AppValidationError('Linux managed launch is unavailable on macOS');
   const root = await resolved_path(app_root);
   const environment = await build_app_launch_env(root, ambient);
   const version = /^22\.(\d+)\.(\d+)$/.exec(process.versions.node);
