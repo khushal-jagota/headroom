@@ -210,6 +210,8 @@ def run(browser, urls):
             "field_approvals": source.get("field_approvals", {}),
         }
 
+    decision_receipts = {}
+
     def respond(route):
         nonlocal read_count, refuse_resume
         path = route.request.url.split("/api/", 1)[1]
@@ -334,40 +336,43 @@ def run(browser, urls):
             result = fixture["MACHINE_CATALOG"]
         elif path == "worker-types":
             result = manifest
-        elif path.startswith("tickets/") and "/accept/" in path:
-            _, ticket_id, _, field = path.split("/", 3)
-            body = route.request.post_data_json
-            attempt = {"ticket_id": ticket_id, "field": field, "body": body}
-            accept_attempts.append(attempt)
-            if ticket_id == "t_stale" and body["expected_proposal_revision"] == 1:
-                tickets[ticket_id]["pending_proposal"].update(body="New plan revision", revision=2)
-                route.fulfill(
-                    status=409,
-                    content_type="application/json",
-                    body=json.dumps(
-                        {"error": {"code": "stale_proposal", "message": "proposal changed"}}
-                    ),
-                )
-                return
-            if (
-                ticket_id == "t_failure"
-                and len([item for item in accept_attempts if item["ticket_id"] == ticket_id]) == 1
-            ):
-                route.fulfill(
-                    status=500,
-                    content_type="application/json",
-                    body=json.dumps(
-                        {"error": {"code": "test_failure", "message": "approval failed"}}
-                    ),
-                )
-                return
-            approvals.append(attempt)
-            tickets[ticket_id].update(
-                pending_proposal_revision=tickets[ticket_id]["pending_proposal"]["revision"],
-                pending_proposal=None,
-                ticket_status="empty",
-            )
-            result = tickets[ticket_id]
+        elif path.startswith("tickets/") and "/decision-operations/" in path:
+            _, ticket_id, _, operation_id = path.split("/")
+            receipt = decision_receipts.get(operation_id)
+            if route.request.method == "GET" or receipt is not None:
+                result = {"receipt_contract": 1, "receipt": receipt}
+            else:
+                command = route.request.post_data_json
+                assert command["decision"] == "approve" and "decision_id" not in command
+                field = command["field"]
+                body = {key: value for key, value in command.items() if key not in {"decision", "field"}}
+                attempt = {"ticket_id": ticket_id, "field": field, "body": body}
+                accept_attempts.append(attempt)
+                error = None
+                if ticket_id == "t_stale" and body["expected_proposal_revision"] == 1:
+                    tickets[ticket_id]["pending_proposal"].update(body="New plan revision", revision=2)
+                    error = {"code": "stale_proposal", "message": "proposal changed", "detail": {}}
+                elif ticket_id == "t_failure" and len([item for item in accept_attempts if item["ticket_id"] == ticket_id]) == 1:
+                    route.fulfill(status=500, json={"error": {"code": "test_failure", "message": "approval failed"}})
+                    return
+                else:
+                    approvals.append(attempt)
+                    tickets[ticket_id].update(
+                        pending_proposal_revision=tickets[ticket_id]["pending_proposal"]["revision"],
+                        pending_proposal=None, ticket_status="empty",
+                    )
+                receipt = {
+                    "operation_id": operation_id, "ticket_id": ticket_id, "decision": "approve", "field": field,
+                    "expected_proposal_revision": command["expected_proposal_revision"],
+                    "outcome": "refused" if error else "applied", "error": error,
+                    "transition": None if error else {
+                        "stage": tickets[ticket_id]["stage"], "ceiling": tickets[ticket_id]["ceiling"],
+                        "ceiling_holder": tickets[ticket_id]["ceiling_holder"], "ticket_status": "empty",
+                        "pending_proposal_revision": command["expected_proposal_revision"] + 1,
+                    }, "created_at": 123,
+                }
+                decision_receipts[operation_id] = receipt
+                result = {"receipt_contract": 1, "receipt": receipt}
         elif path.endswith("/conversation/start-values"):
             result = {}
         elif path.startswith("tickets/") and path.count("/") == 1:
@@ -632,7 +637,7 @@ def run(browser, urls):
     choose("needs_what_changes")
     wait_count(approvals, 1)
     assert approvals[-1]["body"] == {
-        "decision_id": '["t_coding",4]:approve', "message": None,
+        "message": None,
         "next_ceiling": "needs_what_changes",
         "next_holder": {"kind": "owner", "id": "owner"},
         "expected_proposal_revision": expected_revision,
@@ -702,7 +707,7 @@ def run(browser, urls):
             "ticket_id": ticket_id,
             "field": "consequences",
             "body": {
-                "decision_id": f'["{ticket_id}",{expected_revision}]:approve', "message": None,
+                "message": None,
                 "next_ceiling": "none",
                 "next_holder": expected_holder,
                 "expected_proposal_revision": expected_revision,
@@ -716,9 +721,19 @@ def run(browser, urls):
     expect(block()).to_have_attribute("data-field", "plan")
     choose("needs_implementation")
     expect(block()).to_contain_text("proposal changed")
+    expect(block()).to_contain_text("Approval did not apply:")
     assert len(approvals) == 4
     page.evaluate("window.__refresh()")
     expect(block().locator("[contenteditable]")).to_have_text("New plan revision")
+    # The refusal stays beside the replacement proposal after the keyed card changes.
+    expect(block()).to_contain_text("Approval did not apply:")
+    expect(block()).to_contain_text("proposal changed")
+    expect(block().locator(".error-message")).to_have_count(1)
+    expect(block().locator(".error-message")).to_be_visible()
+    if artifact_dir:
+        path = "stale-approval-refused-near-card.png"
+        page.screenshot(path=str(Path(artifact_dir) / path), full_page=True)
+        evidence.append(path)
     choose("needs_implementation")
     wait_count(approvals, 5)
     assert approvals[-1]["body"]["expected_proposal_revision"] == 2
@@ -796,7 +811,7 @@ def run(browser, urls):
         choose("needs_implementation", principal["id"])
         wait_count(approvals, count + 1)
         assert approvals[-1]["body"] == {
-            "decision_id": f'["{identity}",1]:approve', "message": None,
+            "message": None,
             "next_ceiling": "needs_implementation",
             "next_holder": principal,
             "expected_proposal_revision": 1,
@@ -838,7 +853,7 @@ def run(browser, urls):
     choose("needs_implementation", "owner")
     wait_count(approvals, count + 1)
     assert approvals[-1]["body"] == {
-        "decision_id": '["t_lifecycle",7]:approve', "message": None,
+        "message": None,
         "next_ceiling": "needs_implementation",
         "next_holder": {"kind": "owner", "id": "owner"},
         "expected_proposal_revision": 7,
