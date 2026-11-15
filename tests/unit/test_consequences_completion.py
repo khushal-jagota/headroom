@@ -70,24 +70,23 @@ def test_final_decision_needs_no_onward_scope_and_report_finishes(
     )
     revision = proposal.json()["pending_proposal"]["revision"]
     if protected:
-        approved = client.post(
-            f"/api/tickets/{ticket_id}/decision-operations/final",
-            json={
-                "decision": "approve",
-                "field": "evidence",
-                "expected_proposal_revision": revision,
-            },
-        )
-        assert approved.status_code == 200, approved.text
+        approval_path = f"/api/tickets/{ticket_id}/decision-operations/final"
+        approval_body = {
+            "decision": "approve",
+            "field": "evidence",
+            "expected_proposal_revision": revision,
+        }
+    else:
+        approval_path = f"/api/tickets/{ticket_id}/accept/evidence"
+        approval_body = {
+            "expected_proposal_revision": revision,
+            "decision_id": "legacy-final",
+        }
+    approved = client.post(approval_path, json=approval_body)
+    assert approved.status_code == 200, approved.text
+    if protected:
         assert approved.json()["receipt"]["outcome"] == "applied", approved.text
     else:
-        approved = client.post(
-            f"/api/tickets/{ticket_id}/accept/evidence",
-            json={
-                "expected_proposal_revision": revision,
-            },
-        )
-        assert approved.status_code == 200, approved.text
         assert approved.json()["stage"] == "land_the_result"
     completed = client.post(
         f"/api/tickets/{ticket_id}/propose",
@@ -98,6 +97,14 @@ def test_final_decision_needs_no_onward_scope_and_report_finishes(
     assert completed.json()["stage"] == "done"
     assert completed.json()["pending_proposal"] is None
     assert completed.json()["field_values"]["consequences"] == "Verified the saved result."
+    # Completion changes the current Stage, but never the original command identity.
+    repeated = client.post(approval_path, json=approval_body)
+    assert repeated.status_code == 200, repeated.text
+    if protected:
+        assert repeated.json() == approved.json()
+    else:
+        assert repeated.json()["stage"] == "done"
+        assert repeated.json()["field_values"] == completed.json()["field_values"]
 
 
 def test_new_completion_boundary_refused_but_legacy_scope_still_finishes(
