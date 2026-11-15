@@ -3,6 +3,7 @@
 import hashlib
 import io
 import json
+import signal
 import subprocess
 import tarfile
 import urllib.request
@@ -151,7 +152,12 @@ def test_unsupported_loader_host_refuses_before_candidate_exec(
     assert not (tmp_path / "home").exists()
 
 
-def test_interrupt_waits_for_real_installer_cleanup_through_repeated_ctrl_c(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    "interrupt_signal", [signal.SIGINT, signal.SIGTERM], ids=["legacy-int", "linux-term"]
+)
+def test_interrupt_waits_for_real_installer_cleanup_through_repeated_ctrl_c(
+    tmp_path: Path, interrupt_signal: signal.Signals
+) -> None:
     """A real child must finish rollback beyond subprocess.run's .25-second interrupt grace."""
     import signal
     import subprocess
@@ -165,24 +171,33 @@ def test_interrupt_waits_for_real_installer_cleanup_through_repeated_ctrl_c(tmp_
         "root = Path(sys.argv[1])\n"
         "assert sys.stdin.read() == 'private synthetic input'\n"
         "def cleanup(signum, frame):\n"
-        "    (root / 'cleanup-started').touch()\n"
+        "    (root / 'cleanup-started').write_text(str(signum))\n"
         "    time.sleep(.6)\n"
         "    (root / 'cleanup-complete').touch()\n"
         "    raise SystemExit(17)\n"
         "signal.signal(signal.SIGINT, cleanup)\n"
+        "signal.signal(signal.SIGTERM, cleanup)\n"
         "(root / 'ready').write_text(str(os.getpgrp()))\n"
         "time.sleep(5)\n"
     )
     wrapper = (
         "import os, runpy, sys; "
         "run = runpy.run_path(sys.argv[1], run_name='bootstrap_test')['run_installer']; "
+        "options = {'forward_termination': True} if sys.argv[4] == 'term' else {}; "
         "run([sys.executable, sys.argv[2], sys.argv[3]], "
-        "'private synthetic input', dict(os.environ))"
+        "'private synthetic input', dict(os.environ), **options)"
     )
     wrapper_path = tmp_path / "bootstrap.py"
     wrapper_path.write_text(wrapper)
     process = subprocess.Popen(
-        [sys.executable, str(wrapper_path), bootstrap.__file__, str(child), str(tmp_path)],
+        [
+            sys.executable,
+            str(wrapper_path),
+            bootstrap.__file__,
+            str(child),
+            str(tmp_path),
+            "term" if interrupt_signal == signal.SIGTERM else "int",
+        ],
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
@@ -199,11 +214,12 @@ def test_interrupt_waits_for_real_installer_cleanup_through_repeated_ctrl_c(tmp_
     try:
         wait_for(tmp_path / "ready")
         assert int((tmp_path / "ready").read_text()) != process.pid
-        process.send_signal(signal.SIGINT)
+        process.send_signal(interrupt_signal)
         wait_for(tmp_path / "cleanup-started")
         process.send_signal(signal.SIGINT)
         stdout, stderr = process.communicate(timeout=5)
-        assert process.returncode == 130
+        assert process.returncode == 128 + interrupt_signal
+        assert int((tmp_path / "cleanup-started").read_text()) == interrupt_signal
         assert (tmp_path / "cleanup-complete").exists()
         assert "private synthetic input" not in stdout + stderr
         assert "Traceback" not in stderr
@@ -349,6 +365,7 @@ def test_linux_join_recipe_checks_target_then_passes_private_stdin_to_node(
     else:
         bootstrap.main()
         installer.assert_called_once()
+        assert installer.call_args.kwargs == {"forward_termination": True}
         prompt.assert_called_once()
         command, encoded, environment = installer.call_args.args
         value = json.loads(encoded)

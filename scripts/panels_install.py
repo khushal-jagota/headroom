@@ -455,23 +455,31 @@ def parser() -> argparse.ArgumentParser:
     return result
 
 
-def run_installer(command: list[str], payload: str, environment: dict[str, str]) -> None:
-    """Wait through installer rollback after one forwarded interrupt, including repeated Ctrl-C."""
+def run_installer(
+    command: list[str],
+    payload: str,
+    environment: dict[str, str],
+    *,
+    forward_termination: bool = False,
+) -> None:
+    """Wait through rollback after the first forwarded interrupt; Linux join also forwards TERM."""
     process: subprocess.Popen[str] | None = None
-    interrupted = False
+    interrupted: int | None = None
     forwarded = False
 
     def interrupt(signum: int, frame: FrameType | None) -> None:
         nonlocal interrupted, forwarded
-        interrupted = True
+        if interrupted is None:
+            interrupted = signum
         if process is not None and not forwarded:
             forwarded = True
             try:
-                process.send_signal(signal.SIGINT)
+                process.send_signal(interrupted)
             except ProcessLookupError:
                 pass
 
-    previous = signal.signal(signal.SIGINT, interrupt)
+    handled = (signal.SIGINT, signal.SIGTERM) if forward_termination else (signal.SIGINT,)
+    previous = {signum: signal.signal(signum, interrupt) for signum in handled}
     try:
         # A separate session prevents repeated terminal interrupts from reaching cleanup.
         process = subprocess.Popen(
@@ -481,13 +489,14 @@ def run_installer(command: list[str], payload: str, environment: dict[str, str])
             env=environment,
             start_new_session=True,
         )
-        if interrupted:
-            interrupt(signal.SIGINT, None)
+        if interrupted is not None:
+            interrupt(interrupted, None)
         process.communicate(payload)
     finally:
-        signal.signal(signal.SIGINT, previous)
-    if interrupted:
-        raise SystemExit(130)
+        for signum, handler in previous.items():
+            signal.signal(signum, handler)
+    if interrupted is not None:
+        raise SystemExit(128 + interrupted)
     if process.returncode:
         raise subprocess.CalledProcessError(process.returncode, command)
 
@@ -601,7 +610,10 @@ def main() -> None:
                         "label": args.service,
                     }
             print("Release checksum passed. Install the new service.", flush=True)
-            run_installer(command, json.dumps(value), environment)
+            if args.command == "join" and target == "linux":
+                run_installer(command, json.dumps(value), environment, forward_termination=True)
+            else:
+                run_installer(command, json.dumps(value), environment)
     except (
         OSError,
         ValueError,

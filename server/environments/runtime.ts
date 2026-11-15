@@ -101,7 +101,9 @@ export async function createEnvironmentRuntime(
       context.database.read((sql) => executor_platform(sql, machine_id)),
     linux_registered: () =>
       context.database.read((sql) =>
-        Boolean(sql.get("SELECT 1 FROM machine_executor_credentials WHERE platform='linux' LIMIT 1")),
+        Boolean(
+          sql.get("SELECT 1 FROM machine_executor_credentials WHERE platform='linux' LIMIT 1"),
+        ),
       ),
     attempts,
     provider,
