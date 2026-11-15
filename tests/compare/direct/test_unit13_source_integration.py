@@ -8,13 +8,14 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import re
 import sqlite3
 import subprocess
 import time
 from contextlib import closing
 from dataclasses import asdict
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import cast
 
@@ -44,6 +45,7 @@ from planner.manager_wakes import data as wakes
 from planner.manager_wakes.contracts import WakeBatch
 from planner.manager_wakes.runtime import deliver_batch
 from planner.measure_sources import actions, run_actions
+from planner.measure_sources import data as source_data
 from planner.measure_sources.contracts import (
     FailureCode,
     RunFailure,
@@ -51,6 +53,7 @@ from planner.measure_sources.contracts import (
     RunMode,
     RunResult,
 )
+from planner.measure_sources.local_time import latest_due_slot
 from planner.measure_sources.registry import build_participants
 from planner.measure_sources.schedule_loop import SourceScheduleLoop
 from planner.measures.contracts import CandidateObservation
@@ -65,7 +68,7 @@ TABLES = {
 
 
 def normalized(value: object) -> object:
-    """Only minted conversation and sender identities vary across the two executions."""
+    """Only minted conversation, sender, and run identities vary across the executions."""
     text = json.dumps(value)
     maps: dict[str, str] = {}
 
@@ -75,7 +78,10 @@ def normalized(value: object) -> object:
     return cast(
         object,
         json.loads(
-            re.sub(r"manager_delivery_wake_[0-9a-f]+|conv_[0-9a-f]{32}", token, text)
+            re.sub(
+                r"manager_delivery_wake_[0-9a-f]+|conv_[0-9a-f]{32}|source_run_[0-9a-z]+",
+                token, text,
+            )
         ),
     )
 
@@ -258,6 +264,9 @@ def test_unit13_source_integration(
             )
 
         asyncio.run(exercise())
+        catchup_started = time.perf_counter()
+        snapshot("latest-occurrence-catchup", catchup_proof(conn, loop, clock, source.id))
+        catchup_seconds = time.perf_counter() - catchup_started
         expected = normalized(snapshots)
     spec = tmp_path / "input.json"
     spec.write_text(
@@ -291,7 +300,8 @@ def test_unit13_source_integration(
             text=True,
         )
     )
-    actual = normalized(actual)
+    native_seconds = actual.pop("catchup_seconds")
+    actual = normalized(actual["snapshots"])
     native_expected = json.loads(json.dumps(expected))
 
     def notice(text: str) -> str:
@@ -315,6 +325,7 @@ def test_unit13_source_integration(
         "typescript": actual,
         "comparison_rule": "Generated notice source names use native JSON quotes only.",
         "seconds": time.perf_counter() - started,
+        "catchup_seconds": {"python": catchup_seconds, "typescript": native_seconds},
         "boundary": (
             "Canonical producer, batch admission, minimal durable conversation backend, "
             "and shared source clock. No native real-core callback claim."
@@ -328,3 +339,81 @@ def test_unit13_source_integration(
             json.dumps(report, indent=2) + "\n"
         )
     assert actual == native_expected
+
+
+def catchup_proof(
+    conn: sqlite3.Connection, loop: SourceScheduleLoop, clock: FakeClock, source_id: str
+) -> dict[str, object]:
+    """Reuse the populated source and clock without another runtime or backend host."""
+    due = datetime.fromtimestamp(NOW).astimezone().replace(second=0, microsecond=0)
+    source = source_data.read_source(conn, source_id)
+    actions.set_schedule(
+        conn, source_id,
+        {"expected_revision": source.source_revision, "enabled": True,
+         "local_time": due.strftime("%H:%M")},
+        principal=OWNER_PRINCIPAL, now=NOW,
+    )
+    old = [run_actions.admit_scheduled_run(
+        conn, source_id, local_now=due - timedelta(days=days), now=NOW - days * 86400
+    ).id for days in (2, 1)]
+
+    def runs() -> list[dict[str, object]]:
+        containers = {"required_outputs", "dataset_outputs", "failure", "metrics",
+                      "test_candidates", "test_dataset_results"}
+        return [{key: json.loads(value) if key in containers and value is not None else value
+                 for key, value in dict(row).items()}
+                for row in conn.execute(
+                    "SELECT * FROM measure_source_runs WHERE source_id=? AND trigger='scheduled' "
+                    "ORDER BY created_at,schedule_date,schedule_time", (source_id,),
+                )]
+
+    notices = [dict(row) for row in conn.execute("SELECT * FROM manager_wakes ORDER BY id")]
+    episodes = [dict(row) for row in conn.execute(
+        "SELECT * FROM measure_source_failure_episodes ORDER BY source_id,episode"
+    )]
+    clock.set(due + timedelta(minutes=30))
+    conn.execute("UPDATE measure_sources SET created_at=? WHERE id=?", (NOW + 60, source_id))
+    conn.commit()
+    loop.poll_once()
+    creation_refused = runs()
+    assert len(creation_refused) == 2
+    conn.execute("UPDATE measure_sources SET created_at=? WHERE id=?", (NOW, source_id))
+    conn.commit()
+    loop.poll_once()
+    loop.poll_once()
+    admitted = runs()
+    assert len(admitted) == 3
+    assert (admitted[-1]["schedule_date"], admitted[-1]["schedule_time"]) == (
+        due.date().isoformat(), due.strftime("%H:%M")
+    )
+    for run_id in old:
+        assert run_actions.claim_run(conn, run_id, now=clock.now_unix()) is None
+    assert run_actions.claim_run(conn, str(admitted[-1]["id"]), now=clock.now_unix()) is not None
+    claimed = runs()
+    assert [row["status"] for row in claimed] == ["interrupted", "interrupted", "running"]
+    assert notices == [dict(row) for row in conn.execute("SELECT * FROM manager_wakes ORDER BY id")]
+    assert episodes == [dict(row) for row in conn.execute(
+        "SELECT * FROM measure_source_failure_episodes ORDER BY source_id,episode"
+    )]
+    previous = os.environ.get("TZ")
+    os.environ["TZ"] = "Europe/Berlin"
+    time.tzset()
+    try:
+        cases = [
+            ("02:30", "2026-03-29T03:30:00+02:00"),
+            ("02:30", "2026-03-29T03:30:01+02:00"),
+            ("02:30", "2026-10-25T02:15:00+01:00"),
+            ("09:00", "2026-10-27T08:59:00+01:00"),
+        ]
+        slots = []
+        for local_time, now in cases:
+            slot = latest_due_slot(local_time, datetime.fromisoformat(now), system_local=True)
+            slots.append(None if slot is None else slot.timestamp())
+    finally:
+        if previous is None:
+            os.environ.pop("TZ", None)
+        else:
+            os.environ["TZ"] = previous
+        time.tzset()
+    return {"creation_refused": creation_refused, "admitted": admitted, "claimed": claimed,
+            "episodes": episodes, "slots": slots}

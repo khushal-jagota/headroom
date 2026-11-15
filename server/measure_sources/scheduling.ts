@@ -1,4 +1,4 @@
-/** Current local-minute admission. Missed minutes never create catch-up runs. */
+/** Admit only the latest real daily occurrence inside the catch-up window. */
 import type { OwnedAreaContext } from '../core/authority/register.ts';
 import type { Database } from '../core/database/contracts.ts';
 import type { Clock } from '../core/clock.ts';
@@ -9,11 +9,7 @@ import type { SlotParticipant } from './participants.ts';
 import type { StopOptions } from '../lifecycle/contracts.ts';
 import { SourceDispatcher } from './dispatcher.ts';
 import { admit_scheduled_run } from './run_actions.ts';
-export function current_source_slot(clock: Clock): [string, string] {
-  // Date normalizes a fixed-offset test clock to UTC. Retain its local label here.
-  const local = clock.isoformat();
-  return [local.slice(0, 10), local.slice(11, 16)];
-}
+import { latest_due_slot } from './logic/local_time.ts';
 export class SourceScheduleParticipant implements SlotParticipant {
   private stopped = false;
   private readonly dispatcher: SourceDispatcher;
@@ -26,24 +22,20 @@ export class SourceScheduleParticipant implements SlotParticipant {
   }
   poll(database: Database, clock: Clock): void {
     if (this.stopped) return;
-    const slot = current_source_slot(clock);
     const rows = database.read((sql) =>
-      sql.all<{ id: string }>(
-        `
-      SELECT id FROM measure_sources
-      WHERE enabled=1 AND local_time=? ORDER BY id
-    `,
-        [slot[1]],
+      sql.all<{ id: string; local_time: string; created_at: number }>(
+        'SELECT id,local_time,created_at FROM measure_sources WHERE enabled=1 ORDER BY id',
       ),
     );
     for (const row of rows) {
       if (this.stopped) break;
+      const slot = latest_due_slot(row.local_time, clock.now());
+      if (slot === null || slot.getTime() / 1000 < Math.floor(row.created_at / 60) * 60) continue;
       try {
         database.write((sql) =>
           admit_scheduled_run(sql, row.id, {
-            local_now: clock.now(),
+            local_now: slot,
             now: clock.nowUnix(),
-            slot,
           }),
         );
       } catch (error) {

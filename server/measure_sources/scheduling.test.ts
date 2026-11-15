@@ -14,9 +14,24 @@ import { create_source, submit_script } from './actions.ts';
 import { request_run, claim_run } from './run_actions.ts';
 import { read_run } from './data.ts';
 import { SourceDispatcher } from './dispatcher.ts';
-import { current_source_slot } from './scheduling.ts';
+import { latest_due_slot } from './logic/local_time.ts';
 import { ShutdownDeadlineExceeded } from '../lifecycle/contracts.ts';
 const turn = () => new Promise<void>((resolve) => setImmediate(resolve));
+test('daily catch-up resolves real local occurrences across DST and the 24-hour boundary', () => {
+  vi.stubEnv('TZ', 'Europe/Berlin');
+  try {
+    const cases = [
+      ['02:30', '2026-03-29T03:30:00+02:00', '2026-03-28T01:30:00.000Z'],
+      ['02:30', '2026-03-29T03:30:01+02:00', null],
+      ['02:30', '2026-10-25T02:15:00+01:00', '2026-10-25T00:30:00.000Z'],
+      ['09:00', '2026-10-27T08:59:00+01:00', '2026-10-26T08:00:00.000Z'],
+    ];
+    for (const [time, now, expected] of cases)
+      expect(latest_due_slot(time!, new Date(now!))?.toISOString() ?? null).toBe(expected);
+  } finally {
+    vi.unstubAllEnvs();
+  }
+});
 const result = (interrupted = false): RunResult => ({
   observations: [],
   dataset_results: [],
@@ -93,7 +108,6 @@ test('two source executions retain per-source exclusion and drain cancellation b
     blocked = enqueue(first.id);
   const dispatcher = new SourceDispatcher({ context, runtime });
   dispatcher.start();
-  expect(current_source_slot(clock)).toEqual(['2027-01-01', '08:30']);
   expect(dispatcher.poll_once()).toEqual([a.id, b.id]);
   await turn();
   expect(pending.size).toBe(2);

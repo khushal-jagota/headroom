@@ -9,3 +9,4 @@ export const DEFAULT_PAGE_LIMIT = 30;
 export const MAX_PAGE_LIMIT = 100;
 export const LATEST_VALUES_PREVIEW = 5;
 export const MAX_CONCURRENT_RUNS = 2;
+export const SCHEDULE_CATCHUP_SECONDS = 24 * 60 * 60;
