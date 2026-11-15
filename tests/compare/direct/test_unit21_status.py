@@ -311,18 +311,7 @@ def test_unit21_status_populated_and_sanitized(
     assert answers[0]["backup"]["verified_snapshot_count"] == 1
 
 
-@pytest.mark.parametrize(
-    "platform",
-    [
-        "Linux",
-        pytest.param(
-            "Darwin",
-            marks=pytest.mark.xfail(
-                run=False, reason="expected-open P7: #916 Darwin log cleanup truncates native logs"
-            ),
-        ),
-    ],
-)
+@pytest.mark.parametrize("platform", ["Linux", "Darwin"])
 def test_unit21_cleanup_rechecks_changed_targets(
     tmp_path: Path, request: pytest.FixtureRequest, platform: str
 ) -> None:
@@ -359,8 +348,8 @@ def test_unit21_cleanup_rechecks_changed_targets(
     }
     answers = _compare(tmp_path, [(root, cleanup_case)], "cleanup", request)
     assert len(answers[0]["applied"]["removed"]) == 1
-    assert len(answers[0]["applied"]["rotated"]) == 1
-    assert len(answers[0]["applied"]["review_needed"]) == 5
+    assert len(answers[0]["applied"]["rotated"]) == (2 if platform == "Darwin" else 1)
+    assert len(answers[0]["applied"]["review_needed"]) == (4 if platform == "Darwin" else 5)
     assert answers[0]["tree"]["external/keep"]
 
 

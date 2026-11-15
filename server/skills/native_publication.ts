@@ -129,7 +129,7 @@ export interface NativePublicationOptions {
   required_skill_names?: readonly string[];
   policy: NativePublicationPolicy;
 }
-function resolve_mac_path(path: string, active = new Set<string>()): string {
+export function resolve_native_skill_path(path: string, active = new Set<string>()): string {
   let current = '/';
   for (const part of path.split('/')) {
     if (!part || part === '.') continue;
@@ -142,7 +142,10 @@ function resolve_mac_path(path: string, active = new Set<string>()): string {
       if (active.has(candidate)) throw new Error(`symbolic link loop: ${candidate}`);
       active.add(candidate);
       const target = readlinkSync(candidate);
-      current = resolve_mac_path(isAbsolute(target) ? target : current + '/' + target, active);
+      current = resolve_native_skill_path(
+        isAbsolute(target) ? target : current + '/' + target,
+        active,
+      );
       active.delete(candidate);
     } else current = candidate;
   }
@@ -175,7 +178,7 @@ export function prepare_native_skill_publication(
   const owned = (target: string) =>
     path_is_within(
       state,
-      resolve_mac_path(isAbsolute(target) ? target : home + '/skills/' + target),
+      resolve_native_skill_path(isAbsolute(target) ? target : home + '/skills/' + target),
     );
   const scan = () => {
     directory.assert_current();

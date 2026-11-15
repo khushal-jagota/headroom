@@ -1,10 +1,11 @@
+import { HOME_MACHINE_ID } from '../../execution_identity.ts';
 import { PreviewError, type TicketEligibility } from '../contracts.ts';
-export function require_vps(ticket: TicketEligibility): void {
-  if (ticket.locale === 'macos')
-    throw new PreviewError('Application previews are unavailable for Tickets running on the Mac.');
+export function require_home(ticket: TicketEligibility): void {
+  if (ticket.machine_id !== HOME_MACHINE_ID)
+    throw new PreviewError('Application previews are unavailable for Tickets on a remote Mac executor.');
 }
 export function require_eligible(ticket: TicketEligibility): void {
-  require_vps(ticket);
+  require_home(ticket);
   if (ticket.terminal)
     throw new PreviewError('This Ticket has finished; its preview has expired.', 410);
   if (ticket.project_folder === null)

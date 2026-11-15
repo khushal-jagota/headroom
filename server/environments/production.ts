@@ -75,7 +75,7 @@ export const create_production_environment_operations: ProductionEnvironmentFact
     create_mac: (mac_context) => create_mac_update_composition(mac_context, dependencies.executor),
     collector: {
       module_url: new URL('./vps_metrics/collectors/index.ts', import.meta.url).href,
-      export_name: 'build_linux_collector',
+      export_name: 'build_home_collector',
     },
     collect_status: collect_vps_status,
   };

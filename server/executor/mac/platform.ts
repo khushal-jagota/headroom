@@ -676,3 +676,90 @@ export function darwin_prepare_worker_session(): void {
   if (session !== process.pid || group !== process.pid)
     checked('setsid', () => native('int setsid(void)')());
 }
+
+/** Read-only Darwin observations share the existing libproc and libc bridges. */
+export function darwin_process_bytes(pid: number, flavor: number, size: number): Buffer {
+  const bytes = Buffer.alloc(size);
+  koffi.errno(0);
+  const length = worker_process_native(
+    'int proc_pidinfo(int pid, int flavor, uint64_t arg, void *buffer, int buffersize)',
+  )(pid, flavor, 0, bytes, size);
+  if (length !== size) throw darwin_observation_error('Mac process evidence is missing or unreadable.');
+  return bytes;
+}
+function darwin_observation_error(message: string): Error {
+  const errno = koffi.errno();
+  return Object.assign(new Error(message), {
+    code: errno > 0 ? getSystemErrorName(-errno) : 'EIO',
+  });
+}
+export function darwin_process_ids(limit: number, same_uid: boolean): number[] {
+  const bytes = Buffer.alloc((limit + 1) * 4);
+  const size = worker_process_native(
+    'int proc_listpids(uint32_t type, uint32_t typeinfo, void *buffer, int buffersize)',
+  )(same_uid ? 4 : 1, same_uid ? process.getuid!() : 0, bytes, bytes.length);
+  if (size <= 0 || size >= bytes.length || size % 4)
+    throw new Error('Native process inventory is unavailable or exceeds its limit');
+  return [...new Set(Array.from({ length: size / 4 }, (_, index) => bytes.readInt32LE(index * 4)))]
+    .filter((pid) => pid > 0).sort((a, b) => a - b);
+}
+export function darwin_process_descriptors(pid: number, limit: number): number[] {
+  const bytes = Buffer.alloc((limit + 1) * 8);
+  koffi.errno(0);
+  const size = worker_process_native(
+    'int proc_pidinfo(int pid, int flavor, uint64_t arg, void *buffer, int buffersize)',
+  )(pid, 1, 0, bytes, bytes.length);
+  if (size === 0 && koffi.errno() === os_constants.errno.ESRCH) return [];
+  if (size < 0 || (size === 0 && koffi.errno()))
+    throw darwin_observation_error('Mac process descriptors are unreadable.');
+  if (size % 8 || size >= bytes.length)
+    throw new Error('Process descriptor inspection bound exceeded.');
+  // Preserve non-socket descriptors in the budget. Negative entries encode their exclusion.
+  return Array.from({ length: size / 8 }, (_, index) =>
+    bytes.readUInt32LE(index * 8 + 4) === 2 ? bytes.readInt32LE(index * 8) : -1);
+}
+export function darwin_process_socket(pid: number, descriptor: number): Buffer | null {
+  const bytes = Buffer.alloc(792);
+  koffi.errno(0);
+  const length = worker_process_native(
+    'int proc_pidfdinfo(int pid, int fd, int flavor, void *buffer, int buffersize)',
+  )(pid, descriptor, 3, bytes, bytes.length);
+  if (length !== bytes.length) {
+    if ([os_constants.errno.EBADF, os_constants.errno.ESRCH].includes(koffi.errno())) return null;
+    throw darwin_observation_error('Mac socket ownership is unreadable.');
+  }
+  return bytes;
+}
+export function darwin_system_bytes(name: string, size: number, exact = true): Buffer {
+  if (native_platform() !== 'darwin') throw new Error('Native observations require macOS');
+  const bytes = Buffer.alloc(size), length = Buffer.alloc(8);
+  length.writeBigUInt64LE(BigInt(size));
+  checked('sysctlbyname', () => native(
+    'int sysctlbyname(const char *name, void *old, void *length, void *value, size_t size)',
+  )(name, bytes, length, null, 0));
+  const observed = Number(length.readBigUInt64LE());
+  if (observed > size || (exact && observed !== size))
+    throw new Error('Native sysctl observation is truncated or exceeds its buffer');
+  return bytes.subarray(0, observed);
+}
+let observation_host: number | undefined;
+export function darwin_host_words(flavor: number, minimum: number, wide = false): number[] {
+  if (native_platform() !== 'darwin') throw new Error('Native observations require macOS');
+  observation_host ??= native('unsigned int mach_host_self(void)')();
+  if (!observation_host) throw new Error('Native host port is unavailable');
+  const bytes = Buffer.alloc(256 * 4), count = Buffer.alloc(4);
+  count.writeUInt32LE(256);
+  const call = native(`int ${wide ? 'host_statistics64' : 'host_statistics'}(unsigned int host, int flavor, void *buffer, void *count)`);
+  if (call(observation_host, flavor, bytes, count) !== 0 ||
+      count.readUInt32LE() < minimum || count.readUInt32LE() > 256)
+    throw new Error('Native host observation is unavailable or truncated');
+  return Array.from({ length: minimum }, (_, index) => bytes.readUInt32LE(index * 4));
+}
+export function darwin_cpu_time_scale(): number {
+  if (native_platform() !== 'darwin') throw new Error('Native observations require macOS');
+  const bytes = Buffer.alloc(8);
+  if (native('int mach_timebase_info(void *info)')(bytes) !== 0 ||
+      !bytes.readUInt32LE(0) || !bytes.readUInt32LE(4))
+    throw new Error('Native CPU timebase is unavailable');
+  return bytes.readUInt32LE(0) / bytes.readUInt32LE(4) / 1e9;
+}
