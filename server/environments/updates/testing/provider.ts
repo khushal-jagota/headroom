@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { Readable } from 'node:stream';
 import { createHash } from 'node:crypto';
 import { GitHubUpdateProvider } from '../provider.ts';
+import type { RuntimeTarget } from '../../release/contracts.ts';
 interface Reply {
   status?: number;
   json?: unknown;
@@ -21,11 +22,13 @@ interface Case {
   artifact_id: number;
   responses: Record<string, Reply>;
   inactivity_ms?: number;
+  target?: RuntimeTarget;
 }
 interface Request {
   root: string;
   token_file: string;
   cases: Case[];
+  target?: RuntimeTarget;
 }
 export async function probe_update_provider(request: Request) {
   const results: unknown[] = [];
@@ -45,6 +48,7 @@ export async function probe_update_provider(request: Request) {
     }
     const provider = new GitHubUpdateProvider('owner/repository', request.token_file, {
       temporary_directory: request.root,
+      target: item.target ?? request.target,
       fetch: async (input, options) => {
         const url = new URL(input instanceof globalThis.Request ? input.url : input.toString());
         const path = url.pathname.replace('/repos/owner/repository/', '');
