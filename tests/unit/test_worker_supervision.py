@@ -29,6 +29,7 @@ def test_launch_priority_and_recorded_detached_tool_cleanup(
 ) -> None:
     """One real launch proves priority before exec and custody after a tool detaches."""
 
+    _require_delegated_cgroup()
     monkeypatch.setattr(config, "OBSERVATION_SECONDS", 0.1)
 
     async def run() -> None:
@@ -307,6 +308,7 @@ def test_native_stop_cancellation_cannot_extend_deadline(
 @pytest.mark.skipif(sys.platform != "linux", reason="Linux native orphan pidfd cleanup proof")
 def test_restart_reconciles_worker_after_its_parent_crashes(tmp_path: Path) -> None:
     """A new supervisor uses durable evidence after the original owner dies."""
+    _require_delegated_cgroup()
     import json
     import subprocess
 
@@ -433,7 +435,8 @@ def test_parent_captures_wrapper_that_exits_before_registration(tmp_path: Path) 
             assert records.read(supervisor.path)["state"] == "spawned"
             process.kill()
             await process.wait()
-            assert inspect_record(supervisor.path).complete
+            assert not inspect_record(supervisor.path).complete
+            assert "cgroup custody" in inspect_record(supervisor.path).reason
         finally:
             await supervisor.stop()
             if process.returncode is None:
@@ -1321,3 +1324,161 @@ def test_shared_observer_retries_an_unexpected_inventory_error_on_the_same_threa
     errors = [record for record in caplog.records if record.name == observation.__name__]
     assert len(errors) == 1 and "shared pass" in errors[0].getMessage()
     assert errors[0].exc_info is not None and errors[0].exc_info[0] is IndexError
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="Linux delegated cgroup v2 cleanup")
+def test_unobserved_detached_children_end_without_killing_other_workers(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Kernel custody covers immediate double forks missed by every inventory."""
+    import shutil
+    from uuid import uuid4
+
+    if not shutil.which("tmux") or not shutil.which("screen"):
+        pytest.skip("tmux and screen are required for the detached-child proof")
+    _require_delegated_cgroup()
+    monkeypatch.setattr(config, "OBSERVATION_SECONDS", 60)
+
+    async def run() -> None:
+        import tempfile
+
+        # screen stores a Unix socket here, so keep the path below AF_UNIX limits.
+        screen_dir = Path(tempfile.mkdtemp(prefix="ps-"))
+        environment = dict(
+            os.environ, PLAN_WORKER_PROCESS_ROOT=str(tmp_path), SCREENDIR=str(screen_dir)
+        )
+        worker = await WorkerSupervisor.create(dict(environment, PLAN_TICKET_ID="detach"), tmp_path)
+        other = await WorkerSupervisor.create(dict(environment, PLAN_TICKET_ID="other"), tmp_path)
+        assert worker is not None and other is not None
+        sibling = await asyncio.create_subprocess_exec(
+            *other.argv([sys.executable, "-c", "import time; time.sleep(60)"]),
+            env=other.environment,
+        )
+        await other.started(sibling.pid)
+        token = uuid4().hex
+        children = []
+        for name in ("setsid", "tmux", "screen"):
+            marker = tmp_path / name
+            body = (
+                "import os,time; from pathlib import Path; "
+                f"Path({str(marker)!r}).write_text(str(os.getpid())); time.sleep(60)"
+            )
+            if name == "setsid":
+                children.append(["setsid", "-f", sys.executable, "-c", body])
+            elif name == "tmux":
+                children.append(
+                    ["tmux", "-L", token, "new-session", "-d", sys.executable, "-c", body]
+                )
+            else:
+                children.append(["screen", "-dmS", token, sys.executable, "-c", body])
+        code = (
+            f"import subprocess; commands={children!r}; "
+            "[subprocess.run(c,check=True) for c in commands]"
+        )
+        root = await asyncio.create_subprocess_exec(
+            *worker.argv([sys.executable, "-c", code]),
+            env=worker.environment,
+            stdout=asyncio.subprocess.DEVNULL,
+            stderr=asyncio.subprocess.DEVNULL,
+        )
+        pids = []
+        try:
+            await worker.started(root.pid)
+            assert records.read(worker.path).get("cgroup_joined"), records.read(worker.path)
+            assert await asyncio.wait_for(root.wait(), 5) == 0
+            deadline = time.monotonic() + 5
+            while not all((tmp_path / name).exists() for name in ("setsid", "tmux", "screen")):
+                assert time.monotonic() < deadline, "Detached child did not start"
+                await asyncio.sleep(0.01)
+            pids = [int((tmp_path / name).read_text()) for name in ("setsid", "tmux", "screen")]
+            # No periodic observation ran. Reopen by its durable record, as after restart.
+            result = await asyncio.to_thread(stop_record, worker.path)
+            assert result.complete, result.reason
+            from planner.platform_runtime.linux.worker_processes import LinuxWorkerProcesses
+
+            native = LinuxWorkerProcesses()
+            table = native.snapshot(time.monotonic() + 2)
+            assert all(pid not in table or table[pid].zombie for pid in pids)
+            assert sibling.returncode is None and sibling.pid in table
+            assert os.getpid() in table
+        finally:
+            await other.stop()
+            shutil.rmtree(screen_dir)
+            await asyncio.wait_for(sibling.wait(), 5)
+            await worker.stop()
+            if root.returncode is None:
+                root.kill()
+                await root.wait()
+
+    asyncio.run(run())
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="Linux cgroup custody fallback")
+def test_missing_linux_cgroup_support_preserves_cleanup_fence(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Exact PID absence cannot certify unseen descendants without containment."""
+    from planner.worker_supervision.contracts import InspectionContext
+
+    path = _record(tmp_path)
+    native = _Primitives({os.getpid(): WorkerProcess(os.getpid(), "birth", 1, 1, 1)})
+    monkeypatch.setattr(native, "requires_containment", True, raising=False)
+    monkeypatch.setattr(config, "STOP_SECONDS", 0.02)
+    monkeypatch.setattr(config, "TERM_SECONDS", 0.01)
+    context = InspectionContext(native, LocalHostBootIdentity("host", "boot"))
+    from planner.platform_runtime.linux import worker_cgroups
+    from planner.worker_supervision import launch
+
+    monkeypatch.setattr(launch, "get_platform_adapter", lambda: _Adapter(native))
+
+    def unavailable(token: str) -> dict[str, object]:
+        raise OSError("delegation denied")
+
+    monkeypatch.setattr(worker_cgroups, "create", unavailable)
+    launch._launch(path, ["backend"])
+    assert records.read(path)["state"] == "running"
+    native.table.clear()
+    result = stop_record(path, context=context)
+    assert not result.complete
+    assert records.read(path)["state"] != "complete"
+    assert "delegation denied" in inspect_record(path, context=context).reason
+
+
+def _require_delegated_cgroup() -> None:
+    from uuid import uuid4
+
+    from planner.platform_runtime.linux import worker_cgroups
+
+    try:
+        identity = worker_cgroups.create(uuid4().hex)
+        worker_cgroups.remove(identity)
+    except (OSError, ValueError, StopIteration) as error:
+        pytest.skip(f"Delegated cgroup v2 is required: {error}")
+
+
+def test_missing_cgroup_requires_the_original_readable_hierarchy(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Service removal proves emptiness only in the recorded cgroup namespace."""
+    from planner.platform_runtime.linux import worker_cgroups
+
+    root = tmp_path / "hierarchy"
+    root.mkdir()
+    controllers = root / "cgroup.controllers"
+    controllers.write_text("cpu memory")
+    monkeypatch.setattr(worker_cgroups, "ROOT", root)
+    info = root.stat()
+    identity = {
+        "path": str(root / "service" / ("panels-worker-" + "a" * 32)),
+        "inode": 123,
+        "root_device": info.st_dev,
+        "root_inode": info.st_ino,
+    }
+    assert worker_cgroups.empty(identity)
+    identity["root_inode"] = info.st_ino + 1
+    with pytest.raises(ValueError, match="hierarchy identity"):
+        worker_cgroups.empty(identity)
+    identity["root_inode"] = info.st_ino
+    controllers.unlink()
+    with pytest.raises(FileNotFoundError):
+        worker_cgroups.empty(identity)

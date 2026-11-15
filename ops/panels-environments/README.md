@@ -119,13 +119,30 @@ Backup and restore instructions are in [backup-restore.md](backup-restore.md).
 ## Worker processes
 
 One supervisor owns Worker processes on the home and on executors. It records process
-identities, lowers CPU priority to nice 10, and bounds shutdown. Cleanup proves that
-identified processes ended. A tool that detaches before observation can survive.
-Unknown cleanup retains ownership and blocks replacement and folder removal.
+identities, lowers CPU priority to nice 10, and bounds shutdown. On Linux, each new
+Worker enters a delegated cgroup v2 child group before backend execution. Stop kills
+that group and requires proof that it is empty. Detached descendants remain in the group. Requests to an existing external daemon
+do not make that daemon or its children Worker descendants. This is not a security sandbox.
+The durable record binds cleanup to that group across an application restart.
 
-Linux Workers share the home service resource domain. New launches do not use
-`panels-workers.slice`, `panels.slice`, or transient Worker services. Nice priority
-does not replace their old aggregate CPU share or control-group cleanup.
+The live unit and generated Linux executor unit set `Delegate=yes`. The supervisor
+does not enable controllers in `cgroup.subtree_control`. The server stays in the parent
+group, and each Worker occupies a child. The parent must keep an empty
+`cgroup.subtree_control`: cgroup v2 permits resident processes there because no domain
+controllers are enabled for its children. Existing resource settings apply to the whole
+service subtree. No separate Worker units or resource limits return.
+
+Without delegation, writable cgroup v2, or an empty parent `cgroup.subtree_control`,
+Workers still launch. Cleanup reports the unavailable support and retains its fence.
+A process inventory alone cannot prove that unseen detached descendants ended.
+Old records retain their original evidence and do not acquire a new containment claim.
+
+The operator must copy the revised live unit and reload the user manager before the
+next planned service restart. Deploy does not copy unit files. Do not migrate active
+Workers between groups. The existing service stop covers the entire subtree, including
+old Workers. After that restart, new Workers use delegated groups. Generated executor
+units receive the same setting at installation. Restart them through their ordinary
+update route. This ticket does not apply either change to a live service.
 
 | Home service property | Worker behavior |
 |---|---|
