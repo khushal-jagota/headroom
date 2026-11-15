@@ -6,7 +6,7 @@
   import type { ChecklistDeadlineCommand } from '../../lib/goals/requestSessions';
   import { PAGE_CONTEXT, type PageContext } from '../../lib/pageKit/context';
 
-  let { blockId, item }: { blockId: string; item: ChecklistItem } = $props();
+  let { blockId, item, disabled = false }: { blockId: string; item: ChecklistItem; disabled?: boolean } = $props();
   const context = getContext<PageContext | undefined>(PAGE_CONTEXT);
   // A late request belongs to the mounted goal and item, never a later host prop.
   const goalId = untrack(() => context?.goalId);
@@ -33,12 +33,14 @@
   let error = $derived(admissionError ?? (failed ? receipt?.error : draft?.error));
 
   function begin() {
+    if (disabled) return;
     editing = true;
     if (!session || session.current?.status === 'pending' || session.current?.status === 'failed') return;
     try { session.begin(item.deadline ?? '', context?.revision ?? 0); admissionError = null; }
     catch (error) { admissionError = error; }
   }
   function change(node: HTMLInputElement) {
+    if (disabled) return;
     if (!session || session.current?.status === 'pending' || session.current?.status === 'failed') return;
     try {
       session.begin(item.deadline ?? '', context?.revision ?? 0);
@@ -47,6 +49,7 @@
     } catch (error) { admissionError = error; }
   }
   async function submit(command: ChecklistDeadlineCommand) {
+    if (disabled) return;
     if (!session || !editor || session.current?.status === 'pending') return;
     admissionError = null;
     try {
@@ -60,6 +63,7 @@
     }
   }
   function save() {
+    if (disabled) return;
     if (!session || session.current?.status === 'pending' || session.current?.status === 'failed' || admissionError) return;
     const current = session.draft;
     if (!current) return;
@@ -77,6 +81,7 @@
     if (input) input.value = item.deadline ?? '';
   }
   function clear() {
+    if (disabled) return;
     if (!session || session.current?.status === 'pending' || session.current?.status === 'failed') return;
     try {
       session.begin(item.deadline ?? '', context?.revision ?? 0);
@@ -110,7 +115,7 @@
     if (input) openPicker(input);
   }
   function openPicker(node: HTMLInputElement) {
-    if (pending || failed) return;
+    if (disabled || pending || failed) return;
     if (typeof node.showPicker === 'function') try { node.showPicker(); } catch { /* Native keyboard entry remains available. */ }
   }
 </script>
@@ -122,11 +127,11 @@
         <span class="date-face" aria-hidden="true">
           {#if item.deadline}{goalDateText(item.deadline)}{:else}<svg viewBox="0 0 20 20"><rect x="3.5" y="5" width="13" height="11.5" rx="2"/><path d="M6.5 3.5v3M13.5 3.5v3M3.5 9h13"/></svg>{/if}
         </span>
-        <input bind:this={input} type="date" aria-label={`Deadline for ${item.label}`} aria-describedby={`${uid}-status${error ? ` ${uid}-error` : ''}`} aria-invalid={Boolean(error)} value={value} disabled={pending} readonly={failed} oninput={event => change(event.currentTarget)} onkeydown={keydown}/>
+        <input bind:this={input} type="date" aria-label={`Deadline for ${item.label}`} aria-describedby={`${uid}-status${error ? ` ${uid}-error` : ''}`} aria-invalid={Boolean(error)} value={value} disabled={disabled || pending} readonly={failed} oninput={event => change(event.currentTarget)} onkeydown={keydown}/>
         {#if editing && (value || draft?.error) && !failed}
           <!-- Pressing Clear keeps focus in the date field, so the field does not collapse and move Clear
              from under the pointer before release (the left-aligned field shifts; its click would miss). -->
-          <button class="clear" type="button" aria-label={`Clear deadline for ${item.label}`} disabled={pending} onmousedown={event => event.preventDefault()} onclick={clear}><svg viewBox="0 0 16 16" aria-hidden="true"><path d="m5 5 6 6M11 5l-6 6"/></svg></button>
+          <button class="clear" type="button" aria-label={`Clear deadline for ${item.label}`} disabled={disabled || pending} onmousedown={event => event.preventDefault()} onclick={clear}><svg viewBox="0 0 16 16" aria-hidden="true"><path d="m5 5 6 6M11 5l-6 6"/></svg></button>
         {/if}
       {:else}
         <time datetime={item.deadline ?? undefined} aria-describedby={`${uid}-status`}>{goalDateText(item.deadline)}</time>
@@ -137,7 +142,7 @@
       <div class="error" id={`${uid}-error`} role="alert">
         <span>{failed ? 'Date was not saved. ' : ''}{String(error instanceof Error ? error.message : error)}</span>
         <div class="error-actions">
-          {#if failed}<button type="button" onclick={() => { if (receipt) void submit(receipt.command); }}>Retry save</button>{/if}
+          {#if failed}<button type="button" disabled={disabled} onclick={() => { if (receipt) void submit(receipt.command); }}>Retry save</button>{/if}
           <button type="button" onclick={discard}>Discard edit</button>
         </div>
       </div>

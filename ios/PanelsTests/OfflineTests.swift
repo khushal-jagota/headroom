@@ -867,7 +867,11 @@ import XCTest
             let result = try XCTUnwrap(outbox.work(server, id: work.id))
             XCTAssertEqual(result.state, .changed)
             XCTAssertEqual(try store.outgoing.summary(server: server, id: work.id)?.provenance, "unattempted")
-            XCTAssertTrue(result.note.contains(status == 404 ? "compatible server" : "check your access"))
+            if status == 404 {
+                XCTAssertEqual(result.note, "Not sent · the server needs an update before the phone can approve or send back. Use the web for now.")
+            } else {
+                XCTAssertTrue(result.note.contains("check your access"))
+            }
         }
         XCTAssertTrue(OfflineProtocol.state.decisionBodies.isEmpty)
     }

@@ -24,7 +24,7 @@ from functools import partial
 from typing import Annotated, Any, cast
 
 from fastapi import APIRouter, Depends, Query, Request
-from fastapi.responses import PlainTextResponse
+from fastapi.responses import JSONResponse, PlainTextResponse
 
 from planner.conversation.api import (
     OwnerSendBody,
@@ -32,7 +32,7 @@ from planner.conversation.api import (
     delivery_fate_json,
     video_send_admission,
 )
-from planner.conversation.backend_state import require_enabled_model
+from planner.conversation.backend_state import require_usable_model
 from planner.conversation.contracts import (
     ConversationSystem,
     WorkspacePathPolicy,
@@ -45,6 +45,7 @@ from planner.core.authctx import (
     RequestContext,
     request_context,
 )
+from planner.core.authority import Target, TargetKind, require_above
 from planner.core.clock import Clock
 from planner.core.config import DB_BUSY_TIMEOUT_MS, Config
 from planner.core.contracts import (
@@ -65,7 +66,7 @@ from planner.list_reads.detail import (
     require_full_for_one,
 )
 from planner.message_delivery import service as message_delivery_service
-from planner.message_delivery.contracts import MessageDeliveryResult, MessageRecordedToOwner
+from planner.message_delivery.contracts import MessageDeliveryResult
 from planner.projects import data as projects_data
 from planner.runtime import conversation_start
 from planner.runtime.logic.conversation_start_resolution import (
@@ -387,6 +388,8 @@ def _marshal_create_ticket(raw: JsonDict, *, draft: bool = False) -> CreateTicke
     )
     if "workflow" in raw:
         body["workflow"] = custom_workflow_from_dict(raw["workflow"])
+    if "machine_id" in raw:
+        body["machine_id"] = body_str(raw, "machine_id")
     if "locale" in raw:
         from planner.tickets.logic.locale import require_ticket_locale
 
@@ -550,6 +553,7 @@ def write_create_ticket(
         worker_type=body["worker_type"],
         workflow=body.get("workflow"),
         locale=body.get("locale"),
+        machine_id=body.get("machine_id"),
         employee_backend=body.get("employee_backend"),
         employee_launch_model=body.get("employee_launch_model"),
         employee_launch_reasoning_effort=body.get("employee_launch_reasoning_effort"),
@@ -589,6 +593,7 @@ async def read_tickets(
     is_backlogged: bool | None = None,
     worker_type: Annotated[list[str] | None, Query()] = None,
     include_terminal: bool = False,
+    active: bool = False,
     search: str | None = None,
     project: str | None = None,
     project_id: str | None = None,
@@ -608,6 +613,7 @@ async def read_tickets(
             "ticket_status": ticket_status,
             "exclude_ticket_status": exclude_ticket_status,
             "is_backlogged": is_backlogged,
+            "active": active or None,
             "worker_type": worker_type,
             "include_terminal": include_terminal or None,
             "search": search,
@@ -637,6 +643,7 @@ async def read_tickets(
                     "manager_kind": manager_kind,
                     "manager_id": manager_id,
                     "is_backlogged": is_backlogged,
+                    "active": active or None,
                     "worker_type": worker_type,
                     "exclude_stage": exclude_stage,
                     "ticket_status": ticket_status,
@@ -661,6 +668,13 @@ async def read_tickets(
                 manager_id=manager_id,
             )
             return {"tickets": rows}, rows
+
+        if active and (is_backlogged is True or include_terminal):
+            raise PlannerError(
+                ErrorCode.validation,
+                "active excludes backlogged and terminal Tickets",
+                {},
+            )
 
         manager = None
         if manager_kind is not None or manager_id is not None:
@@ -708,6 +722,7 @@ async def read_tickets(
                 is_backlogged=is_backlogged,
                 worker_types=tuple(worker_type or ()),
                 include_terminal=include_terminal,
+                active=active,
                 search=search,
             ),
             project_id=resolved_project.id if resolved_project is not None else None,
@@ -745,9 +760,14 @@ def resolve_employee_configuration(
     employee_launch_model: str,
     employee_launch_reasoning_effort: str | None,
 ) -> ResolvedEmployeeConfiguration:
-    """Keep exact submitted values and refuse disabled models."""
+    """Keep exact submitted values and refuse models the Ticket's machine cannot run."""
     registered_backend = require_conversation_backend_key(employee_backend)
-    require_enabled_model(conn, registered_backend, employee_launch_model)
+    require_usable_model(
+        conn,
+        registered_backend,
+        employee_launch_model,
+        tickets_data.read_ticket(conn, ticket_id).machine_id,
+    )
     return ResolvedEmployeeConfiguration(
         employee_backend=registered_backend.value,
         employee_launch_model=employee_launch_model,
@@ -840,6 +860,24 @@ def put_ticket_employee_configuration(
     )
     ticket = write_resolved_employee_configuration(conn, ticket_id, resolved, now=clk.now_unix())
     return _ticket_detail(conn, ticket.id, clk.now_unix())
+
+
+@router.post("/tickets/{ticket_id}/recheck-worker-cleanup")
+async def recheck_ticket_worker_cleanup(
+    ticket_id: str,
+    request: Request,
+    ctx: Ctx,
+    conversations: Conversations,
+) -> JsonDict:
+    """Inspect only this Ticket's recorded cleanup, including an ended Ticket."""
+    async with connection_off_the_loop(request) as conn:
+        def authorize() -> None:
+            tickets_data.read_ticket(conn, ticket_id)
+            require_above(conn, ctx.principal, Target(TargetKind.ticket, ticket_id))
+
+        await run_on_worker_thread(authorize)
+    result = await conversations.recheck_worker_cleanup(ticket_id)
+    return {"complete": result.complete, "reason": result.reason, "scope": result.scope}
 
 
 @router.post("/tickets/{ticket_id}/restart-worker")
@@ -1027,14 +1065,14 @@ async def patch_ticket(
     return result
 
 
-@router.post("/tickets/{ticket_id}/propose")
+@router.post("/tickets/{ticket_id}/propose", response_model=None)
 def propose_current_field(
     ticket_id: str,
     raw: dict[str, Any],
     conn: DbConn,
     ctx: Ctx,
     clk: Clk,
-) -> JsonDict:
+) -> JsonDict | JSONResponse:
     if ctx.principal != Principal(PrincipalKind.ticket, ticket_id):
         raise PlannerError(
             ErrorCode.agent_forbidden,
@@ -1042,13 +1080,18 @@ def propose_current_field(
             {"ticket_id": ticket_id},
         )
     body = ProposalBody(body=body_str(raw, "body"))
-    ticket = tickets_actions.file_current_proposal(
-        conn,
-        ticket_id,
-        body=body["body"],
-        ctx=ctx,
-        clock=clk,
-    )
+    try:
+        ticket = tickets_actions.file_current_proposal(
+            conn,
+            ticket_id,
+            body=body["body"],
+            ctx=ctx,
+            clock=clk,
+        )
+    except PlannerError as error:
+        if error.code is not ErrorCode.retry_later:
+            raise
+        return JSONResponse(status_code=503, content=error.to_payload())
     return tickets_views.ticket_json(ticket, clk.now_unix())
 
 
@@ -1363,39 +1406,6 @@ async def complete_user_owned_gate(
             now=now,
         )
     return tickets_views.ticket_json(ticket, now)
-
-
-@router.post("/tickets/{ticket_id}/request-help")
-async def request_help(
-    ticket_id: str,
-    body: JsonDict,
-    request: Request,
-    ctx: Ctx,
-    clk: Clk,
-    conversations: Conversations,
-) -> JsonDict:
-    if set(body) - {"message", "recipient"}:
-        raise PlannerError(ErrorCode.validation, "unknown help request field", {})
-    message = body_str(body, "message")
-    if not message.strip():
-        raise PlannerError(ErrorCode.validation, "help message must not be empty", {})
-    async with connection_off_the_loop(request) as conn:
-        ticket = await run_on_worker_thread(tickets_data.read_ticket, conn, ticket_id)
-        named = _parse_principal(body.get("recipient"), "recipient", allow_ticket=True)
-        recipient = named or ticket.ceiling_holder
-        delivered = await message_delivery_service.send_message(
-            conversations, conn, clk, ctx, recipient, message
-        )
-    fate = (
-        {"fate": "recorded"}
-        if isinstance(delivered.fate, MessageRecordedToOwner)
-        else delivery_fate_json(delivered.fate)
-    )
-    return {
-        "target": {"kind": recipient.kind.value, "id": recipient.id},
-        "conversation_id": delivered.conversation_id,
-        **fate,
-    }
 
 
 @router.get("/tickets/{ticket_id}/copy-text", response_class=PlainTextResponse)

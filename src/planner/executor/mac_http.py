@@ -15,19 +15,22 @@ import json
 import os
 import re
 import ssl
+import sys
 from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import Final, Literal, cast
 
 import aiohttp
 
-from planner.execution_identity import ExecutorIdentity
+from planner.execution_identity import ChildReference, ExecutorIdentity
 from planner.executor.configuration import (
     COMMAND_OUTCOME_TIMEOUT_SECONDS,
     COMMAND_POLL_TIMEOUT_SECONDS,
     EXECUTOR_COMMAND_FILE_PATH,
     EXECUTOR_COMMAND_OUTCOMES_PATH,
     EXECUTOR_COMMANDS_PATH,
+    EXECUTOR_CREDENTIAL_HEADER,
+    EXECUTOR_CREDENTIAL_PATH,
     EXECUTOR_FILE_SHA256_HEADER,
     EXECUTOR_FILE_UPLOAD_HEADER,
     EXECUTOR_ID_HEADER,
@@ -35,9 +38,13 @@ from planner.executor.configuration import (
     EXECUTOR_ITEMS_PATH,
     EXECUTOR_LEASE_PATH,
     EXECUTOR_LIVE_PATH,
+    EXECUTOR_PLATFORM_HEADER,
     EXECUTOR_PROTOCOL_HEADER,
     EXECUTOR_READS_PATH,
     EXECUTOR_UPLOAD_PATH,
+    EXECUTOR_WORKSPACE_REGISTRATION_PATH,
+    EXECUTOR_WORKSPACE_RETIREMENT_PATH,
+    EXECUTOR_WORKSPACE_STATES_PATH,
     FILE_TRANSFER_STALL_SECONDS,
     HTTP_CLOSE_TIMEOUT_SECONDS,
     HTTP_CONNECT_TIMEOUT_SECONDS,
@@ -56,6 +63,7 @@ from planner.executor.configuration import (
     MAX_ENVELOPE_BYTES,
     MAX_ITEM_BATCH_BYTES,
     MAX_MAILBOX_POLL_BYTES,
+    MAX_WORKSPACE_STATES_BYTES,
     REQUEST_TIMEOUT_SECONDS,
     TRANSFER_CHUNK_BYTES,
     MacHttpConnectorSettings,
@@ -74,9 +82,15 @@ from planner.executor.protocol import (
     LiveEventBatch,
     LiveReadRequest,
     MailboxPollReply,
+    WorkspaceRegistrationRequest,
+    WorkspaceRetirementReply,
+    WorkspaceRetirementRequest,
+    WorkspaceStatesReply,
+    WorkspaceStatesRequest,
     decode_bounded,
     encode_bounded,
 )
+from planner.ticket_workspaces.contracts import WorkspaceIdentity, WorkspaceState
 
 type MacLoop = Literal["lease", "poll", "outcomes", "items", "downloads", "reads", "live"]
 
@@ -191,15 +205,51 @@ class MacHttpClient:
     ) -> None:
         self.server_url = server_url.rstrip("/")
         self.ssl_context = ssl_context
+        self._application_revision = identity.application_revision
+        self._spool_format_version = identity.spool_format_version
         self._headers = {
             EXECUTOR_ID_HEADER: executor_id,
             EXECUTOR_INCARNATION_HEADER: identity.executor_incarnation,
             EXECUTOR_PROTOCOL_HEADER: str(identity.protocol_version),
+            EXECUTOR_PLATFORM_HEADER: sys.platform,
             # Bodies are never decompressed (auto_decompress=False), so none may be
             # compressed: the VPS gzips any answer over 1 KB that a client accepts gzipped.
             "Accept-Encoding": "identity",
         }
         self._sessions: dict[MacLoop, aiohttp.ClientSession] = {}
+
+    def authentication_headers(self) -> dict[str, str]:
+        return {
+            key: value
+            for key, value in self._headers.items()
+            if key in (EXECUTOR_ID_HEADER, EXECUTOR_CREDENTIAL_HEADER, EXECUTOR_PLATFORM_HEADER)
+        }
+
+    async def ensure_credential(self, path: Path) -> None:
+        from planner.executor.credential_file import read_credential, write_credential
+
+        credential = await asyncio.to_thread(read_credential, path)
+        if credential is None:
+            status, body = await self._json(
+                "lease", "POST", EXECUTOR_CREDENTIAL_PATH,
+                timeout=LEASE_TIMEOUT_SECONDS,
+                body=json.dumps({
+                    "protocol_version": int(self._headers[EXECUTOR_PROTOCOL_HEADER]),
+                    "application_revision": self._application_revision,
+                    "spool_format_version": self._spool_format_version,
+                    "executor_incarnation": self._headers[EXECUTOR_INCARNATION_HEADER],
+                }).encode(),
+            )
+            if status != 200:
+                raise _error(status, body)
+            value = json.loads(body)
+            credential = value.get("credential") if isinstance(value, dict) else None
+            if not isinstance(credential, str):
+                raise ValueError("The home returned an invalid machine credential")
+            # Save before authenticating: the home repeats this pending credential
+            # after a lost reply or failed save, until its first authenticated request.
+            await asyncio.to_thread(write_credential, path, credential)
+        self._headers[EXECUTOR_CREDENTIAL_HEADER] = credential
 
     def _session(self, loop: MacLoop) -> aiohttp.ClientSession:
         session = self._sessions.get(loop)
@@ -249,6 +299,44 @@ class MacHttpClient:
             except ValueError:
                 pass
         raise _error(status, body)
+
+    async def workspace_states(self, ticket_ids: tuple[str, ...]) -> WorkspaceStatesReply:
+        status, body = await self._json(
+            "reads", "POST", EXECUTOR_WORKSPACE_STATES_PATH,
+            timeout=LIVE_READ_TIMEOUT_SECONDS,
+            reply_limit=MAX_WORKSPACE_STATES_BYTES,
+            body=encode_bounded(
+                WorkspaceStatesRequest(ticket_ids), limit=MAX_WORKSPACE_STATES_BYTES
+            ),
+        )
+        if status != 200:
+            raise _error(status, body)
+        return decode_bounded(body, WorkspaceStatesReply, limit=MAX_WORKSPACE_STATES_BYTES)
+
+    async def register_workspace(self, child: ChildReference, workspace: WorkspaceIdentity) -> None:
+        status, body = await self._json(
+            "reads",
+            "POST",
+            EXECUTOR_WORKSPACE_REGISTRATION_PATH,
+            timeout=LIVE_READ_TIMEOUT_SECONDS,
+            body=encode_bounded(WorkspaceRegistrationRequest(child, workspace)),
+        )
+        if status != 204:
+            raise _error(status, body)
+
+    async def retire_workspace(
+        self, state: WorkspaceState, workspace: WorkspaceIdentity, *, replay: bool = False
+    ) -> bool:
+        status, body = await self._json(
+            "reads",
+            "POST",
+            EXECUTOR_WORKSPACE_RETIREMENT_PATH,
+            timeout=LIVE_READ_TIMEOUT_SECONDS,
+            body=encode_bounded(WorkspaceRetirementRequest(state, workspace, replay)),
+        )
+        if status != 200:
+            raise _error(status, body)
+        return decode_bounded(body, WorkspaceRetirementReply).authorized
 
     async def poll_commands(self, after: int, wait_seconds: float) -> MailboxPollReply:
         status, body = await self._json(

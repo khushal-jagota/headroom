@@ -245,14 +245,14 @@ private struct RefreshFixture {
     var holdCancellationStreams = false
     static var authority: [String: Any] { ["delivery_session_id": "d", "availability": ["state": "current", "generation": "1", "reason": NSNull()], "permit": ["scope": "s", "runtime_epoch": "r", "installation_id": "i", "generation": "1"]] }
     static func coverage(_ revision: String) -> [String: Any] {
-        ["scope": "s", "schema_version": 10, "semantics": "attention-knowledge-v10-ticket-workflows", "epoch": "e", "revision": revision]
+        ["scope": "s", "schema_version": 11, "semantics": "attention-knowledge-v11-recap-freshness", "epoch": "e", "revision": revision]
     }
     static var counts: [String: Any] { ["running_conversations": 0, "out_claims": 0, "review": 0, "unread": 0, "settled": 0] }
 
     static func recordValues(working: Bool, ticketBUpdated: Double) -> [[String: Any]] {
         func ticket(_ id: String, updated: Double, conversation: String) -> [String: Any] {
             // The server leaves U+2028 unescaped in its JSON; the changed B title carries one.
-            ["kind": "ticket", "id": id, "value": ["title": id == "B" && updated == 2 ? "B\u{2028}two" : id, "recap": "", "recap_preview": "", "worker_type": "coding", "stage": "plan", "ticket_status": "empty",
+            ["kind": "ticket", "id": id, "value": ["title": id == "B" && updated == 2 ? "B\u{2028}two" : id, "recap": "", "recap_preview": "", "recap_updated_at": NSNull(), "recap_stage_changed": false, "machine_id": "75a49e78-97de-4e28-8dc5-79646761c46f", "worker_type": "coding", "stage": "plan", "ticket_status": "empty",
                                                     "is_backlogged": false, "created_at": 1, "updated_at": updated, "project_id": NSNull(), "manager_kind": "manager",
                                                     "manager_id": "m", "conversation_id": conversation, "blocked": false, "terminal": false] as [String: Any]]
         }

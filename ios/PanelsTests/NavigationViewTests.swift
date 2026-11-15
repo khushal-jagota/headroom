@@ -248,7 +248,7 @@ final class NavigationViewTests: XCTestCase {
     private let authority: [String: Any] = ["delivery_session_id": "delivery", "availability": ["state": "current", "generation": "1", "reason": NSNull()],
                                             "permit": ["scope": "signal-workspace", "runtime_epoch": "producer", "installation_id": "installed", "generation": "1"]]
     private func coverage(_ revision: String) -> [String: Any] {
-        ["scope": "workspace", "schema_version": 10, "semantics": "attention-knowledge-v10-ticket-workflows", "epoch": "e1", "revision": revision]
+        ["scope": "workspace", "schema_version": 11, "semantics": "attention-knowledge-v11-recap-freshness", "epoch": "e1", "revision": revision]
     }
     private func counts(review: Int = 0) -> [String: Any] { ["running_conversations": 1, "out_claims": 0, "review": review, "unread": 0, "settled": 0] }
     private func identity(_ event: String, session: String = "delivery") -> [String: Any] {
@@ -290,7 +290,7 @@ final class NavigationViewTests: XCTestCase {
     }
     /// navigation-application.test.ts `ticket` and its parent.
     private func ticket(_ changes: [String: Any] = [:]) -> [String: Any] {
-        let value: [String: Any] = ["title": "A", "recap": "", "recap_preview": "", "worker_type": "coding", "stage_label": "Plan", "workflow_label": "Coding", "stage": "needs_plan",
+        let value: [String: Any] = ["title": "A", "recap": "", "recap_preview": "", "recap_updated_at": NSNull(), "recap_stage_changed": false, "machine_id": "ee17b608-a449-4966-a808-a791ba7df1c7", "worker_type": "coding", "stage_label": "Plan", "workflow_label": "Coding", "stage": "needs_plan",
             "ticket_status": "empty", "blocked": false, "created_at": 1, "updated_at": 1, "worker_step_claim_out": false, "deadline": NSNull(), "project_id": "p",
             "manager_kind": "manager", "manager_id": "parent", "conversation_id": "a-conversation", "is_backlogged": false, "ceiling": "needs_plan",
             "ceiling_holder": ["kind": "owner", "id": "owner"], "gating_field": "plan", "proposal_field": NSNull(), "proposal_revision": 0, "proposal_created_at": NSNull(),
@@ -302,7 +302,7 @@ final class NavigationViewTests: XCTestCase {
     }
     /// workspace-rail-projection.test.ts `sourceTicket` and `sourceRecords`.
     private func sourceTicket(_ changes: [String: Any] = [:], id: String = "source-ticket") -> [String: Any] {
-        let value: [String: Any] = ["title": "Source Ticket", "recap": "Full source recap.\n" + String(repeating: "Body continues. ", count: 20), "recap_preview": "Source recap",
+        let value: [String: Any] = ["title": "Source Ticket", "recap": "Full source recap.\n" + String(repeating: "Body continues. ", count: 20), "recap_preview": "Source recap", "recap_updated_at": NSNull(), "recap_stage_changed": false, "machine_id": "75a49e78-97de-4e28-8dc5-79646761c46f",
             "worker_type": "coding", "stage_label": "Implementation", "workflow_label": "Coding", "stage": "needs_implementation", "ticket_status": "empty", "blocked": false,
             "created_at": 1, "updated_at": 11, "worker_step_claim_out": false, "deadline": NSNull(), "project_id": "project", "manager_kind": "manager", "manager_id": "item",
             "conversation_id": "conversation", "is_backlogged": false, "ceiling": "needs_implementation", "ceiling_holder": ["kind": "owner", "id": "owner"],

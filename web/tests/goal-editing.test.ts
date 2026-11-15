@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import { tick } from 'svelte';
 import { createGoalEditor } from '../src/lib/goals/editing';
 import { createGoalRequestSessions } from '../src/lib/goals/requestSessions';
 import type { ChecklistBlock, GoalEditBody, GoalResponse, ManualWriteBody } from '../src/lib/goals/contracts';
@@ -14,23 +15,51 @@ const done = (itemId: string) => (block: ChecklistBlock): ChecklistBlock => ({ .
 describe('goal writes across control lifetimes', () => {
   it('serializes editors for the captured goal, applies fresh documents, and lets another goal proceed', async () => {
     const saved = new Map([['first', goal('first')], ['second', goal('second')]]), gate = deferred<void>(), firstStarted = deferred<void>();
+    const refreshGate = deferred<void>(), refreshStarted = deferred<void>();
+    let holdFirstRefresh = false;
     const writes: Array<[string, GoalEditBody]> = [];
     const io = {
       read: async (id: string) => saved.get(id)!,
       write: async (id: string, body: GoalEditBody) => {
         writes.push([id, body]);
-        if (writes.length === 1) { firstStarted.resolve(); await gate.promise; }
+        if (writes.length === 1) { firstStarted.resolve(); await gate.promise; holdFirstRefresh = true; }
         const accepted = { ...saved.get(id)!, ...body, revision: saved.get(id)!.revision + 1 };
         saved.set(id, accepted); return accepted;
-      }, refresh: async () => undefined,
+      }, refresh: async () => {
+        if (holdFirstRefresh) {
+          holdFirstRefresh = false; refreshStarted.resolve(); await refreshGate.promise;
+        }
+      },
     };
     const first = createGoalEditor('first', io), reopened = createGoalEditor('first', io);
+    const writing: boolean[] = [], reopenedWriting: boolean[] = [], otherWriting: boolean[] = [];
+    const unsubscribe = first.subscribeWriting(value => writing.push(value));
+    const unsubscribeReopened = reopened.subscribeWriting(value => reopenedWriting.push(value));
+    const second = createGoalEditor('second', io);
+    const unsubscribeOther = second.subscribeWriting(value => otherWriting.push(value));
     const one = first.updateBlock('steps', block => done('one')(block as ChecklistBlock));
+    expect(writing).toEqual([false, true]);
+    expect(reopenedWriting).toEqual(writing);
+    expect(otherWriting).toEqual([false]);
     const two = reopened.updateBlock('steps', block => done('two')(block as ChecklistBlock));
     await firstStarted.promise;
-    await createGoalEditor('second', io).write({ completed: true });
+    await second.write({ completed: true });
+    await tick();
+    expect(otherWriting).toEqual([false, true, false]);
+    expect(writing.at(-1)).toBe(true);
     expect(writes.map(([id]) => id)).toEqual(['first', 'second']);
-    gate.resolve(); await Promise.all([one, two]);
+    gate.resolve(); await refreshStarted.promise;
+    expect(writing.at(-1)).toBe(true);
+    expect(writes.map(([id]) => id)).toEqual(['first', 'second']);
+    refreshGate.resolve(); await Promise.all([one, two]);
+    await tick();
+    expect(writing.at(-1)).toBe(false);
+    expect(reopenedWriting).toEqual(writing);
+    unsubscribe(); unsubscribeReopened(); unsubscribeOther();
+    const afterUnsubscribe = [...writing];
+    await first.write({ completed: true });
+    await tick();
+    expect(writing).toEqual(afterUnsubscribe);
     expect(writes[2][1]).toHaveProperty('expected_revision', 2);
     expect((writes[2][1].page!.blocks[0] as ChecklistBlock).items.map(item => item.state)).toEqual(['done', 'done']);
   });

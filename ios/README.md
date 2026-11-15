@@ -77,7 +77,8 @@ main actor. Restored display stays stale and never supplies
 stream coverage or read credit. Conversation display retains at most 300 items
 and 512 KiB of inline and expanded bodies. Visible rows keep their neighborhood.
 Older paging remains available; Latest returns to the current edge after trimming.
-Collapsed conversations request status without transcript content. The connection
+Collapsed conversations request status without transcript content; their preview
+follows those compact facts while preserving the latest unsent local message. The connection
 cover cancels conversation dictation and keeps text already saved in the composer.
 Review voice capture instead preserves its recording for recovery.
 
@@ -133,7 +134,7 @@ Run these commands from the repository root:
 
 ```sh
 PANELS_DEVICE=5BEBCEA8-BDF2-4F47-9CAA-0E25C1D147B6
-PANELS_PROOF=/Users/khushaljagota/Coding/firstmate/data/pios-foundation
+PANELS_PROOF=/path/to/proof-directory
 xcrun simctl bootstatus "$PANELS_DEVICE" -b
 xcodebuild -project ios/Panels.xcodeproj -scheme Panels \
   -configuration Debug -sdk iphonesimulator \
@@ -380,8 +381,7 @@ on macOS without a simulator:
 ios/scripts/test-system-models.sh
 ```
 
-For this delivery, firstmate explicitly deferred all simulator testing and Gemini
-motion review. Verification is a generic iOS Simulator SDK compile, these host
+For this delivery, all simulator testing and Gemini motion review were deferred. Verification is a generic iOS Simulator SDK compile, these host
 unit tests, and decoding eight read-only endpoint snapshots. No iOS interaction,
 motion, or physical haptic behavior is claimed as verified.
 
@@ -396,8 +396,8 @@ browser host. The read-only simulator walkthrough is an external capture harness
 not an added UI suite. Haptics still need physical-device verification.
 
 After Feedback and the system screens were integrated, Ideas was rebased while
-preserving every More destination. Firstmate requested compile-only verification
-and the existing host tests for that integration; no simulator was used for the
+preserving every More destination. Verification was compile-only
+plus the existing host tests for that integration; no simulator was used for the
 rebase checks.
 ## Workspace home
 
@@ -650,8 +650,7 @@ tests passed. A stub-only, locked PanelsLaneB pass captured Workspace and the
 Orchestrator title with simultaneous working/unread marks; its accessibility
 snapshot also confirms the inline artifact list expanded. The temporary UI driver
 stopped on row selector mismatches before opening the file or sending a message.
-Firstmate accepted the captures and requested compile-only verification after
-rebasing. No live-server writes, simulator lifecycle changes, new permanent tests,
+Verification after rebasing was compile-only. No live-server writes, simulator lifecycle changes, new permanent tests,
 or physical-device validation were performed.
 
 ## Main release synchronization (2026-10-23)

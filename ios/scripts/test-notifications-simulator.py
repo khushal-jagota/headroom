@@ -115,8 +115,8 @@ def main():
             ordering_generation="fixture",
             coverage=dict(
                 scope="fixture",
-                schema_version=10,
-                semantics="attention-knowledge-v10-ticket-workflows",
+                schema_version=11,
+                semantics="attention-knowledge-v11-recap-freshness",
                 epoch="fixture",
                 revision="1",
             ),

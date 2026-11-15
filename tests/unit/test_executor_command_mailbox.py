@@ -47,9 +47,11 @@ from planner.conversation.lifecycle import (
 from planner.conversation.lifecycle_storage import apply_facts
 from planner.conversation.logic.retained_turn import UndeliveredTurnPrompt
 from planner.conversation.message_content import text_message_content
+from planner.conversation.start_admission import AutomaticStartAdmission
 from planner.core.clock import RealClock
 from planner.core.db import connect, create_schema
 from planner.core.sse import close_open_change_streams
+from planner.execution_configuration import PROTOCOL_VERSION
 from planner.execution_identity import ChildReference, ExecutorIdentity
 from planner.executor.protocol import (
     CommandDisposition,
@@ -57,6 +59,7 @@ from planner.executor.protocol import (
     CommandOutcomeReport,
     CommandResult,
     EnvelopeKind,
+    MailboxCommand,
     MailboxPollReply,
     QueuedEnvelope,
     ReceiptDisposition,
@@ -580,6 +583,18 @@ def test_a_restart_watches_again_the_steer_its_uncertain_row_names(
             first = (await world.endpoint.poll(world.identity, 0, SETTLES)).commands[0]
             await world.report(_succeeded(first.command_id, world.child, kind="steer_accepted"))
             await answered
+            # Establish the fixture's in-time first result independently of host load.
+            # The matching rule uses persisted timestamps, not this test's await order.
+            connection = connect(world.endpoint.db_path)
+            try:
+                connection.execute(
+                    "UPDATE executor_commands SET finished_at_ms=created_at_ms+1 "
+                    "WHERE command_id=?",
+                    (first.command_id,),
+                )
+                connection.commit()
+            finally:
+                connection.close()
             late = asyncio.create_task(steer(world))
             command = (
                 await world.endpoint.poll(world.identity, first.command_sequence, SETTLES)
@@ -871,7 +886,8 @@ def test_a_vps_restart_keeps_the_mailbox_and_its_unproven_stops(tmp_path: Path) 
             restarted = VpsExecutor(world.endpoint.db_path, RealClock())
             try:
                 identity = restarted.require_current(
-                    incarnation_header=world.identity.executor_incarnation, protocol_header="22"
+                    incarnation_header=world.identity.executor_incarnation,
+                    protocol_header=str(PROTOCOL_VERSION),
                 )
                 reply = await restarted.poll(identity, 0, 0)
                 assert [command.operation.value for command in reply.commands] == [
@@ -953,3 +969,284 @@ def test_a_claude_model_change_asks_for_a_rebind_even_after_a_vps_restart(
             assert [operation for operation, _ in world.rows()] == ["start", "write_prompt"]
 
     asyncio.run(asyncio.wait_for(exercise(), 20))
+
+
+def test_cleanup_recheck_targets_only_the_retained_ticket_and_waits_for_fresh_proof(
+    tmp_path: Path,
+) -> None:
+    """A new executor cannot turn an unrelated or stale source into cleanup proof."""
+    from dataclasses import replace
+
+    from tests.unit.test_executor_locale_admission import mac_ticket
+
+    from planner.executor.protocol import WorkerCleanupUncertainty
+
+    async def exercise() -> None:
+        async with _world(tmp_path) as world:
+            _running_turn(world.endpoint.db_path)
+            connection = connect(world.endpoint.db_path)
+            try:
+                ticket = mac_ticket(connection)
+                connection.execute(
+                    "UPDATE tickets SET conversation_id='c' WHERE id=?", (ticket.id,)
+                )
+                connection.execute(
+                    "UPDATE executor_child_assignments SET principal_id=? WHERE child_id=?",
+                    (ticket.id, world.child.child_id),
+                )
+                connection.commit()
+            finally:
+                connection.close()
+            replacement = mac_identity()
+            uncertain = replace(
+                lease_request(replacement),
+                cleanup_uncertainties=(WorkerCleanupUncertainty(ticket.id, "c", "Tool remains"),),
+            )
+            await world.endpoint.lease(uncertain)
+            assert not world.endpoint.presence._drained("c")
+            assert world.endpoint.presence._drained("unrelated")
+            refused = await world.endpoint.runs.recheck_cleanup(world.child, "unrelated-ticket")
+            assert not refused.complete
+            assert world.rows() == []
+            pending = asyncio.create_task(
+                world.endpoint.runs.recheck_cleanup(world.child, ticket.id)
+            )
+            polled = await world.endpoint.poll(replacement, 0, SETTLES)
+            assert polled.commands, (pending.result() if pending.done() else world.rows())
+            command = polled.commands[0]
+            assert command.child_command is not None
+            assert (command.child_command.child.executor_incarnation
+                    == replacement.executor_incarnation)
+            assert command.child_command.operation.value == "recheck_cleanup"
+            reply = await world.endpoint.record_outcomes(
+                replacement,
+                CommandOutcomeReport((
+                    _succeeded(command.command_id, command.child_command.child,
+                               complete=True, reason="Exact source ended"),
+                )),
+            )
+            assert reply.recorded == (command.command_id,)
+            await asyncio.sleep(0)
+            assert not pending.done()
+            assert world.core.retired == []
+            await world.endpoint.lease(lease_request(replacement))
+            result = await asyncio.wait_for(pending, SETTLES)
+            assert result.complete, result.reason
+            assert await world.endpoint.runs._closed_without_stop(world.child)
+            connection = connect(world.endpoint.db_path)
+            try:
+                connection.execute(
+                    "UPDATE tickets SET conversation_id=NULL WHERE id=?", (ticket.id,)
+                )
+                connection.commit()
+            finally:
+                connection.close()
+            # Older homes can already close the source and change the Ticket link.
+            # Its exact historical ownership still authorizes inspection, never work.
+            historical = asyncio.create_task(
+                world.endpoint.runs.recheck_cleanup(world.child, ticket.id)
+            )
+            checked = (await world.endpoint.poll(
+                replacement, command.command_sequence, SETTLES
+            )).commands[0]
+            assert checked.child_command is not None
+            await world.endpoint.record_outcomes(
+                replacement, CommandOutcomeReport((
+                    _succeeded(checked.command_id, checked.child_command.child,
+                               complete=True, reason="Historical source ended"),
+                )),
+            )
+            assert (await asyncio.wait_for(historical, SETTLES)).complete
+
+    asyncio.run(asyncio.wait_for(exercise(), 20))
+
+
+def _saturated_start_admission() -> AutomaticStartAdmission:
+    from planner.conversation.start_admission.contracts import StartRequest
+    from planner.machines.contracts import ORIGINAL_MAC_MACHINE_ID
+
+    now = [0.0]
+    gate = AutomaticStartAdmission(clock=lambda: now[0])
+    gate.configure_destinations(lambda _destination: True)
+    for number in range(gate.limit):
+        assert gate.try_start(StartRequest(f"occupied-{number}", "worker", ORIGINAL_MAC_MACHINE_ID))
+        now[0] += 1.0
+    return gate
+
+
+async def _put_deferred_start(
+    world: _World, gate: AutomaticStartAdmission, child: ChildReference, folder: Path,
+    *, turn_number: int = 1,
+) -> MacRemoteChild:
+    from tests.unit.test_executor_native_runtime import canonical_snapshot
+
+    from planner.conversation.contracts import (
+        ConversationAccess,
+        ConversationBackendKey,
+        ConversationRoleMaterials,
+        ResolvedConversationStart,
+    )
+    from planner.conversation.start_admission.contracts import StartRequest
+    from planner.machines.contracts import ORIGINAL_MAC_MACHINE_ID
+
+    turn = TurnToken(child.conversation_id, turn_number)
+    assert not gate.try_start(
+        StartRequest(child.conversation_id, "worker", ORIGINAL_MAC_MACHINE_ID)
+    )
+    gate.bind((child.conversation_id,), turn)
+    gate.persist_bindings(world.endpoint.db_path, turn)
+    gate.bind_child(world.endpoint.db_path, turn, child)
+    proxy = MacRemoteChild(child, world.endpoint.runs, lambda _start: canonical_snapshot())
+    await proxy.start(
+        ResolvedConversationStart(
+            child.conversation_id, ConversationBackendKey.codex, "scripted", None,
+            ConversationRoleMaterials("worker", (("PLAN_TICKET_ID", "ticket-1"),)),
+            folder, ConversationAccess.full,
+        ),
+        vendor_session_cursor=None,
+    )
+    return proxy
+
+
+def test_recovered_stop_withdraws_held_start_beyond_the_first_poll_page(tmp_path: Path) -> None:
+    """A recovered Stop must not need unrelated permits or native startup first.
+
+    Reuse the review's core/SQLite probe. The old mailbox blocks the real kill behind
+    StartRun. A synthetic stop receipt is sufficient because no backend ever starts.
+    Extra deferred starts put that receipt's command beyond the first poll page.
+    """
+    from planner.conversation.contracts import ConversationBackendKey
+    from planner.conversation.message_files import ConversationMessageFiles
+    from planner.conversation.storage import ConversationStore
+    from planner.conversation.system import SqliteProcessConversationSystem
+    from planner.executor.configuration import MAX_MAILBOX_POLL_COMMANDS
+    from planner.executor.contracts import CommandSettlementReason
+    from planner.executor.protocol import ChildCommand, ChildOperation, Steer
+
+    async def exercise() -> None:
+        async with _world(tmp_path) as world:
+            _running_turn(world.endpoint.db_path)
+            gate = _saturated_start_admission()
+            world.endpoint.mailbox.start_admission = gate
+            initial = await _put_deferred_start(world, gate, world.child, tmp_path)
+            await _prompt(initial)
+            # Recovery loses the original proxy's in-memory delivery command IDs.
+            system = SqliteProcessConversationSystem(
+                store=ConversationStore(world.endpoint.db_path),
+                backend_child_factories={
+                    key: world.endpoint.runs for key in ConversationBackendKey
+                },
+                message_files=ConversationMessageFiles(world.endpoint.db_path),
+            )
+            system.start_admission = gate
+            world.endpoint.bind_conversations(system)
+            assert system._conversations["c"].running_turn is not None
+            for number in range(MAX_MAILBOX_POLL_COMMANDS + 1):
+                child = ChildReference(world.identity.executor_incarnation, f"held-{number}",
+                                       f"held-{number}")
+                world.endpoint.runs.store.register_child(child, "ticket", f"ticket-{number}", 1)
+                await _put_deferred_start(world, gate, child, tmp_path)
+                if number == 0:
+                    # A recovered child's steer can time out while its start is held.
+                    # Settled history must not prevent unrelated control from passing.
+                    steer = ChildCommand(
+                        "withdrawn-steer", child, ChildOperation.steer,
+                        TurnToken(child.conversation_id, 1),
+                        Steer(content=text_message_content("adjust"), sender_label="owner"),
+                    )
+                    await world.endpoint.mailbox.put_child_command(steer)
+                    assert await world.endpoint.mailbox.withdraw_waiting(
+                        steer.command_id, CommandSettlementReason.delivery_withdrawn
+                    )
+            stopping = asyncio.create_task(system.kill("c"))
+            try:
+                async with asyncio.timeout(SETTLES):
+                    while not any(operation == "stop" for operation, _state in world.rows()):
+                        await asyncio.sleep(0)
+                commands: list[MailboxCommand] = []
+                for _ in range(3):
+                    commands.extend((await world.poll()).commands)
+                    if any(command.operation.value == "stop" for command in commands):
+                        break
+                assert [command.operation.value for command in commands] == [
+                    "cancel_running_turn", "stop",
+                ]
+                assert world.rows()[:2] == [("start", "withdrawn"), ("write_prompt", "withdrawn")]
+                assert all(snapshot.request.identity != "c" for snapshot in gate.snapshots())
+                with connect(world.endpoint.db_path) as connection:
+                    assert connection.execute(
+                        "SELECT 1 FROM automatic_start_bindings WHERE conversation_id='c'"
+                    ).fetchone() is None
+                assert ("steer", "withdrawn") in world.rows()
+                stop = commands[-1]
+                outcome = CommandOutcome(
+                    stop.command_id, world.child, CommandDisposition.succeeded, {}
+                )
+                receipt = await world.endpoint.inbox.accept(
+                    QueuedEnvelope("synthetic", "c", 1, "stop-proof", EnvelopeKind.child_stopped,
+                                   as_object(outcome)),
+                    world.identity,
+                )
+                assert receipt.disposition is ReceiptDisposition.accepted
+                await asyncio.wait_for(stopping, SETTLES)
+                assert all(snapshot.state == "active" for snapshot in gate.snapshots()
+                           if snapshot.request.identity.startswith("occupied-"))
+            finally:
+                stopping.cancel()
+                await asyncio.gather(stopping, return_exceptions=True)
+                for state in system._conversations.values():
+                    state.child = None
+                await asyncio.wait_for(system.shutdown(), SETTLES)
+
+    asyncio.run(exercise())
+
+
+@pytest.mark.parametrize("with_prompt", [False, True])
+def test_cancel_withdraws_only_its_exact_held_initial_turn(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, with_prompt: bool,
+) -> None:
+    """A resumed start uses its pending turn and releases admission across poll pages."""
+    from planner.executor.protocol import CancelTurn, ChildCommand, ChildOperation
+
+    async def exercise() -> None:
+        async with _world(tmp_path) as world:
+            _running_turn(world.endpoint.db_path)
+            gate = _saturated_start_admission()
+            world.endpoint.mailbox.start_admission = gate
+            with connect(world.endpoint.db_path) as connection:
+                connection.execute("UPDATE mac_runs SET turn_number=1 WHERE conversation_id='c'")
+            initial = await _put_deferred_start(
+                world, gate, world.child, tmp_path, turn_number=2,
+            )
+            if with_prompt:
+                await _prompt(initial, TurnToken("c", 2))
+            # Start and prompt occupy separate pages, without a second backend or host.
+            monkeypatch.setattr(vps_mailbox, "MAX_MAILBOX_POLL_COMMANDS", 1)
+            wrong_turn = ChildCommand("wrong-turn", world.child, ChildOperation.cancel_running_turn,
+                                      TurnToken("c", 3), CancelTurn())
+            await world.endpoint.mailbox.put_child_command(wrong_turn)
+            assert (await world.poll()).commands == ()
+            assert world.rows()[:1] == [("start", "waiting")]
+            cancel = ChildCommand("cancel", world.child, ChildOperation.cancel_running_turn,
+                                  None, CancelTurn())
+            placed = await world.endpoint.mailbox.put_child_command(cancel)
+            # Retry remains idempotent even though the mailbox records an inferred turn.
+            assert await world.endpoint.mailbox.put_child_command(cancel) == placed
+            commands: list[MailboxCommand] = []
+            after = 0
+            for _ in range(3):
+                reply = await world.poll(after)
+                commands.extend(reply.commands)
+                if reply.commands:
+                    after = reply.commands[-1].command_sequence
+            assert [command.command_id for command in commands] == ["wrong-turn", "cancel"]
+            assert world.rows()[:1] == [("start", "withdrawn")]
+            if with_prompt:
+                assert world.rows()[1] == ("write_prompt", "withdrawn")
+            assert all(snapshot.request.identity != "c" for snapshot in gate.snapshots())
+            with connect(world.endpoint.db_path) as connection:
+                assert connection.execute(
+                    "SELECT 1 FROM automatic_start_bindings WHERE conversation_id='c'"
+                ).fetchone() is None
+
+    asyncio.run(exercise())

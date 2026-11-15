@@ -15,7 +15,7 @@ function groupsMatch(root: Element,groups: readonly WorkspaceTicketGroup[]) {
 }
 function ticketMatches(row:HTMLElement,ticket:WorkItemTicketFacts) {
   return row.dataset.ticketId===ticket.id && row.dataset.ticketStage===ticket.stage
-    && row.dataset.ticketStatus===ticket.ticket_status && row.querySelector('.ticket-row-title')?.textContent===ticket.title
+    && row.dataset.ticketStatus===ticket.ticket_status && row.querySelector('.ticket-row-text')?.textContent===ticket.title
     && JSON.stringify(actualMark(row))===JSON.stringify(expectedMark(ticket.conversation_signal,ticket.conversation_id,row));
 }
 /** Read actual rendered values, including motion-controlled membership and marks. */

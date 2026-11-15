@@ -66,7 +66,7 @@ import uuid
 import warnings
 from base64 import b64encode
 from collections import deque
-from collections.abc import AsyncIterable, AsyncIterator
+from collections.abc import AsyncIterable, AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Final, Protocol, cast
@@ -147,6 +147,7 @@ from planner.conversation.backends.contracts import (
     VendorSessionCursorRebound,
 )
 from planner.conversation.backends.failure_summary import normalized_failure_summary
+from planner.conversation.child_custody import process_identity
 from planner.conversation.contracts import (
     AnswerFate,
     ComposerCatalogEntry,
@@ -167,6 +168,7 @@ from planner.conversation.events import (
     UserInputOption,
     UserInputQuestion,
 )
+from planner.conversation.local_child_contracts import LocalChildIdentity
 from planner.conversation.message_content import (
     ComposedMessageDoesNotContainSenderContent,
     MessageContent,
@@ -181,8 +183,10 @@ from planner.conversation.message_files import (
     ConversationMessageFiles,
     MessageFileMissing,
 )
-from planner.conversation.tool_shell_kill_priority import with_tool_shell_kill_priority
-from planner.conversation.worker_unit import WorkerUnit
+from planner.conversation.worker_scratch import WorkerScratch
+from planner.core.task_settlement import run_on_worker_thread
+from planner.worker_supervision import WorkerCleanupError, WorkerSupervisor
+from planner.worker_supervision.config import NATIVE_PHASE_SECONDS, NATIVE_STREAM_SECONDS
 
 LOGGER = logging.getLogger("planner.conversation.backends.claude_agent_sdk")
 
@@ -432,12 +436,15 @@ class _ClaudeCleanupTransport(SubprocessCLITransport):
         super().__init__(prompt, options)
         self._cleanup_process: Process | None = None
         self._cleanup_started = False
-        self._worker_unit: WorkerUnit | None = None
+        self._worker_supervisor: WorkerSupervisor | None = None
+        self._worker_scratch: WorkerScratch | None = None
+        self.supervision_reporter: Callable[[str], Awaitable[None]] | None = None
+        self.custody_reporter: Callable[[LocalChildIdentity], Awaitable[None]] | None = None
 
     def _build_command(self) -> list[str]:
         command = super()._build_command()
-        if self._worker_unit is not None:
-            return list(self._worker_unit.argv(command))
+        if self._worker_supervisor is not None:
+            return list(self._worker_supervisor.argv(command))
         return command
 
     async def connect(self) -> None:
@@ -451,7 +458,23 @@ class _ClaudeCleanupTransport(SubprocessCLITransport):
             environment=self._options.env,
             working_directory=Path(self._cwd) if self._cwd else None,
         )
-        with_tool_shell_kill_priority(self._options.env)
+        try:
+            await self._connect_worker()
+        except BaseException as error:
+            cause = error
+            while cause.__cause__ is not None:
+                cause = cause.__cause__
+            if (isinstance(cause, OSError) and self._process is None
+                    and self._worker_supervisor is not None):
+                await self._worker_supervisor.cancel_unspawned()
+            elif self._worker_supervisor is not None and self._process is not None:
+                await self._worker_supervisor.spawned(self._process.pid)
+            # This transport owns the native handle before the SDK initializes.
+            if self._process is not None or self._worker_scratch is not None:
+                await self.close()
+            raise
+
+    async def _connect_worker(self) -> None:
         # Use the role's explicit identity, never an inherited Worker identity.
         if self._options.env.get("PLAN_TICKET_ID"):
             environment = {
@@ -464,43 +487,110 @@ class _ClaudeCleanupTransport(SubprocessCLITransport):
                 environment["PWD"] = self._cwd
             if self._options.enable_file_checkpointing:
                 environment["CLAUDE_CODE_ENABLE_SDK_FILE_CHECKPOINTING"] = "true"
-            self._worker_unit = await WorkerUnit.create(
+            self._worker_supervisor = await WorkerSupervisor.create(
                 environment, Path(self._cwd or os.getcwd())
             )
-            if self._worker_unit is not None:
-                self._options.env.update(self._worker_unit.environment)
-        try:
-            await super().connect()
-        except asyncio.CancelledError:
-            if self._worker_unit is not None:
-                await self._worker_unit.stop()
-            raise
-        except Exception:
-            if self._worker_unit is not None:
-                await self._worker_unit.stop()
-            raise
+            try:
+                self._worker_scratch = await WorkerScratch.create(environment)
+            except BaseException:
+                if self._worker_supervisor is not None:
+                    await self._worker_supervisor.cancel_unspawned()
+                raise
+            environment = self._worker_scratch.environment
+            self._options.env.update(environment)
+            if self._worker_supervisor is not None:
+                self._worker_supervisor.environment.update(environment)
+                self._options.env.update(self._worker_supervisor.environment)
+                if self.supervision_reporter is not None:
+                    try:
+                        await self.supervision_reporter(str(self._worker_supervisor.path))
+                    except BaseException:
+                        await self._worker_supervisor.cancel_unspawned()
+                        raise
+        await super().connect()
+        if self._worker_supervisor is not None and self._process is not None:
+            await self._worker_supervisor.started(self._process.pid)
+        if self.custody_reporter is not None:
+            if self._process is None:
+                raise BackendSpawnFailed("Claude did not expose its process identity")
+            if self._worker_supervisor is None:
+                identity = await run_on_worker_thread(process_identity, self._process.pid)
+            else:
+                identity = await run_on_worker_thread(self._worker_supervisor.identity)
+            if identity is None:
+                raise BackendSpawnFailed("Cannot establish the Claude process identity")
+            try:
+                await self.custody_reporter(identity)
+            except Exception as error:
+                raise BackendSpawnFailed(
+                    f"Cannot save the Claude process identity: {error}"
+                ) from error
+
+    async def _stop_worker(self) -> None:
+        supervisor = self._worker_supervisor
+        if supervisor is not None:
+            result = await supervisor.stop(native_stop=self._stop_native_process)
+            if not result.complete:
+                raise WorkerCleanupError(result.reason)
+
+    async def _stop_native_process(self) -> None:
+        if self._cleanup_process is None:
+            self._cleanup_process = self._process
+        process = self._cleanup_process
+        # Keep escalation inside the shared owner's callback budget. The SDK's
+        # ordinary EOF/TERM/KILL waits exceed that budget before KILL can run.
+        if process is not None and process.returncode is None:
+            if self._stdin_stream is not None:
+                try:
+                    await asyncio.wait_for(self._stdin_stream.aclose(), NATIVE_STREAM_SECONDS)
+                except (OSError, TimeoutError):
+                    pass
+            for action in (None, process.terminate, process.kill):
+                if process.returncode is not None:
+                    break
+                if action is not None:
+                    try:
+                        action()
+                    except ProcessLookupError:
+                        pass
+                try:
+                    await asyncio.wait_for(process.wait(), NATIVE_PHASE_SECONDS)
+                except TimeoutError:
+                    continue
+            if process.returncode is None:
+                raise WorkerCleanupError(
+                    "The owned Claude process did not stop before its deadline"
+                )
+        await super().close()
 
     async def _read_messages_impl(self) -> AsyncIterator[dict[str, Any]]:
         try:
             async for message in super()._read_messages_impl():
                 yield message
         except Exception:
-            if self._worker_unit is not None:
-                await self._worker_unit.stop()
+            if self._worker_supervisor is not None:
+                await self._stop_worker()
+            if self._worker_scratch is not None:
+                await self._worker_scratch.aclose()
             raise
         else:
-            if self._worker_unit is not None:
-                await self._worker_unit.stop()
+            if self._worker_supervisor is not None:
+                await self._stop_worker()
+            if self._worker_scratch is not None:
+                await self._worker_scratch.aclose()
 
     async def close(self) -> None:
         self._cleanup_started = True
         if self._cleanup_process is None:
             self._cleanup_process = self._process
-        if self._worker_unit is not None:
-            await self._worker_unit.stop()
-        await super().close()
+        if self._worker_supervisor is not None:
+            await self._stop_worker()
+        if self._worker_supervisor is None:
+            await super().close()
         if self._cleanup_process is not None and self._cleanup_process.returncode is None:
             raise RuntimeError("Claude process termination remains unconfirmed")
+        if self._worker_scratch is not None:
+            await self._worker_scratch.aclose()
 
 
 @dataclass(slots=True)
@@ -745,6 +835,28 @@ class _ObservedClaudeSdkClient:
         self._client = ClaudeSDKClient(options, transport=transport)
         self._transport = transport
 
+    def set_supervision_reporter(
+        self, reporter: Callable[[str], Awaitable[None]] | None,
+    ) -> None:
+        inner = self._transport._inner
+        if isinstance(inner, _ClaudeCleanupTransport):
+            inner.supervision_reporter = reporter
+
+    def set_custody_reporter(
+        self, reporter: Callable[[LocalChildIdentity], Awaitable[None]] | None,
+    ) -> None:
+        inner = self._transport._inner
+        if isinstance(inner, _ClaudeCleanupTransport):
+            inner.custody_reporter = reporter
+
+    def local_child_identity(self) -> LocalChildIdentity | None:
+        # Called after SDK initialization, so the service launch reached its child.
+        inner = self._transport._inner
+        if not isinstance(inner, _ClaudeCleanupTransport) or inner._process is None:
+            return None
+        unit = inner._worker_supervisor
+        return process_identity(inner._process.pid) if unit is None else unit.identity()
+
     async def connect(self) -> None:
         await self._client.connect()
 
@@ -924,6 +1036,13 @@ class ClaudeAgentSdkBackendChild:
         minted_session_id = None if vendor_session_cursor is not None else str(uuid.uuid4())
         options = self._options(resolved_start, vendor_session_cursor, minted_session_id)
         client = self._client_factory(options)
+        if isinstance(client, _ObservedClaudeSdkClient):
+            client.set_supervision_reporter(
+                getattr(self._sink, "record_local_child_supervision", None)
+            )
+            client.set_custody_reporter(
+                getattr(self._sink, "record_local_child_custody", None)
+            )
         self._wire_broken = True
         self._client = client
         await self._connect(client, resumed_from=vendor_session_cursor)
@@ -1376,6 +1495,10 @@ class ClaudeAgentSdkBackendChild:
         minted_session_id: str | None,
     ) -> ClaudeAgentOptions:
         """Everything the child is started with, from the values this conversation runs on."""
+        identity = dict(_identity_environment(resolved_start))
+        environment = {**dict(self._launch.environment_overrides), **identity}
+        if identity.get("PLAN_TICKET_ID"):
+            environment["PLAN_CONVERSATION_ID"] = resolved_start.conversation_id
         return ClaudeAgentOptions(
             cwd=str(resolved_start.workspace_folder),
             cli_path=self._launch.claude_executable,
@@ -1385,10 +1508,7 @@ class ClaudeAgentSdkBackendChild:
             permission_mode=_permission_mode(resolved_start.access),
             resume=vendor_session_cursor,
             session_id=minted_session_id,
-            env={
-                **dict(self._launch.environment_overrides),
-                **dict(_identity_environment(resolved_start)),
-            },
+            env=environment,
             max_buffer_size=CLAUDE_SDK_MAX_BUFFER_SIZE,
             include_partial_messages=True,
             can_use_tool=self._can_use_tool,
@@ -1418,8 +1538,10 @@ class ClaudeAgentSdkBackendChild:
                 # callback is there for the asks that reach it anyway.
                 warnings.simplefilter("ignore", CanUseToolShadowedWarning)
                 await client.connect()
-        except (CLINotFoundError, BackendCliIncompatible) as no_executable:
-            raise BackendSpawnFailed(str(no_executable)) from no_executable
+        except (
+            CLINotFoundError, BackendCliIncompatible, BackendSpawnFailed, WorkerCleanupError,
+        ) as start_failure:
+            raise BackendSpawnFailed(str(start_failure)) from start_failure
         except Exception as would_not_come_up:
             why = self._with_the_standard_error(str(would_not_come_up))
             if resumed_from is not None:

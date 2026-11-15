@@ -1,7 +1,7 @@
 <script lang="ts">
   // Svelte/query translation of T3 mobile UsageRouteScreen and runtime/state/usage.
-  import { onMount, tick } from "svelte";
-  import { createQuery } from "@tanstack/svelte-query";
+  import { onMount } from "svelte";
+  import { createQuery, useQueryClient } from "@tanstack/svelte-query";
   import SkeletonRegion from "../components/SkeletonRegion.svelte";
   import UsageHeader from "../components/usage/UsageHeader.svelte";
   import RecordedUsage from "../components/usage/RecordedUsage.svelte";
@@ -20,6 +20,7 @@
   let { tab = "limits", roleKind = "index", roleId, href = prefixHref("#/backends") }: {
     tab?: UsageTab; roleKind?: ConfigSelection["roleKind"]; roleId?: string; href?: UtilityHref;
   } = $props();
+  const queryClient = useQueryClient();
   let days = $state<UsageDays>(1);
   let windowSelection = $state(makeWindow(1, new Date(), "hour"));
   let providerSelection = $state<string[] | null>(null);
@@ -53,9 +54,9 @@
       } else {
         const nextWindow = makeWindow(days, new Date(), days === 1 ? "hour" : "day");
         await refreshUsage(async () => {
+          // Fetch before selecting the window so its observer reuses this result.
+          await queryClient.fetchQuery({ ...queries.recordedUsage(nextWindow), staleTime: 0 });
           windowSelection = nextWindow;
-          await tick();
-          await recorded.refetch({ throwOnError: true });
         });
       }
       now = Date.now();

@@ -3,6 +3,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createResourceCoordinator } from '../src/lib/resourceVersions/coordinator';
 import { resourceQuery } from '../src/lib/resourceVersions/query';
 import { boundInactiveQueries } from '../src/lib/resourceVersions/cache';
+import { queries } from '../src/lib/queryCatalogue';
+import { UsageDay } from '../src/lib/usage/contracts';
 
 const clients: QueryClient[] = [];
 function client() {
@@ -46,6 +48,61 @@ describe('resource version reconciliation', () => {
     calls.length = 0; epoch = 'two'; await coordinator.refresh();
     expect(calls.filter(call => call.startsWith('/api/resource-body'))).toHaveLength(2);
     unsubscribes.forEach(stop => stop()); coordinator.stop();
+  });
+
+  it('leaves a recorded usage scan alone while legacy queries still follow changes', async () => {
+    const qc = client(); const initial = deferred<Response>();
+    let summaryReads = 0; let legacyReads = 0; let aborted = false;
+    vi.stubGlobal('fetch', vi.fn(async (input: string, init?: RequestInit) => {
+      if (input.startsWith('/api/conversation/usage/summary')) {
+        summaryReads++;
+        init?.signal?.addEventListener('abort', () => { aborted = true; });
+        return initial.promise;
+      }
+      legacyReads++; return response({ legacy: true });
+    }));
+    const options = queries.recordedUsage({ sinceDay: UsageDay.make('2026-11-07'),
+      untilDay: UsageDay.make('2026-11-13'), timeZone: 'UTC', resolution: 'day' });
+    const usage = new QueryObserver(qc, options);
+    const legacy = new QueryObserver(qc, resourceQuery(['legacy'], '/api/legacy'));
+    const stops = [usage.subscribe(() => {}), legacy.subscribe(() => {})];
+    await legacy.refetch(); legacyReads = 0;
+    const coordinator = createResourceCoordinator(qc);
+    for (let i = 0; i < 3; i++) await coordinator.refresh();
+    expect(summaryReads).toBe(1);
+    expect(aborted).toBe(false);
+    expect(legacyReads).toBe(3);
+    initial.resolve(response({ buckets: [] }));
+    await vi.waitFor(() => expect(usage.getCurrentResult().isSuccess).toBe(true));
+    await coordinator.refresh();
+    qc.getQueryCache().onFocus(); qc.getQueryCache().onOnline();
+    await Promise.resolve();
+    expect(summaryReads).toBe(1);
+    expect(usage.getCurrentResult().data).toEqual({ buckets: [] });
+    stops.forEach(stop => stop()); coordinator.stop();
+  });
+
+  it('refreshes a usage window once before its observer selects the fresh result', async () => {
+    const qc = client(); let reads = 0;
+    qc.setDefaultOptions({ queries: { retry: 1, retryDelay: 0 } });
+    vi.stubGlobal('fetch', vi.fn(async () => response({ reads: ++reads })));
+    const input = { sinceDay: UsageDay.make('2026-11-07'),
+      untilDay: UsageDay.make('2026-11-13'), timeZone: 'UTC', resolution: 'day' as const };
+    const observer = new QueryObserver(qc, queries.recordedUsage(input));
+    const stop = observer.subscribe(() => {});
+    await vi.waitFor(() => expect(observer.getCurrentResult().isSuccess).toBe(true));
+    const next = queries.recordedUsage({ ...input, untilDay: UsageDay.make('2026-11-14') });
+    await qc.fetchQuery({ ...next, staleTime: 0 });
+    observer.setOptions(next);
+    await Promise.resolve();
+    expect(reads).toBe(2);
+    await qc.fetchQuery({ ...next, staleTime: 0 });
+    expect(reads).toBe(3);
+    let failedReads = 0;
+    vi.stubGlobal('fetch', vi.fn(async () => { failedReads++; throw new Error('scan failed'); }));
+    await expect(qc.fetchQuery({ ...next, staleTime: 0 })).rejects.toThrow('network error');
+    expect(failedReads).toBe(1);
+    stop();
   });
 
   it('bounds bursts to one pending probe and stops obsolete callbacks', async () => {

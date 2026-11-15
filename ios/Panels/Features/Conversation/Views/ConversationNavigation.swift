@@ -243,7 +243,7 @@ private struct ConversationSurface: View {
                             }
                         }.frame(width: 12)
                         let latest = model.latestMessage
-                        Text(.init(latest?.previewText ?? "Conversation"))
+                        Text(.init(model.compactPreview))
                             .font(PanelsTheme.TypeScale.small).lineLimit(1)
                             .frame(maxWidth: .infinity, alignment: .leading)
                         if latest?.own == true, let note = latest?.note, note != "Sent" {
@@ -255,7 +255,7 @@ private struct ConversationSurface: View {
                     .frame(minHeight: ConversationLayout.lineHeight).contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
-                .accessibilityLabel(model.latestMessage?.previewText ?? "Open conversation")
+                .accessibilityLabel(model.compactPreview)
                 .accessibilityIdentifier("conversation-line")
             }
         }
@@ -549,6 +549,8 @@ extension View {
 #if DEBUG
 /// Uses real detail pages with the existing loopback-only conversation test host.
 struct ConversationDetailSmokeView: View {
+    @Environment(AppStore.self) private var store
+    @Environment(\.scenePhase) private var scenePhase
     var body: some View {
         NavigationStack {
             List {
@@ -556,6 +558,9 @@ struct ConversationDetailSmokeView: View {
                 NavigationLink("Orchestrator fixture") { RouteDestination(route: .orchestrator("si_4chgag3w")) }
                 NavigationLink("Chief fixture") { RouteDestination(route: .chief) }
             }.panelsScreen()
+        }
+        .task(id: "\(store.baseURL.absoluteString):\(scenePhase == .active)") {
+            if scenePhase == .active { await store.run() }
         }
     }
 }

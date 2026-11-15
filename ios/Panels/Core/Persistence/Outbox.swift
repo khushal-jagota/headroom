@@ -376,7 +376,7 @@ import Observation
             if let failure = error as? APIError, failure.status == 401 || failure.status == 403 {
                 note = "Not sent · sign in or check your access to this ticket, then review again."
             } else if error as? DecisionResponseError == .unsupported || (error as? APIError).map({ [404, 405].contains($0.status) }) == true {
-                note = "Not sent · this server cannot confirm protected decisions. Use a compatible server and review again."
+                note = "Not sent · the server needs an update before the phone can approve or send back. Use the web for now."
             } else {
                 note = "Not sent · the server returned an invalid decision response. Refresh and review again."
             }

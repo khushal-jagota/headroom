@@ -130,7 +130,9 @@ def test_delete_cleans_private_state_and_navigation_but_preserves_shared_evidenc
             (goal.id,),
         )
         tmp_db.execute(
-            "INSERT INTO notification_attention_edges VALUES('goal',?,'awaiting_reply',1,1,0)",
+            "INSERT INTO notification_attention_edges "
+            "(subject_kind,subject_id,notification_type,generation,occurred_at,decided) "
+            "VALUES('goal',?,'awaiting_reply',1,1,0)",
             (goal.id,),
         )
         tmp_db.execute(

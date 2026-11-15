@@ -10,7 +10,7 @@ from __future__ import annotations
 import asyncio
 import json
 import sqlite3
-from collections.abc import Awaitable, Callable, Iterator
+from collections.abc import Awaitable, Callable
 from pathlib import Path
 from uuid import uuid4
 
@@ -96,14 +96,23 @@ def build(db: Path, *, signal: SignalRuntimeComposition | None = None) -> _Harne
 
 
 @pytest.fixture
-def host(tmp_path: Path) -> Iterator[_Harness]:
+def host(tmp_path: Path) -> _Harness:
     db = tmp_path / "requests.db"
     conn = connect(str(db))
     create_schema(conn)
     conn.close()
-    built = build(db)
-    yield built
-    asyncio.run(built.runtime.shutdown())
+    return build(db)
+
+
+def run(host: _Harness, exercise: Awaitable[None]) -> None:
+    """Retire the runtime on the same loop that owns its background tasks."""
+    async def owned() -> None:
+        try:
+            await exercise
+        finally:
+            await host.runtime.shutdown()
+
+    asyncio.run(owned())
 
 
 async def start(host: _Harness, *, busy: bool = False) -> None:
@@ -207,7 +216,7 @@ def test_request_outlives_turn_and_concurrent_resolution_is_one_private_write(
         assert SECRET not in host.backend("c").written_texts[-1]
         conn.close()
 
-    asyncio.run(exercise())
+    run(host, exercise())
 
 
 def test_replacement_conflict_requires_review_and_atomic_failure_keeps_request_pending(
@@ -299,7 +308,7 @@ def test_replacement_conflict_requires_review_and_atomic_failure_keeps_request_p
             assert credential_data.read_metadata(conn, metadata.id).revision == 3
         conn.close()
 
-    asyncio.run(exercise())
+    run(host, exercise())
 
 
 def test_reuse_queue_drain_and_discard_update_original_card(host: _Harness) -> None:
@@ -351,7 +360,7 @@ def test_reuse_queue_drain_and_discard_update_original_card(host: _Harness) -> N
             assert conn.execute("SELECT count(*) FROM credentials").fetchone()[0] == 1
         conn.close()
 
-    asyncio.run(exercise())
+    run(host, exercise())
 
 
 def test_only_proven_refusal_retries_delivery_without_another_save(host: _Harness) -> None:
@@ -395,7 +404,7 @@ def test_only_proven_refusal_retries_delivery_without_another_save(host: _Harnes
         )
         conn.close()
 
-    asyncio.run(exercise())
+    run(host, exercise())
 
 
 def test_lost_intent_and_lost_queue_restart_as_uncertain_without_a_send(host: _Harness) -> None:
@@ -432,7 +441,7 @@ def test_lost_intent_and_lost_queue_restart_as_uncertain_without_a_send(host: _H
         finally:
             await restarted.runtime.shutdown()
 
-    asyncio.run(exercise())
+    run(host, exercise())
 
 
 def test_origin_rejects_foreign_missing_and_retired_conversation(host: _Harness) -> None:
@@ -476,7 +485,7 @@ def test_origin_rejects_foreign_missing_and_retired_conversation(host: _Harness)
         identity = dict(role_materials.identity_environment_variables)
         assert identity["PLAN_CONVERSATION_ID"] == "c"
 
-    asyncio.run(exercise())
+    run(host, exercise())
 
 
 def test_canceled_http_owner_write_still_delivers_before_a_racing_reset(
@@ -528,7 +537,7 @@ def test_canceled_http_owner_write_still_delivers_before_a_racing_reset(
             )
             conn.close()
 
-    asyncio.run(asyncio.wait_for(exercise(), 15))
+    run(host, asyncio.wait_for(exercise(), 15))
 
 
 def test_header_reuse_matches_required_header_before_bypassing_owner_input(host: _Harness) -> None:
@@ -566,7 +575,7 @@ def test_header_reuse_matches_required_header_before_bypassing_owner_input(host:
         assert conn.execute("SELECT count(*) FROM credentials").fetchone()[0] == 1
         conn.close()
 
-    asyncio.run(exercise())
+    run(host, exercise())
 
 
 def test_request_transaction_and_receipt_companions_use_production_signal_admission(
@@ -654,7 +663,7 @@ def test_domain_callback_cannot_escape_conversation_owned_transaction(
         )
         conn.close()
 
-    asyncio.run(exercise())
+    run(host, exercise())
 
 
 def test_owner_resolution_after_manager_deletion_is_refused_without_resurrecting_agent(
@@ -713,7 +722,7 @@ def test_owner_resolution_after_manager_deletion_is_refused_without_resurrecting
             assert conn.execute("SELECT count(*) FROM credentials").fetchone()[0] == 0
         conn.close()
 
-    asyncio.run(exercise())
+    run(host, exercise())
 
 
 def test_manager_deletion_waits_for_an_admitted_result_delivery(
@@ -792,4 +801,4 @@ def test_manager_deletion_waits_for_an_admitted_result_delivery(
             assert conn.execute("SELECT count(*) FROM credentials").fetchone()[0] == 0
         conn.close()
 
-    asyncio.run(asyncio.wait_for(exercise(), 15))
+    run(host, asyncio.wait_for(exercise(), 15))

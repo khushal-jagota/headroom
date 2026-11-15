@@ -6,13 +6,16 @@ import asyncio
 import json
 import threading
 import time
+from collections.abc import Iterator
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import contextmanager
 from pathlib import Path
 from sqlite3 import Connection
 from typing import Any
 
 import pytest
 
+from planner.conversation import storage as conversation_storage
 from planner.conversation.contracts import (
     ConversationBackendKey,
     ConversationStartRequest,
@@ -44,6 +47,7 @@ from planner.core.clock import TestClock as FakeClock
 from planner.core.contracts import CHIEF_PRINCIPAL, OWNER_PRINCIPAL, Principal, PrincipalKind
 from planner.core.db import connect
 from planner.core.errors import ErrorCode, PlannerError
+from planner.core.runtime_connections import runtime_connection
 from planner.manager_wakes import data as wake_data
 from planner.manager_wakes.contracts import WakeBatchStatus, WakeSourceKind
 from planner.manager_wakes.runtime import (
@@ -219,22 +223,24 @@ def test_failure_notices_use_the_chief_and_ticket_conversation_doors(
     database_path = Path(str(tmp_db.execute("PRAGMA database_list").fetchone()[2]))
     system = _DurableStartedConversationSystem(database_path)
 
-    assert asyncio.run(
-        deliver_batch(
-            batch,
-            connect_database=lambda: connect(str(database_path)),
-            conversation_system=system,  # type: ignore[arg-type]
-            process_token="process",
-            now=lambda: 50,
+    from tests.support.sql_threads import sql_must_run_off_event_loop
+
+    with sql_must_run_off_event_loop():
+        delivered = asyncio.run(
+            deliver_batch(
+                batch,
+                connect_database=lambda: connect(str(database_path)),
+                conversation_system=system,  # type: ignore[arg-type]
+                process_token="process",
+                now=lambda: 50,
+            )
         )
-    )
+    assert delivered
     assert system.started is not None
     prompts = tmp_db.execute(
         "SELECT payload FROM conversation_events WHERE kind='prompt'"
     ).fetchall()
     assert any("provider unavailable" in str(row["payload"]) for row in prompts)
-
-
 
 
 def test_ticket_reset_between_resolution_and_link_lock_uses_the_new_door(
@@ -1086,15 +1092,18 @@ def test_delivery_uses_the_supervisor_boundary_and_closes_on_its_prompt(
     database_path = Path(str(tmp_db.execute("PRAGMA database_list").fetchone()[2]))
     system = _DurableStartedConversationSystem(database_path)
 
-    delivered = asyncio.run(
-        deliver_batch(
-            batch,
-            connect_database=lambda: connect(str(database_path)),
-            conversation_system=system,  # type: ignore[arg-type]
-            process_token="process",
-            now=lambda: 50,
+    from tests.support.sql_threads import sql_must_run_off_event_loop
+
+    with sql_must_run_off_event_loop():
+        delivered = asyncio.run(
+            deliver_batch(
+                batch,
+                connect_database=lambda: connect(str(database_path)),
+                conversation_system=system,  # type: ignore[arg-type]
+                process_token="process",
+                now=lambda: 50,
+            )
         )
-    )
 
     assert delivered is True
     assert system.started is not None
@@ -1516,16 +1525,20 @@ def test_notice_admission_serializes_with_canonical_resolution(
         sender_message_id=batch.sender_message_id,
     )
     acquired, attempted, release = threading.Event(), threading.Event(), threading.Event()
-    original_connect = store._connect
+    original_connection = runtime_connection
     original_commit = store._commit_rows
 
-    def admission_connect() -> Connection:
-        conn = original_connect()
-        if winner == "resolution":
-            conn.set_trace_callback(
-                lambda sql: attempted.set() if sql == "BEGIN IMMEDIATE" else None
-            )
-        return conn
+    @contextmanager
+    def admission_connection(*args: Any, **kwargs: Any) -> Iterator[Connection]:
+        with original_connection(*args, **kwargs) as conn:
+            if winner == "resolution":
+                conn.set_trace_callback(
+                    lambda sql: attempted.set() if sql == "BEGIN IMMEDIATE" else None
+                )
+            try:
+                yield conn
+            finally:
+                conn.set_trace_callback(None)
 
     def admission_commit(*args: Any, **kwargs: Any) -> None:
         if winner == "admission":
@@ -1533,7 +1546,7 @@ def test_notice_admission_serializes_with_canonical_resolution(
             assert release.wait(5), "resolution did not attempt its transaction"
         original_commit(*args, **kwargs)
 
-    monkeypatch.setattr(store, "_connect", admission_connect)
+    monkeypatch.setattr(conversation_storage, "runtime_connection", admission_connection)
     monkeypatch.setattr(store, "_commit_rows", admission_commit)
 
     def resolve() -> None:
@@ -1591,3 +1604,88 @@ def test_notice_admission_serializes_with_canonical_resolution(
     assert tmp_db.execute(
         "SELECT status FROM manager_wake_batches WHERE id=?", (batch.id,)
     ).fetchone()[0] == ("discarded" if winner == "resolution" else "dispatching")
+
+
+def test_backlogged_proposal_does_not_take_a_batch_from_factual_notices(
+    tmp_db: Connection, fake_clock: FakeClock
+) -> None:
+    manager_id, ticket_id = _item_and_ticket(tmp_db, fake_clock)
+    tickets_data.file_current_proposal(
+        tmp_db, ticket_id, body="Review after resume",
+        principal=Principal(PrincipalKind.ticket, ticket_id), now=2,
+    )
+    tickets_data.set_ticket_backlog(
+        tmp_db, ticket_id, is_backlogged=True, principal=OWNER_PRINCIPAL, now=3,
+    )
+    assert wake_data.claim_next_batch(tmp_db, process_token="process", now=4) is None
+    wake_data.create_worker_error_wake(
+        tmp_db, target=Principal(PrincipalKind.manager, manager_id), ticket_id=ticket_id,
+        claim_revision=1, ticket_title="Managed ticket", error_reason="actual failure", now=5,
+    )
+    tmp_db.commit()
+    failure = wake_data.claim_next_batch(tmp_db, process_token="process", now=6)
+    assert failure is not None
+    assert "actual failure" in failure.message
+    assert "filed a proposal" not in failure.message
+    assert tmp_db.execute(
+        "SELECT closed_at FROM manager_wakes WHERE source_kind='proposal'"
+    ).fetchone()[0] is None
+
+
+def test_backlog_after_notice_preparation_discards_batch_but_resume_preserves_proposal(
+    tmp_db: Connection, fake_clock: FakeClock
+) -> None:
+    _manager_id, ticket_id = _item_and_ticket(tmp_db, fake_clock)
+    tickets_data.edit_ticket(
+        tmp_db, ticket_id, edit={"manager": CHIEF_PRINCIPAL, "ceiling_holder": CHIEF_PRINCIPAL},
+        title_max_chars=TITLE_MAX_CHARS, principal=OWNER_PRINCIPAL, now=2,
+    )
+    parked = tickets_data.file_current_proposal(
+        tmp_db, ticket_id, body="Review after resume",
+        principal=Principal(PrincipalKind.ticket, ticket_id), now=3,
+    )
+    prepared = wake_data.claim_next_batch(tmp_db, process_token="process", now=4)
+    assert prepared is not None
+    assert prepared.target == CHIEF_PRINCIPAL
+    _current_ticket_conversation(tmp_db, ticket_id, "backlog-notice")
+    tmp_db.commit()
+    wake_data.record_batch_offering(
+        tmp_db, prepared.id, conversation_id="backlog-notice", process_token="process", now=5,
+    )
+    tickets_data.set_ticket_backlog(
+        tmp_db, ticket_id, is_backlogged=True, principal=OWNER_PRINCIPAL, now=6,
+    )
+    with tmp_db:
+        assert wake_data.admit_notice_batch(
+            tmp_db, conversation_id="backlog-notice",
+            sender_message_id=prepared.sender_message_id, now=7,
+        ) == (True, "ticket_backlogged")
+    assert tmp_db.execute(
+        "SELECT status FROM manager_wake_batches WHERE id=?", (prepared.id,)
+    ).fetchone()[0] == "discarded"
+    assert wake_data.claim_next_batch(tmp_db, process_token="process", now=20) is None
+    assert tickets_data.read_ticket(tmp_db, ticket_id).pending_proposal == parked.pending_proposal
+    tickets_data.set_ticket_backlog(
+        tmp_db, ticket_id, is_backlogged=False, principal=OWNER_PRINCIPAL, now=21,
+    )
+    resumed = wake_data.claim_next_batch(tmp_db, process_token="process", now=22)
+    assert resumed is not None
+    assert resumed.sender_message_id != prepared.sender_message_id
+    assert resumed.message == prepared.message
+    assert wake_data.claim_next_batch(tmp_db, process_token="process", now=23) is None
+    wake_data.record_batch_offering(
+        tmp_db, resumed.id, conversation_id="backlog-notice", process_token="process", now=24,
+    )
+    with tmp_db:
+        assert wake_data.admit_notice_batch(
+            tmp_db, conversation_id="backlog-notice",
+            sender_message_id=resumed.sender_message_id, now=25,
+        ) == (True, None)
+    wake_data.close_delivered_batch(tmp_db, resumed.id, now=26)
+    tickets_data.set_ticket_backlog(
+        tmp_db, ticket_id, is_backlogged=True, principal=OWNER_PRINCIPAL, now=27,
+    )
+    tickets_data.set_ticket_backlog(
+        tmp_db, ticket_id, is_backlogged=False, principal=OWNER_PRINCIPAL, now=28,
+    )
+    assert wake_data.claim_next_batch(tmp_db, process_token="process", now=29) is None

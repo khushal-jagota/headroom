@@ -12,6 +12,7 @@ from uuid import uuid4
 
 import pytest
 
+from planner.execution_configuration import PROTOCOL_VERSION
 from planner.execution_identity import MAC_NEEDS_UPDATE, ExecutorIdentity
 from planner.executor.configuration import LEASE_CONTINUITY_SECONDS, MAC_AWAY_AFTER_SECONDS
 from planner.executor.contracts import PresenceRecord
@@ -25,7 +26,7 @@ from planner.executor.protocol import ExecutorRefusal
 
 AWAY_MS = int(MAC_AWAY_AFTER_SECONDS * 1000)
 CONTINUITY_MS = int(LEASE_CONTINUITY_SECONDS * 1000)
-IDENTITY = ExecutorIdentity(22, "revision", 5, str(uuid4()))
+IDENTITY = ExecutorIdentity(PROTOCOL_VERSION, "revision", 5, str(uuid4()))
 LEASED = PresenceRecord(
     executor_incarnation=IDENTITY.executor_incarnation,
     identity=IDENTITY,

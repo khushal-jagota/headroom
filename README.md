@@ -56,6 +56,11 @@ Formerly **Panels**. The app and command-line tool still use the `panels` name.
 
 ## Run locally
 
+For a sealed release, use the [one-command home installer](ops/mac-home/installation.md) on Apple Silicon Mac or Linux x86_64.
+Use the [join command](ops/mac-executor/installation.md) to add an extra machine to that home.
+
+For a source checkout, follow the commands below.
+
 Requires **Python 3.12+**, **Node.js 22+**, and npm. Run these commands from a source checkout:
 
 ```sh
