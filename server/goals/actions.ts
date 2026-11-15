@@ -1,4 +1,5 @@
 import { PlannerError } from '../core/contracts.ts';
+import { document_edit } from './logic/revisions.ts';
 import type { Principal } from '../core/contracts.ts';
 import type { Clock } from '../core/clock.ts';
 import type { Database, SqlValue, TransactionSql } from '../core/database/contracts.ts';
@@ -259,7 +260,7 @@ export function update_goal(
 ): Goal {
   const current = read_goal(sql, id),
     goal = {
-      ...prepare(sql, current, body, now, false),
+      ...prepare(sql, current, document_edit(body, current.revision), now, false),
       revision: current.revision + 1,
       updated_at: now,
     },

@@ -71,6 +71,9 @@
             }
           ]
         }
+      },
+      "capture": {
+        "holder_revision": "page_revision"
       }
     },
     {
@@ -343,7 +346,7 @@
       "area": "cli-page",
       "argv": [
         "page",
-        "show",
+        "edit",
         "--manager",
         "${manager}"
       ],
@@ -351,10 +354,10 @@
         "actor": "owner"
       },
       "exit_code": 0,
-      "proof": "Shows the populated holder page and revision.",
+      "proof": "Replaces the populated holder page through its captured revision and retains component IDs.",
+      "stdin": "{\"page\":{\"kind\":\"headroom.page\",\"version\":1,\"title\":\"CLI edited holder page\",\"summary\":\"A populated holder document.\",\"blocks\":[{\"type\":\"section\",\"id\":\"work\",\"title\":\"Work\",\"blocks\":[{\"type\":\"checklist\",\"id\":\"steps\",\"title\":\"Next steps\",\"items\":[{\"id\":\"first\",\"label\":\"CLI real checklist\",\"state\":\"open\"}]}]}]},\"expected_revision\":${holder_revision}}",
       "assert_text": [
-        "CLI domain page",
-        "CLI real checklist"
+        "CLI edited holder page"
       ]
     },
     {
@@ -369,9 +372,25 @@
       "identity": {
         "actor": "owner"
       },
+      "exit_code": 1,
+      "assert_http_status": 409,
+      "proof": "Refuses the stale page clear without replacing newer content.",
+      "stdin": "{\"page\":null,\"expected_revision\":${holder_revision}}"
+    },
+    {
+      "kind": "cli",
+      "area": "cli-page",
+      "argv": [
+        "page",
+        "show",
+        "--manager",
+        "${manager}"
+      ],
+      "identity": {
+        "actor": "owner"
+      },
       "exit_code": 0,
-      "proof": "Replaces the complete page from stdin with retained component IDs.",
-      "stdin": "{\"page\":{\"kind\":\"headroom.page\",\"version\":1,\"title\":\"CLI edited holder page\",\"summary\":\"A populated holder document.\",\"blocks\":[{\"type\":\"section\",\"id\":\"work\",\"title\":\"Work\",\"blocks\":[{\"type\":\"checklist\",\"id\":\"steps\",\"title\":\"Next steps\",\"items\":[{\"id\":\"first\",\"label\":\"CLI real checklist\",\"state\":\"open\"}]}]}]}}",
+      "proof": "Shows the populated holder page and revision after a stale clear leaves the newer document intact.",
       "assert_text": [
         "CLI edited holder page"
       ]
@@ -556,10 +575,12 @@
       "proof": "Creates a populated goal with category chart IDs20,10 and prototype-like ordinary names, backed by distinct retained manual values.",
       "stdin": "{\"project_id\":\"project_other\",\"title\":\"CLI populated goal\",\"why\":\"Retained manual evidence.\",\"kind\":\"quantitative\",\"completion_rule\":{\"actual\":{\"op\":\"reference\",\"measure_id\":\"${manual}\",\"day_offset\":0},\"target\":{\"op\":\"constant\",\"value\":5},\"direction\":\"atleast\",\"first_date\":\"2026-07-04\"},\"primary_chart\":{\"type\":\"chart\",\"id\":\"20\",\"kind\":\"bar\",\"title\":\"CLI category 20\",\"binding\":{\"kind\":\"scalar_inputs\",\"aggregation\":\"latest\",\"inputs\":[{\"key\":\"A\",\"label\":\"A\",\"measure_id\":\"${manual}\"}]}},\"page\":{\"kind\":\"headroom.page\",\"version\":1,\"title\":\"CLI domain page\",\"summary\":\"A populated holder document.\",\"blocks\":[{\"type\":\"section\",\"id\":\"work\",\"title\":\"Work\",\"blocks\":[{\"type\":\"checklist\",\"id\":\"steps\",\"title\":\"Next steps\",\"items\":[{\"id\":\"first\",\"label\":\"CLI real checklist\",\"state\":\"open\"}]}]},{\"type\":\"chart\",\"id\":\"10\",\"kind\":\"bar\",\"title\":\"CLI category 10\",\"binding\":{\"kind\":\"scalar_inputs\",\"aggregation\":\"latest\",\"inputs\":[{\"key\":\"B\",\"label\":\"B\",\"measure_id\":\"${manual_b}\"}]}},{\"type\":\"chart\",\"id\":\"__proto__\",\"kind\":\"bar\",\"title\":\"CLI category __proto__\",\"binding\":{\"kind\":\"scalar_inputs\",\"aggregation\":\"latest\",\"inputs\":[{\"key\":\"A\",\"label\":\"A\",\"measure_id\":\"${manual}\"}]}},{\"type\":\"chart\",\"id\":\"constructor\",\"kind\":\"bar\",\"title\":\"CLI category constructor\",\"binding\":{\"kind\":\"scalar_inputs\",\"aggregation\":\"latest\",\"inputs\":[{\"key\":\"A\",\"label\":\"A\",\"measure_id\":\"${manual}\"}]}},{\"type\":\"chart\",\"id\":\"toString\",\"kind\":\"bar\",\"title\":\"CLI category toString\",\"binding\":{\"kind\":\"scalar_inputs\",\"aggregation\":\"latest\",\"inputs\":[{\"key\":\"A\",\"label\":\"A\",\"measure_id\":\"${manual}\"}]}}]}}",
       "capture": {
-        "goal": "id"
+        "goal": "id",
+        "goal_revision": "revision"
       },
       "capture_text": {
-        "goal": "\"id\":\\s*\"([^\"\\n]+)\""
+        "goal": "\"id\":\\s*\"([^\"\\n]+)\"",
+        "goal_revision": "\"revision\":\\s*([0-9]+)"
       },
       "assert_text": [
         "CLI populated goal"
@@ -581,24 +602,6 @@
       "proof": "Lists the real quantitative goal and its current status.",
       "assert_text": [
         "CLI populated goal"
-      ]
-    },
-    {
-      "kind": "cli",
-      "area": "cli-goal",
-      "argv": [
-        "goal",
-        "show",
-        "${goal}"
-      ],
-      "identity": {
-        "actor": "owner"
-      },
-      "exit_code": 0,
-      "proof": "Shows the complete quantitative goal, page and chart.",
-      "assert_text": [
-        "CLI populated goal",
-        "CLI real checklist"
       ]
     },
     {
@@ -650,11 +653,49 @@
         "actor": "owner"
       },
       "exit_code": 0,
-      "proof": "Updates goal context and replaces supporting category charts with formula charts under the same numeric and prototype-like IDs.",
-      "stdin": "{\"why\":\"CLI revised goal reason.\",\"page\":{\"kind\":\"headroom.page\",\"version\":1,\"title\":\"CLI domain page\",\"summary\":\"A populated holder document.\",\"blocks\":[{\"type\":\"section\",\"id\":\"work\",\"title\":\"Work\",\"blocks\":[{\"type\":\"checklist\",\"id\":\"steps\",\"title\":\"Next steps\",\"items\":[{\"id\":\"first\",\"label\":\"CLI real checklist\",\"state\":\"open\"}]}]},{\"type\":\"chart\",\"id\":\"10\",\"kind\":\"line\",\"title\":\"CLI formula 10\",\"measure_id\":\"${manual}\",\"expectation\":{\"op\":\"constant\",\"value\":5}},{\"type\":\"chart\",\"id\":\"__proto__\",\"kind\":\"line\",\"title\":\"CLI formula __proto__\",\"measure_id\":\"${manual}\",\"expectation\":{\"op\":\"constant\",\"value\":5}},{\"type\":\"chart\",\"id\":\"constructor\",\"kind\":\"line\",\"title\":\"CLI formula constructor\",\"measure_id\":\"${manual}\",\"expectation\":{\"op\":\"constant\",\"value\":5}},{\"type\":\"chart\",\"id\":\"toString\",\"kind\":\"line\",\"title\":\"CLI formula toString\",\"measure_id\":\"${manual}\",\"expectation\":{\"op\":\"constant\",\"value\":5}}]}}",
+      "proof": "Uses the captured Goal revision to replace supporting category charts with formula charts under the same numeric and prototype-like IDs.",
+      "stdin": "{\"why\":\"CLI revised goal reason.\",\"page\":{\"kind\":\"headroom.page\",\"version\":1,\"title\":\"CLI domain page\",\"summary\":\"A populated holder document.\",\"blocks\":[{\"type\":\"section\",\"id\":\"work\",\"title\":\"Work\",\"blocks\":[{\"type\":\"checklist\",\"id\":\"steps\",\"title\":\"Next steps\",\"items\":[{\"id\":\"first\",\"label\":\"CLI real checklist\",\"state\":\"open\"}]}]},{\"type\":\"chart\",\"id\":\"10\",\"kind\":\"line\",\"title\":\"CLI formula 10\",\"measure_id\":\"${manual}\",\"expectation\":{\"op\":\"constant\",\"value\":5}},{\"type\":\"chart\",\"id\":\"__proto__\",\"kind\":\"line\",\"title\":\"CLI formula __proto__\",\"measure_id\":\"${manual}\",\"expectation\":{\"op\":\"constant\",\"value\":5}},{\"type\":\"chart\",\"id\":\"constructor\",\"kind\":\"line\",\"title\":\"CLI formula constructor\",\"measure_id\":\"${manual}\",\"expectation\":{\"op\":\"constant\",\"value\":5}},{\"type\":\"chart\",\"id\":\"toString\",\"kind\":\"line\",\"title\":\"CLI formula toString\",\"measure_id\":\"${manual}\",\"expectation\":{\"op\":\"constant\",\"value\":5}}]},\"expected_revision\":${goal_revision}}",
       "assert_text": [
         "CLI revised goal reason."
       ]
+    },
+    {
+      "kind": "cli",
+      "area": "cli-goal",
+      "argv": [
+        "goal",
+        "edit",
+        "${goal}"
+      ],
+      "identity": {
+        "actor": "owner"
+      },
+      "exit_code": 1,
+      "assert_http_status": 409,
+      "proof": "The actual Goal writer rejects its captured stale revision before a title mutation.",
+      "stdin": "{\"expected_revision\":${goal_revision},\"title\":\"Stale title must not replace the newer Goal\"}"
+    },
+    {
+      "kind": "cli",
+      "area": "cli-goal",
+      "argv": [
+        "goal",
+        "show",
+        "${goal}"
+      ],
+      "identity": {
+        "actor": "owner"
+      },
+      "exit_code": 0,
+      "proof": "Shows the newer complete Goal after a stale title edit preserves its document and revision.",
+      "assert_text": [
+        "CLI populated goal",
+        "CLI real checklist",
+        "CLI revised goal reason."
+      ],
+      "assert_json": {
+        "revision": 2
+      }
     },
     {
       "kind": "cli",
