@@ -7,6 +7,8 @@ import { mkdtempSync, mkdirSync, rmSync, symlinkSync, writeFileSync } from 'node
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { setup } from './conversation_core_fixture.ts';
+import { configure_conversation_start } from '../runtime/conversation_start.ts';
+import { canonical_ticket_execution_refusal } from '../tickets/execution_admission.ts';
 import { create, read } from './ticket_fixture.ts';
 import {
   reconcile,
@@ -323,4 +325,45 @@ test('core shutdown cancels a recovery backoff through its existing signal', asy
   expect(await recovered).toMatchObject({ name: 'AbortError' });
   expect(f.core.workspace_admission.active).toBe(false);
   expect(f.children).toHaveLength(0);
+});
+
+// A policy refusal after pacing cannot strand the prior unbound admission request.
+test('recovery releases its deferred reservation when execution becomes unavailable', async () => {
+  const f = setup();
+  try {
+    await f.start();
+    const ticket = create(f.database);
+    configure_conversation_start(f.database, {
+      db_path: f.database_path,
+      workspace_root: null,
+      execution_refusal: canonical_ticket_execution_refusal,
+    });
+    f.database.write((tx) => {
+      tx.run(
+        "INSERT INTO conversation_lifecycle_facts VALUES ('core','turn','1',1,'turn','running',NULL)",
+      );
+      reconcile(tx, [manifest()], 100);
+    });
+    f.core.start_admission.configure_destinations(() => false);
+    const try_start = f.core.start_admission.try_start.bind(f.core.start_admission);
+    const attempted = vi
+      .spyOn(f.core.start_admission, 'try_start')
+      .mockImplementation((request) => {
+        expect(try_start(request)).toBe(false);
+        expect(f.core.start_admission.snapshots()).toHaveLength(1);
+        f.database.write((tx) => {
+          tx.run("UPDATE tickets SET conversation_id='core',locale='macos' WHERE id=?", [
+            ticket.id,
+          ]);
+          tx.run("INSERT INTO ticket_conversations VALUES ('core',?)", [ticket.id]);
+        });
+        return false;
+      });
+    await recover_conversations(f.core, f.database, { startup: true });
+    expect(attempted).toHaveBeenCalledTimes(1);
+    expect(f.core.start_admission.snapshots()).toEqual([]);
+    expect(f.children).toHaveLength(0);
+  } finally {
+    await f.core.shutdown({ deadline: performance.now() / 1000 + SHUTDOWN_GRACE_SECONDS });
+  }
 });

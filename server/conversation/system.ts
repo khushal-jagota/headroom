@@ -1161,40 +1161,47 @@ export class SqliteProcessConversationSystem implements DeliveryServices, Conver
   }
   make_sink(state: ConversationState): BackendEventSink {
     const sink: BackendEventSink = {
-      report: async (token, event) => {
-        if (this.shutting_down || state.child_event_sink !== sink) return;
-        if (
-          token !== null &&
-          same_turn(state.running_turn?.token ?? null, token) &&
-          !state.running_turn?.ended
-        )
-          await this.accept_automatic_start(state, token);
-        if (event instanceof AgentMessageCompleted) return;
-        if (
-          event instanceof AgentMessageDelta ||
-          event instanceof ModelThinkingHappened ||
-          event instanceof ToolCallProgress
-        ) {
-          if (token === null) return;
-          const show = async () => {
-            await this.wait_for_reservation(state, token);
+      report: (token, event) =>
+        own_settlement(
+          state,
+          (async () => {
+            if (this.shutting_down || state.child_event_sink !== sink) return;
             if (
-              state.child_event_sink === sink &&
+              token !== null &&
               same_turn(state.running_turn?.token ?? null, token) &&
               !state.running_turn?.ended
-            ) {
+            )
               await this.accept_automatic_start(state, token);
-              this.publish_live(state, token, event);
+            if (event instanceof AgentMessageCompleted) return;
+            if (
+              event instanceof AgentMessageDelta ||
+              event instanceof ModelThinkingHappened ||
+              event instanceof ToolCallProgress
+            ) {
+              if (token === null) return;
+              const show = async () => {
+                await this.wait_for_reservation(state, token);
+                if (
+                  state.child_event_sink === sink &&
+                  same_turn(state.running_turn?.token ?? null, token) &&
+                  !state.running_turn?.ended
+                ) {
+                  await this.accept_automatic_start(state, token);
+                  this.publish_live(state, token, event);
+                }
+              };
+              if (state.reserved_turn) this.enqueue_backend_event(state, show);
+              else this.publish_live(state, token, event);
+              return;
             }
-          };
-          if (state.reserved_turn) this.enqueue_backend_event(state, show);
-          else this.publish_live(state, token, event);
-          return;
-        }
-        this.enqueue_backend_event(state, async () => {
-          await this.take_local_backend_event(state, token, event, sink);
-        });
-      },
+            this.enqueue_backend_event(state, async () => {
+              await this.take_local_backend_event(state, token, event, sink);
+            });
+          })().catch((error: unknown) => {
+            state.backend_event_failures += 1;
+            throw error;
+          }),
+        ),
     };
     return sink;
   }
@@ -1920,6 +1927,7 @@ export class SqliteProcessConversationSystem implements DeliveryServices, Conver
       }
       if (child !== null) {
         await this.native_operation(() => child.stop());
+        await Promise.all([...state.settlement_tasks]);
         while (state.backend_event_pump) await state.backend_event_pump;
         const event_failed = this.update_event_failed(state);
         await state.lock.run(async () => {

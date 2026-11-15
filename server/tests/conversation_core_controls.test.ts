@@ -609,3 +609,27 @@ test('unadmitted send_now and promotion preserve the running turn then drain onc
     await f.core.shutdown({ deadline: performance.now() / 1000 + SHUTDOWN_GRACE_SECONDS });
   }
 });
+
+// A failed pre-queue callback stays unsafe after its settled promise leaves the active set.
+test('a settled report rejection still refuses the later update write cut', async () => {
+  const f = setup();
+  await f.start();
+  await f.send();
+  await f.core.wait_until_quiescent();
+  const state = f.core.conversations.get('core')!;
+  const failure = new Error('acceptance could not save');
+  vi.spyOn(f.core, 'accept_automatic_start').mockRejectedValueOnce(failure);
+  await expect(
+    state.child_event_sink!.report(
+      state.running_turn!.token,
+      new AgentMessageDelta({ text_delta: 'unsaved final output' }),
+    ),
+  ).rejects.toBe(failure);
+  expect(state.settlement_tasks.size).toBe(0);
+  await expect(f.core.prepare_update('now')).rejects.toThrow('A backend result did not settle');
+  expect(f.core.workspace_admission.closed).toBe(false);
+  f.core.cancel_update();
+  expect(await f.core.prepare_update('now')).toBe(true);
+  f.core.cancel_update();
+  await f.core.shutdown({ deadline: performance.now() / 1000 + SHUTDOWN_GRACE_SECONDS });
+});

@@ -52,10 +52,13 @@ export async function recover_conversations(
   );
   let delay = DEPLOY_RECOVERY_FIRST_RETRY_SECONDS;
   async function resume(conversation_id: string): Promise<boolean> {
-    if (execution_refusal(database, conversation_id) !== null) return true;
     const starts = system.start_admission;
     const references = selected.get(conversation_id)!;
     const identity = recovery_message_identity(references.map((ref) => ref.interruption_id));
+    if (execution_refusal(database, conversation_id) !== null) {
+      starts?.finish_unbound(identity);
+      return true;
+    }
     if (await system.is_running(conversation_id)) {
       starts?.finish_unbound(identity);
       return true;
