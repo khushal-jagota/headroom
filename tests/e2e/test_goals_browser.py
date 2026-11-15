@@ -553,8 +553,8 @@ def test_goal_page_persistence_external_refresh_and_owned_conversation(
         expect(primary_checkbox).to_be_enabled(timeout=WAIT_MS)
     finally:
         holding_refresh = False
-        for route, response in held_patch:
-            route.fulfill(response=response)
+        for route, held_response in held_patch:
+            route.fulfill(response=held_response)
         for route in held_reads:
             route.continue_()
         page.unroute("**" + path, hold_patch)
