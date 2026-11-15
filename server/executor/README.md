@@ -28,11 +28,12 @@ The Mac runner's `prompt_accepted` result carries the native provider's `agent_a
 
 Executor ingress requires trusted Tailscale login, a claimed executor ID, no browser Origin, and no duplicate security headers. The shared machine credential helper authenticates the destination before the registry selects or creates an endpoint. The original configured ID retains legacy authority until credential handover closes. Work requests then check the supported protocol and current identity before reading the body; a lease admits identity from its payload. Incarnation is a row fence, separate from the credential. Transaction participants compare affected row incarnations and relevant assignments with the admitted request. Updates remain reachable before work-version admission.
 
-Only the original configured executor can request bootstrap credentials, with no credential header and a supported identity. The shared helper owns its database write. Authentication alone keeps legacy authority open. An accepted credentialed `current` update report closes handover through the shared helper before the server confirms it. Refused reports, other phases, and legacy reports leave that authority unchanged.
+Only the original configured executor can request bootstrap credentials, with no credential header and a supported identity. The shared helper owns its database write. Authentication and update reports keep legacy authority open. After the supervisor keeps the runtime, its explicit credentialed close request closes handover through the shared helper. The close route needs neither a work protocol nor a current incarnation and accepts repeat requests.
 
 | Method | Path | Boundary |
 | --- | --- | --- |
 | POST | `/api/executor/credential` | Original executor credential bootstrap before handover closes |
+| POST | `/api/executor/credential/handover/close` | Credentialed handover closure after the supervisor keeps the runtime |
 | POST | `/api/executor/lease` | Admit identity and versions, update presence, settle replacement custody |
 | GET | `/api/executor/commands` | Current executor's bounded mailbox poll |
 | POST | `/api/executor/commands/outcomes` | Current executor's typed command outcomes; stop success still needs exact proof |

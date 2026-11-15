@@ -41,6 +41,7 @@ import {
   MAX_ITEM_BATCH_BYTES,
   MAX_MAILBOX_POLL_BYTES,
   MAX_MAC_UPDATE_RESPONSE_BYTES,
+  EXECUTOR_HANDOVER_CLOSE_PATH,
 } from './configuration.ts';
 
 const EXECUTOR_ID = 'x-panels-executor-id';
@@ -307,7 +308,7 @@ export function create_executor_routes(services: ExecutorHttpServices): FastifyP
       endpoint.record_contact();
       const updates = services.registry.update_service_for(machine_id);
       if (!updates) throw new HttpError(503, 'Mac update service unavailable');
-      return { machine_id, endpoint, updates };
+      return { endpoint, updates };
     };
     const work =
       (handler: (request: FastifyRequest, reply: FastifyReply) => Promise<unknown>) =>
@@ -343,6 +344,23 @@ export function create_executor_routes(services: ExecutorHttpServices): FastifyP
             throw new PlannerError('agent_forbidden', error.message);
           throw error;
         }
+      }),
+    );
+    app.post(
+      EXECUTOR_HANDOVER_CLOSE_PATH,
+      work(async (request, reply) => {
+        const headers = header_map(request.raw);
+        const credential = headers.get(CREDENTIAL)?.[0];
+        if (credential === undefined)
+          throw new PlannerError('agent_forbidden', 'Executor credential is required');
+        const machine_id = authenticate(request);
+        close_original_handover(
+          services.database,
+          machine_id,
+          credential,
+          headers.get(INCARNATION)?.[0] ?? null,
+        );
+        return reply.send({ closed: true });
       }),
     );
     app.post(
@@ -506,7 +524,7 @@ export function create_executor_routes(services: ExecutorHttpServices): FastifyP
       (request, reply) => archive(request, reply, true),
     );
     app.post('/api/executor/update', { config: { uncompressed: true } }, async (request, reply) => {
-      const { machine_id, endpoint, updates } = await updates_for(request);
+      const { endpoint, updates } = await updates_for(request);
       let bytes: Uint8Array;
       try {
         bytes = await body(request, MAX_MAC_UPDATE_RESPONSE_BYTES);
@@ -523,14 +541,6 @@ export function create_executor_routes(services: ExecutorHttpServices): FastifyP
       } catch (error) {
         update_failure(error);
       }
-      const credential = header_map(request.raw).get(CREDENTIAL)?.[0];
-      if (report.phase === 'current' && credential !== undefined)
-        close_original_handover(
-          services.database,
-          machine_id,
-          credential,
-          header_map(request.raw).get(INCARNATION)?.[0] ?? null,
-        );
       return reply.send({ confirmed: report.phase === 'current' });
     });
     install_old_websocket_refusal(app, services);

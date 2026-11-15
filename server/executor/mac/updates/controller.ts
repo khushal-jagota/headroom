@@ -1,9 +1,11 @@
 /** Latest lease offers prepare an independent, durable runtime handoff. */
 import { join } from 'node:path';
+import { setTimeout as sleep } from 'node:timers/promises';
 import type { ExecutorIdentity } from '../../../execution_identity.ts';
 import { observe_shutdown } from '../../../conversation/shutdown.ts';
 import type { StopOptions } from '../../../lifecycle/contracts.ts';
 import { encode_bounded } from '../../protocol.ts';
+import { EXECUTOR_HANDOVER_CLOSE_PATH } from '../../configuration.ts';
 import type {
   MacRuntimeSelection,
   MacUpdateCheck,
@@ -19,7 +21,8 @@ import type { MacMaintenanceContract } from '../runner/maintenance_contracts.ts'
 import { atomic_record, read_record } from '../runtime/records.ts';
 import { handoff_record } from '../runtime/handoff.ts';
 import { HttpSessions, read_bounded } from '../transport/sessions.ts';
-import { CONNECTORS } from '../transport/http.ts';
+import { CONNECTORS, executor_request_failure } from '../transport/http.ts';
+import { http_error } from '../transport/errors.ts';
 import type { MacHttpOptions } from '../transport/contracts.ts';
 
 export interface MacUpdateRuntimeSettings {
@@ -62,6 +65,7 @@ export class MacUpdateController {
   private readonly sessions = new Set<HttpSessions>();
   private sequence = Promise.resolve();
   private loop: Promise<void> | undefined;
+  private handover: Promise<void> | undefined;
   private shutdown_started = false;
   private finish!: () => void;
   private reject!: (error: unknown) => void;
@@ -92,6 +96,7 @@ export class MacUpdateController {
     if (this.loop !== undefined) return;
     this.loop = this.run();
     void this.loop.catch((error) => this.fault(error));
+    void this.close_handover_once_kept();
   }
   offer(check: MacUpdateCheck): void {
     if (this.signal.aborted) return;
@@ -441,17 +446,79 @@ export class MacUpdateController {
   async release_runtime_admission(): Promise<void> {
     this.signal.throwIfAborted();
     if (!this.gate_pending || this.prepared !== null) return;
-    if (this.options.runtime.ready_path !== null) {
-      const selected = await read_record(this.options.files, join(this.root, 'selection.json'));
-      const pending = await read_record(this.options.files, join(this.root, 'pending.json'));
-      if (this.confirmed === null || selected?.request_id !== this.confirmed || pending !== null)
-        return;
-    }
+    if (!(await this.kept_by_supervisor())) return;
     if (!(await this.release_custody())) return;
     this.signal.throwIfAborted();
     this.options.runner.finish_planned_replay();
     this.options.runner.resume_after_cancelled_update();
     this.gate_pending = false;
+  }
+  async kept_by_supervisor(): Promise<boolean> {
+    if (this.options.runtime.ready_path === null) return true;
+    const selected = await read_record(this.options.files, join(this.root, 'selection.json'));
+    return (
+      this.confirmed !== null &&
+      selected?.request_id === this.confirmed &&
+      selected.application_revision === this.options.presence.identity.application_revision &&
+      (await this.options.files.read_runtime_record(join(this.root, 'pending.json'))) === null
+    );
+  }
+  close_handover_once_kept(): Promise<void> {
+    this.signal.throwIfAborted();
+    if (this.handover === undefined) {
+      this.handover = this.close_handover();
+      void this.handover.catch((error: unknown) => {
+        if (!this.signal.aborted) this.fault(error);
+      });
+    }
+    return this.handover;
+  }
+  private async close_handover(): Promise<void> {
+    let delay = settings.MAC_UPDATE_POLL_SECONDS;
+    while (!this.signal.aborted) {
+      try {
+        if (this.options.presence.leased() && (await this.kept_by_supervisor())) {
+          await this.with_session((session) =>
+            session.request(
+              {
+                loop: 'lease',
+                method: 'POST',
+                path: EXECUTOR_HANDOVER_CLOSE_PATH,
+                read_timeout: settings.REQUEST_TIMEOUT_SECONDS,
+                signal: this.signal,
+              },
+              this.options.authentication_headers(),
+              async (response) => {
+                const bytes = await read_bounded(response, settings.MAX_MAC_UPDATE_RESPONSE_BYTES);
+                if (response.statusCode !== 200) throw http_error(response.statusCode!, bytes);
+                return JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(bytes));
+              },
+            ),
+          );
+          return;
+        }
+        delay = settings.MAC_UPDATE_POLL_SECONDS;
+      } catch (error) {
+        if (this.signal.aborted) return;
+        if (
+          !executor_request_failure(error) &&
+          !(error instanceof SyntaxError) &&
+          !(
+            error instanceof TypeError &&
+            'code' in error &&
+            error.code === 'ERR_ENCODING_INVALID_ENCODED_DATA'
+          )
+        )
+          throw error;
+        delay = Math.min(delay * 2, settings.MAC_HANDOVER_CLOSE_RETRY_MAX_SECONDS);
+      }
+      try {
+        await sleep(delay * 1000, undefined, { signal: this.signal });
+      } catch (error) {
+        if (!this.signal.aborted) throw error;
+        return;
+      }
+    }
   }
   async release_handoff_custody(): Promise<void> {
     this.signal.throwIfAborted();
@@ -515,7 +582,12 @@ export class MacUpdateController {
       this.wake?.();
       const closing = [...this.sessions].map((session) => session.close());
       const cleanup = async () => {
-        const results = await Promise.allSettled([this.sequence, this.loop, ...closing]);
+        const results = await Promise.allSettled([
+          this.sequence,
+          this.loop,
+          this.handover,
+          ...closing,
+        ]);
         for (const result of results)
           if (result.status === 'rejected') this.failures.add(result.reason);
         await this.prefetch?.task;

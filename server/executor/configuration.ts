@@ -15,6 +15,7 @@ export const LIVE_READ_SERVER_LIMIT_SECONDS = 20;
 export const LIVE_EVENT_SERVER_LIMIT_SECONDS = 5;
 export const MAX_LIVE_EVENTS_PER_BATCH = 64;
 export const MAX_MAC_UPDATE_RESPONSE_BYTES = 64 * 1024;
+export const EXECUTOR_HANDOVER_CLOSE_PATH = '/api/executor/credential/handover/close';
 export const FILE_TRANSFER_STALL_SECONDS = 60;
 export const LEASE_INTERVAL_SECONDS = 10;
 export const LEASE_CONTINUITY_SECONDS = 25;

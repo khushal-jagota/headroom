@@ -1,4 +1,4 @@
-/** One scripted failed trial must restore the baseline with the same handoff. */
+/** The real supervisor keeps or reverts owned trials before credential handover can close. */
 import {
   existsSync,
   mkdirSync,
@@ -10,6 +10,8 @@ import {
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
+import { IncomingMessage } from 'node:http';
+import { Socket } from 'node:net';
 import { expect, test, vi } from 'vitest';
 import { ChildProcesses } from '../../../lifecycle/owned_processes.ts';
 import { OneShotChildren } from '../../../lifecycle/one_shot_children.ts';
@@ -21,10 +23,33 @@ import { runtime_archive } from '../updates/testing/runtime_archive.ts';
 import { LINUX_EXECUTOR } from '../../../environments/release/contracts.ts';
 import { LINUX_EXECUTOR_ENTRYPOINT } from '../../../environments/linux_executor/configuration.ts';
 import { linux_executor_path } from '../../../environments/linux_executor/logic/paths.ts';
+import { MacUpdateController } from '../updates/controller.ts';
+import { HttpSessions } from '../transport/sessions.ts';
+import { CONNECTORS } from '../transport/http.ts';
+import type { HttpRequest, ReplyReader } from '../transport/contracts.ts';
+import { EXECUTOR_HANDOVER_CLOSE_PATH } from '../../configuration.ts';
+import { observe_promise } from '../../../core/promise_observer.ts';
 
-test.each(['darwin', 'linux'] as const)(
-  'an unconfirmed %s runtime restores baseline and planned custody',
-  async (platform) => {
+const timing = vi.hoisted(() => ({ poll: 0.01 }));
+vi.mock('../configuration.ts', async (importOriginal) => {
+  const original = await importOriginal<typeof import('../configuration.ts')>();
+  return {
+    ...original,
+    MAC_RUNTIME_READY_TIMEOUT_SECONDS: 1,
+    get MAC_UPDATE_POLL_SECONDS() {
+      return timing.poll;
+    },
+  };
+});
+
+test.each([
+  { platform: 'darwin', trial: 'dies_before_marker' },
+  { platform: 'linux', trial: 'dies_before_marker' },
+  { platform: 'darwin', trial: 'kept' },
+  { platform: 'darwin', trial: 'marker_after_last_poll' },
+] as const)(
+  '$platform runtime $trial preserves handoff until the supervisor keeps it',
+  async ({ platform, trial }) => {
     const original_platform = Object.getOwnPropertyDescriptor(process, 'platform')!;
     const root = realpathSync(mkdtempSync(join(tmpdir(), 'mac-supervisor-')));
     const baseline = join(root, 'baseline');
@@ -34,6 +59,10 @@ test.each(['darwin', 'linux'] as const)(
       owners = new ChildProcesses(),
       one_shot_children = new OneShotChildren(owners);
     const launches = vi.spyOn(owners, 'spawn');
+    let controller: MacUpdateController | undefined;
+    const closes: unknown[] = [];
+    const failure = vi.fn();
+    timing.poll = 0.01;
     Object.defineProperty(process, 'platform', { ...original_platform, value: platform });
     try {
       let runtime = join(root, 'candidate');
@@ -68,6 +97,15 @@ fs.writeFileSync(join(process.env.PLAN_EXECUTOR_ROOT,'trial.json'),JSON.stringif
       } else {
         mkdirSync(join(runtime, 'node/bin'), { recursive: true });
         mkdirSync(join(runtime, 'server/executor/mac'), { recursive: true });
+        const trial_work =
+          trial === 'dies_before_marker'
+            ? 'exit 1'
+            : `
+while [ ! -f "$PLAN_EXECUTOR_ROOT/${trial === 'kept' ? 'first-poll' : 'last-poll'}" ]; do sleep 0.01; done
+mkdir -p "$PLAN_EXECUTOR_ROOT/updates/ready"
+printf '%s\\n' '{"request_id":"trial","application_revision":"${next_revision}"}' > "$PLAN_EXECUTOR_RUNTIME_READY"
+sleep ${trial === 'kept' ? '0.3' : '5'}
+exit 0`;
         writeFileSync(
           join(runtime, 'mac-runtime.json'),
           JSON.stringify({
@@ -81,7 +119,7 @@ fs.writeFileSync(join(process.env.PLAN_EXECUTOR_ROOT,'trial.json'),JSON.stringif
           join(runtime, 'node/bin/node'),
           `#!/bin/sh
 printf '%s\\n' "$PATH" "$PLAN_EXECUTOR_RUNTIME_HANDOFF" "$@" > "$PLAN_EXECUTOR_ROOT/trial.txt"
-exit 1
+${trial_work}
 `,
           { mode: 0o755 },
         );
@@ -120,6 +158,116 @@ if(rows.length===1){fs.writeFileSync(join(root,'updates/pending.json'),JSON.stri
         connection_generation: 7,
         replay_pending: true,
       });
+      const read = files.read_runtime_record.bind(files);
+      const remove = files.remove_runtime_record.bind(files);
+      let ready_polls = 0;
+      let nonempty_ready_polls = 0;
+      let late_marker_boundary: number | null = null;
+      let marker_at_removal: unknown;
+      vi.spyOn(files, 'read_runtime_record').mockImplementation(async (path) => {
+        const record = await read(path);
+        if (dirname(path) === join(root, 'updates/ready')) {
+          ready_polls++;
+          if (record === null) writeFileSync(join(root, 'first-poll'), 'observed');
+          else nonempty_ready_polls++;
+        }
+        return record;
+      });
+      vi.spyOn(files, 'remove_runtime_record').mockImplementation(async (path) => {
+        if (dirname(path) === join(root, 'updates/ready') && trial === 'marker_after_last_poll') {
+          late_marker_boundary = ready_polls;
+          writeFileSync(join(root, 'last-poll'), 'completed');
+          await vi.waitFor(
+            () => {
+              expect(JSON.parse(readFileSync(path, 'utf8'))).toEqual({
+                request_id: 'trial',
+                application_revision: next_revision,
+              });
+            },
+            { timeout: 2000, interval: 10 },
+          );
+        }
+        if (dirname(path) === join(root, 'updates/ready') && existsSync(path))
+          marker_at_removal = JSON.parse(readFileSync(path, 'utf8'));
+        await remove(path);
+      });
+      class Home extends HttpSessions {
+        constructor() {
+          super('https://fixture.invalid', CONNECTORS);
+        }
+        override async request<T>(
+          input: HttpRequest,
+          headers: Readonly<Record<string, string>>,
+          consume: ReplyReader<T>,
+        ): Promise<T> {
+          expect(headers['X-Panels-Executor-Credential']).toBe(credential);
+          expect(input.method).toBe('POST');
+          if (input.path === EXECUTOR_HANDOVER_CLOSE_PATH) {
+            const selected = JSON.parse(readFileSync(join(root, 'updates/selection.json'), 'utf8'));
+            expect(selected).toEqual(pending);
+            expect(existsSync(join(root, 'updates/pending.json'))).toBe(false);
+            closes.push(selected);
+          } else expect(input.path).toBe('/api/executor/update');
+          const response = new IncomingMessage(new Socket());
+          response.statusCode = 200;
+          response.complete = true;
+          response.push(
+            Buffer.from(
+              input.path === EXECUTOR_HANDOVER_CLOSE_PATH
+                ? '{"closed":true}'
+                : '{"confirmed":true}',
+            ),
+          );
+          response.push(null);
+          try {
+            return await consume(response);
+          } finally {
+            response.destroy();
+          }
+        }
+      }
+      controller = new MacUpdateController({
+        paths: new ExecutorPaths(root),
+        files,
+        runner: {
+          planned_update_replay: false,
+          prepare_update: async () => true,
+          finish_planned_replay() {},
+          resume_after_cancelled_update() {},
+        },
+        presence: {
+          identity: {
+            protocol_version: 22,
+            spool_format_version: 5,
+            application_revision: next_revision,
+            executor_incarnation: pending.executor_incarnation,
+            connection_generation: 7,
+          },
+          leased: () => true,
+        },
+        outbox: { pending_count: () => 0 },
+        runtime: {
+          child: true,
+          ready_path: join(root, 'controller-ready.json'),
+          handoff_path: null,
+        },
+        authentication_headers: () => ({ 'X-Panels-Executor-Credential': credential }),
+        session_factory: () => new Home(),
+        request_exit() {},
+        on_failure: failure,
+      });
+      await controller.apply({
+        schema_version: 1,
+        prefetch: null,
+        target: {
+          ...pending,
+          archive_path: '/api/executor/update/trial/archive',
+          archive_size: 1,
+          mode: 'idle',
+          activate: false,
+        },
+      });
+      const handover = controller.close_handover_once_kept();
       const args = [
         'executor',
         'run',
@@ -143,12 +291,29 @@ if(rows.length===1){fs.writeFileSync(join(root,'updates/pending.json'),JSON.stri
         }),
       ).toBe(0);
       await owners.settled();
+      if (trial === 'kept') {
+        expect((await observe_promise(handover, 2000)).completed).toBe(true);
+        expect(closes).toEqual([pending]);
+      } else {
+        expect(await controller.kept_by_supervisor()).toBe(false);
+        expect(closes).toEqual([]);
+      }
+      if (trial === 'marker_after_last_poll') {
+        expect(ready_polls).toBeGreaterThan(0);
+        expect(nonempty_ready_polls).toBe(0);
+        expect(late_marker_boundary).toBe(ready_polls);
+        expect(marker_at_removal).toEqual({
+          request_id: 'trial',
+          application_revision: next_revision,
+        });
+      }
+      expect(failure).not.toHaveBeenCalled();
       const observed = JSON.parse(readFileSync(join(root, 'observed.json'), 'utf8'));
       const forwarded = args.map((value) => (value === base_revision ? next_revision : value));
       expect(launches.mock.calls.map(([node]) => node)).toEqual([
         process.execPath,
         platform === 'linux' ? process.execPath : join(runtime, 'node/bin/node'),
-        process.execPath,
+        ...(trial === 'kept' ? [] : [process.execPath]),
       ]);
       for (const [, argv, options] of launches.mock.calls) {
         expect(argv).not.toContain(credential);
@@ -190,7 +355,7 @@ if(rows.length===1){fs.writeFileSync(join(root,'updates/pending.json'),JSON.stri
       }
       expect(observed.map((row: { failure: string }) => row.failure)).toEqual([
         'interrupted',
-        'trial',
+        ...(trial === 'kept' ? [] : ['trial']),
       ]);
       expect(
         observed.every(
@@ -201,7 +366,7 @@ if(rows.length===1){fs.writeFileSync(join(root,'updates/pending.json'),JSON.stri
         ),
       ).toBe(true);
       expect(JSON.parse(readFileSync(join(root, 'updates/failure.json'), 'utf8'))).toMatchObject({
-        request_id: 'trial',
+        request_id: trial === 'kept' ? 'interrupted' : 'trial',
         phase: 'reverted',
       });
       expect(
@@ -210,6 +375,10 @@ if(rows.length===1){fs.writeFileSync(join(root,'updates/pending.json'),JSON.stri
       expect(JSON.parse(readFileSync(credential_path, 'utf8'))).toEqual({ credential });
     } finally {
       try {
+        if (controller) {
+          await controller.stop({ deadline: performance.now() / 1000 + 10 });
+          await controller.settled();
+        }
         one_shot_children.seal();
         owners.seal();
         await one_shot_children.settled();
