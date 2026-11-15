@@ -515,7 +515,8 @@ def test_service_command_limits_kill_and_reap_only_the_scripted_child(
 
 
 def test_darwin_populated_native_observations_match_python(
-    tmp_path: Path, request: pytest.FixtureRequest,
+    tmp_path: Path,
+    request: pytest.FixtureRequest,
 ) -> None:
     """Existing Linux fixtures do not prove Darwin births, socket generations or native rates."""
     import base64
@@ -524,6 +525,7 @@ def test_darwin_populated_native_observations_match_python(
 
     from tests.unit.test_darwin_metrics import Reader
     from tests.unit.test_darwin_preview import inspector, tcp
+
     from planner.platform_runtime.darwin.metrics import DarwinCollector
     from planner.platform_runtime.darwin.preview import _Paths, _SocketFD
     from planner.platform_runtime.darwin.worker_processes import _BSDInfo
@@ -534,12 +536,20 @@ def test_darwin_populated_native_observations_match_python(
     library.descriptors[12][0].protocol_info.tcp.internet.generation = 2**62 + 567
     now = [100.0]
     stat = SimpleNamespace(f_blocks=100, f_bavail=25, f_frsize=4096)
-    collector = DarwinCollector(reader=reader, wall_clock=lambda: now[0], monotonic=lambda: now[0],
-                                statvfs=lambda _: stat, loadavg=lambda: (1, 2, 3))
+    collector = DarwinCollector(
+        reader=reader,
+        wall_clock=lambda: now[0],
+        monotonic=lambda: now[0],
+        statvfs=lambda _: stat,
+        loadavg=lambda: (1, 2, 3),
+    )
     actions, expected = [], []
     identity = None
-    binary = lambda value: base64.b64encode(bytes(value)).decode()
-    for index, operation in enumerate(("discover", "connected", "check", "check", "discover", "discover", "check")):
+    def binary(value: object) -> str:
+        return base64.b64encode(bytes(value)).decode()
+    for index, operation in enumerate(
+        ("discover", "connected", "check", "check", "discover", "discover", "check")
+    ):
         now[0] = 100.0 + index * 2
         reader.ticks = 24_000_000 + index * 48_000_000
         reader.host_ticks = (100 + index * 100, 0, 0, 100 + index * 100)
@@ -564,8 +574,10 @@ def test_darwin_populated_native_observations_match_python(
                 bsd[str(pid)] = [binary(reader.bsd(pid)), binary(reader.bsd(pid))]
             except OSError:
                 bsd[str(pid)] = []
-        tasks = {str(pid): None if pid in reader.denied_task else binary(reader.task(pid))
-                 for pid in reader.observed}
+        tasks = {
+            str(pid): None if pid in reader.denied_task else binary(reader.task(pid))
+            for pid in reader.observed
+        }
         preview = {}
         for pid, sockets in library.descriptors.items():
             info = _BSDInfo(pid=pid, uid=os.getuid(), start_sec=1, start_usec=library.birth)
@@ -577,15 +589,27 @@ def test_darwin_populated_native_observations_match_python(
                 value.socket = socket
                 values.append(binary(value))
             preview[str(pid)] = {"info": binary(info), "paths": binary(paths), "sockets": values}
-        actions.append({"now": now[0], "boot": reader.boot, "cpu": reader.host_ticks,
-                        "pids": reader.observed, "bsd": bsd, "task": tasks,
-                        "preview": preview, "operation": operation,
-                        "unreadable": list(library.unreadable), "truncated": library.truncate,
-                        "socket_error": bool(library.error), "failure_status": index >= 5})
+        actions.append(
+            {
+                "now": now[0],
+                "boot": reader.boot,
+                "cpu": reader.host_ticks,
+                "pids": reader.observed,
+                "bsd": bsd,
+                "task": tasks,
+                "preview": preview,
+                "operation": operation,
+                "unreadable": list(library.unreadable),
+                "truncated": library.truncate,
+                "socket_error": bool(library.error),
+                "failure_status": index >= 5,
+            }
+        )
         try:
             if operation == "discover":
                 identity = subject.discover(3001, tmp_path)
                 from dataclasses import asdict
+
                 evidence = asdict(identity)
             elif operation == "connected":
                 subject.connected(identity, 45678)
@@ -602,15 +626,37 @@ def test_darwin_populated_native_observations_match_python(
     specification = tmp_path / "native.json"
     specification.write_text(json.dumps({"worktree": str(tmp_path), "actions": actions}))
     companion = ROOT / "server/previews/darwin_parity.ts"
-    result = subprocess.run(["node", "--input-type=module", "-e",
-        "import{readFileSync}from'node:fs';const m=await import(process.argv[1]);"
-        "process.stdout.write(await m.native_parity(JSON.parse(readFileSync(process.argv[2],'utf8'))));",
-        companion.as_uri(), str(specification)], cwd=ROOT, env=_environment(tmp_path),
-        capture_output=True, text=True, timeout=15, check=False)
+    result = subprocess.run(
+        [
+            "node",
+            "--input-type=module",
+            "-e",
+            "import{readFileSync}from'node:fs';const m=await import(process.argv[1]);"
+            "const input=JSON.parse(readFileSync(process.argv[2],'utf8'));"
+            "process.stdout.write(await m.native_parity(input));",
+            companion.as_uri(),
+            str(specification),
+        ],
+        cwd=ROOT,
+        env=_environment(tmp_path),
+        capture_output=True,
+        text=True,
+        timeout=15,
+        check=False,
+    )
     assert result.returncode == 0, result.stderr
     assert json.loads(result.stdout) == expected
-    _report(request, "darwin-home-native-observations.json", {
-        "complete": True, "seconds": time.perf_counter() - started, "snapshots": len(actions),
-        "boundary": "Existing populated libproc and metrics fixtures. No native Mac library or host on the VPS.",
-        "result": expected,
-    })
+    _report(
+        request,
+        "darwin-home-native-observations.json",
+        {
+            "complete": True,
+            "seconds": time.perf_counter() - started,
+            "snapshots": len(actions),
+            "boundary": (
+                "Existing populated libproc and metrics fixtures. "
+                "No native Mac library or host on the VPS."
+            ),
+            "result": expected,
+        },
+    )
