@@ -1,6 +1,6 @@
 /** Real child closure cannot be proved by a mocked process result. */
 import { once } from 'node:events';
-import { chmod, mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
+import { chmod, cp, mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
 import { create as create_tar } from 'tar';
@@ -143,14 +143,14 @@ test('source export retains its original deadline through spool cleanup and remo
   }
 }, 15_000);
 
-// Reuse the real source-only builder, owner, and mocked cleanup boundary in this host.
-test('builder retains its deadline through final cleanup before candidate publication', async () => {
+// Reuse the real builder, owner, and mocked cleanup boundary in this host.
+test('builder isolates npm configuration and retains its deadline through final cleanup', async () => {
   const root = await mkdtemp(join(tmpdir(), 'panels-build-cleanup-'));
   const owner = new ChildProcesses();
   const execution = {
     child_processes: owner,
     signal: new AbortController().signal,
-    deadline: performance.now() / 1000 + 15,
+    deadline: performance.now() / 1000 + 30,
   };
   let pending: Promise<AppManifest> | undefined, restore_clock: (() => void) | undefined;
   const source = join(root, 'source'),
@@ -163,6 +163,44 @@ test('builder retains its deadline through final cleanup before candidate public
       await readFile(new URL('../../cli/main.ts', import.meta.url)),
     );
     await chmod(join(source, 'server/cli/main.ts'), 0o755);
+    for (const name of [
+      'scripts/dev',
+      ...['bootstrap', 'launcher', 'scanner', 'contracts', '__init__'].map(
+        (name) => `scripts/development_safety/${name}.py`,
+      ),
+      'server/environments/release/migration_graph.json',
+      'server/core/database/application_schema.json',
+    ]) {
+      await mkdir(dirname(join(source, name)), { recursive: true });
+      await writeFile(
+        join(source, name),
+        await readFile(new URL('../../../' + name, import.meta.url)),
+      );
+    }
+    await cp(
+      new URL('../../../src/planner/core/migrations/versions', import.meta.url),
+      join(source, 'src/planner/core/migrations/versions'),
+      { recursive: true },
+    );
+    await chmod(join(source, 'scripts/dev'), 0o755);
+    await mkdir(join(source, 'server/etc'));
+    await writeFile(join(source, 'server/etc/keep'), 'source-owned directory');
+    for (const name of ['server', 'web']) {
+      await mkdir(join(source, name), { recursive: true });
+      const metadata = {
+        name: `fixture-${name}`,
+        version: '1.0.0',
+        scripts: {
+          build:
+            '../scripts/dev check-node web && node -e \'const fs=require("node:fs");if(fs.existsSync("../server/etc/npmrc")||!fs.existsSync("../server/etc/keep"))throw Error("npm configuration cleanup failed");process.stderr.write("private npm guard passed");process.exit(23)\'',
+        },
+      };
+      await writeFile(join(source, name, 'package.json'), JSON.stringify(metadata));
+      await writeFile(
+        join(source, name, 'package-lock.json'),
+        JSON.stringify({ lockfileVersion: 3, packages: { '': metadata } }),
+      );
+    }
     for (const args of [
       ['init', '-q', source],
       ['-C', source, 'add', '.'],
@@ -186,6 +224,16 @@ test('builder retains its deadline through final cleanup before candidate public
         execution,
       )
     ).stdout.trim();
+    // Real npm and the exported guard prove this lifecycle's private config locations.
+    // Deliberately stop after guard admission, before native package compilation.
+    pending = build_exported_app(
+      source,
+      { requested_sha: sha, candidate_app: candidate, install_dependencies: true },
+      { public_cli_entrypoint: 'server/cli/main.ts' },
+      execution,
+    );
+    await expect(pending).rejects.toThrow('private npm guard passed');
+    await expect(stat(candidate)).rejects.toMatchObject({ code: 'ENOENT' });
     cleanup.after = (path) => {
       if (
         typeof path !== 'string' ||
@@ -213,4 +261,4 @@ test('builder retains its deadline through final cleanup before candidate public
     await owner.settled();
     await rm(root, { recursive: true, force: true });
   }
-}, 20_000);
+}, 40_000);

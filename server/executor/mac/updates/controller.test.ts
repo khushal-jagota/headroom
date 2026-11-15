@@ -2,7 +2,7 @@
 import { IncomingMessage } from 'node:http';
 import { Socket } from 'node:net';
 import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { platform, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { afterEach, expect, test, vi } from 'vitest';
@@ -19,6 +19,13 @@ import type { HttpRequest, ReplyReader } from '../transport/contracts.ts';
 import { MacUpdateController } from './controller.ts';
 import { runtime_archive } from './testing/runtime_archive.ts';
 import { EXECUTOR_HANDOVER_CLOSE_PATH } from '../../configuration.ts';
+import { LINUX_EXECUTOR } from '../../../environments/release/contracts.ts';
+import type { RuntimeTarget } from '../../../environments/release/contracts.ts';
+
+vi.mock('node:os', async (original) => ({
+  ...(await original<typeof import('node:os')>()),
+  platform: vi.fn(() => 'darwin'),
+}));
 
 vi.mock('node:timers/promises', async (importOriginal) => {
   const original = await importOriginal<typeof import('node:timers/promises')>();
@@ -28,7 +35,8 @@ vi.mock('node:timers/promises', async (importOriginal) => {
 const roots: string[] = [],
   controllers: MacUpdateController[] = [],
   workers: FilesService[] = [];
-function fixture(replay = false, trial = false) {
+function fixture(replay = false, trial = false, runtime_target?: RuntimeTarget) {
+  vi.mocked(platform).mockReturnValue(runtime_target?.system ?? 'darwin');
   const root = realpathSync(mkdtempSync(join(tmpdir(), 'mac-update-')));
   roots.push(root);
   const files = new FilesService();
@@ -40,7 +48,7 @@ function fixture(replay = false, trial = false) {
     executor_incarnation: '11111111-1111-1111-1111-111111111111',
     connection_generation: 7,
   };
-  const archive = runtime_archive('a'.repeat(40));
+  const archive = runtime_archive('a'.repeat(40), false, runtime_target);
   const phases: string[] = [];
   let ready!: () => void, exit!: () => void;
   const ready_received = new Promise<void>((resolve) => {
@@ -348,4 +356,31 @@ test('handover retries back off, then shutdown joins its admitted close without 
     held.resolve();
     for (const wait of waits) wait.release.resolve();
   }
+});
+
+test('Linux activation passes the executor target through extraction and retained reuse', async () => {
+  const f = fixture(false, false, LINUX_EXECUTOR);
+  const revision = vi.spyOn(f.files, 'read_runtime_revision');
+  const extraction = vi.spyOn(f.files, 'extract_runtime');
+  await f.controller.apply(f.check({ ...f.target, activate: true }));
+  const pending = JSON.parse(readFileSync(join(f.root, 'updates/pending.json'), 'utf8'));
+  expect(extraction).toHaveBeenCalledWith(
+    join(f.root, 'updates/download.tar.gz'),
+    join(f.root, 'updates/releases'),
+    f.target.archive_sha256,
+    f.target.archive_size,
+    f.target.application_revision,
+    LINUX_EXECUTOR,
+  );
+  expect(existsSync(join(pending.runtime_path, 'node/bin/node'))).toBe(false);
+  expect(readFileSync(join(pending.runtime_path, 'bin/panels'), 'utf8')).toBe('#!/bin/sh\n');
+  await f.controller.apply(f.check({ ...f.target, activate: true }));
+  expect(revision).toHaveBeenLastCalledWith(
+    pending.runtime_path,
+    f.target.application_revision,
+    LINUX_EXECUTOR,
+  );
+  expect(extraction).toHaveBeenCalledTimes(1);
+  expect(f.downloads()).toBe(1);
+  expect(f.on_failure).not.toHaveBeenCalled();
 });

@@ -30,6 +30,7 @@ test('only an explicit credentialed close commits the original executor handover
   const service: MacUpdateServiceContract = {
     for_machine: () => service,
     prepare: async () => unexpected(),
+    settled: () => Promise.resolve(),
     check: () => ({ schema_version: 1, target: null, prefetch: null }),
     status: () => null,
     phase: () => null,

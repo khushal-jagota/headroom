@@ -1,5 +1,14 @@
 /** Exact-SHA source export and transactional Node application construction. */
-import { chmod, mkdir, mkdtemp, readFile, rename, writeFile } from 'node:fs/promises';
+import {
+  chmod,
+  mkdir,
+  mkdtemp,
+  readFile,
+  rename,
+  rmdir,
+  unlink,
+  writeFile,
+} from 'node:fs/promises';
 import { basename, dirname, join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import type {
@@ -85,28 +94,41 @@ async function install_app_dependencies(
   }
   assert_release_execution(execution);
   await writeFile(join(home, 'config.yaml'), '{}\n');
-  for (const name of ['user.npmrc', 'global.npmrc']) {
-    assert_release_execution(execution);
-    await writeFile(join(home, name), '', { flag: 'wx', mode: 0o600 });
-  }
+  await writeFile(join(home, '.npmrc'), '', { flag: 'wx', mode: 0o600 });
   const environment = {
     ...probe_environment(home),
     PATH: BUILD_PATH,
-    NPM_CONFIG_USERCONFIG: join(home, 'user.npmrc'),
-    NPM_CONFIG_GLOBALCONFIG: join(home, 'global.npmrc'),
+    NPM_CONFIG_USERCONFIG: join(home, '.npmrc'),
     NPM_CONFIG_CACHE: join(home, 'cache/npm'),
   };
-  const run = (argv: readonly string[]) =>
-    run_release_command(
-      [argv[0]!, '--ignore-scripts=false', ...argv.slice(1)],
-      { timeout_seconds: null, environment, cwd: root },
-      execution,
-    );
-  await run(['npm', 'ci', '--omit=dev', '--prefix', join(root, 'server')]);
+  const run = async (package_name: string, argv: readonly string[]) => {
+    assert_release_execution(execution);
+    const directory = join(root, package_name, 'etc'),
+      globalconfig = join(directory, 'npmrc');
+    const created = await mkdir(directory, { recursive: true, mode: 0o700 });
+    let owned = false;
+    try {
+      await writeFile(globalconfig, '', { flag: 'wx', mode: 0o600 });
+      owned = true;
+      return await run_release_command(
+        [argv[0]!, '--ignore-scripts=false', ...argv.slice(1)],
+        {
+          timeout_seconds: null,
+          environment: { ...environment, NPM_CONFIG_GLOBALCONFIG: globalconfig },
+          cwd: root,
+        },
+        execution,
+      );
+    } finally {
+      if (owned) await unlink(globalconfig);
+      if (created !== undefined) await rmdir(directory);
+    }
+  };
+  await run('server', ['npm', 'ci', '--omit=dev', '--prefix', join(root, 'server')]);
   if (await exists(join(root, 'web/package-lock.json')))
-    await run(['npm', 'ci', '--prefix', join(root, 'web')]);
+    await run('web', ['npm', 'ci', '--prefix', join(root, 'web')]);
   if (await exists(join(root, 'agent_backends/package.json')))
-    await run([
+    await run('agent_backends', [
       'npm',
       'install',
       '--prefix',
@@ -117,7 +139,7 @@ async function install_app_dependencies(
       '@openai/codex@latest',
     ]);
   if (await exists(join(root, 'web/package.json')))
-    await run(['npm', 'run', 'build', '--prefix', join(root, 'web')]);
+    await run('web', ['npm', 'run', 'build', '--prefix', join(root, 'web')]);
 }
 export async function build_exported_app(
   source_root: string,

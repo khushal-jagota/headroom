@@ -290,6 +290,8 @@ export async function probe_node_frontier(request: ServiceProbeRequest) {
 export async function probe_service(request: ServiceProbeRequest) {
   const host = harness(request),
     answers: unknown[] = [];
+  // Python's synchronous Harness advances only through each explicit action.
+  host.service.schedule_advance = () => {};
   host.service.start();
   await host.service.prefetch();
   try {

@@ -1,5 +1,7 @@
 /** Latest lease offers prepare an independent, durable runtime handoff. */
 import { join } from 'node:path';
+import { platform } from 'node:os';
+import { LINUX_EXECUTOR } from '../../../environments/release/contracts.ts';
 import { setTimeout as sleep } from 'node:timers/promises';
 import type { ExecutorIdentity } from '../../../execution_identity.ts';
 import { observe_shutdown } from '../../../conversation/shutdown.ts';
@@ -60,6 +62,7 @@ export function create_update_session(
   );
 }
 export class MacUpdateController {
+  private readonly runtime_target = platform() === 'linux' ? LINUX_EXECUTOR : undefined;
   private readonly root: string;
   private readonly cancellation = new AbortController();
   private readonly sessions = new Set<HttpSessions>();
@@ -197,7 +200,11 @@ export class MacUpdateController {
   private async cached(value: MacUpdatePrefetch): Promise<string | null> {
     const path = this.release_path(value);
     try {
-      await this.options.files.read_runtime_revision(path, value.application_revision);
+      await this.options.files.read_runtime_revision(
+        path,
+        value.application_revision,
+        this.runtime_target,
+      );
       return path;
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null;
@@ -258,6 +265,7 @@ export class MacUpdateController {
         value.archive_sha256,
         value.archive_size,
         value.application_revision,
+        this.runtime_target,
       );
     } finally {
       try {

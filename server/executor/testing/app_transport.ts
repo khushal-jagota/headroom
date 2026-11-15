@@ -74,6 +74,7 @@ function service_for(machine_id: string): MacUpdateServiceContract {
   const service: MacUpdateServiceContract = {
     for_machine: service_for,
     prepare: unexpected,
+    settled: () => Promise.resolve(),
     status: () => null,
     phase: () => null,
     reported_at: () => null,

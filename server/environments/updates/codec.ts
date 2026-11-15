@@ -30,10 +30,10 @@ export function parse_release(payload: Record<string, unknown>): PublishedUpdate
   const mac = payload.mac ?? null;
   if (mac !== null && !is_object(mac)) throw new Error('Mac publication must be an object');
   const linux = payload.linux_executor ?? null;
-  if (linux !== null && !is_object(linux)) throw new Error('Linux publication must be an object');
   return {
     linux_executor:
-      linux === null
+      !is_object(linux) ||
+      !['artifact_id', 'archive_sha256', 'archive_size'].every((key) => Object.hasOwn(linux, key))
         ? null
         : {
             artifact_id: required(linux, 'artifact_id') as number,

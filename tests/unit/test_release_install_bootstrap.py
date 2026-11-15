@@ -3,12 +3,15 @@
 import hashlib
 import io
 import json
+import signal
+import subprocess
 import tarfile
 import urllib.request
 import zipfile
 from http.client import HTTPMessage
 from pathlib import Path
 from typing import Any
+from unittest.mock import Mock
 
 import pytest
 from scripts import panels_install as bootstrap
@@ -54,11 +57,15 @@ def test_artifact_redirect_removes_github_token() -> None:
     assert not redirected.has_header("Authorization")
 
 
+@pytest.mark.parametrize("command", ["home", "join"])
 def test_publication_refuses_receipt_from_another_run(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    command: str,
 ) -> None:
-    args = bootstrap.parser().parse_args(["home"])
+    args = bootstrap.parser().parse_args([command])
+    workflow = "publish-typescript-release.yml" if command == "join" else "deploy.yml"
+    artifact = "panels-linux-executor" if command == "join" else "panels-app"
     revision = "a" * 40
     receipt = {
         "publication_run_id": 6,
@@ -75,12 +82,12 @@ def test_publication_refuses_receipt_from_another_run(
     }
 
     def api(path: str, destination: Path | None = None) -> Any:
-        if path.startswith("actions/workflows/deploy.yml/runs?"):
+        if path.startswith(f"actions/workflows/{workflow}/runs?"):
             return {
                 "workflow_runs": [
                     {
                         "id": 5,
-                        "path": ".github/workflows/deploy.yml",
+                        "path": f".github/workflows/{workflow}",
                         "head_branch": "main",
                         "event": "push",
                         "conclusion": "success",
@@ -93,7 +100,7 @@ def test_publication_refuses_receipt_from_another_run(
             return {
                 "artifacts": [
                     {"name": "panels-publication-proof", "id": 9, "expired": False},
-                    {"name": "panels-app", "id": 10, "expired": False},
+                    {"name": artifact, "id": 10, "expired": False},
                 ]
             }
         assert path == "actions/artifacts/9/zip" and destination is not None
@@ -145,7 +152,12 @@ def test_unsupported_loader_host_refuses_before_candidate_exec(
     assert not (tmp_path / "home").exists()
 
 
-def test_interrupt_waits_for_real_installer_cleanup_through_repeated_ctrl_c(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    "interrupt_signal", [signal.SIGINT, signal.SIGTERM], ids=["legacy-int", "linux-term"]
+)
+def test_interrupt_waits_for_real_installer_cleanup_through_repeated_ctrl_c(
+    tmp_path: Path, interrupt_signal: signal.Signals
+) -> None:
     """A real child must finish rollback beyond subprocess.run's .25-second interrupt grace."""
     import signal
     import subprocess
@@ -159,24 +171,33 @@ def test_interrupt_waits_for_real_installer_cleanup_through_repeated_ctrl_c(tmp_
         "root = Path(sys.argv[1])\n"
         "assert sys.stdin.read() == 'private synthetic input'\n"
         "def cleanup(signum, frame):\n"
-        "    (root / 'cleanup-started').touch()\n"
+        "    (root / 'cleanup-started').write_text(str(signum))\n"
         "    time.sleep(.6)\n"
         "    (root / 'cleanup-complete').touch()\n"
         "    raise SystemExit(17)\n"
         "signal.signal(signal.SIGINT, cleanup)\n"
+        "signal.signal(signal.SIGTERM, cleanup)\n"
         "(root / 'ready').write_text(str(os.getpgrp()))\n"
         "time.sleep(5)\n"
     )
     wrapper = (
         "import os, runpy, sys; "
         "run = runpy.run_path(sys.argv[1], run_name='bootstrap_test')['run_installer']; "
+        "options = {'forward_termination': True} if sys.argv[4] == 'term' else {}; "
         "run([sys.executable, sys.argv[2], sys.argv[3]], "
-        "'private synthetic input', dict(os.environ))"
+        "'private synthetic input', dict(os.environ), **options)"
     )
     wrapper_path = tmp_path / "bootstrap.py"
     wrapper_path.write_text(wrapper)
     process = subprocess.Popen(
-        [sys.executable, str(wrapper_path), bootstrap.__file__, str(child), str(tmp_path)],
+        [
+            sys.executable,
+            str(wrapper_path),
+            bootstrap.__file__,
+            str(child),
+            str(tmp_path),
+            "term" if interrupt_signal == signal.SIGTERM else "int",
+        ],
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
@@ -193,11 +214,12 @@ def test_interrupt_waits_for_real_installer_cleanup_through_repeated_ctrl_c(tmp_
     try:
         wait_for(tmp_path / "ready")
         assert int((tmp_path / "ready").read_text()) != process.pid
-        process.send_signal(signal.SIGINT)
+        process.send_signal(interrupt_signal)
         wait_for(tmp_path / "cleanup-started")
         process.send_signal(signal.SIGINT)
         stdout, stderr = process.communicate(timeout=5)
-        assert process.returncode == 130
+        assert process.returncode == 128 + interrupt_signal
+        assert int((tmp_path / "cleanup-started").read_text()) == interrupt_signal
         assert (tmp_path / "cleanup-complete").exists()
         assert "private synthetic input" not in stdout + stderr
         assert "Traceback" not in stderr
@@ -211,11 +233,11 @@ def test_interrupt_waits_for_real_installer_cleanup_through_repeated_ctrl_c(tmp_
                 process.wait(timeout=5)
 
 
-@pytest.mark.parametrize("major", [21, 25])
-def test_install_preflight_accepts_current_node_and_refuses_old_node(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, major: int
+@pytest.mark.parametrize("version", ["21.0.0", "22.17.0", "22.18.0", "25.0.0"])
+def test_linux_join_preflight_requires_the_native_node_boundary(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, version: str
 ) -> None:
-    """Bootstrap must accept newer Node before any release download or service write."""
+    """The native Linux join needs the exact admitted Node major and minimum version."""
     import shutil
     import subprocess
 
@@ -228,12 +250,133 @@ def test_install_preflight_accepts_current_node_and_refuses_old_node(
     monkeypatch.setattr(Path, "home", lambda: tmp_path)
 
     def run(*command: str, **kwargs: object) -> subprocess.CompletedProcess[str]:
-        output = f"v{major}.0.0" if command[-1] == "--version" else "not-found"
+        output = f"v{version}" if command[-1] == "--version" else "not-found"
         return subprocess.CompletedProcess(command, 0, stdout=output, stderr="")
 
     monkeypatch.setattr(bootstrap, "_run", run)
-    if major < 22:
-        with pytest.raises(ValueError, match="Node.js 22 or newer"):
+    if version != "22.18.0":
+        with pytest.raises(ValueError, match=r"Node(?:\.js)? 22"):
             bootstrap.preflight(args, "linux")
     else:
         bootstrap.preflight(args, "linux")
+
+
+@pytest.mark.parametrize("contract_version,role", [(1, "executor"), (2, "home"), (2, "executor")])
+def test_linux_join_recipe_checks_target_then_passes_private_stdin_to_node(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    contract_version: int,
+    role: str,
+) -> None:
+    """This new Node handoff must reject legacy/home payloads before credential or helper use."""
+    revision, credential = "a" * 40, "x" * 43
+    contract = dict(
+        version=contract_version,
+        system="linux",
+        architecture="x86_64",
+        node_major=22,
+        minimum_node_version="22.18.0",
+        platforms=[dict(distribution="debian", version="13", minimum_glibc="2.41")],
+        cpu_features=["sse2"],
+        external_libraries=[],
+        external_executables=["node"],
+    )
+    marker = dict(
+        schema_version=1,
+        application_revision=revision,
+        platform="linux",
+        architecture="x86_64",
+        role=role,
+    )
+    files = {
+        "manifest.json": json.dumps(dict(app_sha=revision, runtime_contract=contract)),
+        "mac-runtime.json": json.dumps(marker),
+        "server/environments/linux_executor/join_main.ts": "inert entry, never executed",
+    }
+    archive = tmp_path / "executor.tar.gz"
+    with tarfile.open(archive, "w:gz") as packed:
+        for name, text in files.items():
+            entry = tarfile.TarInfo(name)
+            entry.size = len(text.encode())
+            packed.addfile(entry, io.BytesIO(text.encode()))
+    receipt = tmp_path / "receipt.json"
+    receipt.write_text(
+        json.dumps(
+            {
+                **marker,
+                "archive_sha256": hashlib.sha256(archive.read_bytes()).hexdigest(),
+                "archive_size": archive.stat().st_size,
+            }
+        )
+    )
+    home, xdg, node = tmp_path / "account", tmp_path / "xdg", tmp_path / "node"
+    home.mkdir()
+    node.touch()
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: home))
+    monkeypatch.setenv("XDG_DATA_HOME", str(xdg))
+    monkeypatch.setenv("NODE_OPTIONS", "--require=/foreign/override")
+    monkeypatch.setattr(bootstrap, "host_target", lambda: "linux")
+    monkeypatch.setattr("scripts.panels_install.shutil.which", lambda *_args, **_kwargs: str(node))
+    monkeypatch.setattr(
+        bootstrap,
+        "_run",
+        lambda *args, **kwargs: subprocess.CompletedProcess(
+            args, 0, "v22.18.0" if args[-1] == "--version" else "not-found", ""
+        ),
+    )
+    monkeypatch.setattr(
+        "scripts.panels_install.platform.freedesktop_os_release",
+        lambda: dict(ID="debian", VERSION_ID="13"),
+    )
+    monkeypatch.setattr("scripts.panels_install.platform.libc_ver", lambda: ("glibc", "2.41"))
+    read_text = Path.read_text
+    monkeypatch.setattr(
+        Path,
+        "read_text",
+        lambda path, *args, **kwargs: (
+            "flags: sse2\n" if str(path) == "/proc/cpuinfo" else read_text(path, *args, **kwargs)
+        ),
+    )
+    prompt, installer = Mock(return_value=credential), Mock()
+    monkeypatch.setattr("scripts.panels_install.getpass.getpass", prompt)
+    monkeypatch.setattr(bootstrap, "run_installer", installer)
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "panels_install.py",
+            "join",
+            "--home",
+            "https://home.example",
+            "--machine-id",
+            "ad1f66de-bcaa-45b7-918a-8d0e7a018ae1",
+            "--archive",
+            str(archive),
+            "--receipt",
+            str(receipt),
+        ],
+    )
+    root = xdg / "panels/executor-typescript"
+    if contract_version != 2 or role != "executor":
+        with pytest.raises(SystemExit, match="native version 2|target or revision"):
+            bootstrap.main()
+        installer.assert_not_called()
+        prompt.assert_not_called()
+    else:
+        bootstrap.main()
+        installer.assert_called_once()
+        assert installer.call_args.kwargs == {"forward_termination": True}
+        prompt.assert_called_once()
+        command, encoded, environment = installer.call_args.args
+        value = json.loads(encoded)
+        assert command[0] == str(node.resolve()) and command[1].endswith(
+            "/server/environments/linux_executor/join_main.ts"
+        )
+        assert credential not in " ".join(command) and value["credential"] == credential
+        assert value["root"] == str(root) and value["home"] == str(home)
+        assert value["node_executable"] == str(node.resolve()) and "label" not in value
+        assert "NODE_OPTIONS" not in environment and not any(
+            key.startswith("PLAN_") for key in environment
+        )
+    captured = capsys.readouterr()
+    assert credential not in captured.out + captured.err and not root.exists()

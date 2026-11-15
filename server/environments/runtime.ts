@@ -103,6 +103,12 @@ export async function createEnvironmentRuntime(
     root: join(data_directory, 'mac-updates'),
     platform_for: (machine_id) =>
       context.database.read((sql) => executor_platform(sql, machine_id)),
+    linux_registered: () =>
+      context.database.read((sql) =>
+        Boolean(
+          sql.get("SELECT 1 FROM machine_executor_credentials WHERE platform='linux' LIMIT 1"),
+        ),
+      ),
     attempts,
     provider,
     current_app_sha: config.app_sha,
@@ -202,6 +208,7 @@ export async function createEnvironmentRuntime(
         const actuals = [
           () => metrics.settled(),
           () => updates.settled(),
+          () => mac.service.settled(),
           () => scratch?.settled(),
         ];
         for (const actual of actuals) {
@@ -249,6 +256,7 @@ export async function createEnvironmentRuntime(
       Promise.all([
         metrics.settled(),
         updates.settled(),
+        mac.service.settled(),
         scratch?.settled(),
         starting?.catch(() => {}),
       ]).then(() => {}),

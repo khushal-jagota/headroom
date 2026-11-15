@@ -1,8 +1,14 @@
 /** node-tar owns TAR decoding. This layer owns admission policy and inspection. */
 import { posix } from 'node:path';
+import { createHash } from 'node:crypto';
+import { isDeepStrictEqual } from 'node:util';
+import { is_record } from '../../../core/records.ts';
 import { Parser } from 'tar';
 import type { ReadEntry } from 'tar';
-import { AppValidationError, MacArchiveInspectionError } from '../contracts.ts';
+import { AppValidationError, MacArchiveInspectionError, LINUX_EXECUTOR } from '../contracts.ts';
+import type { MacArchiveInspection } from '../contracts.ts';
+import { manifest_identity, require_runtime_target } from './manifest.ts';
+import { parse_optional_runtime_contract } from '../../updates/logic/runtime_contract.ts';
 import { decode_mac_manifest } from '../../updates/mac/manifest.ts';
 import {
   MAX_MAC_RUNTIME_EXPANDED_BYTES,
@@ -47,6 +53,13 @@ export class ArchiveMembers {
   python = false;
   node = false;
   entrypoint = false;
+  native_linux: MacArchiveInspection['native_linux'];
+  readonly #platform: 'darwin' | 'linux';
+  readonly #linux_files = new Set<string>();
+  readonly #linux_json = new Map<string, Buffer>();
+  #inventory: string | undefined;
+  #panels = false;
+  #linux_invalid: string | undefined;
   readonly purpose: 'extraction' | 'mac-inspection';
   readonly #parser: Parser;
   readonly #on_entry: ((entry: ReadEntry, member: ArchiveMember) => void) | undefined;
@@ -61,7 +74,9 @@ export class ArchiveMembers {
   constructor(
     purpose: 'extraction' | 'mac-inspection' = 'extraction',
     on_entry?: (entry: ReadEntry, member: ArchiveMember) => void,
+    platform: 'darwin' | 'linux' = 'darwin',
   ) {
+    this.#platform = platform;
     this.purpose = purpose;
     this.#on_entry = on_entry;
     this.#parser = new Parser({
@@ -87,9 +102,11 @@ export class ArchiveMembers {
       if (this.purpose === 'extraction' || entry.type === 'SparseFile')
         refuse('app archive contains unsupported entries');
       const member = this.#inspect(entry);
+      if (this.#platform === 'linux') this.#linux_entry(entry, member);
       if (member.path === 'mac-runtime.json')
         throw new MacArchiveInspectionError('refusal', 'The Mac runtime manifest is invalid.');
-      if (member.path === 'python/bin/python3') this.python = false;
+      if (member.path === (this.#platform === 'linux' ? '.venv/bin/python' : 'python/bin/python3'))
+        this.python = false;
       if (member.path === 'node/bin/node') this.node = false;
       if (member.path === 'server/executor/mac/entrypoint.ts') this.entrypoint = false;
     });
@@ -143,6 +160,7 @@ export class ArchiveMembers {
       this.#names.add(member.path);
       this.members.push(member);
     } else {
+      if (this.#platform === 'linux') this.#linux_entry(entry, member);
       if (member.path === 'mac-runtime.json') {
         if (
           this.#manifest ||
@@ -158,7 +176,7 @@ export class ArchiveMembers {
           decode_mac_manifest(this.manifest_bytes);
         });
       }
-      if (member.path === 'python/bin/python3')
+      if (member.path === (this.#platform === 'linux' ? '.venv/bin/python' : 'python/bin/python3'))
         this.python = files.has(member.type) || member.type === 'SymbolicLink';
       if (member.path === 'node/bin/node')
         this.node = files.has(member.type) && member.size > 0 && (member.mode & 0o111) !== 0;
@@ -167,6 +185,101 @@ export class ArchiveMembers {
     }
     this.#on_entry?.(entry, member);
     entry.resume();
+  }
+  #linux_entry(entry: ReadEntry, member: ArchiveMember): void {
+    const json = member.path === 'manifest.json' || member.path === 'runtime/contract.json';
+    if (
+      !json &&
+      !['runtime/inventory.json', 'bin/panels', 'server/executor/mac/entrypoint.ts'].includes(
+        member.path,
+      )
+    )
+      return;
+    if (this.#linux_files.has(member.path) || !files.has(member.type)) {
+      this.#linux_invalid = 'The Linux runtime contains an invalid or duplicate required file.';
+      return;
+    }
+    this.#linux_files.add(member.path);
+    if (json) {
+      if (member.size > MAX_MAC_RUNTIME_MANIFEST_BYTES) {
+        this.#linux_invalid = 'The Linux runtime metadata exceeds its size limit.';
+        return;
+      }
+      const chunks: Buffer[] = [];
+      entry.on('data', (bytes: Buffer) => chunks.push(bytes));
+      entry.on('end', () => this.#linux_json.set(member.path, Buffer.concat(chunks)));
+    } else if (member.path === 'runtime/inventory.json') {
+      const hash = createHash('sha256');
+      entry.on('data', (bytes: Buffer) => hash.update(bytes));
+      entry.on('end', () => {
+        this.#inventory = hash.digest('hex');
+      });
+    } else if (member.path === 'bin/panels')
+      this.#panels = member.size > 0 && (member.mode & 0o111) !== 0;
+  }
+  #finish_linux(): void {
+    if (this.python) {
+      const document = this.#linux_json.get('manifest.json');
+      let declared: unknown;
+      try {
+        declared = document ? decode_mac_manifest(document) : null;
+      } catch {
+        // Source legacy Python archives ignore optional, undecodable application metadata.
+      }
+      if (
+        !is_record(declared) ||
+        !is_record(declared.runtime_contract) ||
+        declared.runtime_contract.version !== 2
+      )
+        return;
+    }
+    if (this.#linux_invalid) throw new MacArchiveInspectionError('refusal', this.#linux_invalid);
+    const marker = this.manifest_bytes === null ? null : decode_mac_manifest(this.manifest_bytes);
+    if (
+      !is_record(marker) ||
+      marker.schema_version !== 1 ||
+      typeof marker.application_revision !== 'string'
+    )
+      throw new MacArchiveInspectionError('refusal', 'The Linux runtime manifest is invalid.');
+    const document = this.#linux_json.get('manifest.json'),
+      payload = this.#linux_json.get('runtime/contract.json');
+    if (!document || !payload || !this.#inventory || !this.#panels || !this.entrypoint)
+      throw new MacArchiveInspectionError(
+        'refusal',
+        'The Linux runtime lacks its native Node metadata or executable.',
+      );
+    // Decode failures retain the existing strict JSON/encoding error categories.
+    const app = decode_mac_manifest(document),
+      actual = decode_mac_manifest(payload);
+    try {
+      require_runtime_target(
+        {
+          system: marker.platform,
+          architecture: marker.architecture,
+          role: marker.role,
+        } as typeof LINUX_EXECUTOR,
+        LINUX_EXECUTOR,
+      );
+      const identity = manifest_identity(app, marker.application_revision);
+      const contract = parse_optional_runtime_contract(
+        (app as Record<string, unknown>).runtime_contract,
+      );
+      if (contract?.version !== 2 || contract.system !== 'linux')
+        throw new Error('Runtime requires a native Linux Node contract.');
+      if (!isDeepStrictEqual(actual, contract))
+        throw new Error('Runtime manifest contract differs from payload.');
+      if (this.#inventory !== contract.inventory_sha256)
+        throw new Error('Runtime inventory differs from contract.');
+      this.native_linux = {
+        version: 2,
+        app_sha: identity.app_sha,
+        inventory_sha256: contract.inventory_sha256,
+        panels: this.#panels,
+      };
+    } catch (error) {
+      if (!(error instanceof Error)) throw error;
+      throw new MacArchiveInspectionError('refusal', error.message);
+    }
   }
   feed(chunk: Buffer): void {
     if (!this.#started) {
@@ -185,7 +298,10 @@ export class ArchiveMembers {
   }
   finish(): void {
     this.#parser.end();
-    if (this.purpose === 'mac-inspection') return;
+    if (this.purpose === 'mac-inspection') {
+      if (this.#platform === 'linux') this.#finish_linux();
+      return;
+    }
     const entries = new Map(this.members.map((member) => [member.path, member]));
     const resolve = (path: string, base: string[] = [], active = new Set<string>()): string => {
       if (posix.isAbsolute(path) || path.includes('\0'))
