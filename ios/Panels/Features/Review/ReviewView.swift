@@ -27,6 +27,7 @@ struct ReviewView: View {
     /// resolved cards leave the server queue and the page refills by itself.
     private var pageSkipped: Bool { !queueCards.isEmpty && queueCards.allSatisfy(queue.isSkipped) }
     private var pending: [ReviewItem] { queueCards.filter { !queue.isSkipped($0) }.flatMap(queue.pending) }
+    private var heldConversationIDs: [String] { Array(Set((displayedCard?.parts ?? []).filter(\.isMessage).compactMap(\.conversationId))).sorted() }
     private var shownCard: ReviewCard? {
         if let card = displayedCard, !parts(of: card).isEmpty { return card }
         return queue.current(in: queueCards)
@@ -35,14 +36,10 @@ struct ReviewView: View {
     /// The shown card's parts, proposal first: its live parts, a message that left the
     /// live queue while on screen, and a proposal decided here whose exit has not finished.
     private func parts(of card: ReviewCard) -> [ReviewItem] {
-        let held = card.parts.filter { part in
-            !queue.resolved.contains(part.id) && (part.isMessage || decisions[part.id]?.resolved == true || decisions[part.id]?.scopeChange.holdingProposal == true)
-        }
-        let live = (queueCards.first { $0.id == card.id }?.parts ?? []).filter { part in
-            !queue.resolved.contains(part.id) && !held.contains { $0.id == part.id || ($0.isMessage && $0.conversationId == part.conversationId) }
-        }
-        let all = live + held
-        return all.filter { !$0.isMessage } + all.filter(\.isMessage)
+        let holdingProposals = Set(card.parts.filter { !$0.isMessage &&
+            (decisions[$0.id]?.resolved == true || decisions[$0.id]?.scopeChange.holdingProposal == true)
+        }.map(\.id))
+        return queue.parts(of: card, in: queueCards, holdingProposals: holdingProposals, view: store.view)
     }
 
     var body: some View {
@@ -96,6 +93,11 @@ struct ReviewView: View {
         // The review window holds 30 cards. Once every loaded one was skipped here,
         // the next page replaces it; Revisit returns to the first.
         .onChange(of: reviewPage, initial: true) { _, page in demandReview(page) }
+        .onChange(of: heldConversationIDs) { _, _ in demandReview(reviewPage) }
+        // Eligibility can change after a read elsewhere already emptied the queue.
+        .onChange(of: store.view?.contentVersion) { _, _ in
+            if snapshotCurrent { holdShownCard() }
+        }
         .onChange(of: pageSkipped) { _, skipped in if skipped { advancePage() } }
         .task(id: "\(store.baseURL):\(active):\(savedWork.key?.revision ?? -1):\(pending.prefix(30).map(\.id).joined(separator: ","))") {
             guard active, snapshotCurrent else { return }
@@ -130,7 +132,8 @@ struct ReviewView: View {
     }
 
     private func demandReview(_ page: String?) {
-        store.setNavigationDemand("review", [ViewWindowRequest(section: "review", anchor: page, limit: NavigationScope.reviewWindowLimit)])
+        store.setNavigationDemand("review", [ViewWindowRequest(section: "review", anchor: page, limit: NavigationScope.reviewWindowLimit)],
+            reviewConversationIDs: heldConversationIDs)
     }
     private func advancePage() {
         if let next = store.view?.window("review")?.next { reviewPage = next }
