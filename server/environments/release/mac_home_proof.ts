@@ -1,6 +1,6 @@
 /** Hosted-only proof of the exact sealed home archive, using the shared boot entry. */
 import { constants } from 'node:fs';
-import { copyFile, mkdir, realpath, stat, writeFile } from 'node:fs/promises';
+import { copyFile, lstat, mkdir, realpath, stat, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
 import type { ReleaseExecution } from './contracts.ts';
@@ -54,11 +54,14 @@ export async function prove_mac_home(
   await remove_owned_tree(join(output, 'app'));
   await unchanged_archive();
   const began = performance.now();
-  let sealed_owned = false;
+  let sealed_identity: { readonly dev: number; readonly ino: number } | undefined;
   try {
     const extracted = await extract_app_archive(result.archive, sealed, result.archive_sha256,
       result.manifest.app_sha, execution.child_processes, undefined, execution, MAC_HOME);
-    sealed_owned = true;
+    const extracted_root = await lstat(sealed);
+    if (!extracted_root.isDirectory() || extracted_root.isSymbolicLink())
+      throw new Error('Mac home extraction root is not an owned directory');
+    sealed_identity = { dev: extracted_root.dev, ino: extracted_root.ino };
     if (!isDeepStrictEqual(extracted, result.manifest))
       throw new Error('Mac home extraction differs from its build');
     await validate();
@@ -79,7 +82,13 @@ export async function prove_mac_home(
     }
     throw error;
   } finally {
-    if (sealed_owned) await remove_owned_tree(sealed);
+    if (sealed_identity) {
+      const current_root = await lstat(sealed);
+      if (!current_root.isDirectory() || current_root.isSymbolicLink() ||
+          current_root.dev !== sealed_identity.dev || current_root.ino !== sealed_identity.ino)
+        throw new Error('Mac home admission root changed. Retain its replacement.');
+      await remove_owned_tree(sealed);
+    }
   }
   fence();
   const boot_root = join(work, 'boot'), request = join(work, 'boot-request.json');
@@ -102,8 +111,8 @@ export async function prove_mac_home(
     admission: { filename: 'admission.json', sha256: await sha256_file(join(output, 'admission.json')) },
     boot: { filename: 'boot-proof.json', sha256: await sha256_file(join(output, 'boot-proof.json')) },
   };
-  // Boot state can be retired only after run_release_command joins its exact child.
-  await remove_owned_tree(boot_root);
+  // The boot entry creates this root before the app runs. Its original identity is
+  // not ours to prove, so retain the diagnostic tree rather than adopt a replacement.
   fence();
   await writeFile(join(output, MAC_HOME_PUBLICATION_METADATA), JSON.stringify(report, null, 2) + '\n',
     { flag: 'wx', mode: 0o600 });
