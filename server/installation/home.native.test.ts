@@ -1,6 +1,7 @@
 /** Hosted service-manager proof. The mini app is not a sealed release/admission proof. */
 import { test, expect } from 'vitest';
 import { randomUUID } from 'node:crypto';
+import { realpathSync } from 'node:fs';
 import {
   cp,
   lstat,
@@ -27,6 +28,9 @@ import { ChildProcesses, OneShotChildren } from '../lifecycle/owned_processes.ts
 import { observe_promise } from '../core/promise_observer.ts';
 import { run_release_command } from '../environments/release/process.ts';
 import { healthy } from '../environments/updates/installer/health.ts';
+import { read_home_job } from '../environments/updates/darwin/jobs.ts';
+import { create_darwin_home_io } from '../environments/updates/darwin/service.ts';
+import { authenticate_loaded_job } from '../environments/updates/darwin/logic/launchd.ts';
 import { MAC_HOME } from '../environments/release/contracts.ts';
 import { extract_app_archive } from '../environments/release/archive.ts';
 import { admit_runtime } from '../environments/release/admission.ts';
@@ -317,12 +321,19 @@ test.skipIf(!admitted)(
               const old = await observe(),
                 began = performance.now(),
                 target = `gui/${deps.uid}/${service_name}`;
+              const home_path = plan!.files[0]!.path;
+              const home_io = create_darwin_home_io(execution(), { HOME: account }, { command });
+              const job = await read_home_job(home_path, home_io);
               const info = await command(['/bin/launchctl', 'print', target], execution(), 10);
               expect(
-                info.stdout
-                  .split('\n')
-                  .some((line) => line.trim() === `path = ${plan!.files[0]!.path}`),
-              ).toBe(true);
+                authenticate_loaded_job(
+                  info.stdout,
+                  home_path,
+                  job,
+                  ['PLAN_DB_PATH', 'PLAN_CONFIG_PATH'],
+                  realpathSync,
+                ),
+              ).toBe(old.parent.pid);
               const snapshot = await primitives.snapshot(performance.now() / 1000 + 5);
               expect(snapshot.get(old.parent.pid)?.birth).toBe(old.parent.birth);
               await command(['/bin/launchctl', 'kill', 'SIGKILL', target], execution(), 10);
