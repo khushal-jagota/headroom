@@ -137,6 +137,8 @@ async function ticket_record(
     'title',
     'worker_type',
     'locale',
+    'machine_id',
+    'machine_name',
     'employee_backend',
     'employee_launch_model',
     'employee_launch_reasoning_effort',
