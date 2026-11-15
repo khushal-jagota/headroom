@@ -18,6 +18,13 @@ struct ReviewWorkerManifest: Decodable, Sendable {
         ceilingRange = workflow.ceilingRange ?? []
     }
 
+    /// The web keeps current and earlier choices as scope edits, not proposal approval.
+    func selectionApprovesPending(ceiling: String, waitingStage: String) -> Bool {
+        guard let selected = stages.firstIndex(where: { $0.id == ceiling }),
+              let waiting = stages.firstIndex(where: { $0.id == waitingStage }) else { return false }
+        return selected > waiting
+    }
+
     func approvalStages(after stage: String) -> [Stage] {
         guard let next = advance[stage], let start = stages.firstIndex(where: { $0.id == next }) else { return [] }
         return Array(stages[start...]).filter { ceilingRange.contains($0.id) }
@@ -130,11 +137,6 @@ extension APIClient {
         guard audio.count <= 25 * 1024 * 1024 else { throw APIError(status: 0, message: "The recording is too large.") }
         let data = try await reviewWrite("/api/conversation/voice-transcriptions", body: Body(audio: audio.base64EncodedString(), mediaType: "audio/mp4"))
         return try Self.decoder().decode(Response.self, from: data).transcript
-    }
-
-    func renameReviewTicket(_ id: String, title: String) async throws {
-        struct Body: Encodable { let title: String }
-        _ = try await reviewWrite("/api/tickets/\(id)", method: "PATCH", body: Body(title: title))
     }
 
     func reviewWrite<T: Encodable>(_ path: String, method: String = "POST", body: T) async throws -> Data {

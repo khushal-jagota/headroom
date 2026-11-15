@@ -32,9 +32,7 @@ final class ReviewMessagesTests: XCTestCase {
         revisit.tap()
         XCTAssertTrue(approve.waitForExistence(timeout: 10))
         approve.tap()
-        let confirm = app.buttons["review.confirmApproval"]
-        XCTAssertTrue(confirm.waitForExistence(timeout: 5))
-        confirm.tap()
+        // The fixture advances to Done, so Approve resolves in one tap.
         XCTAssertTrue(approve.waitForNonExistence(timeout: 8))
         XCTAssertTrue(message.waitForExistence(timeout: 8))
         let markRead = app.buttons["review.markRead"]

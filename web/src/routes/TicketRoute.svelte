@@ -46,7 +46,6 @@
   import ArtifactPreview from "../components/ArtifactPreview.svelte";
   import ArtifactsBand from "../components/ArtifactsBand.svelte";
   import WorkerProposalCard from "../components/WorkerProposalCard.svelte";
-  import type { ReviewDecisionBody } from "../lib/review/decision";
   import { workerPageHistory } from "../lib/workerPageHistory";
   import { createArtifactOnThePage } from "../lib/artifactOnThePage.svelte";
   import { type ManagedFileTarget } from "../lib/filePreview";
@@ -247,10 +246,6 @@
       method: "PUT", body: configuration});
   }
 
-  function acceptField(field: string, body: Record<string, unknown>): Promise<unknown> {
-    return mutateJson(`/api/tickets/${stableId}/accept/${field}`, { method: "POST", body});
-  }
-
   function conversationWorkerTypeLabel(detail: TicketDetail): string {
     return conversationLifecycle?.workerTypeLabel ?? (detail.worker_type ? labelize(detail.worker_type) : 'Custom workflow');
   }
@@ -268,10 +263,6 @@
       section.detail.pending_proposal?.field === "brief" &&
       Boolean(section.detail.employee_configuration_editable)
   );
-  function returnProposal(body:ReviewDecisionBody):Promise<unknown> {
-    return mutateJson(`/api/tickets/${stableId}/reject`,{method:"POST",body});
-  }
-
   async function removeBlocker(blockerTicketId: string): Promise<void> {
     headerError = null;
     try {
@@ -428,9 +419,9 @@
                   {#key `${detail.pending_proposal.field}:${detail.pending_proposal.created_at}:${detail.pending_proposal.revision}`}
                     <WorkerProposalCard ticketId={stableId} proposal={detail.pending_proposal} lifecycle={lc} stage={detail.stage}
                       ceiling={detail.ceiling} holder={detail.ceiling_holder} manager={ticketManager} canReturn={Boolean(detail.conversation_id)}
-                      onAccept={(payload) => acceptField(currentField, payload)}
+                      onAccept={async () => {}}
                       onScope={updateScope}
-                      onReturn={returnProposal}
+                      onReturn={async () => {}}
                       contextRow={currentField === "brief" && kickoffCardShowsContextRow ? kickoffContextRow : undefined} />
                   {/key}
                 {:else}
