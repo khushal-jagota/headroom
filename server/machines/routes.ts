@@ -65,7 +65,7 @@ export const routes: FastifyPluginAsync<AreaServices> = async (app, services) =>
     const response = await machine_views(services);
     return response.machines.find((machine) => machine.machine_id === request.params.machine_id)!;
   });
-  app.post('/machines', (request) => {
+  app.post('/machines', async (request) => {
     requireOwner(services.identity(request));
     const body = request.body;
     if (
@@ -75,13 +75,15 @@ export const routes: FastifyPluginAsync<AreaServices> = async (app, services) =>
       typeof body.name !== 'string'
     )
       throw new PlannerError('validation', 'Machine registration requires a name');
-    return services.database.write((tx) =>
+    const grant = services.database.write((tx) =>
       register_machine(
         tx,
         body.name as string,
         Object.hasOwn(body, 'platform') ? body.platform : 'darwin',
       ),
     );
+    await app.executor_registry?.ensure(grant.machine_id);
+    return grant;
   });
   app.post<{ Params: { machine_id: string } }>('/machines/:machine_id/credential', (request) => {
     requireOwner(services.identity(request));

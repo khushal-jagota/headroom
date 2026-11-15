@@ -45,6 +45,7 @@ export async function createApp(config: Config, services: AppServices): Promise<
     forceCloseConnections: false,
   });
   services.own_app?.(app);
+  app.decorate('executor_registry', services.executor ?? null);
   const clock = services.clock ?? buildClock(config);
   const request_lifetime = install_request_lifetime(app, services.request_lifetime);
   const changes = services.changes ?? new ChangeSignal();
