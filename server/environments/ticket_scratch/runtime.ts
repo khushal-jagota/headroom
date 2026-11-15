@@ -4,7 +4,6 @@ import { observe_shutdown } from '../../conversation/shutdown.ts';
 
 /** Independent of readiness/dispatch, with Python's initial ten-minute wait. */
 export function create_ticket_scratch_runtime(options: ScratchRuntimeOptions): ScratchRuntime {
-  const already_kept = new Set<string>();
   const controller = new AbortController();
   let timer: NodeJS.Timeout | undefined;
   let flight: Promise<void> | undefined;
@@ -19,13 +18,9 @@ export function create_ticket_scratch_runtime(options: ScratchRuntimeOptions): S
         .then(async () => {
           controller.signal.throwIfAborted();
           options.assert_database_owned();
-          const result = await options.clean_finished_ticket_scratch(
-            options.layout!,
-            options.db_path,
-            options.now_unix(),
-            already_kept,
-            { signal: controller.signal },
-          );
+          const result = await options.clean_workspaces(options.db_path, options.now_unix(), {
+            signal: controller.signal,
+          });
           if (controller.signal.aborted) return;
           for (const item of result.skipped)
             console.warn(`Ticket scratch kept: ${item.path} (${item.reason})`);
@@ -44,7 +39,7 @@ export function create_ticket_scratch_runtime(options: ScratchRuntimeOptions): S
     start() {
       if (started || closing) throw new Error('Ticket scratch runtime already started or stopped');
       started = true;
-      if (!options.test_mode && options.layout !== null) schedule();
+      if (!options.test_mode) schedule();
     },
     close(stop) {
       if (closing) return closing;
