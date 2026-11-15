@@ -39,9 +39,13 @@ def test_cli_pins_command_read_and_explicit_revision_before_ancillary_writes(
         arguments = ["ticket", "proposal", ticket.id, action, "--json"]
         if action == "accept":
             arguments += ["--ceiling", "needs_implementation", "--holder", "owner"]
+        if action == "revise":
+            arguments += ["--body-file", "-"]
         result = runner.invoke(main, arguments, input="Exact guidance")
         assert result.exit_code == 0, result.output
         assert calls[-1][2]["json_body"]["expected_proposal_revision"] == revision
+        if action == "revise":
+            assert calls[-1][2]["json_body"]["message"] == "Exact guidance"
         explicit = runner.invoke(
             main, [*arguments, "--expected-proposal-revision", str(revision)],
             input="Exact guidance",
@@ -51,11 +55,17 @@ def test_cli_pins_command_read_and_explicit_revision_before_ancillary_writes(
     calls.clear()
     earlier = runner.invoke(main, [
         "ticket", "proposal", ticket.id, "revise", "--expected-proposal-revision",
-        str(revision + 1), "--json",
+        str(revision + 1), "--json", "--body-file", "-",
     ], input="Exact earlier guidance")
     assert earlier.exit_code == 0, earlier.output
     assert [method for method, _path, _body in calls] == ["POST"]
     assert calls[-1][2]["json_body"]["expected_proposal_revision"] == revision + 1
+    calls.clear()
+    inline = runner.invoke(main, [
+        "ticket", "proposal", ticket.id, "revise", "--message", "Inline guidance", "--json",
+    ])
+    assert inline.exit_code == 0, inline.output
+    assert calls[-1][2]["json_body"]["message"] == "Inline guidance"
     calls.clear()
     page_edit = runner.invoke(main, ["page", "edit", "--chief", "--json"], input=json.dumps({
         "page": None, "expected_revision": 7,
@@ -71,6 +81,16 @@ def test_cli_pins_command_read_and_explicit_revision_before_ancillary_writes(
     assert stale.exit_code != 0
     assert "visible proposal changed" in stale.output
     assert [method for method, _path, _body in calls] == ["GET"]
+
+
+def test_revise_requires_explicit_guidance(monkeypatch: pytest.MonkeyPatch) -> None:
+    def unexpected_send(*args: Any, **kwargs: Any) -> Any:
+        raise AssertionError("missing guidance must not send a request")
+
+    monkeypatch.setattr(http, "send", unexpected_send)
+    result = CliRunner().invoke(main, ["ticket", "proposal", "t_one", "revise"])
+    assert result.exit_code != 0
+    assert "--body-file - for stdin" in result.output
 
 
 def test_native_and_web_stale_decisions_preserve_replacement_and_decision_messages(
