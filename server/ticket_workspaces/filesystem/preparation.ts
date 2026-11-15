@@ -14,11 +14,20 @@ export async function repository_root(
     const result = await git(candidate, ['rev-parse', '--show-toplevel'], options);
     if (result.returncode === 0) return realpath(result.stdout.trim());
   }
+  const children: string[] = [];
   for (const child of await readdir(folder, { withFileTypes: true }))
     if (child.isDirectory() && (await entry_stat(join(folder, child.name, '.git'))))
-      throw new Error(
-        'Project folder contains repositories; select the repository folder explicitly',
-      );
+      children.push(join(folder, child.name));
+  if (children.length > 1)
+    throw new Error(
+      'Project folder contains repositories; select the repository folder explicitly',
+    );
+  if (children.length === 1) {
+    const child = children[0]!;
+    const result = await git(child, ['rev-parse', '--show-toplevel'], options);
+    if (result.returncode !== 0) throw new Error(`Cannot inspect Project repository: ${child}`);
+    return realpath(result.stdout.trim());
+  }
   return null;
 }
 async function registered(

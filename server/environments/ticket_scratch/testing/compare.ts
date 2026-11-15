@@ -4,7 +4,10 @@ import { setTimeout as pause } from 'node:timers/promises';
 import { register_test_root } from '../../../core/test_paths.ts';
 import { entry_stat, git, layout_for, layout_under } from '../collect.ts';
 import { read_workspace_states } from '../../../ticket_workspaces/data.ts';
-import { cleanup_local_workspaces } from '../../../ticket_workspaces/filesystem.ts';
+import {
+  cleanup_local_workspaces,
+  repository_root,
+} from '../../../ticket_workspaces/filesystem.ts';
 import { createReadAccess } from '../../../core/database/index.ts';
 import {
   snapshot_ticket_scratch,
@@ -227,4 +230,21 @@ export async function probe_scratch_runtime(request: ScratchProbeRequest) {
     globalThis.setTimeout = original_timeout;
     unregister();
   }
+}
+
+/** The same populated synthetic repositories feed Python and native selection. */
+export async function probe_repository_selection(
+  request: Pick<ScratchProbeRequest, 'root' | 'paths'>,
+) {
+  const results: Record<string, { repository: string | null } | { error: string }> = {};
+  const options = { admit_path: (path: string) => guard(request.root, path) };
+  for (const [name, path] of Object.entries(request.paths ?? {})) {
+    try {
+      results[name] = { repository: await repository_root(guard(request.root, path), options) };
+    } catch (error) {
+      results[name] = { error: error instanceof Error ? error.message : String(error) };
+    }
+  }
+  results.null = { repository: await repository_root(null, options) };
+  return results;
 }
