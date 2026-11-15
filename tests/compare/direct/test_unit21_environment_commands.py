@@ -17,7 +17,6 @@ import tempfile
 import time
 from contextlib import ExitStack, redirect_stderr, redirect_stdout
 from datetime import datetime
-from importlib import import_module
 from pathlib import Path
 from typing import Any, cast
 
@@ -63,6 +62,7 @@ def _python(root: Path, calls: list[dict[str, Any]], monkeypatch: pytest.MonkeyP
         ),
     )
     results: list[Any] = []
+    monkeypatch.setattr(cli.time, "time", lambda: 1_800_000_000)
     for call in calls:
         if "manifest" in call:
             (root / "app/manifest.json").write_text(call["manifest"])
@@ -135,12 +135,7 @@ def _python(root: Path, calls: list[dict[str, Any]], monkeypatch: pytest.MonkeyP
     "scope",
     [
         "operators",
-        pytest.param(
-            "scratch",
-            marks=pytest.mark.xfail(
-                run=False, reason="expected-open P4: #916 workspaces replace scratch cleanup"
-            ),
-        ),
+        "scratch",
     ],
 )
 def test_unit21_environment_command_function_parity(
@@ -170,8 +165,7 @@ def test_unit21_environment_command_function_parity(
         snapshot = _legacy_snapshot(source, root / "restore-snapshot")
         (root / "git/panels").mkdir(parents=True)
         if scope == "scratch":
-            # P4 replaces this retired fixture when the scratch case returns.
-            _layout = import_module("tests.unit.test_ticket_scratch")._layout
+            from tests.support.ticket_workspace_git import _layout
 
             with monkeypatch.context() as private_git:
                 for key in list(os.environ):
@@ -182,9 +176,19 @@ def test_unit21_environment_command_function_parity(
             scratch = layout.folders[0] / "t_12345678"
             scratch.mkdir()
             (scratch / ".git").write_text("gitdir: missing\n")
+            workspace = source.parent / "files/tickets/t_12345678"
+            workspace.mkdir(parents=True)
+            (workspace / ".git").write_text("gitdir: missing\n")
             with sqlite3.connect(source) as connection:
-                connection.execute("CREATE TABLE tickets(id TEXT,stage TEXT,updated_at INTEGER)")
-                connection.execute("INSERT INTO tickets VALUES('t_12345678','done',0)")
+                connection.execute("CREATE TABLE tickets(id TEXT,worker_step_claim TEXT)")
+                connection.execute(
+                    "CREATE TABLE ticket_workspace_lifecycle"
+                    "(ticket_id TEXT,ended_at INTEGER,deleted INTEGER)"
+                )
+                connection.execute("INSERT INTO tickets VALUES('t_12345678',NULL)")
+                connection.execute(
+                    "INSERT INTO ticket_workspace_lifecycle VALUES('t_12345678',0,0)"
+                )
         for key, path in {
             "PLAN_CONFIG_PATH": root / "config.yaml",
             "PLAN_DB_PATH": source,

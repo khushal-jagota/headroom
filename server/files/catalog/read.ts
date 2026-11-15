@@ -1,3 +1,5 @@
+import { join } from 'node:path';
+import { private_ticket_path } from '../logic/paths.ts';
 import { registerReadFunction } from '../../core/database/index.ts';
 import type { ReadSql } from '../../core/database/contracts.ts';
 import { PlannerError } from '../../core/contracts.ts';
@@ -11,6 +13,7 @@ export function linked(
   seen: Set<string>,
   offset: number,
   limit: number,
+  ticket_files_root: string,
 ): { total: number; entries: CatalogEntry[] } {
   const ticketRow = sql.get<{ workflow_json: string }>(
     'SELECT workflow_json FROM tickets WHERE id=?',
@@ -23,6 +26,14 @@ export function linked(
       .fields.map((f) => f.id)
       .reverse(),
   ];
+  function private_link(target: string): boolean {
+    const path = decodeURIComponent(new URL(target, origin).pathname).split('/');
+    return (
+      path[2] === 'tickets' &&
+      path.length >= 5 &&
+      private_ticket_path(join(ticket_files_root, path[3]!), path.slice(4).join('/'))
+    );
+  }
   registerReadFunction(sql, 'artifact_field_rank', (field) =>
     fields.includes(String(field)) ? fields.indexOf(String(field)) : fields.length,
   );

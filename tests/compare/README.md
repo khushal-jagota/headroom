@@ -10,7 +10,7 @@ The foundation fixes schema, machine keys, and stale fixtures. The cases below r
 They remain collected with `xfail(run=False)` and do not count as parity. Remove each mark when its package restores the proof.
 No comparison field is hidden. Deferred parameters add no active host or runtime cost.
 
-Collected case counts: P2 43, P3 10, P4 4, P5 11, P6 8.
+Collected case counts: P2 43, P3 10, P4 0, P5 11, P6 8.
 
 ### P2 — Executor protocol and custody
 
@@ -75,14 +75,11 @@ Collected case counts: P2 43, P3 10, P4 4, P5 11, P6 8.
 | [`test_unit_19_recovery.py::test_unit19_startup_manifest_and_lost_task_prompts`](direct/test_unit_19_recovery.py) | expected-open P3 (#916): lost-task notices now carry an admission sender_message_id |
 | [`test_worker_runtime_parity.py::test_worker_runtime_parity`](direct/test_worker_runtime_parity.py) | expected-open P3 (#916): port named-machine Worker readiness and protocol-24 claims |
 
-### P4 — Ticket workspace lifecycle
-
-| Retained case | Staging change |
-| --- | --- |
-| [`test_unit21_environment_commands.py::test_unit21_environment_command_function_parity[scratch]`](direct/test_unit21_environment_commands.py) | expected-open P4: #916 workspaces replace scratch cleanup |
-| [`test_unit21_ticket_scratch.py::test_scratch_database_gate_and_ticket_rules_match_python`](direct/test_unit21_ticket_scratch.py) | expected-open P4: #916 workspace lifecycle replaces scratch rules |
-| [`test_unit21_ticket_scratch.py::test_scratch_git_work_and_fresh_apply_checks_match_python`](direct/test_unit21_ticket_scratch.py) | expected-open P4: #916 retired scratch cleanup needs the ticket workspace lifecycle |
-| [`test_unit21_ticket_scratch.py::test_scratch_runtime_waits_and_fences_held_pass_at_deadline`](direct/test_unit21_ticket_scratch.py) | expected-open P4: #916 retired scratch runtime needs the ticket workspace lifecycle |
+P4 restored its four cases. The scratch comparisons now use workspace lifecycle rows,
+thirteen populated synthetic workspaces, fresh remote verification, and retained shutdown ownership.
+They compare the complete inventory, including allocated bytes. Random physical workspace and
+retirement identifiers normalize to placeholders. The command proof preserves operator output and
+owned Git settlement. The synthetic-root guard rejects outside paths and symlink escapes before cleanup.
 
 ### P5 — Platform runtime, updates, and installation
 

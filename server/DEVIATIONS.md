@@ -788,3 +788,10 @@ The foundation refresh adopts machine UUID rows and the current schema. It does 
 Executor routing and credential consumption remain with P2. Machine routes and credential authority follow in foundation PR B.
 The retained comparisons in [the expected-open list](../tests/compare/README.md#expected-open-staging-ports)
 name the packages that replace retired Worker launch and scratch fixtures. These cases do not count as passing parity.
+
+## Ticket ownership temporary files
+
+TypeScript treats `.panels-workspace.json.<32 lowercase hex characters>.tmp` as a private
+Ticket ownership marker in public reads, links, and listings, including aliases. Python
+currently reserves only the final marker and `.panels-workspace.json.tmp`. The temporary
+file contains the same private ownership data, so the Ticket workspace port hides it too.

@@ -14,7 +14,7 @@ import { AppManifestValidationFailure, OperatorInterrupted } from '../command_co
 import { create_production_operator_dependencies } from '../operator_dependencies.ts';
 import { OneShotChildren } from '../../lifecycle/one_shot_children.ts';
 import { ChildProcesses } from '../../lifecycle/owned_processes.ts';
-import { remove_ticket_scratch } from '../ticket_scratch/apply.ts';
+import { layout_under } from '../ticket_scratch/collect.ts';
 import type {
   EnvironmentCommandArguments,
   EnvironmentCommandName,
@@ -87,21 +87,14 @@ async function snapshot_only_refusals(root: string): Promise<unknown> {
     const cleanup = await create_production_operator_dependencies('cleanup', undefined, snapshot);
     assert.equal(cleanup.home, home);
     await assert.rejects(
-      cleanup.with_resources((resources) =>
-        remove_ticket_scratch(
-          {
-            repository: join(root, 'git/panels/repository'),
-            folders: [join(home, 'pct')],
-          },
-          [{ ticket_id: 't_12345678', entries: [join(home, 'pct/t_12345678')], branches: [] }],
-          new Map([['t_12345678', ['done', 0] as const]]),
-          1_800_000_000,
-          {
-            ...resources.scratch_options,
-            admit_path: record(resources.scratch_options.admit_path!),
-          },
-        ),
-      ),
+      cleanup.with_resources(async (resources) => {
+        const layout = await layout_under(
+          join(root, 'git/panels'),
+          home,
+          record(resources.scratch_options.admit_path!),
+        );
+        return layout.folders.map(record(resources.scratch_options.admit_path!));
+      }),
       /OS temp folder/,
     );
     return {
@@ -403,7 +396,12 @@ export async function command_probe(
     assert.equal(command, 'git');
     assert.equal(this, current_owner);
     assert.equal(options.env?.HOME, process.env.HOME);
-    assert(!Object.keys(options.env ?? {}).some((key) => key.startsWith('GIT_')));
+    assert.deepEqual(
+      Object.fromEntries(
+        Object.entries(options.env ?? {}).filter(([key]) => key.startsWith('GIT_')),
+      ),
+      { GIT_OPTIONAL_LOCKS: '0', GIT_TERMINAL_PROMPT: '0' },
+    );
     const row = { closed: false };
     scratch.push(row);
     const child = original_spawn.call(this, command, args, options);

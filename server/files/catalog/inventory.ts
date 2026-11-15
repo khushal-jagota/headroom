@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import { performance } from 'node:perf_hooks';
 import { dirname } from 'node:path';
 import { foldDirectory } from '../logic/listing.ts';
-import { symlink } from '../logic/paths.ts';
+import { symlink, is_private_ticket_name } from '../logic/paths.ts';
 import type { ArtifactEntry, Inventory } from '../contracts.ts';
 import * as config from './config.ts';
 const cache = new Map<string, Inventory>();
@@ -51,7 +51,16 @@ export async function inventory(root: string, prefix: string): Promise<Inventory
     if (symlink(path)) unsafe = true;
     if (dirname(path) === path) break;
   }
-  visit(unsafe ? [] : await foldDirectory(root), '');
+  visit(
+    unsafe
+      ? []
+      : await foldDirectory(
+          root,
+          '',
+          prefix.includes('/files/tickets/') ? is_private_ticket_name : () => false,
+        ),
+    '',
+  );
   const encoded = Buffer.from(JSON.stringify(result.directories));
   result.revision = createHash('sha256').update(encoded).digest('hex');
   result.bytes = encoded.length;

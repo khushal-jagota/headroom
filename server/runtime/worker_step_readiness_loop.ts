@@ -1,3 +1,4 @@
+import { ensure_workspace_activity } from '../ticket_workspaces/data.ts';
 /** Explicit per-Ticket start path. Polling and scheduling remain in Unit 9. */
 import {
   ConversationStartAborted,
@@ -161,6 +162,7 @@ async function _admitted_start_ready_worker_step(
           ),
         });
       });
+      database.write((sql) => ensure_workspace_activity(sql, ticket_id, options.now()));
       const delivered = await conversation_start.send_to_ticket_conversation(
         system,
         database,
@@ -174,6 +176,7 @@ async function _admitted_start_ready_worker_step(
           sender_message_id,
           worker_type_registry: options.worker_type_registry,
           retain_definite_start_refusal: !paired_opener,
+          workspace_activity_recorded: true,
           now: options.now(),
           signal: options.signal,
         },

@@ -1,3 +1,4 @@
+import type { WorkspaceState } from '../../../ticket_workspaces/contracts.ts';
 import type { ScratchLayout } from '../contracts.ts';
 
 export interface ScratchProbeRequest {
@@ -5,7 +6,9 @@ export interface ScratchProbeRequest {
   home: string;
   database: string;
   now: number;
-  states: [string, [string, number]][];
+  states: [string, WorkspaceState][];
+  tickets?: string;
+  paths?: Record<string, string>;
   names?: string[];
   branches?: (string | null)[];
   gates?: { root: string | null; database: string | null; db_path: string }[];

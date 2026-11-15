@@ -1,3 +1,12 @@
+import { HOME_MACHINE_ID } from '../execution_identity.ts';
+import { filesRoot } from '../files/logic/paths.ts';
+import { prepare_workspace, workspace_identity } from '../ticket_workspaces/filesystem.ts';
+import type { WorkspaceIdentity } from '../ticket_workspaces/contracts.ts';
+import {
+  register_workspace,
+  ensure_workspace_activity,
+  conversation_workspace_retired,
+} from '../ticket_workspaces/data.ts';
 import { require_usable_model } from '../conversation/backend_state.ts';
 import { assert_test_database_path } from '../core/test_paths.ts';
 /** Route-owned start/send/reset phases. No SQL capability survives an await. */
@@ -237,7 +246,7 @@ export function worker_resolve(
       reasoning_effort: launch.employee_launch_reasoning_effort,
     };
   }
-  const [workspace_folder, workspace_path_policy] = workspace_for_project(
+  const [project_workspace, workspace_path_policy] = workspace_for_project(
     database,
     ticket.locale,
     ticket.project_id,
@@ -248,16 +257,28 @@ export function worker_resolve(
     worker_type_launch_defaults: defaults,
     ticket_last_chosen: ticket.employee_launch_model === null ? null : defaults,
     overrides,
-    workspace_folder,
+    workspace_folder:
+      ticket.machine_id === HOME_MACHINE_ID
+        ? join(filesRoot(context(database, options).db_path, 'ticket'), ticket.id, 'worktree')
+        : project_workspace,
     workspace_path_policy,
   });
   values.role_materials = new ConversationRoleMaterials({
     ...values.role_materials,
+    identity_environment_variables: [
+      ...values.role_materials.identity_environment_variables,
+      ['PLAN_TICKET_WORKSPACE_MANAGED', '1'],
+    ],
     role_text:
       values.role_materials.role_text +
       '\n\n[Ticket workflow guidance]\n' +
       render_workflow_guide(ticket.workflow) +
-      '\n[/Ticket workflow guidance]',
+      '\n[/Ticket workflow guidance]' +
+      (ticket.machine_id === HOME_MACHINE_ID
+        ? '\n\n[Panels-owned Ticket workspace]\n' +
+          `Panels supplies this worktree: ${values.workspace_folder}. Put reviewable output in ${join(filesRoot(context(database, options).db_path, 'ticket'), ticket.id, 'artifacts')}. ` +
+          'Follow the repository setup instructions and install dependencies yourself. Use this worktree for code, dependencies, and scratch. Do not create or remove worktrees. Workers commit, push, open PRs, and merge through the approved repository route. Stop the processes you start. Panels removes the full Ticket folder seven days after the Ticket ends, unless unpublished work or a failed safety check prevents removal. This workspace instruction supersedes older instructions to create or remove your own worktree.\n[/Panels-owned Ticket workspace]'
+        : ''),
   });
   if (ticket.employee_launch_model === null || overrides.model != null)
     database.read((sql) =>
@@ -342,34 +363,56 @@ export async function start_ticket_conversation(
     const refusal = configured_ticket_execution_refusal(database, sql, current);
     if (refusal !== null) throw refusal;
   });
+  let identity: WorkspaceIdentity | null = null;
+  if (ticket.machine_id === HOME_MACHINE_ID) {
+    const ticket_folder = join(filesRoot(context(database).db_path, 'ticket'), ticket.id);
+    const project_folder =
+      ticket.project_id === null
+        ? null
+        : database.read(
+            (sql) =>
+              sql.get<{ folder_path: string | null }>(
+                'SELECT folder_path FROM projects WHERE id=?',
+                [ticket.project_id],
+              )?.folder_path ?? null,
+          );
+    try {
+      const workspace = await prepare_workspace(ticket_folder, project_folder, ticket.id, {
+        signal: options.signal,
+      });
+      values = { ...values, workspace_folder: workspace };
+      identity = workspace_identity(ticket_folder);
+    } catch (error) {
+      if (options.signal?.aborted) throw new ConversationStartAborted();
+      throw new PlannerError(
+        'validation',
+        `Cannot prepare the Ticket workspace: ${String(error)}`,
+        { ticket_id: ticket.id },
+      );
+    }
+  }
   const request = start_request(options.conversation_id, values);
   await observe_conversation_operation(() => system.start_conversation(request), options.signal);
   let linked: Ticket;
   try {
-    // Python autocommits the durable identity before its separate guarded link.
-    // If the link fails, the record survives and the runtime source is retired.
-    database.write((tx) =>
+    linked = database.write((tx) => {
       ensure_started_conversation_record(tx, resolve_conversation_start_request(request), {
         created_at: options.now,
-      }),
-    );
-    const actual = database.read((sql) =>
-      sql.get<{
-        model: string | null;
-        reasoning_effort: string | null;
-      }>('SELECT model,reasoning_effort FROM conversations WHERE conversation_id=?', [
-        request.conversation_id,
-      ]),
-    );
-    linked = database.write((tx) =>
-      tickets.write_ticket_conversation_start(tx, ticket.id, {
+      });
+      const actual = tx.get<{ model: string | null; reasoning_effort: string | null }>(
+        'SELECT model,reasoning_effort FROM conversations WHERE conversation_id=?',
+        [request.conversation_id],
+      );
+      const linked = tickets.write_ticket_conversation_start(tx, ticket.id, {
         conversation_id: request.conversation_id,
         backend: values.backend_key,
         model: actual ? actual.model : values.model,
         reasoning_effort: actual ? actual.reasoning_effort : values.reasoning_effort,
         now: options.now,
-      }),
-    );
+      });
+      if (identity !== null) register_workspace(tx, ticket.id, request.conversation_id, identity);
+      return linked;
+    });
   } catch (error) {
     try {
       await system.kill(options.conversation_id);
@@ -403,6 +446,7 @@ interface MessageOptions {
 export interface TicketMessageOptions extends MessageOptions {
   worker_type_registry?: WorkerTypeRegistry;
   retain_definite_start_refusal?: boolean;
+  workspace_activity_recorded?: boolean;
   now: number;
 }
 function send_options(
@@ -438,6 +482,24 @@ async function send_existing_ticket(
   content: MessageContent,
   options: TicketMessageOptions,
 ): Promise<DeliveredMessage> {
+  if (database.read((sql) => conversation_workspace_retired(sql, sending_into))) {
+    if (await observe_conversation_operation(() => system.is_running(sending_into), options.signal))
+      throw new PlannerError(
+        'already_running',
+        'The retired workspace still has an active conversation',
+      );
+    await system.kill(sending_into);
+    database.write((tx) =>
+      tickets.clear_ticket_conversation_link(tx, id, {
+        expected_conversation_id: sending_into,
+        now: options.now,
+      }),
+    );
+    return send_to_ticket_conversation(system, database, id, content, {
+      ...options,
+      conversation_id: null,
+    });
+  }
   const fate = await observe_conversation_operation(
     async () => system.send(sending_into, content, send_options(options, true)),
     options.signal,
@@ -489,6 +551,8 @@ export async function send_to_ticket_conversation(
     if (refusal !== null) throw refusal;
   });
   if (options.conversation_id === null && ticket.conversation_id === null) {
+    if (!options.workspace_activity_recorded)
+      database.write((tx) => ensure_workspace_activity(tx, ticket_id, options.now));
     const making = options.created_conversation_id ?? new_conversation_id();
     const values = worker_resolve(database, ticket, options.runs_under, {
       worker_type_registry: options.worker_type_registry,
@@ -559,6 +623,8 @@ export async function send_to_ticket_conversation(
       ticket_id,
       conversation_id: options.conversation_id,
     });
+  if (!options.workspace_activity_recorded)
+    database.write((tx) => ensure_workspace_activity(tx, ticket_id, options.now));
   return send_existing_ticket(
     system,
     database,
