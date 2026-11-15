@@ -181,7 +181,10 @@ function validate_links(files: readonly InstallerRecipeEntry[]): void {
     }
   }
 }
-export function parse_installer_file_manifest(value: unknown, target: RuntimeTarget = LINUX_HOME): InstallerFileManifest {
+export function parse_installer_file_manifest(
+  value: unknown,
+  target: RuntimeTarget = LINUX_HOME,
+): InstallerFileManifest {
   const darwin = target.system === 'darwin';
   if (target.role !== 'home' || target.architecture !== (darwin ? 'arm64' : 'x86_64'))
     fail('unsupported installer recipe target');
@@ -246,7 +249,10 @@ export function parse_installer_file_manifest(value: unknown, target: RuntimeTar
     files: files.sort((a, b) => ordered(a.path, b.path)),
   };
 }
-type NativeMetadata = ({ system: 'linux'; inventory: NativeInventory } | { system: 'darwin'; inventory: DarwinHomeInventory }) & {
+type NativeMetadata = (
+  | { system: 'linux'; inventory: NativeInventory }
+  | { system: 'darwin'; inventory: DarwinHomeInventory }
+) & {
   hash: string;
   external: Set<string>;
 };
@@ -259,8 +265,15 @@ function native_metadata(root: string): NativeMetadata {
   const inventory: unknown = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(bytes));
   if (contract.system === 'darwin') {
     // Keep the synchronous copier and load no Mac-only source on the Linux route.
-    const { parse_mac_home_inventory } = load_darwin_inventory('./mac_home_inventory.ts') as typeof import('./mac_home_inventory.ts');
-    return { system: 'darwin', inventory: parse_mac_home_inventory(inventory), hash, external: new Set(contract.external_libraries) };
+    const { parse_mac_home_inventory } = load_darwin_inventory(
+      './mac_home_inventory.ts',
+    ) as typeof import('./mac_home_inventory.ts');
+    return {
+      system: 'darwin',
+      inventory: parse_mac_home_inventory(inventory),
+      hash,
+      external: new Set(contract.external_libraries),
+    };
   }
   if (
     !is_object(inventory) ||
@@ -307,7 +320,9 @@ function selected_recipe(
   const darwin = metadata.system === 'darwin';
   const source_files = darwin ? DARWIN_HOME_INSTALLER_SOURCE_FILES : INSTALLER_SOURCE_FILES;
   const package_roots = darwin ? DARWIN_HOME_INSTALLER_PACKAGE_ROOTS : INSTALLER_PACKAGE_ROOTS;
-  const optional_root = darwin ? DARWIN_HOME_INSTALLER_KOFFI_OPTIONAL_ROOT : INSTALLER_KOFFI_OPTIONAL_ROOT;
+  const optional_root = darwin
+    ? DARWIN_HOME_INSTALLER_KOFFI_OPTIONAL_ROOT
+    : INSTALLER_KOFFI_OPTIONAL_ROOT;
   function add(name: string): void {
     fence();
     name = path_name(name);
@@ -356,7 +371,10 @@ function selected_recipe(
       if (record.format !== 'Mach-O' || !record.active) return;
       for (const [needed, provider] of Object.entries(record.providers)) {
         if (provider.startsWith('host:')) {
-          if (provider !== 'host:' + needed || ![...metadata.external].some((prefix) => needed.startsWith(prefix)))
+          if (
+            provider !== 'host:' + needed ||
+            ![...metadata.external].some((prefix) => needed.startsWith(prefix))
+          )
             fail('installer native provider is not admitted');
         } else native(path_name(provider));
       }
@@ -391,18 +409,29 @@ function selected_recipe(
     for (const entry of selected.values())
       if (entry.kind === 'file' && entry.path.endsWith('.node') && !records.has(entry.path))
         fail('Darwin installer addon is not inventoried');
-    if (![...records.values()].some((entry) => entry.format === 'Mach-O' && entry.active && entry.path.endsWith('.node') && [
-      'server/node_modules/koffi', DARWIN_HOME_INSTALLER_KOFFI_OPTIONAL_ROOT,
-    ].some((root) => entry.path.startsWith(root + '/'))))
+    if (
+      ![...records.values()].some(
+        (entry) =>
+          entry.format === 'Mach-O' &&
+          entry.active &&
+          entry.path.endsWith('.node') &&
+          ['server/node_modules/koffi', DARWIN_HOME_INSTALLER_KOFFI_OPTIONAL_ROOT].some((root) =>
+            entry.path.startsWith(root + '/'),
+          ),
+      )
+    )
       fail('Darwin installer lacks an active native addon');
   }
-  return parse_installer_file_manifest({
-    version: 1,
-    source_sha,
-    entry: INSTALLER_ENTRY,
-    runtime_inventory_sha256: metadata.hash,
-    files: [...selected.values()],
-  }, darwin ? MAC_HOME : LINUX_HOME);
+  return parse_installer_file_manifest(
+    {
+      version: 1,
+      source_sha,
+      entry: INSTALLER_ENTRY,
+      runtime_inventory_sha256: metadata.hash,
+      files: [...selected.values()],
+    },
+    darwin ? MAC_HOME : LINUX_HOME,
+  );
 }
 export async function write_installer_file_manifest(
   root: string,
@@ -529,8 +558,14 @@ export function copy_installer_runtime(
   installer_attempt_id(request.attempt_id);
   const root = root_path(application_root),
     node = external_node(request);
-  const recipe_target = parse_optional_runtime_contract(read_json(root, RUNTIME_CONTRACT_PATH))?.system === 'darwin' ? MAC_HOME : LINUX_HOME;
-  const recipe = parse_installer_file_manifest(read_json(root, INSTALLER_RECIPE_PATH), recipe_target);
+  const recipe_target =
+    parse_optional_runtime_contract(read_json(root, RUNTIME_CONTRACT_PATH))?.system === 'darwin'
+      ? MAC_HOME
+      : LINUX_HOME;
+  const recipe = parse_installer_file_manifest(
+    read_json(root, INSTALLER_RECIPE_PATH),
+    recipe_target,
+  );
   const manifest = read_json(root, 'manifest.json');
   manifest_identity(manifest, recipe.source_sha);
   const metadata = native_metadata(root);

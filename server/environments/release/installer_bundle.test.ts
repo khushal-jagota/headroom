@@ -53,8 +53,11 @@ import {
 it('keeps the frozen payload complete for static installer and trusted admission imports', () => {
   const checkout = fileURLToPath(new URL('../../../', import.meta.url));
   const require = createRequire(join(checkout, 'server/package.json'));
-  const linux = new Set<string>(INSTALLER_SOURCE_FILES), darwin = new Set<string>(DARWIN_HOME_INSTALLER_SOURCE_FILES), seen = new Set<string>();
-  let frozen = linux, packages = new Set<string>([...INSTALLER_PACKAGE_ROOTS, INSTALLER_KOFFI_OPTIONAL_ROOT]);
+  const linux = new Set<string>(INSTALLER_SOURCE_FILES),
+    darwin = new Set<string>(DARWIN_HOME_INSTALLER_SOURCE_FILES),
+    seen = new Set<string>();
+  let frozen = linux,
+    packages = new Set<string>([...INSTALLER_PACKAGE_ROOTS, INSTALLER_KOFFI_OPTIONAL_ROOT]);
   function visit(name: string): void {
     if (seen.has(name)) return;
     seen.add(name);
@@ -74,8 +77,14 @@ it('keeps the frozen payload complete for static installer and trusted admission
         inside(checkout, path);
         const dependency_name = relative(checkout, path).split(sep).join('/');
         const darwin_only = darwin.has(dependency_name) && !linux.has(dependency_name);
-        assert(frozen.has(dependency_name) || (deferred && darwin_only), 'unknown platform import: ' + dependency_name);
-        assert(!darwin_only || deferred || !linux.has(name), 'common source eagerly imports Darwin-only source: ' + dependency_name);
+        assert(
+          frozen.has(dependency_name) || (deferred && darwin_only),
+          'unknown platform import: ' + dependency_name,
+        );
+        assert(
+          !darwin_only || deferred || !linux.has(name),
+          'common source eagerly imports Darwin-only source: ' + dependency_name,
+        );
         if (frozen.has(dependency_name)) visit(dependency_name);
       } else {
         const package_name = specifier
@@ -91,7 +100,14 @@ it('keeps the frozen payload complete for static installer and trusted admission
       }
     }
     function walk(node: ts.Node): void {
-      if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && node.initializer && ts.isCallExpression(node.initializer) && ts.isIdentifier(node.initializer.expression) && node.initializer.expression.text === 'createRequire') {
+      if (
+        ts.isVariableDeclaration(node) &&
+        ts.isIdentifier(node.name) &&
+        node.initializer &&
+        ts.isCallExpression(node.initializer) &&
+        ts.isIdentifier(node.initializer.expression) &&
+        node.initializer.expression.text === 'createRequire'
+      ) {
         deferred_requires.add(node.name.text);
       } else if (ts.isImportDeclaration(node)) {
         const clause = node.importClause;
@@ -123,7 +139,13 @@ it('keeps the frozen payload complete for static installer and trusted admission
         ts.isStringLiteralLike(node.arguments[0])
       ) {
         dependency(node.arguments[0].text, true);
-      } else if (ts.isCallExpression(node) && ts.isIdentifier(node.expression) && deferred_requires.has(node.expression.text) && node.arguments[0] && ts.isStringLiteralLike(node.arguments[0])) {
+      } else if (
+        ts.isCallExpression(node) &&
+        ts.isIdentifier(node.expression) &&
+        deferred_requires.has(node.expression.text) &&
+        node.arguments[0] &&
+        ts.isStringLiteralLike(node.arguments[0])
+      ) {
         dependency(node.arguments[0].text, true);
       } else if (
         ts.isNewExpression(node) &&
@@ -152,7 +174,11 @@ it('keeps the frozen payload complete for static installer and trusted admission
   }
   for (const platform of ['linux', 'darwin']) {
     frozen = platform === 'linux' ? linux : darwin;
-    packages = new Set<string>(platform === 'linux' ? [...INSTALLER_PACKAGE_ROOTS, INSTALLER_KOFFI_OPTIONAL_ROOT] : [...DARWIN_HOME_INSTALLER_PACKAGE_ROOTS, DARWIN_HOME_INSTALLER_KOFFI_OPTIONAL_ROOT]);
+    packages = new Set<string>(
+      platform === 'linux'
+        ? [...INSTALLER_PACKAGE_ROOTS, INSTALLER_KOFFI_OPTIONAL_ROOT]
+        : [...DARWIN_HOME_INSTALLER_PACKAGE_ROOTS, DARWIN_HOME_INSTALLER_KOFFI_OPTIONAL_ROOT],
+    );
     seen.clear();
     visit(INSTALLER_ENTRY);
     visit('server/environments/release/admission.ts');
@@ -381,19 +407,77 @@ it('copies a complete selected closure once and refuses changed source or an app
     }
     mac_write('server/node_modules/koffi/addon.node', 'structural Mac addon');
     mac_write('runtime/lib/libfixture.dylib', 'structural Mac provider');
-    const mac_record = (path: string, bytes: string, providers: Record<string, string>) => ({ path, sha256: hash(bytes), format: 'Mach-O', active: true, architectures: ['arm64'], minimum_macos: ['15.0'], rpaths: ['@loader_path'], providers });
-    const mac_inventory = JSON.stringify({ version: 2, system: 'darwin', architecture: 'arm64', role: 'home', node_major: 22, native_files: [mac_record('server/node_modules/koffi/addon.node', 'structural Mac addon', { '@rpath/libfixture.dylib': 'runtime/lib/libfixture.dylib' }), mac_record('runtime/lib/libfixture.dylib', 'structural Mac provider', { '/usr/lib/libSystem.B.dylib': 'host:/usr/lib/libSystem.B.dylib' })] });
-    const mac_contract = { version: 2, system: 'darwin', architecture: 'arm64', role: 'home', minimum_os: '15.0', node_major: 22, minimum_node_version: '22.18.0', inventory_sha256: hash(mac_inventory), external_libraries: ['/usr/lib/', '/System/Library/'] };
+    const mac_record = (path: string, bytes: string, providers: Record<string, string>) => ({
+      path,
+      sha256: hash(bytes),
+      format: 'Mach-O',
+      active: true,
+      architectures: ['arm64'],
+      minimum_macos: ['15.0'],
+      rpaths: ['@loader_path'],
+      providers,
+    });
+    const mac_inventory = JSON.stringify({
+      version: 2,
+      system: 'darwin',
+      architecture: 'arm64',
+      role: 'home',
+      node_major: 22,
+      native_files: [
+        mac_record('server/node_modules/koffi/addon.node', 'structural Mac addon', {
+          '@rpath/libfixture.dylib': 'runtime/lib/libfixture.dylib',
+        }),
+        mac_record('runtime/lib/libfixture.dylib', 'structural Mac provider', {
+          '/usr/lib/libSystem.B.dylib': 'host:/usr/lib/libSystem.B.dylib',
+        }),
+      ],
+    });
+    const mac_contract = {
+      version: 2,
+      system: 'darwin',
+      architecture: 'arm64',
+      role: 'home',
+      minimum_os: '15.0',
+      node_major: 22,
+      minimum_node_version: '22.18.0',
+      inventory_sha256: hash(mac_inventory),
+      external_libraries: ['/usr/lib/', '/System/Library/'],
+    };
     mac_write('runtime/inventory.json', mac_inventory);
     mac_write('runtime/contract.json', JSON.stringify(mac_contract));
-    mac_write('manifest.json', JSON.stringify({ format: 'panels-app-v1', app_sha: 'a'.repeat(40), source_digest: 'b'.repeat(64), artifact_digest: 'c'.repeat(64), runtime_contract: mac_contract }));
+    mac_write(
+      'manifest.json',
+      JSON.stringify({
+        format: 'panels-app-v1',
+        app_sha: 'a'.repeat(40),
+        source_digest: 'b'.repeat(64),
+        artifact_digest: 'c'.repeat(64),
+        runtime_contract: mac_contract,
+      }),
+    );
     await write_installer_file_manifest(mac_app, 'a'.repeat(40), execution);
-    const mac_recipe = parse_installer_file_manifest(JSON.parse(readFileSync(join(mac_app, INSTALLER_RECIPE_PATH), 'utf8')), MAC_HOME);
+    const mac_recipe = parse_installer_file_manifest(
+      JSON.parse(readFileSync(join(mac_app, INSTALLER_RECIPE_PATH), 'utf8')),
+      MAC_HOME,
+    );
     assert(mac_recipe.files.some((entry) => entry.path === 'runtime/lib/libfixture.dylib'));
     assert(!mac_recipe.files.some((entry) => entry.path.includes('koffi-linux-x64')));
-    const mac_command = copy_installer_runtime(mac_app, { ...request, attempt_id: 'darwin' }, controller.signal);
-    assert.equal(readFileSync(join(data, 'update-installer-darwin/runtime/runtime/lib/libfixture.dylib'), 'utf8'), 'structural Mac provider');
-    const mac_decoder = join(data, 'update-installer-darwin/runtime/server/environments/release/mac_home_inventory.ts');
+    const mac_command = copy_installer_runtime(
+      mac_app,
+      { ...request, attempt_id: 'darwin' },
+      controller.signal,
+    );
+    assert.equal(
+      readFileSync(
+        join(data, 'update-installer-darwin/runtime/runtime/lib/libfixture.dylib'),
+        'utf8',
+      ),
+      'structural Mac provider',
+    );
+    const mac_decoder = join(
+      data,
+      'update-installer-darwin/runtime/server/environments/release/mac_home_inventory.ts',
+    );
     renameSync(mac_app, join(current, 'retired-Mac-source'));
 
     // Real source/dependency import coverage is separate from the structural inventory fixture.

@@ -37,7 +37,11 @@ async function remove_directory(path: string): Promise<void> {
     throw new Error('Cannot call rmtree on a symbolic link');
   await rm(path, { recursive: true });
 }
-async function staged_manifest(path: string, app_sha: string, expected_target?: RuntimeTarget): Promise<AppManifest | null> {
+async function staged_manifest(
+  path: string,
+  app_sha: string,
+  expected_target?: RuntimeTarget,
+): Promise<AppManifest | null> {
   try {
     return await validate_app_manifest(join(path, 'manifest.json'), {
       expected_sha: app_sha,

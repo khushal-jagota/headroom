@@ -53,16 +53,29 @@ export const create_production_environment_operations: ProductionEnvironmentFact
   const application_root = await resolved_path(dependencies.application_root);
   signal.throwIfAborted();
   let darwin_home: import('./updates/darwin/service.ts').DarwinHomeService | undefined;
-  if (process.platform === 'darwin' && !context.config.test_mode && !installer_test_mode(environment)) {
+  if (
+    process.platform === 'darwin' &&
+    !context.config.test_mode &&
+    !installer_test_mode(environment)
+  ) {
     try {
       const { current_darwin_home } = await import('./updates/darwin/launch.ts');
-      darwin_home = await current_darwin_home(application_root, dependencies.node_executable,
-        { child_processes: context.child_processes, signal, deadline: null }, environment);
-    } catch { /* A source checkout or an unproven login job cannot offer home updates. */ }
+      darwin_home = await current_darwin_home(
+        application_root,
+        dependencies.node_executable,
+        { child_processes: context.child_processes, signal, deadline: null },
+        environment,
+      );
+    } catch {
+      /* A source checkout or an unproven login job cannot offer home updates. */
+    }
   }
-  const service_unit = process.platform === 'darwin' ?
-    darwin_home ? `${darwin_home.identity.domain}/${darwin_home.identity.label}` : null :
-    await read_own_service_unit(environment, context.config.test_mode);
+  const service_unit =
+    process.platform === 'darwin'
+      ? darwin_home
+        ? `${darwin_home.identity.domain}/${darwin_home.identity.label}`
+        : null
+      : await read_own_service_unit(environment, context.config.test_mode);
   signal.throwIfAborted();
   const repository = update_repository_configuration(environment);
 
@@ -73,8 +86,17 @@ export const create_production_environment_operations: ProductionEnvironmentFact
     provider: () =>
       repository === null
         ? null
-        : new GitHubUpdateProvider(repository.repository, repository.token_file, process.platform === 'darwin' ? { target: MAC_HOME } : {}),
-    staging: create_release_staging(context.child_processes, signal, undefined, process.platform === 'darwin' ? MAC_HOME : undefined),
+        : new GitHubUpdateProvider(
+            repository.repository,
+            repository.token_file,
+            process.platform === 'darwin' ? { target: MAC_HOME } : {},
+          ),
+    staging: create_release_staging(
+      context.child_processes,
+      signal,
+      undefined,
+      process.platform === 'darwin' ? MAC_HOME : undefined,
+    ),
     installer: create_installer_operations({
       application_root,
       node_executable: dependencies.node_executable,

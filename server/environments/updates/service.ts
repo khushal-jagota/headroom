@@ -726,7 +726,11 @@ export class UpdateService {
       }
     }
     if (backup === null && this.options.installer.requires_snapshot) {
-      backup = await this.options.installer.create_backup(this.options.database, this.options.backup_directory, attempt.from_sha);
+      backup = await this.options.installer.create_backup(
+        this.options.database,
+        this.options.backup_directory,
+        attempt.from_sha,
+      );
       if (!this.active(incarnation)) return;
     }
     if (!this.active(incarnation)) return;

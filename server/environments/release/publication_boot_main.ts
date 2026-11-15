@@ -17,6 +17,7 @@ import { healthy } from '../updates/installer/health.ts';
 import { UPDATE_HEALTH_TIMEOUT_SECONDS } from '../updates/configuration.ts';
 import { MANAGED_STOP_CLIENT_SECONDS } from '../../lifecycle/configuration.ts';
 import { observe_promise } from '../../core/promise_observer.ts';
+import { MAC_HOME } from './contracts.ts';
 
 async function loopback_port(): Promise<number> {
   const server = createServer();
@@ -102,6 +103,7 @@ try {
         execution.child_processes,
         undefined,
         execution,
+        process.platform === 'darwin' ? MAC_HOME : undefined,
       );
       if (manifest.runtime_contract?.version !== 2)
         throw new Error('Boot requires the sealed Node runtime');
@@ -150,7 +152,12 @@ try {
       child = execution.child_processes.spawn(
         process.execPath,
         [join(app, 'server/environments/release/launcher_main.ts'), 'serve'],
-        { cwd: app, env: environment, stdio: 'inherit' },
+        {
+          cwd: app,
+          env: environment,
+          stdio: 'inherit',
+          ...(process.platform === 'darwin' ? { detached: false } : {}),
+        },
       );
       closed = new Promise((resolve) => {
         child!.once('exit', () => {
@@ -192,6 +199,7 @@ try {
       await validate_app_manifest(join(app, 'manifest.json'), {
         expected_sha: sha,
         require_runtime: true,
+        ...(process.platform === 'darwin' ? { expected_target: MAC_HOME } : {}),
       });
       assert_release_execution(execution);
       replace_existing_json(join(work, 'boot-proof.json'), {

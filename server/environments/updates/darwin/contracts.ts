@@ -18,7 +18,10 @@ export interface DarwinHomeProcess {
   readonly birth: string;
 }
 export type DarwinHomeCommand = (
-  argv: readonly string[], execution: ReleaseExecution, timeout_seconds: number, allow_nonzero?: boolean,
+  argv: readonly string[],
+  execution: ReleaseExecution,
+  timeout_seconds: number,
+  allow_nonzero?: boolean,
 ) => Promise<ReleaseCommandResult>;
 export interface DarwinHomeIO {
   readonly execution: ReleaseExecution;

@@ -183,23 +183,53 @@ export function create_installer_effects(
   assert_installer_health_url(request.health_url, execution.environment);
   const darwin = process.platform === 'darwin';
   let mac: Promise<import('../darwin/service.ts').DarwinHomeService> | undefined;
-  const home = () => mac ??= import('../darwin/service.ts').then(({ create_darwin_home_io, DarwinHomeService }) => {
-    const service = new DarwinHomeService(request.current_root, request.service_unit, request.node_executable,
-      create_darwin_home_io({ child_processes: execution.child_processes, signal: execution.signal, deadline: null }, execution.environment));
-    if (realpathSync(request.node_executable) !== service.identity.installer_node)
-      throw new AppValidationError('Installer Node differs from the Mac installation identity');
-    return service;
-  });
-  let effects: Promise<ReturnType<typeof import('../darwin/service.ts').create_darwin_installer_effects>> | undefined;
-  const home_effects = () => effects ??= import('../darwin/service.ts').then(({ create_darwin_installer_effects }) =>
-    create_darwin_installer_effects(home, (sha) => healthy(request.health_url, sha, request.health_timeout_seconds, execution.signal, execution.environment)));
+  const home = () =>
+    (mac ??= import('../darwin/service.ts').then(({ create_darwin_home_io, DarwinHomeService }) => {
+      const service = new DarwinHomeService(
+        request.current_root,
+        request.service_unit,
+        request.node_executable,
+        create_darwin_home_io(
+          { child_processes: execution.child_processes, signal: execution.signal, deadline: null },
+          execution.environment,
+        ),
+      );
+      if (realpathSync(request.node_executable) !== service.identity.installer_node)
+        throw new AppValidationError('Installer Node differs from the Mac installation identity');
+      return service;
+    }));
+  let effects:
+    | Promise<ReturnType<typeof import('../darwin/service.ts').create_darwin_installer_effects>>
+    | undefined;
+  const home_effects = () =>
+    (effects ??= import('../darwin/service.ts').then(({ create_darwin_installer_effects }) =>
+      create_darwin_installer_effects(home, (sha) =>
+        healthy(
+          request.health_url,
+          sha,
+          request.health_timeout_seconds,
+          execution.signal,
+          execution.environment,
+        ),
+      ),
+    ));
   return {
-    ...(darwin ? {
-      async validate_service() { await (await home_effects()).validate_service(); },
-      async recover_unchanged(sha: string) { return (await home_effects()).recover_unchanged(sha); },
-      async finish_success() { return (await home_effects()).finish_success(); },
-      async finish_rollback() { return (await home_effects()).finish_rollback(); },
-    } : {}),
+    ...(darwin
+      ? {
+          async validate_service() {
+            await (await home_effects()).validate_service();
+          },
+          async recover_unchanged(sha: string) {
+            return (await home_effects()).recover_unchanged(sha);
+          },
+          async finish_success() {
+            return (await home_effects()).finish_success();
+          },
+          async finish_rollback() {
+            return (await home_effects()).finish_rollback();
+          },
+        }
+      : {}),
     async service(action) {
       if (installer_test_mode(execution.environment))
         throw new Error('Installer service actions are unavailable in tests');

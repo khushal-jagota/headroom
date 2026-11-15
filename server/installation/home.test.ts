@@ -118,11 +118,21 @@ async function fixture() {
 }
 
 test('Mac job conversion refuses pre-existing and late hard links before either file write', async () => {
-  const f = await fixture(), path = join(f.account, 'installer.plist');
-  const job = { Label: 'com.panels.test', ProgramArguments: ['/unused/node'], WorkingDirectory: f.account, EnvironmentVariables: {} };
+  const f = await fixture(),
+    path = join(f.account, 'installer.plist');
+  const job = {
+    Label: 'com.panels.test',
+    ProgramArguments: ['/unused/node'],
+    WorkingDirectory: f.account,
+    EnvironmentVariables: {},
+  };
   let converted = false;
   const io = create_darwin_home_io(f.deps.execution, f.deps.environment, {
-    command: async () => { converted = true; linkSync(path, join(f.account, 'late-link')); return { code: 0, stdout: '<plist/>', stderr: '' }; },
+    command: async () => {
+      converted = true;
+      linkSync(path, join(f.account, 'late-link'));
+      return { code: 0, stdout: '<plist/>', stderr: '' };
+    },
   });
   try {
     linkSync(f.foreign, path);
@@ -133,7 +143,9 @@ test('Mac job conversion refuses pre-existing and late hard links before either 
     await assert.rejects(write_home_job(path, job, io), /replacement changed/);
     assert.equal(converted, true);
     assert.equal(readFileSync(join(f.account, 'late-link'), 'utf8'), JSON.stringify(job) + '\n');
-  } finally { await f.close(); }
+  } finally {
+    await f.close();
+  }
 });
 
 test('failed installation uses a fresh cleanup owner after cancellation and preserves linked foreign data', async () => {

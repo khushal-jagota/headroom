@@ -106,9 +106,18 @@ async function roll_back(
   const backup = attempt.backup,
     restore_data = new_app_moved && typeof backup === 'string';
   try {
-    if (!previous_moved && !new_app_moved && effects.recover_unchanged && await effects.recover_unchanged(from_sha)) {
+    if (
+      !previous_moved &&
+      !new_app_moved &&
+      effects.recover_unchanged &&
+      (await effects.recover_unchanged(from_sha))
+    ) {
       release_installer_barrier(request.data_directory, request.attempt_id);
-      record.record('failed', 'failed', `${reason}. The previous app kept running. Its auxiliary jobs were restored.`);
+      record.record(
+        'failed',
+        'failed',
+        `${reason}. The previous app kept running. Its auxiliary jobs were restored.`,
+      );
       return 1;
     }
     if (previous_moved || new_app_moved) {
@@ -147,8 +156,11 @@ async function roll_back(
   release_installer_barrier(request.data_directory, request.attempt_id);
   record.record('rollback_healthy');
   let auxiliary_detail: string | null = null;
-  try { auxiliary_detail = await effects.finish_rollback?.() ?? null; }
-  catch (error) { auxiliary_detail = `Its auxiliary jobs did not restart: ${problem(error)}`; }
+  try {
+    auxiliary_detail = (await effects.finish_rollback?.()) ?? null;
+  } catch (error) {
+    auxiliary_detail = `Its auxiliary jobs did not restart: ${problem(error)}`;
+  }
   if (auxiliary_detail) record.record('auxiliary_restart_failed', undefined, auxiliary_detail);
   record.record(
     'failed',
@@ -216,8 +228,13 @@ async function install_locked(
     );
     return 1;
   }
-  try { await effects.validate_service?.(); }
-  catch (error) { signal.throwIfAborted(); record.record('failed', 'failed', `Mac identity refused: ${problem(error)}`); return 1; }
+  try {
+    await effects.validate_service?.();
+  } catch (error) {
+    signal.throwIfAborted();
+    record.record('failed', 'failed', `Mac identity refused: ${problem(error)}`);
+    return 1;
+  }
   assert_installer_path(previous);
   if (existsSync(previous)) rmtree(previous);
   let previous_moved = false,
@@ -268,8 +285,11 @@ async function install_locked(
   release_installer_barrier(request.data_directory, request.attempt_id);
   record.record('healthy');
   let completion_detail: string | null = null;
-  try { completion_detail = await effects.finish_success?.() ?? null; }
-  catch (error) { completion_detail = `The release passed health, but its auxiliary jobs did not restart: ${problem(error)}`; }
+  try {
+    completion_detail = (await effects.finish_success?.()) ?? null;
+  } catch (error) {
+    completion_detail = `The release passed health, but its auxiliary jobs did not restart: ${problem(error)}`;
+  }
   if (completion_detail) record.record('auxiliary_restart_failed', undefined, completion_detail);
   record.record('done', 'done', completion_detail ?? undefined);
   assert_installer_path(request.current_root);

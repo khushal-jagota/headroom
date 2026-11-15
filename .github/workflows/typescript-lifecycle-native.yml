@@ -153,14 +153,14 @@ jobs:
           native_evidence="$RUNNER_TEMP/lifecycle-native-evidence"
           native_tmp=$(mktemp -d "/tmp/p21-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.XXXXXX")
           native_tmp=$(cd "$native_tmp" && pwd -P)
-          trap 'rm -rf -- "$native_tmp"' EXIT
+          trap 'native_exit=$?; if [ "$native_exit" -eq 0 ]; then rm -rf -- "$native_tmp"; fi' EXIT
           mkdir -p "$native_root"/{home/.codex,home/.claude,home/.hermes,config,cache,data,state,runtime,logs,backups,workspace,files,tickets,app} "$native_evidence"
           printf '{}\n' > "$native_root/config.yaml"
           native_revision=$(git rev-parse HEAD)
           # Scrub before pip's editable build, npm lifecycle scripts, or any repository launcher.
           env -i PATH="$PATH" LANG=en_US.UTF-8 LC_ALL=en_US.UTF-8 \
             GITHUB_ACTIONS=true GITHUB_WORKSPACE="$GITHUB_WORKSPACE" \
-            GITHUB_RUN_ID="$GITHUB_RUN_ID" MAC_SOURCE_REVISION="$native_revision" \
+            GITHUB_RUN_ID="$GITHUB_RUN_ID" GITHUB_RUN_ATTEMPT="$GITHUB_RUN_ATTEMPT" MAC_SOURCE_REVISION="$native_revision" \
             HOME="$native_root/home" \
             CODEX_HOME="$native_root/home/.codex" CLAUDE_CONFIG_DIR="$native_root/home/.claude" \
             HERMES_HOME="$native_root/home/.hermes" PLAN_HERMES_HOME="$native_root/home/.hermes" \
@@ -206,7 +206,7 @@ jobs:
           # Reuse this hosted Darwin job for the real libproc boundary; synthetic tests cannot prove its ABI.
           python -I -S -B scripts/development_safety/bootstrap.py npm --prefix server run test -- \
             platform_runtime/worker_processes.native.test.ts lifecycle/paths.native.test.ts \
-            previews/darwin.native.test.ts installation/home.native.test.ts --reporter=junit \
+            previews/darwin.native.test.ts --reporter=junit \
             --outputFile "$NATIVE_EVIDENCE/process-home-preview-abi.xml"
           # No web build: this registry fixture uses synthetic app roots and no UI assets.
           python -I -S -B scripts/development_safety/bootstrap.py pytest \
@@ -334,6 +334,31 @@ jobs:
               exit 1
             fi
           done
+          # Build the home from separate production inputs, then prove the sealed archive after relocation.
+          home_inputs="$TMPDIR/mac-home-inputs"
+          home_output="$TMPDIR/mac-home-output"
+          home_evidence="$NATIVE_EVIDENCE/mac-home"
+          mkdir -p "$home_inputs" "$home_evidence"
+          git archive --format=tar "$MAC_SOURCE_REVISION" | tar -xf - -C "$home_inputs"
+          NODE_ENV=production python -I -S -B "$home_inputs/scripts/development_safety/bootstrap.py" npm --prefix server ci
+          NODE_ENV=production python -I -S -B "$home_inputs/scripts/development_safety/bootstrap.py" npm --prefix agent_backends install
+          python -I -S -B "$home_inputs/scripts/development_safety/bootstrap.py" npm --prefix web ci
+          python -I -S -B "$home_inputs/scripts/development_safety/bootstrap.py" npm --prefix web run build
+          python -I -S -B scripts/development_safety/bootstrap.py check-node server
+          node server/environments/release/mac_home_main.ts \
+            --source "$GITHUB_WORKSPACE" --revision "$MAC_SOURCE_REVISION" --output "$home_output" \
+            --node-modules "$home_inputs/server/node_modules" \
+            --agent-backends "$home_inputs/agent_backends" --web-dist "$home_inputs/web/dist" \
+            --public-cli-entrypoint server/cli/main.ts \
+            > "$home_evidence/build.json" 2> "$home_evidence/build.stderr.log"
+          # The canonical producer CLI retires its app path, admits the archive, and proves clean foreground boot.
+          cp "$home_output"/*.json "$home_evidence/"
+          cp "$home_output/panels-app.tar.gz" "$home_evidence/panels-app.tar.gz"
+          export MAC_HOME_BUILD_METADATA="$home_output/mac-home-build.json"
+          export MAC_HOME_PRODUCTION_INPUTS="$home_inputs"
+          python -I -S -B scripts/development_safety/bootstrap.py npm --prefix server run test -- \
+            installation/home.native.test.ts --reporter=junit \
+            --outputFile "$NATIVE_EVIDENCE/first-home-darwin.xml"
           NATIVE
       - name: Preserve native ABI evidence
         if: always()

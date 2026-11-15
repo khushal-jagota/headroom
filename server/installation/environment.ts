@@ -10,8 +10,10 @@ export async function home_service_environment(
 ): Promise<Record<string, string>> {
   const root = request.root;
   const node_directory = dirname(host.node_executable);
-  const directories = host.system === 'darwin' ? [node_directory, join(root, 'app/agent_backends/node_modules/.bin')] :
-    [join(root, 'app/agent_backends/node_modules/.bin'), node_directory];
+  const directories =
+    host.system === 'darwin'
+      ? [node_directory, join(root, 'app/agent_backends/node_modules/.bin')]
+      : [join(root, 'app/agent_backends/node_modules/.bin'), node_directory];
   if (host.system === 'darwin') {
     directories.push('/opt/homebrew/bin');
     for (const name of ['codex', 'claude']) {

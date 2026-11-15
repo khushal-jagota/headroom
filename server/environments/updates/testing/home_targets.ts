@@ -26,13 +26,16 @@ export async function probe_home_receipt(spec: {
     controller = new AbortController(),
     answers: unknown[] = [];
   const spawn = owner.spawn.bind(owner);
-  let spawned = 0, closed = 0;
+  let spawned = 0,
+    closed = 0;
   owner.spawn = ((command: string, args: readonly string[], options: SpawnOptions) => {
     if (command !== process.execPath || !args[0]?.endsWith('/release/archive_unpack_main.ts'))
       throw new Error('Unexpected native launch');
     const child = spawn(command, args, options);
     spawned++;
-    child.once('close', () => { closed++; });
+    child.once('close', () => {
+      closed++;
+    });
     return child;
   }) as typeof owner.spawn;
   try {

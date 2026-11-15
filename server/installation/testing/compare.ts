@@ -28,8 +28,7 @@ function normalized_path(path: string, root: string, system: string): string {
     .split(':')
     .filter(
       (entry) =>
-        entry !== join(root, 'app/.venv/bin') &&
-        entry !== dirname(realpathSync(process.execPath)),
+        entry !== join(root, 'app/.venv/bin') && entry !== dirname(realpathSync(process.execPath)),
     )
     .join(':');
 }
@@ -170,10 +169,28 @@ export async function home_install_comparison(
     let identity: Record<string, unknown> | null = null;
     if (existsSync(join(root, 'data/mac-home-installation.json'))) {
       const value = JSON.parse(readFileSync(join(root, 'data/mac-home-installation.json'), 'utf8'));
-      if (JSON.stringify(Object.keys(value).sort()) !== JSON.stringify(['version', 'uid', 'root', 'label', 'home_plist', 'backup_plist', 'installer_node'].sort()) ||
-        value.version !== 2 || typeof value.installer_node !== 'string' || realpathSync(value.installer_node) !== value.installer_node ||
-        path_is_within(root, value.installer_node)) throw new Error('Native home identity does not bind an external Node v2 runtime');
-      identity = Object.fromEntries(['uid', 'root', 'label', 'home_plist', 'backup_plist'].map((key) => [key, value[key]]));
+      if (
+        JSON.stringify(Object.keys(value).sort()) !==
+          JSON.stringify(
+            [
+              'version',
+              'uid',
+              'root',
+              'label',
+              'home_plist',
+              'backup_plist',
+              'installer_node',
+            ].sort(),
+          ) ||
+        value.version !== 2 ||
+        typeof value.installer_node !== 'string' ||
+        realpathSync(value.installer_node) !== value.installer_node ||
+        path_is_within(root, value.installer_node)
+      )
+        throw new Error('Native home identity does not bind an external Node v2 runtime');
+      identity = Object.fromEntries(
+        ['uid', 'root', 'label', 'home_plist', 'backup_plist'].map((key) => [key, value[key]]),
+      );
     }
     if (existsSync(join(root, 'data/config.yaml'))) {
       if (value.system === 'darwin') {
