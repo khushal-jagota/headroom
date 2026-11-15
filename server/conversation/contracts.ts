@@ -338,6 +338,7 @@ export interface ConversationSystem {
   ): Promise<void>;
   interrupt(conversation_id: string): Promise<void>;
   held_prompts(conversation_id: string): Promise<readonly HeldPrompt[]>;
+  sender_message_ids_awaiting_outcome(conversation_id: string): Promise<ReadonlySet<string>>;
   promote_held_prompt(
     conversation_id: string,
     held_prompt_id: string,

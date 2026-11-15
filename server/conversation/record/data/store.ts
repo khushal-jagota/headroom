@@ -105,6 +105,7 @@ function record_from_start(
     latest_agent_activity_at: null,
     latest_agent_activity_sequence: 0,
     automatically_compacted_through_sequence: 0,
+    working_turn_compacted_through_sequence: 0,
     automatic_compaction_attempted_through_sequence: 0,
     owner_read_through_sequence: 0,
     created_at,
@@ -673,6 +674,12 @@ export class ConversationStore
       tx.run(
         'UPDATE conversations SET automatic_compaction_attempted_through_sequence=latest_agent_activity_sequence ' +
           'WHERE conversation_id=?',
+        [conversation_id],
+      );
+    }
+    if (options.working_turn_compaction_confirmed) {
+      tx.run(
+        'UPDATE conversations SET working_turn_compacted_through_sequence=latest_agent_activity_sequence WHERE conversation_id=?',
         [conversation_id],
       );
     }

@@ -9,10 +9,14 @@ exchange remains expected-open P2 with its original comparisons intact.
 
 - Python refuses reports from a successor incarnation while the old process remains current.
   TypeScript returns a batch receipt with `command_of_another_executor_process` instead.
-- Python emits `StartRun.arguments.supervision_protocol=24`. TypeScript omits it. P2 owns this wire gap.
+- StartRun encoding now includes `supervision_protocol=24`. The populated mailbox exchange remains open until report authority matches Python.
 - Python includes `machine_id=null` on internal mailbox stall waits. TypeScript omits it. P3 owns this metadata gap.
 
 No field projection hides these differences. The retained proof must pass after the port.
+
+The native schema describes protocol 26. Runtime identities still advertise protocol 22
+until machine credentials, supervision, and workspace behavior reach parity. This is
+an incomplete staging port, not an accepted final difference.
 
 ## Pending staging port: Linux host admission
 

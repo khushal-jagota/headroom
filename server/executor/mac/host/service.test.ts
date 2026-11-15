@@ -17,6 +17,7 @@ import { Deferred } from '../../../conversation/runtime/state.ts';
 import { observe_shutdown } from '../../../conversation/shutdown.ts';
 import type { CanonicalReader } from '../storage/journal_contracts.ts';
 import { read_canonical_body } from '../mailbox/poll.ts';
+import { PROTOCOL_VERSION } from '../../../execution_configuration.ts';
 
 test('quiesce cancels a catalog probe before native dispatch and joins HTTP before root reuse', async () => {
   const root = await mkdtemp(join(tmpdir(), 'mac-host-'));
@@ -162,6 +163,7 @@ test('quiesce cancels a catalog probe before native dispatch and joins HTTP befo
   const options = () => ({ deadline: performance.now() / 1000 + 10 });
   try {
     service = await MacService.open(configuration, bindings, options());
+    expect(context.identity.protocol_version).toBe(PROTOCOL_VERSION);
     expect(invocation.child_processes).toBe(service.child_processes);
     expect(invocation.one_shot_children).toBe(service.one_shot_children);
     expect(context.outbox).toBe(service.outbox);

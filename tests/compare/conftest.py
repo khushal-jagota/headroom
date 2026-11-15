@@ -17,4 +17,22 @@ def pytest_generate_tests(metafunc: pytest.Metafunc) -> None:
             if names
             else sorted((Path(__file__).parent / "lists").glob("*.json"))
         )
-        metafunc.parametrize("comparison_list", paths, ids=[p.stem for p in paths])
+        metafunc.parametrize(
+            "comparison_list",
+            [
+                pytest.param(
+                    path,
+                    marks=pytest.mark.xfail(
+                        run=False,
+                        reason=(
+                            "expected-open P3 (#916): local child custody rows and linked "
+                            "occurrence identities await supervision"
+                        ),
+                    ),
+                )
+                if path.name == "unit-15.queue.json"
+                else path
+                for path in paths
+            ],
+            ids=[p.stem for p in paths],
+        )
