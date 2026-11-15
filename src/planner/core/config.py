@@ -5,6 +5,7 @@ checked-in yaml. Nothing in the system reads a timing/limit/path inline."""
 from __future__ import annotations
 
 import os
+import re
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
@@ -15,12 +16,30 @@ import yaml
 
 from planner.core.errors import ErrorCode, PlannerError
 from planner.environments.app import AppValidationError, validate_app_sha
+from planner.notifications.config import load_apns_config
+from planner.notifications.contracts import APNsConfig
 
-# ConversationStore retries only rolled-back SQLite writer contention.
+# ConversationStore retries rolled-back SQLite writer contention after this pause.
 CONVERSATION_WRITE_LOCK_RETRY_SECONDS: Final = 0.05
+# A conversation write that only the VPS holds is retried in order after any other
+# failure: first after this delay, then after double the last delay, up to the cap.
+CONVERSATION_WRITE_FAILURE_FIRST_RETRY_SECONDS: Final = 0.5
+CONVERSATION_WRITE_FAILURE_MAX_RETRY_SECONDS: Final = 30.0
+# A Mac item still waiting on the VPS after this long is answered "retry later" and its
+# locks are let go; work that cannot stop part-way finishes on its own, and the resend
+# finds its receipt. The Mac waits 30 s for an answer (ITEM_BATCH_TIMEOUT_SECONDS in
+# executor/configuration.py). The answer comes by this limit whatever is still running,
+# so the 10 s left over is only for the trip back and a busy event loop.
+MAC_ITEM_RETRY_LATER_SECONDS: Final = 20.0
 
 HOST: Final = "127.0.0.1"  # §2: the bind is fixed, not tunable
 DEFAULT_CONFIG_PATH: Final = "config.yaml"
+SSE_HEARTBEAT_MS: Final = 15000
+DB_BUSY_TIMEOUT_MS: Final = 5000
+# Match the pinned AnyIO request-worker limiter (40), retaining ordinary bursts
+# without repeated schema parsing. Loans beyond this budget still open fresh.
+RUNTIME_DATABASE_CONNECTIONS: Final = 40
+SHUTDOWN_GRACE_SECONDS: Final = 30
 
 _TRUE: Final = frozenset({"1", "true", "yes", "on"})
 _FALSE: Final = frozenset({"0", "false", "no", "off"})
@@ -31,16 +50,12 @@ class Config:
     # §13 named keys
     db_path: str
     port: int
-    boundary_hour: int
     tick_seconds: int
     dispatch_enabled: bool
     # other tunables named across SPEC
-    sse_heartbeat_ms: int
     dispatcher_lock_path: str
     logs_dir: str
     backup_dir: str
-    db_busy_timeout_ms: int
-    shutdown_grace_seconds: int
     # optional hosted trusted-ingress boundary
     trusted_ingress_provider: str | None
     trusted_ingress_allowed_login: str | None
@@ -53,7 +68,20 @@ class Config:
     # test mode — ENV ONLY, never in config.yaml
     test_mode: bool
     fake_now: str | None
+    executor_id: str | None = None
+    apns: APNsConfig | None = None
     app_sha: str | None = None
+    credential_key_path: str = "data/credential-secrets/key"
+    measure_source_timeout_seconds: int = 30
+    workspace_root: Path | None = None
+    # Where Ticket worktrees and scratch live, and the one database whose Tickets own it.
+    # Both unset: no Ticket scratch is ever removed.
+    ticket_scratch_root: Path | None = None
+    ticket_scratch_database: str | None = None
+    # None preserves installed-release provisioning. Source home setup selects explicitly.
+    provision_account_skills: bool | None = None
+    # Live ingress only. Consume the environment input before agent children start.
+    refuse_unidentified_agent_calls: bool = False
 
 
 def _parse_bool(raw: object, key: str) -> bool:
@@ -115,6 +143,30 @@ def _optional_str_value(
         return None
     stripped = str(value).strip()
     return stripped or None
+
+
+def _workspace_root_value(file_cfg: Mapping[str, object], env: Mapping[str, str]) -> Path | None:
+    return _existing_directory_value(file_cfg, env, "workspace_root", "PLAN_WORKSPACE_ROOT")
+
+
+def _existing_directory_value(
+    file_cfg: Mapping[str, object], env: Mapping[str, str], key: str, env_var: str
+) -> Path | None:
+    value = env.get(env_var, file_cfg.get(key))
+    if value is None:
+        return None
+    if not isinstance(value, str) or not value.strip():
+        raise PlannerError(ErrorCode.validation, f"invalid {key}: {value!r}")
+    try:
+        root = Path(value).expanduser()
+        if not root.is_absolute():
+            raise ValueError("the path must be absolute")
+        root = root.resolve(strict=True)
+        if not root.is_dir():
+            raise ValueError("the path must be an existing directory")
+    except (OSError, RuntimeError, ValueError) as exc:
+        raise PlannerError(ErrorCode.validation, f"invalid {key} {value!r}: {exc}") from exc
+    return root
 
 
 def _int_value(
@@ -208,6 +260,12 @@ def _validate_trusted_ingress(
 
 def load_config(path: str | None = None, env: Mapping[str, str] | None = None) -> Config:
     env = os.environ if env is None else env
+    refuse_unidentified_agent_calls = _parse_bool(
+        env.get("PLAN_REFUSE_UNIDENTIFIED_AGENT_CALLS", "0"),
+        "refuse_unidentified_agent_calls",
+    )
+    if env is os.environ:
+        os.environ.pop("PLAN_REFUSE_UNIDENTIFIED_AGENT_CALLS", None)
     cfg = _read_yaml(path)
 
     test_mode = _parse_bool(env.get("PLAN_TEST_MODE", "0"), "test_mode")
@@ -244,25 +302,56 @@ def load_config(path: str | None = None, env: Mapping[str, str] | None = None) -
         except AppValidationError as exc:
             raise PlannerError(ErrorCode.validation, str(exc)) from exc
 
+    executor_id = _optional_str_value(cfg, env, "executor_id", "PLAN_EXECUTOR_ID")
+    if executor_id is not None and re.fullmatch(r"[A-Za-z0-9_.:-]{1,128}", executor_id) is None:
+        raise PlannerError(ErrorCode.validation, "executor_id must name a logical executor")
+
+    from planner.platform_runtime.paths import installation_data_directory
+
+    data_directory = installation_data_directory(Path("."))
+    db_path = _str_value(cfg, env, "db_path", "PLAN_DB_PATH", str(data_directory / "planning.db"))
+    account_skills = cfg.get("provision_account_skills")
+    if "PLAN_PROVISION_ACCOUNT_SKILLS" in env:
+        account_skills = env["PLAN_PROVISION_ACCOUNT_SKILLS"]
+    credential_key_path = _str_value(
+        cfg,
+        env,
+        "credential_key_path",
+        "PLAN_CREDENTIAL_KEY_PATH",
+        str(Path(db_path).parent / "credential-secrets" / "key"),
+    )
     return Config(
-        db_path=_str_value(cfg, env, "db_path", "PLAN_DB_PATH", "data/planning.db"),
+        refuse_unidentified_agent_calls=refuse_unidentified_agent_calls,
+        db_path=db_path,
+        provision_account_skills=(
+            None
+            if account_skills is None
+            else _parse_bool(account_skills, "provision_account_skills")
+        ),
+        workspace_root=_workspace_root_value(cfg, env),
+        ticket_scratch_root=_existing_directory_value(
+            cfg, env, "ticket_scratch_root", "PLAN_TICKET_SCRATCH_ROOT"
+        ),
+        ticket_scratch_database=_optional_str_value(
+            cfg, env, "ticket_scratch_database", "PLAN_TICKET_SCRATCH_DATABASE"
+        ),
+        credential_key_path=credential_key_path,
+        measure_source_timeout_seconds=_positive_int_value(
+            cfg, env, "measure_source_timeout_seconds", "PLAN_MEASURE_SOURCE_TIMEOUT_SECONDS", 30
+        ),
         port=_int_value(cfg, env, "port", "PLAN_PORT", 8767),
-        boundary_hour=_int_value(cfg, env, "boundary_hour", "PLAN_BOUNDARY_HOUR", 5),
         tick_seconds=_int_value(cfg, env, "tick_seconds", "PLAN_TICK_SECONDS", 60),
         dispatch_enabled=_bool_value(cfg, env, "dispatch_enabled", "PLAN_DISPATCH_ENABLED", True),
-        sse_heartbeat_ms=_positive_int_value(
-            cfg, env, "sse_heartbeat_ms", "PLAN_SSE_HEARTBEAT_MS", 15000
-        ),
         dispatcher_lock_path=_str_value(
-            cfg, env, "dispatcher_lock_path", "PLAN_DISPATCHER_LOCK_PATH", "data/dispatcher.lock"
+            cfg,
+            env,
+            "dispatcher_lock_path",
+            "PLAN_DISPATCHER_LOCK_PATH",
+            str(data_directory / "dispatcher.lock"),
         ),
-        logs_dir=_str_value(cfg, env, "logs_dir", "PLAN_LOGS_DIR", "data/logs"),
-        backup_dir=_str_value(cfg, env, "backup_dir", "PLAN_BACKUP_DIR", "data/backups"),
-        db_busy_timeout_ms=_int_value(
-            cfg, env, "db_busy_timeout_ms", "PLAN_DB_BUSY_TIMEOUT_MS", 5000
-        ),
-        shutdown_grace_seconds=_int_value(
-            cfg, env, "shutdown_grace_seconds", "PLAN_SHUTDOWN_GRACE_SECONDS", 30
+        logs_dir=_str_value(cfg, env, "logs_dir", "PLAN_LOGS_DIR", str(data_directory / "logs")),
+        backup_dir=_str_value(
+            cfg, env, "backup_dir", "PLAN_BACKUP_DIR", str(data_directory / "backups")
         ),
         voice_transcription_base_url=_str_value(
             cfg,
@@ -285,5 +374,7 @@ def load_config(path: str | None = None, env: Mapping[str, str] | None = None) -
         trusted_ingress_canonical_origin=trusted_ingress_canonical_origin,
         test_mode=test_mode,
         fake_now=fake_now,
+        executor_id=executor_id,
         app_sha=app_sha,
+        apns=load_apns_config(env),
     )

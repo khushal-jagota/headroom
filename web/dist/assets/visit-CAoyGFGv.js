@@ -1,0 +1,1 @@
+const i=new WeakMap;function s(e,t){i.set(e,t)}function n(e){const t=i.get(e);return i.delete(e),t}function a(e,t){var r;return((r=i.get(e))==null?void 0:r.artifactHref)===t?"#/review":null}function c(e){return e.review_item_type==="message"?`message:${e.conversation_id}`:`ticket:${e.ticket_id}`}export{c as a,a as b,s as r,n as t};

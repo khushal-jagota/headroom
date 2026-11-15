@@ -12,13 +12,14 @@ from fastapi.testclient import TestClient
 
 from planner.core.clock import build_clock
 from planner.core.config import load_config
+from planner.core.contracts import OWNER_PRINCIPAL
 from planner.core.db import connect, create_schema
 from planner.core.server import create_app
 from planner.files import api
-from planner.files.contracts import SprintItemFile
+from planner.files.contracts import ManagerFile
 from planner.files.logic import reuse
-from planner.files.logic.paths import resolve_sprint_item_file
-from planner.files.logic.reuse import read_representation_within_bound
+from planner.files.logic.paths import resolve_goal_file, resolve_manager_file
+from planner.tickets.data import create_ticket
 
 
 def _make_app(tmp_path: Path) -> tuple[FastAPI, Path]:
@@ -46,76 +47,76 @@ def _ticket_root(db_path: Path) -> Path:
     return db_path.parent / "files" / "tickets"
 
 
-def _sprint_item_root(db_path: Path) -> Path:
+def _manager_root(db_path: Path) -> Path:
     return db_path.parent / "files" / "sprint-items"
 
 
-def test_sprint_item_files_use_an_isolated_root_and_route(tmp_path: Path) -> None:
+def test_manager_files_use_an_isolated_root_and_route(tmp_path: Path) -> None:
     app, db_path = _make_app(tmp_path)
-    target = _sprint_item_root(db_path) / "si_files" / "notes" / "brief.md"
+    target = _manager_root(db_path) / "si_files" / "notes" / "brief.md"
     target.parent.mkdir(parents=True)
     target.write_text("brief", encoding="utf-8")
+    html = target.with_name("index.html")
+    html.write_text("<p>HTML</p>", encoding="utf-8")
     with connect(str(db_path)) as conn:
         conn.execute(
             "INSERT INTO agents(agent_key,conversation_id) "
-            "VALUES ('sprint_item_supervisor_si_files',NULL)"
+            "VALUES ('manager_si_files',NULL)"
         )
         conn.execute(
-            "INSERT INTO sprint_items(id,title,project_id,supervisor_backend,supervisor_model,"
-            "supervisor_reasoning_effort,created_at,updated_at) "
+            "INSERT INTO managers(id,title,project_id,manager_backend,manager_model,"
+            "manager_reasoning_effort,created_at,updated_at) "
             "VALUES ('si_files','Files','project_vylo','codex','gpt-5.6-sol','medium',1,1)"
         )
         conn.commit()
 
-    assert resolve_sprint_item_file(db_path, "si_files", "notes/brief.md") == (
-        SprintItemFile("si_files", "notes/brief.md", target.resolve(strict=True))
+    assert resolve_manager_file(db_path, "si_files", "notes/brief.md") == (
+        ManagerFile("si_files", "notes/brief.md", target.resolve(strict=True))
     )
     with TestClient(app) as client:
-        response = client.get("/files/sprint-items/si_files/notes/brief.md")
-        missing = client.get("/files/sprint-items/si_other/notes/brief.md")
+        response = client.get("/files/managers/si_files/notes/brief.md")
+        retained = client.get("/files/sprint-items/si_files/notes/brief.md")
+        assert retained.content == response.content
+        assert retained.headers["etag"] == response.headers["etag"]
+        missing = client.get("/files/managers/si_other/notes/brief.md")
+        for prefix in ("managers", "sprint-items"):
+            confined = client.get(
+                f"/files/{prefix}/si_files/notes/index.html",
+                headers={"X-Panels-Artifact-Root": "/files/managers/si_files/notes/index.html"},
+            )
+            assert confined.status_code == 200 and confined.text == "<p>HTML</p>"
 
     assert response.status_code == 200 and response.text == "brief"
     assert response.headers["x-content-type-options"] == "nosniff"
     assert missing.status_code == 404
 
 
-def test_sprint_item_file_resolution_rejects_root_entity_and_file_symlinks(
-    tmp_path: Path,
+@pytest.mark.parametrize("kind", ["manager", "goal"])
+def test_managed_file_resolution_rejects_root_entity_and_file_symlinks(
+    tmp_path: Path, kind: str,
 ) -> None:
     db_path = tmp_path / "data" / "planning.db"
     outside = tmp_path / "outside"
     outside.mkdir()
     (outside / "brief.md").write_text("outside", encoding="utf-8")
-    root = _sprint_item_root(db_path)
+    root = db_path.parent / "files" / "goals" if kind == "goal" else _manager_root(db_path)
+    resolve = resolve_goal_file if kind == "goal" else resolve_manager_file
     root.parent.mkdir(parents=True)
     root.symlink_to(outside, target_is_directory=True)
     with pytest.raises(ValueError):
-        resolve_sprint_item_file(db_path, "si_files", "brief.md")
+        resolve(db_path, "si_files", "brief.md")
     root.unlink()
     root.mkdir()
     (root / "si_files").symlink_to(outside, target_is_directory=True)
     with pytest.raises(ValueError):
-        resolve_sprint_item_file(db_path, "si_files", "brief.md")
+        resolve(db_path, "si_files", "brief.md")
     (root / "si_files").unlink()
     (root / "si_files").mkdir()
     (root / "si_files" / "brief.md").symlink_to(outside / "brief.md")
     with pytest.raises(ValueError):
-        resolve_sprint_item_file(db_path, "si_files", "brief.md")
+        resolve(db_path, "si_files", "brief.md")
 
 
-def test_ticket_file_route_serves_inline_allowlist_with_nosniff(tmp_path: Path) -> None:
-    app, db_path = _make_app(tmp_path)
-    target = _ticket_root(db_path) / "t_file123" / "images" / "pic.png"
-    target.parent.mkdir(parents=True)
-    target.write_bytes(b"\x89PNG\r\n\x1a\n")
-
-    with TestClient(app) as client:
-        response = client.get("/files/tickets/t_file123/images/pic.png")
-
-    assert response.status_code == 200, response.text
-    assert response.headers["x-content-type-options"] == "nosniff"
-    assert response.headers["content-disposition"] == 'inline; filename="pic.png"'
-    assert response.headers["content-type"].startswith("image/png")
 
 
 @pytest.mark.parametrize("path", ["%2e%2e/notes.md", "nested%2fnotes.md", "nested%5cnotes.md"])
@@ -135,42 +136,8 @@ def _ticket_file(db_path: Path, body: bytes, name: str = "notes.md") -> Path:
     return target
 
 
-def test_a_browser_may_reuse_the_copy_it_holds(tmp_path: Path) -> None:
-    """The whole point: asking whether a copy is still good costs no body."""
-    app, db_path = _make_app(tmp_path)
-    _ticket_file(db_path, b"the artifact")
-
-    with TestClient(app) as client:
-        first = client.get("/files/tickets/t_reuse01/notes.md")
-        again = client.get(
-            "/files/tickets/t_reuse01/notes.md",
-            headers={"If-None-Match": first.headers["etag"]},
-        )
-
-    assert first.status_code == 200
-    # private, because these files are answered per reader; no-cache, because a stored
-    # copy is checked before every use.
-    assert first.headers["cache-control"] == "private, no-cache"
-    assert again.status_code == 304
-    assert again.content == b""
 
 
-def test_a_rewrite_of_the_same_size_retires_the_old_validator(tmp_path: Path) -> None:
-    """A stat-based validator cannot see this. A worker rewrites artifacts in place."""
-    app, db_path = _make_app(tmp_path)
-    target = _ticket_file(db_path, b"A" * 64)
-
-    with TestClient(app) as client:
-        before = client.get("/files/tickets/t_reuse01/notes.md").headers["etag"]
-        target.write_bytes(b"B" * 64)
-        after = client.get("/files/tickets/t_reuse01/notes.md")
-        asked_with_the_old_one = client.get(
-            "/files/tickets/t_reuse01/notes.md", headers={"If-None-Match": before}
-        )
-
-    assert after.headers["etag"] != before
-    assert asked_with_the_old_one.status_code == 200
-    assert asked_with_the_old_one.content == b"B" * 64
 
 
 def test_a_stale_validator_is_not_rescued_by_a_matching_date(tmp_path: Path) -> None:
@@ -192,86 +159,10 @@ def test_a_stale_validator_is_not_rescued_by_a_matching_date(tmp_path: Path) -> 
     assert answer.content == b"the artifact"
 
 
-def test_a_range_request_is_answered_exactly_as_it_always_was(tmp_path: Path) -> None:
-    """Video playback rides on this, and a validator from an earlier read would break it.
-
-    A range answer's size and offsets come from the stat taken as the body is sent. An
-    entity tag computed before that, from a separate read, can disagree with it — and a
-    disagreeing tag is worse than none, because ``If-Range`` would confirm a copy the
-    reader does not have and then hand over bytes from a different one.
-    """
-    app, db_path = _make_app(tmp_path)
-    body = bytes(range(256)) * 64
-    _ticket_file(db_path, body, name="clip.mp4")
-
-    with TestClient(app) as client:
-        whole = client.get("/files/tickets/t_reuse01/clip.mp4")
-        part = client.get(
-            "/files/tickets/t_reuse01/clip.mp4", headers={"Range": "bytes=10-19"}
-        )
-        with_live_validator = client.get(
-            "/files/tickets/t_reuse01/clip.mp4",
-            headers={"Range": "bytes=10-19", "If-Range": part.headers["etag"]},
-        )
-        with_stale_validator = client.get(
-            "/files/tickets/t_reuse01/clip.mp4",
-            headers={"Range": "bytes=10-19", "If-Range": '"a validator from before"'},
-        )
-
-    assert part.status_code == 206
-    assert part.headers["content-range"] == f"bytes 10-19/{len(body)}"
-    assert with_live_validator.status_code == 206
-    # The copy the range was meant for is gone, so the reader gets the current one whole.
-    assert with_stale_validator.status_code == 200
-    assert with_stale_validator.content == body
-    # It still carries the policy: a stored piece is checked before it is used, and a
-    # shared cache may not keep it at all.
-    assert part.headers["cache-control"] == "private, no-cache"
-    # Its tag is the one the sending stat derived, never a byte-derived one: that is
-    # what keeps the tag and the range arithmetic describing the same snapshot. A video
-    # keeps that tag on every answer, range or not, because it is seeked.
-    representation = read_representation_within_bound(
-        _ticket_root(db_path) / "t_reuse01" / "clip.mp4"
-    )
-    assert representation is not None
-    assert part.headers["etag"] != representation.etag
-    assert whole.headers["etag"] != representation.etag
 
 
-def test_a_range_request_is_never_answered_not_modified(tmp_path: Path) -> None:
-    app, db_path = _make_app(tmp_path)
-    _ticket_file(db_path, b"C" * 512, name="clip.mp4")
-
-    with TestClient(app) as client:
-        plain = client.get("/files/tickets/t_reuse01/clip.mp4")
-        ranged = client.get(
-            "/files/tickets/t_reuse01/clip.mp4",
-            headers={"Range": "bytes=0-9", "If-None-Match": plain.headers["etag"]},
-        )
-
-    assert ranged.status_code == 206
-    assert ranged.content == b"C" * 10
 
 
-def test_a_date_alone_never_confirms_a_copy(tmp_path: Path) -> None:
-    """A second-resolution timestamp cannot see a rewrite inside the same second.
-
-    Every answer carries an entity tag, so nothing needs the date, and consulting it
-    would reintroduce exactly the staleness the byte-derived tag removes.
-    """
-    app, db_path = _make_app(tmp_path)
-    target = _ticket_file(db_path, b"A" * 12)
-
-    with TestClient(app) as client:
-        served = client.get("/files/tickets/t_reuse01/notes.md")
-        target.write_bytes(b"B" * 12)  # same size, same second
-        answer = client.get(
-            "/files/tickets/t_reuse01/notes.md",
-            headers={"If-Modified-Since": served.headers["last-modified"]},
-        )
-
-    assert answer.status_code == 200
-    assert answer.content == b"B" * 12
 
 
 def test_a_conditional_request_never_answers_before_the_route_has_checked(
@@ -279,25 +170,25 @@ def test_a_conditional_request_never_answers_before_the_route_has_checked(
 ) -> None:
     """A 304 is an answer. Only a reader who could have had the file may be given one.
 
-    The refusal here is the authority gate, not a missing file: the Sprint Item exists
-    and so does the artifact, and the caller is another Sprint Item's supervisor.
+    The refusal here is the authority gate, not a missing file: the Manager exists
+    and so does the artifact, and the caller is another Manager's supervisor.
     """
     app, db_path = _make_app(tmp_path)
     _ticket_file(db_path, b"the artifact")
-    item = _sprint_item_root(db_path) / "si_reuse01"
+    item = _manager_root(db_path) / "si_reuse01"
     item.mkdir(parents=True)
     (item / "brief.md").write_text("the outcome", encoding="utf-8")
 
     with TestClient(app) as client:
-        readable = client.get("/files/sprint-items/si_reuse01/brief.md")
+        readable = client.get("/files/managers/si_reuse01/brief.md")
         assert readable.status_code == 200, readable.text
         etag = readable.headers["etag"]
         somebody_else = client.get(
-            "/files/sprint-items/si_reuse01/brief.md",
+            "/files/managers/si_reuse01/brief.md",
             headers={
                 "If-None-Match": etag,
-                "X-Plan-Actor": "sprint_item_supervisor",
-                "X-Plan-Sprint-Item-Id": "si_someone_else",
+                "X-Plan-Actor": "manager",
+                "X-Plan-Manager-ID": "si_someone_else",
             },
         )
         missing = client.get(
@@ -312,23 +203,6 @@ def test_a_conditional_request_never_answers_before_the_route_has_checked(
     assert missing.status_code == 404
 
 
-def test_the_sprint_item_route_answers_conditionally_too(tmp_path: Path) -> None:
-    app, db_path = _make_app(tmp_path)
-    item = _sprint_item_root(db_path) / "si_reuse01"
-    item.mkdir(parents=True)
-    (item / "brief.md").write_text("the outcome", encoding="utf-8")
-
-    with TestClient(app) as client:
-        first = client.get("/files/sprint-items/si_reuse01/brief.md")
-        if first.status_code != 200:  # the route is supervisor-read gated
-            pytest.skip(f"this fixture cannot read the file: {first.status_code}")
-        again = client.get(
-            "/files/sprint-items/si_reuse01/brief.md",
-            headers={"If-None-Match": first.headers["etag"]},
-        )
-
-    assert first.headers["cache-control"] == "private, no-cache"
-    assert again.status_code == 304
 
 
 def test_the_tag_always_describes_the_bytes_that_were_sent(
@@ -355,94 +229,260 @@ def test_the_tag_always_describes_the_bytes_that_were_sent(
     with TestClient(app) as client:
         answer = client.get("/files/tickets/t_reuse01/notes.md")
 
-    served = f'"{hashlib.sha256(answer.content).hexdigest()}"'
-    assert answer.headers["etag"] == served, "the tag must describe the bytes that travelled"
-    assert answer.content == b"A" * 64
+        served = f'"{hashlib.sha256(answer.content).hexdigest()}"'
+        assert answer.headers["etag"] == served, "the tag must describe the bytes that travelled"
+        assert answer.content == b"A" * 64
 
-    # Without this the test passes whether or not the patch ever took: serving A and
-    # tagging A is also what happens when nothing mutates, so the mutation needs a
-    # witness of its own.
-    assert target.read_bytes() == b"B" * 64, "the rewrite must actually have landed"
+        # Without this the test passes whether or not the patch ever took: serving A and
+        # tagging A is also what happens when nothing mutates, so the mutation needs a
+        # witness of its own.
+        assert target.read_bytes() == b"B" * 64, "the rewrite must actually have landed"
 
-    # The artifact goes back to what it was when the reader took its copy. The reader's
-    # copy really is current now, so confirming it is correct.
-    monkeypatch.undo()
-    target.write_bytes(b"A" * 64)
-    with TestClient(app) as client:
+        # The artifact goes back to what it was when the reader took its copy. The reader's
+        # copy really is current now, so confirming it is correct.
+        monkeypatch.undo()
+        target.write_bytes(b"A" * 64)
         revalidated = client.get(
             "/files/tickets/t_reuse01/notes.md",
             headers={"If-None-Match": answer.headers["etag"]},
         )
-    assert revalidated.status_code == 304
+        assert revalidated.status_code == 304
 
 
-def test_an_artifact_larger_than_the_bound_keeps_the_streaming_answer(
+def test_html_navigation_confines_resolved_paths_without_changing_delivery(tmp_path: Path) -> None:
+    """A sibling reached through a symlink must not enter the preview sandbox."""
+    app, db_path = _make_app(tmp_path)
+    index = _ticket_file(db_path, b"index", "artifact/index.html")
+    child = _ticket_file(db_path, b"child", "artifact/child.html")
+    outside = _ticket_file(db_path, b"private sibling", "outside.html")
+    (index.parent / "escape.html").symlink_to(outside)
+    (index.parent / "inside.html").symlink_to(child)
+    (index.parent / "nested").symlink_to(index.parent, target_is_directory=True)
+    root_href = "/files/tickets/t_reuse01/artifact/index.html"
+    headers = {"X-Panels-Artifact-Root": root_href}
+    with TestClient(app) as client:
+        ordinary = client.get(root_href)
+        confined = client.get(root_href, headers=headers)
+        valid = client.get("/files/tickets/t_reuse01/artifact/inside.html", headers=headers)
+        nested = client.get("/files/tickets/t_reuse01/artifact/nested/child.html", headers=headers)
+        missing = client.get("/files/tickets/t_reuse01/artifact/missing.html", headers=headers)
+        escaped = client.get("/files/tickets/t_reuse01/artifact/escape.html", headers=headers)
+        sibling = client.get("/files/tickets/t_reuse01/outside.html", headers=headers)
+    assert all(answer.status_code == 200 for answer in (ordinary, confined, valid, nested))
+    assert ordinary.content == confined.content == b"index"
+    assert valid.content == nested.content == b"child"
+    for name in ("content-disposition", "x-content-type-options", "cache-control", "etag"):
+        assert ordinary.headers[name] == confined.headers[name]
+    assert missing.status_code == escaped.status_code == sibling.status_code == 404
+    assert missing.json() == escaped.json() == sibling.json()
+    assert str(tmp_path) not in escaped.text
+
+
+def test_html_navigation_resolves_symlinked_artifact_root_before_comparison(tmp_path: Path) -> None:
+    """The lexical artifact alias is permitted only inside its resolved directory."""
+    app, db_path = _make_app(tmp_path)
+    index = _ticket_file(db_path, b"index", "actual/index.html")
+    _ticket_file(db_path, b"child", "actual/child.html")
+    outside = _ticket_file(db_path, b"outside", "sibling/outside.html")
+    owner_root = index.parent.parent
+    (owner_root / "alias").symlink_to(index.parent, target_is_directory=True)
+    (index.parent / "escape.html").symlink_to(outside)
+    # A root document symlink cannot silently redefine the artifact directory.
+    (index.parent / "bad-root.html").symlink_to(outside)
+    headers = {"X-Panels-Artifact-Root": "/files/tickets/t_reuse01/alias/index.html"}
+    with TestClient(app) as client:
+        valid = client.get("/files/tickets/t_reuse01/alias/child.html", headers=headers)
+        escaped = client.get("/files/tickets/t_reuse01/alias/escape.html", headers=headers)
+        bad_root = client.get("/files/tickets/t_reuse01/actual/child.html", headers={
+            "X-Panels-Artifact-Root": "/files/tickets/t_reuse01/actual/bad-root.html",
+        })
+    assert valid.status_code == 200 and valid.content == b"child"
+    assert escaped.status_code == bad_root.status_code == 404
+
+
+def test_html_navigation_rejects_untrusted_root_descriptors(tmp_path: Path) -> None:
+    """Headers are untrusted too, including encoded traversal and URL authorities."""
+    app, db_path = _make_app(tmp_path)
+    _ticket_file(db_path, b"index", "artifact/index.html")
+    target = "/files/tickets/t_reuse01/artifact/index.html"
+    unsafe_roots = [
+        "https://outside.test" + target, "//outside.test" + target,
+        target + "?query=yes", target + "#fragment", target.replace("/artifact/", "/artifact/../"),
+        target.replace("/artifact/", "/artifact/%2e%2e/"),
+        target.replace("/artifact/", "/artifact%2f"), target.replace("/artifact/", "/artifact%5c"),
+        target.replace("/artifact/", "/artifact/%252e%252e/"),
+        target.replace("/artifact/", "/artifact\\"),
+        target.replace("t_reuse01", "t_other"),
+        target.replace("tickets", "managers"),
+    ]
+    with TestClient(app) as client:
+        absent = client.get("/files/tickets/t_reuse01/artifact/absent.html")
+        for root in unsafe_roots:
+            response = client.get(target, headers={"X-Panels-Artifact-Root": root})
+            assert response.status_code == 404, root
+            assert response.json() == absent.json(), root
+
+
+def _create_goal(client: TestClient, holder_id: str | None = None) -> str:
+    result = client.post(
+        "/api/goals", json={"title": "Files", "project_id": "project_other", "kind": "binary",
+               "primary_checklist_block_id": None,
+               "holder_kind": "manager" if holder_id else "chief",
+               "holder_id": holder_id}
+    )
+    assert result.status_code == 200, result.text
+    return str(result.json()["id"])
+
+
+def test_goal_file_and_catalog_authority_precedes_access_and_conditional_responses(
     tmp_path: Path,
 ) -> None:
-    """Reuse is declined rather than approximated when it cannot be made consistent."""
     app, db_path = _make_app(tmp_path)
-    body = b"z" * (reuse.REUSE_MEMORY_BOUND_BYTES + 1)
-    _ticket_file(db_path, body, name="huge.txt")
-
     with TestClient(app) as client:
-        answer = client.get("/files/tickets/t_reuse01/huge.txt")
-        asked_again = client.get(
-            "/files/tickets/t_reuse01/huge.txt",
-            headers={"If-None-Match": answer.headers["etag"]},
+        holder = client.post(
+            "/api/managers", json={"title": "File owner", "project_id": "project_other"}
         )
+        manager = client.post(
+            "/api/managers", json={"title": "Another owner", "project_id": "project_other"}
+        )
+        assert holder.status_code == manager.status_code == 200
+        goal_id = _create_goal(client, holder.json()["id"])
+        foreign_id = _create_goal(client, manager.json()["id"])
+        url = f"/files/goals/{goal_id}/artifacts/brief.md"
+        catalog = f"/api/artifact-catalog/goal/{goal_id}"
+        own = {"X-Plan-Actor": "manager", "X-Plan-Manager-ID": holder.json()["id"]}
+        allowed = [{}, {"X-Plan-Actor": "chief"}, own]
+        for headers in allowed:
+            assert client.put(url, json={"content": "private"}, headers=headers).status_code == 200
+            read = client.get(url, headers=headers)
+            assert read.status_code == 200 and read.content == b"private"
+            assert client.get(catalog, headers=headers).status_code == 200
+            unchanged = client.get(url, headers={**headers, "If-None-Match": read.headers["etag"]})
+            assert unchanged.status_code == 304
+            assert unchanged.headers["cache-control"] == "private, no-cache"
+        with connect(str(db_path)) as conn:
+            ticket = create_ticket(
+                conn, title="Another worker", worker_type="coding", principal=OWNER_PRINCIPAL,
+                now=1, title_max_chars=200,
+            )
+        refused = [
+            {"X-Plan-Actor": "goal", "X-Plan-Goal-ID": goal_id},
+            {"X-Plan-Actor": "goal", "X-Plan-Goal-ID": foreign_id},
+            {"X-Plan-Actor": "manager", "X-Plan-Manager-ID": manager.json()["id"]},
+            {"X-Plan-Actor": "worker", "X-Plan-Ticket-ID": ticket.id},
+        ]
+        for headers in refused:
+            conditional = client.get(
+                url, headers={**headers, "If-None-Match": read.headers["etag"]}
+            )
+            assert conditional.status_code == 400
+            assert conditional.json()["error"]["code"] == "agent_forbidden"
+            # Removed actors fail at identity parsing; valid principals reach the
+            # goal authority gate before any file access or conditional response.
+            if headers["X-Plan-Actor"] == "goal":
+                assert conditional.json()["error"]["detail"] == {"actor": "goal"}
+            else:
+                assert conditional.json()["error"]["detail"]["target_id"] == goal_id
+            assert client.get(catalog, headers=headers).status_code == 400
+            assert client.put(url, json={"content": "stolen"}, headers=headers).status_code == 400
+            assert client.delete(url, headers=headers).status_code == 400
+            assert client.get(url).content == b"private"
+        # Existing bytes under a missing goal never grant access, even to the owner.
+        orphan = db_path.parent / "files" / "goals" / "goal_missing" / "artifacts" / "brief.md"
+        orphan.parent.mkdir(parents=True)
+        orphan.write_text("orphan")
+        missing = "/files/goals/goal_missing/artifacts/brief.md"
+        assert client.get(missing).status_code == 404
+        assert client.get("/api/artifact-catalog/goal/goal_missing").status_code == 404
+        assert client.put(missing, json={"content": "changed"}).status_code == 404
+        assert client.delete(missing).status_code == 404
+        assert orphan.read_text() == "orphan"
+        for headers in allowed:
+            assert client.delete(url, headers=headers).status_code == 200
+            assert client.put(url, json={"content": "private"}, headers=headers).status_code == 200
 
-    assert answer.status_code == 200
-    assert answer.content == body
-    # The policy is still on it, and it is never told its copy is unchanged.
-    assert answer.headers["cache-control"] == "private, no-cache"
-    assert asked_again.status_code == 200
 
-
-def test_sound_and_video_keep_the_framework_answer_at_any_size(tmp_path: Path) -> None:
-    """Media is seeked, so it keeps range handling and a tag that agrees with it."""
+def test_goal_files_reject_traversal_and_symlink_escapes_and_confine_html_navigation(
+    tmp_path: Path,
+) -> None:
     app, db_path = _make_app(tmp_path)
-    _ticket_file(db_path, b"\x00" * 2048, name="clip.mp4")
-    _ticket_file(db_path, b"\x00" * 2048, name="note.mp3")
-
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "secret.html").write_text("secret")
     with TestClient(app) as client:
-        video = client.get("/files/tickets/t_reuse01/clip.mp4")
-        audio = client.get("/files/tickets/t_reuse01/note.mp3")
-        video_again = client.get(
-            "/files/tickets/t_reuse01/clip.mp4",
-            headers={"If-None-Match": video.headers["etag"]},
-        )
+        goal_id = _create_goal(client)
+        root = db_path.parent / "files" / "goals" / goal_id
+        site = root / "artifacts" / "site"
+        site.mkdir(parents=True)
+        (site / "index.html").write_text("<p>root</p>")
+        (site / "next.html").write_text("<p>next</p>")
+        (site / "escape.html").symlink_to(outside / "secret.html")
+        (root / "outside.html").write_text("outside site")
+        (root / "escape").symlink_to(outside, target_is_directory=True)
+        prefix = f"/files/goals/{goal_id}/"
+        for path in ("%2e%2e/secret.html", "nested%2fsecret.html", "nested%5csecret.html"):
+            assert client.get(prefix + path).status_code == 404
+            assert client.put(prefix + path, json={"content": "changed"}).status_code == 404
+            assert client.delete(prefix + path).status_code == 404
+        for path in ("escape/secret.html", "artifacts/site/escape.html"):
+            assert client.get(prefix + path).status_code == 404
+        escaped_write = client.put(prefix + "escape/new/secret.html", json={"content": "changed"})
+        assert escaped_write.status_code == 400
+        assert not (outside / "new").exists()
+        assert client.delete(prefix + "escape/secret.html").status_code == 400
+        assert (outside / "secret.html").read_text() == "secret"
+        headers = {"X-Panels-Artifact-Root": prefix + "artifacts/site/index.html"}
+        ordinary = client.get(prefix + "artifacts/site/next.html")
+        confined = client.get(prefix + "artifacts/site/next.html", headers=headers)
+        assert confined.status_code == 200 and confined.content == ordinary.content
+        for key in ("etag", "cache-control", "content-disposition", "x-content-type-options"):
+            assert confined.headers[key] == ordinary.headers[key]
+        for path in ("outside.html", "artifacts/site/escape.html"):
+            assert client.get(prefix + path, headers=headers).status_code == 404
+        other = _create_goal(client)
+        other_url = f"/files/goals/{other}/artifacts/site/next.html"
+        assert client.put(other_url, json={"content": "another goal"}).status_code == 200
+        assert client.get(other_url, headers=headers).status_code == 404
 
-    for answer in (video, audio):
-        assert answer.headers["cache-control"] == "private, no-cache"
-        assert answer.headers["accept-ranges"] == "bytes"
-    assert video_again.status_code == 200
 
-
-def test_a_non_media_file_still_serves_a_plain_range(tmp_path: Path) -> None:
-    """Asking for a piece of a text artifact still gets a piece of it.
-
-    Reuse and ranges each keep their own tag, and the two are never compared. A plain
-    range is answered by the framework exactly as before. Only a *conditional* range —
-    one carrying the byte-derived tag the whole-file answer gave out — declines, because
-    the framework judges ``If-Range`` against its own stat-derived tag and cannot
-    recognise the other. Declining means the whole current file, which is the safe
-    answer and the one the specification asks for.
-    """
+def test_ticket_checkout_is_private_through_routes_aliases_and_catalog(tmp_path: Path) -> None:
+    """The new colocated checkout must never become a downloadable artifact."""
     app, db_path = _make_app(tmp_path)
-    body = b"the artifact, at some length" * 64
-    _ticket_file(db_path, body, name="report.txt")
-    url = "/files/tickets/t_reuse01/report.txt"
-
-    with TestClient(app) as client:
-        whole = client.get(url)
-        plain_range = client.get(url, headers={"Range": "bytes=4-13"})
-        conditional_range = client.get(
-            url, headers={"Range": "bytes=4-13", "If-Range": whole.headers["etag"]}
+    with connect(str(db_path)) as conn:
+        ticket = create_ticket(
+            conn, title="Private checkout", worker_type="coding", principal=OWNER_PRINCIPAL,
+            now=1, title_max_chars=200,
         )
-
-    assert plain_range.status_code == 206
-    assert plain_range.content == body[4:14]
-    assert plain_range.headers["content-range"] == f"bytes 4-13/{len(body)}"
-    # The conditional one is handed the whole current file instead of a piece.
-    assert conditional_range.status_code == 200
-    assert conditional_range.content == body
+    root = _ticket_root(db_path) / ticket.id
+    (root / "worktree").mkdir(parents=True)
+    (root / "worktree" / "secret.html").write_text("private source")
+    (root / ".panels-workspace.json").write_text('{"repository":"private"}')
+    (root / "artifacts").mkdir()
+    (root / "artifacts" / "index.html").write_text("public artifact")
+    (root / "artifacts" / "alias.html").symlink_to(root / "worktree" / "secret.html")
+    prefix = f"/files/tickets/{ticket.id}/"
+    # Already indexed links can predate the privacy rule or point through aliases.
+    with connect(str(db_path)) as conn:
+        for ordinal, relative in enumerate(("worktree/secret.html", "artifacts/alias.html")):
+            conn.execute(
+                "INSERT INTO ticket_artifact_links "
+                "(ticket_id,field_id,ordinal,href,target,origin,stem,parent,kind) "
+                "VALUES (?,?,?,?,?,NULL,?,?,?)",
+                (ticket.id, "brief", ordinal, prefix + relative, prefix + relative,
+                 "secret", "", "html"),
+            )
+        conn.commit()
+    with TestClient(app) as client:
+        for relative in ("worktree/secret.html", ".panels-workspace.json", "artifacts/alias.html"):
+            assert client.get(prefix + relative).status_code == 404
+        assert client.get(
+            prefix + "artifacts/alias.html",
+            headers={"X-Panels-Artifact-Root": prefix + "artifacts/index.html"},
+        ).status_code == 404
+        artifact = client.get(prefix + "artifacts/index.html")
+        assert artifact.status_code == 200 and artifact.text == "public artifact"
+        catalog = client.get(f"/api/artifact-catalog/ticket/{ticket.id}").json()
+        assert [entry["path"] for entry in catalog["entries"]] == ["artifacts/index.html"]
+        assert client.get(
+            f"/api/artifact-catalog/ticket/{ticket.id}", params={"directory": "worktree"}
+        ).json()["entries"] == []

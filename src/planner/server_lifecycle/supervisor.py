@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import errno
-import fcntl
 import os
 import selectors
 import signal
@@ -12,10 +11,10 @@ import subprocess
 import sys
 from collections.abc import Mapping
 from pathlib import Path
-from types import FrameType
 from typing import Final
 
 from planner.core.config import load_config
+from planner.platform_runtime.selection import get_platform_adapter
 from planner.server_lifecycle.contracts import (
     SERVER_CONTROL_PROTOCOL_VERSION,
     ServerControlResponse,
@@ -30,6 +29,16 @@ from planner.server_lifecycle.control import (
     resolve_server_control_socket_path,
     resolve_server_lifecycle_lease_path,
 )
+from planner.server_lifecycle.logic.shutdown import (
+    adopt_rechecked_launch_policy,
+    decide_shutdown,
+    launch_parent_is_unverified,
+)
+from planner.server_lifecycle.process_identity import (
+    capture_shutdown_policy,
+    revalidate_manager_identity,
+)
+from planner.server_lifecycle.signals import SupervisorSignals
 
 _CONTROL_SOCKET_DRAIN_BYTES: Final = 4096
 
@@ -39,8 +48,36 @@ class _ControlRequestSuperseded(RuntimeError):
 
 
 def resolve_planner_launch_root() -> Path:
-    """Resolve the repository root that owns the imported planner package."""
-    return Path(__file__).resolve().parents[3]
+    """Resolve the checkout or application that owns the imported package."""
+    module_path = Path(__file__).resolve()
+    if module_path.parts[-4:] == ("src", "planner", "server_lifecycle", "supervisor.py"):
+        return module_path.parents[3]
+
+    application_identity = os.environ.get("PLAN_APP_ROOT", "")
+    if application_identity and Path(application_identity).is_absolute():
+        application_root = Path(application_identity).resolve()
+        virtualenv_root = (application_root / ".venv").resolve()
+        if (
+            virtualenv_root != application_root
+            and virtualenv_root.is_relative_to(application_root)
+            and module_path.is_relative_to(virtualenv_root)
+        ):
+            package_parts = module_path.relative_to(virtualenv_root).parts
+            if (
+                len(package_parts) == 6
+                and package_parts[0] == "lib"
+                and package_parts[1].startswith("python")
+                and package_parts[2:]
+                == ("site-packages", "planner", "server_lifecycle", "supervisor.py")
+            ):
+                return application_root
+
+    raise ServerLifecycleError(
+        f"Cannot resolve the application that owns Panels module {module_path} "
+        f"with PLAN_APP_ROOT={application_identity!r}. "
+        "Use the owning application's bin/panels-launcher serve to start Panels, "
+        "or bin/panels restart to restart it."
+    )
 
 
 class PortScopedServerLifecycleLease:
@@ -54,7 +91,7 @@ class PortScopedServerLifecycleLease:
     def acquire(self) -> None:
         descriptor = os.open(self._path, os.O_RDWR | os.O_CREAT, 0o600)
         try:
-            fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            get_platform_adapter().lock_exclusive(descriptor, nonblocking=True)
         except OSError as exc:
             os.close(descriptor)
             if exc.errno in {errno.EACCES, errno.EAGAIN}:
@@ -67,7 +104,7 @@ class PortScopedServerLifecycleLease:
     def release(self) -> None:
         if self._descriptor is None:
             return
-        fcntl.flock(self._descriptor, fcntl.LOCK_UN)
+        get_platform_adapter().unlock(self._descriptor)
         os.close(self._descriptor)
         self._descriptor = None
 
@@ -92,6 +129,16 @@ class ServerSupervisor:
         self._application_child: subprocess.Popen[bytes] | None = None
         self._control_listener: socket.socket | None = None
         self._operator_shutdown_requested = False
+        self._shutdown_policy = capture_shutdown_policy()
+        if launch_parent_is_unverified(self._shutdown_policy):
+            print(
+                "Panels supervisor could not verify its launch parent PID "
+                f"{self._shutdown_policy.launch_parent_pid} at startup. It will check "
+                "again when a shutdown signal arrives.",
+                file=sys.stderr,
+                flush=True,
+            )
+        self._signals = SupervisorSignals()
 
     def run(self) -> int:
         self._lease.acquire()
@@ -103,27 +150,24 @@ class ServerSupervisor:
             self._lease.release()
 
     def _run_lifecycle_loop(self) -> int:
-        signal_read, signal_write = os.pipe()
-        os.set_blocking(signal_read, False)
-        os.set_blocking(signal_write, False)
-        previous_wakeup_fd = signal.set_wakeup_fd(signal_write)
-        watched_signals = (signal.SIGINT, signal.SIGTERM, signal.SIGCHLD)
-        previous_handlers = {watched: signal.getsignal(watched) for watched in watched_signals}
-        signal.signal(signal.SIGINT, self._handle_operator_signal)
-        signal.signal(signal.SIGTERM, self._handle_operator_signal)
-        signal.signal(signal.SIGCHLD, self._handle_child_signal)
         selector = selectors.DefaultSelector()
-        assert self._control_listener is not None
-        selector.register(self._control_listener, selectors.EVENT_READ, "control")
-        selector.register(signal_read, selectors.EVENT_READ, "signal")
         try:
+            self._signals.start()
+        except BaseException:
+            selector.close()
+            raise
+        signal_read = self._signals.read_fd
+        assert self._control_listener is not None
+        try:
+            selector.register(self._control_listener, selectors.EVENT_READ, "control")
+            selector.register(signal_read, selectors.EVENT_READ, "signal")
             self._spawn_application_child()
             while True:
                 if self._operator_shutdown_requested:
                     self._stop_application_child()
                     return 0
                 if self._application_child_has_exited():
-                    return 1
+                    return 0 if self._operator_shutdown_requested else 1
 
                 events = selector.select()
                 if any(key.data == "signal" for key, _ in events):
@@ -132,7 +176,7 @@ class ServerSupervisor:
                     self._stop_application_child()
                     return 0
                 if self._application_child_has_exited():
-                    return 1
+                    return 0 if self._operator_shutdown_requested else 1
 
                 restart_requested = False
                 for key, _ in events:
@@ -145,7 +189,7 @@ class ServerSupervisor:
                     self._stop_application_child()
                     return 0
                 if self._application_child_has_exited():
-                    return 1
+                    return 0 if self._operator_shutdown_requested else 1
                 if restart_requested:
                     self._stop_application_child()
                     if self._operator_shutdown_requested:
@@ -153,14 +197,13 @@ class ServerSupervisor:
                     self._spawn_application_child()
         finally:
             selector.close()
-            for watched, handler in previous_handlers.items():
-                signal.signal(watched, handler)
-            signal.set_wakeup_fd(previous_wakeup_fd)
-            os.close(signal_read)
-            os.close(signal_write)
-            child = self._application_child
-            if child is not None and child.poll() is None:
-                self._stop_application_child()
+            try:
+                child = self._application_child
+                if child is not None and child.poll() is None:
+                    self._stop_application_child()
+            finally:
+                for signum, sender_pid in self._signals.stop():
+                    self._dispatch_signal(signum, sender_pid)
 
     def _bind_control_socket(self) -> None:
         self._control_socket_path.parent.mkdir(parents=True, exist_ok=True)
@@ -184,23 +227,11 @@ class ServerSupervisor:
 
     def _spawn_application_child(self) -> None:
         environment = dict(self._environ)
-        source_path = str(self._launch_root / "src")
-        existing_pythonpath = environment.get("PYTHONPATH", "")
-        environment["PYTHONPATH"] = (
-            source_path
-            if not existing_pythonpath
-            else os.pathsep.join((source_path, existing_pythonpath))
-        )
         environment["PLAN_SERVER_CONTROL_SOCKET"] = str(self._control_socket_path)
+        original_mask = sorted(int(item) for item in self._signals.child_signal_mask)
         try:
-            listener_fd = environment.get("PLAN_SERVER_LISTENER_FD")
-            pass_fds = (int(listener_fd),) if listener_fd is not None else ()
-            self._application_child = subprocess.Popen(
-                [self._interpreter, "-m", "planner.server_lifecycle.application"],
-                cwd=self._launch_root,
-                env=environment,
-                start_new_session=True,
-                pass_fds=pass_fds,
+            self._application_child = get_platform_adapter().spawn_application_child(
+                self._interpreter, self._launch_root, environment, original_mask
             )
         except OSError as exc:
             raise ServerLifecycleError(f"Could not start the Panels application: {exc}") from exc
@@ -303,7 +334,13 @@ class ServerSupervisor:
             return
         if child.poll() is None:
             child.terminate()
-        child.wait()
+        while True:
+            try:
+                child.wait(timeout=0.1)
+                break
+            except subprocess.TimeoutExpired:
+                self._drain_signal_pipe(self._signals.read_fd)
+        self._drain_signal_pipe(self._signals.read_fd)
         self._application_child = None
 
     def _application_child_has_exited(self) -> bool:
@@ -311,32 +348,60 @@ class ServerSupervisor:
         if child is None:
             return False
         if child.poll() is not None:
+            self._drain_signal_pipe(self._signals.read_fd)
             return True
-        # Linux can expose a zombie before waitpid reports it after the supervisor resumes.
-        try:
-            process_state = Path(f"/proc/{child.pid}/stat").read_text().rpartition(") ")[2]
-        except OSError:
-            return False
-        return process_state.startswith("Z ")
+        if get_platform_adapter().process_is_zombie(child.pid):
+            self._drain_signal_pipe(self._signals.read_fd)
+            return True
+        return False
 
-    def _handle_operator_signal(self, _signum: int, _frame: FrameType | None) -> None:
-        self._operator_shutdown_requested = True
-
-    @staticmethod
-    def _handle_child_signal(_signum: int, _frame: FrameType | None) -> None:
-        return
-
-    @staticmethod
-    def _drain_signal_pipe(signal_read: int) -> None:
-        try:
-            while os.read(signal_read, 4096):
-                pass
-        except BlockingIOError:
+    def _dispatch_signal(self, signum: int, sender_pid: int | None) -> None:
+        if signum not in {signal.SIGINT, signal.SIGTERM}:
             return
+        policy = self._shutdown_policy
+        manager_identity = None
+        if launch_parent_is_unverified(policy):
+            # The launch check may have failed rather than answered, for example a busctl
+            # call that missed its limit under load. Check the same parent again now.
+            policy = adopt_rechecked_launch_policy(policy, capture_shutdown_policy())
+            self._shutdown_policy = policy
+            # The recheck has just read the manager, so it is also this signal's identity.
+            manager_identity = policy.authorized_manager
+        manager = policy.authorized_manager
+        current_parent_pid = os.getppid()
+        if (
+            manager_identity is None
+            and manager is not None
+            and sender_pid == manager.pid
+            and current_parent_pid == policy.launch_parent_pid
+        ):
+            manager_identity = revalidate_manager_identity(manager)
+            current_parent_pid = os.getppid()
+        decision = decide_shutdown(
+            policy,
+            sender_pid=sender_pid,
+            current_parent_pid=current_parent_pid,
+            manager_identity=manager_identity,
+        )
+        if decision.accepted:
+            self._operator_shutdown_requested = True
+            return
+        sender = f"sender PID {sender_pid}" if sender_pid and sender_pid > 0 else "unknown sender"
+        print(
+            f"Panels supervisor refused {signal.Signals(signum).name} from {sender}: "
+            f"{decision.reason}. To force shutdown, send SIGKILL "
+            f"to exact supervisor PID {os.getpid()}.",
+            file=sys.stderr,
+            flush=True,
+        )
+
+    def _drain_signal_pipe(self, _signal_read: int) -> None:
+        for signum, sender_pid in self._signals.drain():
+            self._dispatch_signal(signum, sender_pid)
 
 
 def run_server_supervisor() -> int:
-    """Capture launch identity once and run the foreground supervisor."""
+    """Capture launch identity and run the foreground supervisor."""
     launch_root = resolve_planner_launch_root()
     interpreter = sys.executable
     environ = dict(os.environ)

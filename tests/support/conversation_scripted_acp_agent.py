@@ -101,7 +101,10 @@ PANELS_CURRENT_MODEL = "a-model"
 
 # The names of this process's environment a test reads back, to prove the values a
 # conversation was started with reached the agent rather than being dropped on the way.
-REPORTED_ENVIRONMENT_NAMES = ("HERMES_HOME", "HERMES_PYTHON_SRC_ROOT", "HERMES_YOLO_MODE")
+REPORTED_ENVIRONMENT_NAMES = (
+    "HERMES_HOME", "HERMES_PYTHON_SRC_ROOT", "HERMES_YOLO_MODE",
+    "PLAN_NATIVE_SKILLS_DIR", "PLAN_TICKET_FILES_DIR",
+)
 
 CHILD_LINE_LIMIT_BYTES = 50 * 1024 * 1024
 

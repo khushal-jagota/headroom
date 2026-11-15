@@ -32,7 +32,7 @@ export function createComposerTextareaMeasurement(input: HTMLTextAreaElement) {
 
   return {
     input,
-    measure(style: CSSStyleDeclaration, paneHeight: number) {
+    measure(style: CSSStyleDeclaration) {
       mirror.className = input.className;
       mirror.wrap = input.wrap;
       for (const property of measurementProperties) {
@@ -48,9 +48,12 @@ export function createComposerTextareaMeasurement(input: HTMLTextAreaElement) {
       const chrome = verticalPadding + verticalBorder;
       const contentBox = style.boxSizing !== "border-box";
       const calculate = () => calculateComposerTextareaHeight({
-        lineHeight: Number.parseFloat(style.lineHeight), paneHeight,
+        lineHeight: Number.parseFloat(style.lineHeight),
         scrollHeight: mirror.scrollHeight, verticalPadding, verticalBorder
       });
+      mirror.value = "";
+      const baseline = calculate().height;
+      mirror.value = input.value;
       let size = calculate();
       if (size.overflowY === "auto") {
         // A capped textarea can acquire a scrollbar and wrap more narrowly. Read
@@ -59,7 +62,7 @@ export function createComposerTextareaMeasurement(input: HTMLTextAreaElement) {
         mirror.style.overflowY = "auto";
         size = calculate();
       }
-      return { ...size, height: size.height - (contentBox ? chrome : 0) };
+      return { ...size, growth: Math.max(0, size.height - baseline), height: size.height - (contentBox ? chrome : 0) };
     },
     dispose() {
       mirror.remove();

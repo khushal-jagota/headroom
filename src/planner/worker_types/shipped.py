@@ -19,7 +19,7 @@ CHIEF_EMPLOYEE_ID: Final = "chief_of_staff"
 CHIEF_LABEL: Final = "Chief of Staff"
 DEFAULT_CHIEF_LAUNCH: Final = {
     "employee_backend": "codex",
-    "employee_launch_model": "gpt-5.6-sol",
+    "employee_launch_model": "gpt-6.1-sol",
     "employee_launch_reasoning_effort": "medium",
 }
 
@@ -34,11 +34,18 @@ def seed_shipped_worker_types(conn: sqlite3.Connection) -> None:
     """Put the shipped Worker types in an empty table, and nothing in a populated one."""
     if conn.execute("SELECT 1 FROM worker_types LIMIT 1").fetchone() is not None:
         return
+    from planner.managed_skills import read_skill_source
+    from planner.worker_types.guidance import convert_existing_skill
+    from planner.worker_types.store import definition_from_json, definition_to_json
+
     for position, definition in enumerate(shipped_worker_types()):
+        decoded = definition_from_json(json.dumps(definition))
+        source = read_skill_source(conn, decoded.worker_profile.specialist_skill)
+        converted = convert_existing_skill(decoded, source)
         conn.execute(
             "INSERT INTO worker_types (worker_type, position, definition_json, updated_at) "
             "VALUES (?, ?, ?, 0)",
-            (definition["worker_type"], position, json.dumps(definition, ensure_ascii=False)),
+            (definition["worker_type"], position, definition_to_json(converted)),
         )
 
 

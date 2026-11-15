@@ -1,6 +1,6 @@
 """SQLite ownership for conversations and the rows they record.
 
-Calls open their own connection inside a worker thread and close it before returning.
+Calls borrow an exclusive connection inside a worker thread and release it before returning.
 Conversation delivery never receives or owns an application transaction.
 
 Appending a row is one immediate transaction: take the write lock, read where the
@@ -11,7 +11,8 @@ because the second one waits for the first one's lock.
 The commit announces itself on the change signal only when the rows it wrote are ones a
 screen outside the conversation reads. See ``_commit_appended_rows``.
 
-Rows are written once. Nothing here updates or deletes a row it has written.
+Notebook rows are written once. Nothing here updates or deletes one. A live background
+task is the exception: its row says the task is running, and it goes when the task ends.
 """
 
 from __future__ import annotations
@@ -21,11 +22,18 @@ import json
 import logging
 import sqlite3
 import time
-from collections.abc import Callable, Collection, Coroutine
-from dataclasses import dataclass
+from collections.abc import Callable, Collection, Coroutine, Iterator, Mapping
+from contextlib import AbstractContextManager, ExitStack, contextmanager
+from contextvars import ContextVar
+from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import Any
+from typing import IO, Any, cast
+from uuid import uuid4
 
+from pydantic import JsonValue
+
+from planner.conversation import child_custody
+from planner.conversation.backend_event_contracts import AcceptedEvent, CommitParticipant
 from planner.conversation.backends.contracts import BackendSpawnFailed
 from planner.conversation.contracts import (
     ComposerCatalogEntry,
@@ -34,15 +42,22 @@ from planner.conversation.contracts import (
     ConversationAlreadyStarted,
     ConversationBackendKey,
     ConversationRoleMaterials,
+    DeploymentRecoveryReference,
+    NativeMessageAdmission,
+    NativeMessageOperation,
+    PromptDeliveryMode,
+    PromptDeliveryStarted,
+    PromptDispatchDecision,
     ResolvedConversationStart,
+    WorkspacePathPolicy,
 )
+from planner.conversation.deploy_interruptions import data as interruption_data
+from planner.conversation.deploy_interruptions.files import read_manifests
 from planner.conversation.events import (
     AutomaticCompactionResult,
     ConversationEventKind,
     ConversationEventPayload,
-    MessageToOwnerEventPayload,
     ModelChangedEventPayload,
-    PromptDeliveryRefusedEventPayload,
     PromptDeliveryUncertainEventPayload,
     PromptDiscardedEventPayload,
     PromptEventPayload,
@@ -51,9 +66,45 @@ from planner.conversation.events import (
     conversation_event_payload_kind,
     conversation_event_payload_to_canonical_json,
 )
-from planner.core.config import CONVERSATION_WRITE_LOCK_RETRY_SECONDS
-from planner.core.contracts import Principal, PrincipalKind
-from planner.core.db import commit_without_change_signal, connect
+from planner.conversation.lifecycle import (
+    ConversationTransactionParticipant,
+    LifecycleFact,
+    LifecycleKind,
+    LifecycleOperation,
+    LifecycleStatus,
+    LifecycleTransition,
+)
+from planner.conversation.lifecycle_storage import (
+    acquire_runtime_ownership,
+    apply_facts,
+    participate,
+    read_facts,
+    validate_runtime_ownership,
+)
+from planner.conversation.local_child_contracts import LocalChildIdentity, RecordedSourceSettlement
+from planner.conversation.logic.conversation_start_resolution import bind_conversation_origin
+from planner.conversation.logic.retained_turn import OpenRunTurn, facts_after_restart
+from planner.conversation.publication.coordinator import (
+    SignalPublicationCoordinator,
+)
+from planner.conversation.publication.mutations import PlainFieldMutation, SignalRuntimeMutation
+from planner.conversation.start_admission import write_bindings
+from planner.conversation.start_admission.contracts import StartRequest
+from planner.conversation.views.writer import append_projection
+from planner.core.config import (
+    CONVERSATION_WRITE_FAILURE_FIRST_RETRY_SECONDS,
+    CONVERSATION_WRITE_FAILURE_MAX_RETRY_SECONDS,
+    CONVERSATION_WRITE_LOCK_RETRY_SECONDS,
+)
+from planner.core.contracts import ErrorCode, PlannerError, Principal, PrincipalKind
+from planner.core.db import (
+    ChangeSignallingConnection,
+    commit_without_change_signal,
+    connect,
+    transaction_control_guard,
+)
+from planner.core.runtime_connections import runtime_connection
+from planner.execution_identity import TurnToken
 from planner.manager_wakes import data as manager_wakes_data
 from planner.notifications.attention import (
     ConversationAttentionSnapshot,
@@ -62,7 +113,11 @@ from planner.notifications.attention import (
     conversation_attention_snapshot,
     conversation_attention_snapshot_is_current,
 )
-from planner.skill_versions import settle_worker_step_skill_bindings
+from planner.runtime import worker_memory
+from planner.stalls.contracts import TrackedWaitHandle, TrackedWaitKind
+from planner.stalls.registry import WAITS
+from planner.ticket_workspaces.contracts import WorkspaceIdentity
+from planner.tickets import data as tickets_data
 
 DEFAULT_BUSY_TIMEOUT_MILLISECONDS = 5000
 
@@ -122,6 +177,7 @@ class ConversationRecord:
     automatic_compaction_attempted_through_sequence: int
     owner_read_through_sequence: int
     created_at: int
+    workspace_path_policy: WorkspacePathPolicy = WorkspacePathPolicy.home_relative
 
     def resolved_start(self) -> ResolvedConversationStart:
         """The start this conversation was created from, rebuilt from its row.
@@ -145,8 +201,9 @@ class ConversationRecord:
             backend_key=self.backend_key,
             model=self.model,
             reasoning_effort=self.reasoning_effort,
-            role_materials=role_materials,
+            role_materials=bind_conversation_origin(role_materials, self.conversation_id),
             workspace_folder=self.workspace_folder,
+            workspace_path_policy=self.workspace_path_policy,
             access=self.access,
         )
 
@@ -157,6 +214,7 @@ class ConversationAttentionFacts:
 
     unread_message_to_owner: bool
     last_turn_failed: bool
+    has_live_background_task: bool
 
 
 @dataclass(frozen=True, slots=True)
@@ -170,6 +228,67 @@ class StoredConversationEvent:
     created_at: int
 
 
+def open_turn_holds_only_memory_notices(
+    conn: sqlite3.Connection,
+    conversation_id: str,
+) -> bool:
+    rows = conn.execute(
+        "SELECT json_extract(payload,'$.sender_message_id') FROM conversation_events "
+        "WHERE conversation_id = ? AND kind IN ('prompt','prompt_delivery_uncertain') "
+        "AND sequence > COALESCE(("
+        "SELECT MAX(sequence) FROM conversation_events "
+        "WHERE conversation_id = ? AND kind = 'turn_ended'),0)",
+        (conversation_id, conversation_id),
+    ).fetchall()
+    return bool(rows) and all(
+        worker_memory.is_memory_notice_sender_message_id(row[0]) for row in rows
+    )
+
+
+@dataclass(frozen=True)
+class RetainedRunEvidence:
+    facts: tuple[LifecycleFact, ...]
+    events: tuple[StoredConversationEvent, ...]
+    memory_notice_only: bool
+
+
+def read_retained_run_evidence(
+    db_path: str,
+    conversation_ids: tuple[str, ...],
+    busy_timeout_ms: int,
+) -> dict[str, RetainedRunEvidence]:
+    """Fetch immutable adoption evidence on a worker thread before core construction."""
+    evidence: dict[str, RetainedRunEvidence] = {}
+    if not conversation_ids:
+        return evidence
+    with runtime_connection(db_path, busy_timeout_ms) as conn:
+        for conversation_id in conversation_ids:
+            facts = read_facts(conn, conversation_id)
+            events = (
+                tuple(
+                    _stored_event(row)
+                    for row in conn.execute(
+                        "SELECT conversation_id,sequence,kind,payload,created_at "
+                        "FROM conversation_events WHERE conversation_id=? "
+                        "AND kind='user_input_requested' ORDER BY sequence",
+                        (conversation_id,),
+                    )
+                )
+                if any(
+                    fact.kind is LifecycleKind.request
+                    and fact.operation is LifecycleOperation.user_input
+                    for fact in facts
+                )
+                else ()
+            )
+            evidence[conversation_id] = RetainedRunEvidence(
+                facts,
+                events,
+                open_turn_holds_only_memory_notices(conn, conversation_id),
+            )
+    return evidence
+
+
 class ConversationStore:
     """Short-lived append transactions, with one explicit shared-transaction seam."""
 
@@ -179,63 +298,889 @@ class ConversationStore:
         *,
         integer_now: Callable[[], int] = lambda: int(time.time()),
         busy_timeout_ms: int = DEFAULT_BUSY_TIMEOUT_MILLISECONDS,
+        transaction_participant: ConversationTransactionParticipant | None = None,
+        event_participant: Callable[
+            [sqlite3.Connection, str, tuple[ConversationEventPayload, ...]],
+            tuple[ConversationEventPayload, ...],
+        ]
+        | None = None,
+        startup_participant: Callable[
+            [sqlite3.Connection], dict[str, tuple[ConversationEventPayload, ...]]
+        ]
+        | None = None,
+        signal_coordinator: SignalPublicationCoordinator | None = None,
+        transaction_control_guard: Callable[[sqlite3.Connection], AbstractContextManager[None]]
+        | None = None,
     ) -> None:
+        self.signal_coordinator = signal_coordinator
+        self._transaction_control_guard = transaction_control_guard
+        self._signal_mutation: ContextVar[SignalRuntimeMutation | None] = ContextVar(
+            "signal_mutation", default=None
+        )
         self._db_path = db_path
+        self._transaction_participant = transaction_participant
+        self._event_participant = event_participant
+        self._startup_participant = startup_participant
         self._integer_now = integer_now
         self._busy_timeout_ms = busy_timeout_ms
         self._write_operations: set[asyncio.Task[object]] = set()
-        self._recording_failures: dict[asyncio.Task[Any], tuple[str, Exception, asyncio.Event]] = {}
-
-    def recording_failures(self, conversation_id: str) -> tuple[Exception, ...]:
-        """Actual recording errors retained for explicit persistence reconciliation."""
-        return tuple(
-            error
-            for target, error, _ in self._recording_failures.values()
-            if target == conversation_id
+        self.blocked_local_conversations: set[str] = set()
+        self._startup_source_proofs: dict[str, tuple[object, ...]] = {}
+        self._settled_recorded_turns: dict[str, TurnToken] = {}
+        # Loop time after which _write stops retrying SQLite contention, for a write a
+        # sender will send again. None retries contention for as long as it lasts.
+        self._contention_retry_until: ContextVar[float | None] = ContextVar(
+            "contention_retry_until", default=None
+        )
+        # Previous values of the runtime fields this publication connection has set,
+        # so a save that does not commit puts memory back as the rows are.
+        self._runtime_field_undo: ContextVar[list[PlainFieldMutation] | None] = ContextVar(
+            "runtime_field_undo", default=None
         )
 
-    def resume_recording(self, conversation_id: str) -> int:
-        """Resume failed storage calls, without repeating a backend exchange."""
-        pending = [
-            resumed
-            for target, _, resumed in self._recording_failures.values()
-            if target == conversation_id
-        ]
-        for resumed in pending:
-            resumed.set()
-        return len(pending)
+    def claim_runtime(
+        self,
+        *,
+        existing_ownership: IO[bytes] | None = None,
+        open_runs: Mapping[str, OpenRunTurn] | None = None,
+    ) -> IO[bytes]:
+        """Exclusively reconcile lost capabilities before this runtime admits work.
+
+        ``open_runs`` names, by conversation, the turn of an open Mac run, whose agent the
+        previous process's end did not stop, so that turn is not reconciled away.
+        """
+        ownership = (
+            existing_ownership
+            if existing_ownership is not None
+            else acquire_runtime_ownership(self._db_path)
+        )
+        validate_runtime_ownership(self._db_path, ownership)
+        try:
+            conn = self._connect()
+        except BaseException:
+            if existing_ownership is None:
+                ownership.close()
+            raise
+        try:
+            self._reconcile_runtime(conn, open_runs or {})
+        except BaseException:
+            if existing_ownership is None:
+                ownership.close()
+            raise
+        finally:
+            conn.close()
+        return ownership
+
+    def _reconcile_runtime(
+        self, conn: sqlite3.Connection, open_runs: Mapping[str, OpenRunTurn]
+    ) -> None:
+        from planner.environments.interruption_capture import read_unresolved_turns
+
+        # Process and service inspections never hold SQLite's writer lock. The
+        # writer accepts a proof only if the entire recorded source still matches.
+        proofs: dict[str, tuple[object, ...]] = {}
+        for candidate in read_unresolved_turns(conn, include_custody_unavailable=True):
+            if candidate.conversation_id in open_runs:
+                continue
+            snapshot = conn.execute(
+                "SELECT * FROM conversation_child_custody WHERE conversation_id=?",
+                (candidate.conversation_id,),
+            ).fetchone()
+            if snapshot is not None and child_custody.retirement_row_proven(snapshot):
+                proofs[candidate.conversation_id] = tuple(snapshot)
+        conn.execute("BEGIN IMMEDIATE")
+        from planner.conversation.deploy_interruptions.contracts import (
+            CapturedTurn,
+            CaptureManifest,
+        )
+        from planner.tickets import data as tickets_data
+        from planner.tickets.contracts import WorkerStepClaim
+
+        # A prepared journal row commits with its exact claim revision. The dispatch
+        # boundary changes it before any send, so this is positive non-delivery proof.
+        for pending in conn.execute(
+            "SELECT d.ticket_id,d.claim_revision FROM worker_step_dispatch_intents d "
+            "JOIN tickets t ON t.id=d.ticket_id WHERE d.state='prepared' "
+            "AND t.worker_step_claim='out' AND t.worker_step_claim_revision=d.claim_revision"
+        ).fetchall():
+            tickets_data.release_worker_step_claim(
+                conn,
+                str(pending[0]),
+                expected_claim=WorkerStepClaim.out,
+                expected_claim_revision=int(pending[1]),
+                now=self._integer_now(),
+            )
+        manifests = read_manifests(Path(self._db_path))
+        # A pre-upgrade turn without custody keeps the existing restart rule.
+        # Every child launched by this version records custody before it starts.
+        unresolved = tuple(
+            turn
+            for turn in read_unresolved_turns(conn, include_custody_unavailable=True)
+            if turn.conversation_id not in open_runs
+            and conn.execute(
+                "SELECT 1 FROM conversation_child_custody WHERE conversation_id=?",
+                (turn.conversation_id,),
+            ).fetchone()
+            is not None
+        )
+        self.blocked_local_conversations = {
+            turn.conversation_id
+            for turn in unresolved
+            if turn.conversation_id not in proofs
+            or tuple(
+                conn.execute(
+                    "SELECT * FROM conversation_child_custody WHERE conversation_id=?",
+                    (turn.conversation_id,),
+                ).fetchone()
+            )
+            != proofs[turn.conversation_id]
+            or not child_custody.occurrence_matches(
+                conn, turn.conversation_id, turn.occurrence_id, turn.runtime_epoch
+            )
+        }
+        self._startup_source_proofs = {
+            identity: snapshot
+            for identity, snapshot in proofs.items()
+            if identity not in self.blocked_local_conversations
+        }
+        # Capture before restart destroys the old live facts. Missing identity is not
+        # proof of termination, even after the previous runtime released its lock.
+        for turn in unresolved:
+            if turn.conversation_id in self.blocked_local_conversations:
+                continue
+            if not child_custody.occurrence_matches(
+                conn, turn.conversation_id, turn.occurrence_id, turn.runtime_epoch
+            ):
+                continue
+            if any(
+                captured.conversation_id == turn.conversation_id
+                and captured.turn_number == turn.turn_number
+                and (
+                    captured.occurrence_id == turn.occurrence_id
+                    or (
+                        captured.occurrence_id is None
+                        and captured.runtime_epoch == turn.runtime_epoch
+                    )
+                )
+                for manifest in manifests
+                for captured in manifest.turns
+            ):
+                continue
+            already = conn.execute(
+                "SELECT 1 FROM deploy_interruptions WHERE source_conversation_id=? "
+                "AND turn_number=? AND occurrence_id IS ?",
+                (turn.conversation_id, turn.turn_number, turn.occurrence_id),
+            ).fetchone()
+            if already is not None:
+                continue
+            identity = f"crash:{turn.runtime_epoch}:{turn.conversation_id}:{turn.turn_number}"
+            interruption_data.import_captured_turns(
+                conn,
+                CaptureManifest(identity, identity, self._integer_now(), "captured", None, (turn,)),
+                self._integer_now(),
+                claim_error_reason="interrupted by a home crash",
+                ended_by="The home process interruption",
+            )
+
+        # A deployment snapshot does not prove that an independently hosted local
+        # child stopped. Keep those immutable captures for the next proven recovery.
+        def capture_needs_proof(captured: CapturedTurn) -> bool:
+            return any(
+                source.conversation_id == captured.conversation_id
+                and source.turn_number == captured.turn_number
+                and (
+                    source.occurrence_id == captured.occurrence_id
+                    if captured.occurrence_id is not None
+                    else source.runtime_epoch == captured.runtime_epoch
+                )
+                for source in unresolved
+                if source.conversation_id in self.blocked_local_conversations
+            )
+
+        admitted_manifests = tuple(
+            replace(
+                manifest,
+                turns=tuple(turn for turn in manifest.turns if not capture_needs_proof(turn)),
+            )
+            for manifest in manifests
+        )
+        interruption_data.reconcile(conn, admitted_manifests, self._integer_now())
+        ids = conn.execute(
+            "SELECT DISTINCT conversation_id FROM conversation_lifecycle_facts "
+            "WHERE status IN ('intent','running','pending','answering')"
+        ).fetchall()
+        for row in ids:
+            conversation_id = str(row[0])
+            if conversation_id in self.blocked_local_conversations:
+                continue
+            facts = facts_after_restart(
+                read_facts(conn, conversation_id), open_runs.get(conversation_id)
+            )
+            if not facts:
+                continue
+            apply_facts(conn, conversation_id, facts)
+            interruption_data.settle_delivery(conn, conversation_id, facts, now=self._integer_now())
+            participate(
+                conn,
+                self._transaction_participant,
+                LifecycleTransition(conversation_id, read_facts(conn, conversation_id)),
+                guard=self._transaction_control_guard,
+            )
+        if self._startup_participant is not None:
+            with transaction_control_guard(cast(ChangeSignallingConnection, conn)):
+                recovered_events = self._startup_participant(conn)
+            for conversation_id, payloads in recovered_events.items():
+                self._insert_rows(conn, conversation_id, payloads)
+        commit_without_change_signal(conn)
+
+    def update_work_metadata(
+        self, conversation_ids: tuple[str, ...] | None = None
+    ) -> dict[str, tuple[str, str]]:
+        """Read active-work labels, or the destination snapshot at barrier entry."""
+        from planner.machines.contracts import HOME_MACHINE_ID
+
+        if conversation_ids == ():
+            return {}
+        parameters = conversation_ids or ()
+        filter_sql = (
+            " AND conversation_id IN (" + ",".join("?" for _ in parameters) + ")"
+            if conversation_ids is not None else ""
+        )
+        with runtime_connection(self._db_path, self._busy_timeout_ms) as conn:
+            result = {
+                str(row[0]): (str(row[1]), str(row[2]))
+                for row in conn.execute(
+                    "SELECT conversation_id,title,machine_id FROM tickets "
+                    "WHERE conversation_id IS NOT NULL" + filter_sql,
+                    parameters,
+                )
+            }
+            for row in conn.execute(
+                "SELECT a.conversation_id,m.title FROM agents a "
+                "JOIN managers m ON a.agent_key='manager_' || m.id "
+                "WHERE a.conversation_id IS NOT NULL" + filter_sql.replace(
+                    "conversation_id IN", "a.conversation_id IN"
+                ),
+                parameters,
+            ):
+                result[str(row[0])] = (str(row[1]), HOME_MACHINE_ID)
+            return result
+
+    async def workspace_conversation_ids(
+        self,
+        ticket_id: str,
+        identity: WorkspaceIdentity,
+    ) -> tuple[str, ...]:
+        """Read only conversations bound to this physical local workspace."""
+
+        def read() -> tuple[str, ...]:
+            with runtime_connection(self._db_path, self._busy_timeout_ms) as conn:
+                return tuple(
+                    str(row[0])
+                    for row in conn.execute(
+                        "SELECT conversation_id FROM ticket_workspace_conversations "
+                        "WHERE ticket_id=? AND machine_id=? AND workspace_id=?",
+                        (ticket_id, identity.machine_id, identity.workspace_id),
+                    )
+                )
+
+        return await asyncio.to_thread(read)
+
+    async def has_recorded_source(self, conversation_id: str) -> bool:
+        def read() -> bool:
+            with runtime_connection(self._db_path, self._busy_timeout_ms) as conn:
+                return (
+                    conn.execute(
+                        "SELECT 1 FROM conversation_child_custody WHERE conversation_id=?",
+                        (conversation_id,),
+                    ).fetchone()
+                    is not None
+                )
+
+        return await asyncio.to_thread(read)
+
+    async def recorded_source_retirement_proven(self, conversation_id: str) -> bool:
+        def read() -> bool:
+            with runtime_connection(self._db_path, self._busy_timeout_ms) as conn:
+                row = conn.execute(
+                    "SELECT * FROM conversation_child_custody WHERE conversation_id=?",
+                    (conversation_id,),
+                ).fetchone()
+                return row is not None and (
+                    row["state"] == "retired"
+                    or tuple(row) == self._startup_source_proofs.get(conversation_id)
+                )
+
+        return await asyncio.to_thread(read)
+
+    def settled_recorded_turn(self, conversation_id: str) -> TurnToken | None:
+        return self._settled_recorded_turns.get(conversation_id)
+
+    async def check_local_child_started(
+        self,
+        conversation_id: str,
+        generation: str,
+        turn_number: int,
+    ) -> bool:
+        def read() -> bool:
+            with runtime_connection(self._db_path, self._busy_timeout_ms) as conn:
+                row = conn.execute(
+                    "SELECT 1 FROM conversation_child_custody c "
+                    "JOIN conversation_turn_occurrences o ON o.conversation_id=c.conversation_id "
+                    "AND o.occurrence_id=c.occurrence_id AND o.runtime_epoch=c.runtime_epoch "
+                    "WHERE c.conversation_id=? AND c.generation=? AND c.state='started' "
+                    "AND c.host IS NOT NULL AND c.host!='' AND c.pid>0 "
+                    "AND c.birth IS NOT NULL AND c.birth!='' AND c.boot IS NOT NULL AND c.boot!='' "
+                    "AND o.turn_number=?",
+                    (conversation_id, generation, turn_number),
+                ).fetchone()
+                return row is not None
+
+        return await asyncio.to_thread(read)
+
+    async def retire_idle_recorded_source(
+        self, conversation_id: str, *, inspect_only: bool = False,
+    ) -> bool:
+        """Retire exact quiet custody even when no foreground turn survives restart."""
+        def retire() -> bool:
+            with runtime_connection(self._db_path, self._busy_timeout_ms) as conn:
+                source = conn.execute(
+                    "SELECT * FROM conversation_child_custody WHERE conversation_id=?",
+                    (conversation_id,),
+                ).fetchone()
+            if source is None:
+                return False
+            proven = child_custody.retirement_row_proven(source)
+            if not proven and not inspect_only and source["state"] == "started":
+                proven = child_custody.stop_recorded_child(LocalChildIdentity(
+                    source["pid"], source["birth"], source["boot"], source["unit"],
+                    source["supervision_record"],
+                ), source["host"])
+            if not proven:
+                return False
+            with self._publication_connection() as (conn, admission):
+                conn.execute("BEGIN IMMEDIATE")
+                current = conn.execute(
+                    "SELECT * FROM conversation_child_custody WHERE conversation_id=?",
+                    (conversation_id,),
+                ).fetchone()
+                active = conn.execute(
+                    "SELECT 1 FROM conversation_lifecycle_facts WHERE conversation_id=? "
+                    "AND ((kind='turn' AND status IN ('intent','running','unknown')) "
+                    "OR (kind='attempt' AND status IN ('intent','unknown')) "
+                    "OR (kind='request' AND status IN ('pending','answering'))) LIMIT 1",
+                    (conversation_id,),
+                ).fetchone()
+                if current is None or tuple(current) != tuple(source) or active is not None:
+                    conn.rollback()
+                    return False
+                child_custody.write_retired(conn, conversation_id, str(source["generation"]))
+                self._apply_signal_mutation(conn, admission)
+                self._commit_rows(conn, ())
+                return True
+        return await self._write(retire)
+
+    async def recorded_source_block_reason(self, conversation_id: str) -> str:
+        def read() -> bool:
+            with runtime_connection(self._db_path, self._busy_timeout_ms) as conn:
+                row = conn.execute(
+                    "SELECT state,supervision_record FROM conversation_child_custody "
+                    "WHERE conversation_id=?", (conversation_id,),
+                ).fetchone()
+                return (row is not None and row["state"] == "launch_pending"
+                        and row["supervision_record"] is None)
+
+        if await asyncio.to_thread(read):
+            return (
+                "The home stopped before it saved the agent's process identity. "
+                "Your conversation is safe: a second agent cannot start. "
+                "Reboot this same host, reopen Headroom, select Stop, "
+                "then send your message again. A restart of Headroom alone "
+                "does not clear this block."
+            )
+        return (
+            "The home stopped during agent startup. A second agent cannot start. "
+            "Select Stop to end the previous "
+            "agent before another can start. If Stop fails, the previous process "
+            "still needs cleanup."
+        )
+
+    async def settle_recorded_source(
+        self, conversation_id: str, *, inspect_only: bool = False,
+    ) -> RecordedSourceSettlement | None:
+        settled = await self._write(
+            self._settle_recorded_source_sync, conversation_id, inspect_only,
+        )
+        if settled is None:
+            return None
+        result, token = settled
+        self._settled_recorded_turns[conversation_id] = token
+        self.blocked_local_conversations.discard(conversation_id)
+        return result
+
+    def _settle_recorded_source_sync(
+        self,
+        conversation_id: str,
+        inspect_only: bool = False,
+    ) -> tuple[RecordedSourceSettlement, TurnToken] | None:
+        with runtime_connection(self._db_path, self._busy_timeout_ms) as conn:
+            source = conn.execute(
+                "SELECT * FROM conversation_child_custody WHERE conversation_id=?",
+                (conversation_id,),
+            ).fetchone()
+        if source is None:
+            return None
+        result: RecordedSourceSettlement
+        if source["state"] == "launch_pending":
+            if source["supervision_record"] is not None:
+                from planner.worker_supervision import inspect_record, stop_record
+
+                check = inspect_record if inspect_only else stop_record
+                if not check(Path(source["supervision_record"])).complete:
+                    return None
+            elif not child_custody.retirement_row_proven(source):
+                return None
+            result = "undelivered"
+        elif source["state"] == "retired":
+            result = "retired"
+        else:
+            identity = LocalChildIdentity(
+                int(source["pid"]),
+                str(source["birth"]),
+                str(source["boot"]),
+                source["unit"],
+                source["supervision_record"],
+            )
+            proven = (
+                child_custody.retirement_row_proven(source) if inspect_only
+                else child_custody.stop_recorded_child(identity, source["host"])
+            )
+            if not proven:
+                return None
+            result = "retired"
+        with self._publication_connection() as (conn, admission):
+            conn.execute("BEGIN IMMEDIATE")
+            current = conn.execute(
+                "SELECT * FROM conversation_child_custody WHERE conversation_id=?",
+                (conversation_id,),
+            ).fetchone()
+            if current is None or tuple(current) != tuple(source):
+                conn.rollback()
+                return None
+            occurrence = conn.execute(
+                "SELECT turn_number FROM conversation_turn_occurrences WHERE conversation_id=? "
+                "AND occurrence_id=? AND runtime_epoch=?",
+                (conversation_id, source["occurrence_id"], source["runtime_epoch"]),
+            ).fetchone()
+            if occurrence is None:
+                conn.rollback()
+                return None
+            number = int(occurrence[0])
+            facts = read_facts(conn, conversation_id)
+            if result == "undelivered":
+                turn = next(
+                    (
+                        fact
+                        for fact in facts
+                        if fact.kind is LifecycleKind.turn and fact.turn_number == number
+                    ),
+                    None,
+                )
+                prompt = next(
+                    (
+                        fact
+                        for fact in facts
+                        if fact.kind is LifecycleKind.attempt
+                        and fact.identity == f"prompt:{number}"
+                    ),
+                    None,
+                )
+                if (
+                    turn is None
+                    or prompt is None
+                    or turn.status not in {LifecycleStatus.intent, LifecycleStatus.unavailable}
+                    or prompt.status not in {LifecycleStatus.intent, LifecycleStatus.suppressed}
+                ):
+                    conn.rollback()
+                    return None
+                settled = tuple(
+                    replace(
+                        fact,
+                        status=(
+                            LifecycleStatus.unavailable
+                            if fact is turn
+                            else LifecycleStatus.suppressed
+                        ),
+                    )
+                    for fact in (turn, prompt)
+                )
+            else:
+                child_custody.write_retired(conn, conversation_id, str(source["generation"]))
+                settled = facts_after_restart(facts, None)
+            cancelled = LifecycleFact(
+                LifecycleKind.attempt,
+                f"cancel:recorded:{number}:{source['generation']}",
+                number,
+                LifecycleOperation.cancel,
+                LifecycleStatus.accepted,
+            )
+            self._apply_signal_mutation(conn, admission)
+            apply_facts(conn, conversation_id, (*settled, cancelled))
+            participate(
+                conn,
+                self._transaction_participant,
+                LifecycleTransition(conversation_id, read_facts(conn, conversation_id)),
+                guard=self._transaction_control_guard,
+            )
+            conn.execute(
+                "DELETE FROM automatic_start_bindings WHERE conversation_id=? AND turn_number=?",
+                (conversation_id, number),
+            )
+            self._commit_rows(conn, ())
+        return result, TurnToken(conversation_id, number)
+
+    async def record_child_supervision(
+        self,
+        conversation_id: str,
+        generation: str,
+        path: str,
+    ) -> None:
+        def persist() -> None:
+            with runtime_connection(self._db_path, self._busy_timeout_ms) as conn:
+                child_custody.write_supervision_record(conn, conversation_id, generation, path)
+                commit_without_change_signal(conn)
+
+        await self._write(persist)
+
+    async def record_child_custody(
+        self,
+        conversation_id: str,
+        generation: str,
+        identity: LocalChildIdentity | None = None,
+        *,
+        retired: bool = False,
+    ) -> None:
+        await self._write(
+            self._record_child_custody_sync, conversation_id, generation, identity, retired
+        )
+
+    def _record_child_custody_sync(
+        self,
+        conversation_id: str,
+        generation: str,
+        identity: LocalChildIdentity | None,
+        retired: bool,
+    ) -> None:
+        with runtime_connection(self._db_path, self._busy_timeout_ms) as conn:
+            if retired:
+                child_custody.write_retired(conn, conversation_id, generation)
+            elif identity is None:
+                child_custody.write_pending(conn, conversation_id, generation)
+            else:
+                child_custody.write_started(conn, conversation_id, generation, identity)
+                recorded = conn.execute(
+                    "SELECT generation,state,pid,birth,boot,unit,supervision_record "
+                    "FROM conversation_child_custody WHERE conversation_id=?", (conversation_id,),
+                ).fetchone()
+                if recorded is None or tuple(recorded) != (
+                    generation, "started", identity.pid, identity.birth, identity.boot,
+                    identity.unit, identity.supervision_record,
+                ):
+                    raise BackendSpawnFailed("The agent process identity could not be saved")
+            commit_without_change_signal(conn)
+
+    async def bind_interruption_delivery(
+        self,
+        conversation_id: str,
+        turn_number: int,
+        references: tuple[DeploymentRecoveryReference, ...] | None = None,
+        recovery_sender_message_ids: dict[str, str] | None = None,
+    ) -> str | None:
+        return await self._write(
+            self._bind_interruption_delivery_sync,
+            conversation_id,
+            turn_number,
+            references,
+            recovery_sender_message_ids,
+        )
+
+    def _bind_interruption_delivery_sync(
+        self,
+        conversation_id: str,
+        turn_number: int,
+        references: tuple[DeploymentRecoveryReference, ...] | None = None,
+        recovery_sender_message_ids: dict[str, str] | None = None,
+    ) -> str | None:
+        with self._publication_connection() as (conn, admission):
+            conn.execute("BEGIN IMMEDIATE")
+            self._apply_signal_mutation(conn, admission)
+            notice = interruption_data.bind_delivery(
+                conn, conversation_id, turn_number, references, recovery_sender_message_ids
+            )
+            self._commit_rows(conn, ())
+            return notice
+
+    async def record_unknown_recovery_deliveries(self) -> None:
+        """Use the existing transcript uncertainty row for a lost recovery receipt."""
+        from planner.conversation.message_content import text_message_content
+
+        groups = await asyncio.to_thread(self._unknown_recovery_deliveries_sync)
+        for conversation_id, identity, references in groups:
+            if await self.sender_message_outcome(conversation_id, identity) is not None:
+                continue
+            await self.append_event(
+                conversation_id,
+                PromptDeliveryUncertainEventPayload(
+                    content=text_message_content(
+                        "Inspect the interrupted work and continue the current authorized step."
+                    ),
+                    sender_label="Panels deployment recovery",
+                    mode=PromptDeliveryMode.queue,
+                    sender_message_id=identity,
+                    recovery_references=references,
+                ),
+            )
+
+    def _unknown_recovery_deliveries_sync(
+        self,
+    ) -> tuple[tuple[str, str, tuple[DeploymentRecoveryReference, ...]], ...]:
+        with runtime_connection(self._db_path, self._busy_timeout_ms) as conn:
+            groups: dict[tuple[str, int, str], list[DeploymentRecoveryReference]] = {}
+            for row in conn.execute(
+                "SELECT x.conversation_id,x.turn_number,x.interruption_id,t.stage,"
+                "x.recovery_sender_message_id "
+                "FROM deploy_interruption_deliveries x JOIN deploy_interruptions d "
+                "USING(interruption_id) LEFT JOIN tickets t ON d.owner_kind='ticket' "
+                "AND t.id=d.owner_id JOIN conversations c ON c.conversation_id="
+                "x.conversation_id WHERE x.status='unknown' "
+                "AND x.recovery_sender_message_id IS NOT NULL ORDER BY x.interruption_id"
+            ):
+                groups.setdefault((str(row[0]), int(row[1]), str(row[4])), []).append(
+                    DeploymentRecoveryReference(str(row[2]), row[3])
+                )
+            return tuple((key[0], key[2], tuple(value)) for key, value in groups.items())
+
+    async def select_deployment_recoveries(
+        self,
+    ) -> dict[str, tuple[DeploymentRecoveryReference, ...]]:
+        return await asyncio.to_thread(self._select_deployment_recoveries_sync)
+
+    def _select_deployment_recoveries_sync(
+        self,
+    ) -> dict[str, tuple[DeploymentRecoveryReference, ...]]:
+        with runtime_connection(self._db_path, self._busy_timeout_ms) as conn:
+            return interruption_data.select_recoveries(conn)
+
+    async def fail_recovery_claims(self, conversation_id: str, turn_number: int) -> None:
+        await self._write(self._fail_recovery_claims_sync, conversation_id, turn_number)
+
+    def _fail_recovery_claims_sync(self, conversation_id: str, turn_number: int) -> None:
+        with self._publication_connection() as (conn, admission):
+            conn.execute("BEGIN IMMEDIATE")
+            self._apply_signal_mutation(conn, admission)
+            claim_revisions = self._recovery_ticket_claim_revisions(conn, conversation_id)
+            interruption_data.fail_recovery_claims(
+                conn,
+                conversation_id,
+                turn_number,
+                now=self._integer_now(),
+                error_reason="recovery after a deploy failed",
+            )
+            self._commit_rows(
+                conn,
+                (),
+                always_announce=(
+                    claim_revisions != self._recovery_ticket_claim_revisions(conn, conversation_id)
+                ),
+            )
+
+    async def reserve_turn(
+        self, conversation_id: str, start_requests: tuple[StartRequest, ...] = ()
+    ) -> int:
+        return await self._write(self._reserve_turn_sync, conversation_id, start_requests)
+
+    def _reserve_turn_sync(
+        self, conversation_id: str, start_requests: tuple[StartRequest, ...] = ()
+    ) -> int:
+        with self._publication_connection() as (conn, admission):
+            conn.execute("BEGIN IMMEDIATE")
+            row = conn.execute(
+                "SELECT COALESCE(MAX(turn_number),0) FROM conversation_lifecycle_facts "
+                "WHERE conversation_id=?",
+                (conversation_id,),
+            ).fetchone()
+            occurrence = conn.execute(
+                "SELECT COALESCE(MAX(turn_number),0) FROM conversation_turn_occurrences "
+                "WHERE conversation_id=?",
+                (conversation_id,),
+            ).fetchone()
+            turn_number = max(int(row[0]), int(occurrence[0])) + 1
+            epoch = conn.execute(
+                "SELECT epoch FROM conversation_runtime_epoch WHERE singleton=1"
+            ).fetchone()
+            assert epoch is not None
+            conn.execute(
+                "INSERT INTO conversation_turn_occurrences VALUES (?,?,?,?)",
+                (conversation_id, turn_number, uuid4().hex, str(epoch[0])),
+            )
+            if conversation_id not in self.blocked_local_conversations:
+                child_custody.bind_current_turn(conn, conversation_id)
+            write_bindings(conn, TurnToken(conversation_id, turn_number), start_requests)
+            apply_facts(
+                conn,
+                conversation_id,
+                (
+                    LifecycleFact(
+                        LifecycleKind.turn,
+                        str(turn_number),
+                        turn_number,
+                        LifecycleOperation.turn,
+                        LifecycleStatus.intent,
+                    ),
+                    LifecycleFact(
+                        LifecycleKind.attempt,
+                        f"prompt:{turn_number}",
+                        turn_number,
+                        LifecycleOperation.prompt,
+                        LifecycleStatus.intent,
+                    ),
+                ),
+            )
+            participate(
+                conn,
+                self._transaction_participant,
+                LifecycleTransition(conversation_id, read_facts(conn, conversation_id)),
+                guard=self._transaction_control_guard,
+            )
+            self._commit_rows(conn, ())
+            return turn_number
+
+    async def lifecycle_facts(self, conversation_id: str) -> tuple[LifecycleFact, ...]:
+        def read() -> tuple[LifecycleFact, ...]:
+            with runtime_connection(self._db_path, self._busy_timeout_ms) as conn:
+                return read_facts(conn, conversation_id)
+
+        return await asyncio.to_thread(read)
+
+    async def transition_lifecycle(
+        self,
+        conversation_id: str,
+        facts: tuple[LifecycleFact, ...],
+    ) -> None:
+        await self._write(
+            self._transition_lifecycle_sync,
+            conversation_id,
+            facts,
+        )
+
+    def _transition_lifecycle_sync(
+        self,
+        conversation_id: str,
+        facts: tuple[LifecycleFact, ...],
+    ) -> None:
+        with self._publication_connection() as (conn, admission):
+            conn.execute("BEGIN IMMEDIATE")
+            self._apply_signal_mutation(conn, admission)
+            claim_revisions = self._recovery_ticket_claim_revisions(conn, conversation_id)
+            apply_facts(conn, conversation_id, facts)
+            interruption_data.settle_delivery(conn, conversation_id, facts, now=self._integer_now())
+            participate(
+                conn,
+                self._transaction_participant,
+                LifecycleTransition(conversation_id, read_facts(conn, conversation_id)),
+                guard=self._transaction_control_guard,
+            )
+            self._commit_rows(
+                conn,
+                (),
+                always_announce=(
+                    claim_revisions != self._recovery_ticket_claim_revisions(conn, conversation_id)
+                ),
+            )
 
     async def settle_recording[T](
-        self, conversation_id: str, operation: Callable[[], Coroutine[Any, Any, T]]
+        self,
+        conversation_id: str,
+        operation: Callable[[], Coroutine[Any, Any, T]],
+        *,
+        retry_later_at: float | None = None,
     ) -> T:
-        """A non-lock failure pauses this operation until explicit reconciliation.
+        """Run one conversation write until it succeeds, or tell its sender to send again.
 
-        SQLite contention is handled by _write, at the transaction boundary. All other
-        errors are exposed here and retained with the exact storage call. The caller
-        keeps its accepted turn and ordered event until this operation actually succeeds.
+        SQLite contention is retried by _write, at the transaction boundary. For any
+        other failure there are two cases, and neither waits for a release:
+
+        - A sender that keeps its own durable copy (the Mac outbox) passes
+          ``retry_later_at``. The write is attempted once and contention is retried
+          only until that loop time. A failure that can pass (SQLite operational
+          errors, which include busy and disk errors, and OSError) raises
+          ErrorCode.retry_later; any other failure would fail the same way every time
+          and is raised unchanged, for the caller to refuse. Either way the
+          transaction rolled back, memory is as it was, and the caller's locks go.
+        - Every other write is the VPS's only copy. It is retried in order after a
+          growing delay, up to a cap, and each failure is logged. The caller keeps its
+          locks meanwhile, so nothing later in the conversation overtakes it. An error
+          that will fail every time is retried too: such a write often records what
+          the agent has already been given (a delivered prompt), and handing the error
+          back would leave that turn reserved and the conversation stuck in silence.
         """
-        task = asyncio.current_task()
-        assert task is not None
-        while True:
+        log = logging.getLogger("planner.conversation")
+        if retry_later_at is not None:
+            limit = self._contention_retry_until.set(retry_later_at)
             try:
                 return await operation()
-            except asyncio.CancelledError:
-                raise
-            except Exception as error:
-                resumed = asyncio.Event()
-                self._recording_failures[task] = (conversation_id, error, resumed)
-                logging.getLogger("planner.conversation").error(
-                    "conversation %s recording paused: %r",
+            except (sqlite3.OperationalError, OSError) as error:
+                log.warning(
+                    "conversation %s could not save an item its sender will send again: %r",
                     conversation_id,
                     error,
                     exc_info=True,
                 )
+                raise PlannerError(
+                    ErrorCode.retry_later,
+                    f"The conversation could not save this item yet: {error}",
+                ) from error
+            finally:
+                self._contention_retry_until.reset(limit)
+        delay = CONVERSATION_WRITE_FAILURE_FIRST_RETRY_SECONDS
+        failures = 0
+        # From the first failure until the write succeeds, the stall checker sees a
+        # vps_save_retrying wait, which alarms once it passes its limit.
+        with ExitStack() as retrying:
+            wait: TrackedWaitHandle | None = None
+            while True:
                 try:
-                    await resumed.wait()
-                finally:
-                    self._recording_failures.pop(task, None)
+                    return await operation()
+                except asyncio.CancelledError:
+                    # A proven pre-dispatch refusal is an admission outcome, not a failed
+                    # write.
+                    raise
+                except Exception as error:
+                    failures += 1
+                    detail = f"Stuck at write {failures}"
+                    if wait is None:
+                        wait = retrying.enter_context(
+                            WAITS.track(
+                                TrackedWaitKind.vps_save_retrying,
+                                conversation_id,
+                                conversation_id=conversation_id,
+                                detail=detail,
+                            )
+                        )
+                    else:
+                        wait.set_detail(detail)
+                    log.error(
+                        "conversation %s save failed (failure %d); retrying in %g s: %r",
+                        conversation_id,
+                        failures,
+                        delay,
+                        error,
+                        exc_info=True,
+                    )
+                    await asyncio.sleep(delay)
+                    delay = min(delay * 2, CONVERSATION_WRITE_FAILURE_MAX_RETRY_SECONDS)
 
-    async def _write[T](self, operation: Callable[..., T], *args: object) -> T:
+    async def _write[T](self, operation: Callable[..., T], *args: object, **kwargs: object) -> T:
         """Retain one SQLite operation through caller cancellation and lock contention.
 
         A synchronous attempt closes its connection (and rolls back any transaction)
@@ -243,20 +1188,57 @@ class ConversationStore:
         Each next attempt starts after the previous thread finishes, never beside it.
         """
 
+        retry_until = self._contention_retry_until.get()
+
         async def finish() -> T:
+            loop = asyncio.get_running_loop()
             while True:
                 try:
-                    return await asyncio.to_thread(operation, *args)
+                    return await asyncio.to_thread(lambda: operation(*args, **kwargs))
                 except sqlite3.OperationalError as error:
                     code = getattr(error, "sqlite_errorcode", None)
                     if code is None or code & 0xFF != sqlite3.SQLITE_BUSY:
+                        raise
+                    # Between attempts nothing is under way, so giving up here is safe.
+                    if retry_until is not None and loop.time() >= retry_until:
                         raise
                     await asyncio.sleep(CONVERSATION_WRITE_LOCK_RETRY_SECONDS)
 
         task = asyncio.create_task(finish())
         self._write_operations.add(task)
         task.add_done_callback(self._write_operations.discard)
-        return await asyncio.shield(task)
+        try:
+            return await asyncio.shield(task)
+        except asyncio.CancelledError:
+            if self.signal_coordinator is None:
+                raise
+            # Retain the caller's conversation lock until its worker resolves.
+            while not task.done():
+                try:
+                    await asyncio.shield(task)
+                except asyncio.CancelledError:
+                    continue
+                except Exception:
+                    break
+            if task.done() and not task.cancelled():
+                task.exception()
+            raise
+
+    async def finish_writes(self) -> None:
+        """Keep ownership until every cancellation-shielded SQLite write closes."""
+        while self._write_operations:
+            tasks = tuple(self._write_operations)
+            for task in tasks:
+                try:
+                    await asyncio.shield(task)
+                except asyncio.CancelledError:
+                    # The thread still owns its transaction. Do not release the runtime
+                    # lease while a successor could reconcile ahead of that commit.
+                    continue
+                except Exception:
+                    # The operation already reported its error to its owner.
+                    continue
+            await asyncio.sleep(0)
 
     async def create_conversation(self, resolved: ResolvedConversationStart) -> ConversationRecord:
         """Write a conversation's row. Raises ``ConversationAlreadyStarted`` for a repeat."""
@@ -264,6 +1246,33 @@ class ConversationStore:
 
     async def read_conversation(self, conversation_id: str) -> ConversationRecord | None:
         return await asyncio.to_thread(self._read_conversation_sync, conversation_id)
+
+    async def transact_events[T](
+        self,
+        conversation_id: str,
+        operation: Callable[[sqlite3.Connection], tuple[T, tuple[ConversationEventPayload, ...]]],
+    ) -> tuple[T, tuple[StoredConversationEvent, ...]]:
+        """Commit a synchronous domain mutation and its conversation events together."""
+
+        def write() -> tuple[T, tuple[StoredConversationEvent, ...]]:
+            with self._publication_connection() as (conn, admission):
+                try:
+                    snapshot = self._begin_validated_attention_write(conn, conversation_id)
+                    if snapshot is None:
+                        raise ConversationRecordMissing(conversation_id)
+                    self._apply_signal_mutation(conn, admission)
+                    with transaction_control_guard(cast(ChangeSignallingConnection, conn)):
+                        result, payloads = operation(conn)
+                    written = self.append_in_transaction(conn, conversation_id, payloads)
+                    final = (result, written)
+                    self._commit_rows(conn, tuple(row.payload for row in written))
+                    return final
+                except BaseException:
+                    if conn.in_transaction:
+                        conn.execute("ROLLBACK")
+                    raise
+
+        return await self._write(write)
 
     async def append_event(
         self,
@@ -273,16 +1282,163 @@ class ConversationStore:
         agent_activity: bool = False,
         automatic_compaction_confirmed: bool = False,
         owner_read_through_sequence: int | None = None,
+        lifecycle: tuple[LifecycleFact, ...] = (),
+        recording_receipt: NativeMessageOperation | None = None,
+        native_message_admission: NativeMessageAdmission | None = None,
     ) -> StoredConversationEvent:
         """Write the next row of this conversation's record and return it as written."""
-        return await self._write(
-            self._append_event_sync,
+        written = await self.append_events(
             conversation_id,
-            payload,
-            agent_activity,
-            automatic_compaction_confirmed,
-            owner_read_through_sequence,
+            (payload,),
+            agent_activity=agent_activity,
+            automatic_compaction_confirmed=automatic_compaction_confirmed,
+            owner_read_through_sequence=owner_read_through_sequence,
+            lifecycle=lifecycle,
+            recording_receipt=recording_receipt,
+            native_message_admission=native_message_admission,
         )
+        return written[0]
+
+    async def append_events(
+        self,
+        conversation_id: str,
+        payloads: tuple[ConversationEventPayload, ...],
+        *,
+        agent_activity: bool = False,
+        automatic_compaction_confirmed: bool = False,
+        working_turn_compaction_confirmed: bool = False,
+        automatic_compaction_result: AutomaticCompactionResult | None = None,
+        create_failure_notice: bool = False,
+        owner_read_through_sequence: int | None = None,
+        lifecycle: tuple[LifecycleFact, ...] = (),
+        recording_receipt: NativeMessageOperation | None = None,
+        native_message_admission: NativeMessageAdmission | None = None,
+    ) -> tuple[StoredConversationEvent, ...]:
+        """Commit one complete row batch and its related conversation facts."""
+        return await self._write(
+            self._append_events_sync,
+            conversation_id,
+            payloads,
+            agent_activity=agent_activity,
+            automatic_compaction_confirmed=automatic_compaction_confirmed,
+            working_turn_compaction_confirmed=working_turn_compaction_confirmed,
+            automatic_compaction_result=automatic_compaction_result,
+            create_failure_notice=create_failure_notice,
+            owner_read_through_sequence=owner_read_through_sequence,
+            lifecycle=lifecycle,
+            recording_receipt=recording_receipt,
+            native_message_admission=native_message_admission,
+        )
+
+    async def admit_sender_messages(
+        self,
+        conversation_id: str,
+        messages: tuple[PromptDiscardedEventPayload, ...],
+        *,
+        lifecycle_if_all_suppressed: tuple[LifecycleFact, ...] = (),
+        automatic_compaction: bool = False,
+    ) -> tuple[PromptDispatchDecision, ...]:
+        """Serialize current notice eligibility with exact discard and lifecycle records.
+
+        ``automatic_compaction`` says the one message is the automatic ``/compact``, which
+        has no sender id. It and every memory-loss notice are maintenance, admitted only
+        while the conversation may receive maintenance.
+        """
+        return await self._write(
+            self._admit_sender_messages_sync,
+            conversation_id,
+            messages,
+            lifecycle_if_all_suppressed,
+            automatic_compaction,
+        )
+
+    def _admit_sender_messages_sync(
+        self,
+        conversation_id: str,
+        messages: tuple[PromptDiscardedEventPayload, ...],
+        lifecycle_if_all_suppressed: tuple[LifecycleFact, ...],
+        automatic_compaction: bool,
+    ) -> tuple[PromptDispatchDecision, ...]:
+        with self._publication_connection() as (conn, admission):
+            try:
+                snapshot = self._begin_validated_attention_write(conn, conversation_id)
+                self._apply_signal_mutation(conn, admission)
+                claim_revisions = self._recovery_ticket_claim_revisions(conn, conversation_id)
+                decisions: list[PromptDispatchDecision] = []
+                discarded: list[PromptDiscardedEventPayload] = []
+                for message in messages:
+                    notice, reason = manager_wakes_data.admit_notice_batch(
+                        conn,
+                        conversation_id=conversation_id,
+                        sender_message_id=message.sender_message_id,
+                        now=self._integer_now(),
+                    )
+                    if reason is None and message.recovery_references:
+                        reason = interruption_data.admit_recovery(
+                            conn, conversation_id, message.recovery_references, self._integer_now()
+                        )
+                    memory_notice = worker_memory.is_memory_notice_sender_message_id(
+                        message.sender_message_id
+                    )
+                    if reason is None and (automatic_compaction or memory_notice):
+                        reason = tickets_data.automated_maintenance_suppression_reason(
+                            conn, conversation_id
+                        )
+                    if reason is not None:
+                        previous = conn.execute(
+                            "SELECT payload FROM conversation_events WHERE conversation_id=? "
+                            "AND kind='prompt_discarded' "
+                            "AND json_extract(payload,'$.sender_message_id')=? "
+                            "ORDER BY sequence LIMIT 1",
+                            (conversation_id, message.sender_message_id),
+                        ).fetchone()
+                        if previous is None:
+                            discarded.append(replace(message, suppression_reason=reason))
+                        else:
+                            reason = (
+                                json.loads(str(previous["payload"])).get("suppression_reason")
+                                or reason
+                            )
+                    decisions.append(
+                        PromptDispatchDecision(
+                            message.sender_message_id, reason, notice, memory_notice
+                        )
+                    )
+                lifecycle = (
+                    lifecycle_if_all_suppressed
+                    if decisions
+                    and all(value.suppression_reason is not None for value in decisions)
+                    else ()
+                )
+                written: tuple[StoredConversationEvent, ...] = ()
+                if discarded or lifecycle:
+                    written = self._insert_rows(conn, conversation_id, tuple(discarded), lifecycle)
+                    if discarded:
+                        assert snapshot is not None
+                        attention = advance_conversation_attention(
+                            snapshot,
+                            tuple(discarded),
+                            owner_read_through_sequence=snapshot.owner_read_through_sequence,
+                            occurred_at=self._integer_now(),
+                        )
+                        capture_conversation_attention(
+                            conn, conversation_id, self._integer_now(), attention
+                        )
+                    self._participate_in_append(conn, conversation_id, written)
+                result = tuple(decisions)
+                self._commit_rows(
+                    conn,
+                    tuple(discarded),
+                    always_announce=(
+                        claim_revisions
+                        != self._recovery_ticket_claim_revisions(conn, conversation_id)
+                    ),
+                )
+                return result
+            except BaseException:
+                if conn.in_transaction:
+                    conn.execute("ROLLBACK")
+                raise
 
     async def mark_held_sender_messages_leaving_queue(
         self, conversation_id: str, sender_message_ids: tuple[str, ...]
@@ -316,40 +1472,29 @@ class ConversationStore:
         self, conversation_id: str, sender_message_ids: tuple[str, ...]
     ) -> bool:
         placeholders = ",".join("?" for _ in sender_message_ids)
-        conn = self._connect()
-        try:
+        with runtime_connection(self._db_path, self._busy_timeout_ms) as conn:
             row = conn.execute(
                 f"SELECT count(*) FROM manager_wake_batches "
                 f"WHERE conversation_id=? AND sender_message_id IN ({placeholders})",
                 (conversation_id, *sender_message_ids),
             ).fetchone()
-        finally:
-            conn.close()
         return row is not None and int(row[0]) == len(sender_message_ids)
 
     def _mark_held_sender_messages_leaving_queue_sync(
         self, conversation_id: str, sender_message_ids: tuple[str, ...]
     ) -> int:
-        conn = self._connect()
-        try:
-            with conn:
-                changed = 0
-                for sender_message_id in sender_message_ids:
-                    changed += conn.execute(
-                        "UPDATE manager_wake_batches SET status='dispatching',updated_at=? "
-                        "WHERE conversation_id=? AND sender_message_id=? "
-                        "AND status IN ('offering','accepted')",
-                        (self._integer_now(), conversation_id, sender_message_id),
-                    ).rowcount
-                return changed
-        finally:
-            conn.close()
-
-    async def append_message_to_owner(
-        self, conversation_id: str, payload: MessageToOwnerEventPayload
-    ) -> StoredConversationEvent:
-        """Write one owner-bound message without a backend call."""
-        return await self.append_event(conversation_id, payload)
+        with self._publication_connection() as (conn, admission):
+            conn.execute("BEGIN IMMEDIATE")
+            changed = 0
+            for sender_message_id in sender_message_ids:
+                changed += conn.execute(
+                    "UPDATE manager_wake_batches SET status='dispatching',updated_at=? "
+                    "WHERE conversation_id=? AND sender_message_id=? "
+                    "AND status IN ('offering','accepted')",
+                    (self._integer_now(), conversation_id, sender_message_id),
+                ).rowcount
+            conn.commit()
+            return changed
 
     async def append_turn_ending(
         self,
@@ -358,18 +1503,21 @@ class ConversationStore:
         *,
         agent_activity: bool,
         automatic_compaction_confirmed: bool,
+        working_turn_compaction_confirmed: bool = False,
         automatic_compaction_result: AutomaticCompactionResult | None,
         create_failure_notice: bool = False,
+        lifecycle: tuple[LifecycleFact, ...] = (),
     ) -> tuple[StoredConversationEvent, ...]:
         """Atomically append silence markers followed by their turn ending."""
-        return await self._write(
-            self._append_turn_ending_sync,
+        return await self.append_events(
             conversation_id,
             payloads,
-            agent_activity,
-            automatic_compaction_confirmed,
-            automatic_compaction_result,
-            create_failure_notice,
+            agent_activity=agent_activity,
+            automatic_compaction_confirmed=automatic_compaction_confirmed,
+            working_turn_compaction_confirmed=working_turn_compaction_confirmed,
+            automatic_compaction_result=automatic_compaction_result,
+            create_failure_notice=create_failure_notice,
+            lifecycle=lifecycle,
         )
 
     async def advance_owner_read_through_sequence(
@@ -400,6 +1548,10 @@ class ConversationStore:
         model_change: ModelChangedEventPayload | None,
         extra_prompts: tuple[PromptEventPayload, ...] = (),
         owner_read_through_sequence: int | None = None,
+        lifecycle: tuple[LifecycleFact, ...] = (),
+        composed_content_delivered: bool = True,
+        recording_receipt: NativeMessageOperation | None = None,
+        extra_recording_receipts: tuple[NativeMessageOperation, ...] = (),
     ) -> tuple[StoredConversationEvent, ...]:
         """Write everything one delivery leaves behind, as one thing that either all
         happened or none of it did.
@@ -420,6 +1572,7 @@ class ConversationStore:
         later delivery from crediting rows that arrived after the owner left.
         Returns the rows in the order they were written.
         """
+
         return await self._write(
             self._append_delivered_prompt_sync,
             conversation_id,
@@ -427,6 +1580,10 @@ class ConversationStore:
             model_change,
             extra_prompts,
             owner_read_through_sequence,
+            lifecycle,
+            composed_content_delivered,
+            recording_receipt=recording_receipt,
+            extra_recording_receipts=extra_recording_receipts,
         )
 
     async def read_events_after(
@@ -436,6 +1593,24 @@ class ConversationStore:
         return await asyncio.to_thread(
             self._read_events_after_sync, conversation_id, after_sequence
         )
+
+    async def diagnostics_expired(self, conversation_id: str) -> bool:
+        """Whether omission metadata records expired diagnostics in this conversation."""
+        return await asyncio.to_thread(self._expiry_sync, conversation_id, None)
+
+    async def sequence_expired(self, conversation_id: str, sequence: int) -> bool:
+        """Whether this exact original event position was recorded as expired."""
+        return await asyncio.to_thread(self._expiry_sync, conversation_id, sequence)
+
+    def _expiry_sync(self, conversation_id: str, sequence: int | None) -> bool:
+        from planner.conversation.views.omissions import diagnostics_expired, sequence_expired
+
+        with runtime_connection(self._db_path, self._busy_timeout_ms) as conn:
+            return (
+                diagnostics_expired(conn, conversation_id)
+                if sequence is None
+                else sequence_expired(conn, conversation_id, sequence)
+            )
 
     async def read_latest_events(
         self, conversation_id: str, *, before_sequence: int | None, limit: int
@@ -488,17 +1663,97 @@ class ConversationStore:
     async def attention_facts(
         self, conversation_ids: Collection[str]
     ) -> dict[str, ConversationAttentionFacts]:
-        """Return owner-message and last-turn facts for a list of conversations."""
+        """Return owner-message, last-turn and background task facts for conversations."""
         return await asyncio.to_thread(self._attention_facts_sync, conversation_ids)
 
-    async def conversation_ids_holding_unread_owner_message(self) -> frozenset[str]:
-        """Every conversation whose newest message to the owner is past his read mark.
+    # --- background tasks ---
+    #
+    # A conversation's live background tasks are the ones its agent started and whose end
+    # has not been heard. Every write announces itself, because whether an agent is working
+    # is read by screens outside the conversation.
 
-        This asks the whole record rather than a list, because the caller is looking for
-        conversations it does not already hold. A caller that has the list wants
-        ``attention_facts``, which answers more about each one.
+    @staticmethod
+    def record_background_task_started_in_transaction(
+        conn: sqlite3.Connection, conversation_id: str, task_id: str, task_description: str
+    ) -> None:
+        conn.execute(
+            "INSERT OR REPLACE INTO conversation_background_tasks "
+            "(conversation_id, task_id, task_description) VALUES (?, ?, ?)",
+            (conversation_id, task_id, task_description),
+        )
+
+    @staticmethod
+    def record_background_task_ended_in_transaction(
+        conn: sqlite3.Connection, conversation_id: str, task_id: str
+    ) -> str | None:
+        """Forget one live task and return its description, or None if it was not live."""
+        row = conn.execute(
+            "DELETE FROM conversation_background_tasks WHERE conversation_id=? AND task_id=? "
+            "RETURNING task_description",
+            (conversation_id, task_id),
+        ).fetchone()
+        return None if row is None else str(row[0])
+
+    @staticmethod
+    def take_background_tasks_in_transaction(
+        conn: sqlite3.Connection,
+        conversation_id: str,
+        *,
+        task_ids: tuple[str, ...] | None = None,
+    ) -> tuple[str, ...]:
+        """Forget this conversation's live tasks and return their descriptions.
+
+        ``task_ids`` of ``None`` means every live task of the conversation.
         """
-        return await asyncio.to_thread(self._conversation_ids_holding_unread_owner_message_sync)
+        rows = conn.execute(
+            "SELECT task_id, task_description FROM conversation_background_tasks "
+            "WHERE conversation_id=? ORDER BY rowid",
+            (conversation_id,),
+        ).fetchall()
+        taken = [row for row in rows if task_ids is None or str(row[0]) in task_ids]
+        conn.executemany(
+            "DELETE FROM conversation_background_tasks WHERE conversation_id=? AND task_id=?",
+            ((conversation_id, str(row[0])) for row in taken),
+        )
+        return tuple(str(row[1]) for row in taken)
+
+    async def take_background_tasks(
+        self, conversation_id: str, *, task_ids: tuple[str, ...] | None = None
+    ) -> tuple[str, ...]:
+        """Forget this conversation's live tasks in their own announced commit."""
+        return await self._write(self._take_background_tasks_sync, conversation_id, task_ids)
+
+    def _take_background_tasks_sync(
+        self, conversation_id: str, task_ids: tuple[str, ...] | None
+    ) -> tuple[str, ...]:
+        with self._publication_connection() as (conn, admission):
+            try:
+                conn.execute("BEGIN IMMEDIATE")
+                self._apply_signal_mutation(conn, admission)
+                taken = self.take_background_tasks_in_transaction(
+                    conn, conversation_id, task_ids=task_ids
+                )
+                self._commit_rows(conn, (), always_announce=bool(taken))
+                return taken
+            except BaseException:
+                if conn.in_transaction:
+                    conn.execute("ROLLBACK")
+                raise
+
+    async def conversation_ids_with_live_background_tasks(self) -> frozenset[str]:
+        return frozenset(await asyncio.to_thread(self.read_live_background_task_ids))
+
+    def read_live_background_task_ids(self) -> dict[str, tuple[str, ...]]:
+        """Every conversation with a live background task, and those tasks' ids."""
+        with runtime_connection(self._db_path, self._busy_timeout_ms) as conn:
+            rows = conn.execute(
+                "SELECT conversation_id, task_id FROM conversation_background_tasks "
+                "ORDER BY conversation_id, rowid"
+            ).fetchall()
+        live: dict[str, tuple[str, ...]] = {}
+        for row in rows:
+            live[str(row[0])] = (*live.get(str(row[0]), ()), str(row[1]))
+        return live
 
     async def has_delivered_prompt(self, conversation_id: str) -> bool:
         """Whether any prompt has ever reached this conversation's backend.
@@ -508,23 +1763,6 @@ class ConversationStore:
         that was refused leaves a row behind without any prompt having been delivered.
         """
         return await asyncio.to_thread(self._has_delivered_prompt_sync, conversation_id)
-
-    async def update_vendor_session_cursor(
-        self, conversation_id: str, vendor_session_cursor: str
-    ) -> None:
-        await self._write(
-            self._update_vendor_session_cursor_sync, conversation_id, vendor_session_cursor
-        )
-
-    async def replace_composer_catalog(
-        self, conversation_id: str, composer_catalog: tuple[ComposerCatalogEntry, ...]
-    ) -> None:
-        """Put the whole composer catalog where the old one was.
-
-        A backend reports the catalog it has now, not what moved in it. The prior catalog
-        is out of date rather than partly right, so this does not merge entries.
-        """
-        await self._write(self._replace_composer_catalog_sync, conversation_id, composer_catalog)
 
     # --- inside the worker thread ---
 
@@ -536,6 +1774,7 @@ class ConversationStore:
             model=resolved.model,
             reasoning_effort=resolved.reasoning_effort,
             workspace_folder=resolved.workspace_folder,
+            workspace_path_policy=resolved.workspace_path_policy,
             role_text=None if role_materials is None else role_materials.role_text,
             identity_environment_variables=(
                 () if role_materials is None else role_materials.identity_environment_variables
@@ -551,49 +1790,57 @@ class ConversationStore:
             owner_read_through_sequence=0,
             created_at=self._integer_now(),
         )
-        conn = self._connect()
-        try:
-            conn.execute(
-                "INSERT INTO conversations (conversation_id, backend_key, model, "
-                "reasoning_effort, workspace_folder, role_text, "
-                "identity_environment_variables, access, vendor_session_cursor, "
-                "composer_catalog, latest_sequence, latest_agent_activity_at, "
-                "latest_agent_activity_sequence, automatically_compacted_through_sequence, "
-                "automatic_compaction_attempted_through_sequence, "
-                "owner_read_through_sequence, created_at) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                (
-                    record.conversation_id,
-                    str(record.backend_key),
-                    record.model,
-                    record.reasoning_effort,
-                    str(record.workspace_folder),
-                    record.role_text,
-                    _identity_environment_variables_to_json(record.identity_environment_variables),
-                    str(record.access),
-                    record.vendor_session_cursor,
-                    _composer_catalog_to_json(record.composer_catalog),
-                    record.latest_sequence,
-                    record.latest_agent_activity_at,
-                    record.latest_agent_activity_sequence,
-                    record.automatically_compacted_through_sequence,
-                    record.automatic_compaction_attempted_through_sequence,
-                    record.owner_read_through_sequence,
-                    record.created_at,
-                ),
-            )
-        except sqlite3.IntegrityError as already_there:
-            raise ConversationAlreadyStarted(record.conversation_id) from already_there
-        finally:
-            conn.close()
+        with self._publication_connection() as (conn, admission):
+            try:
+                if self.signal_coordinator is not None:
+                    conn.execute("BEGIN IMMEDIATE")
+                conn.execute(
+                    "INSERT INTO conversations (conversation_id, backend_key, model, "
+                    "reasoning_effort, workspace_folder, workspace_path_policy, role_text, "
+                    "identity_environment_variables, access, vendor_session_cursor, "
+                    "composer_catalog, latest_sequence, latest_agent_activity_at, "
+                    "latest_agent_activity_sequence, automatically_compacted_through_sequence, "
+                    "automatic_compaction_attempted_through_sequence, "
+                    "owner_read_through_sequence, created_at) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    (
+                        record.conversation_id,
+                        str(record.backend_key),
+                        record.model,
+                        record.reasoning_effort,
+                        str(record.workspace_folder),
+                        str(record.workspace_path_policy),
+                        record.role_text,
+                        _identity_environment_variables_to_json(
+                            record.identity_environment_variables
+                        ),
+                        str(record.access),
+                        record.vendor_session_cursor,
+                        _composer_catalog_to_json(record.composer_catalog),
+                        record.latest_sequence,
+                        record.latest_agent_activity_at,
+                        record.latest_agent_activity_sequence,
+                        record.automatically_compacted_through_sequence,
+                        record.automatic_compaction_attempted_through_sequence,
+                        record.owner_read_through_sequence,
+                        record.created_at,
+                    ),
+                )
+                # A new conversation has no source process. The pre-spawn boundary
+                # replaces this receipt with launch_pending before a child can start.
+                child_custody.write_never_started(conn, record.conversation_id)
+                if self.signal_coordinator is not None:
+                    conn.commit()
+            except sqlite3.IntegrityError as already_there:
+                raise ConversationAlreadyStarted(record.conversation_id) from already_there
         return record
 
     def _read_conversation_sync(self, conversation_id: str) -> ConversationRecord | None:
-        conn = self._connect()
-        try:
+        with runtime_connection(self._db_path, self._busy_timeout_ms) as conn:
             row = conn.execute(
                 "SELECT conversation_id, backend_key, model, reasoning_effort, "
-                "workspace_folder, role_text, identity_environment_variables, access, "
+                "workspace_folder, workspace_path_policy, role_text, "
+                "identity_environment_variables, access, "
                 "vendor_session_cursor, composer_catalog, latest_sequence, "
                 "latest_agent_activity_at, latest_agent_activity_sequence, "
                 "automatically_compacted_through_sequence, "
@@ -603,8 +1850,6 @@ class ConversationStore:
                 "FROM conversations WHERE conversation_id = ?",
                 (conversation_id,),
             ).fetchone()
-        finally:
-            conn.close()
         return None if row is None else _conversation_record(row)
 
     def _advance_owner_read_through_sequence_sync(
@@ -612,8 +1857,7 @@ class ConversationStore:
     ) -> ConversationRecord | None:
         if through_sequence < 0:
             raise ValueError("through_sequence must be non-negative")
-        conn = self._connect()
-        try:
+        with self._publication_connection() as (conn, admission):
             snapshot = self._begin_validated_attention_write(conn, conversation_id)
             try:
                 conn.execute(
@@ -650,69 +1894,23 @@ class ConversationStore:
                     conn.execute("ROLLBACK")
                 raise
             else:
-                _commit_appended_rows(conn, (), always_announce=True)
-        finally:
-            conn.close()
+                self._commit_rows(conn, (), always_announce=True)
         return record
 
-    def _append_event_sync(
-        self,
-        conversation_id: str,
-        payload: ConversationEventPayload,
-        agent_activity: bool,
-        automatic_compaction_confirmed: bool,
-        owner_read_through_sequence: int | None,
-    ) -> StoredConversationEvent:
-        conn = self._connect()
-        try:
-            snapshot = self._begin_validated_attention_write(conn, conversation_id)
-            written = self._insert_rows(conn, conversation_id, (payload,))
-            stored = written[0]
-            if agent_activity:
-                conn.execute(
-                    "UPDATE conversations SET latest_agent_activity_at = ?, "
-                    "latest_agent_activity_sequence = ? WHERE conversation_id = ?",
-                    (stored.created_at, stored.sequence, conversation_id),
-                )
-            if automatic_compaction_confirmed:
-                conn.execute(
-                    "UPDATE conversations SET automatically_compacted_through_sequence = "
-                    "latest_agent_activity_sequence, "
-                    "automatic_compaction_attempted_through_sequence = "
-                    "latest_agent_activity_sequence WHERE conversation_id = ?",
-                    (conversation_id,),
-                )
-            if owner_read_through_sequence is not None:
-                conn.execute(
-                    "UPDATE conversations SET owner_read_through_sequence = "
-                    "MAX(owner_read_through_sequence, ?) WHERE conversation_id = ?",
-                    (owner_read_through_sequence, conversation_id),
-                )
-            assert snapshot is not None
-            read_through = snapshot.owner_read_through_sequence
-            if owner_read_through_sequence is not None:
-                read_through = max(read_through, owner_read_through_sequence)
-            result = advance_conversation_attention(
-                snapshot,
-                (payload,),
-                owner_read_through_sequence=read_through,
-                occurred_at=stored.created_at,
-            )
-            capture_conversation_attention(conn, conversation_id, stored.created_at, result)
-            _commit_appended_rows(conn, (payload,))
-        except BaseException:
-            if conn.in_transaction:
-                conn.execute("ROLLBACK")
-            raise
-        finally:
-            conn.close()
-        return written[0]
+    async def automated_maintenance_suppression_reason(self, conversation_id: str) -> str | None:
+        """Why automated maintenance may not reach this conversation now, or None."""
+        return await asyncio.to_thread(
+            self._automated_maintenance_suppression_reason_sync, conversation_id
+        )
+
+    def _automated_maintenance_suppression_reason_sync(self, conversation_id: str) -> str | None:
+        with runtime_connection(self._db_path, self._busy_timeout_ms) as conn:
+            return tickets_data.automated_maintenance_suppression_reason(conn, conversation_id)
 
     def _conversations_due_for_automatic_compaction_sync(
         self, due_at_or_before: int, activity_after: int
     ) -> tuple[str, ...]:
-        conn = self._connect()
-        try:
+        with runtime_connection(self._db_path, self._busy_timeout_ms) as conn:
             rows = conn.execute(
                 "SELECT conversation_id FROM conversations "
                 "WHERE latest_agent_activity_at IS NOT NULL "
@@ -723,9 +1921,14 @@ class ConversationStore:
                 "ORDER BY latest_agent_activity_at, conversation_id",
                 (due_at_or_before, activity_after),
             ).fetchall()
-        finally:
-            conn.close()
-        return tuple(str(row["conversation_id"]) for row in rows)
+            return tuple(
+                str(row["conversation_id"])
+                for row in rows
+                if tickets_data.automated_maintenance_suppression_reason(
+                    conn, str(row["conversation_id"])
+                )
+                is None
+            )
 
     def _append_delivered_prompt_sync(
         self,
@@ -734,119 +1937,119 @@ class ConversationStore:
         model_change: ModelChangedEventPayload | None,
         extra_prompts: tuple[PromptEventPayload, ...] = (),
         owner_read_through_sequence: int | None = None,
+        lifecycle: tuple[LifecycleFact, ...] = (),
+        composed_content_delivered: bool = True,
+        *,
+        recording_receipt: NativeMessageOperation | None = None,
+        extra_recording_receipts: tuple[NativeMessageOperation, ...] = (),
     ) -> tuple[StoredConversationEvent, ...]:
         prompts: tuple[ConversationEventPayload, ...] = (prompt, *extra_prompts)
         payloads: tuple[ConversationEventPayload, ...] = (
             prompts if model_change is None else (model_change, *prompts)
         )
-        conn = self._connect()
-        try:
-            snapshot = self._begin_validated_attention_write(conn, conversation_id)
-            written = self._insert_rows(conn, conversation_id, payloads)
-            if model_change is not None:
-                conn.execute(
-                    "UPDATE conversations SET model = ?, reasoning_effort = ? "
-                    "WHERE conversation_id = ?",
-                    (model_change.model, model_change.reasoning_effort, conversation_id),
+        with self._publication_connection() as (conn, admission):
+            try:
+                snapshot = self._begin_validated_attention_write(conn, conversation_id)
+                self._apply_signal_mutation(conn, admission)
+                written = self._insert_rows(
+                    conn,
+                    conversation_id,
+                    payloads,
+                    lifecycle,
+                    recording_receipt=recording_receipt,
+                    extra_recording_receipts=extra_recording_receipts,
+                    native_message_admission=NativeMessageAdmission(PromptDeliveryStarted()),
                 )
-            owner_reply_sequences = [
-                event.sequence
-                for event in written
-                if isinstance(event.payload, PromptEventPayload)
-                and event.payload.sender is not None
-                and event.payload.sender.kind is PrincipalKind.owner
-            ]
-            if owner_reply_sequences:
-                read_through = (
-                    max(owner_reply_sequences)
-                    if owner_read_through_sequence is None
-                    else owner_read_through_sequence
+                interruption_data.settle_delivery(
+                    conn,
+                    conversation_id,
+                    lifecycle,
+                    now=self._integer_now(),
+                    composed_content_delivered=composed_content_delivered,
                 )
-                conn.execute(
-                    "UPDATE conversations SET owner_read_through_sequence = "
-                    "MAX(owner_read_through_sequence, ?) WHERE conversation_id = ?",
-                    (read_through, conversation_id),
+                if model_change is not None:
+                    conn.execute(
+                        "UPDATE conversations SET model = ?, reasoning_effort = ? "
+                        "WHERE conversation_id = ?",
+                        (model_change.model, model_change.reasoning_effort, conversation_id),
+                    )
+                owner_reply_sequences = [
+                    event.sequence
+                    for event in written
+                    if isinstance(event.payload, PromptEventPayload)
+                    and event.payload.sender is not None
+                    and event.payload.sender.kind is PrincipalKind.owner
+                ]
+                if owner_reply_sequences:
+                    read_through = (
+                        max(owner_reply_sequences)
+                        if owner_read_through_sequence is None
+                        else owner_read_through_sequence
+                    )
+                    conn.execute(
+                        "UPDATE conversations SET owner_read_through_sequence = "
+                        "MAX(owner_read_through_sequence, ?) WHERE conversation_id = ?",
+                        (read_through, conversation_id),
+                    )
+                assert snapshot is not None
+                resulting_read_through = snapshot.owner_read_through_sequence
+                if owner_reply_sequences:
+                    resulting_read_through = max(resulting_read_through, read_through)
+                result = advance_conversation_attention(
+                    snapshot,
+                    tuple(row.payload for row in written),
+                    owner_read_through_sequence=resulting_read_through,
+                    occurred_at=written[-1].created_at,
                 )
-            assert snapshot is not None
-            resulting_read_through = snapshot.owner_read_through_sequence
-            if owner_reply_sequences:
-                resulting_read_through = max(resulting_read_through, read_through)
-            result = advance_conversation_attention(
-                snapshot,
-                payloads,
-                owner_read_through_sequence=resulting_read_through,
-                occurred_at=written[-1].created_at,
-            )
-            capture_conversation_attention(conn, conversation_id, written[-1].created_at, result)
-            _commit_appended_rows(conn, payloads)
-        except BaseException:
-            if conn.in_transaction:
-                conn.execute("ROLLBACK")
-            raise
-        finally:
-            conn.close()
+                capture_conversation_attention(
+                    conn, conversation_id, written[-1].created_at, result
+                )
+                self._participate_in_append(conn, conversation_id, written)
+                self._commit_rows(conn, payloads)
+            except BaseException:
+                if conn.in_transaction:
+                    conn.execute("ROLLBACK")
+                raise
         return written
 
-    def _append_turn_ending_sync(
+    def _append_events_sync(
         self,
         conversation_id: str,
         payloads: tuple[ConversationEventPayload, ...],
+        *,
         agent_activity: bool,
         automatic_compaction_confirmed: bool,
+        working_turn_compaction_confirmed: bool,
         automatic_compaction_result: AutomaticCompactionResult | None,
         create_failure_notice: bool,
+        owner_read_through_sequence: int | None,
+        lifecycle: tuple[LifecycleFact, ...],
+        recording_receipt: NativeMessageOperation | None,
+        native_message_admission: NativeMessageAdmission | None,
     ) -> tuple[StoredConversationEvent, ...]:
-        conn = self._connect()
-        try:
-            snapshot = self._begin_validated_attention_write(conn, conversation_id)
-            written = self._insert_rows(conn, conversation_id, payloads)
-            ended = written[-1]
-            if create_failure_notice:
-                ending_payload = ended.payload
-                error_summary = getattr(ending_payload, "error_summary", None)
-                self._create_ticket_failure_notice(
+        with self._publication_connection() as (conn, admission):
+            try:
+                self._begin_validated_attention_write(conn, conversation_id)
+                self._apply_signal_mutation(conn, admission)
+                written = self.append_in_transaction(
                     conn,
-                    conversation_id=conversation_id,
-                    event_sequence=ended.sequence,
-                    error_summary=str(error_summary),
-                    now=ended.created_at,
+                    conversation_id,
+                    payloads,
+                    agent_activity=agent_activity,
+                    automatic_compaction_confirmed=automatic_compaction_confirmed,
+                    working_turn_compaction_confirmed=working_turn_compaction_confirmed,
+                    automatic_compaction_result=automatic_compaction_result,
+                    create_failure_notice=create_failure_notice,
+                    owner_read_through_sequence=owner_read_through_sequence,
+                    lifecycle=lifecycle,
+                    recording_receipt=recording_receipt,
+                    native_message_admission=native_message_admission,
                 )
-            if agent_activity:
-                conn.execute(
-                    "UPDATE conversations SET latest_agent_activity_at = ?, "
-                    "latest_agent_activity_sequence = ? WHERE conversation_id = ?",
-                    (ended.created_at, ended.sequence, conversation_id),
-                )
-            if automatic_compaction_confirmed:
-                conn.execute(
-                    "UPDATE conversations SET automatically_compacted_through_sequence = "
-                    "latest_agent_activity_sequence, "
-                    "automatic_compaction_attempted_through_sequence = "
-                    "latest_agent_activity_sequence WHERE conversation_id = ?",
-                    (conversation_id,),
-                )
-            elif automatic_compaction_result is AutomaticCompactionResult.not_compacted:
-                conn.execute(
-                    "UPDATE conversations SET "
-                    "automatic_compaction_attempted_through_sequence = "
-                    "latest_agent_activity_sequence WHERE conversation_id = ?",
-                    (conversation_id,),
-                )
-            assert snapshot is not None
-            result = advance_conversation_attention(
-                snapshot,
-                payloads,
-                owner_read_through_sequence=snapshot.owner_read_through_sequence,
-                occurred_at=ended.created_at,
-            )
-            capture_conversation_attention(conn, conversation_id, ended.created_at, result)
-            _commit_appended_rows(conn, payloads)
-        except BaseException:
-            if conn.in_transaction:
-                conn.execute("ROLLBACK")
-            raise
-        finally:
-            conn.close()
+                self._commit_rows(conn, payloads)
+            except BaseException:
+                if conn.in_transaction:
+                    conn.execute("ROLLBACK")
+                raise
         return written
 
     @staticmethod
@@ -880,11 +2083,34 @@ class ConversationStore:
             now=now,
         )
 
+    def _participate_in_append(
+        self,
+        conn: sqlite3.Connection,
+        conversation_id: str,
+        written: tuple[StoredConversationEvent, ...],
+    ) -> None:
+        """Expose the final candidate after all source effects, before the owner commits."""
+        participate(
+            conn,
+            self._transaction_participant,
+            LifecycleTransition(
+                conversation_id,
+                read_facts(conn, conversation_id),
+                tuple(event.sequence for event in written),
+            ),
+            guard=self._transaction_control_guard,
+        )
+
     def _insert_rows(
         self,
         conn: sqlite3.Connection,
         conversation_id: str,
         payloads: tuple[ConversationEventPayload, ...],
+        lifecycle: tuple[LifecycleFact, ...] = (),
+        *,
+        recording_receipt: NativeMessageOperation | None = None,
+        extra_recording_receipts: tuple[NativeMessageOperation, ...] = (),
+        native_message_admission: NativeMessageAdmission | None = None,
     ) -> tuple[StoredConversationEvent, ...]:
         """Add rows to the end of a conversation's record. A transaction must be open.
 
@@ -892,6 +2118,9 @@ class ConversationStore:
         together is numbered consecutively with no gap for anyone else to write into: the
         transaction is immediate, so a second writer is waiting for this one's lock.
         """
+        if self._event_participant is not None:
+            with transaction_control_guard(cast(ChangeSignallingConnection, conn)):
+                payloads += self._event_participant(conn, conversation_id, payloads)
         created_at = self._integer_now()
         row = conn.execute(
             "SELECT latest_sequence FROM conversations WHERE conversation_id = ?",
@@ -914,6 +2143,15 @@ class ConversationStore:
                     created_at,
                 ),
             )
+            for operation in (
+                *((recording_receipt,) if recording_receipt else ()),
+                *extra_recording_receipts,
+            ):
+                if (
+                    getattr(payload, "sender_message_id", None) == operation.submission_id
+                    and operation.in_commit is not None
+                ):
+                    operation.in_commit(conn, conversation_id, payload, native_message_admission)
             written.append(
                 StoredConversationEvent(
                     conversation_id=conversation_id,
@@ -923,52 +2161,72 @@ class ConversationStore:
                     created_at=created_at,
                 )
             )
-            if isinstance(payload, PromptEventPayload) and payload.sender_message_id is not None:
-                settle_worker_step_skill_bindings(conn, payload.sender_message_id, delivered=True)
-            elif (
-                isinstance(
-                    payload,
-                    (
-                        PromptDeliveryRefusedEventPayload,
-                        PromptDeliveryUncertainEventPayload,
-                        PromptDiscardedEventPayload,
-                    ),
-                )
-                and payload.sender_message_id is not None
-            ):
-                settle_worker_step_skill_bindings(conn, payload.sender_message_id, delivered=False)
         conn.execute(
             "UPDATE conversations SET latest_sequence = ? WHERE conversation_id = ?",
             (latest_sequence + len(payloads), conversation_id),
         )
+        apply_facts(conn, conversation_id, lifecycle)
+        interruption_data.settle_delivery(
+            conn,
+            conversation_id,
+            tuple(
+                fact
+                for fact in lifecycle
+                if fact.status
+                in (LifecycleStatus.refused, LifecycleStatus.unknown, LifecycleStatus.suppressed)
+            ),
+            now=self._integer_now(),
+        )
+        append_projection(conn, written)
         return tuple(written)
+
+    @staticmethod
+    def read_answer_events_in_transaction(
+        conn: sqlite3.Connection, conversation_id: str, answer_id: str
+    ) -> tuple[StoredConversationEvent, ...]:
+        return tuple(
+            _stored_event(row)
+            for row in conn.execute(
+                "SELECT conversation_id,sequence,kind,payload,created_at FROM conversation_events "
+                "WHERE conversation_id=? "
+                "AND kind IN ('permission_answered','user_input_answered','answer_applied') "
+                "AND json_extract(payload,'$.answer_id')=? ORDER BY sequence",
+                (conversation_id, answer_id),
+            )
+        )
 
     def _read_events_after_sync(
         self, conversation_id: str, after_sequence: int
     ) -> tuple[StoredConversationEvent, ...]:
-        conn = self._connect()
-        try:
+        with runtime_connection(self._db_path, self._busy_timeout_ms) as conn:
             rows = conn.execute(
                 "SELECT conversation_id, sequence, kind, payload, created_at "
                 "FROM conversation_events WHERE conversation_id = ? AND sequence > ? "
                 "ORDER BY sequence",
                 (conversation_id, after_sequence),
             ).fetchall()
-        finally:
-            conn.close()
         return tuple(_stored_event(row) for row in rows)
+
+    def _open_turn_holds_only_memory_notices_sync(self, conversation_id: str) -> bool:
+        """Whether every prompt since the last turn ending is a memory-loss notice.
+
+        A turn adopted after a VPS restart is rebuilt from the record, and its prompt rows
+        (the opener and any steer) are the ones after the previous turn's ending. A steer
+        whose admission is uncertain counts too, as it does while the turn runs here.
+        """
+        with runtime_connection(self._db_path, self._busy_timeout_ms) as conn:
+            return open_turn_holds_only_memory_notices(conn, conversation_id)
 
     def _read_latest_events_sync(
         self, conversation_id: str, before_sequence: int | None, limit: int
     ) -> tuple[StoredConversationEvent, ...]:
-        conn = self._connect()
         parameters: list[object] = [conversation_id]
         before_clause = ""
         if before_sequence is not None:
             before_clause = " AND sequence < ?"
             parameters.append(before_sequence)
         parameters.append(limit)
-        try:
+        with runtime_connection(self._db_path, self._busy_timeout_ms) as conn:
             rows = conn.execute(
                 "SELECT * FROM (SELECT conversation_id, sequence, kind, payload, created_at "
                 "FROM conversation_events WHERE conversation_id = ?"
@@ -976,29 +2234,23 @@ class ConversationStore:
                 + " ORDER BY sequence DESC LIMIT ?) ORDER BY sequence",
                 tuple(parameters),
             ).fetchall()
-        finally:
-            conn.close()
         return tuple(_stored_event(row) for row in rows)
 
     def _read_event_sync(
         self, conversation_id: str, sequence: int
     ) -> StoredConversationEvent | None:
-        conn = self._connect()
-        try:
+        with runtime_connection(self._db_path, self._busy_timeout_ms) as conn:
             row = conn.execute(
                 "SELECT conversation_id, sequence, kind, payload, created_at "
                 "FROM conversation_events WHERE conversation_id = ? AND sequence = ?",
                 (conversation_id, sequence),
             ).fetchone()
-        finally:
-            conn.close()
         return None if row is None else _stored_event(row)
 
     def _sender_message_outcome_sync(
         self, conversation_id: str, sender_message_id: str
     ) -> StoredConversationEvent | None:
-        conn = self._connect()
-        try:
+        with runtime_connection(self._db_path, self._busy_timeout_ms) as conn:
             row = conn.execute(
                 "SELECT conversation_id,sequence,kind,payload,created_at FROM conversation_events "
                 "WHERE conversation_id=? AND json_extract(payload,'$.sender_message_id')=? "
@@ -1007,8 +2259,6 @@ class ConversationStore:
                 "'prompt_discarded','message_to_owner') ORDER BY sequence DESC LIMIT 1",
                 (conversation_id, sender_message_id),
             ).fetchone()
-        finally:
-            conn.close()
         return None if row is None else _stored_event(row)
 
     def _latest_turn_ended_sequences_sync(
@@ -1017,16 +2267,13 @@ class ConversationStore:
         unique = tuple(dict.fromkeys(conversation_ids))
         if not unique:
             return {}
-        conn = self._connect()
-        try:
+        with runtime_connection(self._db_path, self._busy_timeout_ms) as conn:
             rows = conn.execute(
                 "SELECT conversation_id, MAX(sequence) AS latest_turn_ended_sequence "
                 "FROM conversation_events WHERE kind = ? AND conversation_id IN "
                 f"({','.join('?' * len(unique))}) GROUP BY conversation_id",
                 (str(ConversationEventKind.turn_ended), *unique),
             ).fetchall()
-        finally:
-            conn.close()
         return {str(row["conversation_id"]): int(row["latest_turn_ended_sequence"]) for row in rows}
 
     def _owner_read_through_sequences_sync(
@@ -1036,15 +2283,12 @@ class ConversationStore:
         if not ids:
             return {}
         placeholders = ",".join("?" for _ in ids)
-        conn = self._connect()
-        try:
+        with runtime_connection(self._db_path, self._busy_timeout_ms) as conn:
             rows = conn.execute(
                 "SELECT conversation_id, owner_read_through_sequence FROM conversations "
                 f"WHERE conversation_id IN ({placeholders})",
                 ids,
             ).fetchall()
-        finally:
-            conn.close()
         return {
             str(row["conversation_id"]): int(row["owner_read_through_sequence"]) for row in rows
         }
@@ -1056,11 +2300,12 @@ class ConversationStore:
         if not ids:
             return {}
         placeholders = ",".join("?" for _ in ids)
-        conn = self._connect()
-        try:
+        with runtime_connection(self._db_path, self._busy_timeout_ms) as conn:
             rows = conn.execute(
                 "SELECT c.conversation_id, c.owner_read_through_sequence, "
                 "e.latest_owner_message, "
+                "EXISTS (SELECT 1 FROM conversation_background_tasks b "
+                " WHERE b.conversation_id = c.conversation_id) AS has_live_background_task, "
                 "(SELECT CASE WHEN te.kind = 'turn_ended' "
                 " THEN json_extract(te.payload, '$.ending') ELSE NULL END "
                 " FROM conversation_events te "
@@ -1078,8 +2323,6 @@ class ConversationStore:
                 f"WHERE c.conversation_id IN ({placeholders})",
                 ids,
             ).fetchall()
-        finally:
-            conn.close()
         return {
             str(row["conversation_id"]): ConversationAttentionFacts(
                 unread_message_to_owner=(
@@ -1087,70 +2330,296 @@ class ConversationStore:
                     and int(row["latest_owner_message"]) > int(row["owner_read_through_sequence"])
                 ),
                 last_turn_failed=str(row["last_turn_ending"] or "") == "failed",
+                has_live_background_task=bool(row["has_live_background_task"]),
             )
             for row in rows
         }
 
-    def _conversation_ids_holding_unread_owner_message_sync(self) -> frozenset[str]:
-        conn = self._connect()
-        try:
-            rows = conn.execute(
-                "SELECT c.conversation_id FROM conversations c "
-                "JOIN conversation_events e ON e.conversation_id = c.conversation_id "
-                "WHERE e.kind = 'message_to_owner' "
-                "GROUP BY c.conversation_id "
-                "HAVING MAX(e.sequence) > c.owner_read_through_sequence"
-            ).fetchall()
-        finally:
-            conn.close()
-        return frozenset(str(row["conversation_id"]) for row in rows)
-
     def _has_delivered_prompt_sync(self, conversation_id: str) -> bool:
-        conn = self._connect()
-        try:
+        with runtime_connection(self._db_path, self._busy_timeout_ms) as conn:
             row = conn.execute(
                 "SELECT 1 FROM conversation_events WHERE conversation_id = ? AND kind = ? LIMIT 1",
                 (conversation_id, str(ConversationEventKind.prompt)),
             ).fetchone()
-        finally:
-            conn.close()
         return row is not None
 
-    def _update_vendor_session_cursor_sync(
-        self, conversation_id: str, vendor_session_cursor: str
-    ) -> None:
-        conn = self._connect()
+    @contextmanager
+    def signal_mutation(self, mutation: SignalRuntimeMutation | None) -> Iterator[None]:
+        token = self._signal_mutation.set(mutation)
         try:
+            yield
+        finally:
+            self._signal_mutation.reset(token)
+
+    @contextmanager
+    def _publication_connection(
+        self,
+    ) -> Iterator[tuple[sqlite3.Connection, SignalRuntimeMutation | None]]:
+        """One save's connection. If the save does not commit, its runtime fields go back.
+
+        Every writer here commits as its last step, and nothing after COMMIT raises, so
+        an exception leaving this block means the rows rolled back. Memory must say the
+        same: a Mac item answered "retry later" or refused is interpreted again from it.
+        """
+        undo: list[PlainFieldMutation] = []
+        undo_scope = self._runtime_field_undo.set(undo)
+        try:
+            with runtime_connection(self._db_path, self._busy_timeout_ms) as conn:
+                yield conn, self._signal_mutation.get()
+        except BaseException:
+            for previous in reversed(undo):
+                setattr(previous.target, previous.attribute, previous.value)
+            raise
+        finally:
+            self._runtime_field_undo.reset(undo_scope)
+
+    def _apply_signal_mutation(
+        self, conn: sqlite3.Connection, mutation: SignalRuntimeMutation | None
+    ) -> None:
+        """Apply runtime fields before commit, so publication reads them.
+
+        Each previous value is kept before its field changes, so _publication_connection
+        can put it back if anything from here to COMMIT fails.
+        """
+        if mutation is not None:
+            undo = self._runtime_field_undo.get()
+            for operation in mutation.operations:
+                if undo is not None:
+                    undo.append(
+                        PlainFieldMutation(
+                            operation.target,
+                            operation.attribute,
+                            getattr(operation.target, operation.attribute),
+                        )
+                    )
+                setattr(operation.target, operation.attribute, operation.value)
+            from planner.conversation.publication.persistence import mark_changed
+
+            mark_changed(conn, mutation.conversation_id)
+
+    @staticmethod
+    def _recovery_ticket_claim_revisions(
+        conn: sqlite3.Connection,
+        conversation_id: str,
+    ) -> tuple[tuple[str, int], ...]:
+        """Quiet conversation writes announce when recovery changes a Ticket claim."""
+        return tuple(
+            (str(row[0]), int(row[1]))
+            for row in conn.execute(
+                "SELECT id,worker_step_claim_revision FROM tickets WHERE id IN "
+                "(SELECT owner_id FROM deploy_interruptions WHERE source_conversation_id=? "
+                "AND owner_kind='ticket') ORDER BY id",
+                (conversation_id,),
+            )
+        )
+
+    def _commit_rows(
+        self,
+        conn: sqlite3.Connection,
+        payloads: tuple[ConversationEventPayload, ...],
+        *,
+        always_announce: bool = False,
+    ) -> None:
+        _commit_appended_rows(
+            conn,
+            payloads,
+            always_announce=always_announce,
+            strict_outcome=self.signal_coordinator is not None,
+        )
+
+    def read_conversation_records(
+        self, conversation_ids: Collection[str]
+    ) -> tuple[ConversationRecord, ...]:
+        if not conversation_ids:
+            return ()
+        with runtime_connection(self._db_path, self._busy_timeout_ms) as conn:
+            placeholders = ",".join("?" for _ in conversation_ids)
+            return tuple(
+                _conversation_record(row)
+                for row in conn.execute(
+                    f"SELECT * FROM conversations WHERE conversation_id IN ({placeholders})",
+                    tuple(conversation_ids),
+                )
+            )
+
+    async def commit_backend_event(
+        self,
+        writer: Callable[
+            [sqlite3.Connection], tuple[dict[str, JsonValue], tuple[StoredConversationEvent, ...]]
+        ],
+        in_commit: CommitParticipant | None,
+        *,
+        always_announce: bool = False,
+    ) -> AcceptedEvent:
+        return await self._write(
+            self._commit_backend_event_sync, writer, in_commit, always_announce=always_announce
+        )
+
+    def _commit_backend_event_sync(
+        self,
+        writer: Callable[
+            [sqlite3.Connection], tuple[dict[str, JsonValue], tuple[StoredConversationEvent, ...]]
+        ],
+        in_commit: CommitParticipant | None,
+        *,
+        always_announce: bool = False,
+    ) -> AcceptedEvent:
+        with self._publication_connection() as (conn, admission):
+            try:
+                conn.execute("BEGIN IMMEDIATE")
+                written: tuple[StoredConversationEvent, ...] = ()
+
+                def take() -> dict[str, JsonValue]:
+                    nonlocal written
+                    result, written = writer(conn)
+                    return result
+
+                outcome = (
+                    AcceptedEvent(take(), True) if in_commit is None else in_commit(conn, take)
+                )
+                if not conn.in_transaction:
+                    raise RuntimeError("commit participant committed the conversation transaction")
+                outcome = replace(outcome, written=written if outcome.taken else ())
+                if outcome.taken:
+                    self._apply_signal_mutation(conn, admission)
+                if in_commit is None:
+                    self._commit_rows(
+                        conn,
+                        tuple(row.payload for row in outcome.written),
+                        always_announce=always_announce,
+                    )
+                else:
+                    conn.commit()
+                return outcome
+            except BaseException:
+                conn.rollback()
+                raise
+
+    def append_in_transaction(
+        self,
+        conn: sqlite3.Connection,
+        conversation_id: str,
+        payloads: tuple[ConversationEventPayload, ...],
+        *,
+        agent_activity: bool = False,
+        automatic_compaction_confirmed: bool = False,
+        working_turn_compaction_confirmed: bool = False,
+        automatic_compaction_result: AutomaticCompactionResult | None = None,
+        create_failure_notice: bool = False,
+        owner_read_through_sequence: int | None = None,
+        lifecycle: tuple[LifecycleFact, ...] = (),
+        recording_receipt: NativeMessageOperation | None = None,
+        native_message_admission: NativeMessageAdmission | None = None,
+    ) -> tuple[StoredConversationEvent, ...]:
+        """Canonical append under the caller's existing write transaction.
+
+        The caller owns commit and publishes these rows only after it succeeds.
+        """
+        if not conn.in_transaction:
+            raise ValueError("conversation append requires an open transaction")
+        if not payloads and not lifecycle:
+            return ()
+        snapshot = conversation_attention_snapshot(conn, conversation_id, transaction_open=True)
+        written = self._insert_rows(
+            conn,
+            conversation_id,
+            payloads,
+            lifecycle,
+            recording_receipt=recording_receipt,
+            native_message_admission=native_message_admission,
+        )
+        if not written:
+            self._participate_in_append(conn, conversation_id, written)
+            return written
+        last = written[-1]
+        if agent_activity:
             conn.execute(
-                "UPDATE conversations SET vendor_session_cursor = ? WHERE conversation_id = ?",
+                "UPDATE conversations SET latest_agent_activity_at=?, "
+                "latest_agent_activity_sequence=? WHERE conversation_id=?",
+                (last.created_at, last.sequence, conversation_id),
+            )
+        if automatic_compaction_confirmed:
+            conn.execute(
+                "UPDATE conversations SET "
+                "automatically_compacted_through_sequence=latest_agent_activity_sequence, "
+                "automatic_compaction_attempted_through_sequence=latest_agent_activity_sequence "
+                "WHERE conversation_id=?",
+                (conversation_id,),
+            )
+            if working_turn_compaction_confirmed:
+                # Panels' own idle /compact interrupts no step, so only this boundary
+                # owes a Worker the mid-step memory-loss notice.
+                conn.execute(
+                    "UPDATE conversations SET "
+                    "working_turn_compacted_through_sequence=latest_agent_activity_sequence "
+                    "WHERE conversation_id=?",
+                    (conversation_id,),
+                )
+        elif automatic_compaction_result is AutomaticCompactionResult.not_compacted:
+            conn.execute(
+                "UPDATE conversations SET "
+                "automatic_compaction_attempted_through_sequence=latest_agent_activity_sequence "
+                "WHERE conversation_id=?",
+                (conversation_id,),
+            )
+        if create_failure_notice:
+            self._create_ticket_failure_notice(
+                conn,
+                conversation_id=conversation_id,
+                event_sequence=last.sequence,
+                error_summary=str(getattr(last.payload, "error_summary", None)),
+                now=last.created_at,
+            )
+        if owner_read_through_sequence is not None:
+            conn.execute(
+                "UPDATE conversations SET owner_read_through_sequence = "
+                "MAX(owner_read_through_sequence, ?) WHERE conversation_id = ?",
+                (owner_read_through_sequence, conversation_id),
+            )
+        if snapshot is not None:
+            read_through = snapshot.owner_read_through_sequence
+            if owner_read_through_sequence is not None:
+                read_through = max(read_through, owner_read_through_sequence)
+            result = advance_conversation_attention(
+                snapshot,
+                tuple(row.payload for row in written),
+                owner_read_through_sequence=read_through,
+                occurred_at=last.created_at,
+            )
+            capture_conversation_attention(conn, conversation_id, last.created_at, result)
+        self._participate_in_append(conn, conversation_id, written)
+        return written
+
+    def update_session_in_transaction(
+        self,
+        conn: sqlite3.Connection,
+        conversation_id: str,
+        *,
+        vendor_session_cursor: str | None = None,
+        composer_catalog: tuple[ComposerCatalogEntry, ...] | None = None,
+    ) -> None:
+        if vendor_session_cursor is not None:
+            conn.execute(
+                "UPDATE conversations SET vendor_session_cursor=? WHERE conversation_id=?",
                 (vendor_session_cursor, conversation_id),
             )
-        finally:
-            conn.close()
-
-    def _replace_composer_catalog_sync(
-        self, conversation_id: str, composer_catalog: tuple[ComposerCatalogEntry, ...]
-    ) -> None:
-        serialized_catalog = _composer_catalog_to_json(composer_catalog)
-        conn = self._connect()
-        try:
+        if composer_catalog is not None:
             conn.execute(
-                "UPDATE conversations SET composer_catalog = ? "
-                "WHERE conversation_id = ? AND composer_catalog IS NOT ?",
-                (serialized_catalog, conversation_id, serialized_catalog),
+                "UPDATE conversations SET composer_catalog=? WHERE conversation_id=?",
+                (_composer_catalog_to_json(composer_catalog), conversation_id),
             )
-        finally:
-            conn.close()
 
     def _connect(self) -> sqlite3.Connection:
         return connect(self._db_path, self._busy_timeout_ms)
 
-    @staticmethod
     def _begin_validated_attention_write(
-        conn: sqlite3.Connection, conversation_id: str
+        self, conn: sqlite3.Connection, conversation_id: str
     ) -> ConversationAttentionSnapshot | None:
         """Acquire the write lock only after deriving and then validating attention."""
 
+        if self.signal_coordinator is not None:
+            conn.execute("BEGIN IMMEDIATE")
+            return conversation_attention_snapshot(conn, conversation_id, transaction_open=True)
         while True:
             snapshot = conversation_attention_snapshot(conn, conversation_id)
             conn.execute("BEGIN IMMEDIATE")
@@ -1170,6 +2639,7 @@ def _commit_appended_rows(
     payloads: tuple[ConversationEventPayload, ...],
     *,
     always_announce: bool = False,
+    strict_outcome: bool = False,
 ) -> None:
     """Close an append, announcing it only if a screen outside the conversation reads it.
 
@@ -1190,7 +2660,7 @@ def _commit_appended_rows(
         # transaction alone never proves that a database error followed a commit.
         raise
     except Exception:
-        if conn.in_transaction:
+        if strict_outcome or conn.in_transaction:
             raise
         # A publisher can fail after SQLite commits. The rows are already durable.
         # Return their result and never enter another append attempt.
@@ -1222,6 +2692,7 @@ def ensure_started_conversation_record(
     immutable_expected = (
         str(resolved.backend_key),
         str(resolved.workspace_folder),
+        str(resolved.workspace_path_policy),
         None if role_materials is None else role_materials.role_text,
         identity_environment_variables_json,
         str(resolved.access),
@@ -1231,19 +2702,20 @@ def ensure_started_conversation_record(
         resolved.model,
         resolved.reasoning_effort,
         str(resolved.workspace_folder),
+        str(resolved.workspace_path_policy),
         None if role_materials is None else role_materials.role_text,
         identity_environment_variables_json,
         str(resolved.access),
     )
     conn.execute(
         "INSERT OR IGNORE INTO conversations (conversation_id, backend_key, model, "
-        "reasoning_effort, workspace_folder, role_text, "
+        "reasoning_effort, workspace_folder, workspace_path_policy, role_text, "
         "identity_environment_variables, access, created_at) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         (resolved.conversation_id, *inserted_values, created_at),
     )
     row = conn.execute(
-        "SELECT backend_key, workspace_folder, role_text, "
+        "SELECT backend_key, workspace_folder, workspace_path_policy, role_text, "
         "identity_environment_variables, access FROM conversations "
         "WHERE conversation_id = ?",
         (resolved.conversation_id,),
@@ -1265,6 +2737,7 @@ def _conversation_record(row: sqlite3.Row) -> ConversationRecord:
             None if row["reasoning_effort"] is None else str(row["reasoning_effort"])
         ),
         workspace_folder=Path(str(row["workspace_folder"])),
+        workspace_path_policy=WorkspacePathPolicy(str(row["workspace_path_policy"])),
         role_text=None if row["role_text"] is None else str(row["role_text"]),
         identity_environment_variables=_identity_environment_variables_from_json(
             str(row["identity_environment_variables"])

@@ -4,62 +4,120 @@ from __future__ import annotations
 
 import asyncio
 import html
+import logging
 import os
 import re
 import sqlite3
-from collections.abc import AsyncIterator, Callable, Mapping
+from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
 from contextlib import asynccontextmanager
+from datetime import UTC, datetime
 from pathlib import Path
 from time import monotonic as _monotonic
-from typing import Any
+from typing import Any, cast
+from uuid import uuid4
 
-from fastapi import APIRouter, FastAPI, Request
+from fastapi import APIRouter, Depends, FastAPI, Request
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
-from planner.conversation.api import build_conversation_runtime
-from planner.conversation.api import router as conversation_router
+from planner.attention.api import router as attention_router
+from planner.conversation.api import (
+    router as conversation_router,
+)
 from planner.conversation.backend_state import DurableCodexLoginRejection
-from planner.conversation.contracts import ConversationSystem
+from planner.conversation.backends.contracts import BackendChildFactory
+from planner.conversation.contracts import ConversationBackendKey, ConversationSystem
+from planner.conversation.history.api import router as conversation_history_router
 from planner.conversation.production_backends import production_backend_child_factories
 from planner.conversation.send_body_limit import ConversationSendBodyLimitMiddleware
 from planner.conversation.usage.api import router as recorded_usage_router
-from planner.conversation.usage.pricing import UsagePricingService
-from planner.conversation.usage.service import RecordedUsageService
+from planner.conversation.usage.composition import makeUsageService
+from planner.conversation.video_uploads.api import create_router as create_video_upload_router
+from planner.conversation.video_uploads.config import CLEANUP_INTERVAL_SECONDS
+from planner.conversation.video_uploads.destinations import authorize_destination
+from planner.conversation.video_uploads.service import VideoUploadService
+from planner.conversation.views.api import router as conversation_views_router
+from planner.conversation.views.rebuild import rebuild_out_of_date_views
 from planner.core import change_signal
 from planner.core.clock import Clock
-from planner.core.config import HOST, Config
+from planner.core.config import (
+    DB_BUSY_TIMEOUT_MS,
+    HOST,
+    SHUTDOWN_GRACE_SECONDS,
+    SSE_HEARTBEAT_MS,
+    Config,
+)
 from planner.core.errors import ErrorCode, PlannerError
 from planner.core.path_observer import observe_path_changes
+from planner.core.request_guidance import preserve_authored_request_examples
 from planner.core.response_compression import (
-    CompressExceptEventStreams,
-    answers_with_an_event_stream,
-    event_stream_route_patterns,
+    CompressExceptMarkedRoutes,
+    answers_uncompressed,
+    uncompressed_route_patterns,
 )
+from planner.core.runtime_connections import reuse_connections
 from planner.core.sse import change_stream
+from planner.core.task_settlement import run_on_worker_thread
 from planner.core.testmode import build_test_router
 from planner.core.trusted_ingress import TrustedIngressMiddleware, trusted_ingress_config
-from planner.days.api import router as days_router
-from planner.environments.deployment_lifecycle import DeploymentLifecycleStore
-from planner.environments.vps_status import (
-    VpsStatusSnapshot,
-    VpsStatusSummary,
-    collect_vps_status,
-    collect_vps_status_summary,
+from planner.core.unidentified_agent_calls import UnidentifiedAgentCallsMiddleware
+from planner.core.web_assets import WebAssets
+from planner.credentials.api import router as credentials_router
+from planner.credentials.requests.api import router as credential_requests_router
+from planner.datasets.api import router as datasets_router
+from planner.environments import ticket_scratch
+from planner.environments.logic.update_experience import deployment_status
+from planner.environments.mac_updates import MacUpdateService
+from planner.environments.update_admission_middleware import UpdateAdmissionMiddleware
+from planner.environments.update_api import router as updates_router
+from planner.environments.update_attempts import (
+    FileUpdateAttemptStore,
+    attempt_path,
+    import_legacy_request,
 )
-from planner.feedback.api import router as feedback_router
+from planner.environments.update_barrier import UpdateBarrier
+from planner.environments.update_configuration import DEPLOYMENT_SUCCESS_DISPLAY_SECONDS
+from planner.environments.update_install import own_service_unit
+from planner.environments.update_provider import GitHubUpdateProvider
+from planner.environments.update_service import UpdateService
+from planner.environments.vps_metrics.api import router as vps_metrics_router
+from planner.environments.vps_metrics.config import load_config as load_metrics_config
+from planner.environments.vps_metrics.config import store_path
+from planner.environments.vps_metrics.runtime import MetricsRuntime
+from planner.environments.vps_status import VpsStatusSnapshot, collect_vps_status
+from planner.executor.clock import now_ms as executor_now_ms
 from planner.files.api import router as files_router
+from planner.files.catalog.api import router as artifact_catalog_router
+from planner.goals.api import router as goals_router
+from planner.ideas.api import router as ideas_router
+from planner.ios_compatibility.middleware import IOSBuildGateMiddleware
+from planner.machines.api import router as machines_router
+from planner.machines.contracts import HOME_MACHINE_ID, ORIGINAL_MAC_MACHINE_ID
+from planner.managers.api import router as managers_router
+from planner.measure_sources.api import router as measure_sources_router
+from planner.measure_sources.participants import SlotParticipantFactory
+from planner.measures.api import router as measures_router
 from planner.membership.api import router as membership_router
 from planner.message_delivery.api import router as message_delivery_router
+from planner.navigation.delivery import create_delivery_runtime
+from planner.navigation.views.delivery import ScopedDeliveryRuntime
 from planner.notifications.api import router as notifications_router
+from planner.previews.api import handle_preview_error
+from planner.previews.api import router as previews_router
+from planner.previews.contracts import PreviewError
+from planner.previews.runtime import PreviewRuntime
+from planner.previews.service import PreviewService
+from planner.previews.transport import PreviewTransport
 from planner.projects.api import router as projects_router
-from planner.scheduled_tickets.api import router as scheduled_tickets_router
-from planner.skill_versions import (
-    reconcile_managed_skill_versions,
-    reconcile_provisional_worker_step_bindings,
-)
-from planner.sprints.api import router as sprints_router
+from planner.resource_versions.api import router as resource_versions_router
+from planner.runtime.workspaces import register_workspace_root
+from planner.server_lifecycle.runtime import application_runtime
+from planner.skill_sources import provision_account_skills, provision_workspace_skills
+from planner.stalls import checker as stalls_checker
+from planner.stalls.contracts import StallChecker, StallCheckerFactory
+from planner.stalls.registry import WAITS
 from planner.tickets.api import router as tickets_router
+from planner.tickets.workspace.api import router as ticket_workspace_router
 from planner.worker_settings.api import router as worker_settings_router
 from planner.worker_types.configuration import (
     configured_worker_runtime_definitions,
@@ -67,9 +125,14 @@ from planner.worker_types.configuration import (
 
 _STATUS_BY_CODE: dict[ErrorCode, int] = {
     ErrorCode.not_found: 404,
+    ErrorCode.diagnostic_expired: 410,
     ErrorCode.stale_claim: 409,
+    ErrorCode.revision_conflict: 409,
     ErrorCode.already_running: 409,
     ErrorCode.gateway_offline: 503,
+    ErrorCode.skill_save_incomplete: 500,
+    ErrorCode.executor_version_refused: 409,
+    ErrorCode.executor_incarnation_not_current: 409,
 }
 
 
@@ -110,10 +173,7 @@ def svelte_index_html(app_sha: str | None = None) -> str:
             "web/dist is missing; run npm --prefix web run build."
             "</div></body></html>"
         )
-    identity = (
-        '<meta name="panels-app-sha" '
-        f'content="{html.escape(app_sha or "", quote=True)}">'
-    )
+    identity = f'<meta name="panels-app-sha" content="{html.escape(app_sha or "", quote=True)}">'
     return document.replace("</head>", f"{identity}</head>", 1)
 
 
@@ -121,8 +181,30 @@ def http_status_for(code: ErrorCode) -> int:
     return _STATUS_BY_CODE.get(code, 400)
 
 
+async def handle_planner_error(request: Request, exc: Exception) -> JSONResponse:
+    error = cast(PlannerError, exc)
+    return JSONResponse(status_code=http_status_for(error.code), content=error.to_payload())
+
+
 async def _stop_runtime_with_deadline(runtime: Any, deadline: float) -> None:
     await runtime.stop(deadline=deadline)
+
+
+def _with_native_build_1_fields(health: dict[str, object]) -> dict[str, object]:
+    """Native build 1 (ios/Panels/Models/WorkspaceModels.swift, ExecutorHealth) requires
+    connection_state, and knows the Mac's activity only when it is "ready" and the
+    identity's connection_generation is above 0. Protocol 22 has neither, so both are
+    derived from presence here. Remove when the minimum native build reads presence."""
+    present = health.get("presence") == "present"
+    identity = health.get("identity")
+    if isinstance(identity, dict):
+        generation = identity.get("connection_generation", 0)
+        identity = {**identity, "connection_generation": max(int(generation), 1 if present else 0)}
+    return {
+        **health,
+        "identity": identity,
+        "connection_state": "ready" if present else "disconnected",
+    }
 
 
 def create_app(
@@ -131,156 +213,630 @@ def create_app(
     conn_factory: Callable[[], sqlite3.Connection],
     *,
     conversation_system_for_test: ConversationSystem | None = None,
+    slot_participants_for_test: SlotParticipantFactory | None = None,
+    backend_child_factories_for_test: Mapping[ConversationBackendKey, BackendChildFactory]
+    | None = None,
     vps_status_collector: Callable[[Config], VpsStatusSnapshot] | None = None,
-    vps_status_summary_collector: (
-        Callable[[Config, str | None, str | None], VpsStatusSummary] | None
-    ) = None,
+    stall_checker_factory_for_test: StallCheckerFactory | None = None,
 ) -> FastAPI:
+    if stall_checker_factory_for_test is not None and not config.test_mode:
+        raise ValueError("stall_checker_factory_for_test is accepted only in test mode")
+    if slot_participants_for_test is not None and not config.test_mode:
+        raise ValueError("slot_participants_for_test is accepted only in test mode")
     if conversation_system_for_test is not None and not config.test_mode:
         raise ValueError("conversation_system_for_test is accepted only in test mode")
+    if backend_child_factories_for_test is not None and not config.test_mode:
+        raise ValueError("backend_child_factories_for_test is accepted only in test mode")
 
     @asynccontextmanager
     async def _configured_lifespan(app: FastAPI) -> AsyncIterator[None]:
         Path(config.db_path).parent.mkdir(parents=True, exist_ok=True)
-        Path(config.logs_dir).mkdir(parents=True, exist_ok=True)
         from planner.tickets import data as tickets_data
 
-        audit_conn = conn_factory()
-        try:
-            tickets_data.audit_ticket_registry_integrity(audit_conn)
-            reconcile_managed_skill_versions(audit_conn)
-            reconcile_provisional_worker_step_bindings(audit_conn)
-        finally:
-            audit_conn.close()
-
-        # The conversation system, built before anything that sends into one. It composes
-        # the three real agents on this machine, and spawns none of them until a
-        # conversation has something to send. Everything that starts or steers a worker
-        # goes through it, so it has to exist before the readiness loop starts.
-        # One account, one login, so one memory of what a turn found out about it. The
-        # conversations that run codex write it and the backends card reads it. It is in
-        # the database because a refused login is still refused after a restart, and
-        # Panels restarts on every deploy.
-        remembered_codex_login_rejection = DurableCodexLoginRejection(
-            config.db_path, busy_timeout_ms=config.db_busy_timeout_ms
-        )
-        conversation = build_conversation_runtime(
-            db_path=config.db_path,
-            db_busy_timeout_ms=config.db_busy_timeout_ms,
-            sse_heartbeat_ms=config.sse_heartbeat_ms,
-            backend_child_factories=production_backend_child_factories(
-                # Where this server is answering, so the `panels` CLI in an agent's shell
-                # can reach it. Read from the running config rather than stored with a
-                # conversation, so a conversation resumed after a restart reaches the
-                # server that resumed it.
-                panels_server_url=f"http://{HOST}:{config.port}",
-                remembered_codex_login_rejection=remembered_codex_login_rejection,
-            ),
-            remembered_codex_login_rejection=remembered_codex_login_rejection,
-        )
-        app.state.conversation = conversation
-        # A test that drives workers wants a conversation system it can hold still, so it
-        # passes one in. Nothing else does: production always runs the real one.
-        app.state.conversation_system = (
-            conversation.system if conversation_system_for_test is None
-            else conversation_system_for_test
-        )
-        await conversation.system.start_idle_child_janitor()
-
-        lifecycle_observer = asyncio.create_task(
-            observe_path_changes(deployment_lifecycle_path, change_signal.emit)
-        )
+        recovery_task: asyncio.Task[None] | None = None
+        attempt_observer: asyncio.Task[None] | None = None
+        work_release_task: asyncio.Task[None] | None = None
+        video_cleanup_task: asyncio.Task[None] | None = None
+        ticket_scratch_task: asyncio.Task[None] | None = None
+        view_rebuild_task: asyncio.Task[None] | None = None
         loops: Any = None
-        if not config.test_mode:
-            from planner.core.loops import start_background_loops
+        metrics: MetricsRuntime | None = None
+        executor_endpoint = None
+        executor_registry = None
+        stall_checker: StallChecker | None = None
 
-            loops = start_background_loops(
-                config,
-                clock,
-                conversation_system=app.state.conversation_system,
-                asyncio_loop=asyncio.get_running_loop(),
-            )
-        try:
-            yield
-        finally:
-            deadline = _monotonic() + float(config.shutdown_grace_seconds)
-            try:
-                if loops is not None:
-                    await _stop_runtime_with_deadline(loops, deadline)
-            finally:
-                lifecycle_observer.cancel()
+        async def shutdown_dependents() -> None:
+            app.state.updates.stop()
+            app.state.conversation = None
+            deadline = _monotonic() + float(SHUTDOWN_GRACE_SECONDS)
+            failures: list[BaseException] = []
+
+            async def attempt(operation: Awaitable[None]) -> None:
                 try:
-                    await lifecycle_observer
+                    await operation
+                except BaseException as error:
+                    failures.append(error)
+
+            async def cancel_task(task: asyncio.Task[None]) -> None:
+                task.cancel()
+                try:
+                    await task
                 except asyncio.CancelledError:
                     pass
-                finally:
-                    app.state.conversation = None
-                    await conversation.shutdown()
 
+            await attempt(preview_runtime.close())
+            if video_cleanup_task is not None:
+                await attempt(cancel_task(video_cleanup_task))
+            if ticket_scratch_task is not None:
+                await attempt(cancel_task(ticket_scratch_task))
+            if view_rebuild_task is not None:
+                await attempt(cancel_task(view_rebuild_task))
+            if recovery_task is not None:
+                await attempt(cancel_task(recovery_task))
+            await attempt(scoped_navigation.close())
+            await attempt(navigation_delivery.close())
+            if metrics is not None:
+                await attempt(metrics.stop(deadline=deadline))
+            app.state.vps_metrics = None
+            if loops is not None:
+                await attempt(_stop_runtime_with_deadline(loops, deadline))
+            if stall_checker is not None:
+                await attempt(stall_checker.close())
+            if executor_registry is not None:
+                await attempt(executor_registry.close())
+            if work_release_task is not None:
+                await attempt(cancel_task(work_release_task))
+            if attempt_observer is not None:
+                await attempt(cancel_task(attempt_observer))
+            if failures:
+                for later in failures[1:]:
+                    failures[0].add_note(f"dependent shutdown also failed: {later!r}")
+                raise failures[0]
+
+        remembered_codex_login_rejection = DurableCodexLoginRejection(
+            config.db_path, busy_timeout_ms=DB_BUSY_TIMEOUT_MS
+        )
+        backend_factories = (
+            backend_child_factories_for_test
+            if backend_child_factories_for_test is not None
+            else production_backend_child_factories(
+                panels_server_url=f"http://{HOST}:{config.port}",
+                worker_process_root=(
+                    Path(config.db_path).expanduser().resolve().parent / "worker-processes"
+                ),
+                remembered_codex_login_rejection=remembered_codex_login_rejection,
+            )
+        )
+        from planner.executor.registry import VpsExecutorRegistry
+        from planner.executor.routing import LocaleBackendChildFactory
+
+        executor_registry = VpsExecutorRegistry(
+            config.db_path, clock, original_enabled=config.executor_id is not None,
+            application_revision=config.app_sha or "unknown",
+        )
+        backend_factories = {
+            key: LocaleBackendChildFactory(config.db_path, local, executor_registry)
+            for key, local in backend_factories.items()
+        }
+        app.state.executor_registry = executor_registry
+        app.state.executor_endpoint = None
+        with (
+            reuse_connections(config.db_path),
+            register_workspace_root(config.db_path, config.workspace_root),
+        ):
+            from planner.tickets.integrity import TicketIntegrityError
+
+            ticket_integrity_faults: list[TicketIntegrityError] = []
+
+            def audit_startup_tickets(connection: sqlite3.Connection) -> None:
+                executor_registry.load(connection)
+                ticket_integrity_faults.extend(
+                    tickets_data.audit_ticket_registry_integrity(connection, startup=True)
+                )
+
+            async with application_runtime(
+                db_path=config.db_path,
+                db_busy_timeout_ms=DB_BUSY_TIMEOUT_MS,
+                sse_heartbeat_ms=SSE_HEARTBEAT_MS,
+                backend_child_factories=backend_factories,
+                remembered_codex_login_rejection=remembered_codex_login_rejection,
+                navigation_delivery=navigation_delivery,
+                shutdown_dependents=shutdown_dependents,
+                defer_view_cleanup=True,
+                startup_audit=audit_startup_tickets,
+            ) as conversation:
+                app.state.updates.bind_owner(asyncio.get_running_loop())
+
+                def recover_orphaned_cut() -> None:
+                    barrier = app.state.update_barrier
+                    if not barrier.frozen:
+                        return
+                    generation = barrier.generation
+                    interrupted = update_attempts.read()
+                    identity = "" if interrupted is None else interrupted.attempt_id
+                    if app.state.updates.owns_preparation(identity):
+                        return
+                    with barrier.installer_guard(identity) as active:
+                        if active:
+                            app.state.updates.installer_observed(identity)
+                            return
+                        if app.state.updates.owns_preparation(identity):
+                            return
+                        released = app.state.updates.recover_orphaned_attempt(identity, generation)
+                        if released is not None:
+                            barrier.remove(released)
+
+                async def recover_orphaned_barrier() -> None:
+                    await asyncio.to_thread(recover_orphaned_cut)
+
+                await recover_orphaned_barrier()
+                startup_frozen = app.state.update_barrier.frozen
+                if startup_frozen:
+                    conversation.system.workspace_admission.claim(
+                        lambda: None, idle=lambda: True, require_idle=False
+                    )
+                # Mac runs survive a VPS restart: their rows, assignments and commands
+                # are all in the database, and the conversation core adopts them.
+                executor_registry.configure(
+                    conversation.system, app, update_check=app.state.mac_updates.check_for,
+                )
+                executor_endpoint = executor_registry.get(ORIGINAL_MAC_MACHINE_ID)
+                app.state.executor_endpoint = executor_endpoint
+                conversation.system.start_admission.configure_destinations(
+                    lambda destination: destination == HOME_MACHINE_ID
+                    or executor_registry.is_present(destination)
+                )
+                conversation.system.configure_machine_catalog(executor_registry)
+                app.state.conversation_system = (
+                    conversation.system
+                    if conversation_system_for_test is None
+                    else conversation_system_for_test
+                )
+                app.state.conversation = conversation
+
+                async def release_normal_work() -> None:
+                    nonlocal recovery_task, video_cleanup_task, ticket_scratch_task
+                    nonlocal view_rebuild_task
+                    nonlocal loops, metrics, stall_checker
+                    await executor_registry.start()
+                    conversation.live_tail.views.cleanup_stale_epochs()
+                    database_parent = Path(config.db_path).resolve().parent
+                    if config.workspace_root is not None:
+                        await run_on_worker_thread(
+                            provision_workspace_skills, config.workspace_root, database_parent
+                        )
+                    account_skills_enabled = (
+                        installed_app
+                        if config.provision_account_skills is None
+                        else config.provision_account_skills
+                    )
+                    if account_skills_enabled:
+                        if warning := await run_on_worker_thread(
+                            provision_account_skills, database_parent
+                        ):
+                            logging.getLogger(__name__).warning("%s", warning)
+                    from planner.conversation.deploy_interruptions.coordinator import (
+                        run_automatic_recovery,
+                    )
+
+                    async def recover_conversations() -> None:
+                        admission = conversation.system.workspace_admission
+                        with admission.operation(starts=True) as admitted:
+                            if admitted:
+                                if ticket_integrity_faults:
+                                    from planner.tickets.integrity import notify_chief
+
+                                    notice_conn = conn_factory()
+                                    try:
+                                        await notify_chief(
+                                            notice_conn,
+                                            app.state.conversation_system,
+                                            clock,
+                                            ticket_integrity_faults,
+                                        )
+                                    finally:
+                                        notice_conn.close()
+                                system = conversation.system
+                                await system.tell_agents_of_background_tasks_lost_at_restart()
+                        await run_automatic_recovery(
+                            conversation.system, conversation.store
+                        )
+
+                    recovery_task = asyncio.create_task(recover_conversations())
+                    view_rebuild_task = asyncio.create_task(
+                        rebuild_out_of_date_views(
+                            config.db_path,
+                            DB_BUSY_TIMEOUT_MS,
+                            conversation.system.workspace_admission,
+                        )
+                    )
+                    await asyncio.to_thread(video_uploads.recover_and_cleanup)
+                    video_cleanup_task = asyncio.create_task(_clean_video_uploads())
+                    scratch_layout = ticket_scratch.layout_for(
+                        config.ticket_scratch_root, config.ticket_scratch_database, config.db_path
+                    )
+                    if not config.test_mode:
+                        ticket_scratch_task = asyncio.create_task(
+                            _clean_ticket_scratch(scratch_layout)
+                        )
+                    # Worker tests can supply a held conversation system.
+                    # Production always uses the real system.
+                    if not config.test_mode:
+                        from planner.core.loops import prepare_background_loops
+
+                        loops = prepare_background_loops(
+                            config,
+                            clock,
+                            conversation_system=app.state.conversation_system,
+                            asyncio_loop=asyncio.get_running_loop(),
+                            before_readiness_poll=app.state.updates.poll,
+                        )
+
+                    elif slot_participants_for_test is not None:
+                        from planner.core.loops import prepare_scheduled_loops
+
+                        loops = prepare_scheduled_loops(
+                            config,
+                            clock,
+                            workspace_admission=conversation.system.workspace_admission,
+                            participants_factory=slot_participants_for_test,
+                        )
+
+                    from planner.environments.vps_metrics.data import Store
+                    from planner.platform_runtime.selection import get_platform_adapter
+
+                    metrics_config = load_metrics_config()
+                    metrics_path = store_path(config.db_path)
+                    metrics = MetricsRuntime(
+                        metrics_path,
+                        Store(metrics_path, metrics_config),
+                        (
+                            None if config.test_mode
+                            else get_platform_adapter().metrics_collector(metrics_config)
+                        ),
+                        metrics_config,
+                    )
+                    app.state.vps_metrics = metrics
+                    metrics.start()
+                    stall_checker_factory: StallCheckerFactory | None = (
+                        stall_checker_factory_for_test
+                        if config.test_mode
+                        else stalls_checker.StallChecker
+                    )
+                    if stall_checker_factory is not None:
+                        endpoint = executor_registry
+                        stall_checker = stall_checker_factory(
+                            config.db_path,
+                            WAITS,
+                            (lambda: ()) if endpoint is None else endpoint.stall_sources,
+                            executor_now_ms,
+                        )
+                        stall_checker.start()
+                    await navigation_delivery.start()
+                    await scoped_navigation.start()
+                    await conversation.system.start_idle_child_janitor()
+                    if loops is not None:
+                        loops.start(config.tick_seconds)
+                    app.state.updates.start(asyncio.get_running_loop())
+                    change_signal.emit()
+
+                normal_work_released = False
+                normal_work_task: asyncio.Task[None] | None = None
+
+                async def release_after_trial() -> None:
+                    nonlocal normal_work_released, work_release_task, normal_work_task
+                    try:
+                        observed = update_attempts.read()
+                        identity = "" if observed is None else observed.attempt_id
+                        was_frozen = app.state.update_barrier.frozen
+                        app.state.update_barrier.refresh()
+                        if app.state.update_barrier.frozen:
+                            await recover_orphaned_barrier()
+                        if app.state.update_barrier.frozen:
+                            return
+                        if was_frozen or (startup_frozen and not normal_work_released):
+                            app.state.updates.reopen_trial_work(identity)
+                        if normal_work_released:
+                            return
+                        # Producer startup can leave partial resources after a failure.
+                        # Keep it one-shot while earlier orphan dispatch remains retryable.
+                        if normal_work_task is not None:
+                            return
+                        normal_work_task = asyncio.create_task(release_normal_work())
+                        await normal_work_task
+                        normal_work_released = True
+                    except Exception:
+                        logging.getLogger(__name__).exception(
+                            "Normal work could not resume after the update trial"
+                        )
+                    finally:
+                        work_release_task = None
+
+                next_trial_probe = 0.0
+                last_trial_probe: object = None
+
+                def trial_probe() -> object:
+                    nonlocal next_trial_probe, last_trial_probe
+                    barrier = app.state.update_barrier
+                    if not barrier.frozen:
+                        next_trial_probe = 0.0
+                        last_trial_probe = None
+                        return None
+                    now = _monotonic()
+                    if now < next_trial_probe:
+                        return last_trial_probe
+                    next_trial_probe = now + 2
+                    attempt = update_attempts.read()
+                    identity = "" if attempt is None else attempt.attempt_id
+                    local = app.state.updates.owns_preparation(identity)
+                    active = False if local else barrier.installer_active(identity)
+                    if active:
+                        app.state.updates.installer_observed(identity)
+                    # A failed orphan dispatch changes no file or lock state. The
+                    # existing bounded probe must still give its next sample a wake.
+                    last_trial_probe = (identity, None if attempt is None else attempt.state,
+                                        local, active, now if not local and not active else None)
+                    return last_trial_probe
+
+                def attempt_changed() -> None:
+                    nonlocal work_release_task
+                    change_signal.emit()
+                    # One recovery runs at a time. Its finally releases this slot so
+                    # the next bounded probe can retry a failed owner dispatch.
+                    if work_release_task is None:
+                        work_release_task = asyncio.create_task(release_after_trial())
+
+                if not startup_frozen:
+                    await release_normal_work()
+                    normal_work_released = True
+                # The installer writes the attempt record from outside this process.
+                attempt_observer = asyncio.create_task(
+                    observe_path_changes(
+                        update_attempts.path, attempt_changed,
+                        additional_paths=(app.state.update_barrier.path,),
+                        additional_probe=trial_probe,
+                    )
+                )
+                if startup_frozen:
+                    attempt_changed()
+                await preview_runtime.start()
+                yield
+
+    video_uploads = VideoUploadService(config.db_path)
+
+    async def _clean_video_uploads() -> None:
+        while True:
+            await asyncio.sleep(CLEANUP_INTERVAL_SECONDS)
+            system = app.state.conversation_system
+            if system is not None:
+                with system.workspace_admission.operation() as admitted:
+                    if admitted:
+                        await asyncio.to_thread(video_uploads.recover_and_cleanup)
+
+    async def _clean_ticket_scratch(layout: ticket_scratch.ScratchLayout | None) -> None:
+        from planner.conversation.system import SqliteProcessConversationSystem
+        from planner.ticket_workspaces.cleanup import clean_for_database
+        from planner.ticket_workspaces.contracts import WorkspaceIdentity
+
+        logger = logging.getLogger(__name__)
+        loop = asyncio.get_running_loop()
+
+        def retire_local_children(
+            ticket_id: str, identity: WorkspaceIdentity, operation: Callable[[], Path | str]
+        ) -> Path | str:
+            system = cast(SqliteProcessConversationSystem | None, app.state.conversation_system)
+            if system is None:
+                return "Conversation runtime is unavailable"
+            future = asyncio.run_coroutine_threadsafe(
+                system.retire_local_workspace(ticket_id, identity, operation), loop
+            )
+            return future.result()
+
+        while True:
+            await asyncio.sleep(ticket_scratch.CLEANUP_INTERVAL_SECONDS)
+            try:
+                result = await asyncio.to_thread(
+                    clean_for_database,
+                    config.db_path,
+                    clock.now_unix(),
+                    extra_roots=layout.folders if layout is not None else (),
+                    retire_local_children=retire_local_children,
+                )
+            except Exception:
+                logger.exception("Ticket scratch cleanup failed")
+                continue
+            for kept in result.skipped:
+                logger.warning("Ticket scratch kept: %s (%s)", kept["path"], kept["reason"])
+
+    navigation_delivery = create_delivery_runtime(config.db_path)
+    scoped_navigation = ScopedDeliveryRuntime(navigation_delivery)
     app = FastAPI(title="planner", version="2.0.0", lifespan=_configured_lifespan)
+    preview_service = PreviewService(
+        config.db_path, config.trusted_ingress_canonical_origin or "", panels_port=config.port
+    )
+    preview_transport = PreviewTransport(preview_service)
+    preview_runtime = PreviewRuntime(preview_service, preview_transport)
+    app.state.previews = preview_service
+    app.state.preview_transport = preview_transport
+    app.state.video_uploads = video_uploads
+    app.state.navigation_delivery = navigation_delivery
     app.add_middleware(ConversationSendBodyLimitMiddleware)
+    app.add_middleware(
+        UnidentifiedAgentCallsMiddleware, enabled=config.refuse_unidentified_agent_calls
+    )
     app.add_middleware(TrustedIngressMiddleware, config=trusted_ingress_config(config))
+    from planner.executor.app_transport import build_executor_router
+
+    # The compression at the end of this function skips the marked routes. An included
+    # router's routes do not appear in app.routes, so each router adds its own marks here.
+    # The Mac update channel is among them.
+    uncompressed_patterns: list[re.Pattern[str]] = []
+    executor_router = build_executor_router()
+    app.include_router(executor_router)
+    from planner.machines.credential_api import router as machine_credential_router
+    app.include_router(machine_credential_router, prefix="/api")
+    uncompressed_patterns.extend(uncompressed_route_patterns(executor_router.routes))
+    app.state.executor_id = config.executor_id
     app.state.config = config
     app.state.clock = clock
     app.state.conn_factory = conn_factory
-    app.state.recorded_usage = RecordedUsageService(
-        conn_factory,
-        now=clock.now,
-        pricing=UsagePricingService(conn_factory, now=clock.now),
-    )
+    app.state.recorded_usage = makeUsageService(config, now=clock.now)
     app.state.conversation = None
+    app.state.vps_metrics = None
     # The conversation system is the running one, so it belongs to the lifespan that
     # starts and stops it. Outside that window there is none.
     app.state.conversation_system = None
     configured_vps_status_collector = vps_status_collector or (
         lambda status_config: collect_vps_status(status_config, application_root=_REPO_ROOT)
     )
-    configured_vps_status_summary_collector = vps_status_summary_collector or (
-        lambda status_config, outcome, detail: collect_vps_status_summary(
-            status_config,
-            deployment_outcome=outcome,
-            deployment_detail=detail,
+    data_directory = Path(config.db_path).expanduser().resolve(strict=False).parent
+    current_root = data_directory.parent
+    # Only an installed release under <current_root>/app installs its own updates.
+    installed_app = bool(config.app_sha) and _REPO_ROOT == current_root / "app"
+    # The installer restarts the unit this server runs in, and nothing else.
+    from planner.platform_runtime.selection import get_platform_adapter
+
+    update_unavailable_reason = get_platform_adapter().update_unavailable_reason
+    service_unit = (
+        own_service_unit() if installed_app and update_unavailable_reason is None else None
+    )
+    update_attempts = FileUpdateAttemptStore(attempt_path(data_directory))
+    app.state.update_barrier = UpdateBarrier(data_directory / "update-barrier.json")
+    import_legacy_request(update_attempts, data_directory, config.app_sha)
+    update_provider = GitHubUpdateProvider.configured() if service_unit is not None else None
+    def executor_update_platform(machine_id: str) -> str:
+        from planner.machines.executor_credentials import executor_platform
+
+        connection = conn_factory()
+        try:
+            return executor_platform(connection, machine_id)
+        finally:
+            connection.close()
+
+    def linux_executor_registered() -> bool:
+        connection = conn_factory()
+        try:
+            return connection.execute(
+                "SELECT 1 FROM machine_executor_credentials WHERE platform='linux' LIMIT 1"
+            ).fetchone() is not None
+        finally:
+            connection.close()
+
+    app.state.mac_updates = MacUpdateService(
+        data_directory / "mac-updates",
+        update_attempts,
+        update_provider,
+        config.app_sha,
+        ready_release=lambda: app.state.updates.ready_release(),
+        platform_for=executor_update_platform,
+        linux_registered=linux_executor_registered,
+    )
+    app.state.updates = UpdateService(
+        update_provider,
+        update_attempts,
+        lambda: app.state.conversation_system,
+        connection_factory=conn_factory,
+        current_root=current_root,
+        database=Path(config.db_path).expanduser().resolve(strict=False),
+        backup_directory=Path(config.backup_dir).expanduser(),
+        current_app_sha=config.app_sha,
+        health_url=f"http://{HOST}:{config.port}/api/health",
+        service_unit=service_unit or "",
+        unavailable_reason=update_unavailable_reason,
+        update_barrier=app.state.update_barrier,
+        prepare_mac_update=app.state.mac_updates.prepare,
+        mac_phase=app.state.mac_updates.phase,
+        mac_reported_at=app.state.mac_updates.reported_at,
+        mac_configured=lambda: getattr(app.state, "executor_endpoint", None) is not None,
+    )
+
+    def current_deployment_status() -> dict[str, object]:
+        return deployment_status(
+            update_attempts.read(),
+            config.app_sha,
+            success_seconds=DEPLOYMENT_SUCCESS_DISPLAY_SECONDS,
+            now=datetime.now(UTC),
         )
-    )
-    deployment_lifecycle_path = (
-        Path(config.db_path).expanduser().resolve(strict=False).parent
-        / "deployment-lifecycle.json"
-    )
-    deployment_lifecycle_store = DeploymentLifecycleStore(deployment_lifecycle_path)
 
-    @app.exception_handler(PlannerError)
-    async def handle_planner_error(request: Request, exc: PlannerError) -> JSONResponse:
-        return JSONResponse(status_code=http_status_for(exc.code), content=exc.to_payload())
+    app.state.deployment_status = current_deployment_status
 
-    # Every router the application serves is included through here, so this is where the
-    # live streams among them are collected. The compression below has to know them.
-    event_stream_patterns: list[re.Pattern[str]] = []
+    app.add_middleware(IOSBuildGateMiddleware)
+    app.add_middleware(UpdateAdmissionMiddleware, config=config)
 
+    app.state.resource_version_epoch = str(uuid4())
+
+    app.add_exception_handler(PlannerError, handle_planner_error)
+    app.add_exception_handler(PreviewError, handle_preview_error)
+
+    # Every domain router is included through here, so its marked routes join the list.
     def include_router(router: APIRouter, prefix: str = "") -> None:
-        app.include_router(router, prefix=prefix)
-        event_stream_patterns.extend(event_stream_route_patterns(router.routes, prefix))
+        from planner.core.authority.intake import request_admission
+
+        app.include_router(router, prefix=prefix, dependencies=[Depends(request_admission)])
+        uncompressed_patterns.extend(uncompressed_route_patterns(router.routes, prefix))
 
     for domain_router in (
+        updates_router,
         tickets_router,
+        machines_router,
+        ticket_workspace_router,
+        resource_versions_router,
+        artifact_catalog_router,
+        conversation_history_router,
         projects_router,
-        sprints_router,
-        days_router,
-        scheduled_tickets_router,
+        managers_router,
+        ideas_router,
+        measure_sources_router,
+        measures_router,
+        datasets_router,
+        attention_router,
+        goals_router,
+        credentials_router,
+        credential_requests_router,
         notifications_router,
-        feedback_router,
         worker_settings_router,
         message_delivery_router,
         membership_router,
+        vps_metrics_router,
     ):
         include_router(domain_router, prefix="/api")
+    include_router(previews_router)
+    include_router(scoped_navigation.router)
     include_router(files_router)
     include_router(conversation_router, prefix="/api/conversation")
+    include_router(
+        create_video_upload_router(
+            video_uploads,
+            lambda destination: authorize_destination(
+                destination, conn_factory=conn_factory, runtime=app.state.conversation
+            ),
+        )
+    )
+    include_router(conversation_views_router, prefix="/api/conversation")
     include_router(recorded_usage_router, prefix="/api/conversation")
+
     @app.get("/api/meta")
     async def meta() -> dict[str, Any]:
         return {
             "test_mode": config.test_mode,
             "app_sha": config.app_sha,
+        }
+
+    @app.get("/api/executor/health")
+    async def executor_health(machine_id: str | None = None) -> dict[str, object]:
+        destination = machine_id or ORIGINAL_MAC_MACHINE_ID
+        registry = getattr(app.state, "executor_registry", None)
+        endpoint = None if registry is None else registry.get(destination)
+        if endpoint is None:
+            if destination not in (HOME_MACHINE_ID, ORIGINAL_MAC_MACHINE_ID):
+                raise PlannerError(ErrorCode.not_found, "Unknown executor destination")
+            return {"mode": "local", "connection_state": "disconnected"}
+        payload = {"mode": "remote", **endpoint.health_payload()}
+        if destination == ORIGINAL_MAC_MACHINE_ID:
+            return _with_native_build_1_fields(payload)
+        return {
+            **payload,
+            "connection_state": "ready" if payload.get("presence") == "present" else "disconnected",
         }
 
     @app.get("/api/health")
@@ -304,24 +860,8 @@ def create_app(
         return snapshot.as_dict()
 
     @app.get("/api/deployment-status")
-    async def deployment_status() -> dict[str, object]:
-        projection = await asyncio.to_thread(
-            deployment_lifecycle_store.project, config.app_sha
-        )
-        return projection.to_public_dict()
-
-    @app.get("/api/vps-status-summary")
-    async def vps_status_summary() -> dict[str, object]:
-        projection = await asyncio.to_thread(
-            deployment_lifecycle_store.project, config.app_sha
-        )
-        summary = await asyncio.to_thread(
-            configured_vps_status_summary_collector,
-            config,
-            projection.outcome,
-            projection.detail,
-        )
-        return summary.as_dict()
+    async def deployment_status_route() -> dict[str, object]:
+        return await asyncio.to_thread(current_deployment_status)
 
     @app.get("/api/worker-types")
     async def worker_types(supported: bool = False) -> dict[str, Any]:
@@ -330,16 +870,25 @@ def create_app(
             registry.supported_worker_types() if supported else registry.registered_worker_types()
         )
         return {
-            "worker_types": [
-                registry.manifest(worker_type) for worker_type in worker_type_ids
-            ],
+            "worker_types": [registry.manifest(worker_type) for worker_type in worker_type_ids],
         }
 
+    @app.get("/api/worker-types/{worker_type}/manifest")
+    async def worker_type_manifest(worker_type: str) -> dict[str, Any]:
+        """One Worker type, in the same shape the whole list arrives in.
+
+        A Ticket page draws the stages of one type and was reading all fourteen, 20,165
+        bytes, to find it. Answering in the list's shape keeps every reader of that shape
+        — the lifecycle, the stage table, the section admission — untouched.
+        """
+        registry = configured_worker_runtime_definitions().worker_type_registry
+        return {"worker_types": [registry.manifest(worker_type)]}
+
     @app.get("/api/changes")
-    @answers_with_an_event_stream
+    @answers_uncompressed
     async def changes() -> StreamingResponse:
         return StreamingResponse(
-            change_stream(config.sse_heartbeat_ms),
+            change_stream(SSE_HEARTBEAT_MS),
             media_type="text/event-stream",
         )
 
@@ -361,22 +910,22 @@ def create_app(
     if config.test_mode:
         include_router(build_test_router(config, clock), prefix="/api")
     if _WEB_DIST.is_dir():
-        app.mount("/_app", StaticFiles(directory=_WEB_DIST, html=True), name="vite_app")
+        app.mount("/_app", WebAssets(directory=_WEB_DIST, html=True), name="vite_app")
     app.mount("/assets", StaticFiles(directory=_ASSETS_DIR), name="assets")
     app.mount("/static", StaticFiles(directory=_STATIC_DIR), name="static")
     # Reads are large and the link is remote, so bodies travel compressed. Level 4 is
     # the measured knee on the largest real body: it costs 100 ms of CPU and saves
-    # 7.5 MB, where level 9 spends 245 ms for 0.12 MB more. The change signal and the
-    # conversation tail go around the compression entirely, because the middleware holds
-    # every response's headers back until a body arrives, and a live stream that has
-    # nothing to say yet has no body to release them with.
+    # 7.5 MB, where level 9 spends 245 ms for 0.12 MB more. The live streams and the Mac
+    # update channel go around the compression entirely: the middleware holds a stream's
+    # headers back until a body arrives, and the Mac saves update bytes exactly as sent.
     app.add_middleware(
-        CompressExceptEventStreams,
-        event_stream_patterns=(
-            *event_stream_patterns,
-            *event_stream_route_patterns(app.routes),
+        CompressExceptMarkedRoutes,
+        uncompressed_patterns=(
+            *uncompressed_patterns,
+            *uncompressed_route_patterns(app.routes),
         ),
         minimum_size=1024,
         compresslevel=4,
     )
+    preserve_authored_request_examples(app)
     return app

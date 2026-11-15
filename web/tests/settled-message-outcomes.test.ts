@@ -34,6 +34,11 @@ describe("message-specific settlement", () => {
     expect(recordedMessageFateSentence([event], "queued", null)).toBe(`not delivered · ${detail}`);
   });
 
+  it("reports intentional suppression with its reason", () => {
+    expect(fateSentence({ fate: "suppressed", reason: "proposal_revision_changed" }))
+      .toBe("not sent · proposal_revision_changed");
+  });
+
   it("provides a readable model refusal before its persisted detail arrives", () => {
     expect(fateSentence({ fate: "refused", refusal_reason: "model_resolution_failed" }))
       .toBe("not delivered · the selected model could not be resolved");
@@ -73,7 +78,7 @@ describe("message-specific settlement", () => {
   });
 });
 
-it("keeps errored Tickets in a Sprint Item's nested attention groups", () => {
+it("keeps errored Tickets in a Manager's nested attention groups", () => {
   const broken = { ...ticketFacts({ agent_state: "errored", ticket_status: "agent" }),
     id: "broken", title: "Broken work", };
   expect(workspaceAttentionGroups([broken]).map((group) => [group.key, group.cards[0].id]))

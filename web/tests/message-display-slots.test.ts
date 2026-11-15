@@ -1,0 +1,113 @@
+import { describe, expect, it } from 'vitest';
+import { reconcileDisplaySlots } from '../src/lib/conversation/displaySlots';
+import { outgoingMessagesByPlace, outgoingReceiptBatches, retainOutgoingPresentations, type OutgoingMessage } from '../src/lib/conversation/outgoing';
+import type { ConversationViewRow } from '../src/lib/conversation/view/contracts';
+const local: OutgoingMessage = {messageId:'send',content:[{piece:'text',text:'words'}],senderLabel:'owner',mode:'steer',sentAtUnixMilliseconds:1,knownFate:'nothing_yet',accepted:true};
+const row = (key: string, sequence: number, sender: string|null = null): ConversationViewRow => ({kind:'row',key,row_kind:sender?'prompt':'agent_message',sender_message_id:sender,source_sequence:sequence,order:{sequence,slot:0},changed_through_sequence:sequence,created_at:1,turn_key:null,work_group_key:null,fold_rule:'never',body:{kind:'inline',value:{kind:'agent_message',content:[{piece:'text',text:key}],to_owner:true}}});
+describe('mounted message presentation',()=>{
+ it('mounts a send at the end of the window, takes its record row place, and releases the slot at eviction',()=>{
+   let slots=reconcileDisplaySlots([], [row('before',1)], [local],new Set());
+   expect(slots[1]?.order).toEqual({sequence:1.5,slot:0});
+   slots=reconcileDisplaySlots(slots,[row('before',1),row('later',3)],[],new Set(['send']));
+   expect(slots.map(s=>s.key)).toEqual(['record:before','send','record:later']);
+   slots=reconcileDisplaySlots(slots,[row('before',1),row('later',3),row('received',4,'send')],[],new Set(['send']));
+   expect(slots.map(s=>s.key)).toEqual(['record:before','record:later','send']);
+   expect(slots[2]?.order).toEqual({sequence:4,slot:0});
+   expect(slots[2]?.item?.key).toBe('received');
+   expect(slots.filter(s=>s.local!==null)).toHaveLength(1);
+   slots=reconcileDisplaySlots(slots,[row('new-window',20)],[],new Set(['send']));
+   expect(slots.map(s=>s.key)).toEqual(['record:new-window']);
+   // A window ending at 31 of a record at 163 placed the owner's send at 31.5, inside
+   // history. It now sorts after every retained row.
+   const behind=reconcileDisplaySlots([],[row('retained',31)],[local],new Set(),new Set(),163);
+   expect(behind.map(s=>s.key)).toEqual(['record:retained','send']);
+   expect(behind[1]?.order).toEqual({sequence:163.5,slot:0});
+   // A window that already holds the newest row keeps placing the send at its end.
+   expect(reconcileDisplaySlots([],[row('retained',31)],[local],new Set(),new Set(),20)[1]?.order)
+     .toEqual({sequence:31.5,slot:0});
+ });
+ it('keeps two sends in the order the owner sent them while the first takes its record row place',()=>{
+   const second={...local,messageId:'second'};
+   let slots=reconcileDisplaySlots([],[row('retained',31)],[local,second],new Set(),new Set(),163);
+   expect(slots.map(s=>s.key)).toEqual(['record:retained','send','second']);
+   expect(slots.map(s=>s.order)).toEqual([{sequence:31,slot:0},{sequence:163.5,slot:0},{sequence:163.5,slot:1}]);
+   // The first send's row arrives at 164. Without a floor the second, still waiting at
+   // 163.5, would be drawn above the message the owner sent before it.
+   slots=reconcileDisplaySlots(slots,[row('retained',31),row('first',164,'send')],[local,second],new Set(['send']),new Set(),164);
+   expect(slots.map(s=>s.key)).toEqual(['record:retained','send','second']);
+   expect(slots[1]?.order).toEqual({sequence:164,slot:0});
+   expect(slots[2]?.order).toEqual({sequence:164,slot:1});
+   slots=reconcileDisplaySlots(slots,[row('retained',31),row('first',164,'send'),row('next',165,'second')],[local,second],new Set(['send','second']),new Set(),165);
+   expect(slots.map(s=>s.order)).toEqual([{sequence:31,slot:0},{sequence:164,slot:0},{sequence:165,slot:0}]);
+ });
+ it('resends within the same slot and restores failure without changing historical order',()=>{
+   let slots=reconcileDisplaySlots([], [row('before',1)], [local],new Set());
+   slots=reconcileDisplaySlots(slots,[row('before',1),row('after',2)],[{...local,messageId:'retry',displayMessageId:'send'}],new Set());
+   expect(slots.map(s=>s.key)).toEqual(['record:before','send','record:after']);
+   expect(slots[1]?.local?.messageId).toBe('retry');
+   slots=reconcileDisplaySlots(slots,[row('before',1),row('after',2)],[local],new Set());
+   expect(slots[1]?.local?.messageId).toBe('send');
+   expect(reconcileDisplaySlots(slots,[row('before',1)],[],new Set()).map(s=>s.key)).toEqual(['record:before']);
+ });
+ it('waits for a confirmed destination and ignores stale queue membership after acceptance or record admission',()=>{
+   const unresolved={...local,accepted:false};
+   const where={composerStackMessageIds:[] as string[],serverHeldSenderMessageIds:new Set<string>()};
+   expect(outgoingMessagesByPlace([unresolved],where)).toEqual({thread:[],composerStack:[]});
+   const queued={...unresolved,knownFate:'waiting_for_the_agent' as const};
+   expect(outgoingMessagesByPlace([queued],where)).toEqual({thread:[],composerStack:[queued]});
+   const stale={composerStackMessageIds:['send'],serverHeldSenderMessageIds:new Set(['send'])};
+   expect(outgoingMessagesByPlace([local],stale)).toEqual({thread:[local],composerStack:[]});
+   expect(outgoingMessagesByPlace([queued],{...stale,recordedSenderMessageIds:new Set(['send'])})).toEqual({thread:[queued],composerStack:[]});
+   const unknown={...unresolved,knownFate:'answer_never_came_back' as const};
+   expect(outgoingMessagesByPlace([unknown],where)).toEqual({thread:[unknown],composerStack:[]});
+ });
+ it('commits one slot in either transport/record order and retains record chronology on record-first admission',()=>{
+   const before=row('before',1), received=row('received',2,'send'), after=row('after',3);
+   const where={composerStackMessageIds:[],serverHeldSenderMessageIds:new Set<string>()};
+   const unresolved={...local,accepted:false};
+   let slots=reconcileDisplaySlots([], [before], outgoingMessagesByPlace([unresolved],where).thread,new Set());
+   expect(slots.map(slot=>slot.key)).toEqual(['record:before']);
+   slots=reconcileDisplaySlots(slots,[before],outgoingMessagesByPlace([local],where).thread,new Set());
+   const placed=slots.find(slot=>slot.local)!;
+   slots=reconcileDisplaySlots(slots,[before,received,after],[],new Set(['send']));
+   expect(slots.filter(slot=>slot.item?.kind==='row' && slot.item.sender_message_id==='send')).toHaveLength(1);
+   expect(slots.find(slot=>slot.local)?.key).toBe(placed.key);
+   expect(slots.find(slot=>slot.local)?.order).toEqual(received.order);
+   slots=reconcileDisplaySlots([], [before,received,after],outgoingMessagesByPlace([unresolved],{...where,recordedSenderMessageIds:new Set(['send'])}).thread,new Set());
+   expect(slots.map(slot=>slot.item?.key)).toEqual(['before','received','after']);
+   const recordedSlot=slots.find(slot=>slot.local)!;
+   slots=reconcileDisplaySlots(slots,[before,received,after],[local],new Set(['send']));
+   expect(slots.find(slot=>slot.local)?.key).toBe(recordedSlot.key);
+   expect(slots.filter(slot=>slot.item?.kind==='row' && slot.item.sender_message_id==='send')).toHaveLength(1);
+ });
+ it('does not let mounted receipt copies starve newer lookups and bounds their retention',()=>{
+   const messages=Array.from({length:401},(_,i)=>({...local,messageId:'send-'+i}));
+   const acknowledged=new Set(messages.slice(0,350).map(message=>message.messageId));
+   expect(outgoingReceiptBatches(messages,acknowledged)).toEqual([messages.slice(350).map(message=>message.messageId)]);
+   const retained=retainOutgoingPresentations(messages,acknowledged,new Set(),true);
+   expect(retained.filter(message=>acknowledged.has(message.messageId))).toHaveLength(300);
+   expect(retained.filter(message=>!acknowledged.has(message.messageId))).toEqual(messages.slice(350));
+   expect(retainOutgoingPresentations(messages,acknowledged,new Set(),false)).toEqual(messages.slice(350));
+   expect(retainOutgoingPresentations(messages,acknowledged,new Set(messages.map(message=>message.messageId)),true)).toEqual(messages.slice(350));
+   const batches=outgoingReceiptBatches(messages,new Set());
+   expect(batches.every(batch=>batch.length<=64)).toBe(true);
+   expect(batches.flat()).toEqual(messages.map(message=>message.messageId));
+ });
+ it('transfers a queued retry out of its old transcript slot while accepted retry keeps that slot',()=>{
+   const original={...local,knownFate:'answer_never_came_back' as const};
+   const slots=reconcileDisplaySlots([],[],[original],new Set());
+   const retry={...local,messageId:'retry',displayMessageId:'send',accepted:false};
+   const acknowledged=new Set(['send']);
+   expect(reconcileDisplaySlots(slots,[],[],acknowledged)[0]?.key).toBe('send');
+   const queued={...retry,knownFate:'waiting_for_the_agent' as const};
+   const destinations=outgoingMessagesByPlace([queued],{composerStackMessageIds:['retry'],serverHeldSenderMessageIds:new Set()});
+   expect(destinations.composerStack).toEqual([queued]);
+   expect(reconcileDisplaySlots(slots,[],destinations.thread,acknowledged,new Set(['send']))).toEqual([]);
+   const accepted=reconcileDisplaySlots(slots,[],[{...retry,accepted:true}],acknowledged);
+   expect(accepted).toHaveLength(1);
+   expect(accepted[0]?.key).toBe(slots[0]?.key);
+   expect(accepted[0]?.order).toEqual(slots[0]?.order);
+   expect(accepted[0]?.local?.messageId).toBe('retry');
+ });
+
+});

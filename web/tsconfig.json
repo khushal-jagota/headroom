@@ -12,8 +12,33 @@
     "skipLibCheck": true,
     "strict": true,
     "target": "ES2022",
-    "types": ["svelte"]
+    "types": [
+      "svelte"
+    ],
+    "paths": {
+      "@t3tools/contracts": [
+        "./src/lib/usage/contracts/index.ts"
+      ],
+      "vite-plus/test": [
+        "./node_modules/vitest/dist/index.d.ts"
+      ]
+    },
+    "allowImportingTsExtensions": true,
+    "lib": [
+      "ES2023",
+      "DOM",
+      "DOM.Iterable"
+    ],
+    "jsx": "react-jsx"
   },
-  "include": ["src/**/*.d.ts", "src/**/*.ts", "src/**/*.svelte"],
-  "exclude": ["dist", "node_modules"]
+  "include": [
+    "src/**/*.d.ts",
+    "src/**/*.ts",
+    "src/**/*.svelte",
+    "src/**/*.tsx"
+  ],
+  "exclude": [
+    "dist",
+    "node_modules"
+  ]
 }

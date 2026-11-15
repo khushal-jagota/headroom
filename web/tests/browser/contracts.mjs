@@ -1,5 +1,13 @@
 import assert from "node:assert/strict";
 
+export function assertCompleteCaseEnvironment(environment) {
+  for (const key of ["CONVERSATION_SETTLED_CASE", "CONVERSATION_LATEST_CASE",
+    "CONVERSATION_SCROLL_CASE", "PANELS_CONVERSATION_MENU_ONLY"]) {
+    assert.ok(environment[key] === undefined || environment[key] === "",
+      `Complete browser cases forbid scenario selector: ${key}`);
+  }
+}
+
 export function selectedEntries(catalog, selections) {
   assert.equal(catalog.schema, 1, "Unsupported browser catalog");
   assert.ok(Array.isArray(catalog.entries) && catalog.entries.length, "Empty browser catalog");

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Final, TypedDict
 
 from planner.core.contracts import ErrorCode, PlannerError
@@ -29,6 +29,7 @@ class StageDefinition:
     gating_field: str | None
     is_terminal: bool
     ownership_mode: StageOwnershipMode | None
+    instructions: str = field(default="", kw_only=True)
 
 
 @dataclass(frozen=True, slots=True)
@@ -55,12 +56,11 @@ class WorkerProfile:
 
 
 @dataclass(frozen=True, slots=True)
-class WorkerTypeDefinition:
-    worker_type: str
-    label: str
+class WorkflowDefinition:
     stages: tuple[StageDefinition, ...]
     fields: tuple[FieldDefinition, ...]
-    worker_profile: WorkerProfile
+    label: str = field(default="Custom workflow", kw_only=True)
+    guidance: str = field(default="", kw_only=True)
 
     def stage_ids(self) -> tuple[str, ...]:
         return tuple(stage.id for stage in self.stages)
@@ -152,22 +152,39 @@ class WorkerTypeDefinition:
         raise PlannerError(
             ErrorCode.validation,
             "linear order has no terminal",
-            {"worker_type": self.worker_type},
+            {"workflow": self.label},
         )
 
-    def validate_ticket_position(self, stage: str, ceiling: str) -> None:
+    def validate_ticket_position(
+        self, stage: str, ceiling: str, *, allow_historical_terminal_ceiling: bool = False
+    ) -> None:
         if not self.is_known_stage(stage):
             raise PlannerError(
                 ErrorCode.validation,
                 "stage outside the linear order",
                 {"stage": stage},
             )
+        # Historical terminal rows retain the exact scope their holder once granted.
+        # This read-only exception never admits an unfinished position or a new write.
+        if allow_historical_terminal_ceiling and self.is_terminal(stage):
+            return
         if ceiling not in self.ceiling_range():
             raise PlannerError(
                 ErrorCode.scope_invalid,
                 "ceiling outside the type's range",
-                {"worker_type": self.worker_type, "ceiling": ceiling},
+                {"workflow": self.label, "ceiling": ceiling},
             )
+
+
+@dataclass(frozen=True, slots=True)
+class WorkerTypeDefinition(WorkflowDefinition):
+    worker_type: str
+    worker_profile: WorkerProfile
+
+
+@dataclass(frozen=True, slots=True)
+class TicketWorkflowDefinition(WorkflowDefinition):
+    specialist_skill: str | None = field(default=None, kw_only=True)
 
 
 class WorkerTypeManifestStage(TypedDict):
@@ -175,7 +192,8 @@ class WorkerTypeManifestStage(TypedDict):
     label: str
     gating_field: str | None
     is_terminal: bool
-    ownership_mode: str | None
+    ownership_mode: StageOwnershipMode | None
+    instructions: str
 
 
 class WorkerTypeManifestField(TypedDict):
@@ -183,7 +201,20 @@ class WorkerTypeManifestField(TypedDict):
     label: str
 
 
+class WorkflowManifest(TypedDict):
+    worker_type: str | None
+    label: str
+    guidance: str
+    stages: list[WorkerTypeManifestStage]
+    fields: list[WorkerTypeManifestField]
+    advance: dict[str, str]
+    ceiling_range: list[str]
+    default_ceiling: str
+    worker_profile_id: str | None
+
+
 class WorkerTypeManifest(TypedDict):
+    guidance: str
     creatable: bool
     worker_type: str
     label: str

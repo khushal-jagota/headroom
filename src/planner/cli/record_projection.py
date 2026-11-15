@@ -8,25 +8,31 @@ from __future__ import annotations
 
 import json
 from collections.abc import Mapping
-from typing import Any, TypedDict
+from typing import Any, NotRequired, TypedDict
 
 
 class RecordPart(TypedDict):
     value: Any
     proposal: Any
+    approval: NotRequired[Mapping[str, Any]]
 
 
 class ManifestEntry(TypedDict):
     character_count: int
+    approval: NotRequired[Mapping[str, Any]]
 
 
 def part(
     value: Any,
     *,
     proposal: Any = None,
+    approval: Mapping[str, Any] | None = None,
 ) -> RecordPart:
     """Build the common shape for one authored part."""
-    return {"value": value, "proposal": proposal}
+    result: RecordPart = {"value": value, "proposal": proposal}
+    if approval is not None:
+        result["approval"] = approval
+    return result
 
 
 def parse_part_names(raw: str | None) -> tuple[str, ...] | None:
@@ -59,6 +65,8 @@ def project_record(
             manifest[name] = {
                 "character_count": _character_count(record_part["value"]),
             }
+            if "approval" in record_part:
+                manifest[name]["approval"] = record_part["approval"]
         return {"header": dict(header), "manifest": manifest}
 
     duplicates = tuple(dict.fromkeys(name for name in requested if requested.count(name) > 1))
@@ -87,12 +95,14 @@ def _display(value: Any) -> str:
     return json.dumps(value, ensure_ascii=False, sort_keys=True)
 
 
-def _append_value(lines: list[str], label: str, value: Any, indent: str) -> None:
+def _append_value(
+    lines: list[str], label: str, value: Any, indent: str, annotation: str = ""
+) -> None:
     rendered = _display(value)
     if "\n" not in rendered:
-        lines.append(f"{indent}{label}: {rendered}")
+        lines.append(f"{indent}{label}: {rendered}{annotation}")
         return
-    lines.append(f"{indent}{label}: |")
+    lines.append(f"{indent}{label}: |{annotation}")
     lines.extend(f"{indent}  {line}" for line in rendered.splitlines())
 
 
@@ -106,13 +116,17 @@ def render_text(projection: Mapping[str, Any]) -> str:
     if manifest is not None:
         lines.extend(("", "manifest:"))
         for name, entry in manifest.items():
-            lines.append(f"  {name}:")
+            approval = entry.get("approval")
+            annotation = f" # {approval['display_label']}" if approval else ""
+            lines.append(f"  {name}:{annotation}")
             lines.append(f"    character_count: {entry['character_count']}")
         return "\n".join(lines)
 
     lines.extend(("", "parts:"))
     for name, record_part in projection["parts"].items():
         lines.append(f"  {name}:")
-        _append_value(lines, "value", record_part["value"], "    ")
+        approval = record_part.get("approval")
+        annotation = f" # {approval['display_label']}" if approval else ""
+        _append_value(lines, "value", record_part["value"], "    ", annotation)
         _append_value(lines, "proposal", record_part["proposal"], "    ")
     return "\n".join(lines)

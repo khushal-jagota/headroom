@@ -8,21 +8,39 @@ request actor contract.
 from __future__ import annotations
 
 import json
+from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any, Final
+from urllib.parse import urlsplit
 
 from planner.core.authctx import (
+    AUTHENTICATED_OWNER_SCOPE_KEY,
     PLAN_ACTOR_SCOPE_KEY,
-    PLAN_SPRINT_ITEM_ID_SCOPE_KEY,
+    PLAN_CONVERSATION_ID_SCOPE_KEY,
+    PLAN_MANAGER_ID_SCOPE_KEY,
     PLAN_TICKET_ID_SCOPE_KEY,
     X_PLAN_ACTOR,
-    X_PLAN_SPRINT_ITEM_ID,
+    X_PLAN_CONVERSATION_ID,
+    X_PLAN_MANAGER_ID,
     X_PLAN_TICKET_ID,
 )
 from planner.core.config import Config
+from planner.core.errors import ErrorCode, PlannerError
 
 TAILSCALE_USER_LOGIN_HEADER: Final = "tailscale-user-login"
 ORIGIN_HEADER: Final = "origin"
+TRUSTED_LOGIN_SCOPE_KEY: Final = "panels.trusted_ingress.login"
+EXECUTOR_ID_HEADER: Final = "x-panels-executor-id"
+_EXECUTOR_SINGLETON_HEADERS: Final = frozenset(
+    {
+        TAILSCALE_USER_LOGIN_HEADER,
+        ORIGIN_HEADER,
+        EXECUTOR_ID_HEADER,
+        "x-panels-executor-incarnation",
+        "x-panels-executor-protocol",
+        "x-panels-executor-credential",
+    }
+)
 _SINGLETON_SECURITY_HEADERS: Final = frozenset({TAILSCALE_USER_LOGIN_HEADER, ORIGIN_HEADER})
 _SAFE_HTTP_METHODS: Final = frozenset({"GET", "HEAD", "OPTIONS", "TRACE"})
 
@@ -56,6 +74,10 @@ class TrustedIngressMiddleware:
             await self.app(scope, receive, send)
             return
 
+        # Never accept a caller-supplied normalized identity.
+        scope = dict(scope)
+        scope.pop(TRUSTED_LOGIN_SCOPE_KEY, None)
+        scope.pop(AUTHENTICATED_OWNER_SCOPE_KEY, None)
         duplicate_header = _duplicate_singleton_security_header(scope)
         if duplicate_header is not None:
             await self._reject(scope, send, "duplicate security header is not allowed")
@@ -79,12 +101,20 @@ class TrustedIngressMiddleware:
                 if login != self.config.allowed_login:
                     await self._reject(scope, send, "Tailscale user is not allowed")
                     return
+                scope[TRUSTED_LOGIN_SCOPE_KEY] = login
+                scope[AUTHENTICATED_OWNER_SCOPE_KEY] = True
+
+                if str(scope.get("path", "")).startswith("/api/updates"):
+                    await self.app(scope, receive, send)
+                    return
+                scope = _without_header(scope, X_PLAN_CONVERSATION_ID)
+                scope[PLAN_CONVERSATION_ID_SCOPE_KEY] = None
                 scope = _without_header(scope, X_PLAN_ACTOR)
                 scope = _without_header(scope, X_PLAN_TICKET_ID)
-                scope = _without_header(scope, X_PLAN_SPRINT_ITEM_ID)
+                scope = _without_header(scope, X_PLAN_MANAGER_ID)
                 scope[PLAN_ACTOR_SCOPE_KEY] = None
                 scope[PLAN_TICKET_ID_SCOPE_KEY] = None
-                scope[PLAN_SPRINT_ITEM_ID_SCOPE_KEY] = None
+                scope[PLAN_MANAGER_ID_SCOPE_KEY] = None
 
         await self.app(scope, receive, send)
 
@@ -141,3 +171,60 @@ def _without_header(scope: dict[str, Any], header_name: str) -> dict[str, Any]:
         (name, value) for name, value in scope.get("headers", ()) if name.lower() != lowered
     ]
     return copied
+
+
+def executor_ingress_claim(scope: Mapping[str, Any]) -> str:
+    """Read a caller ID after the trusted ingress check. Credentials bind its authority."""
+    if not scope.get(TRUSTED_LOGIN_SCOPE_KEY):
+        raise ValueError("trusted executor ingress is required")
+    headers: dict[str, str] = {}
+    for raw_name, raw_value in scope.get("headers", ()):
+        name = raw_name.decode("latin1").lower()
+        if name in _EXECUTOR_SINGLETON_HEADERS:
+            if name in headers:
+                raise ValueError("duplicate executor security header is not allowed")
+            headers[name] = raw_value.decode("latin1")
+    if ORIGIN_HEADER in headers:
+        raise ValueError("browser origin is not allowed on executor routes")
+    claimed_id = headers.get(EXECUTOR_ID_HEADER)
+    if not claimed_id or len(claimed_id) > 128:
+        raise ValueError("executor identity is required")
+    return claimed_id
+
+
+def require_executor_ingress(scope: Mapping[str, Any], executor_id: str | None) -> str:
+    """The original configured executor's pre-handover ingress check."""
+    claimed_id = executor_ingress_claim(scope)
+    if not executor_id or claimed_id != executor_id:
+        raise ValueError("executor identity does not match configuration")
+    return claimed_id
+
+
+def require_preview_ingress(scope: dict[str, Any], config: TrustedIngressConfig) -> None:
+    """Require the configured tailnet gate, including reads and socket upgrades.
+
+    Tailscale Serve enforces network membership. These headers are not authentication
+    against same-user local processes, which can forge them at the loopback listener.
+    """
+    message: str | None = None
+    headers = _header_map(scope)
+    names = [name.decode("latin1").lower() for name, _ in scope.get("headers", ())]
+    if (
+        config.provider != "tailscale"
+        or not config.allowed_login
+        or not config.canonical_origin
+        or not config.canonical_origin.startswith("https://")
+    ):
+        message = "application previews require configured Tailscale HTTPS ingress"
+    elif any(
+        names.count(name) > 1 for name in (TAILSCALE_USER_LOGIN_HEADER, "host", ORIGIN_HEADER)
+    ):
+        message = "duplicate preview security header is not allowed"
+    elif headers.get(TAILSCALE_USER_LOGIN_HEADER) != config.allowed_login:
+        message = "application previews require the configured Tailscale login"
+    elif headers.get("host") != urlsplit(config.canonical_origin).netloc:
+        message = "preview host is not the configured public origin"
+    elif ORIGIN_HEADER in headers and headers[ORIGIN_HEADER] != config.canonical_origin:
+        message = "preview origin is not allowed"
+    if message is not None:
+        raise PlannerError(ErrorCode.agent_forbidden, message, {})

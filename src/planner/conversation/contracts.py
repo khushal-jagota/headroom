@@ -2,7 +2,8 @@
 
 This module is the whole seam. The rest of Panels can start a conversation, send text
 into it, interrupt its running turn, kill its activity outright, and ask whether it is
-running. Nothing else crosses the boundary.
+running. Typed Signal publications supply complete attention and explicit availability
+at a serialized runtime and durable boundary.
 
 The conversation id is the identity everywhere. It is owned by the caller and it is the
 only name this contract knows a conversation by. The ACP session id of the backend
@@ -14,16 +15,22 @@ shape of an event record) and the concrete database schema are deferred to the r
 build. They are deliberately absent from this module rather than sketched.
 """
 
+# Versioned durable source and transaction participation: conversation.lifecycle.
+# Its knowledge outcomes never broaden the public delivery receipt contract here.
+
 from __future__ import annotations
 
+import sqlite3
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from enum import StrEnum
 from pathlib import Path
-from typing import Final, Protocol, TypedDict
+from typing import Final, Literal, Protocol, TypedDict
 
 from planner.conversation.message_content import MessageContent
+from planner.conversation.workspace_admission import WorkspaceAdmission
 from planner.core.contracts import ErrorCode, PlannerError, Principal
+from planner.worker_supervision.contracts import CleanupResult
 
 type ConversationMessageContent = MessageContent | Callable[[str], Awaitable[MessageContent]]
 
@@ -45,11 +52,170 @@ class ConversationAttention:
 
 
 @dataclass(frozen=True, slots=True)
-class ConversationTurnReference:
-    """The public, opaque-enough name of one active turn in one conversation."""
+class ConversationSignalPublicationV1:
+    """Complete canonical attention at one fenced conversation boundary.
+
+    Construction copies the existing mutable signal dictionary. Producers must also
+    copy publications at their public boundaries rather than expose owned objects.
+    """
 
     conversation_id: str
-    turn_number: int
+    runtime_epoch: str
+    conversation_revision: int
+    attention: ConversationAttention
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "attention",
+            replace(self.attention, signal=self.attention.signal.copy()),
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class SignalCursor:
+    """Opaque producer continuity, independent of navigation continuity."""
+
+    scope: str
+    runtime_epoch: str
+    sequence: int
+
+
+@dataclass(frozen=True, slots=True)
+class SignalSnapshot:
+    """Every exact conversation at one producer cursor, including historical ones."""
+
+    installation_id: str
+    cursor: SignalCursor
+    values: tuple[ConversationSignalPublicationV1, ...]
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "values", tuple(replace(value) for value in self.values))
+
+
+@dataclass(frozen=True, slots=True)
+class SignalDeletion:
+    """Explicit removal fenced against obsolete conversation publications."""
+
+    conversation_id: str
+    runtime_epoch: str
+    conversation_revision: int
+
+
+@dataclass(frozen=True, slots=True)
+class SignalAssociationEffect:
+    """Both sides of an address change in its source transaction."""
+
+    owner_kind: Literal["ticket", "manager", "chief"]
+    owner_id: str
+    relation: Literal["current", "historical"]
+    before_conversation_id: str | None
+    after_conversation_id: str | None
+
+
+@dataclass(frozen=True, slots=True)
+class SignalBatch:
+    """One accepted source boundary, including association-only or order-only work."""
+
+    base_cursor: SignalCursor
+    cursor: SignalCursor
+    replacements: tuple[ConversationSignalPublicationV1, ...]
+    deletions: tuple[SignalDeletion, ...]
+    associations: tuple[SignalAssociationEffect, ...]
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self, "replacements", tuple(replace(value) for value in self.replacements)
+        )
+
+
+class SignalInstaller(Protocol):
+    def __call__(self, connection: sqlite3.Connection, snapshot: SignalSnapshot, /) -> None:
+        """Install atomically on the source connection. Never commit, await or call providers."""
+        ...
+
+
+class SignalParticipant(Protocol):
+    def __call__(self, connection: sqlite3.Connection, batch: SignalBatch, /) -> None:
+        """Accept synchronously before source commit. A failure rolls back the boundary."""
+        ...
+
+
+@dataclass(frozen=True, slots=True)
+class SignalReadPermit:
+    """An attachment generation that cannot survive invalidation or reinstallation."""
+
+    scope: str
+    runtime_epoch: str
+    installation_id: str
+    generation: int
+
+
+@dataclass(frozen=True, slots=True)
+class SignalInvalidation:
+    """Unavailable before notification delivery, even if a subscriber fails."""
+
+    generation: int
+    reason: Literal[
+        "initializing",
+        "authority_lost",
+        "detached",
+        "shutdown",
+    ]
+
+
+@dataclass(frozen=True, slots=True)
+class SignalDurableFacts:
+    """Separately knowable durable facts, without any assertion of runtime truth."""
+
+    message_for_owner: bool
+    last_turn_failed: bool
+    has_live_background_task: bool
+
+
+@dataclass(frozen=True, slots=True)
+class SignalAvailability:
+    """Unknown runtime truth remains distinct from idle or false facts."""
+
+    generation: int
+    state: Literal["initializing", "current", "unavailable"]
+    reason: str | None
+
+
+class SignalUnavailable(RuntimeError):
+    """Producer truth or the requested attachment generation is unavailable."""
+
+
+class SignalAttachment(Protocol):
+    def capture_permit(self) -> SignalReadPermit:
+        """Capture current authority or raise SignalUnavailable."""
+        ...
+
+    def validate(self, permit: SignalReadPermit, /) -> None:
+        """Reject an obsolete permit even if current service subsequently resumes."""
+        ...
+
+    def close(self) -> None:
+        """Invalidate before detach, idempotently. Never close runtime ownership."""
+        ...
+
+
+class SignalPublicationSource(Protocol):
+    """Public operations of the domain coordinator, with no storage implementation."""
+
+    def signal_availability(self) -> SignalAvailability:
+        """Read atomic availability without admission to current facts or source writes."""
+        ...
+
+    def attach_signal_publication(
+        self,
+        *,
+        install: SignalInstaller,
+        participate: SignalParticipant,
+        unavailable: Callable[[SignalInvalidation], None],
+    ) -> SignalAttachment:
+        """Install complete state and register callbacks before current admission."""
+        ...
 
 
 class ConversationBackendKey(StrEnum):
@@ -167,6 +333,19 @@ class ConversationRoleMaterials:
     identity_environment_variables: tuple[tuple[str, str], ...] = ()
 
 
+class WorkspacePathPolicy(StrEnum):
+    """Select a mapped path, an absolute path, or the executor-owned workspace.
+
+    For executor_default, workspace_folder names a folder inside the executor's own
+    workspace, written with that workspace as ``/``. Only native admission resolves and
+    provisions it.
+    """
+
+    home_relative = "home_relative"
+    absolute = "absolute"
+    executor_default = "executor_default"
+
+
 @dataclass(frozen=True, slots=True)
 class ConversationStartRequest:
     """The concrete, already-resolved values a conversation is created from.
@@ -183,7 +362,9 @@ class ConversationStartRequest:
     no floor default: absent means the conversation is started without them, and for
     reasoning effort that is a real answer — some models take none.
 
-    ``workspace_folder`` is the folder the agent runs in.
+    ``workspace_folder`` is the folder the agent runs in, except for executor_default.
+    That policy carries a folder inside the executor workspace, written with that
+    workspace as ``/``, until native admission resolves it.
     """
 
     conversation_id: str
@@ -193,6 +374,7 @@ class ConversationStartRequest:
     role_materials: ConversationRoleMaterials | None = None
     workspace_folder: Path | None = None
     access: ConversationAccess | None = None
+    workspace_path_policy: WorkspacePathPolicy = WorkspacePathPolicy.home_relative
 
 
 @dataclass(frozen=True, slots=True)
@@ -204,7 +386,9 @@ class ResolvedConversationStart:
     here because each has a floor default; ``model`` is always concrete because the
     request had to name one. ``reasoning_effort`` and ``role_materials`` stay optional
     because neither has a floor default — there is nothing to fall back to, so absent
-    stays absent.
+    stays absent. For executor_default, native admission must replace the folder
+    inside the executor workspace and the policy before a local backend adapter can
+    use this request.
     """
 
     conversation_id: str
@@ -214,6 +398,15 @@ class ResolvedConversationStart:
     role_materials: ConversationRoleMaterials | None
     workspace_folder: Path
     access: ConversationAccess
+    workspace_path_policy: WorkspacePathPolicy = WorkspacePathPolicy.home_relative
+
+
+class AnswerFate(StrEnum):
+    """Applied by the backend, saved in this process, or refused."""
+
+    applied = "applied"
+    saved = "saved"
+    refused = "refused"
 
 
 class PromptDeliveryMode(StrEnum):
@@ -282,6 +475,10 @@ class PromptDeliveryRefusalReason(StrEnum):
     runs every command as a turn of its own. The command is real and the backend takes it,
     but only as the next turn, so it cannot join the one that is already running.
 
+    ``remote_steer_not_delivered`` names a steer for a Mac turn that the Mac did not take:
+    the Mac was away, or did not fetch it within the steer delivery limit. Nothing reached
+    the agent, so the text can still go as the next message.
+
     Busyness is not on this list and never will be: a busy agent is a message the system
     can hold, and nothing the system can hold is refused.
     """
@@ -294,10 +491,45 @@ class PromptDeliveryRefusalReason(StrEnum):
     no_running_turn_to_steer_into = "no_running_turn_to_steer_into"
     backend_cannot_steer = "backend_cannot_steer"
     command_cannot_join_running_turn = "command_cannot_join_running_turn"
+    remote_steer_not_delivered = "remote_steer_not_delivered"
     running_turn_changed_before_steer = "running_turn_changed_before_steer"
     running_turn_cannot_accept_steer = "running_turn_cannot_accept_steer"
     message_cannot_be_steered = "message_cannot_be_steered"
     backend_rejected_steer = "backend_rejected_steer"
+    backend_rejected_prompt = "backend_rejected_prompt"
+
+
+@dataclass(frozen=True, slots=True)
+class DeploymentRecoveryReference:
+    """Internal capability naming immutable interrupted work and its selected stage."""
+
+    interruption_id: str
+    expected_stage: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class PromptDispatchDecision:
+    """One exact sender's final admission, after preparation and before backend I/O.
+
+    A missing suppression reason means allow. Notice eligibility belongs to its domain.
+    Ordinary messages pass through with ``is_manager_notice=False``.
+
+    ``is_memory_notice`` names a Worker memory-loss notice. It is maintenance, so a turn
+    holding only such notices does not renew automatic compaction. It is distinct from a
+    Manager notice, which drives failure reporting.
+    """
+
+    sender_message_id: str | None
+    suppression_reason: str | None = None
+    is_manager_notice: bool = False
+    is_memory_notice: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class PromptDeliverySuppressed:
+    """An intentional pre-wire discard, durably recorded for this sender identity."""
+
+    reason: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -387,20 +619,24 @@ type PromptDeliveryFate = (
     | PromptDeliveryInjected
     | PromptDeliveryRefused
     | PromptDeliveryUncertain
+    | PromptDeliverySuppressed
 )
 
 
+@dataclass(slots=True)
+class NativeMessageOperation:
+    """One executor-origin send's delivery record, written in its canonical append's commit."""
+
+    sender_id: str
+    submission_id: str
+    in_commit: (
+        Callable[[sqlite3.Connection, str, object, NativeMessageAdmission | None], None] | None
+    ) = None
+
+
 @dataclass(frozen=True, slots=True)
-class AddressedPromptDeliveryReceipt:
-    """An internal receipt for reply attribution after one addressed send.
-
-    The public fate stays the complete conversation contract. ``newly_accepted`` is
-    false only when the sender's message id replayed an earlier outcome, so a retry in a
-    later source turn cannot claim that it answered that turn.
-    """
-
+class NativeMessageAdmission:
     fate: PromptDeliveryFate
-    newly_accepted: bool
 
 
 type HeldPromptPromotionFate = (
@@ -409,6 +645,7 @@ type HeldPromptPromotionFate = (
     | PromptDeliveryInjected
     | PromptDeliveryRefused
     | PromptDeliveryUncertain
+    | PromptDeliverySuppressed
 )
 
 
@@ -429,6 +666,7 @@ class HeldPrompt:
     sender: Principal | None = None
     recipient: Principal | None = None
     queue_reason: PromptQueueReason = PromptQueueReason.requested
+    delivery_uncertain: bool = False
 
 
 class ConversationAlreadyStarted(Exception):
@@ -464,13 +702,38 @@ class ConversationSystem(Protocol):
     locking, so all four are awaited.
     """
 
-    async def run_if_idle(self, conversation_id: str, operation: Callable[[], None]) -> bool:
-        """Run a synchronous canonical write under the conversation admission lock.
+    @property
+    def workspace_admission(self) -> WorkspaceAdmission:
+        """Shared admission for background starts and conversation operations."""
+        ...
 
-        Refuse immediately when any turn, held prompt, or delivery is outstanding.
-        The callback must do no backend I/O and cannot await. A missing conversation
-        counts as idle; callers serialize its association when creating or unlinking it.
-        """
+    def workspace_activity(self) -> Literal["idle", "busy", "unknown"]:
+        """Read complete activity from a worker thread without admitting new work."""
+        ...
+
+    async def prepare_update(self, mode: Literal["idle", "now"]) -> bool:
+        """Pause starts, settle local output, then close writes before a snapshot."""
+        ...
+
+    def update_waiting_work(self) -> tuple[str, ...]:
+        """Name active local and extra-machine work for update controls."""
+        ...
+
+    def cancel_update(self) -> bool:
+        """Reopen admission and invalidate this attempt's authority to snapshot."""
+        ...
+
+    async def run_with_workspace_admission(
+        self,
+        operation: Callable[[], None],
+        *,
+        require_idle: bool,
+    ) -> bool:
+        """Atomically recheck activity, claim adoption, and close start/send admission."""
+        ...
+
+    async def recheck_worker_cleanup(self, ticket_id: str) -> CleanupResult:
+        """Inspect a Ticket's retained source without a new Worker start."""
         ...
 
     async def start_conversation(self, request: ConversationStartRequest) -> None:
@@ -498,14 +761,18 @@ class ConversationSystem(Protocol):
         content: MessageContent,
         *,
         sender_label: str,
+        owner_read_through_sequence: int | None = None,
         mode: PromptDeliveryMode = PromptDeliveryMode.queue,
         model_change: str | None = None,
         reasoning_effort_change: str | None = None,
+        reasoning_effort_is_set: bool = False,
         sender_message_id: str | None = None,
         sent_at_unix_milliseconds: int | None = None,
         sender: Principal | None = None,
         recipient: Principal | None = None,
-        reply_requested: bool = True,
+        recovery_references: tuple[DeploymentRecoveryReference, ...] = (),
+        record_refusal: bool = False,
+        recording_receipt: NativeMessageOperation | None = None,
     ) -> PromptDeliveryFate:
         """Send a message into a conversation. This is the only way anything gets to an agent.
 
@@ -543,30 +810,7 @@ class ConversationSystem(Protocol):
         ``sender_label`` says who sent the text — the automatic loop or the owner, for
         example. It is recorded on the prompt event and it is display-only: nothing else
         consumes it and nothing branches on it.
-        """
-        ...
 
-    async def send_with_receipt(
-        self,
-        conversation_id: str,
-        content: MessageContent,
-        *,
-        sender_label: str,
-        mode: PromptDeliveryMode = PromptDeliveryMode.queue,
-        model_change: str | None = None,
-        reasoning_effort_change: str | None = None,
-        sender_message_id: str | None = None,
-        sent_at_unix_milliseconds: int | None = None,
-        sender: Principal | None = None,
-        recipient: Principal | None = None,
-        reply_requested: bool = True,
-        record_refusal: bool = False,
-    ) -> AddressedPromptDeliveryReceipt:
-        """Run the canonical send and expose replay freshness to addressed-send wiring.
-
-        Ordinary callers use ``send`` and receive only the stable public fate. This
-        receipt exists so Send Message can credit a reply only for the first accepted
-        delivery of a sender-minted message id.
         A caller that retains a refused initial message sets ``record_refusal`` and
         supplies a sender message id. Its refusal remains visible in the conversation.
         """
@@ -582,29 +826,9 @@ class ConversationSystem(Protocol):
         recipient: Principal,
         sender_message_id: str | None = None,
         sent_at_unix_milliseconds: int | None = None,
+        recording_receipt: NativeMessageOperation | None = None,
     ) -> None:
         """Record one addressed message that no backend receives."""
-        ...
-
-    async def active_turn_reference(self, conversation_id: str) -> ConversationTurnReference | None:
-        """Capture the exact active turn that a Send Message may answer."""
-        ...
-
-    async def turn_expects_reply(
-        self, turn: ConversationTurnReference, recipient: Principal
-    ) -> bool:
-        """Say whether an accepted send to ``recipient`` answers the named turn."""
-        ...
-
-    async def record_explicit_reply(
-        self, turn: ConversationTurnReference, recipient: Principal
-    ) -> None:
-        """Credit an accepted Send Message to the active turn in its sender conversation.
-
-        The message itself belongs to its destination conversation. This records no
-        second row. If the named turn has ended or changed, its ending won the race and
-        the later send cannot rewrite what that turn said.
-        """
         ...
 
     async def interrupt(self, conversation_id: str) -> None:
@@ -625,6 +849,15 @@ class ConversationSystem(Protocol):
 
     async def held_prompts(self, conversation_id: str) -> tuple[HeldPrompt, ...]:
         """Return the messages still held by the system, in FIFO order."""
+        ...
+
+    async def sender_message_ids_awaiting_outcome(self, conversation_id: str) -> frozenset[str]:
+        """Return the sender ids of every message accepted here whose outcome is not recorded.
+
+        That is a held message, and also one that has left the queue or been admitted but
+        has no prompt, refusal, uncertainty or discard row yet. ``held_prompts`` alone
+        misses the second kind, so a sender that must not repeat itself asks this.
+        """
         ...
 
     async def promote_held_prompt(
@@ -653,8 +886,17 @@ class ConversationSystem(Protocol):
         turn's interruption is recorded as an event, and so is the discard of each held
         message, because text a caller handed over must never disappear without a trace.
 
-        There is nothing to return. If the conversation is idle with nothing held, or
-        the id names no conversation, nothing happens.
+        There is nothing to return. If the conversation is idle with nothing held and
+        no retained source, or the id names no conversation, nothing happens.
+
+        An initial remote delivery is also cancellable while its start or prompt lacks
+        an outcome. Shutdown suppresses a provably untransmitted prompt; possible
+        transmission retains uncertain delivery. Success requires proof that the old
+        child ended or never started. If cleanup remains uncertain, kill raises
+        retry_later and asks for a Worker cleanup recheck. Callers retain the old
+        ownership and conversation link after refusal. The original child stays
+        quarantined until its ordinary stop succeeds. No later prompt runs beside it.
+        Cancellation does not undo effects that an accepted operation already produced.
         """
         ...
 

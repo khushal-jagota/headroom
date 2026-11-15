@@ -2,11 +2,16 @@
   "schema": 1,
   "entries": [
     {
-      "id": "shell-feedback",
-      "path": "web/tests/shell-feedback-browser.test.mjs",
+      "id": "goal-preview-controls",
+      "path": "web/tests/goal-preview-browser.test.mjs",
+      "cases": ["goal-preview"],
+      "companions": ["web/tests/workspace-rail-interaction.test.ts", "web/tests/manual-measurements.test.ts", "web/tests/goal-editing.test.ts"]
+    },
+    {
+      "id": "shell-utilities",
+      "path": "web/tests/shell-utilities-browser.test.mjs",
       "cases": [
-        "ideas-shell",
-        "feedback-inbox"
+        "workspace-utility-pane"
       ],
       "companions": []
     },
@@ -16,16 +21,15 @@
       "cases": [
         "stage-owner",
         "approve-default",
-        "ticket-guidance"
+        "ticket-review-flow"
       ],
       "companions": []
     },
     {
-      "id": "configuration-schedules",
-      "path": "web/tests/configuration-schedules-browser.test.mjs",
+      "id": "configuration",
+      "path": "web/tests/configuration-browser.test.mjs",
       "cases": [
-        "worker-configuration-setup",
-        "scheduled-tasks"
+        "skill-editors"
       ],
       "companions": []
     },
@@ -35,8 +39,7 @@
       "cases": [
         "conversation-pane",
         "live-conversation-switch",
-        "live-conversation-unanswered-send",
-        "open-stays-open"
+        "live-conversation-unanswered-send"
       ],
       "companions": []
     },
@@ -44,38 +47,41 @@
       "id": "composer-voice",
       "path": "web/tests/composer-voice-browser.test.mjs",
       "cases": [
-        "conversation-composer",
-        "voice-everywhere"
+        "conversation-composer"
       ],
       "companions": []
     },
     {
-      "id": "workspace",
-      "path": "web/tests/workspace-browser.test.mjs",
+      "id": "skeleton",
+      "path": "web/tests/skeleton-regions-browser.test.mjs",
       "cases": [
-        "workspace-rail-at-rest",
-        "workspace-order",
-        "orchestrator-groups-settled",
-        "orchestrator-children",
-        "orchestrator-group-reader-state"
+        "skeleton-regions"
+      ],
+      "companions": []
+    },
+    {
+      "id": "vps",
+      "path": "web/tests/vps-browser.test.mjs",
+      "cases": [
+        "vps-page"
+      ],
+      "companions": []
+    },
+    {
+      "id": "artifact-in-place",
+      "path": "web/tests/artifact-in-place-browser.test.mjs",
+      "cases": [
+        "artifact-keeps-its-conversation"
       ],
       "companions": [
-        "web/tests/workspace-rail-projection.test.ts"
+        "web/tests/artifact-press.test.ts"
       ]
     },
     {
-      "id": "artifacts",
-      "path": "web/tests/artifacts-browser.test.mjs",
+      "id": "embedded-artifacts-and-media",
+      "path": "web/tests/artifact-media-browser.test.mjs",
       "cases": [
-        "file-preview"
-      ],
-      "companions": []
-    },
-    {
-      "id": "historical-sprint",
-      "path": "web/tests/historical-sprint-browser.test.mjs",
-      "cases": [
-        "sprint-documents"
+        "artifact-media"
       ],
       "companions": []
     }

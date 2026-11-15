@@ -1,6 +1,6 @@
 <script lang="ts">
   import InlineEdit from "./InlineEdit.svelte";
-  import type { ManagedSkill } from "../lib/types";
+  import type { ManagedSkill, ManagedSkillField } from "../lib/types";
 
   let {
     heading,
@@ -15,7 +15,7 @@
     descriptionAriaLabel: string;
     bodyAriaLabel: string;
     bodyPlaceholder: string;
-    onSave: (field: "description" | "markdown_body", raw: string) => Promise<void>;
+    onSave: (field: ManagedSkillField, raw: string) => Promise<void>;
   } = $props();
 </script>
 

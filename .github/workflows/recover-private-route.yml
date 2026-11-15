@@ -2,10 +2,14 @@ name: Recover private route
 on:
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 jobs:
   recover:
     runs-on: [self-hosted, linux, production, panels-deploy]
     steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
       - name: Inspect Panels locally
         run: |
           systemctl --user is-active panels-live.service
@@ -15,3 +19,7 @@ jobs:
         run: |
           sudo -n tailscale serve --https=443 http://127.0.0.1:8767
           sudo -n tailscale serve status
+      - name: Check published HTTP/2
+        env:
+          PANELS_PUBLISHED_ORIGIN: ${{ vars.PANELS_PUBLISHED_ORIGIN }}
+        run: python3 "$GITHUB_WORKSPACE/scripts/check_published_http2.py"

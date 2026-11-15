@@ -1,102 +1,92 @@
 # Notifications
 
-Panels can be installed from the browser as a small home-screen or desktop app. It
-uses Web Push, so a selected event can reach an enabled phone or Mac while the Panels
-page is closed. The service worker does not cache pages or provide an offline copy of
-Panels.
+A notification is a phone or desktop push for a kind of attention Khushal opted into, sent at the moment that attention newly becomes true. Notifications exist so Khushal does not have to keep Headroom open to learn that something is waiting on him.
 
-## What becomes a notification
+## What it is made of
 
-Panels derives five attention flags for each subject: a message is waiting for a reply,
-a worker is waiting for an answer, a proposal is waiting for approval, a stage is
-assigned to Khushal, and something failed. A message and a waiting ask are two flags
-because they are two different things. Held as one, whichever arrived second changed
-nothing, so it raised no edge and reached nobody, and an ask announced itself as a
-message. A flag that
-turns from false to true is an edge, and an edge is the only thing that can become a
-notification. The writer records the flag and the edge in its own transaction, so several
-commits stay distinct even when one wake-up covers them. Ticket creation captures its
-initial flags before commit. Blocker, proposal, assignment, conversation link, and read
-changes capture their flags in the same transaction.
+- **Subjects.** Tickets, the Chief, Managers, and Panels itself (for the stall alarm). Preferences are per subject class: all Managers share one switch per kind,  A Chief preference never changes the matching Ticket preference.
+- **Attention flags.** Each subject has separate flags for a message waiting for a reply, an ask waiting for an answer, and a failure. Tickets also have a proposal waiting for approval and a stage assigned to Khushal.
+- **Edges.** A flag flipping from false to true is an edge. Apart from the stall alarm below, an edge is the only thing that can notify.
+- **The policy.** One decision door that turns an edge into a push or drops it, according to Khushal's preferences.
+- **Devices.** Each browser or installed app that enabled notifications is a Web Push subscription. A service worker on the device shows the push and opens the link.
+- **The stall alarm.** Panels itself is a subject with one switch, Stalled work. The stall watchdog unit sends it when work stops moving or the server's stall checker stops; it has no edge and does not pass the policy, but it reads that switch. See [Executor](executor.md) for the watchdog.
+- **The settings section.** Notifications is a section of Settings. It renders the server's catalogue of choices and does not keep its own list.
 
-The delivery poll consumes those saved edges. It does not scan conversation history.
-A Ticket without a conversation has no conversation attention. The process that owns
-the polling lock reconciles imported state once before it starts the loops. Repeated
-startup reconciliation creates no duplicate edges. A startup failure releases the lock.
+```
+ Ticket, conversation, and proposal writes
+                 │
+                 ▼
+ attention flag rises ──► edge (same transaction)
+                                │
+                                ▼
+                     policy (preferences) ──► drop
+                                │
+                                ▼
+                  one delivery per enabled device ──► Web Push ──► service worker
+```
 
-One policy function is the only door from an edge to a notification. It reads the saved
-choice for that type and either suppresses the edge or creates the privacy-safe title,
-body, exact subject link, and replacement tag. The subject uses the same kind and ID
-contract as requests and messages.
+## How it works
 
-This chokepoint is intentional. The source adapters, user choices, wording, and delivery
-provider do not decide independently what counts. The server owns one catalogue, and
-the Notifications screen renders its subject groups and choices directly. It offers
-five choices for Tickets:
+The writer records the flag and the edge in the same transaction as the change that caused them. A background pass later turns edges into deliveries, so several commits stay distinct even when one pass sends them. Each device gets its own delivery, retried with backoff. An expired subscription disables that device. Before each send, Headroom checks that the attention is still current and fresh. Stale deliveries expire without clearing the attention that they describe.
 
-- an unread addressed message awaits a reply;
-- a permission request or an input request awaits an answer;
-- an owner-held Ticket proposal awaits approval;
-- a Ticket stage becomes assigned to Khushal; and
-- a worker turn fails or a Ticket errors.
+Backlog suppresses Ticket approval, assignment, and pending-answer alerts, including queued delivery. Resume restores eligibility for the current obligation. Unread-message and failure alerts still describe real events.
 
-Chief of Staff and Sprint Item supervisors each offer awaiting reply, needs an answer,
-and errored.
-Approval and assignment belong to Tickets only. Each saved choice uses its subject and
-notification type as one key, so a Chief choice never changes the matching Ticket choice.
+The flags are separate because the events are separate. Held as one flag, a message and an ask that arrived second would raise no edge and reach nobody. An ask awaits an answer only while its turn is open. When the turn ends, its unanswered asks clear, so the next ask can raise a new edge.
 
-Sprint Item supervisors share one subject between all of them, because a sprint holds
-twenty or thirty Items and they are replaced each sprint. Upgrades preserve the old
-disabled supervisor-error preference while adding the reply choice.
+A message push names its sender and shows a short plain-text preview. An approval push names the Ticket and the stage that waits. Both native and browser push use these words. Text limits preserve complete visible characters. The source write saves this context with its edge, so later messages or stage changes do not replace it. If context creation fails, the core write still commits and the alert uses generic text. A push also carries a link and one replacement tag per subject. A newer push replaces the older one on the device. The link opens the Ticket, Chief, or Manager it is about.
 
-The notification contains no transcript, prompt, permission detail, or worker output.
-Opening a Ticket notification goes to `/#/workspace/<ticket-id>`. A Sprint Item
-notification goes to `/#/workspace/item/<item-id>`. A notification sent
-before Tickets moved to the Workspace still carries the old `/#/ticket/<ticket-id>`
-address, which the app redirects. A Chief notification
-uses the retained `/#/agents/chief-of-staff` address, which the app redirects to
-`/#/workspace/chief-of-staff`. The service worker accepts only those subject links. A
-malformed payload or an unsupported link opens the safe Workspace fallback. All
-notifications for one subject use one stable replacement tag, so overlapping
-notifications coalesce at the operating system.
+The browser and iPhone Settings change the same preferences. A failed save keeps the confirmed value and shows an error. A preference change affects future edges and does not replay the past.
 
-## Durable delivery
+Headroom can be installed from the browser. Pushes need HTTPS outside localhost, and on iPhone or iPad they work from the installed Home Screen app. The service worker only handles pushes. It does not cache the app, and there is no offline copy.
 
-Several messages before one read cause one reply notification. A later message causes
-another notification only after the first reply state clears.
+## Decisions that shape it
 
-Every edge is decided once. An allowed edge creates one delivery row per device that was
-registered at that time, holding the words that were sent. A suppressed edge is decided
-too, and leaves nothing behind. The delivery log is therefore the whole record of what
-Panels sent, and Panels keeps no notification history besides it.
+- Only edges notify. A flag that stays true does not keep pushing, and a correction never pushes.
+- Every push passes the one policy door. Sources never call delivery. Delivery checks the retained attention flags.
+- Push providers and the lock screen receive the bounded message preview. The full transcript, prompt, attachment contents, and text of asks stay in Panels. System notification preview controls determine what the locked device displays.
+- Preferences are by class, not by item, so a new Manager needs no setup.
 
-Notification reads never change attention state. Reads and owner replies do not clear a
-failed agent state; only a successful start or explicit restart does.
+## Code
 
-The single-machine runtime loop owns the queue step and delivery. A database
-change wakes it promptly, and a periodic pass covers missed wake-ups and retries.
-Successful deliveries are recorded. Temporary failures back off and retry. A push
-provider's expired-subscription response disables that device.
+- `src/planner/notifications/`: flags and edges (`attention.py`), the policy (`logic/policy.py`), deliveries, preferences, and Web Push.
+- `static/service-worker.js`: the service worker.
+- `web/src/routes/NotificationsRoute.svelte`: the settings section.
 
-The Web Push signing identity, subscriptions, preferences, attention state, edges, and
-delivery results all live in the main SQLite database. Normal database backup and
-restore therefore preserve the identity that existing devices trust.
+_Last verified: 2026-11-15._
 
-## Enabling a device
 
-Open **More → Notifications**. Choose the kinds of event that count for Tickets and the
-Chief of Staff, then press
-**Enable on this device**. Panels asks the browser for notification permission only at
-that point. On iPhone and iPad, first add Panels to the Home Screen and open that
-installed app. Web Push also requires Panels to be served over HTTPS in production
-(`localhost` is the browser's development exception).
+## Native iOS push
 
-Disabling a device removes its subscription from Panels and asks the browser to
-unsubscribe. Changing a “What counts” switch affects later edges; it does not resurrect
-events that were suppressed earlier.
+The native app uses Apple Push Notification service (APNs). Press and hold a message notification to reply after device authentication. The app saves that reply in its ordinary outbox, addressed to the original conversation. Offline and uncertain replies follow the existing recovery flow. The action can launch the app in the background without an extension. The system permits one bounded delivery attempt, and pending work resumes when the app next opens. The browser keeps its
+existing Web Push path. Each path records delivery separately for the same attention
+edge and notification preference. Native retries stop after five minutes or five attempts.
+No Apple credentials means no native network calls and no claim of successful delivery.
+The native bundle `com.khushaljagota.panels` has Push Notifications enabled under
+Blue Door Labs. Release signing requests production APNs.
 
-Code paths: `src/planner/notifications/`, the notification tables in the baseline revision,
-`static/service-worker.js`, and
-`web/src/routes/NotificationsRoute.svelte`.
+The live service reads these settings from `~/.config/panels/panels-live.env`.
+Its launcher passes them to the server:
 
-_Last verified: 2026-09-20._
+- `PLAN_APNS_KEY_PATH`: the private `.p8` key file, outside source control.
+- `PLAN_APNS_KEY_ID`: the Apple key ID.
+- `PLAN_APNS_TEAM_ID`: the Apple developer team ID.
+- `PLAN_APNS_BUNDLE_IDS`: the allowed bundle IDs, separated by commas.
+
+Use a canonical HTTPS origin and the configured Tailscale ingress. Device registration
+requires the owner identity from that ingress. A token or client identity header is not
+a login. `PUT /api/notifications/apns/devices` registers the device token, bundle ID, and
+`development` or `production` environment. `DELETE` revokes the same registration even
+after the operator removes the key. Tokens never appear in adapter logs.
+
+For TestFlight, use an Apple developer membership, an App Store Connect app with the
+matching bundle ID, push capability, and the production APNs environment. Release builds for physical iPhones enable server registration by default.
+Debug and Simulator builds keep it disabled unless explicitly enabled.
+The `.p8` key stays on the server. It does not belong in the app or its build inputs.
+See [the native setup guide](../ios/NOTIFICATIONS.md) for private key setup, app settings, and the physical delivery check.
+
+The owner must deploy the server and install the new signed TestFlight build separately.
+Check native reads, an explicit owner action, foreground refresh, and conversation output.
+Enable notifications, then trigger a permitted attention edge while the app is closed.
+Check lock-screen delivery and the destination after a tap. A simulator injection does
+not prove Apple delivery, signing, provisioning, or trusted access from the phone.
+These physical-device checks need the owner and configured Apple credentials.

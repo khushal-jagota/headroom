@@ -1,0 +1,429 @@
+import Foundation
+import Observation
+
+@MainActor @Observable final class AppStore {
+    var baseURL: URL
+    private let session: URLSession
+    @ObservationIgnored lazy var resources = ResourceOwner(api: client)
+    /// Unfinished Goal edits survive route pop/reentry for this app session only.
+    let goalEdits = PageSessionRoute()
+    var client: APIClient { APIClient(baseURL: baseURL, session: session) }
+    /// Workspace rows from the last view that carried the rail windows. A scope
+    /// without them, such as Review alone, keeps the last coherent Workspace.
+    var managers: [ManagerSummary] = []
+    var tickets: [TicketSummary] = []
+    var workspaceLoaded = false
+    /// Per Workspace card (manager id, or "chief"), the active tickets its rail window
+    /// counts but did not load: the shared row budget can cut a card short.
+    var workspaceHidden: [String: Int] = [:]
+    private var chiefResource: ResourceHandle<ChiefDetail> { resources.handle(ChiefResources.settings) }
+    private var deploymentResource: ResourceHandle<DeploymentStatus> { resources.handle(ChiefResources.deployment) }
+    private var healthResource: ResourceHandle<ExecutorHealth> { resources.handle(ChiefResources.executorHealth) }
+    var chief: ChiefDetail? { chiefResource.value }
+    var chiefSignal: ConversationSignal?
+    var review: ReviewResponse?
+    var counts: ViewCounts?
+    /// The last admitted view; screens read window paging facts from it.
+    private(set) var view: ViewSnapshot?
+    var executorHealth: ExecutorHealth? { healthResource.value }
+    var deployment: DeploymentStatus? { deploymentResource.value }
+    var errors: [String: ServerReadFailure] = [:]
+    var serverUnreachable: Bool {
+        errors.values.contains { $0.isServerUnreachable } || chiefResource.failure?.isServerUnreachable == true ||
+            deploymentResource.failure?.isServerUnreachable == true
+    }
+    var isLoading = false
+    /// The view stream's health: "Following changes" once the current stream delivered
+    /// its snapshot, "Reconnecting" after a failure until the next snapshot.
+    var connection = "Connecting"
+    /// Counts connection sessions after the first: each return to the foreground and each
+    /// recovery from a dropped connection. Screens read their detail again at each, so a
+    /// read that failed offline is retried, and never on an unrelated change.
+    private(set) var connectionSession = 0
+    /// Counts settings reads, which run at start, on each change and on refresh. Goal
+    /// screens read again at each; they are outside the navigation view.
+    private(set) var revision = 0
+    private var hasRun = false
+    /// Each view record's reload identity. A detail screen reloads when its own records'
+    /// stamps change, never because another record changed.
+    private(set) var recordStamps: [RecordKey: String] = [:]
+    private(set) var presentation: NavigationPresentation?
+    private(set) var viewRequest = ViewRequest(windows: NavigationScope.baseWindows)
+    private var demands: [String: [ViewWindowRequest]] = [:]
+    private var reviewConversationDemands: [String: [String]] = [:]
+    /// Detail screens that named a selected owner, most recent last.
+    private var selections: [(name: String, owner: ViewOwner)] = []
+    private var running = false
+    private var runGeneration = 0
+    private var viewConsumer: Task<ViewStreamEnd, Never>?
+    /// The scope the running stream follows, which may be wider than `viewRequest`.
+    private var streamRequest: ViewRequest?
+    private var reconnectRequested = false
+    private var viewReading = false
+    private var viewReadsStarted = 0
+
+    init(baseURL suppliedBaseURL: URL? = nil, session: URLSession = .shared) {
+        self.session = session
+        defer { restore() }
+        baseURL = suppliedBaseURL ?? Self.configuredBaseURL
+    }
+
+    /// The same selected origin is available before SwiftUI creates a scene.
+    nonisolated static var configuredBaseURL: URL {
+#if DEBUG
+        if let at = ProcessInfo.processInfo.arguments.firstIndex(of: "--conversation-stub"), ProcessInfo.processInfo.arguments.indices.contains(at + 1),
+           let local = URL(string: ProcessInfo.processInfo.arguments[at + 1]), ["localhost", "127.0.0.1"].contains(local.host) {
+            // A SpringBoard notification response does not retain XCTest's
+            // launch arguments. Persist this explicit DEBUG fixture selection.
+            UserDefaults.standard.set(local.absoluteString, forKey: "panels.baseURL")
+            return local
+        }
+        if ProcessInfo.processInfo.arguments.contains("--conversation-smoke") {
+            return URL(string: "http://127.0.0.1:1")!
+        }
+#endif
+        let saved = UserDefaults.standard.string(forKey: "panels.baseURL")
+        return saved.flatMap(URL.init(string:)) ?? APIClient.defaultBaseURL
+    }
+
+    func configure(baseURL: URL) {
+        runGeneration += 1
+        displayGeneration += 1
+        displaySaveTask?.cancel(); displaySaveTask = nil; pendingDisplays = [:]; lastDisplaySave = .distantPast
+        self.baseURL = baseURL
+        resources.configure(api: client)
+        UserDefaults.standard.set(baseURL.absoluteString, forKey: "panels.baseURL")
+        managers = []; tickets = []; workspaceLoaded = false; workspaceHidden = [:]; chiefSignal = nil; review = nil; counts = nil; view = nil
+        presentation = nil; recordStamps = [:]
+        errors = [:]
+        restore()
+    }
+
+    // MARK: Saved views
+
+    /// The reduced current display is replaceable. It never supplies a stream base.
+    private var pendingDisplays: [String: ViewSnapshot] = [:]
+    private var displaySaveTask: Task<Void, Never>?
+    private var displayEncodingTask: Task<Void, Never>?
+    private var lastDisplaySave = Date.distantPast
+    private var displayGeneration = 0
+    private var displayCheckpointSequence = 0
+    private func savedViewID(_ name: String) -> String { baseURL.absoluteString + "/api/navigation/view/snapshot#" + name }
+
+    private func restore() {
+        let server = LocalStore.server(baseURL)
+        for name in ["workspace", "latest"] {
+            guard let data = try? LocalStore.shared.record(server: server, kind: "cache", id: savedViewID(name))?.payload,
+                  let snapshot = try? APIClient.decoder().decode(ViewSnapshot.self, from: data),
+                  snapshot.wireVersion == NavigationViewVersion.wire,
+                  snapshot.projectionVersion == NavigationViewVersion.projection else { continue }
+            admit(snapshot.savedDisplay, persist: false)
+        }
+    }
+
+    private func checkpointNavigation(_ snapshot: ViewSnapshot) {
+        pendingDisplays["latest"] = snapshot
+        if snapshot.window("rail_parents") != nil { pendingDisplays["workspace"] = snapshot }
+        let delay = max(0, DisplayCacheConfiguration.checkpointInterval - Date().timeIntervalSince(lastDisplaySave))
+        guard displaySaveTask == nil else { return }
+        let generation = displayGeneration
+        displaySaveTask = Task { [weak self] in
+            do { try await Task.sleep(for: .seconds(delay)) } catch { return }
+            guard let self, generation == self.displayGeneration else { return }
+            self.displaySaveTask = nil
+            await self.saveNavigationDisplay()
+        }
+    }
+    func saveNavigationDisplay() async {
+        displaySaveTask?.cancel(); displaySaveTask = nil
+        // An explicit checkpoint also waits for the automatic checkpoint already
+        // in progress, so a following disk barrier includes its admitted bytes.
+        await displayEncodingTask?.value
+        let displays = pendingDisplays
+        guard !displays.isEmpty else { return }
+        pendingDisplays = [:]; lastDisplaySave = .now
+        displayCheckpointSequence += 1
+        let sequence = displayCheckpointSequence, generation = displayGeneration
+        let server = LocalStore.server(baseURL)
+        let ids = displays.keys.reduce(into: [String: String]()) { $0[$1] = savedViewID($1) }
+        let task = Task { [weak self] in
+            let encoded = await Task.detached(priority: .utility) {
+                let encoder = JSONEncoder(); encoder.keyEncodingStrategy = .convertToSnakeCase
+                return displays.compactMap { name, snapshot -> (String, Data)? in
+                    guard let data = try? encoder.encode(snapshot.savedDisplay) else { return nil }
+                    return (name, data)
+                }
+            }.value
+            guard let self, generation == self.displayGeneration, sequence == self.displayCheckpointSequence else { return }
+            for (name, data) in encoded {
+                guard let id = ids[name] else { continue }
+                LocalStore.shared.enqueueCacheResponse(server: server, id: id, data: data)
+            }
+        }
+        displayEncodingTask = task
+        await task.value
+        if sequence == displayCheckpointSequence { displayEncodingTask = nil }
+    }
+
+    // MARK: Scope
+
+    /// A mounted screen states the windows it shows; nil withdraws them. A new or
+    /// changed demand opens a stream for the new scope at once, and the last coherent
+    /// view stays on screen until its snapshot arrives. A withdrawal only narrows the
+    /// next stream, so leaving a screen puts no view read in front of the next screen's own.
+    func setNavigationDemand(_ name: String, _ windows: [ViewWindowRequest]?, reviewConversationIDs: [String] = []) {
+        let conversations = Array(Set(reviewConversationIDs)).sorted()
+        guard demands[name] != windows || reviewConversationDemands[name, default: []] != conversations else { return }
+        demands[name] = windows
+        reviewConversationDemands[name] = windows == nil || conversations.isEmpty ? nil : conversations
+        updateScope(opening: windows != nil)
+    }
+
+    /// A detail screen names the one record it keys its reloads on, so the view carries
+    /// it wherever the screen was opened from. The most recent screen's owner wins. When
+    /// the current stream already carries that record and those windows, as for a Ticket
+    /// opened from Workspace or Review, the new scope waits for the next stream, so no
+    /// view read goes in front of the page's own first read.
+    func setNavigationDemand(_ name: String, selected owner: ViewOwner, windows: [ViewWindowRequest] = []) {
+        let unchanged = demands[name] == windows && selections.last.map { $0.name == name && $0.owner == owner } == true
+        guard !unchanged else { return }
+        let covered = connection == "Following changes" && recordStamps[RecordKey(kind: owner.kind, id: owner.id)] != nil
+            && windows.allSatisfy { streamRequest?.windows.contains($0) == true }
+        demands[name] = windows
+        selections.removeAll { $0.name == name }
+        selections.append((name, owner))
+        updateScope(opening: !covered)
+    }
+
+    func withdrawNavigationDemand(_ name: String) {
+        guard demands[name] != nil || reviewConversationDemands[name] != nil || selections.contains(where: { $0.name == name }) else { return }
+        demands[name] = nil
+        reviewConversationDemands[name] = nil
+        selections.removeAll { $0.name == name }
+        updateScope(opening: false)
+    }
+
+    private func updateScope(opening: Bool) {
+        let next = NavigationScope.request(demands: demands, selected: selections.last?.owner,
+            reviewConversationIDs: reviewConversationDemands.values.flatMap { $0 }, previous: viewRequest)
+        guard next != viewRequest else { return }
+        viewRequest = next
+        guard running, opening else { return }
+        // The follow loop opens the new scope's stream; several changes in one turn share it.
+        if let viewConsumer { viewConsumer.cancel() } else { reconnectRequested = true }
+    }
+
+    private func admit(_ snapshot: ViewSnapshot, persist: Bool = true) {
+        let presentation = NavigationPresentation(snapshot.content.records)
+        if let managers = presentation.workspaceManagers(in: snapshot), let tickets = presentation.workspaceTickets(in: snapshot) {
+            self.managers = managers; self.tickets = tickets; workspaceLoaded = true
+            workspaceHidden = Dictionary(snapshot.content.windows.filter { $0.request.section == "rail_tickets" && $0.request.group == "all" }
+                .map { ($0.request.owner?.id ?? "chief", max(0, $0.total - $0.members.count)) }, uniquingKeysWith: { first, _ in first })
+        }
+        chiefSignal = presentation.chief?.signal.conversationSignal
+        review = presentation.reviewQueue(in: snapshot)
+        counts = snapshot.content.counts
+        let stamps = Dictionary(snapshot.content.records.compactMap { record in record.stamp.map { (record.key, $0) } }, uniquingKeysWith: { _, latest in latest })
+        if stamps != recordStamps { recordStamps = stamps }
+        self.presentation = presentation
+        view = snapshot
+        if persist { checkpointNavigation(snapshot) }
+    }
+
+    /// Outer nil means that this view does not carry the owner. Inner nil is a
+    /// known cleared link, and must not fall back to a saved conversation.
+    func currentConversationID(_ owner: ConversationOwner) -> String?? {
+        switch owner {
+        case .chief:
+            guard let chief = presentation?.chief else { return nil }
+            return .some(chief.conversationId)
+        case .manager(let id):
+            guard let manager = presentation?.managersById[id] else { return nil }
+            return .some(manager.conversationId)
+        case .ticket(let id):
+            guard let ticket = presentation?.ticketsById[id] else { return nil }
+            return .some(ticket.conversationId)
+        case .goal: return nil
+        }
+    }
+
+    // MARK: Reload identities
+
+    func ticketStamp(_ id: String) -> String? { recordStamps[RecordKey(kind: "ticket", id: id)] }
+
+    /// An orchestrator page: its record, and its children window's members and total.
+    func managerStamp(_ id: String) -> String? { ownerStamp(RecordKey(kind: "manager", id: id), children: .manager(id)) }
+
+    /// The Chief page: its record and children window, and its settings body.
+    func chiefStamp() -> String? {
+        ownerStamp(RecordKey(kind: "chief", id: "chief"), children: .chief).map { $0 + "\n" + (chief.map { $0.label + "\u{1f}" + $0.recap } ?? "") }
+    }
+
+    private func ownerStamp(_ key: RecordKey, children owner: ViewOwner) -> String? {
+        let identity = NavigationScope.children(of: owner).identity
+        guard let own = recordStamps[key], let window = view?.content.windows.first(where: { $0.request.identity == identity }) else { return nil }
+        return ([own, String(window.total)] + window.members.map { $0.id + "=" + (recordStamps[$0] ?? "") }).joined(separator: "\n")
+    }
+
+    /// A detail read's rows with the view's current working and unread marks, so a
+    /// mark change needs no detail read. Rows the view does not carry keep their own.
+    func withLiveMarks<Row: LiveMarkedWorker>(_ rows: [Row]) -> [Row] {
+        guard let presentation else { return rows }
+        return rows.map { row in
+            guard let live = presentation.ticketsById[row.id], let signal = live.signal.conversationSignal else { return row }
+            var row = row
+            row.conversationSignal = signal
+            if let state = live.agentState { row.agentState = state }
+            return row
+        }
+    }
+
+    // MARK: Following the view
+
+    /// Owned by the foreground shell task. SwiftUI cancels it on background or URL change,
+    /// which closes both streams; the next foreground entry starts with fresh snapshots.
+    /// SwiftUI starts the next run without waiting for the cancelled one to unwind, so
+    /// a run clears the shared stream state only while it is still the newest run.
+    func run() async {
+        runGeneration += 1
+        let generation = runGeneration
+        running = true
+        let chief = chiefResource, deployment = deploymentResource, health = healthResource
+        chief.acquire(); deployment.acquire(); health.acquire()
+        resources.start()
+        if hasRun { connectionSession += 1 }
+        hasRun = true
+        defer {
+            chief.release(); deployment.release(); health.release()
+            if runGeneration == generation {
+                Task { await saveNavigationDisplay() }
+                resources.stop(); running = false; viewConsumer = nil; streamRequest = nil
+            }
+        }
+        await followView()
+    }
+
+    fileprivate enum ViewStreamEnd { case cancelled, ended(admitted: Bool), refused(admitted: Bool), failed }
+
+    /// Mirrors web/src/lib/navigation/views/owner.ts: one stream per scope generation.
+    /// A gap, an obsolete frame, a reset or a closed stream needs a fresh snapshot, which
+    /// a new stream sends first. Failures retry with backoff and show Reconnecting.
+    private func followView() async {
+        var failures = 0
+        while !Task.isCancelled {
+            let api = client
+            let request = viewRequest
+            reconnectRequested = false
+            streamRequest = request
+            let consumer = Task { await self.consume(request, api: api) }
+            viewConsumer = consumer
+            let end = await withTaskCancellationHandler { await consumer.value } onCancel: { consumer.cancel() }
+            if viewConsumer == consumer { viewConsumer = nil }
+            if Task.isCancelled { return }
+            switch end {
+            case .cancelled: continue // A new or widened scope: open its stream at once.
+            case .ended(let admitted), .refused(let admitted):
+                // A stream that was current reconnects after a second for its fresh
+                // snapshot, as the web does: the server closes on change-log gaps, and a
+                // repeating gap must not become a loop of full snapshots.
+                if admitted { failures = 0 } else { failures += 1 }
+            case .failed: failures += 1
+            }
+            if failures > 0 { connection = "Reconnecting" }
+            // 1, 2, 4, then 8 s: a phone in the foreground wants to be current again soon.
+            let delay = Duration.seconds(1 << min(max(failures, 1) - 1, 3))
+            let deadline = ContinuousClock.now + delay
+            while ContinuousClock.now < deadline, !reconnectRequested {
+                do { try await Task.sleep(for: .milliseconds(100)) } catch { return }
+            }
+        }
+    }
+
+    private func consume(_ request: ViewRequest, api: APIClient) async -> ViewStreamEnd {
+        let generation = runGeneration
+        // Frames apply to this stream's own snapshot, never to a restored or older view.
+        var current: ViewSnapshot?
+        var admitted = false
+        do {
+            for try await (frame, _) in api.navigationViewEvents(request) {
+                guard !Task.isCancelled, generation == runGeneration, api.baseURL == baseURL else { return .cancelled }
+                if let generation = frame.scopeGeneration, generation != request.scopeGeneration { return .refused(admitted: admitted) }
+                guard case .success(let next) = NavigationViewFrames.apply(current, frame) else { return .refused(admitted: admitted) }
+                current = next
+                switch frame {
+                case .checkpoint: continue // Coverage only; the content is unchanged.
+                case .snapshot:
+                    admit(next)
+                    admitted = true
+                    if connection == "Reconnecting" { connectionSession += 1 }
+                    connection = "Following changes"
+                    errors["Navigation"] = nil
+                    Task { await Outbox.shared.drain(api: api) }
+                default: admit(next)
+                }
+                // A page that waited for the next stream was carried by another screen's
+                // window. Once its record leaves this stream, open one with it selected.
+                if let owner = selections.last?.owner, request.selected != owner,
+                   recordStamps[RecordKey(kind: owner.kind, id: owner.id)] == nil { return .cancelled }
+            }
+            return Task.isCancelled || generation != runGeneration ? .cancelled : .ended(admitted: admitted)
+        } catch {
+            if Task.isCancelled || generation != runGeneration || api.baseURL != baseURL { return .cancelled }
+            errors["Navigation"] = ServerReadFailure(error)
+            return .failed
+        }
+    }
+
+    /// Manual refresh and confirmed writes. Chief settings and deployment read again. The
+    /// view follows its stream; a stream that is not current reconnects now. Without a
+    /// foreground stream, one snapshot is read.
+    func refresh() async {
+        guard !Task.isCancelled else { return }
+        isLoading = view == nil && chief == nil
+        defer { isLoading = false }
+        if connection != "Following changes" { reconnectRequested = true }
+        let api = client
+        async let settingsRead: () = readSettings(probing: false)
+        if !running { await readView(from: api) }
+        await settingsRead
+        guard !Task.isCancelled, api.baseURL == baseURL else { return }
+        if errors.isEmpty { Task { await Outbox.shared.drain(api: api) } }
+    }
+
+    /// Shell documents use the same owner as every mounted detail.
+    func readSettings(probing: Bool) async {
+        if probing { await resources.reconcile() }
+        else {
+            async let chief: Void = chiefResource.refresh()
+            async let deployment: Void = deploymentResource.refresh()
+            async let health: Void = healthResource.refresh()
+            _ = await (chief, deployment, health)
+        }
+    }
+
+    /// One bounded snapshot for the current scope, when no stream runs. A read that starts
+    /// after this call covers it; concurrent callers wait for that read instead of repeating it.
+    private func readView(from api: APIClient) async {
+        let wanted = viewReadsStarted
+        while viewReading {
+            do { try await Task.sleep(for: .milliseconds(50)) } catch { return }
+        }
+        guard viewReadsStarted == wanted, !Task.isCancelled, api.baseURL == baseURL else { return }
+        viewReading = true
+        viewReadsStarted += 1
+        defer { viewReading = false }
+        let request = viewRequest
+        let generation = runGeneration
+        do {
+            let (snapshot, _) = try await api.navigationViewSnapshot(request)
+            guard !Task.isCancelled, generation == runGeneration, api.baseURL == baseURL else { return }
+            guard snapshot.scopeGeneration == request.scopeGeneration else { throw APIError(status: 0, message: "The navigation view answered another scope.") }
+            admit(snapshot)
+            errors["Navigation"] = nil
+        } catch {
+            guard !Task.isCancelled, generation == runGeneration, api.baseURL == baseURL else { return }
+            errors["Navigation"] = ServerReadFailure(error)
+        }
+    }
+
+}

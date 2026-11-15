@@ -17,6 +17,10 @@ import sys
 import tempfile
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "scripts"))
+
+from test_runtime import RuntimeIsolation  # noqa: E402
+
 
 def main():
     root = Path(__file__).resolve().parents[3]
@@ -26,7 +30,7 @@ def main():
     environment = {
         key: value
         for key, value in os.environ.items()
-        if not key.startswith(("PLAN_", "PANELS_REAL_", "PANELS_BROWSER_", "PANELS_COMPANION_"))
+        if not key.startswith(("PANELS_REAL_", "PANELS_BROWSER_", "PANELS_COMPANION_"))
         and key
         not in (
             "HERMES_HOME",
@@ -150,4 +154,7 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    with RuntimeIsolation(os.environ) as runtime:
+        os.environ.clear()
+        os.environ.update(runtime.environment)
+        main()

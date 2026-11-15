@@ -1,14 +1,14 @@
 """E2E harness fixtures (SPEC §18.3 items 22-27). Standalone: imports nothing from
 tests/unit.
 
-Ordinary tests share a real ``panels serve`` subprocess on an OS-assigned port. The
-``server`` fixture resets its canonical SQLite and managed-file state before every test;
-if a test created conversation/runtime state, the fixture replaces the process instead.
+Ordinary tests use a real ``panels serve`` subprocess on an OS-assigned port. The
+``server`` fixture starts a fresh generation before every test so canonical rows, derived
+state, and process-local publication registrations share the same isolated lifetime.
 Tests whose subject is process ownership or special configuration keep using the
 function-scoped ``server_factory`` path. Browser contexts come from pytest-playwright's
 session ``browser``; the ``open_page`` / ``cli`` / ``api`` helpers drive the surfaces.
-Every Playwright wait carries an explicit ``timeout``; the only sleep is the worker-step
-readiness poll's 0.1s interval, which polls a condition inside a boot budget.
+Every Playwright wait carries an explicit ``timeout``. A server is ready at its first
+``/api/meta`` answer on a listener the fixture bound for it, with no boot budget.
 """
 
 from __future__ import annotations
@@ -20,9 +20,14 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from playwright.sync_api import Browser, BrowserContext, Page
+from playwright.sync_api import (
+    Browser,
+    BrowserContext,
+    Page,
+    Playwright,
+    sync_playwright,
+)
 from tests.e2e.harness import (
-    BOOT_BUDGET_S,
     FAKE_NOW,
     PLAN_BIN,
     REPO_ROOT,
@@ -31,6 +36,7 @@ from tests.e2e.harness import (
     JsonObject,
     ServerHandle,
 )
+from tests.support.fresh_schema_template import install_fresh_schema_template
 from tests.support.server_fixtures import (  # noqa: F401 - fixture registration
     _reusable_server,
     api,
@@ -44,7 +50,6 @@ from tests.support.server_fixtures import (
 )
 
 __all__ = [
-    "BOOT_BUDGET_S",
     "FAKE_NOW",
     "PLAN_BIN",
     "REPO_ROOT",
@@ -56,6 +61,31 @@ __all__ = [
 
 
 BROWSER_CHECK_FAILED = pytest.StashKey[bool]()
+
+
+def pytest_configure(config: pytest.Config) -> None:
+    install_fresh_schema_template()
+
+
+# Capture Linux's browser-cache location during collection, before test setup
+# replaces HOME. Honor a caller's explicit Playwright override, including 0.
+_BROWSER_CACHE = os.environ.get(
+    "PLAYWRIGHT_BROWSERS_PATH",
+    str(Path(os.environ.get("XDG_CACHE_HOME") or Path.home() / ".cache") / "ms-playwright"),
+)
+
+
+@pytest.fixture(scope="session")
+def playwright() -> Iterator[Playwright]:
+    # The driver snapshots its environment at startup; launch args are too late.
+    # Keep the private HOME and restore this process's environment immediately.
+    with pytest.MonkeyPatch.context() as environment:
+        environment.setenv("PLAYWRIGHT_BROWSERS_PATH", _BROWSER_CACHE)
+        driver = sync_playwright().start()
+    try:
+        yield driver
+    finally:
+        driver.stop()
 
 
 @pytest.fixture

@@ -21,6 +21,7 @@
   let {
     ask,
     busy = false,
+    answerAvailable = true,
     note = null,
     onAnswer
   }: {
@@ -31,6 +32,7 @@
       options: readonly PermissionAskOption[];
     };
     busy?: boolean;
+    answerAvailable?: boolean;
     note?: string | null;
     onAnswer: (optionId: string) => void;
   } = $props();
@@ -42,7 +44,7 @@
   let rawOpen = $state(false);
 
   function onWindowKeydown(event: KeyboardEvent): void {
-    if (shape !== "question" || busy) return;
+    if (shape !== "question" || busy || !answerAvailable) return;
     if (event.metaKey || event.ctrlKey || event.altKey) return;
     const target = event.target;
     // Somebody typing a number into a field means the number, not the answer.
@@ -75,8 +77,8 @@
           class="c2-ask-choice"
           data-conversation-ask-choice={choice.optionId}
           data-conversation-ask-shortcut={choice.shortcutDigit ?? undefined}
-          disabled={busy}
-          onclick={() => onAnswer(choice.optionId)}
+          disabled={busy || !answerAvailable}
+          onclick={() => answerAvailable && onAnswer(choice.optionId)}
         >
           <span class="c2-ask-choice-label">{choice.label}</span>
           {#if choice.shortcutDigit !== null}

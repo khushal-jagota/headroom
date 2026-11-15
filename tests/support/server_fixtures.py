@@ -2,23 +2,20 @@
 
 from __future__ import annotations
 
-import hashlib
 import json
 import os
-import shutil
 import socket
-import sqlite3
 import subprocess
 import sys
 import time
 from collections.abc import Callable, Iterator, Mapping
+from contextlib import closing
 from pathlib import Path
 
 import httpx
 import pytest
-from tests.support.model_catalogue import seed_test_model_catalogue
+from test_runtime import environment_for, validate_environment
 from tests.support.server import (
-    BOOT_BUDGET_S,
     FAKE_NOW,
     PLAN_BIN,
     REPO_ROOT,
@@ -26,17 +23,55 @@ from tests.support.server import (
     JsonObject,
     ServerHandle,
 )
+from tests.support.synthetic_homes import create_synthetic_homes, synthetic_home_environment
 
 
-def _free_port() -> int:
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
-        sock.bind(("127.0.0.1", 0))
-        return int(sock.getsockname()[1])
+def _bind_loopback_listener(port: int = 0) -> socket.socket:
+    """Bind and listen on a loopback port for a server that has not started yet.
+
+    The server is handed this socket through ``PLAN_SERVER_LISTENER_FD`` and never binds
+    the port itself, so nothing else can take the port between choosing it and the server
+    starting. A connection made before the server is ready waits in the kernel's queue
+    instead of being refused.
+    """
+    listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    try:
+        # A stopped server on this exact port can leave its connections in TIME_WAIT.
+        listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        listener.bind(("127.0.0.1", port))
+        listener.listen()
+    except BaseException:
+        listener.close()
+        raise
+    return listener
 
 
-def _scrubbed_env() -> dict[str, str]:
-    """os.environ minus every ambient PLAN_* key (kills shell leakage)."""
-    return {k: v for k, v in os.environ.items() if not k.startswith(("PLAN_", "PANELS_REAL_"))}
+def _first_meta_answer(base: str, log_path: Path, describe_server: Callable[[], str]) -> None:
+    """Wait for the first ``/api/meta`` answer from a server given a bound listener.
+
+    The request waits in the listener's queue until the server accepts it, however long
+    boot takes. Only the server's own processes hold the listener, so once they have all
+    exited the kernel resets the queued connection and the request fails at once. There
+    is no boot limit: the job's own timeout guards a real hang.
+    """
+    try:
+        response = httpx.get(f"{base}/api/meta", timeout=None)
+    except httpx.TransportError as error:
+        raise AssertionError(
+            f"{describe_server()} closed its listener without answering /api/meta: {error!r}\n"
+            f"--- server log tail ---\n{_log_tail(log_path)}"
+        ) from error
+    assert response.status_code == 200, f"/api/meta -> {response.status_code}: {response.text}"
+    meta = response.json()
+    assert meta["test_mode"] is True, meta
+
+
+def _scrubbed_env(storage: Path | None = None) -> dict[str, str]:
+    """Private runtime defaults, without worker identity or provider opt-ins."""
+    if storage is None:
+        storage = Path(os.environ["PLAN_DB_PATH"]).parent
+    environment = environment_for(storage, os.environ)
+    return {k: v for k, v in environment.items() if not k.startswith("PANELS_REAL_")}
 
 
 def _log_tail(log_path: Path, n: int = 40) -> str:
@@ -69,7 +104,7 @@ def _adopt_the_worker_types_the_server_runs_on(db_path: Path) -> None:
     from planner.core.db import connect
     from planner.worker_types.configuration import load_worker_runtime_definitions
 
-    with connect(str(db_path)) as conn:
+    with closing(connect(str(db_path))) as conn:
         load_worker_runtime_definitions(conn)
 
 
@@ -83,71 +118,85 @@ def _start_server(
     port: int | None = None,
     server_module: str | None = None,
     database_name: str = "planning.db",
+    owner_read_trace: bool = False,
 ) -> ServerHandle:
+    started_at = time.monotonic()
     # A1: the log file is opened from THIS process before the subprocess exists;
     # panels serve only creates directories later, inside itself.
     srvdir.mkdir(parents=True, exist_ok=True)
 
-    port = _free_port() if port is None else port
-    base = f"http://127.0.0.1:{port}"
     db_path = srvdir / database_name
     log_path = srvdir / "server.log"
     from planner.core.db import connect, create_schema
 
-    with connect(str(db_path)) as bootstrap:
-        create_schema(bootstrap)
-        seed_test_model_catalogue(bootstrap)
-    if seed_db is not None:
-        seed_db(db_path)
+    homes = create_synthetic_homes(srvdir)
+    with synthetic_home_environment(homes):
+        with closing(connect(str(db_path))) as bootstrap:
+            create_schema(bootstrap)
 
-    env = _scrubbed_env()
-    env.update(
-        {
-            "PLAN_TEST_MODE": "1",
-            "PLAN_DB_PATH": str(db_path),
-            "PLAN_PORT": str(port),
-            "PLAN_FAKE_NOW": fake_now if fake_now is not None else FAKE_NOW,
-            "PLAN_LOGS_DIR": str(srvdir / "logs"),
-            "PLAN_DISPATCHER_LOCK_PATH": str(srvdir / "dispatcher.lock"),
-            # A real server composes the real agents, and composing them puts Panels'
-            # role skills in the agent home. Without this that home is the developer's
-            # own ~/.hermes, and every server started here would re-point their real
-            # skills at a temporary directory that is deleted when the test ends.
-            "PLAN_HERMES_HOME": str(srvdir / "hermes-home"),
-        }
-    )
-    if app_sha is not None:
-        env["PLAN_APP_SHA"] = app_sha
-    if trusted_ingress_env is not None:
-        env.update(
-            trusted_ingress_env(base) if callable(trusted_ingress_env) else trusted_ingress_env
-        )
+        if seed_db is not None:
+            seed_db(db_path)
 
-    # Hooks are dormant unless the exact proof activates its runtime scope marker.
-    # Install at the ordinary startup boundary; never restart/reset a server for tracing.
-    env["PANELS_E2E_OWNER_READ_TRACE"] = str(srvdir / "owner-read-trace.jsonl")
-    env["PYTHONPATH"] = os.pathsep.join(
-        filter(
-            None,
-            (
-                str(REPO_ROOT / "tests/e2e/approval_message_trace"),
-                str(REPO_ROOT),
-                env.get("PYTHONPATH", ""),
-            ),
-        )
-    )
-
-    log = log_path.open("wb")
+    listener = _bind_loopback_listener(0 if port is None else port)
     try:
-        proc = subprocess.Popen(
-            ([sys.executable, "-m", server_module] if server_module else [str(PLAN_BIN), "serve"]),
-            cwd=str(REPO_ROOT),  # load-bearing: assets mount + config.yaml
-            env=env,
-            stdout=log,
-            stderr=subprocess.STDOUT,
+        port = int(listener.getsockname()[1])
+        base = f"http://127.0.0.1:{port}"
+        env = _scrubbed_env(srvdir)
+        env.update(
+            {
+                "PLAN_TEST_MODE": "1",
+                "PLAN_DB_PATH": str(db_path),
+                "PLAN_PORT": str(port),
+                "PLAN_SERVER_URL": base,
+                "PLAN_SERVER_LISTENER_FD": str(listener.fileno()),
+                "PLAN_FAKE_NOW": fake_now if fake_now is not None else FAKE_NOW,
+                "PLAN_LOGS_DIR": str(srvdir / "logs"),
+                "PLAN_DISPATCHER_LOCK_PATH": str(srvdir / "dispatcher.lock"),
+            }
         )
+        if app_sha is not None:
+            env["PLAN_APP_SHA"] = app_sha
+        if trusted_ingress_env is not None:
+            env.update(
+                trusted_ingress_env(base) if callable(trusted_ingress_env) else trusted_ingress_env
+            )
+
+        env.update(homes)
+        validate_environment(env)
+
+        # The owner-read trace hook is a sitecustomize, so every interpreter started with
+        # it on PYTHONPATH imports FastAPI and the conversation store before doing anything
+        # else: about 1.5 CPU-seconds in each of the supervisor, its trampoline and the
+        # application. Only the one proof that reads the trace pays for it. Its hooks stay
+        # dormant until that proof activates its runtime scope marker; install them at the
+        # ordinary startup boundary and never restart or reset a server for tracing.
+        trace_hook_path: tuple[str, ...] = ()
+        if owner_read_trace:
+            env["PANELS_E2E_OWNER_READ_TRACE"] = str(srvdir / "owner-read-trace.jsonl")
+            trace_hook_path = (str(REPO_ROOT / "tests/e2e/approval_message_trace"),)
+        env["PYTHONPATH"] = os.pathsep.join(
+            filter(None, (*trace_hook_path, str(REPO_ROOT), env.get("PYTHONPATH", "")))
+        )
+
+        log = log_path.open("wb")
+        try:
+            proc = subprocess.Popen(
+                (
+                    [sys.executable, "-m", server_module]
+                    if server_module
+                    else [str(PLAN_BIN), "serve"]
+                ),
+                cwd=str(REPO_ROOT),  # load-bearing: assets mount + config.yaml
+                env=env,
+                stdout=log,
+                stderr=subprocess.STDOUT,
+                pass_fds=(listener.fileno(),),
+            )
+        finally:
+            log.close()  # the child keeps its own dup'd fd
     finally:
-        log.close()  # the child keeps its own dup'd fd
+        # The server holds the only other copies, so its exit closes the listener.
+        listener.close()
     from planner.server_lifecycle.control import resolve_server_control_socket_path
 
     control_socket_path = resolve_server_control_socket_path(port, env, REPO_ROOT)
@@ -160,32 +209,18 @@ def _start_server(
         control_socket_path=control_socket_path,
     )
 
-    deadline = time.time() + BOOT_BUDGET_S
-    while time.time() < deadline:
-        if proc.poll() is not None:
-            raise AssertionError(
-                f"panels serve exited during boot (rc={proc.returncode})\n"
-                f"--- server log tail ---\n{_log_tail(log_path)}"
-            )
-        try:
-            resp: httpx.Response | None = httpx.get(f"{base}/api/meta", timeout=1.0)
-        except httpx.HTTPError:
-            resp = None
-        if resp is not None and resp.status_code == 200:
-            meta = resp.json()
-            assert meta["test_mode"] is True, meta
-            root = httpx.get(f"{base}/", timeout=1.0)
-            assert root.status_code == 200, root.status_code
-            assert "data-svelte-app" in root.text
-            _adopt_the_worker_types_the_server_runs_on(db_path)
-            return handle
-        time.sleep(0.1)
-
-    proc.terminate()
-    raise AssertionError(
-        f"panels serve did not become ready within {BOOT_BUDGET_S}s\n"
-        f"--- server log tail ---\n{_log_tail(log_path)}"
-    )
+    try:
+        _first_meta_answer(base, log_path, lambda: f"panels serve (rc={proc.poll()})")
+        root = httpx.get(f"{base}/", timeout=None)
+        assert root.status_code == 200, root.status_code
+        assert "data-svelte-app" in root.text
+    except BaseException:
+        _stop_server(handle)
+        raise
+    with synthetic_home_environment(homes):
+        _adopt_the_worker_types_the_server_runs_on(db_path)
+    print(f"E2E_SERVER_START {srvdir.name} seconds={time.monotonic() - started_at:.3f}")
+    return handle
 
 
 @pytest.fixture
@@ -198,6 +233,7 @@ def server_factory(tmp_path: Path) -> Iterator[Callable[..., ServerHandle]]:
         app_sha: str | None = None,
         trusted_ingress_env: Mapping[str, str] | Callable[[str], Mapping[str, str]] | None = None,
         seed_db: Callable[[Path], None] | None = None,
+        server_module: str | None = None,
     ) -> ServerHandle:
         nonlocal counter
         srvdir = tmp_path / f"srv{counter}"
@@ -208,6 +244,7 @@ def server_factory(tmp_path: Path) -> Iterator[Callable[..., ServerHandle]]:
             app_sha=app_sha,
             trusted_ingress_env=trusted_ingress_env,
             seed_db=seed_db,
+            server_module=server_module,
         )
         handles.append(handle)
         return handle
@@ -248,122 +285,23 @@ def restart_server() -> Iterator[Callable[[ServerHandle], ServerHandle]]:
         _stop_server(handle)
 
 
-def _database_has_conversation_runtime(db_path: Path) -> bool:
-    with sqlite3.connect(db_path) as conn:
-        return bool(conn.execute("SELECT EXISTS(SELECT 1 FROM conversations)").fetchone()[0])
-
-
-def _reset_database(db_path: Path) -> None:
-    """Reset mutable rows after the caller confirms that boot-managed state is unchanged."""
-    from planner.core.db import connect, create_schema
-
-    with sqlite3.connect(db_path, isolation_level=None, timeout=10) as conn:
-        conn.execute("PRAGMA foreign_keys=OFF")
-        conn.execute("BEGIN IMMEDIATE")
-        try:
-            tables = [
-                str(row[0])
-                for row in conn.execute(
-                    "SELECT name FROM sqlite_master "
-                    "WHERE type='table' AND name NOT LIKE 'sqlite_%' "
-                    "AND name NOT IN ('alembic_version', 'managed_skill_versions', "
-                    "'managed_skills', 'worker_types', 'chief_settings')"
-                )
-            ]
-            for table in tables:
-                # Names came from sqlite_master, but quote them rather than treating a
-                # future migration's table name as SQL.
-                conn.execute(f'DELETE FROM "{table.replace(chr(34), chr(34) * 2)}"')
-            conn.execute("DELETE FROM sqlite_sequence")
-            conn.execute("COMMIT")
-        except BaseException:
-            conn.execute("ROLLBACK")
-            raise
-        finally:
-            conn.execute("PRAGMA foreign_keys=ON")
-        conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
-
-    # create_schema is also the one canonical seed door, so the shared server begins
-    # each test with the same default projects as a newly booted server.
-    with connect(str(db_path)) as conn:
-        create_schema(conn)
-        seed_test_model_catalogue(conn)
-
-
-def _reset_managed_directories(database_parent: Path) -> None:
-    """Remove mutable stores and runner evidence that must not cross test cases."""
-    for name in ("files",):
-        path = database_parent / name
-        if path.is_symlink():
-            path.unlink()
-        elif path.exists():
-            shutil.rmtree(path)
-    for name in ("deployment-lifecycle.json", "deployment-lifecycle.json.lock"):
-        path = database_parent / name
-        if path.exists() or path.is_symlink():
-            path.unlink()
-
-
-def _process_owned_managed_state(handle: ServerHandle) -> tuple[object, ...]:
-    """Compare boot-provisioned state by content, without treating its existence as mutation."""
-    entries: list[object] = []
-    for directory in ("worker-settings", "skills"):
-        root = handle.db_path.parent / directory
-        for path in sorted(root.rglob("*")) if root.exists() else []:
-            relative = str(path.relative_to(handle.db_path.parent))
-            if path.is_symlink():
-                entries.append((relative, "link", os.readlink(path)))
-            elif path.is_file():
-                entries.append((relative, "file", hashlib.sha256(path.read_bytes()).hexdigest()))
-    with sqlite3.connect(handle.db_path) as conn:
-        for table in ("managed_skills", "managed_skill_versions", "worker_types", "chief_settings"):
-            entries.append(
-                (table, tuple(sorted(tuple(row) for row in conn.execute(f"SELECT * FROM {table}"))))
-            )
-    return tuple(entries)
-
-
 class _ReusableServer:
     def __init__(self, root: Path) -> None:
         self._root = root
         self._generation = 0
-        self._used = False
         self.handle: ServerHandle | None = None
-        self._boot_managed_state: tuple[object, ...] = ()
 
     def _start(self) -> ServerHandle:
         srvdir = self._root / f"srv{self._generation}"
         self._generation += 1
-        handle = _start_server(srvdir)
-        self._boot_managed_state = _process_owned_managed_state(handle)
-        return handle
+        return _start_server(srvdir)
 
     def prepare(self) -> ServerHandle:
-        if self.handle is None:
-            self.handle = self._start()
-        if not self._used:
-            self._used = True
-            return self.handle
-
-        if _database_has_conversation_runtime(self.handle.db_path) or (
-            _process_owned_managed_state(self.handle) != self._boot_managed_state
-        ):
-            # Conversation runtime lives in memory, while worker settings and managed
-            # skills may be read and recreated by the running process. Replacing the
-            # process is the only honest reset boundary for tests that touched either;
-            # ordinary row-only tests retain the fast shared process.
+        # Publication and navigation registrations belong to the child lifetime.
+        # A fresh generation resets canonical and derived state under real ownership.
+        if self.handle is not None:
             _stop_server(self.handle)
-            self.handle = self._start()
-            return self.handle
-
-        _reset_database(self.handle.db_path)
-        _reset_managed_directories(self.handle.db_path.parent)
-        response = httpx.post(
-            self.handle.base + "/api/test/set-now",
-            json={"now": FAKE_NOW},
-            timeout=10.0,
-        )
-        assert response.status_code == 200, response.text
+        self.handle = self._start()
         return self.handle
 
     def close(self) -> None:
@@ -394,15 +332,17 @@ def server(
 
 
 @pytest.fixture
-def cli() -> Callable[..., JsonObject]:
+def cli(tmp_path: Path) -> Callable[..., JsonObject]:
     def _cli(
         server: ServerHandle,
         *args: str,
         ticket_id: str | None = None,
         actor: str | None = None,
         stdin: str | None = None,
+        settle_brief: bool = False,
     ) -> JsonObject:
-        env = _scrubbed_env()
+        env = _scrubbed_env(tmp_path)
+        env.update(create_synthetic_homes(tmp_path))
         env["PLAN_SERVER_URL"] = server.base
         if ticket_id is not None:
             # The identity a launched Worker runs under is both variables together:
@@ -413,11 +353,7 @@ def cli() -> Callable[..., JsonObject]:
             env["PLAN_ACTOR"] = "worker"
         if actor is not None:
             env["PLAN_ACTOR"] = actor
-        # A Ticket created with no Brief rests at its Brief stage with nothing parked,
-        # so the fixture has to write one before it can settle the gate below.
-        settles_the_intake_gate = args[:2] == ("ticket", "create") and "--kickoff-note" not in args
-        if settles_the_intake_gate:
-            args = (*args, "--kickoff-note", "Agreed brief.")
+        validate_environment(env)
         proc = subprocess.run(
             [str(PLAN_BIN), *args, "--json"],
             input=stdin,
@@ -431,16 +367,17 @@ def cli() -> Callable[..., JsonObject]:
             f"plan {' '.join(args)} rc={proc.returncode}\nstderr: {proc.stderr}"
         )
         data: JsonObject = json.loads(proc.stdout)
-        # Most pre-Kickoff browser scenarios need a worker-stage ticket. Settle the
-        # new intake gate in the fixture unless the test supplied Kickoff content;
-        # those explicit cases exercise the parked proposal itself.
-        if settles_the_intake_gate:
+        # Worker-stage scenarios explicitly accept their supplied Brief. Tests
+        # about the parked proposal leave this off and retain the creation gate.
+        if settle_brief:
+            assert args[:2] == ("ticket", "create")
             approve = subprocess.run(
                 [
                     str(PLAN_BIN),
                     "ticket",
-                    "approve",
+                    "proposal",
                     data["id"],
+                    "accept",
                     "--ceiling",
                     "none",
                     "--json",
@@ -452,7 +389,7 @@ def cli() -> Callable[..., JsonObject]:
                 timeout=30,
             )
             assert approve.returncode == 0, (
-                f"automatic kickoff approval rc={approve.returncode}\nstderr: {approve.stderr}"
+                f"fixture Brief approval rc={approve.returncode}\nstderr: {approve.stderr}"
             )
             approved: JsonObject = json.loads(approve.stdout)
             return approved
@@ -470,6 +407,21 @@ def api() -> ApiHelper:
 def rail_server(tmp_path: Path) -> Iterator[ServerHandle]:
     handle = _start_server(
         tmp_path / "rail", server_module="tests.e2e.rail_server", database_name="rail-proof.db"
+    )
+    try:
+        yield handle
+    finally:
+        _stop_server(handle)
+
+
+@pytest.fixture
+def owner_read_traced_rail_server(tmp_path: Path) -> Iterator[ServerHandle]:
+    """The rail host with the owner-read trace hook installed in its child."""
+    handle = _start_server(
+        tmp_path / "rail",
+        server_module="tests.e2e.rail_server",
+        database_name="rail-proof.db",
+        owner_read_trace=True,
     )
     try:
         yield handle

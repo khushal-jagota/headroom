@@ -14,7 +14,6 @@ from planner.core.clock import Clock, TestClock, parse_fake_now
 from planner.core.config import Config
 from planner.core.contracts import JsonDict
 from planner.core.errors import ErrorCode, PlannerError
-from planner.days.logic.dates import planning_date
 from planner.worker_types.configuration import configured_worker_type_registry
 
 
@@ -37,7 +36,6 @@ def build_test_router(config: Config, clock: Clock) -> APIRouter:
         clock.set(parsed)
         return {
             "now": clock.now().isoformat(),
-            "planning_date": planning_date(clock.now(), config.boundary_hour).isoformat(),
         }
 
     @router.post("/test/run-step/{ticket_id}")

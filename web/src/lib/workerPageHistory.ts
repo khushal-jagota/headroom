@@ -1,12 +1,10 @@
-import { fieldIsPassedFor, gatingFieldFor, type Lifecycle } from "./lifecycle";
+import { fieldIsPassedFor, type Lifecycle } from "./lifecycle";
 import type { TicketDetail } from "./types";
 
-/** Show completed steps and the current step without exposing future steps. */
+/** Show every lifecycle step and report which steps are complete. */
 export function workerPageHistory(lifecycle: Lifecycle, detail: TicketDetail): {
   fields: string[]; completed: string[];
 } {
-  const fields = lifecycle.fieldIds.filter((field) =>
-    fieldIsPassedFor(lifecycle, field, detail.stage) || gatingFieldFor(lifecycle, detail.stage) === field
-  );
+  const fields = [...lifecycle.fieldIds];
   return { fields, completed: fields.filter((field) => fieldIsPassedFor(lifecycle, field, detail.stage)) };
 }

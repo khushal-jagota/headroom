@@ -1,0 +1,412 @@
+"""Guard supported development entry points before target tool startup."""
+
+from __future__ import annotations
+
+import json
+import os
+import shlex
+import shutil
+import subprocess
+import sys
+from collections.abc import Mapping, Sequence
+from pathlib import Path
+from typing import NoReturn
+
+from development_safety.contracts import Diagnostic, SafetyRefusal
+from development_safety.scanner import check_paths, check_python, check_python_lookup, check_tree
+
+TREE = Path(__file__).resolve().parents[2]
+PACKAGES = ("web", "agent_backends")
+# These do not redirect executable or dependency lookup. Unknown options fail closed.
+NPM_CONFIG = {
+    "registry",
+    "loglevel",
+    "progress",
+    "audit",
+    "fund",
+    "color",
+    "fetch-retries",
+    "fetch-timeout",
+    "strict-ssl",
+    "cafile",
+    "always-auth",
+}
+
+
+def refuse(path: Path, signal: str, detail: str) -> NoReturn:
+    raise SafetyRefusal(
+        Diagnostic("cannot establish dependency safety", path, None, None, signal, detail)
+    )
+
+
+def node_environment(tree: Path, package: Path, env: Mapping[str, str]) -> None:
+    for name in ("NODE_PATH", "NODE_OPTIONS"):
+        if env.get(name):
+            refuse(
+                package,
+                "unsupported lookup redirect",
+                f"{name} changes executable or module lookup.",
+            )
+    selected_npm = shutil.which("npm", path=env.get("PATH", os.defpath))
+    if selected_npm and len(Path(selected_npm).resolve().parents) < 5:
+        refuse(
+            Path(selected_npm),
+            "npm configuration location",
+            "Cannot establish npm installation prefix from executable location.",
+        )
+    npm_prefix = Path(selected_npm).resolve().parents[4] if selected_npm else Path("/usr")
+    expected_paths = {
+        "prefix": package,
+        "local-prefix": package,
+        "global-prefix": package,
+        "userconfig": Path.home() / ".npmrc",
+        "globalconfig": package / "etc/npmrc",
+        "init-module": Path.home() / ".npm-init.js",
+    }
+    for name in env:
+        if name.lower().startswith("npm_config_"):
+            key = name[len("npm_config_") :].lower().replace("_", "-")
+            if key == "cache":
+                # A cache can outlive isolated test homes. It still needs the
+                # deployment-storage check, including nested links and aliases.
+                check_paths([Path(env[name])], environment=env)
+                continue
+            if key in expected_paths:
+                allowed = {expected_paths[key].absolute()}
+                if key in {"prefix", "global-prefix"}:
+                    allowed.add(npm_prefix)
+                if key == "globalconfig":
+                    allowed.add(npm_prefix / "etc/npmrc")
+                if Path(env[name]).absolute() not in allowed:
+                    refuse(package, "unsupported npm configuration", f"Unexpected {name} path.")
+                check_tree(Path(env[name]), environment=env)
+                continue
+            if key == "node-gyp":
+                npm = shutil.which("npm", path=env.get("PATH", os.defpath))
+                if not npm:
+                    refuse(package, "executable lookup", "npm is absent from PATH.")
+                expected = Path(npm).resolve().parents[1] / "node_modules/node-gyp/bin/node-gyp.js"
+                if Path(env[name]) != expected:
+                    refuse(
+                        package, "unsupported npm configuration", "Unexpected npm node-gyp path."
+                    )
+                check_paths([expected], environment=env)
+                continue
+            if key in {"user-agent", "npm-version", "noproxy"}:
+                continue
+            if key not in NPM_CONFIG and not key.endswith(":_authtoken"):
+                refuse(
+                    package,
+                    "unsupported npm configuration",
+                    f"Unsupported npm environment key: {name}",
+                )
+    # npm reads user, global, and project configuration before dependency resolution.
+    npm_distribution_configs = {
+        npm_prefix / "etc/npmrc",
+        *((Path(selected_npm).resolve().parents[1] / "npmrc",) if selected_npm else ()),
+    }
+    configs = {
+        Path.home() / ".npmrc",
+        Path("/etc/npmrc"),
+        Path("/usr/etc/npmrc"),
+        Path("/usr/local/etc/npmrc"),
+        tree / ".npmrc",
+        package / ".npmrc",
+        package / "etc/npmrc",
+        *npm_distribution_configs,
+    }
+    check_paths(list(configs), environment=env)
+    for config in configs:
+        if not config.exists():
+            continue
+        try:
+            lines = config.read_text().splitlines()
+        except (OSError, UnicodeError) as exc:
+            refuse(config, "npm configuration read", str(exc))
+        for line in lines:
+            line = line.strip()
+            if not line or line.startswith(("#", ";")):
+                continue
+            key, separator, _ = line.partition("=")
+            key = key.strip().lower()
+            if (
+                sys.platform == "darwin"
+                and separator
+                and key == "prefix"
+                and config in npm_distribution_configs
+            ):
+                continue
+            if not separator or (key not in NPM_CONFIG and not key.endswith(":_authtoken")):
+                refuse(config, "unsupported npm configuration", f"Unsupported config key: {key}")
+
+
+def node_safety(tree: Path, package: str, env: Mapping[str, str]) -> Path:
+    if package not in PACKAGES:
+        refuse(tree, "npm command grammar", "Prefix must be web or agent_backends.")
+    destination = tree / package
+    node_environment(tree, destination, env)
+    check_tree(tree, environment=env)
+    check_tree(destination, environment=env)
+    lookups = [base / "node_modules" for base in (destination, *destination.parents)]
+    node = shutil.which("node", path=env.get("PATH", os.defpath))
+    if not node:
+        refuse(destination, "executable lookup", "node is absent from PATH.")
+    check_paths([*lookups, Path(node)], environment=env)
+    return destination
+
+
+def npm_command(tree: Path, args: Sequence[str], env: Mapping[str, str]) -> list[str]:
+    if len(args) < 3 or args[0] != "--prefix":
+        refuse(
+            tree,
+            "npm command grammar",
+            "Use npm --prefix web|agent_backends ci|install|run SCRIPT.",
+        )
+    package, operation, *tail = args[1:]
+    destination = node_safety(tree, package, env)
+    if operation in {"ci", "install"}:
+        if tail:
+            refuse(
+                destination,
+                "npm command grammar",
+                "Install and ci accept no extra options or packages.",
+            )
+    elif operation == "run" and len(tail) >= 1:
+        try:
+            scripts = json.loads((destination / "package.json").read_text()).get("scripts", {})
+        except (OSError, ValueError) as exc:
+            refuse(destination, "npm script lookup", str(exc))
+        if tail[0] not in scripts or (len(tail) > 1 and tail[1] != "--"):
+            refuse(
+                destination,
+                "npm command grammar",
+                "Use a registered script followed by optional -- arguments.",
+            )
+    else:
+        refuse(
+            destination,
+            "npm command grammar",
+            "Only ci, install, and registered scripts are supported.",
+        )
+    executable = shutil.which("npm", path=env.get("PATH", os.defpath))
+    if not executable:
+        refuse(destination, "executable lookup", "npm is absent from PATH.")
+    node = shutil.which("node", path=env.get("PATH", os.defpath))
+    if not node:
+        refuse(destination, "executable lookup", "node is absent from PATH.")
+    check_paths([Path(executable), Path(node)], environment=env)
+    # Backend CLIs track current releases; they have no repository lockfile.
+    if package == "agent_backends" and operation == "ci":
+        refuse(destination, "npm command grammar", "Backend CLIs have no lockfile. Use install.")
+    if package == "agent_backends" and operation == "install":
+        tail = ["--package-lock=false", "--save=false",
+                "@anthropic-ai/claude-code@latest", "@openai/codex@latest"]
+    return [str(executable), "--prefix", str(destination), operation, *tail]
+
+
+def interpreter_from_launcher(text: str) -> Path | None:
+    """Resolve the interpreter a console script launches on.
+
+    Three forms appear in ``.venv/bin``:
+
+    * ``#!/path/to/python`` — the ordinary shebang.
+    * ``#!/usr/bin/env python`` — names the finder, not the interpreter, so there is
+      no answer here.
+    * A two-line ``/bin/sh`` wrapper. pip writes this instead of a shebang whenever
+      the interpreter path is over 127 bytes or holds a space, which a long worktree
+      name reaches on its own. The real path is the second line's ``exec`` argument.
+
+    Returns ``None`` for a native binary, a relative interpreter, or anything else
+    that records no path: those carry nothing to redirect.
+    """
+    lines = text.splitlines()
+    if not lines or not lines[0].startswith("#!"):
+        return None
+    words = _split(lines[0][2:])
+    if words and Path(words[0]).name in {"sh", "bash"} and len(lines) > 1:
+        # The line reads: <quoting noise>exec' /path/to/python "$0" "$@"
+        words = _split(lines[1])
+        words = words[1:] if words and words[0].endswith("exec") else words
+    if not words:
+        return None
+    candidate = words[1] if Path(words[0]).name == "env" and len(words) > 1 else words[0]
+    if not candidate.startswith("/"):
+        return None
+    # The directory is resolved but the interpreter name is not. ``.venv/bin/python``
+    # is a symlink chain ending at the system interpreter: follow it and every healthy
+    # launcher looks foreign. Leave the directory unresolved and a tree reached through
+    # a symlink looks foreign instead. Resolving only the parent answers both.
+    named = Path(os.path.normpath(candidate))
+    try:
+        return named.parent.resolve() / named.name
+    except OSError:
+        return named
+
+
+def _split(line: str) -> list[str]:
+    try:
+        return shlex.split(line.strip())
+    except ValueError:
+        return []
+
+
+def read_launcher_interpreter(launcher: Path) -> Path | None:
+    """Read a console script's opening lines, tolerating a native binary or a missing file."""
+    try:
+        with launcher.open("rb") as handle:
+            head = b"\n".join(handle.read(4096).split(b"\n")[:2])
+    except OSError:
+        return None
+    try:
+        return interpreter_from_launcher(head.decode("utf-8"))
+    except UnicodeDecodeError:
+        return None
+
+
+def python_command(tree: Path, args: Sequence[str], env: Mapping[str, str]) -> list[str]:
+    venv = tree / ".venv"
+    check_python(venv, tree, environment=env)
+    command, *tail = args
+    name = Path(command).name
+    if command not in {name, f".venv/bin/{name}", str(venv / "bin" / name)}:
+        refuse(tree, "Python command grammar", "Use this worktree's Python, pytest, or mypy.")
+    if name in {"python", "python3"}:
+        if len(tail) < 2 or tail[0] != "-m" or tail[1] not in {"pytest", "mypy"}:
+            refuse(venv, "Python command grammar", "Python supports only -m pytest and -m mypy.")
+        return [str(venv / "bin/python"), "-I", *tail]
+    if name not in {"pytest", "mypy"}:
+        refuse(venv, "Python command grammar", "Only pytest and mypy are supported.")
+    console = venv / "bin" / name
+    interpreter = read_launcher_interpreter(console)
+    if interpreter is None:
+        refuse(
+            console,
+            "console interpreter evidence",
+            "Cannot establish console launcher interpreter.",
+        )
+    check_paths([console, interpreter], environment=env)
+    if interpreter.parent != (venv / "bin").resolve():
+        refuse(
+            console,
+            "console interpreter identity",
+            f"Console launcher names {interpreter}, outside this worktree virtualenv.",
+        )
+    return [str(console), *tail]
+
+
+def setup(tree: Path, env: Mapping[str, str]) -> int:
+    """Create fresh local dependencies; never remove or reuse a suspect destination."""
+    check_python_lookup(tree, environment=env)
+    destinations = [tree / ".venv", *(tree / item / "node_modules" for item in PACKAGES)]
+    check_tree(tree, environment=env)
+    check_paths(destinations, environment=env)
+    for destination in destinations:
+        if destination.exists() or destination.is_symlink():
+            refuse(
+                destination,
+                "setup requires fresh dependencies",
+                "Use a fresh worktree. Preserve existing dependencies "
+                "for deliberate link or mount repair.",
+            )
+    for package in PACKAGES:
+        node_safety(tree, package, env)
+    # pip's configuration loader explicitly treats os.devnull as no configuration.
+    # Destination switches never reach pip, including ensurepip during venv creation.
+    registry_keys = {
+        "PIP_INDEX_URL",
+        "PIP_EXTRA_INDEX_URL",
+        "PIP_TRUSTED_HOST",
+        "PIP_CERT",
+        "PIP_CLIENT_CERT",
+        "PIP_TIMEOUT",
+        "PIP_RETRIES",
+        "PIP_PROXY",
+    }
+    install_environment = {
+        key: value
+        for key, value in env.items()
+        if not key.upper().startswith("PIP_") or key in registry_keys
+    }
+    install_environment["PIP_CONFIG_FILE"] = os.devnull
+    selected_python = shutil.which("python3", path=env.get("PATH", os.defpath))
+    if not selected_python:
+        refuse(tree, "executable lookup", "python3 is absent from PATH.")
+    bootstrap = Path(selected_python)
+    check_paths([bootstrap], environment=env)
+    subprocess.run(
+        [str(bootstrap), "-I", "-S", "-B", "-m", "venv", str(tree / ".venv")],
+        cwd=tree,
+        env=install_environment,
+        check=True,
+    )
+    check_python(tree / ".venv", tree, environment=env)
+    python = str(tree / ".venv/bin/python")
+    for arguments in (
+        ["-I", "-m", "pip", "--no-cache-dir", "install", "-r", str(tree / "requirements.txt")],
+        [
+            "-I",
+            "-m",
+            "pip",
+            "--no-cache-dir",
+            "install",
+            "--editable",
+            str(tree),
+            "--config-settings",
+            "editable_mode=compat",
+        ],
+    ):
+        check_python(tree / ".venv", tree, environment=env)
+        subprocess.run([python, *arguments], cwd=tree, env=install_environment, check=True)
+    for package in PACKAGES:
+        subprocess.run(
+            npm_command(
+                tree, ["--prefix", package, "install" if package == "agent_backends" else "ci"],
+                env,
+            ),
+            cwd=tree,
+            env=install_environment,
+            check=True,
+        )
+    return 0
+
+
+def main(args: Sequence[str] | None = None) -> int:
+    arguments = list(sys.argv[1:] if args is None else args)
+    environment = os.environ.copy()
+    try:
+        if not arguments:
+            refuse(
+                TREE, "command grammar", "Use setup, npm, pytest, mypy, or python -m pytest|mypy."
+            )
+        if arguments == ["setup"]:
+            return setup(TREE, environment)
+        if arguments[0] == "check-node":
+            if len(arguments) != 2:
+                refuse(TREE, "command grammar", "check-node requires one package name.")
+            node_safety(TREE, arguments[1], environment)
+            return 0
+        command = (
+            npm_command(TREE, arguments[1:], environment)
+            if arguments[0] == "npm"
+            else python_command(TREE, arguments, environment)
+        )
+        # Keep original deployment evidence for the existing dependency check above.
+        # Only test commands receive replacement runtime paths, never setup or mypy.
+        is_pytest = arguments[0] != "npm" and (
+            Path(arguments[0]).name == "pytest"
+            or (len(arguments) > 2 and arguments[1:3] == ["-m", "pytest"])
+        )
+        if is_pytest:
+            from test_runtime import RuntimeIsolation
+
+            with RuntimeIsolation(environment) as runtime:
+                return subprocess.run(command, cwd=TREE, env=runtime.environment).returncode
+        os.chdir(TREE)
+        os.execvpe(command[0], command, environment)
+    except SafetyRefusal as exc:
+        print(f"Command: {' '.join(arguments)}\n{exc}", file=sys.stderr)
+        return 2
+    except (OSError, subprocess.CalledProcessError, ValueError) as exc:
+        print(f"Development command failed: {exc}", file=sys.stderr)
+        return 2
+    return 0

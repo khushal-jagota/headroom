@@ -1,8 +1,7 @@
-export const COMPOSITION_STATE_EVENT = "panels:composition-state";
+import { writable } from "svelte/store";
 
 export type ReleaseSnapshot = {
   updateAvailable: boolean;
-  compositionActive: boolean;
   reloadRequested: boolean;
 };
 
@@ -31,12 +30,11 @@ export function createReleaseMonitor(options: ReleaseMonitorOptions) {
   const reload = options.reload ?? (() => window.location.reload());
   let snapshot: ReleaseSnapshot = {
     updateAvailable: false,
-    compositionActive: false,
     reloadRequested: false
   };
   let started = false;
   let reloadStarted = false;
-  let checkInFlight: Promise<void> | null = null;
+  let checkInFlight: Promise<boolean> | null = null;
   const subscribers = new Set<(value: ReleaseSnapshot) => void>();
 
   function publish(update: Partial<ReleaseSnapshot>): void {
@@ -48,20 +46,27 @@ export function createReleaseMonitor(options: ReleaseMonitorOptions) {
     if (
       !reloadStarted &&
       snapshot.reloadRequested &&
-      snapshot.updateAvailable &&
-      !snapshot.compositionActive
+      snapshot.updateAvailable
     ) {
       reloadStarted = true;
       reload();
     }
   }
 
-  function check(): Promise<void> {
+  function observeAppSha(appSha: string | null): void {
+    if (!options.bootSha || !appSha) return;
+    const updateAvailable = appSha !== options.bootSha;
+    if (!updateAvailable) reloadStarted = false;
+    publish({ updateAvailable, reloadRequested: updateAvailable ? snapshot.reloadRequested : false });
+    reloadIfReady();
+  }
+
+  function check(): Promise<boolean> {
     if (checkInFlight) return checkInFlight;
     checkInFlight = (async () => {
       try {
         const response = await fetchMeta("/api/meta", { cache: "no-store" });
-        if (!response.ok) return;
+        if (!response.ok) return false;
         const meta = (await response.json()) as MetaResponse;
         if (options.bootSha && typeof meta.app_sha === "string") {
           const updateAvailable = meta.app_sha !== options.bootSha;
@@ -70,9 +75,12 @@ export function createReleaseMonitor(options: ReleaseMonitorOptions) {
             updateAvailable,
             reloadRequested: updateAvailable ? snapshot.reloadRequested : false
           });
+          return !updateAvailable;
         }
+        return options.bootSha === null;
       } catch {
-        // A failed release check must not disturb the current app. Resume retries it.
+        // A failed update check leaves the current app unchanged.
+        return false;
       } finally {
         checkInFlight = null;
       }
@@ -85,13 +93,6 @@ export function createReleaseMonitor(options: ReleaseMonitorOptions) {
     reloadIfReady();
   }
 
-  async function recheckThenReloadIfReady(): Promise<void> {
-    const activeCheck = checkInFlight;
-    if (activeCheck) await activeCheck;
-    await check();
-    reloadIfReady();
-  }
-
   function onVisibilityChange(): void {
     if (options.document.visibilityState === "visible") void checkThenReloadIfReady();
   }
@@ -100,17 +101,10 @@ export function createReleaseMonitor(options: ReleaseMonitorOptions) {
     void checkThenReloadIfReady();
   }
 
-  function onCompositionState(event: Event): void {
-    const active = (event as CustomEvent<{ active?: unknown }>).detail?.active === true;
-    publish({ compositionActive: active });
-    if (!active) void recheckThenReloadIfReady();
-  }
-
   function start(): void {
     if (started) return;
     started = true;
     options.document.addEventListener("visibilitychange", onVisibilityChange);
-    options.document.addEventListener(COMPOSITION_STATE_EVENT, onCompositionState);
     options.window.addEventListener("pageshow", onPageShow);
     void check();
   }
@@ -119,7 +113,6 @@ export function createReleaseMonitor(options: ReleaseMonitorOptions) {
     if (!started) return;
     started = false;
     options.document.removeEventListener("visibilitychange", onVisibilityChange);
-    options.document.removeEventListener(COMPOSITION_STATE_EVENT, onCompositionState);
     options.window.removeEventListener("pageshow", onPageShow);
   }
 
@@ -135,5 +128,51 @@ export function createReleaseMonitor(options: ReleaseMonitorOptions) {
     return () => subscribers.delete(subscriber);
   }
 
-  return { start, stop, check, requestReload, subscribe };
+  return { start, stop, check, requestReload, subscribe, observeAppSha };
+}
+
+// One monitor for the whole app. ShellStatus is mounted once per breakpoint and both
+// mounts stay in the DOM, so a monitor owned by the component would poll twice and
+// hold two independent reload requests.
+export const releaseState = writable<ReleaseSnapshot>({
+  updateAvailable: false,
+  reloadRequested: false
+});
+
+let sharedMonitor: ReturnType<typeof createReleaseMonitor> | null = null;
+let sharedBootSha: string | null = null;
+let unsubscribeShared: (() => void) | null = null;
+
+export function startReleaseMonitor(): void {
+  if (sharedMonitor) return;
+  sharedBootSha = readBootAppSha(document);
+  const monitor = createReleaseMonitor({ bootSha: sharedBootSha, document, window });
+  sharedMonitor = monitor;
+  unsubscribeShared = monitor.subscribe((value) => releaseState.set(value));
+  monitor.start();
+}
+
+export function stopReleaseMonitor(): void {
+  if (!sharedMonitor) return;
+  sharedMonitor.stop();
+  unsubscribeShared?.();
+  unsubscribeShared = null;
+  sharedMonitor = null;
+  sharedBootSha = null;
+}
+
+export function requestReleaseReload(): void {
+  sharedMonitor?.requestReload();
+}
+
+/** Attach the page version. The server rejects an outdated browser. */
+export async function mutationHeaders(headers?: HeadersInit): Promise<Record<string, string>> {
+  const result = Object.fromEntries(new Headers(headers).entries());
+  if (sharedBootSha) result["X-Panels-App-SHA"] = sharedBootSha;
+  return result;
+}
+
+/** Reconciled update status supplies the running version without a second status read. */
+export function observeRunningAppSha(appSha: string | null): void {
+  sharedMonitor?.observeAppSha(appSha);
 }

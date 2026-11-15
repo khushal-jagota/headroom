@@ -1,12 +1,12 @@
 """Ticket routes (§9), plus Ticket blocks and the ticket-centric
-derived views (board, Review). Thin HTTP shells over the stage-3 writers and the
+derived Review view. Thin HTTP shells over the stage-3 writers and the
 pure read views: every handler is parse -> auth -> writer -> serialize. No route
 re-implements a domain rule.
 
 This module also homes the shared request plumbing (config/clock accessors, the
 per-request connection dependency, the transaction context manager, and the enum
 and body-key marshallers). The other api modules import these from here; the direction
-is strictly one-way (sprints/days/dispatch api -> tickets api), and views modules
+is strictly one-way (domain API -> tickets API), and views modules
 import no api module at all.
 
 Request bodies arrive as plain dicts and are marshalled into the TypedDict shapes
@@ -16,41 +16,38 @@ validation envelope rather than FastAPI's 422, so the CLI and UI see one error s
 from __future__ import annotations
 
 import sqlite3
-from collections.abc import AsyncIterator, Callable, Iterator
-from contextlib import contextmanager
+from collections.abc import AsyncIterator, Callable, Iterator, Sequence
+from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass
 from enum import StrEnum
 from functools import partial
 from typing import Annotated, Any, cast
 
 from fastapi import APIRouter, Depends, Query, Request
-from fastapi.responses import PlainTextResponse
+from fastapi.responses import JSONResponse, PlainTextResponse
 
 from planner.conversation.api import (
     OwnerSendBody,
     conversation_message_content,
     delivery_fate_json,
+    video_send_admission,
 )
-from planner.conversation.backend_state import require_enabled_model
+from planner.conversation.backend_state import require_usable_model
 from planner.conversation.contracts import (
     ConversationSystem,
+    WorkspacePathPolicy,
     require_conversation_backend_key,
 )
 from planner.conversation.message_files import ConversationMessageFiles
-from planner.conversation.model_resolution.contracts import (
-    CurrentModelResolver,
-    ModelResolutionUnavailable,
-)
-from planner.conversation.model_resolution.service import resolve_cached_model
 from planner.conversation.storage import ConversationStore
-from planner.core import authority
+from planner.conversation.video_uploads.contracts import UploadDestination
 from planner.core.authctx import (
     RequestContext,
     request_context,
 )
-from planner.core.authority import require_above, require_above_or_self, require_self
+from planner.core.authority import Target, TargetKind, require_above
 from planner.core.clock import Clock
-from planner.core.config import Config
+from planner.core.config import DB_BUSY_TIMEOUT_MS, Config
 from planner.core.contracts import (
     CHIEF_PRINCIPAL,
     JsonDict,
@@ -59,6 +56,7 @@ from planner.core.contracts import (
 )
 from planner.core.db import connect
 from planner.core.errors import ErrorCode, PlannerError
+from planner.core.task_settlement import run_on_worker_thread
 from planner.list_reads.configuration import DEFAULT_LIST_LIMIT
 from planner.list_reads.contracts import ListPageRequest
 from planner.list_reads.detail import (
@@ -68,7 +66,7 @@ from planner.list_reads.detail import (
     require_full_for_one,
 )
 from planner.message_delivery import service as message_delivery_service
-from planner.message_delivery.contracts import MessageDeliveryResult, MessageRecordedToOwner
+from planner.message_delivery.contracts import MessageDeliveryResult
 from planner.projects import data as projects_data
 from planner.runtime import conversation_start
 from planner.runtime.logic.conversation_start_resolution import (
@@ -81,30 +79,31 @@ from planner.runtime.worker_step_readiness_loop import (
 )
 from planner.tickets import actions as tickets_actions
 from planner.tickets import data as tickets_data
+from planner.tickets import decision_operations, worker_restart
 from planner.tickets import views as tickets_views
-from planner.tickets import worker_restart
 from planner.tickets.contracts import (
-    NO_FURTHER,
     TITLE_MAX_CHARS,
     AcceptBody,
     CreateTicketBody,
     EmployeeConfigurationBody,
-    EmployeeLaunchConfiguration,
     GateCompletionBody,
     ProposalBody,
     RejectionBody,
+    ReviewTransferNotice,
     Ticket,
     TicketEdit,
     TicketListFilters,
     TicketStatus,
 )
 from planner.tickets.logic import admission
+from planner.tickets.review_transfer import notify_review_transfers
 from planner.work_attention import add_work_attention, read_running_conversation_count
 from planner.worker_settings.service import CHIEF_SETTINGS_KEY
 from planner.worker_types.configuration import (
     configured_worker_type_registry,
 )
-from planner.worker_types.contracts import WorkerTypeDefinition
+from planner.worker_types.contracts import WorkflowDefinition
+from planner.worker_types.store import custom_workflow_from_dict
 
 router = APIRouter()
 
@@ -120,7 +119,14 @@ def get_clock(request: Request) -> Clock:
     return cast(Clock, request.app.state.clock)
 
 
-async def db_conn(request: Request) -> AsyncIterator[sqlite3.Connection]:
+def db_conn(request: Request) -> Iterator[sqlite3.Connection]:
+    """One connection per request, opened and closed on a worker thread.
+
+    A plain-function handler then does all its database work off the event loop, so a
+    write that waits on the SQLite lock holds up only its own request. An ``async def``
+    handler that takes it runs its database work on the loop instead. A write route must
+    not do that, and the route table test holds that rule.
+    """
     conn = cast(Callable[[], sqlite3.Connection], request.app.state.conn_factory)()
     try:
         yield conn
@@ -128,12 +134,22 @@ async def db_conn(request: Request) -> AsyncIterator[sqlite3.Connection]:
         conn.close()
 
 
-def get_model_resolver(request: Request) -> CurrentModelResolver:
-    runtime = getattr(request.app.state, "conversation", None)
-    resolver = getattr(runtime, "model_resolution", None)
-    if resolver is None:
-        raise PlannerError(ErrorCode.gateway_offline, "the model resolver is unavailable", {})
-    return cast(CurrentModelResolver, resolver)
+@asynccontextmanager
+async def connection_off_the_loop(request: Request) -> AsyncIterator[sqlite3.Connection]:
+    """The request connection for a write route that must stay ``async def``.
+
+    Such a route awaits the conversation system between its database steps, so it cannot
+    be a plain function. It opens its connection here instead of taking ``DbConn``, and
+    runs each database step it owns with ``run_on_worker_thread``. Only one step at a time
+    uses the connection, and the connection is opened and closed on a worker thread too.
+    """
+    conn = await run_on_worker_thread(
+        cast(Callable[[], sqlite3.Connection], request.app.state.conn_factory)
+    )
+    try:
+        yield conn
+    finally:
+        await run_on_worker_thread(conn.close)
 
 
 def get_conversation_system(request: Request) -> ConversationSystem:
@@ -169,7 +185,6 @@ DbConn = Annotated[sqlite3.Connection, Depends(db_conn)]
 Ctx = Annotated[RequestContext, Depends(request_context)]
 Cfg = Annotated[Config, Depends(get_config)]
 Clk = Annotated[Clock, Depends(get_clock)]
-ModelResolver = Annotated[CurrentModelResolver, Depends(get_model_resolver)]
 Conversations = Annotated[ConversationSystem, Depends(get_conversation_system)]
 MessageFiles = Annotated[ConversationMessageFiles, Depends(get_conversation_message_files)]
 ConversationRecord = Annotated[ConversationStore, Depends(get_conversation_record)]
@@ -195,7 +210,9 @@ async def reject_while_the_conversation_is_running(
     here and writing after is racy by nature; for one person driving one workspace that
     is the honest cost of keeping the writers pure database transactions.
     """
-    conversation_id = tickets_data.read_ticket(conn, ticket_id).conversation_id
+    conversation_id = (
+        await run_on_worker_thread(tickets_data.read_ticket, conn, ticket_id)
+    ).conversation_id
     if conversation_id is None:
         return
     if await conversation_system.is_running(conversation_id):
@@ -221,7 +238,9 @@ async def silence_the_worker_before_deleting(
     The conversation record and its history survive, as they do for every deletion. An
     idle conversation, or none at all, means there is nothing to kill.
     """
-    conversation_id = tickets_data.read_ticket(conn, ticket_id).conversation_id
+    conversation_id = (
+        await run_on_worker_thread(tickets_data.read_ticket, conn, ticket_id)
+    ).conversation_id
     if conversation_id is None:
         return
     await conversation_system.kill(conversation_id)
@@ -229,7 +248,7 @@ async def silence_the_worker_before_deleting(
 
 @contextmanager
 def txn(conn: sqlite3.Connection) -> Iterator[None]:
-    """Wrap a NON-self-transacting writer (days/dispatch/Ticket blocks) so a mid-sequence
+    """Wrap a NON-self-transacting writer (Ticket blocks) so a mid-sequence
     PlannerError rolls back cleanly. Never wrap a ticket/sprint writer — those open
     their own BEGIN IMMEDIATE and would raise 'transaction within a transaction'."""
     conn.execute("BEGIN IMMEDIATE")
@@ -291,9 +310,11 @@ def body_str_list(body: JsonDict, key: str) -> list[str]:
 # Worker type (PLAN invariant 1); the Worker-type-specific middle Stages/fields are not.
 
 
-def _require_create_worker_type(raw: JsonDict) -> str:
+def _require_create_worker_type(raw: JsonDict) -> str | None:
     """A create's Worker type, required and known before any writer runs."""
-    worker_type = body_str(raw, "worker_type")
+    worker_type = body_opt_str(raw, "worker_type")
+    if worker_type is None and "workflow" in raw:
+        return None
     known = configured_worker_type_registry().supported_worker_types()
     if worker_type not in known:
         raise PlannerError(
@@ -306,19 +327,19 @@ def _require_create_worker_type(raw: JsonDict) -> str:
 
 def _ticket_and_worker_type_definition(
     conn: sqlite3.Connection, ticket_id: str
-) -> tuple[Ticket, WorkerTypeDefinition]:
+) -> tuple[Ticket, WorkflowDefinition]:
     """Load the Ticket and resolve its Worker type for workflow interpretation."""
     ticket = tickets_data.read_ticket(conn, ticket_id)
-    return ticket, configured_worker_type_registry().require(ticket.worker_type)
+    return ticket, ticket.workflow
 
 
-def _validate_field(worker_type_definition: WorkerTypeDefinition, field: str) -> str:
+def _validate_field(worker_type_definition: WorkflowDefinition, field: str) -> str:
     """A field id validated against the type's declared fields; raises validation."""
     if not worker_type_definition.has_field(field):
         raise PlannerError(
             ErrorCode.validation,
             "unknown ticket field",
-            {"field": field, "worker_type": worker_type_definition.worker_type},
+            {"field": field, "workflow": worker_type_definition.label},
         )
     return field
 
@@ -344,27 +365,31 @@ def _marshal_settled_field_values(
     return values
 
 
-def _marshal_create_ticket(raw: JsonDict) -> CreateTicketBody:
-    obsolete = set(raw) & {"sprint_id", "sprint_item_id", "day", "day_id"}
+def _marshal_create_ticket(raw: JsonDict, *, draft: bool = False) -> CreateTicketBody:
+    obsolete = set(raw) & {"sprint_id", "manager_id", "sprint_item_id", "day", "day_id"}
     if obsolete:
         raise PlannerError(
-            ErrorCode.validation, "use orchestrator assignment instead of calendar placement"
+            ErrorCode.validation, "use manager assignment instead of calendar placement"
         )
     for key in raw:
         if key not in CreateTicketBody.__annotations__:
             raise PlannerError(ErrorCode.validation, "unknown ticket field", {"field": key})
     body = CreateTicketBody(
         worker_type=_require_create_worker_type(raw),
-        title=body_str(raw, "title"),
-        brief=body_str(raw, "brief"),
+        title="" if draft else body_str(raw, "title"),
+        brief="" if draft else body_str(raw, "brief"),
         deadline=body_opt_str(raw, "deadline"),
         project=body_opt_str(raw, "project"),
         project_id=body_opt_str(raw, "project_id"),
-        orchestrator=raw.get("orchestrator"),
+        manager=raw.get("manager"),
         blocked_by_ticket_ids=body_str_list(raw, "blocked_by_ticket_ids"),
         ceiling=body_opt_str(raw, "ceiling"),
         ceiling_holder=raw.get("ceiling_holder"),
     )
+    if "workflow" in raw:
+        body["workflow"] = custom_workflow_from_dict(raw["workflow"])
+    if "machine_id" in raw:
+        body["machine_id"] = body_str(raw, "machine_id")
     if "locale" in raw:
         from planner.tickets.logic.locale import require_ticket_locale
 
@@ -373,24 +398,38 @@ def _marshal_create_ticket(raw: JsonDict) -> CreateTicketBody:
         body["employee_backend"] = body_str(raw, "employee_backend")
     if "employee_launch_model" in raw:
         body["employee_launch_model"] = body_str(raw, "employee_launch_model")
+    if "employee_launch_reasoning_effort" in raw:
+        body["employee_launch_reasoning_effort"] = body_opt_str(
+            raw, "employee_launch_reasoning_effort"
+        )
     return body
 
 
-def _marshal_accept(raw: JsonDict) -> AcceptBody:
+def _expected_proposal_revision(raw: JsonDict) -> int | None:
     revision = raw.get("expected_proposal_revision")
     if revision is not None and (type(revision) is not int or revision <= 0):
         raise PlannerError(
             ErrorCode.validation, "expected_proposal_revision must be a positive integer", {}
         )
+    if raw.get("message") is not None and revision is None:
+        raise PlannerError(
+            ErrorCode.validation, "a decision note requires expected_proposal_revision"
+        )
+    return revision
+
+
+def _marshal_accept(raw: JsonDict) -> AcceptBody:
     return AcceptBody(
-        expected_proposal_revision=revision,
+        message=body_opt_str(raw, "message"),
+        decision_id=body_opt_str(raw, "decision_id"),
+        expected_proposal_revision=_expected_proposal_revision(raw),
         edited_body=body_opt_str(raw, "edited_body"),
         next_ceiling=body_opt_str(raw, "next_ceiling"),
         next_holder=raw.get("next_holder"),
     )
 
 
-def _parse_principal(raw: object, field: str) -> Principal | None:
+def _parse_principal(raw: object, field: str, *, allow_ticket: bool = False) -> Principal | None:
     if raw is None:
         return None
     if not isinstance(raw, dict) or set(raw) != {"kind", "id"}:
@@ -401,18 +440,23 @@ def _parse_principal(raw: object, field: str) -> Principal | None:
         )
     kind_raw = raw.get("kind")
     principal_id = raw.get("id")
+    kind_choices = (
+        "owner, chief, manager, or ticket" if allow_ticket else "owner, chief, or manager"
+    )
     if not isinstance(kind_raw, str):
         raise PlannerError(
             ErrorCode.validation,
-            f"{field} kind must be owner, chief, sprint_item, or ticket",
+            f"{field} kind must be {kind_choices}",
             {field: raw},
         )
     try:
         kind = PrincipalKind(kind_raw)
+        if kind is PrincipalKind.ticket and not allow_ticket:
+            raise ValueError("Ticket cannot hold a review")
     except (TypeError, ValueError):
         raise PlannerError(
             ErrorCode.validation,
-            f"{field} kind must be owner, chief, sprint_item, or ticket",
+            f"{field} kind must be {kind_choices}",
             {field: raw},
         ) from None
     if not isinstance(principal_id, str):
@@ -423,12 +467,12 @@ def _parse_principal(raw: object, field: str) -> Principal | None:
         raise PlannerError(ErrorCode.validation, str(exc), {field: raw}) from exc
 
 
-def _parse_orchestrator(raw: object) -> Principal:
-    orchestrator = _parse_principal(raw, "orchestrator")
-    if orchestrator is None:
-        raise PlannerError(ErrorCode.validation, "orchestrator must name Chief or an orchestrator")
-    admission.validate_orchestrator(orchestrator)
-    return orchestrator
+def _parse_manager(raw: object) -> Principal:
+    manager = _parse_principal(raw, "manager")
+    if manager is None:
+        raise PlannerError(ErrorCode.validation, "manager must name Chief or a Manager")
+    admission.validate_manager(manager)
+    return manager
 
 
 def _parse_stated_holder(raw: object, field: str) -> Principal:
@@ -457,86 +501,37 @@ def _parse_required_principal(raw: object, field: str) -> Principal:
 # --- scope marshallers ---------------------------------------------------------
 
 
-def _parse_next_ceiling(
-    raw: str | None, worker_type_definition: WorkerTypeDefinition
-) -> str | None:
-    if raw is None:
-        return None
-    if raw == NO_FURTHER:
-        return NO_FURTHER
-    try:
-        return worker_type_definition.resolve_ceiling(raw)
-    except PlannerError as exc:
-        raise PlannerError(
-            ErrorCode.scope_invalid, "unknown next_ceiling", {"next_ceiling": raw}
-        ) from exc
+@router.post("/tickets/{ticket_id}/decision-operations/{operation_id}")
+def apply_decision_operation(
+    ticket_id: str, operation_id: str, raw: dict[str, Any], conn: DbConn, ctx: Ctx, clk: Clk,
+) -> JsonDict:
+    return dict(decision_operations.apply(
+        conn, ticket_id, operation_id, raw, actor=ctx.principal, now=clk.now_unix(),
+    ))
+
+
+@router.get("/tickets/{ticket_id}/decision-operations/{operation_id}")
+def lookup_decision_operation(
+    ticket_id: str, operation_id: str, conn: DbConn, ctx: Ctx,
+) -> JsonDict:
+    return dict(decision_operations.lookup(conn, ticket_id, operation_id, actor=ctx.principal))
 
 
 # --- ticket routes -------------------------------------------------------------
 
 
-async def warm_ticket_creation_model(
-    conn: sqlite3.Connection,
-    resolver: CurrentModelResolver,
-    *,
-    worker_type: str,
-    employee_backend: str | None = None,
-    employee_launch_model: str | None = None,
-    model_source_is_historical: bool = False,
-) -> None:
-    """Resolve outside the creation transaction so cold catalogues can be awaited."""
-    launch_configuration = tickets_data.requested_ticket_launch_configuration(
-        worker_type,
-        employee_backend=employee_backend,
-        employee_launch_model=employee_launch_model,
-    )
-    assert launch_configuration.employee_launch_model is not None
-    backend_key = require_conversation_backend_key(launch_configuration.employee_backend)
-    if employee_launch_model and not model_source_is_historical:
-        require_enabled_model(conn, backend_key, employee_launch_model)
-    try:
-        resolve_cached_model(
-            conn,
-            backend_key,
-            launch_configuration.employee_launch_model,
-            launch_configuration.employee_launch_reasoning_effort,
-        )
-    except ModelResolutionUnavailable as error:
-        if error.variant is None:
-            # There is no known family to probe. Creation retains the opaque value.
-            return
-    try:
-        await resolver.resolve(
-            backend_key,
-            launch_configuration.employee_launch_model,
-            launch_configuration.employee_launch_reasoning_effort,
-        )
-    except ModelResolutionUnavailable:
-        # The synchronous creation boundary reports and retains the unresolved choice.
-        pass
-
-
-@router.post("/tickets")
-async def create_ticket(
+def write_create_ticket(
     raw: dict[str, Any],
     conn: DbConn,
     ctx: Ctx,
-    cfg: Cfg,
     clk: Clk,
-    model_resolver: ModelResolver,
 ) -> JsonDict:
+    """Apply creation through the same writer inside HTTP or executor transactions."""
     body = _marshal_create_ticket(raw)
-    await warm_ticket_creation_model(
-        conn,
-        model_resolver,
-        worker_type=body["worker_type"],
-        employee_backend=body.get("employee_backend"),
-        employee_launch_model=body.get("employee_launch_model"),
-    )
     now = clk.now_unix()
-    orchestrator = (
-        _parse_orchestrator(body["orchestrator"])
-        if "orchestrator" in raw
+    manager = (
+        _parse_manager(body["manager"])
+        if "manager" in raw
         else Principal(PrincipalKind.chief, "chief")
     )
     project = projects_data.resolve_project(
@@ -553,27 +548,38 @@ async def create_ticket(
         brief=body["brief"],
         project_id=project.id if project is not None else None,
         deadline=body["deadline"],
-        sprint_item_id=(
-            orchestrator.id if orchestrator.kind is PrincipalKind.sprint_item else None
-        ),
-        orchestrator_kind=orchestrator.kind.value,
+        manager_id=(manager.id if manager.kind is PrincipalKind.manager else None),
+        manager_kind=manager.kind.value,
         worker_type=body["worker_type"],
+        workflow=body.get("workflow"),
         locale=body.get("locale"),
+        machine_id=body.get("machine_id"),
         employee_backend=body.get("employee_backend"),
         employee_launch_model=body.get("employee_launch_model"),
+        employee_launch_reasoning_effort=body.get("employee_launch_reasoning_effort"),
+        reasoning_effort_is_set="employee_launch_reasoning_effort" in body,
         blocked_by_ticket_ids=body["blocked_by_ticket_ids"],
-        planning_now=clk.now(),
-        sprint_item_id_explicit=orchestrator.kind is PrincipalKind.sprint_item,
-        project_id_explicit="project" in raw or "project_id" in raw,
         stated_ceiling=body["ceiling"],
         stated_holder=_parse_principal(body["ceiling_holder"], "ceiling_holder"),
     )
-    return tickets_views.ticket_json(ticket, now)
+    return tickets_views.ticket_creation_json(conn, ticket, now)
+
+
+@router.post("/tickets")
+def create_ticket(
+    raw: dict[str, Any],
+    conn: DbConn,
+    ctx: Ctx,
+    cfg: Cfg,
+    clk: Clk,
+    request: Request,
+) -> JsonDict:
+    return write_create_ticket(raw, conn, ctx, clk)
 
 
 @router.get("/tickets")
 async def read_tickets(
-    conn: DbConn,
+    request: Request,
     cfg: Cfg,
     clk: Clk,
     conversations: Conversations,
@@ -587,143 +593,147 @@ async def read_tickets(
     is_backlogged: bool | None = None,
     worker_type: Annotated[list[str] | None, Query()] = None,
     include_terminal: bool = False,
+    active: bool = False,
     search: str | None = None,
     project: str | None = None,
     project_id: str | None = None,
-    sprint_id: str | None = None,
-    sprint_item_id: str | None = None,
-    orchestrator_kind: str | None = None,
-    orchestrator_id: str | None = None,
-    day: str | None = None,
+    manager_id: str | None = None,
+    manager_kind: str | None = None,
     limit: int | None = None,
     offset: int | None = None,
 ) -> JsonDict:
     """Read Tickets at the level the caller asks for, or one Ticket by id."""
-    level = parse_read_detail(detail)
-    scope = {
-        "stage": stage,
-        "exclude_stage": exclude_stage,
-        "ticket_status": ticket_status,
-        "exclude_ticket_status": exclude_ticket_status,
-        "is_backlogged": is_backlogged,
-        "worker_type": worker_type,
-        "include_terminal": include_terminal or None,
-        "search": search,
-        "project": project,
-        "project_id": project_id,
-        "sprint_id": sprint_id,
-        "sprint_item_id": sprint_item_id,
-        "orchestrator_kind": orchestrator_kind,
-        "orchestrator_id": orchestrator_id,
-        "day": day,
-        "limit": limit,
-        "offset": offset,
-    }
-    if object_id is not None:
-        require_full_for_one(level)
-        reject_parameters("id", scope)
-        one = _ticket_detail(conn, object_id, clk.now_unix())
-        await add_work_attention(conn, conversations, conversation_record, tickets=(one,))
-        return one
 
-    # Stage is stored canonical data. Reading compares it directly and does not need
-    # to resolve or interpret the Ticket's Worker type.
-    resolved_project = projects_data.resolve_project(
-        conn, project_id=project_id, project_name=project
-    )
-    if day is not None or sprint_id is not None:
-        raise PlannerError(ErrorCode.validation, "calendar filters are retired")
+    def read_rows(conn: sqlite3.Connection) -> tuple[JsonDict, Sequence[JsonDict]]:
+        """The response, and the Ticket rows in it that take work attention."""
+        level = parse_read_detail(detail)
+        scope = {
+            "stage": stage,
+            "exclude_stage": exclude_stage,
+            "ticket_status": ticket_status,
+            "exclude_ticket_status": exclude_ticket_status,
+            "is_backlogged": is_backlogged,
+            "active": active or None,
+            "worker_type": worker_type,
+            "include_terminal": include_terminal or None,
+            "search": search,
+            "project": project,
+            "project_id": project_id,
+            "manager_id": manager_id,
+            "manager_kind": manager_kind,
+            "limit": limit,
+            "offset": offset,
+        }
+        if object_id is not None:
+            require_full_for_one(level)
+            reject_parameters("id", scope)
+            one = _ticket_detail(conn, object_id, clk.now_unix())
+            return one, (one,)
 
-    if level is ReadDetail.full:
-        reject_parameters(
-            "detail=full",
-            {
-                "orchestrator_kind": orchestrator_kind,
-                "orchestrator_id": orchestrator_id,
-                "is_backlogged": is_backlogged,
-                "worker_type": worker_type,
-                "exclude_stage": exclude_stage,
-                "ticket_status": ticket_status,
-                "exclude_ticket_status": exclude_ticket_status,
-                "include_terminal": include_terminal or None,
-                "search": search,
-                "limit": limit,
-                "offset": offset,
-            },
+        # Stage is stored canonical data. Reading compares it directly and does not need
+        # to resolve or interpret the Ticket's Worker type.
+        resolved_project = projects_data.resolve_project(
+            conn, project_id=project_id, project_name=project
         )
-        if stage is not None and len(stage) > 1:
+
+        if level is ReadDetail.full:
+            reject_parameters(
+                "detail=full",
+                {
+                    "manager_kind": manager_kind,
+                    "manager_id": manager_id,
+                    "is_backlogged": is_backlogged,
+                    "active": active or None,
+                    "worker_type": worker_type,
+                    "exclude_stage": exclude_stage,
+                    "ticket_status": ticket_status,
+                    "exclude_ticket_status": exclude_ticket_status,
+                    "include_terminal": include_terminal or None,
+                    "search": search,
+                    "limit": limit,
+                    "offset": offset,
+                },
+            )
+            if stage is not None and len(stage) > 1:
+                raise PlannerError(
+                    ErrorCode.validation,
+                    "detail=full takes at most one stage",
+                    {"stages": list(stage)},
+                )
+            rows = tickets_views.list_tickets(
+                conn,
+                clk.now_unix(),
+                stage=stage[0] if stage else None,
+                project_id=resolved_project.id if resolved_project is not None else None,
+                manager_id=manager_id,
+            )
+            return {"tickets": rows}, rows
+
+        if active and (is_backlogged is True or include_terminal):
             raise PlannerError(
                 ErrorCode.validation,
-                "detail=full takes at most one stage",
-                {"stages": list(stage)},
+                "active excludes backlogged and terminal Tickets",
+                {},
             )
-        rows = tickets_views.list_tickets(
+
+        manager = None
+        if manager_kind is not None or manager_id is not None:
+            manager = _parse_manager(
+                {
+                    "kind": manager_kind or "manager",
+                    "id": (
+                        "chief" if manager_kind == "chief" and manager_id is None else manager_id
+                    ),
+                }
+            )
+
+        included_stages = tuple(stage or ())
+        registry = configured_worker_type_registry()
+        terminal_stages = {
+            registry.require(worker_type).completed_stage()
+            for worker_type in registry.registered_worker_types()
+        }
+        requested_terminal = sorted(set(included_stages) & terminal_stages)
+        if requested_terminal and not include_terminal:
+            raise PlannerError(
+                ErrorCode.validation,
+                "terminal stages require include_terminal",
+                {"stages": requested_terminal},
+            )
+        statuses = tuple(
+            parse_enum(TicketStatus, value, "ticket_status") for value in (ticket_status or ())
+        )
+        excluded_statuses = tuple(
+            parse_enum(TicketStatus, value, "exclude_ticket_status")
+            for value in (exclude_ticket_status or ())
+        )
+        page = tickets_views.list_ticket_summaries(
             conn,
-            clk.now_unix(),
-            stage=stage[0] if stage else None,
+            page_request=ListPageRequest(
+                limit=DEFAULT_LIST_LIMIT if limit is None else limit,
+                offset=0 if offset is None else offset,
+            ),
+            filters=TicketListFilters(
+                manager=manager,
+                stages=included_stages,
+                excluded_stages=tuple(exclude_stage or ()),
+                ticket_statuses=statuses,
+                excluded_ticket_statuses=excluded_statuses,
+                is_backlogged=is_backlogged,
+                worker_types=tuple(worker_type or ()),
+                include_terminal=include_terminal,
+                active=active,
+                search=search,
+            ),
             project_id=resolved_project.id if resolved_project is not None else None,
-            sprint_id=sprint_id,
-            sprint_item_id=sprint_item_id,
+            manager_id=manager_id,
         )
+        return page.response("tickets"), page.rows
+
+    async with connection_off_the_loop(request) as conn:
+        response, rows = await run_on_worker_thread(read_rows, conn)
         await add_work_attention(conn, conversations, conversation_record, tickets=rows)
-        return {"tickets": rows}
-
-    orchestrator = None
-    if orchestrator_kind is not None or orchestrator_id is not None:
-        orchestrator = _parse_orchestrator(
-            {
-                "kind": orchestrator_kind,
-                "id": (
-                    "chief"
-                    if orchestrator_kind == "chief" and orchestrator_id is None
-                    else orchestrator_id
-                ),
-            }
-        )
-
-    included_stages = tuple(stage or ())
-    registry = configured_worker_type_registry()
-    terminal_stages = {
-        registry.require(worker_type).completed_stage()
-        for worker_type in registry.registered_worker_types()
-    }
-    requested_terminal = sorted(set(included_stages) & terminal_stages)
-    if requested_terminal and not include_terminal:
-        raise PlannerError(
-            ErrorCode.validation,
-            "terminal stages require include_terminal",
-            {"stages": requested_terminal},
-        )
-    statuses = tuple(
-        parse_enum(TicketStatus, value, "ticket_status") for value in (ticket_status or ())
-    )
-    excluded_statuses = tuple(
-        parse_enum(TicketStatus, value, "exclude_ticket_status")
-        for value in (exclude_ticket_status or ())
-    )
-    page = tickets_views.list_ticket_summaries(
-        conn,
-        page_request=ListPageRequest(
-            limit=DEFAULT_LIST_LIMIT if limit is None else limit,
-            offset=0 if offset is None else offset,
-        ),
-        filters=TicketListFilters(
-            orchestrator=orchestrator,
-            stages=included_stages,
-            excluded_stages=tuple(exclude_stage or ()),
-            ticket_statuses=statuses,
-            excluded_ticket_statuses=excluded_statuses,
-            is_backlogged=is_backlogged,
-            worker_types=tuple(worker_type or ()),
-            include_terminal=include_terminal,
-            search=search,
-        ),
-        project_id=resolved_project.id if resolved_project is not None else None,
-        sprint_id=sprint_id,
-        sprint_item_id=sprint_item_id,
-    )
-    await add_work_attention(conn, conversations, conversation_record, tickets=page.rows)
-    return page.response("tickets")
+    return response
 
 
 @dataclass(frozen=True)
@@ -731,21 +741,17 @@ class ResolvedEmployeeConfiguration:
     """A launch configuration that has passed every check a write can make beforehand.
 
     Holding it as a value is what lets a caller validate at one moment and write at
-    another. The supervisor restart needs exactly that: a configuration it cannot write
+    another. The Manager restart needs exactly that: a configuration it cannot write
     must be refused before the old conversation is killed, or a bad argument would cost
     the Ticket its worker and give it nothing back.
     """
 
-    expected: EmployeeLaunchConfiguration
     employee_backend: str
     employee_launch_model: str
     employee_launch_reasoning_effort: str | None
-    advertised_models: frozenset[str] | None
-    reasoning_supported: bool | None
-    advertised_reasoning_efforts: frozenset[str] | None
 
 
-async def resolve_employee_configuration(
+def resolve_employee_configuration(
     request: Request,
     conn: sqlite3.Connection,
     ticket_id: str,
@@ -754,21 +760,18 @@ async def resolve_employee_configuration(
     employee_launch_model: str,
     employee_launch_reasoning_effort: str | None,
 ) -> ResolvedEmployeeConfiguration:
-    """Resolve an owner's enabled choice to the current member of its variant."""
-    expected = tickets_data.employee_launch_configuration(tickets_data.read_ticket(conn, ticket_id))
+    """Keep exact submitted values and refuse models the Ticket's machine cannot run."""
     registered_backend = require_conversation_backend_key(employee_backend)
-    require_enabled_model(conn, registered_backend, employee_launch_model)
-    resolved = await get_model_resolver(request).resolve(
-        registered_backend, employee_launch_model, employee_launch_reasoning_effort
+    require_usable_model(
+        conn,
+        registered_backend,
+        employee_launch_model,
+        tickets_data.read_ticket(conn, ticket_id).machine_id,
     )
     return ResolvedEmployeeConfiguration(
-        expected=expected,
-        employee_backend=registered_backend,
-        employee_launch_model=resolved.model,
-        employee_launch_reasoning_effort=resolved.reasoning_effort,
-        advertised_models=frozenset({resolved.model}),
-        reasoning_supported=bool(resolved.supported_reasoning_efforts),
-        advertised_reasoning_efforts=frozenset(resolved.supported_reasoning_efforts),
+        employee_backend=registered_backend.value,
+        employee_launch_model=employee_launch_model,
+        employee_launch_reasoning_effort=employee_launch_reasoning_effort,
     )
 
 
@@ -783,19 +786,15 @@ def write_resolved_employee_configuration(
     return tickets_data.write_employee_configuration(
         conn,
         ticket_id,
-        expected_employee_configuration=resolved.expected,
         employee_backend=resolved.employee_backend,
         employee_launch_model=resolved.employee_launch_model,
         employee_launch_reasoning_effort=resolved.employee_launch_reasoning_effort,
-        advertised_models=resolved.advertised_models,
-        reasoning_supported=resolved.reasoning_supported,
-        advertised_reasoning_efforts=resolved.advertised_reasoning_efforts,
         now=now,
     )
 
 
 @router.get("/tickets/{ticket_id}/worker-self")
-async def get_worker_self_ticket(
+def get_worker_self_ticket(
     ticket_id: str,
     conn: DbConn,
     clk: Clk,
@@ -806,7 +805,8 @@ async def get_worker_self_ticket(
     the same one-owner validation the by-session readers apply: if the ticket has a bound
     durable session, that session must resolve to EXACTLY this ticket — a corrupt duplicate
     (two tickets sharing one durable session) is rejected. Returns the same detail shape
-    (`ticket_detail` + the worker specialist skill) the by-session route returns."""
+    (`ticket_detail`) the by-session route returns. The Worker follows the Ticket's own
+    workflow guide, so no specialist skill is named here."""
     ticket = tickets_data.read_ticket(conn, ticket_id)
     if ticket.conversation_id is not None:
         owner = tickets_data.read_ticket_by_conversation_id(conn, ticket.conversation_id)
@@ -820,17 +820,11 @@ async def get_worker_self_ticket(
                     "owner_ticket_id": owner.id,
                 },
             )
-    detail = _ticket_detail(conn, ticket.id, clk.now_unix())
-    detail["worker"] = (
-        configured_worker_type_registry()
-        .require(ticket.worker_type)
-        .worker_profile.specialist_skill
-    )
-    return detail
+    return _ticket_detail(conn, ticket.id, clk.now_unix())
 
 
 @router.put("/tickets/{ticket_id}/employee-configuration")
-async def put_ticket_employee_configuration(
+def put_ticket_employee_configuration(
     ticket_id: str,
     raw: dict[str, Any],
     request: Request,
@@ -838,7 +832,6 @@ async def put_ticket_employee_configuration(
     ctx: Ctx,
     clk: Clk,
 ) -> JsonDict:
-    require_above(conn, ctx.principal, authority.ticket(ticket_id))
     required_keys = {
         "employee_backend",
         "employee_launch_model",
@@ -857,7 +850,7 @@ async def put_ticket_employee_configuration(
         employee_launch_model=body_str(raw, "employee_launch_model"),
         employee_launch_reasoning_effort=body_opt_str(raw, "employee_launch_reasoning_effort"),
     )
-    resolved = await resolve_employee_configuration(
+    resolved = resolve_employee_configuration(
         request,
         conn,
         ticket_id,
@@ -869,12 +862,29 @@ async def put_ticket_employee_configuration(
     return _ticket_detail(conn, ticket.id, clk.now_unix())
 
 
+@router.post("/tickets/{ticket_id}/recheck-worker-cleanup")
+async def recheck_ticket_worker_cleanup(
+    ticket_id: str,
+    request: Request,
+    ctx: Ctx,
+    conversations: Conversations,
+) -> JsonDict:
+    """Inspect only this Ticket's recorded cleanup, including an ended Ticket."""
+    async with connection_off_the_loop(request) as conn:
+        def authorize() -> None:
+            tickets_data.read_ticket(conn, ticket_id)
+            require_above(conn, ctx.principal, Target(TargetKind.ticket, ticket_id))
+
+        await run_on_worker_thread(authorize)
+    result = await conversations.recheck_worker_cleanup(ticket_id)
+    return {"complete": result.complete, "reason": result.reason, "scope": result.scope}
+
+
 @router.post("/tickets/{ticket_id}/restart-worker")
 async def restart_ticket_worker(
     ticket_id: str,
     raw: dict[str, Any],
     request: Request,
-    conn: DbConn,
     ctx: Ctx,
     cfg: Cfg,
     clk: Clk,
@@ -883,15 +893,14 @@ async def restart_ticket_worker(
     """Start this Ticket's worker step again, optionally on a named configuration.
 
     New on Khushal's surface. No ordinary route did this: reset and re-configure exist
-    separately, and neither releases the claim and starts. Only an Outcome manager could
+    separately, and neither releases the claim and starts. Only a Manager could
     reach it, through a wrapper of its own.
 
     The configuration is resolved before the restart, so a backend or model this Ticket
     cannot launch on is a plain refusal rather than a killed conversation. Position is
-    proved before even that: resolving asks the backends what they offer, and no caller
-    reaches a question about a Ticket it does not stand above.
+    proved before even that: no caller can configure or restart a Ticket it does
+    not stand above.
     """
-    require_above(conn, ctx.principal, authority.ticket(ticket_id))
     backend = body_opt_str(raw, "employee_backend")
     model = body_opt_str(raw, "employee_launch_model")
     if (backend is None) != (model is None):
@@ -900,91 +909,95 @@ async def restart_ticket_worker(
             "a launch configuration needs both a backend and a model",
             {},
         )
-    write_configuration: Callable[[sqlite3.Connection, int], None] | None = None
-    if backend is not None and model is not None:
-        resolved = await resolve_employee_configuration(
-            request,
-            conn,
-            ticket_id,
-            employee_backend=backend,
-            employee_launch_model=model,
-            employee_launch_reasoning_effort=body_opt_str(raw, "employee_launch_reasoning_effort"),
-        )
-
-        def write_the_resolved_configuration(open_conn: sqlite3.Connection, now: int) -> None:
-            write_resolved_employee_configuration(open_conn, ticket_id, resolved, now=now)
-
-        write_configuration = write_the_resolved_configuration
+    reasoning_effort = body_opt_str(raw, "employee_launch_reasoning_effort")
 
     async def start_worker_step() -> WorkerStepStartResult:
         return await start_ready_worker_step(
             ticket_id,
-            connect_database=lambda: connect(cfg.db_path, cfg.db_busy_timeout_ms),
+            connect_database=lambda: connect(cfg.db_path, DB_BUSY_TIMEOUT_MS),
             conversation_system=conversations,
             worker_type_registry=configured_worker_type_registry(),
             now=clk.now_unix,
         )
 
-    return await worker_restart.restart_worker(
-        conversations,
-        conn,
-        ctx.principal,
-        ticket_id,
-        write_employee_configuration=write_configuration,
-        start_worker_step=start_worker_step,
-        now=clk.now_unix,
-    )
+    async with connection_off_the_loop(request) as conn:
+        write_configuration: Callable[[sqlite3.Connection, int], None] | None = None
+        if backend is not None and model is not None:
+            resolved = await run_on_worker_thread(
+                resolve_employee_configuration,
+                request,
+                conn,
+                ticket_id,
+                employee_backend=backend,
+                employee_launch_model=model,
+                employee_launch_reasoning_effort=reasoning_effort,
+            )
+
+            def write_configuration(open_conn: sqlite3.Connection, now: int) -> None:
+                write_resolved_employee_configuration(open_conn, ticket_id, resolved, now=now)
+
+        return await worker_restart.restart_worker(
+            conversations,
+            conn,
+            ctx.principal,
+            ticket_id,
+            write_employee_configuration=write_configuration,
+            start_worker_step=start_worker_step,
+            now=clk.now_unix,
+        )
 
 
 @router.delete("/tickets/{ticket_id}")
 async def delete_ticket(
     ticket_id: str,
-    conn: DbConn,
+    request: Request,
     ctx: Ctx,
     clk: Clk,
     conversations: Conversations,
     force: Annotated[bool, Query()] = False,
 ) -> JsonDict:
-    require_above(conn, ctx.principal, authority.ticket(ticket_id))
-    # An Outcome deletes its own child Ticket outright, and force is how the user reaches
+    # A Manager deletes its own child Ticket outright, and force is how the user reaches
     # the same place. Both walk past the running guards, so the Ticket's turn is killed
     # here instead: a Worker must never outlive the Ticket it belongs to.
-    even_while_running = force or ctx.principal.kind is PrincipalKind.sprint_item
-    if even_while_running:
-        await silence_the_worker_before_deleting(conn, conversations, ticket_id)
-    else:
-        await reject_while_the_conversation_is_running(conn, conversations, ticket_id)
-    deleted = tickets_data.delete_ticket(
-        conn,
-        ticket_id,
-        principal=ctx.principal,
-        now=clk.now_unix(),
-        even_while_running=even_while_running,
-    )
+    even_while_running = force or ctx.principal.kind is PrincipalKind.manager
+    async with connection_off_the_loop(request) as conn:
+        if even_while_running:
+            await silence_the_worker_before_deleting(conn, conversations, ticket_id)
+        else:
+            await reject_while_the_conversation_is_running(conn, conversations, ticket_id)
+        deleted = await run_on_worker_thread(
+            tickets_data.delete_ticket,
+            conn,
+            ticket_id,
+            principal=ctx.principal,
+            now=clk.now_unix(),
+            even_while_running=even_while_running,
+        )
     return {
         "ok": True,
         "ticket_id": deleted.ticket_id,
         "title": deleted.title,
-        "day_ids": list(deleted.day_ids),
-        "sprint_item_ids": list(deleted.sprint_item_ids),
-        "sprint_ids": list(deleted.sprint_ids),
+        "manager_ids": list(deleted.manager_ids),
         "linked_ticket_ids": list(deleted.linked_ticket_ids),
     }
 
 
-@router.patch("/tickets/{ticket_id}")
-async def patch_ticket(
-    ticket_id: str, body: dict[str, Any], conn: DbConn, ctx: Ctx, cfg: Cfg, clk: Clk
+def write_patch_ticket(
+    ticket_id: str,
+    body: dict[str, Any],
+    conn: DbConn,
+    ctx: Ctx,
+    clk: Clk,
+    *,
+    review_transfer_notices: list[ReviewTransferNotice] | None = None,
 ) -> JsonDict:
     recognized = (
         "title",
         "deadline",
         "project",
         "project_id",
-        "orchestrator",
+        "manager",
         "recap",
-        "guidance",
-        "guidance_append",
         "field_values",
         "ceiling",
         "ceiling_holder",
@@ -994,15 +1007,6 @@ async def patch_ticket(
             raise PlannerError(ErrorCode.validation, "unknown ticket field", {"field": key})
     if not body:
         raise PlannerError(ErrorCode.validation, "no ticket fields to update", {})
-    if "guidance" in body and "guidance_append" in body:
-        raise PlannerError(
-            ErrorCode.validation, "guidance is either replaced or appended to, not both", {}
-        )
-    # The floor: a stranger is refused here, before any of this body is looked at. Which
-    # of these fields need a caller above the Ticket rather than the Ticket itself is
-    # edit_ticket's question, asked once, where the write happens.
-    require_above_or_self(conn, ctx.principal, authority.ticket(ticket_id))
-
     edit = TicketEdit()
     if "title" in body:
         edit["title"] = body_str(body, "title")
@@ -1016,14 +1020,10 @@ async def patch_ticket(
             conn, project_id=project_id_raw, project_name=project_raw
         )
         edit["project_id"] = project.id if project is not None else None
-    if "orchestrator" in body:
-        edit["orchestrator"] = _parse_orchestrator(body["orchestrator"])
+    if "manager" in body:
+        edit["manager"] = _parse_manager(body["manager"])
     if "recap" in body:
         edit["recap"] = body_str(body, "recap")
-    if "guidance" in body:
-        edit["guidance"] = body_str(body, "guidance")
-    if "guidance_append" in body:
-        edit["guidance_append"] = body_str(body, "guidance_append")
     if "ceiling" in body:
         edit["ceiling"] = body_str(body, "ceiling")
     if "ceiling_holder" in body:
@@ -1031,6 +1031,7 @@ async def patch_ticket(
     if "field_values" in body:
         edit["field_values"] = _marshal_settled_field_values(conn, ticket_id, body["field_values"])
     now = clk.now_unix()
+    notices: list[ReviewTransferNotice] = []
     ticket = tickets_data.edit_ticket(
         conn,
         ticket_id,
@@ -1038,18 +1039,40 @@ async def patch_ticket(
         title_max_chars=TITLE_MAX_CHARS,
         principal=ctx.principal,
         now=now,
+        review_transfer_notices=notices,
     )
+    if review_transfer_notices is not None:
+        review_transfer_notices.extend(notices)
     return tickets_views.ticket_json(ticket, now)
 
 
-@router.post("/tickets/{ticket_id}/propose")
-async def propose_current_field(
+@router.patch("/tickets/{ticket_id}")
+async def patch_ticket(
+    ticket_id: str,
+    body: dict[str, Any],
+    request: Request,
+    ctx: Ctx,
+    cfg: Cfg,
+    clk: Clk,
+    conversations: Conversations,
+) -> JsonDict:
+    notices: list[ReviewTransferNotice] = []
+    async with connection_off_the_loop(request) as conn:
+        result = await run_on_worker_thread(
+            write_patch_ticket, ticket_id, body, conn, ctx, clk, review_transfer_notices=notices
+        )
+        await notify_review_transfers(conversations, conn, notices, now=clk.now_unix())
+    return result
+
+
+@router.post("/tickets/{ticket_id}/propose", response_model=None)
+def propose_current_field(
     ticket_id: str,
     raw: dict[str, Any],
     conn: DbConn,
     ctx: Ctx,
     clk: Clk,
-) -> JsonDict:
+) -> JsonDict | JSONResponse:
     if ctx.principal != Principal(PrincipalKind.ticket, ticket_id):
         raise PlannerError(
             ErrorCode.agent_forbidden,
@@ -1057,18 +1080,23 @@ async def propose_current_field(
             {"ticket_id": ticket_id},
         )
     body = ProposalBody(body=body_str(raw, "body"))
-    ticket = tickets_actions.file_current_proposal(
-        conn,
-        ticket_id,
-        body=body["body"],
-        ctx=ctx,
-        clock=clk,
-    )
+    try:
+        ticket = tickets_actions.file_current_proposal(
+            conn,
+            ticket_id,
+            body=body["body"],
+            ctx=ctx,
+            clock=clk,
+        )
+    except PlannerError as error:
+        if error.code is not ErrorCode.retry_later:
+            raise
+        return JSONResponse(status_code=503, content=error.to_payload())
     return tickets_views.ticket_json(ticket, clk.now_unix())
 
 
 @router.post("/tickets/{ticket_id}/accept/{field}")
-async def accept_field(
+def accept_field(
     ticket_id: str,
     field: str,
     raw: dict[str, Any],
@@ -1080,7 +1108,7 @@ async def accept_field(
     _ticket, worker_type_definition = _ticket_and_worker_type_definition(conn, ticket_id)
     _validate_field(worker_type_definition, field)
     now = clk.now_unix()
-    next_ceiling = _parse_next_ceiling(body["next_ceiling"], worker_type_definition)
+    next_ceiling = admission.parse_next_ceiling(body["next_ceiling"], worker_type_definition)
     ticket = tickets_data.accept_proposal(
         conn,
         ticket_id,
@@ -1090,29 +1118,35 @@ async def accept_field(
         edited_body=body["edited_body"],
         next_ceiling=next_ceiling,
         expected_proposal_revision=body["expected_proposal_revision"],
+        message=body["message"],
+        decision_id=body["decision_id"],
         next_holder=_parse_required_principal(body["next_holder"], "next_holder"),
     )
     return tickets_views.ticket_json(ticket, now)
 
 
 @router.post("/tickets/{ticket_id}/reject")
-async def reject_ticket_proposal(
+def reject_ticket_proposal(
     ticket_id: str,
     raw: dict[str, Any],
     conn: DbConn,
     ctx: Ctx,
     cfg: Cfg,
     clk: Clk,
-    conversations: Conversations,
 ) -> JsonDict:
     """Send a parked proposal back, with guidance for the executing agent or without."""
-    body = RejectionBody(message=body_opt_str(raw, "message"))
+    body = RejectionBody(
+        message=body_opt_str(raw, "message"),
+        decision_id=body_opt_str(raw, "decision_id"),
+        expected_proposal_revision=_expected_proposal_revision(raw),
+    )
     now = clk.now_unix()
-    ticket = await tickets_actions.reject_ticket_proposal(
-        conversations,
+    ticket = tickets_actions.reject_ticket_proposal(
         conn,
         ticket_id,
         message=body["message"],
+        decision_id=body["decision_id"],
+        expected_proposal_revision=body["expected_proposal_revision"],
         ctx=ctx,
         clock=clk,
     )
@@ -1127,6 +1161,7 @@ def _what_this_message_runs_under(body: OwnerSendBody) -> ConversationStartOverr
         ),
         model=body.model,
         reasoning_effort=body.reasoning_effort,
+        reasoning_effort_is_set="reasoning_effort" in body.model_fields_set,
     )
 
 
@@ -1145,29 +1180,28 @@ def _delivered_message_json(
 
 
 def _conversation_start_values_json(values: ConversationStartValues) -> JsonDict:
-    """What a start resolved to, as far as anybody looking at it can choose.
-
-    The backend, the model and the reasoning effort, under the names a started
-    conversation reports them under — so a panel reads the same three fields whether it is
-    asking what a conversation runs on or what one would. The rest of a resolved start is
-    nobody's choice: the role an agent is told to be, the folder it runs in and what it
-    may reach are the same however the person answers, so nothing shows them.
-    """
+    """Expose choices and their canonical workspace for advisory-view invalidation."""
     return {
         "backend_key": values.backend_key.value,
         "model": values.model,
         "reasoning_effort": values.reasoning_effort,
+        "workspace_folder": (
+            None
+            if values.workspace_path_policy == WorkspacePathPolicy.executor_default
+            else str(values.workspace_folder)
+        ),
+        "workspace_path_policy": values.workspace_path_policy.value,
     }
 
 
 @router.get("/chief/conversation")
-async def read_chief_conversation(conn: DbConn) -> JsonDict:
+def read_chief_conversation(conn: DbConn) -> JsonDict:
     """Which conversation the Chief is currently talking in, or none."""
     return {"conversation_id": conversation_start.read_agent_conversation(conn, CHIEF_SETTINGS_KEY)}
 
 
 @router.get("/chief/conversation/start-values")
-async def read_chief_conversation_start_values(conn: DbConn) -> JsonDict:
+def read_chief_conversation_start_values(conn: DbConn) -> JsonDict:
     """What a conversation started for the Chief right now would run on.
 
     This is the question a panel with no conversation has to answer to show anything at
@@ -1181,7 +1215,7 @@ async def read_chief_conversation_start_values(conn: DbConn) -> JsonDict:
 @router.post("/chief/conversation/send")
 async def send_to_chief_conversation(
     body: OwnerSendBody,
-    conn: DbConn,
+    request: Request,
     ctx: Ctx,
     clk: Clk,
     conversations: Conversations,
@@ -1197,38 +1231,55 @@ async def send_to_chief_conversation(
     — which it can only recognise by the name it minted. A door that takes the name and
     does not pass it on leaves that browser drawing a message the record already has.
     """
-    require_above(conn, ctx.principal, authority.owner_only("chief conversation"))
     created_conversation_id = conversation_start.new_conversation_id()
     runs_under = _what_this_message_runs_under(body)
-    delivered = await message_delivery_service.send_message(
-        conversations,
-        conn,
-        clk,
-        ctx,
+    admission = video_send_admission(
+        request,
+        message_files,
+        body.content,
+        body.sender_message_id,
+        UploadDestination(kind="chief", id="chief", expected_conversation_id=body.conversation_id),
         CHIEF_PRINCIPAL,
-        partial(conversation_message_content, message_files, sent=body.content),
-        conversation_id=body.conversation_id,
-        created_conversation_id=created_conversation_id,
-        runs_under=runs_under,
-        mode=body.mode,
-        sender_message_id=body.sender_message_id,
-        sent_at_unix_milliseconds=body.sent_at_unix_milliseconds,
+        ctx.principal,
     )
+    async with connection_off_the_loop(request) as conn:
+        delivered = await message_delivery_service.send_message(
+            conversations,
+            conn,
+            clk,
+            ctx,
+            CHIEF_PRINCIPAL,
+            admission
+            or partial(
+                conversation_message_content,
+                message_files,
+                sent=body.content,
+                sender_message_id=body.sender_message_id,
+            ),
+            admission=admission,
+            conversation_id=body.conversation_id,
+            created_conversation_id=created_conversation_id,
+            runs_under=runs_under,
+            mode=body.mode,
+            owner_read_through_sequence=body.owner_read_through_sequence,
+            sender_message_id=body.sender_message_id,
+            sent_at_unix_milliseconds=body.sent_at_unix_milliseconds,
+        )
     return _delivered_message_json(delivered)
 
 
 @router.post("/chief/conversation/reset")
 async def reset_chief_conversation(
-    conn: DbConn, ctx: Ctx, conversations: Conversations
+    request: Request, ctx: Ctx, conversations: Conversations
 ) -> JsonDict:
     """Cut the Chief loose from its conversation. This is what New does."""
-    require_above(conn, ctx.principal, authority.owner_only("chief conversation"))
-    await conversation_start.reset_agent_conversation(conversations, conn, CHIEF_SETTINGS_KEY)
+    async with connection_off_the_loop(request) as conn:
+        await conversation_start.reset_agent_conversation(conversations, conn, CHIEF_SETTINGS_KEY)
     return {"conversation_id": None}
 
 
 @router.get("/tickets/{ticket_id}/conversation/start-values")
-async def read_ticket_conversation_start_values(ticket_id: str, conn: DbConn) -> JsonDict:
+def read_ticket_conversation_start_values(ticket_id: str, conn: DbConn) -> JsonDict:
     """What a conversation started for this Ticket's worker right now would run on.
 
     The Chief's question, asked of a Ticket: the same resolve the send door runs, so the
@@ -1244,7 +1295,7 @@ async def read_ticket_conversation_start_values(ticket_id: str, conn: DbConn) ->
 async def send_to_ticket_conversation(
     ticket_id: str,
     body: OwnerSendBody,
-    conn: DbConn,
+    request: Request,
     ctx: Ctx,
     clk: Clk,
     conversations: Conversations,
@@ -1261,29 +1312,48 @@ async def send_to_ticket_conversation(
     Chief's door gives: a browser recognises its own message coming back by the name it
     minted, and a name this door drops is one the record can never hand back.
     """
-    require_above(conn, ctx.principal, authority.ticket(ticket_id))
     created_conversation_id = conversation_start.new_conversation_id()
-    delivered = await message_delivery_service.send_message(
-        conversations,
-        conn,
-        clk,
-        ctx,
+    admission = video_send_admission(
+        request,
+        message_files,
+        body.content,
+        body.sender_message_id,
+        UploadDestination(
+            kind="ticket", id=ticket_id, expected_conversation_id=body.conversation_id
+        ),
         Principal(PrincipalKind.ticket, ticket_id),
-        partial(conversation_message_content, message_files, sent=body.content),
-        conversation_id=body.conversation_id,
-        created_conversation_id=created_conversation_id,
-        runs_under=_what_this_message_runs_under(body),
-        mode=body.mode,
-        sender_message_id=body.sender_message_id,
-        sent_at_unix_milliseconds=body.sent_at_unix_milliseconds,
+        ctx.principal,
     )
+    async with connection_off_the_loop(request) as conn:
+        delivered = await message_delivery_service.send_message(
+            conversations,
+            conn,
+            clk,
+            ctx,
+            Principal(PrincipalKind.ticket, ticket_id),
+            admission
+            or partial(
+                conversation_message_content,
+                message_files,
+                sent=body.content,
+                sender_message_id=body.sender_message_id,
+            ),
+            admission=admission,
+            conversation_id=body.conversation_id,
+            created_conversation_id=created_conversation_id,
+            runs_under=_what_this_message_runs_under(body),
+            mode=body.mode,
+            owner_read_through_sequence=body.owner_read_through_sequence,
+            sender_message_id=body.sender_message_id,
+            sent_at_unix_milliseconds=body.sent_at_unix_milliseconds,
+        )
     return _delivered_message_json(delivered)
 
 
 @router.post("/tickets/{ticket_id}/conversation/reset")
 async def reset_ticket_conversation(
     ticket_id: str,
-    conn: DbConn,
+    request: Request,
     ctx: Ctx,
     clk: Clk,
     conversations: Conversations,
@@ -1295,10 +1365,11 @@ async def reset_ticket_conversation(
     is started here: the Ticket now has no conversation, which is the state the start door
     above already knows how to answer.
     """
-    require_above(conn, ctx.principal, authority.ticket(ticket_id))
     now = clk.now_unix()
-    await conversation_start.reset_ticket_conversation(conversations, conn, ticket_id, now=now)
-    return tickets_views.ticket_json(tickets_data.read_ticket(conn, ticket_id), now)
+    async with connection_off_the_loop(request) as conn:
+        await conversation_start.reset_ticket_conversation(conversations, conn, ticket_id, now=now)
+        ticket = await run_on_worker_thread(tickets_data.read_ticket, conn, ticket_id)
+    return tickets_views.ticket_json(ticket, now)
 
 
 @router.post("/tickets/{ticket_id}/complete/{field}")
@@ -1306,7 +1377,7 @@ async def complete_user_owned_gate(
     ticket_id: str,
     field: str,
     raw: dict[str, Any],
-    conn: DbConn,
+    request: Request,
     ctx: Ctx,
     clk: Clk,
     conversations: Conversations,
@@ -1318,126 +1389,48 @@ async def complete_user_owned_gate(
     approval otherwise has.
     """
     body = GateCompletionBody(body=body_str(raw, "body"))
-    require_above(conn, ctx.principal, authority.ticket(ticket_id))
-    _ticket, worker_type_definition = _ticket_and_worker_type_definition(conn, ticket_id)
-    _validate_field(worker_type_definition, field)
-    await reject_while_the_conversation_is_running(conn, conversations, ticket_id)
-    now = clk.now_unix()
-    ticket = tickets_data.complete_user_owned_gate(
-        conn,
-        ticket_id,
-        field=field,
-        new_body=body["body"],
-        principal=ctx.principal,
-        now=now,
-    )
+    async with connection_off_the_loop(request) as conn:
+        _ticket, worker_type_definition = await run_on_worker_thread(
+            _ticket_and_worker_type_definition, conn, ticket_id
+        )
+        _validate_field(worker_type_definition, field)
+        await reject_while_the_conversation_is_running(conn, conversations, ticket_id)
+        now = clk.now_unix()
+        ticket = await run_on_worker_thread(
+            tickets_data.complete_user_owned_gate,
+            conn,
+            ticket_id,
+            field=field,
+            new_body=body["body"],
+            principal=ctx.principal,
+            now=now,
+        )
     return tickets_views.ticket_json(ticket, now)
 
 
-@router.post("/tickets/{ticket_id}/request-help")
-async def request_help(
-    ticket_id: str,
-    body: JsonDict,
-    conn: DbConn,
-    ctx: Ctx,
-    clk: Clk,
-    conversations: Conversations,
-) -> JsonDict:
-    require_self(conn, ctx.principal, authority.ticket(ticket_id))
-    if set(body) - {"message", "recipient"}:
-        raise PlannerError(ErrorCode.validation, "unknown help request field", {})
-    message = body_str(body, "message")
-    if not message.strip():
-        raise PlannerError(ErrorCode.validation, "help message must not be empty", {})
-    ticket = tickets_data.read_ticket(conn, ticket_id)
-    named = _parse_principal(body.get("recipient"), "recipient")
-    if named is not None:
-        # The same question Send Message asks. Without it this is a second, open door
-        # into any conversation in Panels. The default below is not asked, because the
-        # ceiling holder is the principal Panels itself addressed this Ticket to.
-        message_delivery_service.require_reach(conn, ctx.principal, named)
-    recipient = named or ticket.ceiling_holder
-    delivered = await message_delivery_service.send_message(
-        conversations, conn, clk, ctx, recipient, message
-    )
-    fate = (
-        {"fate": "recorded"}
-        if isinstance(delivered.fate, MessageRecordedToOwner)
-        else delivery_fate_json(delivered.fate)
-    )
-    return {
-        "target": {"kind": recipient.kind.value, "id": recipient.id},
-        "conversation_id": delivered.conversation_id,
-        **fate,
-    }
-
-
 @router.get("/tickets/{ticket_id}/copy-text", response_class=PlainTextResponse)
-async def ticket_copy_text(ticket_id: str, conn: DbConn) -> str:
+def ticket_copy_text(ticket_id: str, conn: DbConn) -> str:
     return tickets_views.copy_text(conn, ticket_id)
-
-
-async def add_conversation_row_signals(
-    conn: sqlite3.Connection,
-    board: JsonDict,
-    conversation_system: ConversationSystem,
-    conversation_record: ConversationStore,
-) -> JsonDict:
-    """Attach the shared owner-attention and agent-state projection to board rows."""
-    cards = [card for column in board["columns"] for card in column["cards"]]
-    children = [ticket for item in board["sprint_items"] for ticket in item["tickets"]]
-    await add_work_attention(
-        # This helper predates the shared projection. Keep its public name until the Day
-        # route moves with the other callers, but give it the one canonical behavior.
-        conn,
-        conversation_system,
-        conversation_record,
-        tickets=(*cards, *children),
-        sprint_items=board["sprint_items"],
-    )
-    return board
-
-
-@router.get("/board")
-async def board(
-    conn: DbConn,
-    cfg: Cfg,
-    clk: Clk,
-    conversations: Conversations,
-    conversation_record: ConversationRecord,
-) -> JsonDict:
-    return await add_conversation_row_signals(
-        conn,
-        tickets_views.board_view(conn),
-        conversations,
-        conversation_record,
-    )
 
 
 @router.get("/review")
 async def review(
-    conn: DbConn,
+    request: Request,
     cfg: Cfg,
     clk: Clk,
     conversations: Conversations,
     conversation_record: ConversationRecord,
 ) -> JsonDict:
-    response = tickets_views.review_view(conn)
-    response["running_worker_count"] = await read_running_conversation_count(
-        conn, conversations, conversation_record
-    )
+    async with connection_off_the_loop(request) as conn:
+        response = await run_on_worker_thread(tickets_views.review_view, conn)
+        response["running_worker_count"] = await read_running_conversation_count(
+            conn, conversations, conversation_record
+        )
     return response
 
 
-def _record_precondition(body: dict[str, Any]) -> str | None:
-    value = body.get("expected_record_sha256")
-    if value is not None and (not isinstance(value, str) or len(value) != 64):
-        raise PlannerError(ErrorCode.validation, "expected_record_sha256 must be a SHA256 string")
-    return value
-
-
 @router.post("/tickets/{ticket_id}/backlog")
-async def backlog_ticket(
+def backlog_ticket(
     ticket_id: str, body: dict[str, Any], conn: DbConn, ctx: Ctx, clk: Clk
 ) -> JsonDict:
     tickets_data.set_ticket_backlog(
@@ -1446,13 +1439,12 @@ async def backlog_ticket(
         is_backlogged=True,
         principal=ctx.principal,
         now=clk.now_unix(),
-        expected_record_sha256=_record_precondition(body),
     )
     return _ticket_detail(conn, ticket_id, clk.now_unix())
 
 
 @router.post("/tickets/{ticket_id}/resume")
-async def resume_ticket(
+def resume_ticket(
     ticket_id: str, body: dict[str, Any], conn: DbConn, ctx: Ctx, clk: Clk
 ) -> JsonDict:
     tickets_data.set_ticket_backlog(
@@ -1461,34 +1453,5 @@ async def resume_ticket(
         is_backlogged=False,
         principal=ctx.principal,
         now=clk.now_unix(),
-        expected_record_sha256=_record_precondition(body),
     )
     return _ticket_detail(conn, ticket_id, clk.now_unix())
-
-
-@router.post("/tickets/{ticket_id}/move")
-async def move_ticket_locale(
-    ticket_id: str,
-    raw: dict[str, Any],
-    conn: DbConn,
-    ctx: Ctx,
-    clk: Clk,
-    conversations: Conversations,
-) -> JsonDict:
-    from planner.tickets.locale_move import move_ticket_locale as move
-    from planner.tickets.logic.locale import require_ticket_locale
-
-    require_above(conn, ctx.principal, authority.ticket(ticket_id))
-    if "locale" not in raw or set(raw) - {"locale", "expected_record_sha256"}:
-        raise PlannerError(ErrorCode.validation, "move requires a locale", {})
-    now = clk.now_unix()
-    ticket = await move(
-        conversations,
-        conn,
-        ticket_id,
-        locale=require_ticket_locale(raw["locale"]),
-        principal=ctx.principal,
-        now=now,
-        expected_record_sha256=_record_precondition(raw),
-    )
-    return tickets_views.ticket_json(ticket, now)

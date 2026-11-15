@@ -7,11 +7,13 @@ edges into deliveries, so several commits can safely share one wake-up.
 from __future__ import annotations
 
 import json
+import logging
 import sqlite3
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from typing import NamedTuple
 
 from planner.conversation.events import (
+    ConversationEventKind,
     ConversationEventPayload,
     ConversationTurnEnding,
     MessageToOwnerEventPayload,
@@ -22,9 +24,22 @@ from planner.conversation.events import (
     UserInputAnsweredEventPayload,
     UserInputFailedEventPayload,
     UserInputRequestedEventPayload,
+    conversation_event_payload_from_canonical_json,
 )
+from planner.conversation.logic.pending_requests import (
+    REQUEST_TERMINATING_EVENT_KIND,
+    advance_pending_requests,
+)
+from planner.conversation.message_content import message_content_text
+from planner.core.contracts import PrincipalKind
+from planner.notifications.contracts import EdgeKey, NotificationMessage, NotificationReply
+from planner.notifications.logic.preview import message_preview, notification_label
 from planner.tickets import derivation
 from planner.tickets.contracts import TicketStatus
+from planner.worker_types.contracts import WorkflowDefinition
+from planner.worker_types.store import workflow_from_row
+
+_LOG = logging.getLogger(__name__)
 
 
 class ConversationAttention(NamedTuple):
@@ -43,6 +58,28 @@ class ConversationAttention(NamedTuple):
 
 
 NOTHING_WAITING = ConversationAttention(False, False, False, 0, 0)
+
+# The alias d can name either an attention edge or a queued delivery. Task alerts
+# describe the current obligation. Messages and failures remain factual events.
+TASK_ALERT_IS_CURRENT = (
+    "(d.subject_kind != 'ticket' "
+    "OR d.notification_type NOT IN ('awaiting_approval','assigned','awaiting_answer') "
+    "OR (EXISTS (SELECT 1 FROM tickets t WHERE t.id=d.subject_id AND t.is_backlogged=0) "
+    "AND EXISTS (SELECT 1 FROM notification_attention_state a "
+    "WHERE a.subject_kind=d.subject_kind AND a.subject_id=d.subject_id "
+    "AND a.notification_type=d.notification_type AND a.active=1 "
+    "AND a.generation=d.generation)))"
+)
+
+
+def task_alert_is_current(conn: sqlite3.Connection, edge: EdgeKey) -> bool:
+    """Recheck a selected delivery immediately before the provider send."""
+    row = conn.execute(
+        f"SELECT {TASK_ALERT_IS_CURRENT} FROM "
+        "(SELECT ? AS subject_kind,? AS subject_id,? AS notification_type,? AS generation) d",
+        (edge.subject_kind, edge.subject_id, edge.notification_type, edge.generation),
+    ).fetchone()
+    return bool(row[0])
 
 
 @dataclass(frozen=True, slots=True)
@@ -72,11 +109,21 @@ class ConversationAttentionSnapshot:
 
 
 def conversation_attention_snapshot(
-    conn: sqlite3.Connection, conversation_id: str
+    conn: sqlite3.Connection,
+    conversation_id: str,
+    *,
+    transaction_open: bool = False,
 ) -> ConversationAttentionSnapshot | None:
-    """Derive one consistent snapshot before a conversation asks for the write lock."""
+    """Own a short read transaction by default, or borrow the caller's open transaction.
 
-    conn.execute("BEGIN")
+    The borrowed path leaves commit and rollback to the caller, including on read errors.
+    """
+
+    if transaction_open:
+        if not conn.in_transaction:
+            raise RuntimeError("attention snapshot requires an open source transaction")
+    else:
+        conn.execute("BEGIN")
     try:
         conversation = conn.execute(
             "SELECT c.latest_sequence, c.owner_read_through_sequence, c.created_at, "
@@ -93,10 +140,11 @@ def conversation_attention_snapshot(
             (conversation_id,),
         ).fetchall()
     finally:
-        conn.execute("COMMIT")
+        if not transaction_open:
+            conn.execute("COMMIT")
 
-    pending_permission_ask_ids: set[str] = set()
-    pending_user_input_request_ids: set[str] = set()
+    pending_permission_ask_ids: frozenset[str] = frozenset()
+    pending_user_input_request_ids: frozenset[str] = frozenset()
     latest_message_sequence = 0
     error_acknowledged_through_sequence = int(conversation["error_acknowledged_through_sequence"])
     errored = False
@@ -108,14 +156,21 @@ def conversation_attention_snapshot(
         occurred_at = max(occurred_at, int(row["created_at"]))
         if kind == "message_to_owner":
             latest_message_sequence = sequence
-        elif kind == "permission_asked":
-            pending_permission_ask_ids.add(str(payload["ask_id"]))
-        elif kind == "permission_answered":
-            pending_permission_ask_ids.discard(str(payload["ask_id"]))
-        elif kind == "user_input_requested":
-            pending_user_input_request_ids.add(str(payload["request_id"]))
-        elif kind in ("user_input_answered", "user_input_failed"):
-            pending_user_input_request_ids.discard(str(payload["request_id"]))
+        pending_permission_ask_ids, pending_user_input_request_ids = advance_pending_requests(
+            pending_permission_ask_ids,
+            pending_user_input_request_ids,
+            kind,
+            ask_id=(
+                str(payload["ask_id"])
+                if kind in ("permission_asked", "permission_answered")
+                else None
+            ),
+            request_id=(
+                str(payload["request_id"])
+                if kind in ("user_input_requested", "user_input_answered", "user_input_failed")
+                else None
+            ),
+        )
         if sequence > error_acknowledged_through_sequence:
             if kind == "prompt":
                 errored = False
@@ -128,8 +183,8 @@ def conversation_attention_snapshot(
         owner_read_through_sequence=int(conversation["owner_read_through_sequence"]),
         error_acknowledged_through_sequence=error_acknowledged_through_sequence,
         latest_message_sequence=latest_message_sequence,
-        pending_permission_ask_ids=frozenset(pending_permission_ask_ids),
-        pending_user_input_request_ids=frozenset(pending_user_input_request_ids),
+        pending_permission_ask_ids=pending_permission_ask_ids,
+        pending_user_input_request_ids=pending_user_input_request_ids,
         errored=errored,
         occurred_at=occurred_at,
     )
@@ -168,21 +223,37 @@ def advance_conversation_attention(
     """Apply one validated write batch without reading conversation events again."""
 
     latest_message_sequence = snapshot.latest_message_sequence
-    pending_permission_ask_ids = set(snapshot.pending_permission_ask_ids)
-    pending_user_input_request_ids = set(snapshot.pending_user_input_request_ids)
+    pending_permission_ask_ids = snapshot.pending_permission_ask_ids
+    pending_user_input_request_ids = snapshot.pending_user_input_request_ids
     errored = snapshot.errored
     for offset, payload in enumerate(payloads, start=1):
         sequence = snapshot.latest_sequence + offset
         if isinstance(payload, MessageToOwnerEventPayload):
             latest_message_sequence = sequence
-        elif isinstance(payload, PermissionAskedEventPayload):
-            pending_permission_ask_ids.add(payload.ask_id)
-        elif isinstance(payload, PermissionAnsweredEventPayload):
-            pending_permission_ask_ids.discard(payload.ask_id)
-        elif isinstance(payload, UserInputRequestedEventPayload):
-            pending_user_input_request_ids.add(payload.request_id)
-        elif isinstance(payload, (UserInputAnsweredEventPayload, UserInputFailedEventPayload)):
-            pending_user_input_request_ids.discard(payload.request_id)
+        pending_permission_ask_ids, pending_user_input_request_ids = advance_pending_requests(
+            pending_permission_ask_ids,
+            pending_user_input_request_ids,
+            payload.kind,
+            ask_id=(
+                payload.ask_id
+                if isinstance(
+                    payload, (PermissionAskedEventPayload, PermissionAnsweredEventPayload)
+                )
+                else None
+            ),
+            request_id=(
+                payload.request_id
+                if isinstance(
+                    payload,
+                    (
+                        UserInputRequestedEventPayload,
+                        UserInputAnsweredEventPayload,
+                        UserInputFailedEventPayload,
+                    ),
+                )
+                else None
+            ),
+        )
         if isinstance(payload, PromptEventPayload):
             errored = False
         elif isinstance(payload, TurnEndedEventPayload):
@@ -195,6 +266,77 @@ def advance_conversation_attention(
         latest_sequence=snapshot.latest_sequence + len(payloads),
         occurred_at=max(snapshot.occurred_at, occurred_at),
     )
+
+
+def _edge_context_json(
+    conn: sqlite3.Connection, subject_kind: str, subject_id: str, notification_type: str
+) -> str | None:
+    """Read the source only while the rising edge's transaction holds the write lock."""
+    if notification_type not in {"awaiting_reply", "awaiting_approval"}:
+        return None
+    if subject_kind == "ticket":
+        row = conn.execute(
+            "SELECT title, conversation_id, stage, workflow_json FROM tickets WHERE id=?",
+            (subject_id,),
+        ).fetchone()
+    elif subject_kind == "manager":
+        row = conn.execute(
+            "SELECT i.title, a.conversation_id FROM managers i "
+            "LEFT JOIN agents a ON a.agent_key='manager_' || i.id WHERE i.id=?",
+            (subject_id,),
+        ).fetchone()
+    else:
+        row = conn.execute(
+            "SELECT 'Chief of Staff' AS title, conversation_id FROM agents WHERE agent_key=?",
+            (subject_id,),
+        ).fetchone()
+    if row is None:
+        return None
+    context: dict[str, object] = {"subject_label": notification_label(str(row["title"]))}
+    if notification_type == "awaiting_approval":
+        workflow = workflow_from_row(row)
+        context["stage_label"] = notification_label(workflow.stage_definition(row["stage"]).label)
+    elif row["conversation_id"] is not None:
+        conversation_id = str(row["conversation_id"])
+        message_row = conn.execute(
+            "SELECT sequence,payload FROM conversation_events WHERE conversation_id=? "
+            "AND kind='message_to_owner' ORDER BY sequence DESC LIMIT 1",
+            (conversation_id,),
+        ).fetchone()
+        if message_row is not None:
+            payload = conversation_event_payload_from_canonical_json(
+                ConversationEventKind.message_to_owner, str(message_row["payload"])
+            )
+            assert isinstance(payload, MessageToOwnerEventPayload)
+            reply = (
+                NotificationReply(
+                    conversation_id, f"{conversation_id}:{message_row['sequence']}",
+                    payload.sender.kind.value, payload.sender.id,
+                )
+                if payload.sender.kind in {
+                    PrincipalKind.chief, PrincipalKind.manager, PrincipalKind.ticket,
+                }
+                else None
+            )
+            context["message"] = asdict(NotificationMessage(
+                notification_label(payload.sender_label),
+                message_preview(message_content_text(payload.content)), reply,
+            ))
+    return json.dumps(context, ensure_ascii=False, separators=(",", ":"))
+
+
+def _optional_edge_context_json(
+    conn: sqlite3.Connection, subject_kind: str, subject_id: str, notification_type: str
+) -> str | None:
+    """Notification enrichment must not prevent its source write from committing."""
+    try:
+        return _edge_context_json(conn, subject_kind, subject_id, notification_type)
+    except Exception:
+        # Context errors can contain message words. Keep the diagnostic payload-free.
+        _LOG.warning(
+            "Notification context unavailable; queued generic alert (%s)", notification_type,
+        )
+        return None
 
 
 def _record(
@@ -214,13 +356,19 @@ def _record(
     generation = int(row["generation"]) if row is not None else 0
     if active == prior_active and row is not None:
         return
+    if subject_kind == "ticket" and notification_type == "awaiting_approval":
+        from planner.attention.history import capture_gate
+
+        capture_gate(conn, ticket_id=subject_id, active=active, now=occurred_at)
     if active:
         generation += 1
         conn.execute(
             "INSERT INTO notification_attention_edges"
-            "(subject_kind, subject_id, notification_type, generation, occurred_at) "
-            "VALUES (?, ?, ?, ?, ?)",
-            (subject_kind, subject_id, notification_type, generation, occurred_at),
+            "(subject_kind, subject_id, notification_type, generation, "
+            "occurred_at, context_json) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            (subject_kind, subject_id, notification_type, generation, occurred_at,
+             _optional_edge_context_json(conn, subject_kind, subject_id, notification_type)),
         )
     conn.execute(
         "INSERT INTO notification_attention_state"
@@ -236,7 +384,10 @@ def conversation_attention(
     conversation_id: str | None = None,
 ) -> dict[str, ConversationAttention]:
     where = "WHERE c.conversation_id = ? " if conversation_id is not None else ""
-    parameters: tuple[str, ...] = (conversation_id,) if conversation_id is not None else ()
+    parameters: tuple[str, ...] = (
+        REQUEST_TERMINATING_EVENT_KIND,
+        REQUEST_TERMINATING_EVENT_KIND,
+    ) + ((conversation_id,) if conversation_id is not None else ())
     rows = conn.execute(
         "SELECT c.conversation_id, c.latest_sequence, "
         "COALESCE(MAX(CASE WHEN e.kind = 'message_to_owner' THEN e.sequence END), 0) "
@@ -246,14 +397,20 @@ def conversation_attention(
         "AND NOT EXISTS (SELECT 1 FROM conversation_events answered WHERE "
         "answered.conversation_id = c.conversation_id AND answered.kind = 'permission_answered' "
         "AND json_extract(answered.payload, '$.ask_id') = "
-        "json_extract(asked.payload, '$.ask_id') AND answered.sequence > asked.sequence)) "
+        "json_extract(asked.payload, '$.ask_id') AND answered.sequence > asked.sequence) "
+        "AND NOT EXISTS (SELECT 1 FROM conversation_events ended WHERE "
+        "ended.conversation_id = c.conversation_id AND ended.kind = ? "
+        "AND ended.sequence > asked.sequence)) "
         "OR EXISTS (SELECT 1 FROM conversation_events asked WHERE "
         "asked.conversation_id = c.conversation_id AND asked.kind = 'user_input_requested' "
         "AND NOT EXISTS (SELECT 1 FROM conversation_events answered WHERE "
         "answered.conversation_id = c.conversation_id "
         "AND answered.kind IN ('user_input_answered','user_input_failed') "
         "AND json_extract(answered.payload, '$.request_id') = "
-        "json_extract(asked.payload, '$.request_id') AND answered.sequence > asked.sequence)) "
+        "json_extract(asked.payload, '$.request_id') AND answered.sequence > asked.sequence) "
+        "AND NOT EXISTS (SELECT 1 FROM conversation_events ended WHERE "
+        "ended.conversation_id = c.conversation_id AND ended.kind = ? "
+        "AND ended.sequence > asked.sequence)) "
         "AS pending_ask, "
         "COALESCE((SELECT CASE WHEN recent.kind = 'turn_ended' "
         "AND json_extract(recent.payload, '$.ending') = 'failed' THEN 1 ELSE 0 END "
@@ -287,12 +444,14 @@ def capture_ticket_attention(
     occurred_at: int,
     *,
     conversation_result: ConversationAttention | None = None,
+    worker_type_definition: WorkflowDefinition | None = None,
 ) -> None:
     # Local import keeps the conversation storage and work-attention projection acyclic.
     from planner.work_attention import ticket_assignment_from_values
 
     row = conn.execute(
-        "SELECT id, stage, worker_type, worker_step_claim, pending_proposal, ceiling_holder, "
+        "SELECT id, stage, worker_type, workflow_json, worker_step_claim, "
+        "pending_proposal, ceiling_holder, is_backlogged, "
         f"conversation_id, {derivation.HAS_LIVE_BLOCKER_COLUMN} "
         "FROM tickets WHERE id=?",
         (ticket_id,),
@@ -300,7 +459,8 @@ def capture_ticket_attention(
     if row is None:
         return
     facts = derivation.derive_ticket_facts(
-        derivation.stored_facts_from_row(row, has_live_blocker=bool(row["has_live_blocker"]))
+        derivation.stored_facts_from_row(row, has_live_blocker=bool(row["has_live_blocker"])),
+        worker_type_definition=worker_type_definition,
     )
     conversation = conversation_result
     if conversation is None:
@@ -316,11 +476,16 @@ def capture_ticket_attention(
     owner_holds = holder.get("kind") == "owner"
     flags = {
         "awaiting_reply": conversation.unread_message,
-        "awaiting_answer": conversation.pending_ask,
-        "awaiting_approval": facts.ticket_status is TicketStatus.awaiting_approval and owner_holds,
-        "assigned": ticket_assignment_from_values(
+        "awaiting_answer": conversation.pending_ask and not row["is_backlogged"],
+        "awaiting_approval": (
+            facts.ticket_status is TicketStatus.awaiting_approval
+            and owner_holds
+            and not row["is_backlogged"]
+        ),
+        "assigned": not row["is_backlogged"] and ticket_assignment_from_values(
             stage=str(row["stage"]),
-            worker_type=str(row["worker_type"]),
+            worker_type=row["worker_type"],
+            worker_type_definition=worker_type_definition or workflow_from_row(row),
         ),
         "errored": facts.ticket_status is TicketStatus.errored or conversation.errored,
     }
@@ -347,9 +512,9 @@ def capture_conversation_attention(
             conversation_result=attention,
         )
     for row in conn.execute(
-        "SELECT CASE WHEN i.id IS NULL THEN 'agent' ELSE 'sprint_item' END subject_kind, "
+        "SELECT CASE WHEN i.id IS NULL THEN 'agent' ELSE 'manager' END subject_kind, "
         "COALESCE(i.id, a.agent_key) subject_id FROM agents a "
-        "LEFT JOIN sprint_items i ON a.agent_key='sprint_item_supervisor_' || i.id "
+        "LEFT JOIN managers i ON a.agent_key='manager_' || i.id "
         "WHERE a.conversation_id=? AND (a.agent_key='chief_of_staff' OR i.id IS NOT NULL)",
         (conversation_id,),
     ):
@@ -396,13 +561,19 @@ def reconcile_attention(
         prior_active, generation = prior_value or (False, 0)
         if prior_value is not None and active == prior_active:
             continue
+        if subject_kind == "ticket" and notification_type == "awaiting_approval":
+            from planner.attention.history import capture_gate
+
+            capture_gate(conn, ticket_id=subject_id, active=active, now=occurred_at)
         if active:
             generation += 1
             conn.execute(
                 "INSERT INTO notification_attention_edges"
-                "(subject_kind, subject_id, notification_type, generation, occurred_at) "
-                "VALUES (?, ?, ?, ?, ?)",
-                (*key, generation, occurred_at),
+                "(subject_kind, subject_id, notification_type, generation, "
+                "occurred_at, context_json) "
+                "VALUES (?, ?, ?, ?, ?, ?)",
+                (*key, generation, occurred_at,
+                 _optional_edge_context_json(conn, subject_kind, subject_id, notification_type)),
             )
         conn.execute(
             "INSERT INTO notification_attention_state"

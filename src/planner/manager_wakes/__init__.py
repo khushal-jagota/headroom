@@ -1,1 +1,1 @@
-"""Durable wake delivery for Sprint Item managers."""
+"""Durable wake delivery for Managers."""
