@@ -3340,6 +3340,7 @@
           ]
         },
         "expected_revision": {
+          "title": "Expected Revision",
           "type": "integer"
         }
       },
