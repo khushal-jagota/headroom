@@ -10,6 +10,7 @@ interface Action {
   bsd: Record<string, string[]>; task: Record<string, string | null>;
   preview: Record<string, { info: string; paths: string; sockets: string[] }>;
   operation: 'discover' | 'check' | 'connected';
+  unreadable?: number[]; truncated?: boolean; socket_error?: boolean; failure_status?: boolean;
 }
 export async function native_parity(input: { worktree: string; actions: Action[] }): Promise<string> {
   let action = input.actions[0]!;
@@ -33,10 +34,19 @@ export async function native_parity(input: { worktree: string; actions: Action[]
     statvfs: () => ({ blocks: 100, available: 25, fragment_size: 4096 }), loadavg: () => [1, 2, 3], cores: () => 4,
   });
   const preview = new DarwinProcessInspector({
-    boot: () => 'boot', pids: () => Object.keys(action.preview).map(Number),
+    boot: () => 'boot', pids: () => {
+      if (action.truncated) throw new Error('Process discovery bound exceeded.');
+      return Object.keys(action.preview).map(Number);
+    },
     info: (pid, flavor) => bytes(flavor === 3 ? action.preview[pid]!.info : action.preview[pid]!.paths),
-    descriptors: (pid) => action.preview[pid]!.sockets.map((_, index) => index),
-    socket: (pid, descriptor) => bytes(action.preview[pid]!.sockets[descriptor]!),
+    descriptors: (pid) => {
+      if (action.unreadable?.includes(pid)) throw Object.assign(new Error('Descriptors denied'), { code: 'EPERM' });
+      return action.preview[pid]!.sockets.map((_, index) => index);
+    },
+    socket: (pid, descriptor) => {
+      if (action.socket_error) throw Object.assign(new Error('Socket denied'), { code: 'EPERM' });
+      return bytes(action.preview[pid]!.sockets[descriptor]!);
+    },
   });
   let identity: ProcessIdentity | undefined;
   const results: unknown[] = [];
@@ -48,7 +58,7 @@ export async function native_parity(input: { worktree: string; actions: Action[]
       else if (action.operation === 'connected') await preview.connected(identity!, 45678);
       else await preview.check(identity!);
       evidence = action.operation === 'discover' ? identity : 'accepted';
-    } catch (error) { evidence = (error as Error).message; }
+    } catch (error) { evidence = action.failure_status ? { status_code: (error as { status_code: number }).status_code } : (error as Error).message; }
     const sample = await collector.collect({ include_slow: results.length === 0 });
     results.push({ preview: evidence, sample });
   }

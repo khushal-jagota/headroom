@@ -514,10 +514,12 @@ def test_service_command_limits_kill_and_reap_only_the_scripted_child(
     )
 
 
-def test_darwin_populated_native_observations_match_python(tmp_path: Path) -> None:
+def test_darwin_populated_native_observations_match_python(
+    tmp_path: Path, request: pytest.FixtureRequest,
+) -> None:
     """Existing Linux fixtures do not prove Darwin births, socket generations or native rates."""
     import base64
-    import ctypes
+    import errno
     from unittest.mock import patch
 
     from tests.unit.test_darwin_metrics import Reader
@@ -526,8 +528,10 @@ def test_darwin_populated_native_observations_match_python(tmp_path: Path) -> No
     from planner.platform_runtime.darwin.preview import _Paths, _SocketFD
     from planner.platform_runtime.darwin.worker_processes import _BSDInfo
 
+    started = time.perf_counter()
     reader = Reader()
     subject, library = inspector(tmp_path)
+    library.descriptors[12][0].protocol_info.tcp.internet.generation = 2**62 + 567
     now = [100.0]
     stat = SimpleNamespace(f_blocks=100, f_bavail=25, f_frsize=4096)
     collector = DarwinCollector(reader=reader, wall_clock=lambda: now[0], monotonic=lambda: now[0],
@@ -535,7 +539,7 @@ def test_darwin_populated_native_observations_match_python(tmp_path: Path) -> No
     actions, expected = [], []
     identity = None
     binary = lambda value: base64.b64encode(bytes(value)).decode()
-    for index, operation in enumerate(("discover", "connected", "check", "check")):
+    for index, operation in enumerate(("discover", "connected", "check", "check", "discover", "discover", "check")):
         now[0] = 100.0 + index * 2
         reader.ticks = 24_000_000 + index * 48_000_000
         reader.host_ticks = (100 + index * 100, 0, 0, 100 + index * 100)
@@ -548,6 +552,11 @@ def test_darwin_populated_native_observations_match_python(tmp_path: Path) -> No
             reader.start += 1
         if index == 3:
             reader.boot = "boot-b"
+        if index == 4:
+            library.descriptors[13] = [tcp()]
+            library.unreadable.add(13)
+        library.truncate = index == 5
+        library.error = errno.EPERM if index == 6 else 0
         bsd = {}
         reader.reads.clear()
         for pid in reader.observed:
@@ -570,7 +579,9 @@ def test_darwin_populated_native_observations_match_python(tmp_path: Path) -> No
             preview[str(pid)] = {"info": binary(info), "paths": binary(paths), "sockets": values}
         actions.append({"now": now[0], "boot": reader.boot, "cpu": reader.host_ticks,
                         "pids": reader.observed, "bsd": bsd, "task": tasks,
-                        "preview": preview, "operation": operation})
+                        "preview": preview, "operation": operation,
+                        "unreadable": list(library.unreadable), "truncated": library.truncate,
+                        "socket_error": bool(library.error), "failure_status": index >= 5})
         try:
             if operation == "discover":
                 identity = subject.discover(3001, tmp_path)
@@ -583,7 +594,7 @@ def test_darwin_populated_native_observations_match_python(tmp_path: Path) -> No
                 subject.check(identity)
                 evidence = "accepted"
         except Exception as error:
-            evidence = str(error)
+            evidence = {"status_code": error.status_code} if index >= 5 else str(error)
         reader.reads.clear()
         with patch("planner.platform_runtime.darwin.metrics.os.cpu_count", return_value=4):
             sample = collector.collect(include_slow=index == 0)
@@ -598,3 +609,8 @@ def test_darwin_populated_native_observations_match_python(tmp_path: Path) -> No
         capture_output=True, text=True, timeout=15, check=False)
     assert result.returncode == 0, result.stderr
     assert json.loads(result.stdout) == expected
+    _report(request, "darwin-home-native-observations.json", {
+        "complete": True, "seconds": time.perf_counter() - started, "snapshots": len(actions),
+        "boundary": "Existing populated libproc and metrics fixtures. No native Mac library or host on the VPS.",
+        "result": expected,
+    })
