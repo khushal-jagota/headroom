@@ -209,10 +209,20 @@ export async function write_publication_receipt(
         name: 'panels-publication-build',
       },
       { path: options.mac_artifact_zip, id: options.mac_artifact_id, name: 'panels-mac-runtime' },
-      ...(mac_home_options ? [
-        { path: mac_home_options.mac_home_artifact_zip, id: mac_home_options.mac_home_artifact_id, name: 'panels-mac-home' },
-        { path: mac_home_options.mac_home_build_artifact_zip, id: mac_home_options.mac_home_build_artifact_id, name: 'panels-mac-home-build' },
-      ] : []),
+      ...(mac_home_options
+        ? [
+            {
+              path: mac_home_options.mac_home_artifact_zip,
+              id: mac_home_options.mac_home_artifact_id,
+              name: 'panels-mac-home',
+            },
+            {
+              path: mac_home_options.mac_home_build_artifact_zip,
+              id: mac_home_options.mac_home_build_artifact_id,
+              name: 'panels-mac-home-build',
+            },
+          ]
+        : []),
       ...(has_linux_executor
         ? [
             {
@@ -420,7 +430,13 @@ export async function write_publication_receipt(
     if (mac_home_options) {
       const home_work = join(work, 'mac-home');
       await mkdir(home_work, { mode: 0o700 });
-      mac_home = await validate_mac_home_receipt(mac_home_options, source_run, home_work, execution, member);
+      mac_home = await validate_mac_home_receipt(
+        mac_home_options,
+        source_run,
+        home_work,
+        execution,
+        member,
+      );
     }
     const ios_review = await check_head_review(source, source_run.source_sha, execution);
     for (const artifact of artifacts)

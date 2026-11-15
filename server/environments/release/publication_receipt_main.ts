@@ -28,7 +28,10 @@ try {
       !is_object(request) ||
       required.some((key) => !(key in request)) ||
       Object.keys(request).some(
-        (key) => !required.includes(key) && !linux_executor_fields.includes(key) && !MAC_HOME_RECEIPT_FIELDS.some((field) => field === key),
+        (key) =>
+          !required.includes(key) &&
+          !linux_executor_fields.includes(key) &&
+          !MAC_HOME_RECEIPT_FIELDS.some((field) => field === key),
       ) ||
       (linux_executor_fields.some((key) => key in request) &&
         !linux_executor_fields.every((key) => key in request))

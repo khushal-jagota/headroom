@@ -11,6 +11,7 @@ export const MAC_HOME_REQUIRED_FILES = [
   'server/core/database/application_schema.json',
   'server/environments/release/migration_graph.json',
   'server/skills/cli_commands.json',
+  'server/installation/database_main.ts',
   'src/planner/worker_types/shipped_worker_types.json',
 ] as const;
 export const MAC_HOME_PUBLICATION_METADATA = 'mac-home-build.json';

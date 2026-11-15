@@ -18,6 +18,7 @@ import { UPDATE_HEALTH_TIMEOUT_SECONDS } from '../updates/configuration.ts';
 import { MANAGED_STOP_CLIENT_SECONDS } from '../../lifecycle/configuration.ts';
 import { observe_promise } from '../../core/promise_observer.ts';
 import { MAC_HOME } from './contracts.ts';
+import { initialize_candidate_home_database } from '../../installation/database.ts';
 
 async function loopback_port(): Promise<number> {
   const server = createServer();
@@ -148,6 +149,12 @@ try {
         PLAN_REFUSE_UNIDENTIFIED_AGENT_CALLS: '1',
         PLAN_TEST_MODE: '0',
       };
+      await initialize_candidate_home_database(
+        app,
+        join(state, 'data/probe.sqlite'),
+        execution,
+        process.execPath,
+      );
       assert_release_execution(execution);
       child = execution.child_processes.spawn(
         process.execPath,

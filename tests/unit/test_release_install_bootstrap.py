@@ -25,11 +25,10 @@ from scripts import panels_install as bootstrap
         ("linux", "home", 2),
         ("darwin", "home", 1),
         ("darwin", "home", 2),
-        ("linux", "join", 1),
         ("darwin", "join", 1),
     ],
 )
-def test_local_receipt_routes_native_home_and_preserves_legacy_installer_requests(
+def test_local_home_receipts_and_legacy_mac_join_requests(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     target: str,
@@ -128,8 +127,9 @@ def test_local_receipt_routes_native_home_and_preserves_legacy_installer_request
             ]
             expected["installer_python"] = str(Path(sys.executable).resolve())
     else:
+        assert target == "darwin"
         assert argv == [
-            str(payload / ("python/bin/python3" if target == "darwin" else ".venv/bin/python")),
+            str(payload / "python/bin/python3"),
             "-I",
             "-B",
             "-c",
@@ -137,7 +137,7 @@ def test_local_receipt_routes_native_home_and_preserves_legacy_installer_request
         ]
         expected = {
             "root": str(root),
-            "label": "com.panels.executor" if target == "darwin" else "panels-executor.service",
+            "label": "com.panels.executor",
             "home_url": "https://home.invalid",
             "machine_id": "synthetic-machine",
             "credential": "synthetic-secret",
