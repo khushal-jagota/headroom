@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import os
 import subprocess
+import sys
 import time
 from collections.abc import Callable
 from dataclasses import asdict, is_dataclass, replace
@@ -30,6 +31,7 @@ from planner.executor.files import (
     verified_version,
 )
 from planner.executor.protocol import FileManifest, FileScope
+from planner.worker_supervision.config import STOP_SECONDS
 
 ROOT = Path(__file__).resolve().parents[3]
 
@@ -38,6 +40,7 @@ def test_unit22_mac_files_and_configuration(tmp_path: Path, request: pytest.Fixt
     started = time.perf_counter()
     tmp_path = tmp_path.resolve(strict=True)
     homes = create_synthetic_homes(tmp_path)
+    homes["XDG_DATA_HOME"] = str(Path(homes["HOME"]) / ".local/share")
     content = bytes(range(256)) * 1100 + "native input 🦉\n".encode()
     for name in ("py", "ts"):
         (tmp_path / name).mkdir()
@@ -88,7 +91,11 @@ def test_unit22_mac_files_and_configuration(tmp_path: Path, request: pytest.Fixt
     alias = tmp_path / "alias"
     alias.symlink_to(canonical / "child", target_is_directory=True)
     roots = ["", "~/executor", str(alias) + "/../executor", str(tmp_path / "absent" / "state")]
-    legacy = Path(homes["HOME"]) / "Library" / "Application Support" / "Panels" / "executor"
+    legacy = (
+        Path(homes["XDG_DATA_HOME"]) / "panels/executor"
+        if sys.platform == "linux"
+        else Path(homes["HOME"]) / "Library/Application Support/Panels/executor"
+    )
     legacy.mkdir(parents=True)
     legacy_alias = tmp_path / "legacy-alias"
     legacy_alias.symlink_to(legacy, target_is_directory=True)
@@ -190,7 +197,11 @@ def test_unit22_mac_files_and_configuration(tmp_path: Path, request: pytest.Fixt
     assert actual.pop("fifo_refused") is True
     python_default_paths = expected["paths"].pop(0)
     typescript_default_paths = actual["paths"].pop(0)
-    typescript_root = legacy.with_name("executor-typescript")
+    typescript_root = (
+        legacy.with_name("executor-typescript") / "data"
+        if sys.platform == "linux"
+        else legacy.with_name("executor-typescript")
+    )
     assert typescript_default_paths == [
         str(path)
         for path in (
@@ -220,6 +231,8 @@ def test_unit22_mac_files_and_configuration(tmp_path: Path, request: pytest.Fixt
         * 2
     )
     settings = actual.pop("settings")
+    linux_trial_stop_seconds = settings.pop("LINUX_UPDATE_TERMINATE_SECONDS")
+    assert linux_trial_stop_seconds == STOP_SECONDS + 10
     for name, value in settings.items():
         reference = getattr(configuration, name, getattr(update_configuration, name, None))
         if is_dataclass(reference) and not isinstance(reference, type):
@@ -248,8 +261,9 @@ def test_unit22_mac_files_and_configuration(tmp_path: Path, request: pytest.Fixt
                         "python_default_paths": python_default_paths,
                         "typescript_default_paths": typescript_default_paths,
                         "reason": (
-                            "The TypeScript installation must stay separate from Python state."
+                            "TypeScript uses the approved platform layout, separate from Python."
                         ),
+                        "linux_trial_stop_seconds": linux_trial_stop_seconds,
                         "fifo": "TS refuses FIFO intake without an external writer.",
                         "nul_messages": nul_messages,
                     },
