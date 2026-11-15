@@ -190,37 +190,21 @@ export function create_installer_effects(
       throw new AppValidationError('Installer Node differs from the Mac installation identity');
     return service;
   });
+  let effects: Promise<ReturnType<typeof import('../darwin/service.ts').create_darwin_installer_effects>> | undefined;
+  const home_effects = () => effects ??= import('../darwin/service.ts').then(({ create_darwin_installer_effects }) =>
+    create_darwin_installer_effects(home, (sha) => healthy(request.health_url, sha, request.health_timeout_seconds, execution.signal, execution.environment)));
   return {
     ...(darwin ? {
-      async validate_service() { await (await home()).validate_running_home(); },
-      async recover_unchanged(sha: string) {
-        const service = await home();
-        if (service.stopped) return false;
-        await service.validate_running_home();
-        if (!await healthy(request.health_url, sha, request.health_timeout_seconds, execution.signal, execution.environment))
-          throw new Error('The unchanged home did not pass health after its stop failed');
-        await service.resume_auxiliaries();
-        return true;
-      },
-      async finish_success() {
-        const service = await home(), errors: string[] = [];
-        try { await service.provision_schedules(); } catch (error) { errors.push(`schedule setup: ${String(error)}`); }
-        try { await service.resume_auxiliaries(); } catch (error) { errors.push(String(error)); }
-        return errors.length ? 'The release passed health, but its auxiliary jobs did not restart: ' + errors.join('; ') : null;
-      },
-      async finish_rollback() {
-        try { await (await home()).resume_auxiliaries(); return null; }
-        catch (error) { return `Its auxiliary jobs did not restart: ${String(error)}`; }
-      },
+      async validate_service() { await (await home_effects()).validate_service(); },
+      async recover_unchanged(sha: string) { return (await home_effects()).recover_unchanged(sha); },
+      async finish_success() { return (await home_effects()).finish_success(); },
+      async finish_rollback() { return (await home_effects()).finish_rollback(); },
     } : {}),
     async service(action) {
       if (installer_test_mode(execution.environment))
         throw new Error('Installer service actions are unavailable in tests');
       if (darwin) {
-        const service = await home();
-        if (action === 'stop') await service.stop();
-        else await service.start();
-        return;
+        return (await home_effects()).service(action);
       }
       const value = phase(execution, SERVICE_COMMAND_TIMEOUT_SECONDS);
       await run_installer_command(['systemctl', '--user', action, request.service_unit], value, {
