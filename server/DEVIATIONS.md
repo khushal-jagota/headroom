@@ -22,24 +22,21 @@ The actual AArch64 header and matching package selector must agree. These entrie
 Other unknown ELF architectures still refuse. Python's current Linux builder refuses these foreign ELF files rather than classifying them.
 Paired synthetic proofs project the interpreter, root, PATH, and unit differences explicitly. Real runtime execution remains a hosted acceptance boundary.
 
-## Pending staging port: mailbox authority and protocol
+## Executor protocol parity evidence
 
 P2 owns these boundaries. The active machine-scope comparison now proves that stale
 reports refuse before outcome writes and StartRun encoding carries `supervision_protocol=24`.
 Internal executor waits and the shared process registry now include `machine_id=null`.
 The save-retry comparison is active again with that exact field.
 
-The original populated mailbox exchange remains expected-open until runtime protocol
-admission and the rest of the executor port match Python. Its original comparisons
-remain intact. These implemented boundaries do not claim full executor parity.
-
-The native schema describes protocol 26. Runtime identities still advertise protocol 22
-until machine credentials, supervision, and workspace behavior reach parity. This is
-an incomplete staging port, not an accepted final difference.
+The schema and runtime identities use protocol 26. Machine credentials, supervision,
+workspace registration, and retirement use the shared contract. The remaining
+expected-open comparisons do not count as parity until their complete proofs pass.
 
 The active machine-admission comparison uses each runtime's supported identity
 and retains both full identities in its report. It proves destination selection,
-readiness, and refusal envelopes. It does not claim a same-wire protocol-26 exchange.
+readiness, and refusal envelopes. The dedicated wire comparisons check the shared
+protocol contract separately.
 
 ## Linux host Node major — accepted
 
@@ -813,6 +810,15 @@ TypeScript treats `.panels-workspace.json.<32 lowercase hex characters>.tmp` as 
 Ticket ownership marker in public reads, links, and listings, including aliases. Python
 currently reserves only the final marker and `.panels-workspace.json.tmp`. The temporary
 file contains the same private ownership data, so the Ticket workspace port hides it too.
+
+## Workspace Stop publication retry
+
+The Manager accepted this difference on November 15, 2026. After a successful native
+Stop and failed durable publication, TypeScript retains the successful Stop and retries
+only publication through `MacRunner.stop_and_publish`. Python calls native Stop again
+on the workspace retirement retry. The populated command proof asserts both counts
+explicitly: two Python native calls and one TypeScript native call. It compares the
+retained custody, retirement grant, final output bytes, and physical removal exactly.
 
 ## Known gap: Mac workspace removal
 

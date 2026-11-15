@@ -6,6 +6,8 @@ import type {
 import { ServerLifecycleError, ShutdownDeadlineExceeded } from '../../../lifecycle/contracts.ts';
 import type { StopOptions } from '../../../lifecycle/contracts.ts';
 import { observe_conversation_operation } from '../../../runtime/abort.ts';
+import { FifoLock } from '../../../conversation/runtime/state.ts';
+import type { WorkspaceState } from '../../../ticket_workspaces/contracts.ts';
 import type {
   ChildCommand,
   ChildReference,
@@ -30,6 +32,7 @@ import { MacCommandService } from './service.ts';
 import { MacMaintenance } from './maintenance.ts';
 import { MacRunnerLifetime } from './lifetime.ts';
 import { create_mac_output_publication } from './publication.ts';
+import { MacWorkspaceCleanup } from './workspaces.ts';
 
 export class MacRunner implements MacRunnerContract {
   private readonly options: MacRunnerOptions;
@@ -42,6 +45,7 @@ export class MacRunner implements MacRunnerContract {
   private readonly events: MacRunnerEvents;
   private readonly maintenance: MacMaintenance;
   private readonly lifetime: MacRunnerLifetime;
+  private readonly workspaces: MacWorkspaceCleanup;
   private readonly retirement: MacRetirement;
   constructor(options: MacRunnerOptions) {
     this.options = options;
@@ -58,8 +62,12 @@ export class MacRunner implements MacRunnerContract {
       }
     };
     const sources = new MacSourceWork(state, () => lifetime.permanently_stopped);
+    const workspace_lock = new FifoLock();
     const native = new MacNativeChildren({
       ...options.native,
+      workspace_lock,
+      workspace_git: options.workspace_git,
+      register_workspace: options.register_workspace,
       event_sink: (reference) => events.event_sink(reference),
       on_failure: failure,
       worker_cleanup: {
@@ -122,6 +130,21 @@ export class MacRunner implements MacRunnerContract {
     this.maintenance = maintenance;
     this.lifetime = lifetime;
     this.retirement = retirement;
+    this.workspaces = new MacWorkspaceCleanup({
+      paths: options.native.paths,
+      workspace_home: options.native.workspace_home,
+      workspace_lock,
+      workspace_git: options.workspace_git,
+      retire_workspace: options.retire_workspace,
+      retirement_is_committed: options.retirement_is_committed,
+      native_children: native,
+      sources,
+      commands,
+      stop_and_publish: (command) => this.stop_and_publish(command),
+    });
+  }
+  cleanup_workspaces(states: readonly WorkspaceState[], now: number): Promise<void> {
+    return this.workspaces.cleanup(states, now);
   }
   stop_and_publish(command: ChildCommand): Promise<CommandOutcome> {
     this.assert_admission();

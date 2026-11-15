@@ -43,9 +43,11 @@ from planner.conversation.message_content import MessageFile, text_message_conte
 from planner.conversation.storage import ConversationStore
 from planner.conversation.system import SqliteProcessConversationSystem
 from planner.core.clock import TestClock as FixedClock
+from planner.core.contracts import PlannerError
 from planner.core.db import connect, create_schema
 from planner.environments.mac_updates import MacUpdateService
 from planner.environments.update_attempts import UpdateConflict
+from planner.execution_configuration import PROTOCOL_VERSION
 from planner.execution_identity import ChildReference
 from planner.executor import protocol as wire
 from planner.executor.registry import VpsExecutorRegistry
@@ -162,7 +164,7 @@ async def transcript(proxy: HttpsProxy, spec: dict[str, Any]) -> list[Any]:
     work = {
         **only_id,
         "X-Panels-Executor-Incarnation": IDENTITY.executor_incarnation,
-        "X-Panels-Executor-Protocol": "22",
+        "X-Panels-Executor-Protocol": str(PROTOCOL_VERSION),
     }
     result = []
     async with proxy.session_factory() as client:
@@ -276,7 +278,7 @@ async def continue_core(endpoint: VpsExecutor, path: Path, proxy: HttpsProxy) ->
             "Accept-Encoding": "identity",
             "X-Panels-Executor-ID": "test-executor",
             "X-Panels-Executor-Incarnation": identity.executor_incarnation,
-            "X-Panels-Executor-Protocol": "22",
+            "X-Panels-Executor-Protocol": str(PROTOCOL_VERSION),
         }
         async with proxy.session_factory() as client:
             async with client.post(
@@ -389,9 +391,25 @@ async def continue_core(endpoint: VpsExecutor, path: Path, proxy: HttpsProxy) ->
         )
         release.set()
         assert type(await sending).__name__ == "PromptDeliverySuppressed"
-        await killing
+        with pytest.raises(PlannerError) as refused:
+            await killing
+        assert refused.value.code.value == "retry_later"
         endpoint.mailbox.put_child_command = original_put  # type: ignore[method-assign]
         await proof(await stop("withdraw"))
+        assert rows("SELECT stop_state FROM mac_runs WHERE conversation_id='withdraw'") == [
+            ["closed"]
+        ]
+        assert rows(
+            "SELECT 1 FROM executor_child_assignments "
+            "WHERE conversation_id='withdraw' AND closed_at_ms IS NOT NULL"
+        ) == [[1]]
+        state = core._conversations["withdraw"]
+        await until(
+            lambda: state.retained_child_reference is None and not state.child_is_quarantined
+        )
+        if state.retirement_task is not None:
+            await state.retirement_task
+        await core.kill("withdraw")
         ordinary = await launched("ordinary")
         watcher = tail.subscribe("ordinary")
         before = (
@@ -621,13 +639,6 @@ async def continue_core(endpoint: VpsExecutor, path: Path, proxy: HttpsProxy) ->
         await core.shutdown()
 
 
-@pytest.mark.xfail(
-    run=False,
-    reason=(
-        "expected-open P2: #916 staging protocol24 rejects TS22 file transport with "
-        "HTTP409 before its 8MiB transfer"
-    ),
-)
 def test_unit22_executor_real_wire(tmp_path: Path, request: pytest.FixtureRequest) -> None:
     started = time.perf_counter()
     homes = create_synthetic_homes(tmp_path)
@@ -790,7 +801,7 @@ def test_unit22_executor_real_wire(tmp_path: Path, request: pytest.FixtureReques
                             headers={
                                 "X-Panels-Executor-ID": "test-executor",
                                 "X-Panels-Executor-Incarnation": IDENTITY.executor_incarnation,
-                                "X-Panels-Executor-Protocol": "22",
+                                "X-Panels-Executor-Protocol": str(PROTOCOL_VERSION),
                             },
                         ) as response:
                             assert response.status == 400

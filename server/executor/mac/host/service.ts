@@ -141,6 +141,14 @@ export class MacService {
       inputs: new MacInputs(this.transfer, this.files, configuration.paths, on_failure),
       now_ms: Date.now,
       new_update_id: () => randomUUID().replaceAll('-', ''),
+      workspace_git: {
+        children: this.one_shot_children,
+        environment: adapters.environment,
+      },
+      register_workspace: (child, workspace) => this.client.register_workspace(child, workspace),
+      retire_workspace: (state, workspace) => this.client.retire_workspace(state, workspace),
+      retirement_is_committed: (state, workspace) =>
+        this.client.retire_workspace(state, workspace, { replay: true }),
       cleanup: {
         runtime: this.worker_supervision,
         read_commands: read_cleanup_commands(journal),
@@ -207,6 +215,7 @@ export class MacService {
     this.updates = bindings.updates(context);
     this.lease = new MacLeaseLoop({
       client: this.client,
+      workspace_root: configuration.paths.artifacts,
       presence: this.presence,
       outbox,
       journal,

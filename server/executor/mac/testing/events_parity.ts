@@ -29,6 +29,7 @@ import {
   record_commands,
   pending_envelopes,
   close_fixture_owners,
+  unexpected_workspaces,
   fixture_cleanup_dependencies,
 } from './runner_fixture.ts';
 import type { FixtureStores } from './runner_fixture.ts';
@@ -142,6 +143,7 @@ try {
     settled: () => cleanup_dependencies.runtime.shutdown_settled,
   });
   const runner_options: MacRunnerOptions = {
+    ...unexpected_workspaces,
     incarnation: 'inc',
     journal,
     outbox: store,

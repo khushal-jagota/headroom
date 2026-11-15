@@ -15,6 +15,7 @@ from typing import Any, cast
 from aiohttp import web
 from tests.support.synthetic_homes import create_synthetic_homes
 
+from planner.execution_configuration import PROTOCOL_VERSION
 from planner.executor import protocol as p
 from planner.executor.credential_file import read_credential
 from planner.executor.diagnostics import ConnectionDiagnostics, ConnectionPhase
@@ -23,13 +24,19 @@ from planner.executor.mac_http import ExecutorHttpError, MacHttpClient, failure_
 ROOT = Path(__file__).resolve().parents[3]
 INC = "00000000-0000-0000-0000-000000000001"
 IDENTITY = dict(
-    protocol_version=22,
+    protocol_version=PROTOCOL_VERSION,
     application_revision="synthetic",
     spool_format_version=5,
     executor_incarnation=INC,
     connection_generation=0,
 )
 CHILD = dict(conversation_id="conversation", child_id="child", executor_incarnation=INC)
+WORKSPACE = dict(
+    machine_id="00000000-0000-0000-0000-000000000002",
+    workspace_id="00000000-0000-0000-0000-000000000003",
+)
+WORKSPACE_STATE = dict(ticket_id="t_abcdefgh", ended_at=1700000000, deleted=True)
+WORKSPACE_TICKETS = ("t_abcdefgh", "t_jkmnpqrs")
 
 
 def typed(name: str, value: Any) -> Any:
@@ -99,6 +106,10 @@ def fixtures(content: bytes) -> tuple[dict[str, str], dict[str, Any]]:
             ]
         ),
         "FileUploadRequest": dict(child=CHILD, manifest=manifest),
+        "ChildReference": CHILD,
+        "WorkspaceIdentity": WORKSPACE,
+        "WorkspaceState": WORKSPACE_STATE,
+        "WorkspaceStatesRequest": dict(ticket_ids=WORKSPACE_TICKETS),
     }
     replies = {
         "lease": dict(
@@ -137,6 +148,13 @@ def fixtures(content: bytes) -> tuple[dict[str, str], dict[str, Any]]:
             stop=None,
         ),
         "read": {"data": ["one", "λ"], "integer": 123456789, "float": 1.0},
+        "workspace_states": dict(
+            states=[
+                WORKSPACE_STATE,
+                dict(ticket_id=WORKSPACE_TICKETS[1], ended_at=None, deleted=False),
+            ],
+            at_vps_ms=1700000000999,
+        ),
     }
     return {key: encoded(key, typed(key, value)) for key, value in roots.items()}, replies
 
@@ -226,6 +244,27 @@ async def reference(
         await save(lambda: client.poll_commands(1, 0))
         await client.reset()
         await save(lambda: client.read(value("LiveReadRequest")), "JsonObject")
+        await save(lambda: client.workspace_states(WORKSPACE_TICKETS), "WorkspaceStatesReply")
+
+        async def oversized_states() -> Any:
+            try:
+                return await client.workspace_states(WORKSPACE_TICKETS)
+            except ValueError as error:
+                assert str(error) == "executor response exceeds its size bound"
+                raise
+
+        await save(oversized_states)
+        await save(
+            lambda: client.register_workspace(value("ChildReference"), value("WorkspaceIdentity"))
+        )
+        await save(
+            lambda: client.retire_workspace(value("WorkspaceState"), value("WorkspaceIdentity"))
+        )
+        await save(
+            lambda: client.retire_workspace(
+                value("WorkspaceState"), value("WorkspaceIdentity"), replay=True
+            )
+        )
     finally:
         await client.close()
     logs: list[str] = []
@@ -368,6 +407,35 @@ def test_unit22_mac_http(tmp_path: Path, record_property: Any) -> None:
             elif path == "/api/executor/reads":
                 p.decode_bounded(body, p.LiveReadRequest)
                 reply = encoded("JsonObject", replies["read"])
+            elif path == "/api/executor/workspaces/states":
+                request_states = p.decode_bounded(body, p.WorkspaceStatesRequest, limit=16 * 1024)
+                assert request_states.ticket_ids == WORKSPACE_TICKETS
+                reply = encoded(
+                    "WorkspaceStatesReply",
+                    typed("WorkspaceStatesReply", replies["workspace_states"]),
+                )
+                if index:
+                    # Valid JSON exceeds only the states read cap, not the general envelope cap.
+                    return web.Response(
+                        body=reply.encode() + b" " * (16 * 1024 + 1 - len(reply.encode())),
+                        content_type="application/json",
+                    )
+            elif path == "/api/executor/workspaces/register":
+                registration = p.decode_bounded(body, p.WorkspaceRegistrationRequest)
+                assert registration == typed(
+                    "WorkspaceRegistrationRequest", dict(child=CHILD, workspace=WORKSPACE)
+                )
+                return web.Response(status=204)
+            elif path == "/api/executor/workspaces/retire":
+                retirement = p.decode_bounded(body, p.WorkspaceRetirementRequest)
+                assert retirement == typed(
+                    "WorkspaceRetirementRequest",
+                    dict(state=WORKSPACE_STATE, workspace=WORKSPACE, replay=bool(index)),
+                )
+                reply = encoded(
+                    "WorkspaceRetirementReply",
+                    typed("WorkspaceRetirementReply", dict(authorized=bool(index))),
+                )
             elif path.endswith("/live") or path.startswith("/api/executor/uploads/"):
                 return web.Response(status=204)
             elif "/files/" in path:
@@ -460,8 +528,11 @@ def test_unit22_mac_http(tmp_path: Path, record_property: Any) -> None:
             )
             assert actual == expected
             assert traces[0] == traces[1]
+            assert expected["results"][-5:] == [
+                replies["workspace_states"], {"failure": "validation"}, None, False, True
+            ]
             assert (tmp_path / "node-target").read_bytes() == content
-            assert len(traces[0]) == 20
+            assert len(traces[0]) == 25
         finally:
             await runner.cleanup()
 

@@ -7,10 +7,14 @@ import { read_credential, write_credential } from '../../credential_file.ts';
 import { decode_bounded, encode_bounded, ExecutorValidationError } from '../../protocol.ts';
 import type {
   CommandOutcomeReply,
+  ChildReference,
   ItemBatch,
   LeaseRequest,
   LiveEventBatch,
   LiveReadRequest,
+  WorkspaceIdentity,
+  WorkspaceState,
+  WorkspaceStatesReply,
 } from '../../wire.generated.ts';
 import type { CanonicalReader } from '../storage/journal_contracts.ts';
 import * as settings from '../configuration.ts';
@@ -254,6 +258,62 @@ export class MacHttpClient {
     });
     if (reply.status !== 200) throw http_error(reply.status, reply.body);
     return decode_bounded(reply.body, 'JsonObject');
+  }
+  async workspace_states(
+    ticket_ids: readonly string[],
+    signal?: AbortSignal,
+  ): Promise<WorkspaceStatesReply> {
+    const reply = await this.json(
+      {
+        loop: 'reads',
+        method: 'POST',
+        path: '/api/executor/workspaces/states',
+        body: encode_bounded({ ticket_ids: [...ticket_ids] }, 'WorkspaceStatesRequest', {
+          limit: settings.MAX_WORKSPACE_STATES_BYTES,
+        }),
+        timeout: settings.LIVE_READ_TIMEOUT_SECONDS,
+        signal,
+      },
+      settings.MAX_WORKSPACE_STATES_BYTES,
+    );
+    if (reply.status !== 200) throw http_error(reply.status, reply.body);
+    return decode_bounded(reply.body, 'WorkspaceStatesReply', {
+      limit: settings.MAX_WORKSPACE_STATES_BYTES,
+    });
+  }
+  async register_workspace(
+    child: ChildReference,
+    workspace: WorkspaceIdentity,
+    signal?: AbortSignal,
+  ): Promise<void> {
+    const reply = await this.json({
+      loop: 'reads',
+      method: 'POST',
+      path: '/api/executor/workspaces/register',
+      body: encode_bounded({ child, workspace }, 'WorkspaceRegistrationRequest'),
+      timeout: settings.LIVE_READ_TIMEOUT_SECONDS,
+      signal,
+    });
+    if (reply.status !== 204) throw http_error(reply.status, reply.body);
+  }
+  async retire_workspace(
+    state: WorkspaceState,
+    workspace: WorkspaceIdentity,
+    options: { replay?: boolean; signal?: AbortSignal } = {},
+  ): Promise<boolean> {
+    const reply = await this.json({
+      loop: 'reads',
+      method: 'POST',
+      path: '/api/executor/workspaces/retire',
+      body: encode_bounded(
+        { state, workspace, replay: options.replay ?? false },
+        'WorkspaceRetirementRequest',
+      ),
+      timeout: settings.LIVE_READ_TIMEOUT_SECONDS,
+      signal: options.signal,
+    });
+    if (reply.status !== 200) throw http_error(reply.status, reply.body);
+    return decode_bounded(reply.body, 'WorkspaceRetirementReply').authorized;
   }
   async post_live(
     conversation_id: string,

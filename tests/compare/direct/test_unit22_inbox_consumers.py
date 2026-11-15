@@ -74,13 +74,6 @@ def rows(path: str) -> dict[str, Any]:
         }
 
 
-@pytest.mark.xfail(
-    run=False,
-    reason=(
-        "expected-open P2: #916 staging protocol24 source identity fails TS22 canonical "
-        "inbox identity admission"
-    ),
-)
 def test_unit22_inbox_canonical_consumers(
     tmp_path: Path,
     request: pytest.FixtureRequest,

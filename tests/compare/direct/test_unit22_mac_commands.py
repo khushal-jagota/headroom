@@ -5,8 +5,11 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import sqlite3
 import threading
 import time
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import replace
 from pathlib import Path
 from typing import Any, cast
@@ -61,13 +64,46 @@ from planner.executor.protocol import (
     encode_value,
     type_adapter,
 )
+from planner.ticket_workspaces.contracts import RETENTION_SECONDS, WorkspaceState
+from planner.ticket_workspaces.data import (
+    authorize_retirement,
+    has_committed_retirement,
+    register_workspace,
+)
 
 NOW = 1_700_000_010_123
 HIGH = 123456799
 UPDATE_ID = "0123456789abcdef0123456789abcdef"
 
 
+def workspace_authority(root: Path) -> None:
+    root.mkdir(parents=True, exist_ok=True)
+    with sqlite3.connect(root / "authority.sqlite") as conn:
+        conn.executescript("""
+            CREATE TABLE tickets(id TEXT PRIMARY KEY,worker_step_claim TEXT);
+            CREATE TABLE ticket_workspace_lifecycle(
+                ticket_id TEXT PRIMARY KEY,ended_at INTEGER,deleted INTEGER);
+            CREATE TABLE ticket_workspace_retirements(
+                ticket_id TEXT,machine_id TEXT,workspace_id TEXT,authorized_at INTEGER,
+                PRIMARY KEY(ticket_id,machine_id,workspace_id));
+            CREATE TABLE ticket_workspace_conversations(
+                conversation_id TEXT PRIMARY KEY,ticket_id TEXT,machine_id TEXT,workspace_id TEXT);
+            CREATE TABLE conversations(
+                conversation_id TEXT PRIMARY KEY,identity_environment_variables TEXT);
+            CREATE TABLE conversation_lifecycle_facts(conversation_id TEXT,kind TEXT,status TEXT);
+            CREATE TABLE conversation_background_tasks(conversation_id TEXT);
+        """)
+        for ticket in ("t_abcdefgh", "t_jkmnpqrs", "t_stvwxyz0", "t_12345678"):
+            conn.execute("INSERT INTO tickets VALUES (?,'none')", (ticket,))
+            conn.execute("INSERT INTO ticket_workspace_lifecycle VALUES (?,?,0)",
+                         (ticket, NOW // 1000 - RETENTION_SECONDS - 1))
+            conn.execute("INSERT INTO conversations VALUES (?,?)", (ticket, json.dumps([
+                ["PLAN_TICKET_ID", ticket],
+            ])))
+
+
 def fixture(root: Path) -> dict[str, Any]:
+    workspace_authority(root / "managed-proof")
     child = ChildReference("inc", "child", "conversation")
     turn = TurnToken("conversation", HIGH)
     asks = [
@@ -101,6 +137,7 @@ def fixture(root: Path) -> dict[str, Any]:
         workspace_path_policy=WorkspacePathPolicy.absolute,
     )
     start = replace(base, resolved_start=resolved, workspace_home_relative=None)
+    assert resolved.role_materials is not None
     add("start", start)
     prompt = WritePrompt(
         content=(MessageText("accepted"),),
@@ -200,7 +237,197 @@ def fixture(root: Path) -> dict[str, Any]:
     return dict(
         commands={key: canonical(ChildCommand, value) for key, value in commands.items()},
         asks=[canonical(AskReference, ask) for ask in asks],
+        workspace_commands={
+            key: canonical(ChildCommand, replace(
+                commands["start"], command_id="workspace-" + key,
+                child=replace(child, child_id="workspace-" + key,
+                              conversation_id="workspace-" + key),
+                arguments=replace(start, resolved_start=replace(
+                    resolved, conversation_id="workspace-" + key,
+                    workspace_path_policy=WorkspacePathPolicy.executor_default,
+                    role_materials=replace(resolved.role_materials,
+                        identity_environment_variables=(
+                            ("PLAN_TICKET_ID", ticket), ("PLAN_TICKET_WORKSPACE_MANAGED", "1"),
+                        )),
+                )),
+            ))
+            for key, ticket in zip(("one", "two", "failure", "swap"),
+                                   ("t_abcdefgh", "t_jkmnpqrs", "t_stvwxyz0", "t_12345678"),
+                                   strict=True)
+        },
     )
+
+
+async def managed_workspace_phase(
+    root: Path, data: dict[str, Any], patch: pytest.MonkeyPatch
+) -> Any:
+    """The command owner needs real preparation and registration, not another Git matrix."""
+    paths = ExecutorPaths(root / "state")
+    commands = {key: type_adapter(ChildCommand).validate_json(raw)
+                for key, raw in data["workspace_commands"].items()}
+    machine = "1" * 32
+    for index, command in enumerate(commands.values(), 1):
+        assert isinstance(command.arguments, StartRun)
+        materials = command.arguments.resolved_start.role_materials
+        assert materials is not None
+        ticket = dict(materials.identity_environment_variables)["PLAN_TICKET_ID"]
+        folder = paths.artifacts / ticket
+        folder.mkdir(parents=True)
+        (folder / ".panels-workspace.json").write_text(json.dumps(dict(
+            ticket_id=ticket, machine_id=machine, workspace_id=f"{index:032x}",
+        )))
+    (paths.artifacts.parent / ".workspace-machine-id").write_text(machine)
+    calls: list[Any] = []
+    prepared: list[bool] = []
+    entered, release = asyncio.Event(), asyncio.Event()
+    stop_entered, stop_release, source_release = asyncio.Event(), asyncio.Event(), asyncio.Event()
+    stops = 0
+    grants = 0
+
+    @contextmanager
+    def authority() -> Iterator[sqlite3.Connection]:
+        conn = sqlite3.connect(root / "authority.sqlite")
+        conn.row_factory = sqlite3.Row
+        try:
+            with conn:
+                yield conn
+        finally:
+            conn.close()
+
+    def rows(table: str) -> list[Any]:
+        with authority() as conn:
+            return [dict(row) for row in conn.execute(f"SELECT * FROM {table} ORDER BY ticket_id")]
+
+    async def authorize(state: WorkspaceState, workspace: Any) -> bool:
+        nonlocal grants
+        grants += 1
+        with authority() as conn:
+            return authorize_retirement(conn, state, NOW // 1000, workspace)
+
+    async def committed(state: WorkspaceState, workspace: Any) -> bool:
+        with authority() as conn:
+            return has_committed_retirement(conn, state, workspace)
+
+    async def register(child: Any, workspace: Any) -> None:
+        calls.append(["register", as_object(child), dict(
+            machine_id=workspace.machine_id, workspace_id=workspace.workspace_id,
+        )])
+        key = child.child_id.removeprefix("workspace-")
+        arguments = commands[key].arguments
+        assert isinstance(arguments, StartRun)
+        materials = arguments.resolved_start.role_materials
+        assert materials is not None
+        ticket = dict(materials.identity_environment_variables)["PLAN_TICKET_ID"]
+        folder = paths.artifacts / ticket
+        marker_value = json.loads((folder / ".panels-workspace.json").read_text())
+        prepared.append(marker_value.get("preparing") is False
+                        and marker_value.get("repository") is None
+                        and (folder / "worktree").is_dir())
+        if key == "failure":
+            raise RuntimeError("scripted registration refused")
+        with authority() as conn:
+            register_workspace(conn, ticket, child.conversation_id, workspace)
+        if key == "one":
+            entered.set()
+            await release.wait()
+        if key == "swap":
+            marker = paths.artifacts / "t_12345678" / ".panels-workspace.json"
+            value = json.loads(marker.read_text())
+            value["workspace_id"] = "f" * 32
+            marker.write_text(json.dumps(value))
+
+    class Native:
+        async def start(self, resolved: Any, **_options: Any) -> None:
+            ticket = dict(resolved.role_materials.identity_environment_variables)["PLAN_TICKET_ID"]
+            calls.append(["start", ticket, str(resolved.workspace_folder.relative_to(root))])
+
+        async def stop(self) -> None:
+            nonlocal stops
+            stops += 1
+            if stops == 1:
+                stop_entered.set()
+                await stop_release.wait()
+
+    def factory(resolved: Any) -> Any:
+        ticket = dict(resolved.role_materials.identity_environment_variables)["PLAN_TICKET_ID"]
+        calls.append(["factory", ticket])
+        return lambda **_options: Native()
+
+    runner, box, journal = make_runner(
+        patch, root=root, now_ms=NOW, paths=paths, workspace_home=root,
+        factory=factory, files=None, live=None, workspace_callbacks={
+            "register_workspace": register, "retire_workspace": authorize,
+            "retirement_is_committed": committed,
+        },
+    )
+    record_commands(
+        journal, {command.command_id: command for command in commands.values()}, now_ms=NOW
+    )
+    first = asyncio.create_task(runner.run(commands["one"]))
+    registration_entered = asyncio.create_task(entered.wait())
+    try:
+        await asyncio.wait((first, registration_entered), return_when=asyncio.FIRST_COMPLETED)
+        if first.done() and not entered.is_set():
+            raise AssertionError(f"Managed registration never started: {as_object(await first)}")
+        await registration_entered
+        second = await runner.run(commands["two"])
+        concurrent = not first.done() and second.disposition is CommandDisposition.succeeded
+        release.set()
+        outcomes = [await first, second]
+        outcomes.extend([await runner.run(commands[key]) for key in ("failure", "swap")])
+        retained = sorted(child.ticket_id for child in runner._children.values())
+        state = WorkspaceState("t_abcdefgh", NOW // 1000 - RETENTION_SECONDS - 1, False)
+        folder = paths.artifacts / state.ticket_id
+        source = runner.source_work(commands["one"].child, source_release.wait)
+        await runner.cleanup_workspaces((state,), NOW // 1000)
+        busy = folder.exists() and grants == 0 and stops == 0
+        source_release.set()
+        await source
+        original_add = box.add
+        fail_append = True
+
+        def append(entry: Any, **options: Any) -> Any:
+            nonlocal fail_append
+            if fail_append and entry.submission_id.startswith("stopped_"):
+                fail_append = False
+                raise OSError("scripted workspace output failure")
+            return original_add(entry, **options)
+
+        patch.setattr(box, "add", append)
+        cleanup = asyncio.create_task(runner.cleanup_workspaces((state,), NOW // 1000))
+        await stop_entered.wait()
+        held = (
+            folder.exists() and len(rows("ticket_workspace_retirements")) == 1
+            and not cleanup.done()
+        )
+        stop_release.set()
+        await cleanup
+        retained_output = folder.exists() and commands["one"].child.child_id in runner._children
+        await runner.cleanup_workspaces((state,), NOW // 1000)
+        unpublished = folder.exists() and grants == 1 and stops == 1
+        child = runner._children[commands["one"].child.child_id]
+        assert await runner._retire_workspace_child(child)
+        await runner.cleanup_workspaces((state,), NOW // 1000)
+        cleanup_evidence = dict(
+            facts=[busy, held, retained_output, unpublished, not folder.exists()],
+            grants=rows("ticket_workspace_retirements"),
+            registered=rows("ticket_workspace_conversations"),
+            pending=pending_envelopes(box), stops=stops,
+        )
+        return dict(calls=calls, concurrent=concurrent, prepared=prepared,
+                    outcomes=[as_object(value) for value in outcomes],
+                    retained=retained, cleanup=cleanup_evidence)
+    finally:
+        release.set()
+        stop_release.set()
+        source_release.set()
+        registration_entered.cancel()
+        await asyncio.gather(registration_entered, return_exceptions=True)
+        await asyncio.gather(first, return_exceptions=True)
+        for child in runner._children.values():
+            await child.native.stop()
+        journal.close()
+        box.close()
 
 
 async def reference(root: Path, data: dict[str, Any], patch: pytest.MonkeyPatch) -> dict[str, Any]:
@@ -578,6 +805,7 @@ async def reference(root: Path, data: dict[str, Any], patch: pytest.MonkeyPatch)
             unpublished_before_reopen=before,
             pending=pending_rows,
             results=results,
+            workspace=await managed_workspace_phase(root / "managed-proof", data, patch),
         )
     finally:
         source_release.set()
@@ -624,7 +852,31 @@ def test_unit22_mac_commands(
             "error_message": "required source publication failed",
         }
         source_error["error_type"] = "Error"
+    # P3 retains native-stop completion while its exact FIFO publication retries.
+    # Python repeats that native stop. No outcome, grant, fence, or output differs.
+    python_workspace_stops = expected["workspace"]["cleanup"]["stops"]
+    native_workspace_stops = observed["parity"]["workspace"]["cleanup"]["stops"]
+    assert python_workspace_stops == 2 and native_workspace_stops == 1
+    expected["workspace"]["cleanup"]["stops"] = native_workspace_stops
     assert observed["parity"] == expected
+    workspace = expected["workspace"]
+    assert workspace["concurrent"] and workspace["retained"] == ["t_abcdefgh", "t_jkmnpqrs"]
+    assert workspace["prepared"] == [True] * 4
+    assert workspace["cleanup"]["facts"] == [True] * 5
+    assert workspace["cleanup"]["grants"] == [dict(
+        ticket_id="t_abcdefgh", machine_id="1" * 32, workspace_id=f"{1:032x}",
+        authorized_at=NOW // 1000,
+    )]
+    assert len(workspace["cleanup"]["pending"]) == 1
+    assert workspace["cleanup"]["pending"][0]["submission_id"] == "stopped_" + hashlib.sha256(
+        b"workspace_stop_workspace-one"
+    ).hexdigest()
+    assert [row[0] for row in workspace["calls"]] == [
+        "register", "register", "factory", "start", "factory", "start", "register", "register",
+    ]
+    assert [value["disposition"] for value in workspace["outcomes"]] == [
+        "succeeded", "succeeded", "refused", "refused",
+    ]
     accepted = dict(expected["outcomes"])
     assert accepted["prompt"]["result"]["agent_acceptance_proven"] is True
     assert accepted["maintenance-prompt"]["result"]["agent_acceptance_proven"] is False
@@ -645,5 +897,12 @@ def test_unit22_mac_commands(
             "python": "RuntimeError",
             "typescript": "Error",
             "preserved": "uncertain disposition, command identity, and original error message",
+        },
+        native_workspace_stop_difference={
+            "command": "workspace_stop_workspace-one",
+            "python": python_workspace_stops,
+            "typescript": native_workspace_stops,
+            "reason": "P3 retains completed native stop across FIFO publication retry",
+            "preserved": "all outcomes, SQL rows, custody fences, and exact stop output bytes",
         },
     )

@@ -37,6 +37,7 @@ import {
   FILE_TRANSFER_STALL_SECONDS,
   TRANSFER_CHUNK_BYTES,
   MAX_ENVELOPE_BYTES,
+  MAX_WORKSPACE_STATES_BYTES,
   MAX_COMMAND_OUTCOME_REPORT_BYTES,
   MAX_ITEM_BATCH_BYTES,
   MAX_MAILBOX_POLL_BYTES,
@@ -395,6 +396,54 @@ export function create_executor_routes(services: ExecutorHttpServices): FastifyP
         } finally {
           reply.raw.off('close', disconnected);
         }
+      }),
+    );
+    app.post(
+      '/api/executor/workspaces/states',
+      work(async (request, reply) => {
+        const { endpoint, identity } = await current_for(request);
+        const query = decode(
+          await body(request, MAX_WORKSPACE_STATES_BYTES),
+          'WorkspaceStatesRequest',
+          MAX_WORKSPACE_STATES_BYTES,
+        );
+        return typed_reply(
+          reply,
+          await endpoint.workspace_states(identity, query),
+          'WorkspaceStatesReply',
+          MAX_WORKSPACE_STATES_BYTES,
+        );
+      }),
+    );
+    app.post(
+      '/api/executor/workspaces/register',
+      work(async (request, reply) => {
+        const { endpoint, identity } = await current_for(request);
+        const registration = decode(
+          await body(request, MAX_ENVELOPE_BYTES),
+          'WorkspaceRegistrationRequest',
+          MAX_ENVELOPE_BYTES,
+        );
+        await endpoint.register_workspace(identity, registration);
+        return reply.code(204).send();
+      }),
+    );
+    app.post(
+      '/api/executor/workspaces/retire',
+      work(async (request, reply) => {
+        const { endpoint, identity } = await current_for(request);
+        const retirement = decode(
+          await body(request, MAX_ENVELOPE_BYTES),
+          'WorkspaceRetirementRequest',
+          MAX_ENVELOPE_BYTES,
+        );
+        return typed_reply(
+          reply,
+          await endpoint.retire_workspace(identity, retirement.state, retirement.workspace, {
+            replay: retirement.replay,
+          }),
+          'WorkspaceRetirementReply',
+        );
       }),
     );
     app.post(

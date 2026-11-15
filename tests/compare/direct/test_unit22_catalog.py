@@ -99,13 +99,6 @@ def test_catalog_machine_storage(tmp_path: Path) -> None:
     assert len(expected["rows"]) == 2
 
 
-@pytest.mark.xfail(
-    run=False,
-    reason=(
-        "expected-open P2: #916 staging protocol24 source identity cannot pass TS22 "
-        "catalogue mailbox admission"
-    ),
-)
 def test_catalog_retention_refresh_and_owned_cancellation(
     tmp_path: Path, request: pytest.FixtureRequest
 ) -> None:

@@ -15,6 +15,7 @@ import {
   open_fixture_stores,
   close_fixture_stores,
   record_commands,
+  unexpected_workspaces,
 } from './runner_fixture.ts';
 import { write as write_record } from '../../../worker_supervision/records.ts';
 
@@ -104,6 +105,7 @@ try {
   const native_starts: string[] = [];
   const paths = new ExecutorPaths(root);
   const runner = new MacRunner({
+    ...unexpected_workspaces,
     incarnation: 'new',
     journal: stores.journal,
     outbox: stores.store,

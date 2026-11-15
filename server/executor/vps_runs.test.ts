@@ -84,6 +84,7 @@ test('answer admission refuses an exact unsafe turn before the core callback', a
     resume_undelivered_prompt: unused,
     await_late_steer: unused,
     confirm_remote_child_termination: unused,
+    confirm_remote_prompt_accepted: unused,
     stop_interrupted_remote_child: unused,
   };
   try {

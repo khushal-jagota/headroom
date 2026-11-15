@@ -55,6 +55,8 @@ from planner.conversation.lifecycle import (
 from planner.conversation.lifecycle_storage import apply_facts, read_facts
 from planner.conversation.logic.retained_turn import adopted_running_turn
 from planner.conversation.message_content import text_message_content
+from planner.conversation.start_admission import write_bindings
+from planner.conversation.start_admission.contracts import StartRequest
 from planner.core.authctx import RequestContext
 from planner.core.clock import TestClock as FixedClock
 from planner.core.contracts import PlannerError, Principal, PrincipalKind
@@ -69,19 +71,13 @@ from planner.executor.vps_presence import MacPresenceService
 from planner.executor.vps_presence_store import accept_lease_in_transaction
 from planner.executor.vps_runs import MacRuns
 from planner.machines.contracts import HOME_MACHINE_ID, ORIGINAL_MAC_MACHINE_ID
+from planner.ticket_workspaces.contracts import RETENTION_SECONDS, WorkspaceIdentity, WorkspaceState
 from planner.tickets.api import write_create_ticket
 
 ROOT = Path(__file__).resolve().parents[3]
 NOW = 1760000000000
 
 
-@pytest.mark.xfail(
-    run=False,
-    reason=(
-        "expected-open P2: #916 protocol24 replacement lease is refused by TS22, "
-        "so the retained-run drain remains unsettled at exit13"
-    ),
-)
 def test_retained_runs_rebuild_drain_and_rewrite(
     tmp_path: Path, request: pytest.FixtureRequest
 ) -> None:
@@ -218,7 +214,7 @@ def _runs_exchange(
         source.backup(destination)
     if machine_scope:
         _machine_runs_exchange(
-            path, candidate, homes, remote_ticket,
+            path, candidate, homes, remote_ticket, local_ticket,
             [ORIGINAL_MAC_MACHINE_ID, other],
             [children[0], replace(children[1], executor_incarnation=fresh.executor_incarnation)],
             lease_request(
@@ -619,6 +615,7 @@ def _machine_runs_exchange(
     candidate: Path,
     homes: dict[str, str],
     ticket: str,
+    local_ticket: str,
     machines: list[str],
     children: list[ChildReference],
     replacement: wire.LeaseRequest,
@@ -749,6 +746,9 @@ def _machine_runs_exchange(
                 adopted = registry.recover(child)
                 assert adopted is not None
                 recovered.append(adopted.initial_history_complete)
+            acknowledgement = await _prompt_acknowledgement_exchange(
+                path, registry, machines[0], children[0]
+            )
             with closing(connect(str(path))) as conn:
                 accept_lease_in_transaction(conn, replacement, NOW + 1, machines[1])
                 conn.commit()
@@ -765,9 +765,14 @@ def _machine_runs_exchange(
             cleanup = await _cleanup_recheck_exchange(
                 path, registry, machines, children[1], ticket
             )
+            workspaces = await _workspace_authority_exchange(
+                path, registry, machines, children, ticket, local_ticket
+            )
             return dict(
                 before=before,
+                acknowledgement=acknowledgement,
                 cleanup=cleanup,
+                workspaces=workspaces,
                 loaded=loaded,
                 named_only=named_only,
                 unknown_present=unknown_present,
@@ -798,6 +803,7 @@ def _machine_runs_exchange(
             path=str(candidate),
             now=NOW,
             ticket=ticket,
+            local_ticket=local_ticket,
             machines=machines,
             children=[wire.as_object(child) for child in children],
             replacement=wire.as_object(replacement),
@@ -826,6 +832,39 @@ def _machine_runs_exchange(
     assert not actual["unknown_present"] and not actual["unknown_allocated"]
     assert actual["refused_destinations"] == [True, True]
     assert actual["choices"] == [*machines, "local"]
+    acknowledgement = actual["acknowledgement"]
+    assert acknowledgement["before"] == [{
+        "identity": "ack-proof", "work_class": "worker", "destination": machines[0],
+        "conversation_id": children[0].conversation_id, "turn_number": 3,
+        "executor_incarnation": None, "child_id": None,
+    }]
+    assert acknowledgement["after_filters"] == acknowledgement["before"]
+    assert acknowledgement["calls_after_filters"] == 0
+    assert acknowledgement["after_proven"] == []
+    assert len(acknowledgement["confirmations"]) == 1
+    assert acknowledgement["confirmations"][0]["committed"]["state"] == "finished"
+    workspaces = actual["workspaces"]
+    assert workspaces["historical"] == [workspaces["states"]["historical"]] * 2
+    assert workspaces["states"]["historical"]["states"] == [{
+        "ticket_id": ticket, "ended_at": None, "deleted": False,
+    }]
+    assert workspaces["states"]["current"]["states"] == [{
+        "ticket_id": local_ticket, "ended_at": None, "deleted": False,
+    }]
+    assert all(refusal["unchanged"] for refusal in workspaces["refused"])
+    assert [refusal["error"]["error"]["code"] for refusal in workspaces["refused"]] == [
+        "agent_forbidden", "executor_incarnation_not_current", "agent_forbidden",
+        "agent_forbidden", "agent_forbidden", "agent_forbidden",
+    ]
+    assert workspaces["registered"] == [{
+        "conversation_id": children[0].conversation_id, "ticket_id": ticket,
+        **workspaces["physical"],
+    }]
+    assert workspaces["physical"]["machine_id"] not in machines
+    assert workspaces["retirement"] == [False, False, False, True, False, True]
+    assert workspaces["grants"] == [{
+        "ticket_id": ticket, **workspaces["physical"], "authorized_at": NOW // 1000,
+    }]
     assert [wait["machine_id"] for wait in actual["tagged_stalls"]] == [machines[1]]
     cleanup = actual["cleanup"]
     assert cleanup["held"] == [True] * 5 and all(cleanup["budgets"])
@@ -851,6 +890,114 @@ def _machine_runs_exchange(
             dict(seconds=time.perf_counter() - began, expected=expected, actual=actual),
             indent=2,
         ))
+
+
+async def _workspace_authority_exchange(
+    path: Path, registry: VpsExecutorRegistry, machines: list[str],
+    children: list[ChildReference], ticket: str, local_ticket: str,
+) -> dict[str, Any]:
+    """Separate historical executor custody from an exact physical retirement grant."""
+    first, second = (registry.get(machine) for machine in machines)
+    assert first is not None and second is not None
+    current = first.presence.current_identity()
+    other = second.presence.current_identity()
+    assert current is not None and other is not None
+    physical = WorkspaceIdentity(
+        "88888888-8888-4888-8888-888888888888", "99999999-9999-4999-8999-999999999999"
+    )
+    registration = wire.WorkspaceRegistrationRequest(children[0], physical)
+
+    def rows() -> dict[str, Any]:
+        with closing(connect(str(path))) as conn:
+            return {
+                name: [dict(row) for row in conn.execute(query)]
+                for name, query in {
+                    "registered": (
+                        "SELECT * FROM ticket_workspace_conversations ORDER BY conversation_id"
+                    ),
+                    "grants": (
+                        "SELECT * FROM ticket_workspace_retirements "
+                        "ORDER BY ticket_id,machine_id,workspace_id"
+                    ),
+                    "lifecycle": (
+                        "SELECT * FROM ticket_workspace_lifecycle ORDER BY ticket_id"
+                    ),
+                }.items()
+            }
+
+    async def refused(work: Any) -> dict[str, Any]:
+        before = rows()
+        try:
+            await work
+        except PlannerError as error:
+            return {"error": error.to_payload(), "unchanged": rows() == before}
+        raise AssertionError("Workspace authority unexpectedly accepted the request")
+
+    with closing(connect(str(path))) as conn:
+        conn.execute("UPDATE tickets SET machine_id=? WHERE id=?", (machines[1], local_ticket))
+        conn.commit()
+    historical = wire.WorkspaceStatesRequest((ticket, "t_zzzzzzzz"))
+    current_request = wire.WorkspaceStatesRequest((local_ticket,))
+    states = {
+        "historical": await first.workspace_states(current, historical),
+        "current": await second.workspace_states(other, current_request),
+    }
+    result: dict[str, Any] = {
+        "states": states,
+        "historical": [states["historical"], await second.workspace_states(other, historical)],
+        "physical": physical,
+        "refused": [
+            await refused(first.workspace_states(current, current_request)),
+            await refused(second.register_workspace(
+                replace(other, executor_incarnation=children[1].executor_incarnation),
+                replace(registration, child=children[1]),
+            )),
+            await refused(first.register_workspace(current, replace(
+                registration, child=replace(children[0], child_id="missing-child")
+            ))),
+            await refused(first.register_workspace(
+                current, replace(registration, child=children[1])
+            )),
+        ],
+    }
+    await first.register_workspace(current, registration)
+    result["registered"] = rows()["registered"]
+    ended = NOW // 1000 - RETENTION_SECONDS - 1
+    state = WorkspaceState(ticket, ended, False)
+    with closing(connect(str(path))) as conn:
+        conn.execute(
+            "UPDATE ticket_workspace_lifecycle SET ended_at=? WHERE ticket_id=?", (ended, ticket)
+        )
+        conn.commit()
+    result["refused"].extend([
+        await refused(second.retire_workspace(other, state, physical)),
+        await refused(first.retire_workspace(
+            current, state,
+            replace(physical, workspace_id="aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"),
+        )),
+    ])
+    retirement = [
+        (await first.retire_workspace(current, state, physical, replay=True)).authorized,
+        (await first.retire_workspace(
+            current, replace(state, ended_at=ended - 1), physical
+        )).authorized,
+        (await first.retire_workspace(current, state, physical)).authorized,
+    ]
+    with closing(connect(str(path))) as conn:
+        conn.execute("UPDATE tickets SET worker_step_claim='none' WHERE id=?", (ticket,))
+        conn.commit()
+    retirement.append((await first.retire_workspace(current, state, physical)).authorized)
+    with closing(connect(str(path))) as conn:
+        conn.execute(
+            "UPDATE ticket_workspace_lifecycle SET ended_at=NULL WHERE ticket_id=?", (ticket,)
+        )
+        conn.commit()
+    retirement.extend([
+        (await first.retire_workspace(current, state, physical)).authorized,
+        (await first.retire_workspace(current, state, physical, replay=True)).authorized,
+    ])
+    result.update(retirement=retirement, grants=rows()["grants"])
+    return result
 
 
 async def _cleanup_recheck_exchange(
@@ -976,5 +1123,103 @@ async def _cleanup_recheck_exchange(
         with closing(connect(str(path))) as conn:
             conn.executemany(
                 "DELETE FROM executor_commands WHERE command_id=?", [(key,) for key in ids]
+            )
+            conn.commit()
+
+
+async def _prompt_acknowledgement_exchange(
+    path: Path, registry: VpsExecutorRegistry, machine: str, source: ChildReference
+) -> dict[str, Any]:
+    endpoint = registry.get(machine)
+    assert endpoint is not None
+    owner, mailbox = endpoint.runs, endpoint.mailbox
+    turn = TurnToken(source.conversation_id, 3)
+    with closing(connect(str(path))) as conn:
+        write_bindings(conn, turn, (StartRequest("ack-proof", "worker", machine),))
+        conn.commit()
+    harness = _Harness(path, factory_wrapper=lambda _: registry)
+    core = harness.system
+    previous = getattr(owner, "conversations", None)
+    owner.conversations = core
+    confirmations: list[dict[str, Any]] = []
+    original = core.confirm_remote_prompt_accepted
+
+    def bindings() -> list[dict[str, Any]]:
+        with closing(connect(str(path))) as conn:
+            return [dict(row) for row in conn.execute(
+                "SELECT * FROM automatic_start_bindings ORDER BY identity"
+            )]
+
+    async def observed(reference: ChildReference, token: TurnToken) -> None:
+        with closing(connect(str(path))) as fresh:
+            row = fresh.execute(
+                "SELECT state,outcome_json FROM executor_commands WHERE command_id='ack-proven'"
+            ).fetchone()
+        confirmations.append({
+            "child": wire.encode_value(reference), "turn": wire.encode_value(token),
+            "committed": None if row is None else {
+                "state": row["state"], "outcome": json.loads(row["outcome_json"]),
+            },
+        })
+        await original(reference, token)
+
+    prompt = wire.ChildCommand(
+        "ack-generic", source, wire.ChildOperation.write_prompt, turn,
+        wire.WritePrompt(
+            content=text_message_content("ack"), sender_content=text_message_content("ack"),
+            sender_label="fixture", mode=PromptDeliveryMode.queue,
+        ),
+    )
+    current = endpoint.presence.current_identity()
+    assert current is not None
+
+    async def settle(command: wire.ChildCommand, payload: dict[str, Any]) -> None:
+        placed = await mailbox.put_child_command(command)
+        assert isinstance(placed, wire.MailboxCommand)
+        await mailbox.poll(current, 0, 0)
+        await mailbox.record_results(current, wire.CommandOutcomeReport((wire.CommandResult(
+            command.command_id, wire.CommandOutcome(
+                command.command_id, command.child, wire.CommandDisposition.succeeded, payload
+            ),
+        ),)))
+
+    try:
+        with patch.object(core, "confirm_remote_prompt_accepted", observed):
+            before = bindings()
+            await settle(prompt, {"kind": "prompt_accepted", "composed_content_delivered": True})
+            for command, outcome in (
+                (prompt, wire.CommandOutcome("ack-generic", source,
+                    wire.CommandDisposition.succeeded, {"agent_acceptance_proven": False})),
+                (prompt, wire.CommandOutcome("ack-generic", replace(source, child_id="wrong"),
+                    wire.CommandDisposition.succeeded, {"agent_acceptance_proven": True})),
+                (prompt, wire.CommandOutcome("ack-generic", source,
+                    wire.CommandDisposition.refused, {"agent_acceptance_proven": True})),
+            ):
+                owner._command_settled(
+                    wire.MailboxCommand(1, command.command_id, NOW, child_command=command),
+                    wire.CommandResult(command.command_id, outcome),
+                )
+            await asyncio.sleep(0)
+            after_filters, calls_after_filters = bindings(), len(confirmations)
+            await settle(replace(prompt, command_id="ack-proven"), {
+                "kind": "prompt_accepted", "composed_content_delivered": True,
+                "agent_acceptance_proven": True,
+            })
+            await asyncio.gather(*tuple(owner._tasks))
+            return {
+                "before": before, "after_filters": after_filters,
+                "calls_after_filters": calls_after_filters,
+                "confirmations": confirmations, "after_proven": bindings(),
+            }
+    finally:
+        await core.shutdown()
+        if previous is None:
+            del owner.conversations
+        else:
+            owner.conversations = previous
+        assert not harness.spawned_conversation_ids
+        with closing(connect(str(path))) as conn:
+            conn.execute(
+                "DELETE FROM executor_commands WHERE command_id IN ('ack-generic','ack-proven')"
             )
             conn.commit()

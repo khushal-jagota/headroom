@@ -22,7 +22,7 @@ Agent messages require an explicit recipient through `message.send`. Executor tr
 
 Live batches carry only message deltas, thinking notices, and tool progress. They use the current exact child's event sink and create no durable item receipt. Completed backend prose uses the item route for journal and receipt custody. The core does not turn it into an addressed notebook message. Lifecycle changes and other durable events also use that route. Live reads enter the existing application routes under the child's assigned principal; they do not grant arbitrary owner access.
 
-The Mac runner's `prompt_accepted` result carries the native provider's `agent_acceptance_proven` value exactly. Its default is false. A generic executor receipt keeps that default. The later VPS outcome-to-core confirmation seam remains port work.
+The Mac runner's `prompt_accepted` result carries the native provider's `agent_acceptance_proven` value exactly. Its default is false. A generic executor receipt keeps that default. A proven result awaits the core's exact-child and live-turn confirmation. Its admitted save retains the update barrier and runtime ownership until confirmation settles, including during shutdown.
 
 ## Routes and authority
 
@@ -42,6 +42,9 @@ Only the original configured executor can request bootstrap credentials, with no
 | GET | `/api/executor/commands/:command_id/files/:stored_file_id` | Authorized input of a waiting or delivered command |
 | POST | `/api/executor/reads` | Allowlisted application read as the assigned principal |
 | POST | `/api/executor/conversations/:conversation_id/live` | Transient events for the exact current child |
+| POST | `/api/executor/workspaces/states` | Bounded lifecycle states for local workspace maintenance |
+| POST | `/api/executor/workspaces/register` | Bind physical workspace identity to an exact open child |
+| POST | `/api/executor/workspaces/retire` | Grant or replay retirement for the registered physical generation |
 | GET | `/api/executor/update` | Real update service's current check |
 | GET | `/api/executor/update/:request_id/archive` | Real update service's selected archive |
 | GET | `/api/executor/update/prefetch/:archive_sha256` | Real update service's digest-selected prefetch |
@@ -64,13 +67,13 @@ Catalog cancellation withdraws its waiting command and completes that cleanup be
 
 The shared executor entrypoint also serves Linux. Linux default data paths use P5's `default_linux_executor_root` helper, with explicit `PLAN_EXECUTOR_ROOT` precedence. Relative nonempty XDG paths refuse. The supervisor uses admitted host Node for every Linux runtime and P5's exact PATH and entrypoint helpers. Retained runtime reads use `LINUX_EXECUTOR` target admission. Darwin installation assets keep their Mac paths even when the build host is Linux.
 
-This launch slice preserves ready-marker promotion, failed-trial rollback, and handoff custody. Worker cleanup, lease composition, and final protocol activation remain port work.
+The launch path preserves ready-marker promotion, failed-trial rollback, and handoff custody. Startup reconciles Worker cleanup before work begins. Leases carry the cached cleanup evidence under protocol 26.
 
 ## Shared wire
 
 Both TypeScript peers use `wire.schema.json` as the message contract. The same schemas generate `wire.generated.ts` and supply Ajv validation. The schema now describes Python wire protocol 26, including supervision protocol 24 inside start commands, cleanup evidence, and workspace messages. The spool format is 5 and the command journal format is 1.
 
-This schema preparation does not enable protocol 26 execution. Both runtime identities still advertise protocol 22 through `execution_configuration.ts`. Machine credentials, supervision, and workspace behavior remain port work before protocol 26 activation.
+Both runtime identities advertise protocol 26 through `execution_configuration.ts`. Machine credentials, supervision evidence, and workspace messages use that same contract. The presence owner retains an accepted lease when an optional update offer exceeds its response budget.
 
 Regenerate or check the types in an isolated development environment:
 
@@ -134,7 +137,7 @@ Accepted poll and large-replacement latency measurements remain in DEVIATIONS. G
 
 The mailbox uses the core's shared automatic-start admission owner. It restores the exact turn binding before dispatch admission and holds a refused start or prompt. Stop and Cancel can withdraw that waiting turn across poll pages. Unrelated controls can move a waiting conversation suffix behind them, while a delivered row prevents that move. Withdrawn turns release their in-memory reservations after commit. Held polls cap their admission wait at one second, so a released slot needs no new mailbox write.
 
-Replacement withdraws waiting commands in the lease transaction. Delivered commands settle from the successor's journal cursor. A successful stop result stays delivered until `finish_by_proof` supplies actual child-stop evidence. `publish_settlements` wakes one command's waiters before its listener, then advances to the next command. A listener failure leaves the whole committed batch durable.
+Replacement withdraws waiting commands in the lease transaction. Delivered commands settle from the successor's journal cursor. A successful stop result stays delivered until `finish_by_proof` supplies actual child-stop evidence. `publish_settlements` wakes one command's waiters before its listener, then advances to the next command without awaiting returned promises. It joins those promises after publication, so an outcome save retains the core's proven prompt acknowledgement through shutdown and the update barrier. A synchronous listener throw stops later notifications and still joins earlier promises. Every listener failure leaves the whole committed batch durable.
 
 Sequence, turn, and recovery counters use safe number values. Command and outcome rows use native JSON after schema validation.
 

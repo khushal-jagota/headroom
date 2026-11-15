@@ -135,6 +135,9 @@ export class VpsExecutorRegistry {
     this.admit();
     this.configuration = { core, app, barrier };
     for (const owner of this.owned) owner.configure(core, app, barrier);
+    core.configure_worker_cleanup_recheck((source, ticket_id) =>
+      this.recheck_cleanup(source, ticket_id),
+    );
   }
 
   bind_updates(service: MacUpdateServiceContract): void {

@@ -1,4 +1,5 @@
 import { ORIGINAL_MAC_MACHINE_ID } from '../execution_identity.ts';
+import { PROTOCOL_VERSION } from '../execution_configuration.ts';
 /** Actual startup preserves retained turns and keeps away/unconfigured Mac work remote. */
 import { dirname, join } from 'node:path';
 import { expect, test, vi } from 'vitest';
@@ -30,6 +31,12 @@ import {
 import type { StallSource } from '../stalls/contracts.ts';
 import { MacUpdateService } from '../environments/updates/mac/service.ts';
 import type { MacUpdateServiceContract } from '../environments/updates/mac/contracts.ts';
+import { Deferred } from '../conversation/runtime/state.ts';
+import { write_bindings } from '../conversation/start_admission/index.ts';
+import { text_message_content } from '../conversation/message_content.ts';
+import { decode_value } from '../executor/protocol.ts';
+import { createReadAccess } from '../core/database/index.ts';
+import { acquireRuntimeOwnership } from '../core/locks/index.ts';
 
 const incarnation = '11111111-1111-4111-8111-111111111111';
 function retained_fixture() {
@@ -90,7 +97,7 @@ function retained_fixture() {
         ORIGINAL_MAC_MACHINE_ID,
         incarnation,
         JSON.stringify({
-          protocol_version: 22,
+          protocol_version: PROTOCOL_VERSION,
           application_revision: 'synthetic',
           spool_format_version: 5,
           executor_incarnation: incarnation,
@@ -253,12 +260,172 @@ test('configured restart adopts before reconciliation and Mac locality never sel
       }),
     ).toThrow('Execution admission invariant violated');
     expect(local).not.toHaveBeenCalled();
+    await prompt_acknowledgement_shutdown(server, core, endpoint, context, path);
   } finally {
     await server?.close({ deadline: performance.now() / 1000 + 5 });
     await server?.shutdown_settled;
     vi.unstubAllEnvs();
   }
 });
+
+async function prompt_acknowledgement_shutdown(
+  server: StartedServer,
+  core: SqliteProcessConversationSystem,
+  endpoint: VpsExecutor,
+  context: ConversationCompositionContext,
+  path: string,
+): Promise<void> {
+  const state = core.conversations.get('kept')!,
+    reference = state.retained_child_reference!;
+  const turn = state.running_turn!.token;
+  context.database.write((tx) =>
+    write_bindings(tx, turn, [
+      {
+        identity: 'shutdown-ack',
+        work_class: 'worker',
+        destination: ORIGINAL_MAC_MACHINE_ID,
+      },
+    ]),
+  );
+  context.database.read((sql) => core.start_admission.restore_bindings(sql, turn));
+  const command = decode_value(
+    {
+      command_id: 'shutdown-ack-prompt',
+      child: reference,
+      operation: 'write_prompt',
+      turn,
+      arguments: {
+        kind: 'write_prompt',
+        content: text_message_content('proof'),
+        sender_content: text_message_content('proof'),
+        sender_label: 'fixture',
+        mode: 'queue',
+      },
+    },
+    'ChildCommand',
+  );
+  await endpoint.mailbox.put_child_command(command);
+  const identity = endpoint.presence.current_identity()!;
+  await endpoint.mailbox.poll(identity, 0, 0);
+  const save_release = new Deferred<void>(),
+    confirmation_release = new Deferred<void>();
+  const original_save = endpoint.mailbox.record_results.bind(endpoint.mailbox);
+  const held_save = vi
+    .spyOn(endpoint.mailbox, 'record_results')
+    .mockImplementation(async (...args) => {
+      await save_release.promise;
+      return original_save(...args);
+    });
+  const confirm = vi.spyOn(core, 'confirm_remote_prompt_accepted');
+  const runs_stop = vi.spyOn(endpoint.runs, 'stop');
+  const read_database = () => context.database.read((sql) => sql.get('SELECT 1 AS open'));
+  let save: Promise<unknown> | undefined, closing: Promise<void> | undefined;
+  let raw_closed = false,
+    endpoint_closed = false,
+    save_settled = false;
+  try {
+    save = endpoint.record_outcomes(identity, {
+      outcomes: [
+        {
+          command_id: command.command_id,
+          child_outcome: {
+            command_id: command.command_id,
+            child: reference,
+            disposition: 'succeeded',
+            result: {
+              kind: 'prompt_accepted',
+              composed_content_delivered: true,
+              agent_acceptance_proven: true,
+            },
+          },
+          model_list: null,
+        },
+      ],
+    });
+    void save.then(
+      () => {
+        save_settled = true;
+      },
+      () => {
+        save_settled = true;
+      },
+    );
+    await vi.waitFor(() => expect(held_save).toHaveBeenCalledOnce());
+    closing = server.close({ deadline: performance.now() / 1000 + 1 });
+    void closing.catch(() => {});
+    expect(core.shutting_down).toBe(true);
+    // Shutdown clears earlier barriers. This hold belongs to the acknowledgement admitted later.
+    state.steer_settlements.add(confirmation_release);
+    void server.shutdown_settled.then(
+      () => {
+        raw_closed = true;
+      },
+      () => {},
+    );
+    void endpoint.settled().then(
+      () => {
+        endpoint_closed = true;
+      },
+      () => {},
+    );
+    expect(runs_stop).not.toHaveBeenCalled();
+    expect(read_database()).toEqual({ open: 1 });
+    expect(endpoint.update_barrier).toBeDefined();
+    expect(endpoint.update_barrier!.drained).toBe(false);
+    expect(() => acquireRuntimeOwnership(path)).toThrow('ConversationRuntimeAlreadyOwned');
+    save_release.resolve(undefined);
+    await vi.waitFor(() => expect(confirm).toHaveBeenCalledOnce());
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(confirm).toHaveBeenCalledWith(reference, turn);
+    expect(state.settlement_tasks.size).toBeGreaterThan(0);
+    expect(save_settled).toBe(false);
+    expect(endpoint.update_barrier!.drained).toBe(false);
+    expect(runs_stop).not.toHaveBeenCalled();
+    expect(raw_closed || endpoint_closed).toBe(false);
+    expect(read_database()).toEqual({ open: 1 });
+    const fresh = createReadAccess(path);
+    try {
+      expect(
+        fresh.read((sql) =>
+          sql.get<{ state: string }>('SELECT state FROM executor_commands WHERE command_id=?', [
+            command.command_id,
+          ]),
+        ),
+      ).toEqual({ state: 'finished' });
+      expect(fresh.read((sql) => sql.all('SELECT identity FROM automatic_start_bindings'))).toEqual(
+        [{ identity: 'shutdown-ack' }],
+      );
+    } finally {
+      fresh.close();
+    }
+    state.steer_settlements.delete(confirmation_release);
+    confirmation_release.resolve(undefined);
+    await save;
+    expect(save_settled).toBe(true);
+    expect(endpoint.update_barrier!.drained).toBe(true);
+    await server.shutdown_settled;
+    await closing;
+    expect(raw_closed && endpoint_closed).toBe(true);
+    expect(read_database).toThrow('database is closed');
+    const successor = acquireRuntimeOwnership(path),
+      after = createReadAccess(path);
+    try {
+      expect(after.read((sql) => sql.all('SELECT * FROM automatic_start_bindings'))).toEqual([]);
+    } finally {
+      after.close();
+      successor.close();
+    }
+  } finally {
+    save_release.resolve(undefined);
+    state.steer_settlements.delete(confirmation_release);
+    confirmation_release.resolve(undefined);
+    await save?.catch(() => {});
+    await closing?.catch(() => {});
+    held_save.mockRestore();
+    confirm.mockRestore();
+    runs_stop.mockRestore();
+  }
+}
 
 // The earlier composed-host case supplied its own executor constructor and could
 // not catch missing production revision or inventory handoff.

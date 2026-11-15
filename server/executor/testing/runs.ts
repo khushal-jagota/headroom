@@ -27,8 +27,11 @@ import { SqliteProcessConversationSystem } from '../../conversation/system.ts';
 import { adopted_running_turn } from '../../conversation/logic/retained_turn.ts';
 import { accept_lease_in_transaction } from '../vps_presence_store.ts';
 import { isDeepStrictEqual } from 'node:util';
+import { write_bindings } from '../../conversation/start_admission/index.ts';
 import { setImmediate as yield_turn } from 'node:timers/promises';
 import type { PresenceRecord } from '../contracts.ts';
+import { PlannerError } from '../../core/contracts.ts';
+import { RETENTION_SECONDS } from '../../ticket_workspaces/contracts.ts';
 const spec = JSON.parse(readFileSync(0, 'utf8'));
 if (spec.mode === 'machines') {
   Date.now = () => spec.now;
@@ -74,6 +77,245 @@ if (spec.mode === 'machines') {
       owns: references.map((child) => owner.owns_conversation(child.conversation_id)),
       stalls: db.read((sql) => owner.stall_source().tracked_waits(sql, spec.now)),
     }));
+  const prompt_acknowledgement = async () => {
+    const owner = owners[0]!,
+      endpoint = endpoints[0]!,
+      mailbox = owner.mailbox;
+    const source = references[0]!,
+      turn = { conversation_id: source.conversation_id, turn_number: 3 };
+    db.write((tx) =>
+      write_bindings(tx, turn, [
+        {
+          identity: 'ack-proof',
+          work_class: 'worker',
+          destination: spec.machines[0],
+        },
+      ]),
+    );
+    const factory = registry.as_factory();
+    const core = new SqliteProcessConversationSystem({
+      store: new ConversationStore(db),
+      backend_child_factories: { codex: factory, claude: factory, hermes: factory },
+      message_files: endpoint.message_files,
+      delivery_model_refusal: () => null,
+      execution_refusal: () => null,
+    });
+    const previous = owner.conversations;
+    owner.conversations = core;
+    const confirmations: Record<string, unknown>[] = [];
+    const original = core.confirm_remote_prompt_accepted.bind(core);
+    const bindings = () =>
+      db.read((sql) => sql.all('SELECT * FROM automatic_start_bindings ORDER BY identity'));
+    core.confirm_remote_prompt_accepted = async (reference, token) => {
+      const fresh = createDatabase(spec.path);
+      try {
+        const row = fresh.read((sql) =>
+          sql.get<{ state: string; outcome_json: string }>(
+            "SELECT state,outcome_json FROM executor_commands WHERE command_id='ack-proven'",
+          ),
+        );
+        confirmations.push({
+          child: reference,
+          turn: token,
+          committed: row ? { state: row.state, outcome: JSON.parse(row.outcome_json) } : null,
+        });
+      } finally {
+        fresh.close();
+      }
+      await original(reference, token);
+    };
+    const prompt = decode_value(
+      {
+        command_id: 'ack-generic',
+        child: source,
+        operation: 'write_prompt',
+        turn,
+        arguments: {
+          kind: 'write_prompt',
+          content: [{ type: 'text', text: 'ack' }],
+          sender_content: [{ type: 'text', text: 'ack' }],
+          sender_label: 'fixture',
+          mode: 'queue',
+        },
+      },
+      'ChildCommand',
+    );
+    const current = endpoint.presence.current_identity()!;
+    const outcome = (
+      payload: WireTypes['JsonObject'],
+      child = source,
+      disposition: WireTypes['CommandOutcome']['disposition'] = 'succeeded',
+    ): WireTypes['CommandOutcome'] => ({
+      command_id: 'ack-generic',
+      child,
+      disposition,
+      result: payload,
+    });
+    const settle = async (command: WireTypes['ChildCommand'], payload: WireTypes['JsonObject']) => {
+      const placed = await mailbox.put_child_command(command);
+      if (!('command_sequence' in placed)) throw new Error('Prompt was not admitted');
+      await mailbox.poll(current, 0, 0);
+      await mailbox.record_results(current, {
+        outcomes: [
+          {
+            command_id: command.command_id,
+            child_outcome: { ...outcome(payload), command_id: command.command_id },
+            model_list: null,
+          },
+        ],
+      });
+    };
+    try {
+      const before = bindings();
+      await settle(prompt, { kind: 'prompt_accepted', composed_content_delivered: true });
+      for (const [command, result] of [
+        [prompt, outcome({ agent_acceptance_proven: false })],
+        [prompt, outcome({ agent_acceptance_proven: true }, { ...source, child_id: 'wrong' })],
+        [prompt, outcome({ agent_acceptance_proven: true }, source, 'refused')],
+      ] as const)
+        mailbox.settled_listener!(
+          {
+            command_sequence: 1,
+            command_id: command.command_id,
+            created_at_vps_ms: spec.now,
+            child_command: command,
+            model_list_request: null,
+          },
+          { command_id: command.command_id, child_outcome: result, model_list: null },
+        );
+      await yield_turn();
+      const after_filters = bindings(),
+        calls_after_filters = confirmations.length;
+      await settle(
+        { ...prompt, command_id: 'ack-proven' },
+        {
+          kind: 'prompt_accepted',
+          composed_content_delivered: true,
+          agent_acceptance_proven: true,
+        },
+      );
+      await Promise.all([...(owner as unknown as { tasks: Set<Promise<unknown>> }).tasks]);
+      return {
+        before,
+        after_filters,
+        calls_after_filters,
+        confirmations,
+        after_proven: bindings(),
+      };
+    } finally {
+      await core.shutdown({ deadline: performance.now() / 1000 + 5 });
+      owner.conversations = previous;
+      db.write((tx) =>
+        tx.run("DELETE FROM executor_commands WHERE command_id IN ('ack-generic','ack-proven')"),
+      );
+    }
+  };
+  const workspace_authority = async () => {
+    const first = endpoints[0]!,
+      second = endpoints[1]!;
+    const current = first.presence.current_identity()!,
+      other = second.presence.current_identity()!;
+    const physical = {
+      machine_id: '88888888-8888-4888-8888-888888888888',
+      workspace_id: '99999999-9999-4999-8999-999999999999',
+    };
+    const registration = { child: references[0]!, workspace: physical };
+    const workspace_rows = () =>
+      db.read((sql) => ({
+        registered: sql.all(
+          'SELECT * FROM ticket_workspace_conversations ORDER BY conversation_id',
+        ),
+        grants: sql.all(
+          'SELECT * FROM ticket_workspace_retirements ORDER BY ticket_id,machine_id,workspace_id',
+        ),
+        lifecycle: sql.all('SELECT * FROM ticket_workspace_lifecycle ORDER BY ticket_id'),
+      }));
+    const refused = async (work: () => Promise<unknown>) => {
+      const before = workspace_rows();
+      try {
+        await work();
+      } catch (error) {
+        if (!(error instanceof PlannerError)) throw error;
+        return { error: error.toPayload(), unchanged: isDeepStrictEqual(workspace_rows(), before) };
+      }
+      throw new Error('Workspace authority unexpectedly accepted the request');
+    };
+    db.write((tx) =>
+      tx.run('UPDATE tickets SET machine_id=? WHERE id=?', [spec.machines[1], spec.local_ticket]),
+    );
+    const historical = { ticket_ids: [spec.ticket, 't_zzzzzzzz'] };
+    const current_request = { ticket_ids: [spec.local_ticket] };
+    const states = {
+      historical: await first.workspace_states(current, historical),
+      current: await second.workspace_states(other, current_request),
+    };
+    const historical_states = [states.historical, await second.workspace_states(other, historical)];
+    const refusals = [
+      await refused(() => first.workspace_states(current, current_request)),
+      await refused(() =>
+        second.register_workspace(
+          { ...other, executor_incarnation: references[1]!.executor_incarnation },
+          { ...registration, child: references[1]! },
+        ),
+      ),
+      await refused(() =>
+        first.register_workspace(current, {
+          ...registration,
+          child: { ...references[0]!, child_id: 'missing-child' },
+        }),
+      ),
+      await refused(() =>
+        first.register_workspace(current, { ...registration, child: references[1]! }),
+      ),
+    ];
+    await first.register_workspace(current, registration);
+    const registered = workspace_rows().registered;
+    const ended = spec.now / 1000 - RETENTION_SECONDS - 1;
+    const state = { ticket_id: spec.ticket, ended_at: ended, deleted: false };
+    db.write((tx) =>
+      tx.run('UPDATE ticket_workspace_lifecycle SET ended_at=? WHERE ticket_id=?', [
+        ended,
+        spec.ticket,
+      ]),
+    );
+    refusals.push(
+      await refused(() => second.retire_workspace(other, state, physical)),
+      await refused(() =>
+        first.retire_workspace(current, state, {
+          ...physical,
+          workspace_id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+        }),
+      ),
+    );
+    const retirement = [
+      (await first.retire_workspace(current, state, physical, { replay: true })).authorized,
+      (await first.retire_workspace(current, { ...state, ended_at: ended - 1 }, physical))
+        .authorized,
+      (await first.retire_workspace(current, state, physical)).authorized,
+    ];
+    db.write((tx) =>
+      tx.run("UPDATE tickets SET worker_step_claim='none' WHERE id=?", [spec.ticket]),
+    );
+    retirement.push((await first.retire_workspace(current, state, physical)).authorized);
+    db.write((tx) =>
+      tx.run('UPDATE ticket_workspace_lifecycle SET ended_at=NULL WHERE ticket_id=?', [
+        spec.ticket,
+      ]),
+    );
+    retirement.push(
+      (await first.retire_workspace(current, state, physical)).authorized,
+      (await first.retire_workspace(current, state, physical, { replay: true })).authorized,
+    );
+    return {
+      states,
+      historical: historical_states,
+      physical,
+      refused: refusals,
+      registered,
+      retirement,
+      grants: workspace_rows().grants,
+    };
+  };
   const cleanup_recheck = async () => {
     const endpoint = endpoints[1]!,
       other = endpoints[0]!;
@@ -333,6 +575,7 @@ if (spec.mode === 'machines') {
     const recovered = references.map(
       (reference) => registry.recover(reference)?.initial_history_complete,
     );
+    const acknowledgement = await prompt_acknowledgement();
     db.write((tx) =>
       accept_lease_in_transaction(
         tx,
@@ -355,9 +598,12 @@ if (spec.mode === 'machines') {
     // This trusted exact-reference participant intentionally remains global, as in Python.
     owners[0]!.store.close_child(references[1]!, spec.now + 2);
     const cleanup = await cleanup_recheck();
+    const workspaces = await workspace_authority();
     result = {
       before,
+      acknowledgement,
       cleanup,
+      workspaces,
       loaded,
       named_only,
       unknown_present,
@@ -435,6 +681,8 @@ const lease = (waiting: string[]) => ({
   working_turns: [],
   admission_stopped: false,
   going_to_sleep: false,
+  cleanup_uncertainties: [],
+  legacy_cleanup_notice: null,
 });
 function snapshot() {
   return {
@@ -461,6 +709,7 @@ function snapshot() {
 function attach() {
   runs.conversations = {
     emit_answer: core.emit_answer.bind(core),
+    confirm_remote_prompt_accepted: core.confirm_remote_prompt_accepted.bind(core),
     async retire_replaced_remote_child(reference, options) {
       trace.push({ retire: reference, options });
       close_run_and_record_mac_process_interruption(database, reference, options.replaced_by, now, {
@@ -678,6 +927,7 @@ try {
   });
   runs.conversations = {
     emit_answer: core.emit_answer.bind(core),
+    confirm_remote_prompt_accepted: core.confirm_remote_prompt_accepted.bind(core),
     async retire_replaced_remote_child() {
       retry_enter();
       throw new Error('fixture retirement failed');

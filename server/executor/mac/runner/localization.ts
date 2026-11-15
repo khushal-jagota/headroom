@@ -7,6 +7,7 @@ import { inspect } from 'node:util';
 import { ServerLifecycleError } from '../../../lifecycle/contracts.ts';
 import { BackendSpawnFailed } from '../../../conversation/backends/contracts.ts';
 import { RECORD_ROOT_ENV } from '../../../worker_supervision/config.ts';
+import { prepare_workspace } from '../../../ticket_workspaces/filesystem.ts';
 import {
   ConversationRoleMaterials,
   ResolvedConversationStart,
@@ -103,9 +104,26 @@ export async function localize_start(
     throw new BackendSpawnFailed(`Mac workspace unavailable: ${workspace_failure(error)}`);
   }
   const identity = new Map(resolved.role_materials?.identity_environment_variables ?? []);
+  const ticket_id = safe_component(identity.get('PLAN_TICKET_ID')!);
+  const artifacts = join(options.paths.artifacts, ticket_id);
+  const managed = identity.get('PLAN_TICKET_WORKSPACE_MANAGED') === '1';
+  try {
+    await create_directory(options, artifacts);
+    if (managed) {
+      const repository =
+        resolved.workspace_path_policy === WorkspacePathPolicy.executor_default &&
+        !input.workspace_home_relative
+          ? null
+          : workspace;
+      workspace = await prepare_workspace(artifacts, repository, ticket_id, {
+        git_execution: options.workspace_git,
+      });
+    }
+  } catch (error) {
+    if (error instanceof ServerLifecycleError) throw error;
+    throw new BackendSpawnFailed(`Mac Ticket worktree unavailable: ${workspace_failure(error)}`);
+  }
   for (const name of removed_environment) identity.delete(name);
-  const artifacts = join(options.paths.artifacts, safe_component(identity.get('PLAN_TICKET_ID')!));
-  await create_directory(options, artifacts);
   identity.set(EXECUTOR_CHILD_ID_ENV, reference.child_id);
   identity.set(EXECUTOR_CAPABILITY_ENV, capability);
   identity.set(EXECUTOR_ROOT_ENV, options.paths.root);
@@ -114,7 +132,7 @@ export async function localize_start(
   identity.set('PLAN_EXECUTOR_SOURCE_INCARNATION', reference.executor_incarnation);
   identity.set(NATIVE_SKILLS_DIR_ENV, join(generation, 'skills'));
   let role_text = resolved.role_materials?.role_text ?? '';
-  if (identity.get('PLAN_TICKET_WORKSPACE_MANAGED') === '1') {
+  if (managed) {
     role_text +=
       '\n\nPanels owns this Ticket workspace. ' +
       `Use the supplied worktree at ${workspace}. ` +

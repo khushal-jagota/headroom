@@ -218,13 +218,6 @@ async def source(path: Path, spec: dict[str, str]) -> dict[str, Any]:
     return result
 
 
-@pytest.mark.xfail(
-    run=False,
-    reason=(
-        "expected-open P2: #916 protocol24 source identity fails TS22 retained-core "
-        "identity admission after recovery"
-    ),
-)
 def test_retained_core_matches_fresh_python(tmp_path: Path, request: pytest.FixtureRequest) -> None:
     began = time.perf_counter()
     selected = {**environment(tmp_path), "PLAN_TEST_MODE": "1"}

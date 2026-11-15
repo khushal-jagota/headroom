@@ -12,6 +12,7 @@ import type { ExecutorPaths } from '../configuration.ts';
 import type { FilesService } from '../files.ts';
 import type { MacSkillsPublisher } from '../skills/index.ts';
 import type { FifoLock } from '../../../conversation/runtime/state.ts';
+import type { WorkspaceIdentity, WorkspaceOptions } from '../../../ticket_workspaces/contracts.ts';
 export interface MacRunningChild {
   readonly reference: ChildReference;
   readonly capability: string;
@@ -19,6 +20,7 @@ export interface MacRunningChild {
   readonly ticket_id: string;
   readonly launch_input: StartRun;
   readonly localized_start: ResolvedConversationStart;
+  readonly workspace: WorkspaceIdentity | null;
   readonly lock: FifoLock;
   active_turn: TurnToken | null;
   readonly open_tool_calls: Set<string>;
@@ -36,6 +38,12 @@ export class MacPermissionDenied extends Error {
 export interface MacNativeChildrenOptions {
   readonly paths: ExecutorPaths;
   readonly workspace_home: string;
+  readonly workspace_lock: FifoLock;
+  readonly workspace_git: NonNullable<WorkspaceOptions['git_execution']>;
+  readonly register_workspace: (
+    child: ChildReference,
+    workspace: WorkspaceIdentity,
+  ) => Promise<void>;
   readonly factory: (start: ResolvedConversationStart) => BackendChildFactory;
   readonly native_skill_home: (backend: ResolvedConversationStart['backend_key']) => string;
   readonly event_sink: (reference: ChildReference) => BackendEventSink;

@@ -20,6 +20,7 @@ import { observe_shutdown } from '../../../conversation/shutdown.ts';
 import type { ChildReference, StartRun } from '../../wire.generated.ts';
 import type { BackendSnapshot } from '../../../conversation/snapshot/contracts.ts';
 import { gate, native_fixture_options } from './runner_fixture.ts';
+import { FifoLock } from '../../../conversation/runtime/state.ts';
 
 const started = performance.now(),
   root = process.argv[2]!;
@@ -98,6 +99,9 @@ let skill_stopped = false;
 const options = {
   paths,
   workspace_home: join(root, 'home'),
+  workspace_lock: new FifoLock(),
+  workspace_git: { children: one_shots, environment },
+  register_workspace: async () => unexpected(),
   files,
   message_files,
   native_skill_home: (backend: string) => join(root, 'native', backend),

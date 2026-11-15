@@ -44,6 +44,7 @@ from planner.core import change_signal
 from planner.core.db import connect, create_schema
 from planner.environments.update_attempts import UpdateConflict
 from planner.executor import protocol as wire
+from planner.executor.configuration import MAX_ENVELOPE_BYTES
 from planner.executor.contracts import CommandSettlementReason
 from planner.executor.store import ExecutorStore
 from planner.executor.vps_mailbox import SqliteCommandMailbox
@@ -590,6 +591,15 @@ class _Source:
             self.callback_trace.append(["update"])
             if self.presence_mode != "sqlite":
                 self._callback_error()
+            if self.presence_mode == "oversized_update":
+                return _typed("MacUpdateCheck", {
+                    "schema_version": 1, "prefetch": None,
+                    "target": {
+                        "request_id": "lease-budget", "application_revision": "a" * 40,
+                        "mode": "idle", "activate": False, "archive_sha256": "b" * 64,
+                        "archive_size": 1, "archive_path": "/" + "x" * MAX_ENVELOPE_BYTES,
+                    },
+                })
             return no_update_check()
 
         async def replaced(old: str, current: str) -> None:
@@ -977,10 +987,6 @@ def _semantic_snapshot(snapshot: dict[str, Any]) -> dict[str, Any]:
     return result
 
 
-@pytest.mark.xfail(
-    run=False,
-    reason="expected-open P2: #916 port successor-incarnation report authority and receipts",
-)
 def test_unit22_mailbox_exchange(tmp_path: Path, request: pytest.FixtureRequest) -> None:
     _mailbox_exchange(tmp_path, request)
 
@@ -1275,8 +1281,11 @@ def _mailbox_exchange(
                 "command_withdrawn",
                 "malformed_result",
             ]
-            other_process = await report(_result(expiry_commands[2]), identity=SUCCESSOR)
-            assert other_process["rejected"][0]["reason"] == "command_of_another_executor_process"
+            errors_before = len(observed_errors)
+            assert await report(_result(expiry_commands[2]), identity=SUCCESSOR) is None
+            assert len(observed_errors) == errors_before + 1
+            assert observed_errors[-1]["type"] == "PlannerError"
+            assert "not the current" in observed_errors[-1]["message"]
             await snapshot()
             # Byte budget and SQL LIMIT are distinct boundaries in the same fetch owner.
             cursor = await call("high")
@@ -1670,9 +1679,12 @@ def _mailbox_exchange(
                 {"op": "sealed", "args": [SUCCESSOR, BASE, 0], "command": concurrent}
             )
             assert sealed["value"]["sql"] == 0
+            assert sealed["value"]["refused"][2] == {
+                "ok": True, "value": source.mailbox.high_sequence(),
+            }
             assert all(
                 not item["ok"] and item["type"] == "ServerLifecycleError"
-                for item in sealed["value"]["refused"]
+                for item in sealed["value"]["refused"][:2] + sealed["value"]["refused"][3:]
             )
             stateless = await paired({"op": "poststop", "args": [NEW, OLD]})
             assert any(item["wait_key"] == "postseal-waiting" for item in stateless["before"])
@@ -2026,7 +2038,21 @@ async def _machine_phases(paired: Any, paths: list[Path], errors: list[Any]) -> 
     assert all(row["state"] == "waiting" for row in final["rows"]
                if row["command_id"] in ("scope-a1", "scope-a2"))
     admission = await _admission_phases(paired, paths, other, replacement)
-    return {"errors": errors, "global_sequences": sequences, "admission": admission}
+    high_before_lease = await call("high")
+    await p("presence", method="open")
+    await p("presence", method="mode", mode="oversized_update")
+    reply = await p("presence", method="lease", args=[lease(OLD)])
+    assert reply["update"] == wire.encode_value(no_update_check())
+    assert reply["mailbox_high_sequence"] == high_before_lease
+    assert len(wire.encode_bounded(_typed("LeaseReply", reply))) < MAX_ENVELOPE_BYTES
+    stored = await p("presence", method="stored")
+    assert stored["executor_incarnation"] == OLD
+    assert stored["last_lease_at_ms"] == NOW and stored["lease"]["identity"] == IDENTITY
+    callbacks = await p("presence", method="callbacks")
+    assert callbacks == [["update"]]
+    await p("presence", method="stop")
+    return {"errors": errors, "global_sequences": sequences, "admission": admission,
+            "lease_budget": {"reply": reply, "stored": stored, "callbacks": callbacks}}
 
 
 async def _admission_phases(
@@ -2291,11 +2317,12 @@ async def _presence_phases(source: _Source, node: Any, paired: Any, paths: list[
         expect_error=True,
     )
     await p("lease", lease())
-    for protocol, incarnation in (("21", NEW), ("22", NEW), ("22", OLD)):
+    current_protocol = str(IDENTITY["protocol_version"])
+    for protocol, incarnation in (("21", NEW), (current_protocol, NEW), (current_protocol, OLD)):
         await p(
             "fence",
             dict(protocol_header=protocol, incarnation_header=incarnation),
-            expect_error=protocol != "22" or incarnation != OLD,
+            expect_error=protocol != current_protocol or incarnation != OLD,
         )
     # Error families differ by callback, not by message text or a synthetic class name.
     for kind in ("conflict", "value", "os", "syntax", "validation", "type"):
@@ -2307,7 +2334,7 @@ async def _presence_phases(source: _Source, node: Any, paired: Any, paths: list[
     working = [
         {
             "child": _child("basic"),
-            "turn": {"conversation_id": "basic", "turn_number": BIG},
+            "turn": {"conversation_id": "basic", "turn_number": TURN},
             "tool_running": False,
         }
     ]
@@ -2315,7 +2342,7 @@ async def _presence_phases(source: _Source, node: Any, paired: Any, paths: list[
     assert reply is not None and "accepted_at_vps_ms" in reply
     await pending("basic-drain", "drain", "basic")
     first_wait = (await state())["waits"][0]
-    assert first_wait["wait_key"] == f"basic:{BIG}"
+    assert first_wait["wait_key"] == f"basic:{TURN}"
     await clock(source.now + 1)
     await p("activity", key="basic")
     await p("lease", lease(waiting_conversations_truncated=True, working_turns=working))
@@ -2342,13 +2369,8 @@ async def _presence_phases(source: _Source, node: Any, paired: Any, paths: list[
     source_race = await _outcome(lambda: source.execute(race_action))
     candidate_race = await node(race_action)
     assert source_race["ok"] and candidate_race["ok"]
-    native_reply = candidate_race["value"]["reply"]
     reference_reply = source_race["value"]["reply"]
-    assert native_reply["mailbox_high_sequence"] == reference_reply["mailbox_high_sequence"] + 1
-    assert native_reply == {
-        **reference_reply,
-        "mailbox_high_sequence": native_reply["mailbox_high_sequence"],
-    }
+    assert candidate_race == source_race
     assert (
         candidate_race["value"]["cached"]
         == candidate_race["value"]["before"]

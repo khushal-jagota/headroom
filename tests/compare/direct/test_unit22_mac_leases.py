@@ -48,6 +48,37 @@ def test_unit22_mac_leases(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> N
             dict(error={"code": "executor_incarnation_not_current"}, refusal=refusal, update=None),
         ),
     ]
+    replies.insert(1, replies[0])
+    workspace_root = tmp_path / "lease-workspaces"
+    workspace_root.mkdir()
+    workspace_ids = [f"t_{index:08x}" for index in range(65)]
+    for ticket_id in workspace_ids:
+        (workspace_root / ticket_id).mkdir()
+    refresh_entered, refresh_release = asyncio.Event(), asyncio.Event()
+    cleanup_entered, cleanup_release = asyncio.Event(), asyncio.Event()
+    workspace_calls: list[list[str]] = []
+    cleaned: list[Any] = []
+    cleanup_facts: list[bool] = []
+    refreshes = 0
+
+    async def refresh_cleanup() -> None:
+        nonlocal refreshes
+        refreshes += 1
+        refresh_entered.set()
+        await refresh_release.wait()
+
+    async def workspace_states(ticket_ids: tuple[str, ...]) -> Any:
+        workspace_calls.append(list(ticket_ids))
+        return typed("WorkspaceStatesReply", dict(
+            states=[dict(ticket_id=value, ended_at=None, deleted=False) for value in ticket_ids],
+            at_vps_ms=1700000001999 if len(workspace_calls) == 1 else 1700000002999,
+        ))
+
+    async def cleanup_workspaces(states: Any, now: int) -> None:
+        cleaned.append(dict(states=[dict(ticket_id=state.ticket_id, ended_at=state.ended_at,
+                                        deleted=state.deleted) for state in states], now=now))
+        cleanup_entered.set()
+        await cleanup_release.wait()
     calls: list[str] = []
     offers: list[str] = []
     lowered: list[list[int]] = []
@@ -59,25 +90,17 @@ def test_unit22_mac_leases(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> N
             child=CHILD, turn=dict(conversation_id="conversation", turn_number=3), tool_running=True
         ),
     )
-    cleanup = typed(
-        "WorkerCleanupUncertainty",
-        dict(
-            ticket_id="uncertain-ticket",
-            conversation_id="old-worker",
-            reason="Recorded cleanup is incomplete",
-        ),
-    )
-    cleanup_entered, cleanup_release = asyncio.Event(), asyncio.Event()
-
-    async def refresh_cleanup() -> None:
-        cleanup_entered.set()
-        await cleanup_release.wait()
-
     runner = SimpleNamespace(
+        paths=SimpleNamespace(artifacts=workspace_root),
+        refresh_worker_cleanup=refresh_cleanup,
+        cleanup_workspaces=cleanup_workspaces,
         admission_stopped=False,
         working_turns=lambda: (working,),
-        cleanup_uncertainties=(cleanup,),
-        legacy_cleanup_notice="Legacy evidence needs inspection",
+        cleanup_uncertainties=(typed("WorkerCleanupUncertainty", dict(
+            ticket_id="cleanup-ticket", conversation_id="cleanup-conversation",
+            reason="Previous Worker cleanup is not proven",
+        )),),
+        legacy_cleanup_notice="Legacy Worker cleanup requires owner review",
     )
     backlog = OutboxBacklog(
         7,
@@ -101,7 +124,7 @@ def test_unit22_mac_leases(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> N
         replaced = True
 
     loop = mac_presence.MacLeaseLoop(
-        client=cast(Any, SimpleNamespace(lease=lease)),
+        client=cast(Any, SimpleNamespace(lease=lease, workspace_states=workspace_states)),
         presence=presence,
         outbox=cast(Any, SimpleNamespace(lease_backlog=lambda: backlog)),
         runner=cast(Any, runner),
@@ -114,17 +137,27 @@ def test_unit22_mac_leases(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> N
     )
 
     async def exchange() -> list[bool]:
-        result = [await loop.lease_once() for _ in range(3)]
-        await cleanup_entered.wait()
-        assert loop._workspace_cleanup_task is not None and not loop._workspace_cleanup_task.done()
-        cleanup_release.set()
-        await loop._workspace_cleanup_task
-        return result
+        values = [await loop.lease_once()]
+        try:
+            await refresh_entered.wait()
+            values.append(await loop.lease_once())
+            cleanup_facts.append(refreshes == 1 and not cleaned)
+            refresh_release.set()
+            await cleanup_entered.wait()
+            values.append(await loop.lease_once())
+            assert loop._workspace_cleanup_task is not None
+            cleanup_facts.append(not loop._workspace_cleanup_task.done())
+            cleanup_release.set()
+            await loop._workspace_cleanup_task
+            values.append(await loop.lease_once())
+            return values
+        finally:
+            refresh_release.set()
+            cleanup_release.set()
 
     with monkeypatch.context() as patch:
         patch.setattr(mac_presence, "now_ms", lambda: 1700000000000)
         patch.setattr(os, "getpid", lambda: 7)
-        patch.setattr(loop, "_cleanup_workspaces", refresh_cleanup)
         expected = dict(
             calls=calls,
             offers=offers,
@@ -136,13 +169,20 @@ def test_unit22_mac_leases(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> N
             encoded("MacLocalStatus", presence.status(admission_stopped=runner.admission_stopped))
         )
     expected.update(status=status, failed=status.pop("last_lease_failure") is not None)
+    expected["workspace"] = dict(calls=workspace_calls, cleaned=cleaned,
+                                 facts=cleanup_facts, refreshes=refreshes)
     spec = tmp_path / "leases.json"
     payload = dict(
         identity=encoded("ExecutorIdentity", presence.identity),
+        workspace_root=str(workspace_root),
         working=encoded("WorkingTurn", working),
-        cleanup=encoded("WorkerCleanupUncertainty", cleanup),
+        cleanup_uncertainties=[
+            json.loads(encoded("WorkerCleanupUncertainty", item))
+            for item in runner.cleanup_uncertainties
+        ],
+        legacy_cleanup_notice=runner.legacy_cleanup_notice,
         replies=[
-            encoded("LeaseReply" if index == 0 else "LeaseRefused", reply)
+            encoded("LeaseReply" if index < 2 else "LeaseRefused", reply)
             for index, reply in enumerate(replies)
         ],
     )
@@ -169,6 +209,12 @@ def test_unit22_mac_leases(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> N
     )
     assert result.returncode == 0, result.stderr
     assert json.loads(result.stdout) == expected
+    assert workspace_calls == [workspace_ids[:64], workspace_ids[64:]]
+    assert cleanup_facts == [True, True] and refreshes == 1
+    assert cleaned == [dict(
+        states=[dict(ticket_id=value, ended_at=None, deleted=False) for value in workspace_ids],
+        now=1700000001,
+    )]
 
 
 def test_mac_cleanup_snapshot_populated(

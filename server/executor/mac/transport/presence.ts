@@ -1,5 +1,7 @@
 /** Local presence and the independently scheduled lease to the VPS. */
 import { setTimeout as sleep } from 'node:timers/promises';
+import { lstat, readdir } from 'node:fs/promises';
+import { join } from 'node:path';
 import {
   observe_shutdown,
   is_shutdown_business_cancellation,
@@ -14,13 +16,46 @@ import type {
   MacUpdateCheck,
   WorkingTurn,
   WorkerCleanupUncertainty,
+  WorkspaceState,
 } from '../../wire.generated.ts';
 import type { AsyncCommandJournal } from '../storage/journal_contracts.ts';
 import type { OutboxStore } from '../storage/outbox.ts';
-import { LEASE_INTERVAL_SECONDS, MAX_LEASE_WAITING_CONVERSATIONS } from '../configuration.ts';
+import {
+  LEASE_INTERVAL_SECONDS,
+  MAX_LEASE_WAITING_CONVERSATIONS,
+  MAX_WORKSPACE_STATE_IDS,
+} from '../configuration.ts';
+import { TICKET_ID_PATTERN } from '../../../ticket_workspaces/contracts.ts';
 import type { MacHttpClient } from './http.ts';
 import { failure_name } from './errors.ts';
 import { ConnectionDiagnostics } from './diagnostics.ts';
+
+const WORKSPACE_CLEANUP_INTERVAL_SECONDS = 600;
+
+async function local_workspace_ticket_ids(root: string): Promise<string[]> {
+  let names: string[];
+  try {
+    const status = await lstat(root);
+    if (!status.isDirectory() || status.isSymbolicLink()) return [];
+    names = await readdir(root);
+  } catch (error) {
+    if (['ENOENT', 'ENOTDIR'].includes((error as NodeJS.ErrnoException).code ?? '')) return [];
+    throw error;
+  }
+  const owners = new Set<string>();
+  const pattern = new RegExp(`^(${TICKET_ID_PATTERN})(?:-|$)`);
+  for (const name of names) {
+    const match = pattern.exec(name);
+    if (!match) continue;
+    try {
+      const status = await lstat(join(root, name));
+      if (status.isDirectory() && !status.isSymbolicLink()) owners.add(match[1]!);
+    } catch (error) {
+      if (!['ENOENT', 'ENOTDIR'].includes((error as NodeJS.ErrnoException).code ?? '')) throw error;
+    }
+  }
+  return [...owners].sort();
+}
 
 export class MacPresence {
   readonly identity: ExecutorIdentity;
@@ -63,16 +98,18 @@ export class MacPresence {
   }
 }
 export interface MacLeaseOptions {
-  readonly client: Pick<MacHttpClient, 'lease'>;
+  readonly client: Pick<MacHttpClient, 'lease' | 'workspace_states'>;
+  readonly workspace_root: string;
   readonly presence: MacPresence;
   readonly outbox: Pick<OutboxStore, 'pending_count' | 'pending_conversations' | 'oldest_age_ms'>;
   readonly journal: Pick<AsyncCommandJournal, 'poll_cursor' | 'lower_poll_cursor'>;
   readonly runner: {
     readonly admission_stopped: boolean;
-    readonly cleanup_uncertainties: WorkerCleanupUncertainty[];
+    readonly cleanup_uncertainties: readonly WorkerCleanupUncertainty[];
     readonly legacy_cleanup_notice: string | null;
-    refresh_worker_cleanup(): Promise<void>;
     working_turns(): readonly WorkingTurn[];
+    refresh_worker_cleanup(): Promise<void>;
+    cleanup_workspaces(states: readonly WorkspaceState[], now: number): Promise<void>;
     seal(): void;
   };
   readonly updates: { offer(update: MacUpdateCheck): void };
@@ -86,8 +123,8 @@ export class MacLeaseLoop {
   private readonly cancellation = new AbortController();
   private task: Promise<void> | undefined;
   private lease: Promise<boolean> | undefined;
-  private worker_cleanup: Promise<void> | undefined;
-  private next_worker_cleanup = 0;
+  private workspace_cleanup: Promise<void> | undefined;
+  private next_workspace_cleanup = 0;
   private closed = false;
   constructor(options: MacLeaseOptions) {
     this.options = options;
@@ -112,7 +149,7 @@ export class MacLeaseLoop {
       working_turns: [...runner.working_turns()],
       admission_stopped: runner.admission_stopped,
       going_to_sleep: presence.going_to_sleep,
-      cleanup_uncertainties: runner.cleanup_uncertainties,
+      cleanup_uncertainties: [...runner.cleanup_uncertainties],
       legacy_cleanup_notice: runner.legacy_cleanup_notice,
     };
   }
@@ -163,24 +200,59 @@ export class MacLeaseLoop {
     }
     presence.accepted();
     updates.offer(reply.update);
-    if (performance.now() >= this.next_worker_cleanup && this.worker_cleanup === undefined) {
-      this.next_worker_cleanup = performance.now() + 600_000;
-      const task = Promise.resolve()
-        .then(() => runner.refresh_worker_cleanup())
-        .catch((error: unknown) => {
-          warn(`Worker cleanup refresh failed: ${failure_name(error)}`);
-        });
-      this.worker_cleanup = task;
-      void task.finally(() => {
-        if (this.worker_cleanup === task) this.worker_cleanup = undefined;
-      });
-    }
+    this.schedule_workspace_cleanup();
     try {
       if (cursor !== null) await journal.lower_poll_cursor(reply.mailbox_high_sequence, cursor);
     } catch (error) {
       warn(`Lease cursor update failed: ${failure_name(error)}`);
     }
     return true;
+  }
+  private schedule_workspace_cleanup(): void {
+    const now = performance.now() / 1000;
+    if (this.closed || this.workspace_cleanup !== undefined || now < this.next_workspace_cleanup)
+      return;
+    this.next_workspace_cleanup = now + WORKSPACE_CLEANUP_INTERVAL_SECONDS;
+    const { promise, resolve, reject } = Promise.withResolvers<void>();
+    this.workspace_cleanup = promise;
+    void promise.then(
+      () => {
+        if (this.workspace_cleanup === promise) this.workspace_cleanup = undefined;
+      },
+      () => {
+        if (this.workspace_cleanup === promise) this.workspace_cleanup = undefined;
+      },
+    );
+    try {
+      resolve(this.cleanup_workspaces());
+    } catch (error) {
+      reject(error);
+    }
+  }
+  private async cleanup_workspaces(): Promise<void> {
+    const { runner, client, workspace_root, warn } = this.options;
+    const signal = this.cancellation.signal;
+    try {
+      await runner.refresh_worker_cleanup();
+      signal.throwIfAborted();
+      const ids = await local_workspace_ticket_ids(workspace_root);
+      signal.throwIfAborted();
+      const states: WorkspaceState[] = [];
+      let at_vps_ms = Infinity;
+      for (let offset = 0; offset < Math.max(ids.length, 1); offset += MAX_WORKSPACE_STATE_IDS) {
+        const reply = await client.workspace_states(
+          ids.slice(offset, offset + MAX_WORKSPACE_STATE_IDS),
+          signal,
+        );
+        signal.throwIfAborted();
+        states.push(...reply.states);
+        at_vps_ms = Math.min(at_vps_ms, reply.at_vps_ms);
+      }
+      await runner.cleanup_workspaces(states, Math.floor(at_vps_ms / 1000));
+    } catch (error) {
+      if (!(signal.aborted && is_shutdown_business_cancellation(error)))
+        warn(`Ticket workspace cleanup failed: ${failure_name(error)}`);
+    }
   }
   start(): void {
     if (this.closed) throw new ServerLifecycleError('Mac lease loop is stopped.');
@@ -221,7 +293,7 @@ export class MacLeaseLoop {
   }
   async settled(): Promise<void> {
     const results = await Promise.allSettled([this.task, this.lease]);
-    results.push(...(await Promise.allSettled([this.worker_cleanup])));
+    results.push(...(await Promise.allSettled([this.workspace_cleanup])));
     const failures = new Set<unknown>();
     for (const result of results) {
       if (result.status === 'fulfilled') continue;

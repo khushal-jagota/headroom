@@ -15,6 +15,7 @@ import type { MacUpdateServiceContract } from '../../environments/updates/mac/co
 import { VpsExecutor } from '../vps_transport.ts';
 import { VpsExecutorRegistry } from '../registry.ts';
 import { ORIGINAL_MAC_MACHINE_ID } from '../../execution_identity.ts';
+import { PROTOCOL_VERSION } from '../../execution_configuration.ts';
 import { as_object } from '../protocol.ts';
 import { continue_core } from './transport_core.ts';
 import { routes as machine_routes } from '../../machines/routes.ts';
@@ -58,6 +59,7 @@ endpoint.runs.conversations = {
   resume_undelivered_prompt: unexpected,
   await_late_steer: unexpected,
   confirm_remote_child_termination: unexpected,
+  confirm_remote_prompt_accepted: unexpected,
   stop_interrupted_remote_child: unexpected,
 };
 const reports: unknown[] = [];
@@ -232,7 +234,7 @@ for await (const command of createInterface({ input: process.stdin })) {
         'Tailscale-User-Login': 'owner@example.com',
         'X-Panels-Executor-ID': 'test-executor',
         'X-Panels-Executor-Incarnation': '11111111-1111-4111-8111-111111111111',
-        'X-Panels-Executor-Protocol': '22',
+        'X-Panels-Executor-Protocol': String(PROTOCOL_VERSION),
       },
     });
     connection.on('error', () => {});
