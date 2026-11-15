@@ -82,6 +82,9 @@ export async function compose_mac_home_payload(
   for (const name of ['package.json', 'node_modules'])
     await copy(join(providers, name), join(app, 'agent_backends', name));
   await copy(web, join(app, 'web/dist'));
+  // The server re-exports these generated protocol values at runtime.
+  const view_contract = 'web/src/lib/conversation/view/contracts.ts';
+  await copy(join(exported, view_contract), join(app, view_contract));
   for (const name of MAC_STATIC_FILES) await copy(join(exported, name), join(app, name));
   await copy(join(exported, 'src/planner/skills'), join(app, 'src/planner/skills'));
   // The graph binds these raw source bytes. Installation never executes them.

@@ -25,6 +25,10 @@ import ts from 'typescript';
 import { inside } from '../../files/logic/paths.ts';
 import { ChildProcesses } from '../../lifecycle/owned_processes.ts';
 import {
+  VIEW_PROTOCOL_VERSION,
+  VIEW_PROJECTION_VERSION,
+} from '../../conversation/views/contracts.ts';
+import {
   copy_installer_runtime,
   parse_installer_file_manifest,
   write_installer_file_manifest,
@@ -343,6 +347,7 @@ it('copies a complete selected closure once and refuses changed source or an app
     for (const name of [
       'src/planner/skills/panels/SKILL.md',
       'src/planner/worker_types/shipped_worker_types.json',
+      'web/src/lib/conversation/view/contracts.ts',
       'pyproject.toml',
     ])
       assert.deepEqual(readFileSync(join(payload, name)), readFileSync(join(checkout, name)));
@@ -628,7 +633,7 @@ it('copies a complete selected closure once and refuses changed source or an app
       return child;
     }) as ChildProcesses['spawn'];
     const bootstrap =
-      "import{pathToFileURL}from'node:url';import{createRequire}from'node:module';const[admission,entry,request,mac]=process.argv.slice(1);await import(pathToFileURL(admission).href);if(typeof createRequire(import.meta.url)(mac).parse_mac_home_inventory!=='function')throw Error('copied Mac decoder missing');process.argv=[process.execPath,entry,request];await import(pathToFileURL(entry).href);";
+      "import{pathToFileURL}from'node:url';import{createRequire}from'node:module';const[admission,entry,request,mac,view,protocol,projection]=process.argv.slice(1);await import(pathToFileURL(admission).href);if(typeof createRequire(import.meta.url)(mac).parse_mac_home_inventory!=='function')throw Error('copied Mac decoder missing');const versions=await import(pathToFileURL(view).href);if(versions.VIEW_PROTOCOL_VERSION!==Number(protocol)||versions.VIEW_PROJECTION_VERSION!==Number(projection))throw Error('copied conversation view protocol differs');process.argv=[process.execPath,entry,request];await import(pathToFileURL(entry).href);";
     const started = performance.now();
     const result = await run_release_command(
       [
@@ -640,6 +645,9 @@ it('copies a complete selected closure once and refuses changed source or an app
         join(loaded, INSTALLER_ENTRY),
         invalid_request,
         mac_decoder,
+        join(payload, 'server/conversation/views/contracts.ts'),
+        String(VIEW_PROTOCOL_VERSION),
+        String(VIEW_PROJECTION_VERSION),
       ],
       { timeout_seconds: null, environment, allow_nonzero: true },
       execution,
@@ -654,7 +662,8 @@ it('copies a complete selected closure once and refuses changed source or an app
     assert.equal(closes, 1);
     console.log(
       JSON.stringify({
-        proof: 'copied Linux installer, trusted admission, and Darwin inventory decoder imports',
+        proof:
+          'copied Linux installer, trusted admission, Darwin inventory decoder, and home shared protocol imports',
         spawns,
         closes,
         seconds: (performance.now() - started) / 1000,
