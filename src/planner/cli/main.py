@@ -2481,6 +2481,10 @@ def worker_note(ticket_id: str | None, append_note: bool, as_json: bool) -> None
 @click.option("--edit-file", default=None, help="Edited accepted body, or - for stdin.")
 @click.option("--kickoff-title", default=None, help="Edited Kickoff title.")
 @click.option("--kickoff-note-file", default=None, help="Edited Kickoff note, or - for stdin.")
+@click.option("--message", default=None, help="Revision guidance for revise.")
+@click.option(
+    "--body-file", default=None, help="Revision guidance file for revise, or - for stdin."
+)
 @json_option
 def ticket_proposal(
     proposal_args: tuple[str, ...],
@@ -2489,6 +2493,8 @@ def ticket_proposal(
     edit_file: str | None,
     kickoff_title: str | None,
     kickoff_note_file: str | None,
+    message: str | None,
+    body_file: str | None,
     as_json: bool,
 ) -> None:
     """Submit, accept, or revise the current Ticket proposal."""
@@ -2505,11 +2511,19 @@ def ticket_proposal(
     accept_options = (ceiling, holder, edit_file, kickoff_title, kickoff_note_file)
     if action != "accept" and any(value is not None for value in accept_options):
         http.fail_validation(f"{action} does not accept proposal approval options", as_json)
+    if action != "revise" and (message is not None or body_file is not None):
+        http.fail_validation(f"{action} does not accept revision guidance options", as_json)
     if action == "submit":
         _submit_ticket_proposal(ticket_id, None, None, None, as_json)
         return
     if action == "revise":
-        _revise_ticket_proposal(ticket_id, None, "-", as_json)
+        if (message is None) == (body_file is None):
+            http.fail_validation(
+                "revise requires exactly one of --message or --body-file "
+                "(use --body-file - for stdin)",
+                as_json,
+            )
+        _revise_ticket_proposal(ticket_id, message, body_file, as_json)
         return
     _approve_ticket_proposal(
         ticket_id,

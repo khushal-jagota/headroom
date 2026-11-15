@@ -131,13 +131,15 @@ One command owns the proposal lifecycle:
 ```sh
 panels ticket proposal t_example submit < proposal.md
 panels ticket proposal t_example accept --ceiling needs_plan
-panels ticket proposal t_example revise < guidance.md
+panels ticket proposal t_example revise --body-file guidance.md
 ```
 
 Submit remains restricted to the authenticated Worker for its own current Stage. Accept
 and revise retain the existing proposal resolver and authority checks. `ticket complete`
 remains separate because it completes a user-owned Stage directly.
 
+Revise requires `--message` or `--body-file`; use `--body-file -` to read stdin.
+Give the revision guidance to revise itself; a separate message does not replace it.
 Revise stores the attributed feedback, removes the proposal, and returns the Stage to
 rest in one commit. Normal readiness
 then reuses the existing conversation for one revision prompt.

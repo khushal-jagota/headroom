@@ -137,7 +137,7 @@ Use the same object commands as every other Panels agent:
 - `panels sprint item set <item-id> <field> --value <value>` changes one Sprint Item field.
 - `panels ticket edit <ticket-id> --input-json -` changes permitted child Ticket fields.
 - `panels ticket proposal <ticket-id> accept --ceiling <stage>` accepts a parked proposal.
-- `panels ticket proposal <ticket-id> revise` reads focused guidance from stdin.
+- `panels ticket proposal <ticket-id> revise --body-file <guidance-file>` sends focused revision guidance; use `--body-file -` for stdin or `--message` for inline guidance. A separate message does not replace revision guidance.
 - `panels ticket block <ticket-id> --by <blocker-ticket-id>` and the matching `unblock`
   command change blocker links.
 - `panels sprint item artifact list <item-id>` lists Sprint Item artifacts. Use the sibling

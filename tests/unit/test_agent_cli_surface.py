@@ -223,12 +223,27 @@ def test_proposal_actions_reuse_existing_writers(
     stdin = "Proposal." if arguments[1] == "submit" else "Narrow it."
     result = CliRunner().invoke(
         main,
-        ["ticket", "proposal", *arguments, "--json"],
+        [
+            "ticket", "proposal", *arguments,
+            *(["--body-file", "-"] if arguments[1] == "revise" else []), "--json",
+        ],
         input=stdin,
     )
 
     assert result.exit_code == 0, result.output
     assert calls == [("POST", path, body)]
+
+
+def test_revise_requires_explicit_guidance_without_reading_stdin(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def unexpected_send(*args: Any, **kwargs: Any) -> Any:
+        raise AssertionError("missing guidance must not send a request")
+
+    monkeypatch.setattr(http, "send", unexpected_send)
+    result = CliRunner().invoke(main, ["ticket", "proposal", "t_one", "revise"])
+    assert result.exit_code != 0
+    assert "--body-file - for stdin" in result.output
 
 
 def test_proposal_action_uses_worker_ticket_when_id_is_omitted(
