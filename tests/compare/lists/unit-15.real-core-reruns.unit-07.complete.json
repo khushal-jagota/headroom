@@ -454,20 +454,13 @@
     {
       "area": "tickets-membership",
       "method": "POST",
-      "path": "/api/tickets/${ticket}/decision-operations/complete-send-back",
+      "path": "/api/tickets/${ticket}/reject",
       "status": 200,
       "json": {
         "message": "Revise the concrete evidence.",
         "expected_proposal_revision": "${decision_revision}",
-        "decision": "send_back",
-        "field": "what_changes"
+        "decision_id": "complete-send-back"
       }
-    },
-    {
-      "area": "tickets-membership",
-      "method": "GET",
-      "path": "/api/tickets/${ticket}/decision-operations/complete-send-back",
-      "status": 200
     },
     {
       "area": "tickets-membership",
@@ -497,18 +490,6 @@
       "status": 200,
       "capture": {
         "revision_prompt": "backend.children"
-      }
-    },
-    {
-      "area": "tickets-membership",
-      "method": "POST",
-      "path": "/api/tickets/${ticket}/decision-operations/complete-send-back",
-      "status": 200,
-      "json": {
-        "message": "Revise the concrete evidence.",
-        "expected_proposal_revision": "${decision_revision}",
-        "decision": "send_back",
-        "field": "what_changes"
       }
     },
     {

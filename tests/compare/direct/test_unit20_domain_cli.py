@@ -10,6 +10,7 @@ from __future__ import annotations
 import base64
 import json
 import os
+import sqlite3
 import subprocess
 import time
 from contextlib import closing
@@ -37,7 +38,7 @@ from tests.support.server import ServerHandle
 from tests.support.server_fixtures import _start_server, _stop_server
 from tests.unit.test_dataset_persistence import dataset
 
-from planner.core.contracts import OWNER_PRINCIPAL
+from planner.core.contracts import OWNER_PRINCIPAL, Principal, PrincipalKind
 from planner.core.db import connect
 from planner.datasets import actions as dataset_actions
 from planner.datasets.contracts import (
@@ -60,6 +61,7 @@ LIST = ROOT / "tests/compare/lists/unit-20-commands.domain.json"
 def test_unit20_retained_dataset_cli(tmp_path: Path, request: pytest.FixtureRequest) -> None:
     started = time.perf_counter()
     captures: dict[str, Any] = {}
+    seed_seconds: dict[str, float] = {}
 
     def seed(target: Path) -> None:
         # _start_server scopes synthetic provider homes around this callback and
@@ -143,7 +145,18 @@ def test_unit20_retained_dataset_cli(tmp_path: Path, request: pytest.FixtureRequ
                     principal=OWNER_PRINCIPAL,
                     now=NOW,
                 )
-            captures["numeric_ticket"] = ticket.id
+            proposal_started = time.perf_counter()
+            ticket = tickets_data.file_current_proposal(
+                conn,
+                ticket.id,
+                body="Retained consequences for the receipt proof",
+                principal=Principal(PrincipalKind.ticket, ticket.id),
+                now=NOW,
+            )
+            captures.update(
+                numeric_ticket=ticket.id, decision_revision=ticket.pending_proposal_revision
+            )
+            seed_seconds["python_proposal"] = time.perf_counter() - proposal_started
 
     spec = json.loads(LIST.read_text())
     steps = [step for step in spec["direct_requests"] if step["argv"] == ["dataset", "read"]]
@@ -163,11 +176,17 @@ def test_unit20_retained_dataset_cli(tmp_path: Path, request: pytest.FixtureRequ
         # the candidate's not-yet-running database, as the existing runner does.
         snapshot = tmp_path / "seed.db"
         backup_database(reference.db_path, snapshot)
+
+        def seed_candidate(target: Path) -> None:
+            copy_started = time.perf_counter()
+            backup_database(snapshot, target)
+            seed_seconds["typescript_snapshot"] = time.perf_counter() - copy_started
+
         candidate_host = _start_server(
             tmp_path / "typescript",
             fake_now="2026-10-27T12:00:00",
             server_module="tests.compare.ts_launcher",
-            seed_db=lambda target: backup_database(snapshot, target),
+            seed_db=seed_candidate,
         )
         handles.append(candidate_host)
         # Python's action delegates to the dataset reader. TS uses database.read.
@@ -332,12 +351,86 @@ def test_unit20_retained_dataset_cli(tmp_path: Path, request: pytest.FixtureRequ
             else:
                 evidence["numeric_ticket_human"].append(observed)
         evidence["numeric_ticket_proof_seconds"] = time.perf_counter() - ticket_started
+        evidence["decision_seed_seconds"] = seed_seconds
+        evidence["decision_operations"] = {
+            name: _decision_operation_proof(handle, tmp_path, captures)
+            for name, handle in (("python", reference), ("typescript", candidate_host))
+        }
+        left, right = evidence["decision_operations"].values()
+        assert left["envelopes"] == right["envelopes"]
+        assert left["rows"] == right["rows"]
         evidence["runtime_guidance"] = _runtime_proof(reference, candidate_host, tmp_path)
     finally:
         for handle in reversed(handles):
             _stop_server(handle)
         evidence["seconds"] = time.perf_counter() - started
         driver.write_report(request, "unit20-retained-dataset-cli", evidence)
+
+
+def _decision_operation_proof(
+    handle: ServerHandle, root: Path, captures: dict[str, Any]
+) -> dict[str, Any]:
+    """Reuse this host and Ticket to compare actual receipts, privacy, and replay writes."""
+    started = time.perf_counter()
+    CliHost(handle, root).check()
+    ticket_id = captures["numeric_ticket"]
+    path = handle.base + f"/api/tickets/{ticket_id}/decision-operations/unit20-send-back"
+    command = {
+        "decision": "send_back",
+        "field": "consequences",
+        "expected_proposal_revision": captures["decision_revision"],
+    }
+
+    def retained_rows() -> dict[str, Any]:
+        with closing(sqlite3.connect(f"file:{handle.db_path}?mode=ro", uri=True)) as conn:
+            conn.row_factory = sqlite3.Row
+            conn.execute("BEGIN")
+            stored = {
+                table: [
+                    dict(row)
+                    for row in conn.execute(
+                        f"SELECT * FROM {table} WHERE "
+                        f"{'id' if table == 'tickets' else 'ticket_id'}=?",
+                        (ticket_id,),
+                    )
+                ]
+                for table in ("tickets", "ticket_decision_messages", "ticket_decision_operations")
+            }
+        # Decode stored JSON containers as the ordinary source-row comparison does.
+        containers = {
+            "field_values", "field_approvals", "pending_proposal", "ceiling_holder",
+            "workflow_json", "receipt_json",
+        }
+        return {
+            table: [
+                {
+                    key: json.loads(value) if key in containers and value is not None else value
+                    for key, value in row.items()
+                }
+                for row in values
+            ]
+            for table, values in stored.items()
+        }
+
+    with httpx.Client(trust_env=False, follow_redirects=False, timeout=30) as client:
+        applied = client.post(path, json=command)
+        assert applied.status_code == 200, applied.text
+        envelope = applied.json()
+        assert envelope["receipt_contract"] == 1 and envelope["receipt"]["outcome"] == "applied"
+        saved = retained_rows()
+        assert saved["tickets"][0]["pending_proposal"] is None
+        assert len(saved["ticket_decision_messages"]) == 1
+        assert len(saved["ticket_decision_operations"]) == 1
+        replies = [
+            client.get(path), client.post(path, json=command),
+            client.get(path, headers={"X-Plan-Actor": "chief"}),
+        ]
+        assert all(reply.status_code == 200 for reply in replies), [r.text for r in replies]
+        envelopes = [envelope, *(reply.json() for reply in replies)]
+        assert envelopes[:3] == [envelope] * 3
+        assert envelopes[3] == {"receipt_contract": 1, "receipt": None}
+        assert retained_rows() == saved
+    return {"envelopes": envelopes, "rows": saved, "seconds": time.perf_counter() - started}
 
 
 def _runtime_proof(

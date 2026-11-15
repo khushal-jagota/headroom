@@ -191,32 +191,19 @@
     },
     {
       "area": "tickets",
-      "method": "GET",
-      "path": "/api/tickets/${ticket}/decision-operations/lifecycle-accept",
-      "status": 200
-    },
-    {
-      "area": "tickets",
       "method": "POST",
-      "path": "/api/tickets/${ticket}/decision-operations/lifecycle-accept",
+      "path": "/api/tickets/${ticket}/accept/what_changes",
       "status": 200,
       "json": {
         "expected_proposal_revision": "${rev}",
-        "next_ceiling": "implementation",
+        "next_ceiling": "needs_implementation",
         "next_holder": {
           "kind": "owner",
           "id": "owner"
         },
         "message": "Proceed with the reviewed scope.",
-        "decision": "approve",
-        "field": "what_changes"
+        "decision_id": "lifecycle-accept"
       }
-    },
-    {
-      "area": "tickets",
-      "method": "GET",
-      "path": "/api/tickets/${ticket}/decision-operations/lifecycle-accept",
-      "status": 200
     },
     {
       "area": "tickets",
@@ -227,23 +214,6 @@
         "field_values": {
           "what_changes": "Corrected [artifact](/files/tickets/${ticket}/corrected.md) and ![image](/files/tickets/${ticket}/image.png).\n\n<div>\n[Ignored HTML block](/files/tickets/${ticket}/ignored.md)\n</div>\n\n[Preview](#/preview?source=ticket&ticket=${ticket}&path=a?b.md)"
         }
-      }
-    },
-    {
-      "area": "tickets",
-      "method": "POST",
-      "path": "/api/tickets/${ticket}/decision-operations/lifecycle-accept",
-      "status": 200,
-      "json": {
-        "expected_proposal_revision": "${rev}",
-        "next_ceiling": "implementation",
-        "next_holder": {
-          "kind": "owner",
-          "id": "owner"
-        },
-        "message": "Proceed with the reviewed scope.",
-        "decision": "approve",
-        "field": "what_changes"
       }
     },
     {
