@@ -1,7 +1,9 @@
+import { once } from 'node:events';
+import { ChildProcesses } from '../lifecycle/owned_processes.ts';
 import { mkdtemp, mkdir, readdir, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
-import { afterEach, expect, test } from 'vitest';
+import { afterEach, expect, test, vi } from 'vitest';
 import { WorkerScratch, snapshot_ticket_scratch, prune_ticket_scratch } from './worker_scratch.ts';
 import { private_ticket_path, resolveFile } from '../files/logic/paths.ts';
 import { fixture as ticket_fixture, fixture_path, create } from '../tests/ticket_fixture.ts';
@@ -32,8 +34,9 @@ test('retirement snapshot removes only captured runs and refuses symlink or fore
 });
 test('Worker run owns private disk scratch, prunes old run, sets all temporary variables and closes', async () => {
   const home = await fixture();
-  const old = await WorkerScratch.create({ PLAN_TICKET_ID: 't_test' }, { home });
-  const fresh = await WorkerScratch.create({ PLAN_TICKET_ID: 't_test' }, { home });
+  const processes = new ChildProcesses();
+  const old = await WorkerScratch.create({ PLAN_TICKET_ID: 't_test' }, { home, processes });
+  const fresh = await WorkerScratch.create({ PLAN_TICKET_ID: 't_test' }, { home, processes });
   expect(fresh.directory).not.toBe(old.directory);
   expect(fresh.environment.TMPDIR).toBe(fresh.directory);
   expect(fresh.environment.TMP).toBe(fresh.directory);
@@ -42,7 +45,9 @@ test('Worker run owns private disk scratch, prunes old run, sets all temporary v
   await fresh.close();
   expect(await readdir(join(home, '.pw'))).toEqual([]);
   await symlink(home, join(home, '.pw/t_test-abcdef'));
-  await expect(WorkerScratch.create({ PLAN_TICKET_ID: '../escape' }, { home })).rejects.toThrow();
+  await expect(
+    WorkerScratch.create({ PLAN_TICKET_ID: '../escape' }, { home, processes }),
+  ).rejects.toThrow();
 });
 test('public Ticket files and catalogs hide private checkouts, markers and aliases but keep artifacts', async () => {
   const db = ticket_fixture(),
@@ -110,4 +115,68 @@ test('public Ticket files and catalogs hide private checkouts, markers and alias
   );
   expect(links.total).toBe(1);
   expect(links.entries.map((row) => row.path)).toEqual(['future.html']);
+});
+
+// Linux scratch checks never launch the Mac probe. This proves the caller owns its real lifetime.
+test('caller shutdown owns the Mac disk probe until actual child close', async () => {
+  const home = await fixture(),
+    processes = new ChildProcesses();
+  const descriptor = Object.getOwnPropertyDescriptor(process, 'platform')!;
+  const spawn = processes.spawn.bind(processes);
+  const admitted = Promise.withResolvers<ReturnType<typeof processes.spawn>>();
+  let closed = false,
+    create_settled = false;
+  const probe = vi.spyOn(processes, 'spawn').mockImplementation((command, args, options) => {
+    expect(command).toBe('/sbin/mount');
+    expect(args).toEqual([]);
+    const child = spawn(
+      process.execPath,
+      ['-e', 'process.stdout.write("ready\\n");setInterval(()=>{},1000)'],
+      options,
+    );
+    child.once('close', () => {
+      closed = true;
+    });
+    admitted.resolve(child);
+    return child;
+  });
+  let creation: Promise<unknown> | undefined;
+  try {
+    Object.defineProperty(process, 'platform', { value: 'darwin', configurable: true });
+    creation = WorkerScratch.create({ PLAN_TICKET_ID: 't_test' }, { home, processes }).then(
+      () => {
+        throw new Error('Stopped probe cannot authorize scratch');
+      },
+      (error) => {
+        create_settled = true;
+        expect(closed).toBe(true);
+        return error;
+      },
+    );
+    const child = await admitted.promise;
+    await once(child.stdout!, 'data', { signal: AbortSignal.timeout(2000) });
+    processes.seal();
+    expect(create_settled).toBe(false);
+    let owner_settled = false;
+    const settlement = processes.settled().then(() => {
+      owner_settled = true;
+    });
+    await Promise.resolve();
+    expect(owner_settled).toBe(false);
+    processes.force_kill(performance.now() / 1000 + 1);
+    await settlement;
+    expect(await creation).toBeInstanceOf(Error);
+    expect(probe).toHaveBeenCalledOnce();
+    expect(await readdir(join(home, '.pw'))).toEqual([]);
+  } finally {
+    processes.seal();
+    processes.force_kill(performance.now() / 1000 + 1);
+    try {
+      await processes.settled();
+      await creation;
+    } finally {
+      probe.mockRestore();
+      Object.defineProperty(process, 'platform', descriptor);
+    }
+  }
 });
