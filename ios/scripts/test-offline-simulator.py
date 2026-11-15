@@ -7,9 +7,9 @@ import http.server
 import json
 import os
 import plistlib
-import sqlite3
 import signal
 import socket
+import sqlite3
 import subprocess
 import sys
 import threading
@@ -19,6 +19,7 @@ from typing import Any
 from urllib.parse import parse_qs, urlparse
 
 ROOT = Path(__file__).resolve().parents[2]
+DESIGN_REVIEW = os.environ.get("PANELS_DESIGN_REVIEW") == "1"
 REVIEW_COMPLETION = os.environ.get("PANELS_REVIEW_COMPLETION") == "1"
 REACHABILITY_SMOKE = os.environ.get("PANELS_REACHABILITY_SMOKE") == "1"
 DEVICE = os.environ.get("PANELS_OFFLINE_DEVICE") or (
@@ -34,7 +35,9 @@ LANE_LOCK = (
 BUNDLE = os.environ.get("PANELS_OFFLINE_BUNDLE", "app.panels.ios.pios-offline")
 GOALS_SMOKE = os.environ.get("PANELS_GOALS_SMOKE") == "1"
 REPLACEMENT_SMOKE = os.environ.get("PANELS_REPLACEMENT_SMOKE") == "1"
-REVIEW_MESSAGES = os.environ.get("PANELS_REVIEW_MESSAGES") == "1" or GOALS_SMOKE or REPLACEMENT_SMOKE
+REVIEW_MESSAGES = (
+    os.environ.get("PANELS_REVIEW_MESSAGES") == "1" or GOALS_SMOKE or REPLACEMENT_SMOKE
+)
 
 
 def main() -> int:
@@ -43,7 +46,9 @@ def main() -> int:
     if review and not server_only and "/" not in os.environ.get("PANELS_OFFLINE_TEST", ""):
         raise SystemExit("--review requires one explicit class/method in PANELS_OFFLINE_TEST")
     if not server_only and "--locked" not in sys.argv:
-        return subprocess.call(["lockf", LANE_LOCK, sys.executable, __file__, *sys.argv[1:], "--locked"])
+        return subprocess.call(
+            ["lockf", LANE_LOCK, sys.executable, __file__, *sys.argv[1:], "--locked"]
+        )
     output = Path(os.environ["PANELS_OFFLINE_OUTPUT"]).resolve()
     output.mkdir(parents=True, exist_ok=True)
     if not server_only:
@@ -87,6 +92,24 @@ def main() -> int:
             }
         ]
     }
+    if DESIGN_REVIEW:
+        workflow = dict(worker_type="coding", label="Coding", stages=[
+            dict(id="needs_brief", label="Brief", is_terminal=False, gating_field="brief"),
+            dict(id="needs_what_changes", label="What Changes", is_terminal=False, gating_field="what_changes"),
+            dict(id="needs_implementation", label="Implementation", is_terminal=False, gating_field="implementation"),
+            dict(id="needs_consequences", label="Consequences", is_terminal=False, gating_field="consequences"),
+            dict(id="done", label="Done", is_terminal=True)],
+            advance=dict(needs_brief="needs_what_changes", needs_what_changes="needs_implementation", needs_implementation="needs_consequences", needs_consequences="done"),
+            fields=[dict(id=x, label=y) for x,y in [("brief","Brief"),("what_changes","What Changes"),("implementation","Implementation"),("consequences","Consequences")]],
+            ceiling_range=["needs_brief","needs_what_changes","needs_implementation","needs_consequences","done"])
+        manifest = {"worker_types": [workflow]}
+        for ticket in tickets.values():
+            ticket.update(worker_type="coding", workflow=workflow, stage="needs_what_changes", ceiling="needs_what_changes", manager_id=None,
+                title="Match the iPhone app to the web", recap="The approved design brings the web sidebar cards, focused work and one decision area to the phone. Every proposal keeps its own note until its decision lands. The existing protected route carries each decision.",
+                field_values={"brief":"Match the phone to the approved web design."},
+                field_approvals={"brief":dict(method="owner", principal=dict(kind="owner",id="owner"), display_label="Approved by User")})
+            ticket["pending_proposal"].update(field="what_changes", body="Make the work that needs your attention easy to read.\n\n## One decision area\n\nRead the proposal, add an optional note, then choose **Approve**. Use `Send it back` with a note when the work needs a revision.\n\n| Surface | Change |\n| --- | --- |\n| Workspace | Focused sidebar cards |\n| Review | Pinned decisions |\n\n```swift\nlet focus = true\n```")
+
     # Goals reuse this host and the exact authored chart catalogue from the web.
     catalogue_source = (ROOT / "ios/scripts/goal-component-examples.ts").read_text()
     catalogue = (
@@ -266,7 +289,7 @@ def main() -> int:
     decision_receipts: dict[str, dict[str, Any]] = {}
     state: dict[str, Any] = {
         "offline": False,
-        "slow": not REVIEW_COMPLETION and not GOALS_SMOKE and not REACHABILITY_SMOKE,
+        "slow": not REVIEW_COMPLETION and not GOALS_SMOKE and not REACHABILITY_SMOKE and not DESIGN_REVIEW,
         "writes": [],
         "messages": [],
         "recording": None,
@@ -302,7 +325,12 @@ def main() -> int:
         device = os.environ.get("PANELS_REPLACEMENT_DEVICE_ID")
         if not device or "PANELS_OFFLINE_BUNDLE" not in os.environ:
             raise ValueError("Replacement disk proof requires an explicit test device and bundle")
-        containers = Path.home() / "Library/Developer/CoreSimulator/Devices" / device / "data/Containers/Data/Application"
+        containers = (
+            Path.home()
+            / "Library/Developer/CoreSimulator/Devices"
+            / device
+            / "data/Containers/Data/Application"
+        )
         matches = [
             path.parent
             for path in containers.glob("*/.com.apple.mobile_container_manager.metadata.plist")
@@ -312,18 +340,33 @@ def main() -> int:
             raise ValueError("The owned replacement app has no unique data container")
         store = matches[0] / "Library/Application Support/PanelsPhone/phone.store"
         with sqlite3.connect("file:" + str(store) + "?mode=ro", uri=True) as connection:
-            rows = connection.execute("SELECT ZKEY, ZPAYLOAD FROM ZLOCALRECORD WHERE ZKIND = 'cache' AND ZSERVER = ?", (url,)).fetchall()
+            rows = connection.execute(
+                "SELECT ZKEY, ZPAYLOAD FROM ZLOCALRECORD WHERE ZKIND = 'cache' AND ZSERVER = ?",
+                (url,),
+            ).fetchall()
         saved = {}
         for key, payload in rows:
             if "/api/navigation/view/snapshot#" not in key:
                 continue
             snapshot = json.loads(payload)
-            chief = next((record["value"] for record in snapshot["content"]["records"] if record["kind"] == "chief"), None)
+            chief = next(
+                (
+                    record["value"]
+                    for record in snapshot["content"]["records"]
+                    if record["kind"] == "chief"
+                ),
+                None,
+            )
             if chief is not None:
                 saved[key.rsplit("#", 1)[-1]] = chief.get("conversation_id")
         if saved.get("latest") != "stub" or saved.get("workspace") != "stub":
             raise ValueError("The app did not persist its old Chief reference before relaunch")
-        proof = {"device": device, "bundle": BUNDLE, "saved_chief_references": saved, "store_open_mode": "read-only"}
+        proof = {
+            "device": device,
+            "bundle": BUNDLE,
+            "saved_chief_references": saved,
+            "store_open_mode": "read-only",
+        }
         (output / "replacement-saved-reference.json").write_text(json.dumps(proof, indent=2))
         return proof
 
@@ -347,7 +390,7 @@ def main() -> int:
                 "machine_id": "75a49e78-97de-4e28-8dc5-79646761c46f",
                 "recap_reference": None,
                 "worker_type": ticket["worker_type"],
-                "stage_label": "Current",
+                "stage_label": "What Changes" if DESIGN_REVIEW else "Current",
                 "workflow_label": "Product design",
                 "stage": ticket["stage"],
                 "ticket_status": "awaiting_approval" if proposal else "empty",
@@ -361,10 +404,10 @@ def main() -> int:
                 "manager_id": None,
                 "conversation_id": ticket["conversation_id"],
                 "is_backlogged": False,
-                "ceiling": ticket["stage"],
-                "ceiling_holder": {"kind": "owner", "id": "owner"},
-                "gating_field": "wireframe",
-                "proposal_field": "wireframe" if proposal else None,
+                "ceiling": ticket["ceiling"] if DESIGN_REVIEW else ticket["stage"],
+                "ceiling_holder": ticket["ceiling_holder"] if DESIGN_REVIEW else {"kind": "owner", "id": "owner"},
+                "gating_field": "what_changes" if DESIGN_REVIEW else "wireframe",
+                "proposal_field": proposal["field"] if proposal else None,
                 "proposal_revision": proposal["revision"] if proposal else 0,
                 "proposal_created_at": proposal["created_at"] if proposal else None,
                 "stage_ownership": "worker",
@@ -399,9 +442,16 @@ def main() -> int:
             ("chief", "chief"): {
                 "kind": "chief",
                 "id": "chief",
-                "value": {"label": "Chief of Staff", "conversation_id": state["chief_conversation"]},
+                "value": {
+                    "label": "Chief of Staff",
+                    "conversation_id": state["chief_conversation"],
+                },
             }
         }
+        if DESIGN_REVIEW:
+            for key, project, title in [("design-panels", "Panels", "Get Panels ready for the phone"), ("design-wren", "Wren", "Ship Wren to the App Store"), ("design-write", "Write", "Write 1,000 words a day")]:
+                records[("project", key)] = dict(kind="project", id=key, value=dict(name=project))
+                records[("manager", key)] = dict(kind="manager", id=key, value=dict(title=title, recap="", recap_preview="", recap_reference=None, created_at=1, updated_at=1, project_id=key, settled=False, conversation_id=None))
         cards: dict[tuple[str, str], int] = {}
         owner = state["review_owner"] if REVIEW_MESSAGES else None
         for ticket in tickets.values():
@@ -492,18 +542,35 @@ def main() -> int:
         windows = []
         for window in request["windows"]:
             members = order[: window["limit"]] if window["section"] == "review" else []
+            if DESIGN_REVIEW and window["section"] == "rail_tickets" and window["owner"]["kind"] == "chief":
+                members = [("ticket", key) for key in tickets][:window["limit"]]
+            if DESIGN_REVIEW and window["section"] == "rail_parents":
+                members = [("manager", key) for key in ["design-panels", "design-wren", "design-write"]]
             windows.append(
                 {
                     "window_id": json.dumps([window["section"], window["owner"]]),
                     "request": window,
                     "members": [{"kind": kind, "id": identity} for kind, identity in members],
-                    "total": len(order) if window["section"] == "review" else 0,
+                    "total": len(members) if DESIGN_REVIEW else (len(order) if window["section"] == "review" else 0),
                     "previous": None,
                     "next": None,
                     "forward_overlap": None,
                     "backward_overlap": None,
                 }
             )
+        review_context = []
+        for conversation_id in request["review_conversation_ids"]:
+            candidates = [
+                row for row in records.values()
+                if row["kind"] == "address"
+                and row["value"]["conversation_id"] == conversation_id
+                and (row["value"]["owner_kind"], row["value"]["owner_id"]) in records
+            ]
+            candidates.sort(key=lambda row: (-int(row["value"]["current"]), row["id"]))
+            review_context.append({
+                "conversation_id": conversation_id,
+                "canonical_address_id": candidates[0]["id"] if candidates else None,
+            })
         content = {
             "records": list(records.values()),
             "windows": windows,
@@ -514,7 +581,7 @@ def main() -> int:
                 "unread": 0,
                 "settled": 0,
             },
-            "review_context": [],
+            "review_context": review_context,
             "review_summary": {"skipped": 0, "new": len(order)},
         }
         version = hashlib.sha256(json.dumps(content, sort_keys=True).encode()).hexdigest()
@@ -572,9 +639,13 @@ def main() -> int:
                 {
                     "kind": "row",
                     "key": identity + "-message",
-                    "body": {"kind": "inline", "value": {
-                        "kind": "agent_message", "content": [{"piece": "text", "text": text}],
-                    }},
+                    "body": {
+                        "kind": "inline",
+                        "value": {
+                            "kind": "agent_message",
+                            "content": [{"piece": "text", "text": text}],
+                        },
+                    },
                 }
             ]
             value["coverage"]["through_sequence"] = 8
@@ -627,6 +698,9 @@ def main() -> int:
             query = parse_qs(urlparse(self.path).query)
             if path.startswith("/proof/"):
                 name = path.removeprefix("/proof/")
+                if DESIGN_REVIEW and name == "scopes":
+                    self.respond(state.get("scope_writes", []))
+                    return
                 if REPLACEMENT_SMOKE and name.startswith("replacement/"):
                     action = name.split("/", 1)[1]
                     with lock:
@@ -646,16 +720,35 @@ def main() -> int:
                         elif action == "unread":
                             state["read_through"] = 1
                         elif action == "state":
-                            self.respond({
-                                "current": state["chief_conversation"],
-                                "tails": state["tail_requests"],
-                            })
+                            self.respond(
+                                {
+                                    "current": state["chief_conversation"],
+                                    "tails": state["tail_requests"],
+                                }
+                            )
                             return
                         elif action == "review-observation":
-                            (output / "replacement-review-observation.json").write_text(json.dumps(query))
+                            (output / "replacement-review-observation.json").write_text(
+                                json.dumps(query)
+                            )
                         else:
                             self.respond({"error": "Unknown replacement action"}, 400)
                             return
+                    self.respond({})
+                    return
+                if DESIGN_REVIEW and name.startswith("design-state/"):
+                    mode = name.rsplit("/", 1)[-1]
+                    with lock:
+                        ticket = tickets["offline-1"]
+                        ticket["conversation_id"] = None if mode == "noconv" else "stub"
+                        if mode == "final":
+                            ticket["stage"] = "needs_consequences"
+                            ticket["pending_proposal"]["field"] = "consequences"
+                        elif mode == "normal":
+                            ticket["stage"] = "needs_what_changes"
+                            ticket["pending_proposal"]["field"] = "what_changes"
+                        if mode == "refused":
+                            ticket["pending_proposal"]["revision"] += 1
                     self.respond({})
                     return
                 if name.startswith("review-owner/"):
@@ -722,16 +815,19 @@ def main() -> int:
             if state.get("request_failed"):
                 self.respond({"error": {"message": "Request failed on the reachable server."}}, 503)
                 return
-            if (
-                path in ("/api/changes", "/api/navigation/view/events")
-                or path.endswith("/view/tail")
+            if path in ("/api/changes", "/api/navigation/view/events") or path.endswith(
+                "/view/tail"
             ):
                 # The navigation view and conversation tail send a fresh snapshot frame each
                 # second, so the app follows fixture changes without a change-driven read.
                 view = json.loads(query["view"][0]) if "view" in query else None
                 if REPLACEMENT_SMOKE and path.endswith("/view/tail"):
-                    state["tail_requests"].append(path.split("/conversations/", 1)[1].split("/", 1)[0])
-                    (output / "replacement-tail-requests.json").write_text(json.dumps(state["tail_requests"]))
+                    state["tail_requests"].append(
+                        path.split("/conversations/", 1)[1].split("/", 1)[0]
+                    )
+                    (output / "replacement-tail-requests.json").write_text(
+                        json.dumps(state["tail_requests"])
+                    )
                 # A cold slow load holds the view's first frame as it held the snapshot read.
                 while view is not None and state["slow"] and not state["offline"]:
                     time.sleep(0.1)
@@ -770,6 +866,14 @@ def main() -> int:
             page = dict(
                 match_count=0, return_count=0, limit=30, offset=0, complete=True, next_offset=None
             )
+            if DESIGN_REVIEW and path == "/api/goals":
+                design_goals = []
+                for key, status in [("design-panels", "good"), ("design-wren", "bad")]:
+                    goal = goal_record(key, "Reach the next milestone", "binary")
+                    goal.update(holder_kind="manager", holder_id=key, status=status, deadline=None)
+                    design_goals.append(goal)
+                self.respond(dict(goals=design_goals, status_date="2026-11-15", next_refresh_at=time.time()+3600))
+                return
             if GOALS_SMOKE and path == "/api/goals":
                 self.respond(
                     dict(
@@ -828,7 +932,11 @@ def main() -> int:
                 self.wfile.write(content)
                 return
             if REPLACEMENT_SMOKE and path == "/api/goals":
-                value = {"goals": [], "status_date": "2026-11-14", "next_refresh_at": time.time() + 3600}
+                value = {
+                    "goals": [],
+                    "status_date": "2026-11-14",
+                    "next_refresh_at": time.time() + 3600,
+                }
             elif REPLACEMENT_SMOKE and path.endswith("/page"):
                 value = {"page": {"blocks": []}, "page_revision": 1}
             elif REPLACEMENT_SMOKE and path.endswith("/page/readings"):
@@ -946,6 +1054,14 @@ def main() -> int:
         def do_PATCH(self) -> None:
             path = urlparse(self.path).path
             body = json.loads(self.rfile.read(int(self.headers.get("Content-Length", "0"))) or "{}")
+            if DESIGN_REVIEW and path.startswith("/api/tickets/") and path.split("/")[3] in tickets:
+                with lock:
+                    ticket = tickets[path.split("/")[3]]
+                    assert set(body) <= {"ceiling", "ceiling_holder"}
+                    ticket.update(body)
+                    state.setdefault("scope_writes", []).append(dict(path=path, body=body))
+                    self.respond(ticket)
+                return
             if not GOALS_SMOKE or not path.startswith("/api/goals/"):
                 self.respond({}, 404)
                 return
@@ -1019,7 +1135,9 @@ def main() -> int:
                     state["writes"].append(body)
                     state["messages"].append(body)
                     value = {
-                        "conversation_id": body.get("conversation_id") or state["chief_conversation"] or "stub",
+                        "conversation_id": body.get("conversation_id")
+                        or state["chief_conversation"]
+                        or "stub",
                         "fate": "started",
                     }
                 elif REVIEW_MESSAGES and path.endswith("/send"):
@@ -1145,7 +1263,9 @@ def main() -> int:
 
         control = http.server.ThreadingHTTPServer(("127.0.0.1", 0), ConnectionControl)
         threading.Thread(target=control.serve_forever, daemon=True).start()
-        env["TEST_RUNNER_PANELS_REACHABILITY_CONTROL_URL"] = f"http://127.0.0.1:{control.server_port}"
+        env["TEST_RUNNER_PANELS_REACHABILITY_CONTROL_URL"] = (
+            f"http://127.0.0.1:{control.server_port}"
+        )
     try:
         if server_only:
             # The caller owns build, test, device and deadline. This mode starts
@@ -1182,14 +1302,14 @@ def main() -> int:
                 "never",
                 "PANELS_APP_BUNDLE_IDENTIFIER=" + BUNDLE,
                 "CODE_SIGNING_ALLOWED=NO",
-                ("-only-testing:PanelsReviewUITests/" if review else "-only-testing:PanelsNotificationUITests/")
+                (
+                    "-only-testing:PanelsReviewUITests/"
+                    if review
+                    else "-only-testing:PanelsNotificationUITests/"
+                )
                 + (
                     os.environ.get("PANELS_OFFLINE_TEST")
-                    or (
-                        "ReviewMessagesTests"
-                        if REVIEW_MESSAGES
-                        else "OfflineOperationTests"
-                    )
+                    or ("ReviewMessagesTests" if REVIEW_MESSAGES else "OfflineOperationTests")
                 ),
                 "test",
             ],

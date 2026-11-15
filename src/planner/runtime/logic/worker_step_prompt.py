@@ -58,7 +58,6 @@ def compose_worker_step_prompt(
     ticket: Ticket,
     *,
     worker_type_definition: WorkflowDefinition,
-    memory_was_lost: bool,
 ) -> WorkerStepPrompt:
     """Compose every Panels-owned input for one Ticket worker step.
 
@@ -66,9 +65,6 @@ def compose_worker_step_prompt(
     requirements also remain in the conversation system, where their own trust rules
     apply. The gated field is resolved against the Ticket's own Worker type definition.
 
-    ``memory_was_lost`` is the caller's answer to whether this conversation was compacted
-    since Panels last spoke into it. Only Panels holds that fact, so only Panels can put
-    it in the message.
     """
     gating = worker_type_definition.gating_field(ticket.stage)
     field = str(gating) if gating is not None else "the next step"
@@ -99,15 +95,15 @@ def compose_worker_step_prompt(
         f"{FOLLOW_YOUR_WORKFLOW_GUIDE}"
     )
 
-    inputs: list[WorkerStepInput] = []
-    if memory_was_lost:
-        inputs.append(WorkerStepInput("memory loss", MEMORY_LOSS_NOTICE, quoted=False))
-    if memory_was_lost:
-        inputs.append(
-            WorkerStepInput("Ticket workflow guidance", render_workflow_guide(ticket.workflow))
-        )
-    inputs.append(WorkerStepInput("stage instruction", step_instruction, quoted=False))
-    return WorkerStepPrompt(inputs=tuple(inputs))
+    return WorkerStepPrompt(
+        inputs=(WorkerStepInput("stage instruction", step_instruction, quoted=False),)
+    )
+
+
+def worker_step_memory_loss_prompt(ticket: Ticket) -> str:
+    """Panels' separate dispatch-time input for a worker-step wake."""
+    return (MEMORY_LOSS_NOTICE + "\n\n[Ticket workflow guidance]\n"
+            + render_workflow_guide(ticket.workflow) + "\n[/Ticket workflow guidance]")
 
 
 def mid_step_memory_loss_prompt(ticket: Ticket) -> str:

@@ -1345,23 +1345,47 @@ def _compaction_boundaries(db_path: Path, conversation_id: str) -> tuple[int, in
 
 @pytest.mark.parametrize("working_turn", (False, True), ids=("idle-compact", "working-turn"))
 def test_only_a_compaction_inside_a_working_turn_sets_the_working_turn_boundary(
-    harness: _Harness, working_turn: bool
+    harness: _Harness, working_turn: bool, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     async def exercise() -> None:
+        from contextlib import closing
+
+        from planner.runtime.worker_memory import conversation_holds_an_unanswered_memory_loss
+
+        monkeypatch.setattr(conversation_system, "backend_supports_steer", lambda _key: True)
         await _start(harness, "c")
-        await harness.system.send("c", text_message_content("real work"), sender_label="owner")
+        await harness.system.send(
+            "c", text_message_content("real work"), sender_label="loop",
+            sender_message_id="worker_step_message_original",
+        )
         if not working_turn:
             await harness.complete_turn("c")
             harness.clock.advance(50 * 60)
             await _sweep(harness)
             assert harness.backend("c").written_texts()[-1] == "/compact"
         await harness.confirm_compaction("c")
+        compacted_event = (await harness.events("c"))[-1]
+        assert compacted_event.kind.value == "context_compacted"
+        if working_turn:
+            # A worker-step prompt answers the boundary while the same turn is still running.
+            harness.backend("c").steer_outcome = BackendSteerAccepted()
+            await harness.system.send(
+                "c", text_message_content("notice"), sender_label="loop",
+                sender_message_id="worker_step_message_answer",
+                mode=PromptDeliveryMode.steer,
+            )
+            await harness.agent_message("c", text_message_content("continued work"))
+            with closing(connect(str(harness.db_path))) as conn:
+                assert not conversation_holds_an_unanswered_memory_loss(conn, "c")
         await harness.complete_turn("c")
+        if working_turn:
+            with closing(connect(str(harness.db_path))) as conn:
+                assert not conversation_holds_an_unanswered_memory_loss(conn, "c")
 
         compacted_through, working_turn_compacted_through = _compaction_boundaries(
             harness.db_path, "c"
         )
-        assert compacted_through > 0
+        assert compacted_through == compacted_event.sequence
         assert working_turn_compacted_through == (compacted_through if working_turn else 0)
 
     _run(exercise)
@@ -1413,8 +1437,11 @@ async def _send_memory_notice(harness: _Harness, conversation_id: str) -> object
 
 
 def test_a_memory_notice_turn_does_not_make_its_worker_due_for_another_compaction(
-    harness: _Harness,
+    harness: _Harness, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    from planner.runtime import worker_memory
+
+    monkeypatch.setattr(worker_memory, "ticket_needs_memory_notice", lambda *_: True)
     async def exercise() -> None:
         await _start(harness, "c")
         _link_worker_ticket(harness.db_path, "c")
@@ -1453,6 +1480,10 @@ def test_a_memory_notice_turn_does_not_make_its_worker_due_for_another_compactio
 def test_real_work_joining_a_memory_notice_turn_still_counts(
     harness: _Harness, monkeypatch: pytest.MonkeyPatch, joins: str
 ) -> None:
+    from planner.runtime import worker_memory
+
+    monkeypatch.setattr(worker_memory, "ticket_needs_memory_notice", lambda *_: True)
+
     async def exercise() -> None:
         monkeypatch.setattr(conversation_system, "backend_supports_steer", lambda _key: True)
         await _start(harness, "c")
@@ -1537,6 +1568,341 @@ def test_a_notice_waiting_in_the_queue_is_suppressed_once_its_ticket_is_backlogg
         assert harness.backend("c").written_texts() == ("real work", "behind it")
         assert await _discarded(harness, "c") == [
             ("Your context was compacted", "worker_ticket_backlogged")
+        ]
+
+    _run(exercise)
+
+
+@pytest.mark.parametrize("answered,uncertain,backlogged", [
+    (True, False, False), (False, False, False), (False, True, False), (False, False, True),
+])
+def test_queued_wake_receives_separate_memory_input_only_when_needed(
+    harness: _Harness, monkeypatch: pytest.MonkeyPatch, answered: bool, uncertain: bool,
+    backlogged: bool,
+) -> None:
+    from planner.conversation.backends.contracts import PromptWriteFailed
+    from planner.conversation.events import PromptDeliveryUncertainEventPayload
+    from planner.runtime.logic.worker_step_prompt import (
+        MEMORY_LOSS_NOTICE,
+        compose_worker_step_prompt,
+    )
+    from planner.tickets import data as tickets_data
+
+    async def exercise() -> None:
+        monkeypatch.setattr(conversation_system, "backend_supports_steer", lambda _key: True)
+        await _start(harness, "c")
+        _link_worker_ticket(harness.db_path, "c")
+        await harness.system.send(
+            "c", text_message_content("work"), sender_label="Panels",
+            sender_message_id="worker_step_message_first",
+        )
+        if answered:
+            await harness.confirm_compaction("c")
+        conn = connect(str(harness.db_path))
+        try:
+            with conn:
+                conn.execute("UPDATE tickets SET worker_step_claim='out' WHERE id='t_worker'")
+                conn.execute(
+                    "INSERT INTO worker_step_dispatch_intents VALUES "
+                    "('t_worker', 0, 'worker_step_message_t_worker:0', 'dispatch_started')"
+                )
+            ticket = tickets_data.read_ticket(conn, "t_worker")
+            wake = compose_worker_step_prompt(
+                ticket, worker_type_definition=ticket.workflow
+            ).model_text
+        finally:
+            conn.close()
+        if not answered:
+            await harness.confirm_compaction("c")
+        assert isinstance(await _send_memory_notice(harness, "c"), PromptDeliveryQueued)
+        notice_id = (await harness.system.held_prompts("c"))[0].sender_message_id
+        assert isinstance(await harness.system.send(
+            "c", text_message_content(wake), sender_label="Panels",
+            sender_message_id="worker_step_message_t_worker:0",
+        ), PromptDeliveryQueued)
+        if answered:
+            harness.backend("c").steer_outcome = BackendSteerAccepted()
+            await harness.system.send(
+                "c", text_message_content("already answered"), sender_label="Panels",
+                sender_message_id="worker_step_message_answer", mode=PromptDeliveryMode.steer,
+            )
+        await harness.system.send("c", text_message_content("owner"), sender_label="owner")
+        # A user-owned stage releases the claim when its opener queues.
+        conn = connect(str(harness.db_path))
+        try:
+            with conn:
+                conn.execute(
+                    "UPDATE tickets SET worker_step_claim='none', "
+                    "worker_step_claim_revision=worker_step_claim_revision+1 WHERE id='t_worker'"
+                )
+        finally:
+            conn.close()
+        if backlogged:
+            _backlog_ticket(harness.db_path)
+        attempted = []
+        if uncertain:
+            async def possible_emission(
+                self: _FakeBackendChild, *args: Any, **kwargs: Any
+            ) -> None:
+                attempted.append(message_content_text(kwargs["sender_content"]))
+                raise PromptWriteFailed("acknowledgment lost after possible transmission")
+
+            monkeypatch.setattr(_FakeBackendChild, "write_prompt", possible_emission)
+        await harness.complete_turn("c")
+        delivered = attempted[0] if uncertain else harness.backend("c").written_texts()[-1]
+        assert notice_id not in await harness.system.sender_message_ids_awaiting_outcome("c")
+        assert delivered.count(MEMORY_LOSS_NOTICE) == (0 if answered or backlogged else 1)
+        assert "Work ticket t_worker" in delivered and "owner" in delivered
+        prompts = [event.payload for event in await harness.events("c")
+                   if isinstance(event.payload, (
+                       PromptEventPayload, PromptDeliveryUncertainEventPayload
+                   ))]
+        wake_row = next(
+            p for p in prompts if p.sender_message_id == "worker_step_message_t_worker:0"
+        )
+        assert message_content_text(wake_row.content) == wake
+        notice_rows = [p for p in prompts if p.sender_message_id and
+                       p.sender_message_id.startswith("worker_step_memory_notice_") and
+                       MEMORY_LOSS_NOTICE in message_content_text(p.content)]
+        assert len(notice_rows) == (0 if answered or backlogged else 1)
+        assert "Work ticket t_worker" in message_content_text(wake_row.content)
+        assert await _discarded(harness, "c") == [
+            ("Your context was compacted",
+             "worker_ticket_backlogged" if backlogged else "worker_memory_notice_included_in_step")
+        ]
+
+    _run(exercise)
+
+
+@pytest.mark.parametrize("uncertain,rebind", [(False, False), (True, False), (False, True)])
+def test_immediate_wake_records_separate_memory_input_and_replays(
+    harness: _Harness, monkeypatch: pytest.MonkeyPatch, uncertain: bool, rebind: bool,
+) -> None:
+    from planner.conversation.backends.contracts import PromptWriteFailed
+    from planner.conversation.events import PromptDeliveryUncertainEventPayload
+    from planner.runtime.logic.worker_step_prompt import (
+        MEMORY_LOSS_NOTICE,
+        compose_worker_step_prompt,
+    )
+    from planner.tickets import data as tickets_data
+
+    async def exercise() -> None:
+        await _start(harness, "c")
+        _link_worker_ticket(harness.db_path, "c")
+        await harness.system.send(
+            "c", text_message_content("work"), sender_label="Panels",
+            sender_message_id="worker_step_message_first",
+        )
+        await harness.confirm_compaction("c")
+        await harness.complete_turn("c")
+        conn = connect(str(harness.db_path))
+        try:
+            with conn:
+                conn.execute(
+                    "INSERT INTO worker_step_dispatch_intents VALUES "
+                    "('t_worker', 0, 'worker_step_message_t_worker:0', 'dispatch_started')"
+                )
+            ticket = tickets_data.read_ticket(conn, "t_worker")
+            wake = compose_worker_step_prompt(
+                ticket, worker_type_definition=ticket.workflow
+            ).model_text
+        finally:
+            conn.close()
+        attempted = []
+        if uncertain:
+            async def possible_emission(
+                self: _FakeBackendChild, *args: Any, **kwargs: Any
+            ) -> None:
+                attempted.append(message_content_text(kwargs["sender_content"]))
+                raise PromptWriteFailed("acknowledgment lost after possible transmission")
+
+            monkeypatch.setattr(_FakeBackendChild, "write_prompt", possible_emission)
+        harness.backend("c").needs_rebind_once = rebind
+        fate = await harness.system.send(
+            "c", text_message_content(wake), sender_label="Panels",
+            sender_message_id="worker_step_message_t_worker:0",
+        )
+        assert isinstance(fate, PromptDeliveryUncertain if uncertain else PromptDeliveryStarted)
+        delivered = attempted[0] if uncertain else harness.backend("c").written_texts()[-1]
+        prompts = [
+            event.payload for event in await harness.events("c")
+            if isinstance(event.payload, (
+                PromptEventPayload, PromptDeliveryUncertainEventPayload
+            ))
+        ]
+        wake_row = next(
+            p for p in prompts if p.sender_message_id == "worker_step_message_t_worker:0"
+        )
+        assert delivered.count(MEMORY_LOSS_NOTICE) == 1
+        assert message_content_text(wake_row.content) == wake
+        assert any(MEMORY_LOSS_NOTICE in message_content_text(p.content)
+                   for p in prompts if p is not wake_row)
+        replay = await harness.system.send(
+            "c", text_message_content(wake), sender_label="Panels",
+            sender_message_id="worker_step_message_t_worker:0",
+        )
+        assert isinstance(replay, PromptDeliveryUncertain if uncertain else PromptDeliveryStarted)
+        assert "Work ticket t_worker" in delivered
+
+    _run(exercise)
+
+
+
+def test_rebind_recomputes_worker_memory_after_boundary_changes(
+    harness: _Harness, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from planner.runtime.logic.worker_step_prompt import (
+        MEMORY_LOSS_NOTICE,
+        compose_worker_step_prompt,
+    )
+    from planner.tickets import data as tickets_data
+
+    async def exercise() -> None:
+        await _start(harness, "c")
+        _link_worker_ticket(harness.db_path, "c")
+        await harness.system.send(
+            "c", text_message_content("work"), sender_label="Panels",
+            sender_message_id="worker_step_message_first",
+        )
+        await harness.confirm_compaction("c")
+        await harness.complete_turn("c")
+        conn = connect(str(harness.db_path))
+        try:
+            with conn:
+                conn.execute(
+                    "INSERT INTO worker_step_dispatch_intents VALUES "
+                    "('t_worker', 0, 'worker_step_message_t_worker:0', 'dispatch_started')"
+                )
+            ticket = tickets_data.read_ticket(conn, "t_worker")
+            wake = compose_worker_step_prompt(
+                ticket, worker_type_definition=ticket.workflow
+            ).model_text
+        finally:
+            conn.close()
+
+        original_write = _FakeBackendChild.write_prompt
+        first = True
+
+        async def answer_then_rebind(self: _FakeBackendChild, *args: Any, **kwargs: Any) -> Any:
+            nonlocal first
+            if first:
+                first = False
+                assert MEMORY_LOSS_NOTICE in message_content_text(kwargs["sender_content"])
+                conn = connect(str(harness.db_path))
+                try:
+                    with conn:
+                        conn.execute(
+                            "UPDATE conversations SET automatically_compacted_through_sequence=0 "
+                            "WHERE conversation_id='c'"
+                        )
+                finally:
+                    conn.close()
+                raise NeedsRebind("c")
+            return await original_write(self, *args, **kwargs)
+
+        monkeypatch.setattr(_FakeBackendChild, "write_prompt", answer_then_rebind)
+        assert isinstance(await harness.system.send(
+            "c", text_message_content(wake), sender_label="Panels",
+            sender_message_id="worker_step_message_t_worker:0",
+        ), PromptDeliveryStarted)
+        assert MEMORY_LOSS_NOTICE not in harness.backend("c").written_texts()[-1]
+        prompts = [event.payload for event in await harness.events("c")
+                   if isinstance(event.payload, PromptEventPayload)]
+        wake_row = next(
+            p for p in prompts if p.sender_message_id == "worker_step_message_t_worker:0"
+        )
+        assert message_content_text(wake_row.content) == wake
+        assert not any(p.sender_message_id and p.sender_message_id.startswith(
+            "worker_step_memory_notice_") for p in prompts)
+
+    _run(exercise)
+
+
+def test_restarted_worker_wake_computes_memory_from_current_boundary(harness: _Harness) -> None:
+    from planner.runtime.logic.worker_step_prompt import (
+        MEMORY_LOSS_NOTICE,
+        compose_worker_step_prompt,
+    )
+    from planner.tickets import data as tickets_data
+
+    async def exercise() -> None:
+        await _start(harness, "c")
+        _link_worker_ticket(harness.db_path, "c")
+        await harness.system.send(
+            "c", text_message_content("work"), sender_label="Panels",
+            sender_message_id="worker_step_message_first",
+        )
+        conn = connect(str(harness.db_path))
+        try:
+            with conn:
+                conn.execute(
+                    "INSERT INTO worker_step_dispatch_intents VALUES "
+                    "('t_worker', 0, 'worker_step_message_t_worker:0', 'dispatch_started')"
+                )
+            ticket = tickets_data.read_ticket(conn, "t_worker")
+            wake = compose_worker_step_prompt(
+                ticket, worker_type_definition=ticket.workflow
+            ).model_text
+        finally:
+            conn.close()
+        assert isinstance(await harness.system.send(
+            "c", text_message_content(wake), sender_label="Panels",
+            sender_message_id="worker_step_message_t_worker:0",
+        ), PromptDeliveryQueued)
+        # Compaction occurred after the immutable wake was queued. Held prompts are
+        # process-local; a fresh system must compute the note from the durable boundary.
+        await harness.confirm_compaction("c")
+        await harness.system.shutdown()
+        restarted = _Harness(harness.db_path)
+        restarted.backends = harness.backends
+        try:
+            assert isinstance(await restarted.system.send(
+                "c", text_message_content(wake), sender_label="Panels",
+                sender_message_id="worker_step_message_t_worker:0",
+            ), PromptDeliveryStarted)
+            assert restarted.backend("c").written_texts()[-1].count(MEMORY_LOSS_NOTICE) == 1
+            prompts = [event.payload for event in await restarted.events("c")
+                       if isinstance(event.payload, PromptEventPayload)]
+            wake_row = next(
+                p for p in prompts if p.sender_message_id == "worker_step_message_t_worker:0"
+            )
+            assert message_content_text(wake_row.content) == wake
+            assert sum(bool(p.sender_message_id and p.sender_message_id.startswith(
+                "worker_step_memory_notice_")) for p in prompts) == 1
+        finally:
+            await restarted.system.shutdown()
+
+    _run(exercise)
+
+def test_queued_memory_notice_is_discarded_when_its_step_finishes(
+    harness: _Harness,
+) -> None:
+    async def exercise() -> None:
+        await _start(harness, "c")
+        _link_worker_ticket(harness.db_path, "c")
+        conn = connect(str(harness.db_path))
+        try:
+            with conn:
+                conn.execute("UPDATE tickets SET worker_step_claim='out' WHERE id='t_worker'")
+        finally:
+            conn.close()
+        await harness.system.send(
+            "c", text_message_content("work"), sender_label="Panels",
+            sender_message_id="worker_step_message_first",
+        )
+        await harness.confirm_compaction("c")
+        assert isinstance(await _send_memory_notice(harness, "c"), PromptDeliveryQueued)
+        await harness.system.send("c", text_message_content("owner"), sender_label="owner")
+        conn = connect(str(harness.db_path))
+        try:
+            with conn:
+                conn.execute("UPDATE tickets SET worker_step_claim='none' WHERE id='t_worker'")
+        finally:
+            conn.close()
+        await harness.complete_turn("c")
+        assert harness.backend("c").written_texts() == ("work", "owner")
+        assert await _discarded(harness, "c") == [
+            ("Your context was compacted", "worker_memory_notice_no_longer_needed")
         ]
 
     _run(exercise)

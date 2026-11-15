@@ -182,3 +182,17 @@ def test_artifact_only_retirement_does_not_require_git_repair_before_new_checkou
     checkout = prepare_workspace(folder, layout.repository, folder.name)
     assert _git(checkout, "status", "--porcelain") == ""
     assert (retired / "report.md").read_text() == "retired artifact"
+
+
+def test_repository_selection_refuses_malformed_or_ambiguous_children(tmp_path: Path) -> None:
+    """A unique child must be Git-valid, and multiple candidates must not be guessed."""
+    project = tmp_path / "project"
+    malformed = project / "headroom"
+    (malformed / ".git").mkdir(parents=True)
+    with pytest.raises(RuntimeError, match="Cannot inspect Project repository"):
+        filesystem.repository_root(project)
+    other = project / "other"
+    other.mkdir()
+    _git(other, "init", "-q")
+    with pytest.raises(RuntimeError, match="select the repository folder explicitly"):
+        filesystem.repository_root(project)

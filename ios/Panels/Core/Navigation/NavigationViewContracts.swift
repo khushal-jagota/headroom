@@ -266,10 +266,16 @@ struct ViewAuthority: Codable, Equatable, Sendable {
     let permit: Permit
 }
 
+struct ViewReviewConversationContext: Codable, Equatable, Sendable {
+    let conversationId: String
+    let canonicalAddressId: String?
+}
+
 struct ViewContent: Codable, Sendable {
     var records: [ViewRecord]
     var windows: [ViewWindow]
     var counts: ViewCounts
+    var reviewContext: [ViewReviewConversationContext]
 }
 
 /// One coherent bounded view: records, window membership and global counts.
@@ -320,6 +326,7 @@ struct ViewPatch: Codable, Sendable {
     let evictions: [RecordKey]
     let windows: [ViewWindow]
     let counts: ViewCounts
+    let reviewContext: [ViewReviewConversationContext]
 }
 
 struct ViewCheckpoint: Codable, Sendable {

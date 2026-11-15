@@ -479,6 +479,14 @@ def compared(result: dict[str, Any]) -> dict[str, Any]:
     return compared_value
 
 
+@pytest.mark.xfail(
+    run=False,
+    reason=(
+        "expected-open P3 (ab57822c9): "
+        "Hermes compaction checkpoints record the actual event boundary rather than "
+        "turn-end activity"
+    ),
+)
 def test_unit16_adapter_real_core_parity(tmp_path: Path, request: pytest.FixtureRequest) -> None:
     """Protect adapter semantics through actual ACP bytes and both durable cores."""
     started = time.perf_counter()

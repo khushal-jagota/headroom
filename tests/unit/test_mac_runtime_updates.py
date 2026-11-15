@@ -628,7 +628,10 @@ def test_marker_requires_server_confirmation_and_replay_custody_survives_selecti
         controller.release_handoff_custody()
         assert (read_record(handoff) or {})["replay_pending"] is False
         assert runner.admission_stopped
-        atomic_record(controller.root / "selection.json", {"request_id": target.request_id})
+        atomic_record(
+            controller.root / "selection.json",
+            {"request_id": target.request_id, "application_revision": target.application_revision},
+        )
         controller.release_runtime_admission()
         assert not runner.admission_stopped
 

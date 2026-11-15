@@ -532,7 +532,13 @@ class MacRunner:
         try:
             artifact_root.mkdir(parents=True, exist_ok=True)
             if managed:
-                workspace = prepare_workspace(artifact_root, workspace, ticket_id)
+                repository = (
+                    None
+                    if resolved.workspace_path_policy == WorkspacePathPolicy.executor_default
+                    and not workspace_home_relative
+                    else workspace
+                )
+                workspace = prepare_workspace(artifact_root, repository, ticket_id)
         except (OSError, ValueError, RuntimeError, subprocess.TimeoutExpired) as error:
             raise BackendSpawnFailed(f"Mac Ticket worktree unavailable: {error}") from error
         original = resolved.role_materials

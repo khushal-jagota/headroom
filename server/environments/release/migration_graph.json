@@ -1,5 +1,8 @@
 {
   "revisions": {
+    "actual_compaction_boundaries": [
+      "merge_iphone_staging"
+    ],
     "automatic_start_lookup": [
       "worker_cleanup_recheck"
     ],
@@ -85,6 +88,6 @@
       "recap_freshness"
     ]
   },
-  "source_digest": "5e2c6e6491a90646e0f361a869ae541369a4188be04eea465e55493f98e76b4a",
+  "source_digest": "112099d8d3698c6545d29e2e30f80ede9c703dd22a6ec983322f576ae6f187a1",
   "version": 1
 }

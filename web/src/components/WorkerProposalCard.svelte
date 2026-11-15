@@ -6,16 +6,16 @@
   import ErrorLine from "./ErrorLine.svelte";
   import ComposerField from "./conversation/ComposerField.svelte";
   import { advanceTargetFor, fieldLabelFor, preferredScopeCeilingFor, type Lifecycle } from "../lib/lifecycle";
-  import { decisionIdentity, decisionId, recallReviewDecision, submitReviewDecision, type ReviewDecisionBody } from "../lib/review/decision";
+  import { decisionIdentity, decisionRecovery, DecisionRefusedError, recallReviewDecision, submitReviewDecision } from "../lib/review/decision";
   import type { PendingTicketProposal, Principal } from "../lib/types";
 
   let { ticketId, proposal, lifecycle, stage, ceiling, holder, manager, onAccept, onScope, onReturn, canReturn = true, returnUnavailableReason = "No existing Worker conversation to send a revision to.", disabled = false, revisionEditor, revisionText = $bindable(""), holdDecisions = false, initialEditedBody, onEditedBodyChange, contextRow, utilityActions }: {
     ticketId: string;
     proposal: PendingTicketProposal; lifecycle: Lifecycle; stage: string; ceiling: string; holder: Principal;
     manager: { id: string; title: string } | null;
-    onAccept: (body: Record<string, unknown>) => Promise<unknown>;
+    onAccept: () => Promise<unknown>;
     onScope: (body: Record<string,unknown>) => Promise<void>;
-    onReturn: (body: ReviewDecisionBody) => Promise<unknown>;
+    onReturn: () => Promise<unknown>;
     canReturn?: boolean;
     disabled?: boolean;
     /** The Review screen's voice-enabled note field beside the decision controls.
@@ -40,6 +40,10 @@
   let busy = $state(false);
   let resolved = $state(false);
   let error = $state<unknown>(null);
+  // A refusal names the Ticket and field, so it survives replacement of the reviewed revision.
+  let terminalRefusal = $derived($decisionRecovery.filter(entry => entry.terminal
+    && entry.saved.ticketId === ticketId && entry.saved.command.field === proposal.field).slice(-1)[0]?.error);
+  let visibleError = $derived(error ?? terminalRefusal);
   let lastKey: string | null = null;
   let newStage = $derived(advanceTargetFor(lifecycle, stage, ""));
   let nextCeiling = $derived(preferredScopeCeilingFor(lifecycle, newStage));
@@ -57,8 +61,8 @@
     try {
       const pending = recallReviewDecision(decisionKey);
       if (pending) {
-        revisionText = pending.body.message ?? "";
-        draft = pending.body.edited_body ?? proposal.body;
+        revisionText = pending.command.message ?? "";
+        draft = pending.command.edited_body ?? proposal.body;
       }
     } catch (recoveryError) { error = recoveryError; }
   });
@@ -75,18 +79,19 @@
     busy = true; error = null;
     try {
       if (change.approval && change.ceiling) {
-        await submitReviewDecision(key, { action: "approve", body: {
-          decision_id: decisionId(key, "approve"), message: text || null,
+        await submitReviewDecision(ticketId, proposal.field, { action: "approve", body: {
+          message: text || null,
           next_ceiling: change.ceiling, next_holder: change.holder, expected_proposal_revision: revision,
           ...(editedBody !== proposal.body ? { edited_body: editedBody } : {})
-        } }, onAccept);
+        } });
         if (!mounted || decisionKey !== key) return;
+        await onAccept();
         revisionText = "";
         resolved = true;
       } else {
         await onScope({ ...(change.ceiling === undefined ? {} : { ceiling:change.ceiling }), ceiling_holder:change.holder });
       }
-    } catch (err) { error = err; }
+    } catch (err) { error = err instanceof DecisionRefusedError ? null : err; }
     finally { busy = false; }
   }
   async function sendBack(message: string): Promise<void> {
@@ -95,14 +100,15 @@
     const key = decisionKey;
     const revision = proposal.revision;
     try {
-      await submitReviewDecision(key, { action: "send_back", body: {
-        decision_id: decisionId(key, "send_back"), message, expected_proposal_revision: revision
-      } }, onReturn);
+      await submitReviewDecision(ticketId, proposal.field, { action: "send_back", body: {
+        message, expected_proposal_revision: revision
+      } });
       if (!mounted || decisionKey !== key) return;
+      await onReturn();
       revisionText = "";
       resolved = true;
     }
-    catch (err) { error = err; }
+    catch (err) { error = err instanceof DecisionRefusedError ? null : err; }
     finally { busy = false; }
   }
   let revisionSlot = $state<HTMLElement | null>(null);
@@ -159,7 +165,7 @@
     approvalCeiling={nextCeiling} bind:controller={scopePicker}
     holderLabel={(value) => value ? reviewerLabel(value) : "User"} onComplete={(change) => void completeScope(change)} />
   {#if proposal.field !== "brief" && !canReturn}<p class="return-unavailable" data-return-unavailable>{returnUnavailableReason}</p>{/if}
-  {#if error}<ErrorLine {error} />{/if}
+  {#if visibleError}<ErrorLine error={visibleError} />{/if}
 </section>
 <style>
   /* THE CARD (page system). Its actions are the one Button, in one row at the card's right:

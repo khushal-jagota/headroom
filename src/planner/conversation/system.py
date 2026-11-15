@@ -425,6 +425,7 @@ class _Message:
 
     reasoning_effort_is_set: bool = False
     system_generated: bool = False
+    dispatch_memory_note: bool = False
 
     def same_message_as(self, other: object) -> bool:
         """Compare the identity facts retained at the other message's stage.
@@ -2203,11 +2204,14 @@ class SqliteProcessConversationSystem:
                     messages=(held,),
                 )
             except PromptWriteFailed:
-                await self._record_delivery_uncertainty(state, reservation, (held,))
+                await self._record_delivery_uncertainty(state, reservation, reservation.messages)
                 return PromptDeliveryUncertain()
             except BaseException:
                 async with state.lock:
-                    self._quarantine_uncertain_held_batch(state, (held,))
+                    self._quarantine_uncertain_held_batch(
+                        state,
+                        reservation.messages if reservation.prompt_write_attempted else (held,),
+                    )
                 raise
             if delivery.suppression_reason is not None:
                 self._abandon_reserved_turn(state, reservation, _ConversationPhase.idle)
@@ -2223,7 +2227,8 @@ class SqliteProcessConversationSystem:
                     reservation=reservation,
                     mode=PromptDeliveryMode.send_now,
                     phase_when_not_started=_ConversationPhase.idle,
-                    message=held,
+                    message=delivery.messages[0] if delivery.messages else held,
+                    also_delivered=delivery.messages[1:],
                     delivery=replace(delivery, record_refusal=True),
                 )
                 async with state.lock:
@@ -3170,6 +3175,8 @@ class SqliteProcessConversationSystem:
         state: _ConversationState,
         reservation: _ReservedTurn,
         messages: tuple[_Message, ...],
+        *,
+        settle_messages: tuple[_Message, ...] | None = None,
     ) -> None:
         """Keep the reservation and child owned while recording possible emission."""
         async with state.lock:
@@ -3182,7 +3189,7 @@ class SqliteProcessConversationSystem:
                     lifecycle=(_prompt_fact(reservation.token, LifecycleStatus.unknown),),
                     recording_receipt=message.recording_receipt,
                 )
-            self._settle_held_deliveries(state, messages)
+            self._settle_held_deliveries(state, settle_messages or messages)
             present = {held.held_prompt_id for held in state.held_prompts}
             for message in reversed(messages):
                 if message.held_prompt_id and message.held_prompt_id not in present:
@@ -3265,7 +3272,8 @@ class SqliteProcessConversationSystem:
             reservation=reservation,
             mode=mode,
             phase_when_not_started=_ConversationPhase.idle,
-            message=message,
+            message=delivery.messages[0] if delivery.messages else message,
+            also_delivered=delivery.messages[1:],
             delivery=delivery,
         )
         if started:
@@ -3585,6 +3593,59 @@ class SqliteProcessConversationSystem:
                 raise PromptWriteFailed(str(error)) from error
             raise
 
+    def _with_worker_step_memory_notice(
+        self, conversation_id: str, messages: tuple[_Message, ...]
+    ) -> tuple[_Message, ...]:
+        """Attach Panels' current memory input without changing the submitted wake."""
+        from planner.runtime.logic.worker_step_prompt import worker_step_memory_loss_prompt
+        from planner.tickets import data as tickets_data
+
+        with contextlib.closing(connect(self._store._db_path)) as conn:
+            result = []
+            added = False
+            for message in messages:
+                if message.dispatch_memory_note:
+                    continue
+                result.append(message)
+                row = conn.execute(
+                    "SELECT t.id FROM worker_step_dispatch_intents d "
+                    "JOIN tickets t ON t.id=d.ticket_id "
+                    "WHERE d.sender_message_id=? AND t.conversation_id=?",
+                    (message.sender_message_id, conversation_id),
+                ).fetchone()
+                if (
+                    added or row is None
+                    or tickets_data.automated_maintenance_suppression_reason(
+                        conn, conversation_id
+                    ) is not None
+                    or not worker_memory.conversation_holds_an_unanswered_memory_loss(
+                        conn, conversation_id
+                    )
+                ):
+                    continue
+                ticket = tickets_data.read_ticket(conn, str(row[0]))
+                result.append(replace(
+                    message,
+                    held_prompt_id="",
+                    content=text_message_content(worker_step_memory_loss_prompt(ticket)),
+                    sender_label="Panels",
+                    sender_message_id=worker_memory.new_memory_notice_message_id(),
+                    sent_at_unix_milliseconds=None,
+                    sender=None,
+                    recipient=None,
+                    owner_read_through_sequence=None,
+                    recording_receipt=None,
+                    recovery_references=(),
+                    model_change=None,
+                    reasoning_effort_change=None,
+                    reasoning_effort_is_set=False,
+                    system_generated=True,
+                    dispatch_memory_note=True,
+                ))
+                # One boundary owes only one input, even if a batch contains two wakes.
+                added = True
+            return tuple(result)
+
     async def _write_on_child(
         self,
         state: _ConversationState,
@@ -3605,6 +3666,7 @@ class SqliteProcessConversationSystem:
         check_delivery_owner: Callable[[], None] | None = None,
     ) -> _PromptDeliveryAttempt:
         """Prepare and write once; a rebound child cannot request another rebind."""
+        messages = tuple(message for message in messages if not message.dispatch_memory_note)
         try:
             if check_delivery_owner is None:
                 if (
@@ -3692,6 +3754,9 @@ class SqliteProcessConversationSystem:
                 # Preparation can spawn on uncommitted model values. Never retain that child.
                 await self._discard_child(state, child)
                 return _PromptDeliveryAttempt(suppression_reason=suppression_reason)
+            messages = await run_on_worker_thread(
+                self._with_worker_step_memory_notice, state.record.conversation_id, messages
+            )
             content = one_prompt_from(messages)
             sender_label = messages[0].sender_label
             sender_message_count = len(messages)
@@ -3736,6 +3801,7 @@ class SqliteProcessConversationSystem:
                     )
             self.start_admission.bind_source(turn_token, attempted_child)
             if attempted_reservation is not None and attempted_reservation.token == turn_token:
+                attempted_reservation.messages = messages
                 attempted_reservation.prompt_write_attempted = True
             accepted = await attempted_child.write_prompt(
                 turn_token,
@@ -4354,7 +4420,9 @@ class SqliteProcessConversationSystem:
                         self._store._db_path,
                         tuple(message.sender_message_id for message in batch),
                     )
-                await self._record_delivery_uncertainty(state, reservation, batch)
+                await self._record_delivery_uncertainty(
+                    state, reservation, reservation.messages, settle_messages=batch
+                )
                 return
             except asyncio.CancelledError:
                 if (
@@ -4366,7 +4434,11 @@ class SqliteProcessConversationSystem:
                         self._return_unattempted_held_batch(state, reservation, batch)
                     )
                 else:
-                    self._quarantine_uncertain_held_batch(state, batch)
+                    self._quarantine_uncertain_held_batch(
+                        state,
+                        reservation.messages if reservation.prompt_write_attempted else batch,
+                        settle_messages=batch,
+                    )
                 raise
             except Exception:
                 if reservation.shutdown_owned:
@@ -4379,7 +4451,11 @@ class SqliteProcessConversationSystem:
                     await self._return_unattempted_held_batch(state, reservation, batch)
                 else:
                     async with state.lock:
-                        self._quarantine_uncertain_held_batch(state, batch)
+                        self._quarantine_uncertain_held_batch(
+                            state,
+                            reservation.messages if reservation.prompt_write_attempted else batch,
+                            settle_messages=batch,
+                        )
                 return
 
             if delivery.suppression_reason is not None:
@@ -4453,7 +4529,11 @@ class SqliteProcessConversationSystem:
                 self._defer_start_drain(state)
 
     def _quarantine_uncertain_held_batch(
-        self, state: _ConversationState, batch: tuple[_Message, ...]
+        self,
+        state: _ConversationState,
+        batch: tuple[_Message, ...],
+        *,
+        settle_messages: tuple[_Message, ...] | None = None,
     ) -> None:
         # The canonical dispatching marker predates the native attempt. Preserve
         # its bytes and identity; transport loss supplies no terminal outcome.
@@ -4461,8 +4541,10 @@ class SqliteProcessConversationSystem:
         reservation = state.reserved_turn
         if reservation is not None:
             self._abandon_reserved_turn(state, reservation, _ConversationPhase.idle)
-        self._settle_held_deliveries(state, batch)
+        self._settle_held_deliveries(state, settle_messages or batch)
         for held in reversed(batch):
+            if held.dispatch_memory_note:
+                continue
             if not self.start_admission.attempted((held.sender_message_id,)):
                 self.start_admission.queue(held.sender_message_id)
             state.held_prompts.appendleft(replace(held, delivery_uncertain=True))
@@ -6390,9 +6472,18 @@ class SqliteProcessConversationSystem:
                 latest_agent_activity_sequence=written[-1].sequence,
             )
         if compaction_confirmed:
+            compaction = next(
+                (event for event in reversed(written)
+                 if event.kind.value == "context_compacted"),
+                None,
+            )
             state.record = replace(
                 state.record,
-                automatically_compacted_through_sequence=state.record.latest_agent_activity_sequence,
+                automatically_compacted_through_sequence=(
+                    compaction.sequence
+                    if compaction
+                    else state.record.automatically_compacted_through_sequence
+                ),
                 automatic_compaction_attempted_through_sequence=state.record.latest_agent_activity_sequence,
             )
         elif compaction_result is AutomaticCompactionResult.not_compacted:

@@ -12,6 +12,7 @@ export type JsonObject = { [key: string]: JsonValue };
 
 export type FetchOptions = {
   method?: string;
+  cache?: RequestCache;
   body?: unknown;
   signal?: AbortSignal;
   headers?: Record<string, string>;
@@ -50,6 +51,7 @@ export async function fetchJson<T = unknown>(path: string, options: FetchOptions
   const init: RequestInit = {
     method: options.method || "GET",
     headers,
+    cache: options.cache,
     signal: options.signal
   };
   if (options.body !== undefined && options.body !== null) {
