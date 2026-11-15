@@ -211,8 +211,8 @@ class GoalFixture:
         else:
             identity = path.split("/")[3]
             goal = self.goals[identity]
-            assert "expected_revision" not in body, body
-            goal.update(body)
+            assert body["expected_revision"] == goal["revision"], body
+            goal.update({key: value for key, value in body.items() if key != "expected_revision"})
             goal["revision"] += 1
             if goal["primary_checklist_block_id"]:
                 items = goal["page"]["blocks"][0]["items"]
