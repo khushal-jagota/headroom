@@ -20,6 +20,8 @@ Agent messages require an explicit recipient through `message.send`. Executor tr
 
 Live batches carry only message deltas, thinking notices, and tool progress. They use the current exact child's event sink and create no durable item receipt. Completed backend prose uses the item route for journal and receipt custody. The core does not turn it into an addressed notebook message. Lifecycle changes and other durable events also use that route. Live reads enter the existing application routes under the child's assigned principal; they do not grant arbitrary owner access.
 
+The Mac runner's `prompt_accepted` result carries the native provider's `agent_acceptance_proven` value exactly. Its default is false. A generic executor receipt keeps that default. The later VPS outcome-to-core confirmation seam remains port work.
+
 ## Routes and authority
 
 All thirteen executor endpoints require trusted Tailscale login, the configured executor ID, no browser Origin, and no duplicate security headers. There is no executor bearer token. Work requests carrying incarnation headers check the supported protocol and current identity before reading the body; a lease admits identity from its payload. Incarnation is a row fence, not a credential. Transaction participants compare affected row incarnations and relevant assignments with the admitted request. Updates remain reachable before work-version admission.
