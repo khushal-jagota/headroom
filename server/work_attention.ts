@@ -100,7 +100,7 @@ export async function add_work_attention(
       const ids = [...manager_ids].sort();
       const placeholders = ids.map(() => '?').join(',');
       for (const row of sql.all<{ id: string; manager_id: string }>(
-        `SELECT id, manager_id FROM tickets WHERE manager_id IN (${placeholders})`,
+        `SELECT id, manager_id FROM tickets WHERE manager_id IN (${placeholders}) AND is_backlogged=0`,
         ids,
       )) {
         children.get(row.manager_id)!.push(row.id);

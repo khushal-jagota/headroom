@@ -59,7 +59,7 @@ export function push_intent(alarms: readonly StallAlarm[]): NotificationIntent {
   if (alarms.length > 1) body += ` And ${alarms.length - 1} more.`;
   const route =
     alarms.length === 1 && first.ticket_id !== null ? `/#/workspace/${first.ticket_id}` : '/#/';
-  return { title: 'Panels: work stalled', body, route, tag: STALL_ALARM_PUSH_TAG };
+  return { title: 'Panels: work stalled', body, route, tag: STALL_ALARM_PUSH_TAG, reply: null };
 }
 export async function send_push(
   intent: NotificationIntent,
