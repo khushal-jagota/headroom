@@ -19,7 +19,7 @@ from contextlib import ExitStack, redirect_stderr, redirect_stdout
 from datetime import datetime
 from importlib import import_module
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import click
 import pytest
@@ -485,7 +485,7 @@ def test_unit21_environment_command_function_parity(
         denied_app = next(
             index
             for index, call in enumerate(calls)
-            if call["args"].get("current_app") == denied.name
+            if cast(dict[str, Any], call["args"]).get("current_app") == denied.name
         )
         assert expected[denied_app]["stderr"] == (
             f"Error: [Errno 13] Permission denied: {str(Path(denied.name) / 'manifest.json')!r}\n"
