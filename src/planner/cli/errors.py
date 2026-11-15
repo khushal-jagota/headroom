@@ -24,7 +24,7 @@ LEGACY_SUPERVISOR_RECOVERIES: dict[str, str] = {
     "send": "panels send-message --sprint-item ITEM_ID --message TEXT",
     "reset": "panels sprint item conversation reset ITEM_ID",
     "approve": "panels ticket proposal TICKET_ID accept --ceiling STAGE",
-    "reject": "panels ticket proposal TICKET_ID revise < GUIDANCE_FILE",
+    "reject": "panels ticket proposal TICKET_ID revise --revision N < GUIDANCE_FILE",
 }
 
 # These commands enforce one input rule after Click parses their options. Their shortest
@@ -50,7 +50,7 @@ COMMAND_RECOVERY_SHAPES: dict[str, str] = {
     "panels ticket set-value": "panels ticket set-value TICKET_ID FIELD --value VALUE",
     "panels ticket place": "panels ticket place TICKET_ID --project-id PROJECT_ID",
     "panels ticket approve": "panels ticket approve TICKET_ID --ceiling STAGE",
-    "panels ticket reject": "panels ticket reject TICKET_ID --message TEXT",
+    "panels ticket reject": "panels ticket reject TICKET_ID --revision N --message TEXT",
     "panels sprint item create": ("panels sprint item create --title TEXT --project-id PROJECT_ID"),
     "panels sprint item delete": "panels sprint item delete ITEM_ID --yes",
     "panels sprint item set": "panels sprint item set ITEM_ID FIELD --value VALUE",

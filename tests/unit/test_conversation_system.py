@@ -3306,3 +3306,142 @@ def test_held_promotion_and_locale_move_cannot_cross(
         finally:
             conn.close()
     _run(exercise)
+
+
+def test_commit_reply_credit_obeys_turn_end_and_rollback_order(
+    harness: _Harness, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    async def exercise() -> None:
+        await _start(harness, "c")
+        ticket = Principal(PrincipalKind.ticket, "t_worker")
+        await harness.system.send(
+            "c",
+            text_message_content("reply"),
+            sender_label="owner",
+            sender=OWNER_PRINCIPAL,
+            recipient=ticket,
+        )
+        state = harness.system._conversations["c"]
+        running = state.running_turn
+        assert running is not None
+
+        def rollback() -> None:
+            raise ValueError("rollback")
+
+        with pytest.raises(ValueError, match="rollback"):
+            harness.system.commit_and_credit_reply("c", OWNER_PRINCIPAL, rollback)
+        assert OWNER_PRINCIPAL not in running.explicit_reply_recipients
+        assert harness.system.commit_and_credit_reply("c", OWNER_PRINCIPAL, lambda: 42) == 42
+        assert OWNER_PRINCIPAL in running.explicit_reply_recipients
+        await harness.complete_turn("c")
+        assert not any(
+            isinstance(row.payload, ExplicitReplyMissingEventPayload)
+            for row in await harness.events("c")
+        )
+
+        await harness.system.send(
+            "c",
+            text_message_content("another"),
+            sender_label="owner",
+            sender=OWNER_PRINCIPAL,
+            recipient=ticket,
+        )
+        running = state.running_turn
+        assert running is not None
+        entered = asyncio.Event()
+        release = asyncio.Event()
+        real_persist = harness.store.append_turn_ending
+        available = False
+
+        async def failed_persist(*args: Any, **kwargs: Any) -> Any:
+            if available:
+                return await real_persist(*args, **kwargs)
+            entered.set()
+            await release.wait()
+            raise RuntimeError("failed persistence")
+
+        monkeypatch.setattr(harness.store, "append_turn_ending", failed_persist)
+
+        async def end() -> None:
+            async with state.lock:
+                await harness.system._end_turn(
+                    state, running, ConversationTurnEnding.completed, None
+                )
+
+        ending = asyncio.create_task(end())
+        await entered.wait()
+        committed: list[str] = []
+        harness.system.commit_and_credit_reply(
+            "c", OWNER_PRINCIPAL, lambda: committed.append("yes")
+        )
+        assert committed == ["yes"]
+        assert OWNER_PRINCIPAL not in running.explicit_reply_recipients
+        release.set()
+        for _ in range(20):
+            if harness.store.recording_failures("c"):
+                break
+            await asyncio.sleep(0)
+        assert harness.store.recording_failures("c")
+        assert running.reply_eligible
+        harness.system.commit_and_credit_reply("c", OWNER_PRINCIPAL, lambda: None)
+        assert OWNER_PRINCIPAL in running.explicit_reply_recipients
+        available = True
+        assert harness.store.resume_recording("c") == 1
+        await ending
+        assert not any(
+            isinstance(row.payload, ExplicitReplyMissingEventPayload)
+            for row in await harness.events("c")
+        )
+
+    _run(exercise)
+
+
+def test_commit_reply_after_ending_decision_does_not_rewrite_missing_event(
+    harness: _Harness, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    async def exercise() -> None:
+        await _start(harness, "c")
+        await harness.system.send(
+            "c", text_message_content("reply"), sender_label="owner",
+            sender=OWNER_PRINCIPAL, recipient=Principal(PrincipalKind.ticket, "t_worker"),
+        )
+        state = harness.system._conversations["c"]
+        running = state.running_turn
+        assert running is not None
+        entered, release = asyncio.Event(), asyncio.Event()
+        real_persist = harness.store.append_turn_ending
+
+        async def delayed_persist(*args: Any, **kwargs: Any) -> Any:
+            entered.set()
+            await release.wait()
+            return await real_persist(*args, **kwargs)
+
+        monkeypatch.setattr(harness.store, "append_turn_ending", delayed_persist)
+
+        async def end() -> None:
+            async with state.lock:
+                await harness.system._end_turn(
+                    state, running, ConversationTurnEnding.completed, None
+                )
+
+        ending = asyncio.create_task(end())
+        await entered.wait()
+        committed: list[str] = []
+        harness.system.commit_and_credit_reply(
+            "c", OWNER_PRINCIPAL, lambda: committed.append("yes")
+        )
+        release.set()
+        await ending
+        assert committed == ["yes"]
+        assert any(
+            isinstance(row.payload, ExplicitReplyMissingEventPayload)
+            for row in await harness.events("c")
+        )
+
+        async def wrong_loop() -> None:
+            harness.system.commit_and_credit_reply("c", OWNER_PRINCIPAL, lambda: None)
+
+        with pytest.raises(RuntimeError, match="different event loop"):
+            await asyncio.to_thread(asyncio.run, wrong_loop())
+
+    _run(exercise)

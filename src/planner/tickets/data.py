@@ -1380,7 +1380,7 @@ def reject_proposal(
     message: str | None,
     principal: Principal,
     now: int,
-    expected_proposal: PendingTicketProposal | None = None,
+    expected_proposal_revision: int,
 ) -> Ticket:
     if message is not None:
         admission.validate_revision_guidance(message)
@@ -1389,13 +1389,22 @@ def reject_proposal(
         ticket, worker_type_definition = _load_ticket_and_worker_type_definition_for_write(
             conn, ticket_id
         )
-        field = worker_type_definition.gating_field(ticket.stage)
-        current_proposal = ticket.pending_proposal
-        if expected_proposal is not None and current_proposal != expected_proposal:
+        current_revision = ticket.pending_proposal_revision
+        if ticket.pending_proposal is None:
             raise PlannerError(
                 ErrorCode.validation,
-                "proposal changed before revision guidance was applied",
-                {"ticket_id": ticket_id, "field": field},
+                "proposal already resolved; no pending proposal",
+                {
+                    "ticket_id": ticket_id,
+                    "result": "already_resolved",
+                    "current_revision": current_revision,
+                },
+            )
+        if current_revision != expected_proposal_revision:
+            raise PlannerError(
+                ErrorCode.validation,
+                "stale proposal revision; read the current proposal before revising",
+                {"ticket_id": ticket_id, "result": "stale", "current_revision": current_revision},
             )
         decision = resolution.decide_reject(
             ticket,

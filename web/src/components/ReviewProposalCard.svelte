@@ -76,7 +76,7 @@
   // moving to the next ask switches the query rather than re-opening a handle.
   const detail = createQuery(() => queries.ticket(ticketId));
 
-  let currentKey = $derived(`${ticketId}:${field}`);
+  let currentKey = $derived(`${ticketId}:${field}:${detail.data?.pending_proposal?.revision ?? ""}`);
   let ticketHref = $derived(workspaceAddress({ kind: "ticket", id: ticketId }));
 
   // Per-Worker-type lifecycle for this decision's detail. Null while the manifest or
@@ -185,13 +185,14 @@
 
   async function returnForRevision(): Promise<void> {
     const message = revisionDraft.trim();
-    if (!message || revisionBusy) return;
+    const proposalRevision = detail.data?.pending_proposal?.revision;
+    if (!message || revisionBusy || proposalRevision == null) return;
     revisionError = null;
     revisionBusy = true;
     try {
       await mutateJson(`/api/tickets/${ticketId}/reject`, {
         method: "POST",
-        body: { message }
+        body: { message, expected_proposal_revision: proposalRevision }
       });
       revisionDraft = "";
       announceResolved();
@@ -279,7 +280,7 @@
               disabled={revisionBusy} canReturn={Boolean(ticketDetail.conversation_id)}
               onAccept={accept}
               onScope={async (body) => { await mutateJson(`/api/tickets/${ticketId}`, { method:"PATCH", body }); }}
-              onReturn={async (message) => { await mutateJson(`/api/tickets/${ticketId}/reject`, { method:"POST", body:{ message } }); announceResolved(); }}
+              onReturn={async (message) => { await mutateJson(`/api/tickets/${ticketId}/reject`, { method:"POST", body:{ message, expected_proposal_revision: ticketDetail.pending_proposal!.revision } }); announceResolved(); }}
               {revisionEditor} />
             {/key}
           {/if}

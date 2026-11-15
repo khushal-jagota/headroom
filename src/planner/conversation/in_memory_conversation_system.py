@@ -12,6 +12,7 @@ treated as one.
 
 from __future__ import annotations
 
+import asyncio
 from collections import deque
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
@@ -172,6 +173,7 @@ class _RunningTurn:
     turn_number: int
     prompt_senders: dict[Principal, None] = field(default_factory=dict)
     explicit_reply_recipients: set[Principal] = field(default_factory=set)
+    reply_eligible: bool = True
     pending_permission_ask_ids: set[str] = field(default_factory=set)
     pending_user_input_questions: dict[str, tuple[UserInputQuestion, ...]] = field(
         default_factory=dict
@@ -217,8 +219,27 @@ class InMemoryConversationSystem:
 
     def __init__(self) -> None:
         self._conversations: dict[str, _ConversationState] = {}
+        self._event_loop: asyncio.AbstractEventLoop | None = None
 
     # --- the contract ---
+
+    def _require_event_loop(self) -> None:
+        loop = asyncio.get_running_loop()
+        if self._event_loop is None:
+            self._event_loop = loop
+        elif self._event_loop is not loop:
+            raise RuntimeError("conversation system called from a different event loop")
+
+    def commit_and_credit_reply[T](
+        self, conversation_id: str | None, recipient: Principal, operation: Callable[[], T]
+    ) -> T:
+        self._require_event_loop()
+        state = self._conversations.get(conversation_id) if conversation_id is not None else None
+        running = state.running_turn if state is not None else None
+        result = operation()
+        if running is not None and running.reply_eligible:
+            running.explicit_reply_recipients.add(recipient)
+        return result
 
     async def run_if_idle(self, conversation_id: str, operation: Callable[[], None]) -> bool:
         state = self._conversations.get(conversation_id)
@@ -229,6 +250,7 @@ class InMemoryConversationSystem:
         return True
 
     async def start_conversation(self, request: ConversationStartRequest) -> None:
+        self._require_event_loop()
         resolved = resolve_conversation_start_request(request)
         if resolved.conversation_id in self._conversations:
             raise ConversationAlreadyStarted(resolved.conversation_id)
@@ -503,7 +525,7 @@ class InMemoryConversationSystem:
                 recipient=recipient,
             )
         )
-        if state.running_turn is not None:
+        if state.running_turn is not None and state.running_turn.reply_eligible:
             state.running_turn.explicit_reply_recipients.add(recipient)
 
     async def active_turn_reference(self, conversation_id: str) -> ConversationTurnReference | None:
@@ -520,6 +542,7 @@ class InMemoryConversationSystem:
             state is not None
             and state.running_turn is not None
             and state.running_turn.turn_number == turn.turn_number
+            and state.running_turn.reply_eligible
             and recipient in state.running_turn.prompt_senders
             and recipient not in state.running_turn.explicit_reply_recipients
         )
@@ -532,6 +555,7 @@ class InMemoryConversationSystem:
             state is not None
             and state.running_turn is not None
             and state.running_turn.turn_number == turn.turn_number
+            and state.running_turn.reply_eligible
         ):
             state.running_turn.explicit_reply_recipients.add(recipient)
 
@@ -1094,6 +1118,7 @@ class InMemoryConversationSystem:
     ) -> None:
         running = state.running_turn
         assert running is not None
+        running.reply_eligible = False
         state.running_turn = None
         session = state.backend_session
         if ending is InMemoryConversationTurnEnding.interrupted and session is not None:

@@ -1106,13 +1106,19 @@ async def reject_ticket_proposal(
     conversations: Conversations,
 ) -> JsonDict:
     """Send a parked proposal back, with guidance for the executing agent or without."""
-    body = RejectionBody(message=body_opt_str(raw, "message"))
+    revision = raw.get("expected_proposal_revision")
+    if type(revision) is not int or revision <= 0:
+        raise PlannerError(
+            ErrorCode.validation, "expected_proposal_revision must be a positive integer", {}
+        )
+    body = RejectionBody(message=body_opt_str(raw, "message"), expected_proposal_revision=revision)
     now = clk.now_unix()
     ticket = await tickets_actions.reject_ticket_proposal(
         conversations,
         conn,
         ticket_id,
         message=body["message"],
+        expected_proposal_revision=body["expected_proposal_revision"],
         ctx=ctx,
         clock=clk,
     )

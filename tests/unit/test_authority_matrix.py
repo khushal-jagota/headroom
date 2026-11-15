@@ -361,7 +361,11 @@ OPERATIONS: Final[tuple[Operation, ...]] = (
     ),
     (
         "POST   /tickets/{t}/reject",
-        lambda s: Call("POST", f"/api/tickets/{s.ticket_a}/reject", {"message": "Revise this."}),
+        lambda s: Call(
+            "POST",
+            f"/api/tickets/{s.ticket_a}/reject",
+            {"message": "Revise this.", "expected_proposal_revision": 1},
+        ),
     ),
     (
         "POST   /tickets/{t}/restart-worker",

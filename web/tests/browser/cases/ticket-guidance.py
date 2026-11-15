@@ -41,6 +41,7 @@ def run(browser, urls):
             "body": "A result",
             "proposed_by": "agent",
             "created_at": 1,
+            "revision": 7,
         },
     )
     stages = [
@@ -592,7 +593,7 @@ def run(browser, urls):
     expect(
         page.locator('[data-ticket-id="t_with_session"] [data-approval-block][data-mode="pending"]')
     ).to_have_count(0)
-    assert revisions == [{"message": exact_revision}]
+    assert revisions == [{"message": exact_revision, "expected_proposal_revision": 7}]
 
     page.evaluate("window.__showTicket('t_done')")
     page.locator('[data-ticket-id="t_done"]').wait_for()

@@ -238,10 +238,10 @@ def test_targeted_worker_message_is_attributed_and_preserves_ticket_facts(
                 (conversation_id, ticket["id"]),
             )
             conn.commit()
-        asyncio.run(
-            app.state.conversation_system.start_conversation(
-                ConversationStartRequest(conversation_id=conversation_id, model="test-model")
-            )
+        assert client.portal is not None
+        client.portal.call(
+            app.state.conversation_system.start_conversation,
+            ConversationStartRequest(conversation_id=conversation_id, model="test-model"),
         )
         before = client.get(f"/api/tickets?detail=full&id={ticket['id']}").json()
         sent = client.post(
@@ -357,16 +357,19 @@ def test_supervisor_rejection_stores_attributed_feedback_without_backend_io(
                 (conversation_id, ticket["id"]),
             )
             conn.commit()
-        asyncio.run(
-            app.state.conversation_system.start_conversation(
-                ConversationStartRequest(conversation_id=conversation_id, model="test-model")
-            )
+        assert client.portal is not None
+        client.portal.call(
+            app.state.conversation_system.start_conversation,
+            ConversationStartRequest(conversation_id=conversation_id, model="test-model"),
         )
         system = cast(InMemoryConversationSystem, app.state.conversation_system)
         path = f"/api/tickets/{ticket['id']}/reject"
         cross = client.post(
             path,
-            json={"message": "Not your Ticket."},
+            json={
+                "message": "Not your Ticket.",
+                "expected_proposal_revision": ticket["pending_proposal"]["revision"],
+            },
             headers=_supervisor_headers(str(other["id"])),
         )
         assert cross.status_code == 400
@@ -374,7 +377,10 @@ def test_supervisor_rejection_stores_attributed_feedback_without_backend_io(
         assert system.backend_prompt_writes(conversation_id) == ()
         rejected = client.post(
             path,
-            json={"message": "State the verification evidence."},
+            json={
+                "message": "State the verification evidence.",
+                "expected_proposal_revision": ticket["pending_proposal"]["revision"],
+            },
             headers=_supervisor_headers(str(item["id"])),
         )
 
@@ -409,10 +415,10 @@ def test_rejection_after_the_day_boundary_rearms_one_worker_step(tmp_path: Path)
             ).worker_step_claim_revision
             conn.commit()
         system = cast(InMemoryConversationSystem, app.state.conversation_system)
-        asyncio.run(
-            system.start_conversation(
-                ConversationStartRequest(conversation_id=conversation_id, model="test-model")
-            )
+        assert client.portal is not None
+        client.portal.call(
+            system.start_conversation,
+            ConversationStartRequest(conversation_id=conversation_id, model="test-model"),
         )
         assert client.portal is not None
 
@@ -424,20 +430,24 @@ def test_rejection_after_the_day_boundary_rearms_one_worker_step(tmp_path: Path)
                 asyncio_loop=asyncio.get_running_loop(),
             )
 
+        moved = client.post(
+            "/api/test/set-now",
+            json={"now": "2026-09-22T05:01:00+02:00"},
+        )
+        assert moved.status_code == 200, moved.text
+        rejected = client.post(
+            f"/api/tickets/{ticket['id']}/reject",
+            json={
+                "message": "Keep the rollover evidence exact.",
+                "expected_proposal_revision": ticket["pending_proposal"]["revision"],
+            },
+            headers=_supervisor_headers(str(item["id"])),
+        )
+        assert rejected.status_code == 200, rejected.text
+        # Start readiness after the revision so this checks the rearmed step itself,
+        # without racing the independent reconcilers for SQLite's writer lock.
         loops = client.portal.call(start_test_loops)
         try:
-            moved = client.post(
-                "/api/test/set-now",
-                json={"now": "2026-09-22T05:01:00+02:00"},
-            )
-            assert moved.status_code == 200, moved.text
-            rejected = client.post(
-                f"/api/tickets/{ticket['id']}/reject",
-                json={"message": "Keep the rollover evidence exact."},
-                headers=_supervisor_headers(str(item["id"])),
-            )
-            assert rejected.status_code == 200, rejected.text
-
             deadline = time.monotonic() + 5
             while (
                 time.monotonic() < deadline
@@ -520,17 +530,14 @@ def test_restart_rearms_only_the_legacy_idle_revision_shape(tmp_path: Path) -> N
 
     with TestClient(app) as client:
         system = cast(InMemoryConversationSystem, app.state.conversation_system)
-        asyncio.run(
-            system.start_conversation(
-                ConversationStartRequest(conversation_id=legacy_conversation_id, model="test-model")
-            )
+        assert client.portal is not None
+        client.portal.call(
+            system.start_conversation,
+            ConversationStartRequest(conversation_id=legacy_conversation_id, model="test-model"),
         )
-        asyncio.run(
-            system.start_conversation(
-                ConversationStartRequest(
-                    conversation_id=unrelated_conversation_id, model="test-model"
-                )
-            )
+        client.portal.call(
+            system.start_conversation,
+            ConversationStartRequest(conversation_id=unrelated_conversation_id, model="test-model"),
         )
         app.state.conversation_system = cast(
             ConversationSystem,
@@ -607,10 +614,10 @@ def test_legacy_recovery_does_not_trust_stale_running_bookkeeping(tmp_path: Path
 
     with TestClient(app) as client:
         system = cast(InMemoryConversationSystem, app.state.conversation_system)
-        asyncio.run(
-            system.start_conversation(
-                ConversationStartRequest(conversation_id=conversation_id, model="test-model")
-            )
+        assert client.portal is not None
+        client.portal.call(
+            system.start_conversation,
+            ConversationStartRequest(conversation_id=conversation_id, model="test-model"),
         )
         asyncio.run(
             system.send(
@@ -692,10 +699,10 @@ def test_legacy_recovery_refuses_a_launch_override_before_mutation(tmp_path: Pat
 
     with TestClient(app) as client:
         system = cast(InMemoryConversationSystem, app.state.conversation_system)
-        asyncio.run(
-            system.start_conversation(
-                ConversationStartRequest(conversation_id=conversation_id, model="test-model")
-            )
+        assert client.portal is not None
+        client.portal.call(
+            system.start_conversation,
+            ConversationStartRequest(conversation_id=conversation_id, model="test-model"),
         )
         asyncio.run(
             system.send(

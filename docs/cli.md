@@ -131,11 +131,11 @@ One command owns the proposal lifecycle:
 ```sh
 panels ticket proposal t_example submit < proposal.md
 panels ticket proposal t_example accept --ceiling needs_plan
-panels ticket proposal t_example revise < guidance.md
+panels ticket proposal t_example revise --revision N < guidance.md
 ```
 
 Submit remains restricted to the authenticated Worker for its own current Stage. Accept
-and revise retain the existing proposal resolver and authority checks. `ticket complete`
+and revise retain the existing proposal resolver and authority checks. Read the revision with `panels ticket show t_example proposal`; pass that same revision on every retry. The CLI retries one transport failure with the same revision. `ticket complete`
 remains separate because it completes a user-owned Stage directly.
 
 Revise stores the attributed feedback, removes the proposal, and returns the Stage to

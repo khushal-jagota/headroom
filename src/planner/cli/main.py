@@ -1736,7 +1736,7 @@ def ticket_approve(
 
 
 def _revise_ticket_proposal(
-    ticket_id: str | None, message: str | None, body_file: str | None, as_json: bool
+    ticket_id: str | None, message: str | None, body_file: str | None, revision: int, as_json: bool
 ) -> None:
     tid = resolve_ticket_id(ticket_id, as_json)
     if (message is None) == (body_file is None):
@@ -1746,21 +1746,23 @@ def _revise_ticket_proposal(
         "POST",
         f"/api/tickets/{tid}/reject",
         as_json=as_json,
-        json_body={"message": text},
+        json_body={"message": text, "expected_proposal_revision": revision},
+        retry_transport=True,
     )
     http.emit(data, as_json, f"{tid} proposal rejected")
 
 
 @ticket.command("reject", hidden=True)
+@click.option("--revision", type=click.IntRange(min=1), required=True)
 @click.argument("ticket_id", required=False, envvar=_TICKET_ID_ENV)
 @click.option("--message", default=None, help="Focused revision guidance.")
 @click.option("--body-file", default=None, help="Read revision guidance from this file, or -.")
 @json_option
 def ticket_reject(
-    ticket_id: str | None, message: str | None, body_file: str | None, as_json: bool
+    ticket_id: str | None, message: str | None, body_file: str | None, revision: int, as_json: bool
 ) -> None:
     """Reject the proposal parked on this Ticket, with focused guidance."""
-    _revise_ticket_proposal(ticket_id, message, body_file, as_json)
+    _revise_ticket_proposal(ticket_id, message, body_file, revision, as_json)
 
 
 @ticket.command("history")
@@ -2475,6 +2477,12 @@ def worker_note(ticket_id: str | None, append_note: bool, as_json: bool) -> None
 
 
 @ticket.command("proposal")
+@click.option(
+    "--revision",
+    type=click.IntRange(min=1),
+    default=None,
+    help="Inspected proposal revision; required for revise.",
+)
 @click.argument("proposal_args", nargs=-1, metavar="[TICKET_ID] ACTION")
 @click.option("--ceiling", default=None, help="Next ceiling for an accepted proposal.")
 @click.option("--holder", default=None, help="Next ceiling holder for an accepted proposal.")
@@ -2484,6 +2492,7 @@ def worker_note(ticket_id: str | None, append_note: bool, as_json: bool) -> None
 @json_option
 def ticket_proposal(
     proposal_args: tuple[str, ...],
+    revision: int | None,
     ceiling: str | None,
     holder: str | None,
     edit_file: str | None,
@@ -2505,11 +2514,15 @@ def ticket_proposal(
     accept_options = (ceiling, holder, edit_file, kickoff_title, kickoff_note_file)
     if action != "accept" and any(value is not None for value in accept_options):
         http.fail_validation(f"{action} does not accept proposal approval options", as_json)
+    if action != "revise" and revision is not None:
+        http.fail_validation("--revision is only valid for revise", as_json)
     if action == "submit":
         _submit_ticket_proposal(ticket_id, None, None, None, as_json)
         return
     if action == "revise":
-        _revise_ticket_proposal(ticket_id, None, "-", as_json)
+        if revision is None:
+            http.fail_validation("revise requires --revision", as_json)
+        _revise_ticket_proposal(ticket_id, None, "-", revision, as_json)
         return
     _approve_ticket_proposal(
         ticket_id,

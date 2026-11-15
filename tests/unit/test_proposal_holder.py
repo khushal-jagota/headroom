@@ -6,13 +6,12 @@ import asyncio
 import sqlite3
 from pathlib import Path
 from sqlite3 import Connection
-from unittest.mock import AsyncMock
+from unittest.mock import MagicMock
 
 import pytest
 
 from planner.core.authctx import RequestContext
-from planner.core.clock import Clock, parse_fake_now
-from planner.core.clock import TestClock as MutableClock
+from planner.core.clock import Clock
 from planner.core.contracts import (
     CHIEF_PRINCIPAL,
     OWNER_PRINCIPAL,
@@ -22,7 +21,6 @@ from planner.core.contracts import (
 from planner.core.db import connect, create_schema
 from planner.core.errors import ErrorCode, PlannerError
 from planner.days import data as days_data
-from planner.message_delivery import service as message_delivery_service
 from planner.sprints import data as sprints_data
 from planner.tickets import actions, data, revision_feedback, views
 from planner.tickets.contracts import TITLE_MAX_CHARS, Ticket, TicketEdit
@@ -207,12 +205,18 @@ def test_revision_stores_exact_attributed_feedback_without_mutating_guidance_and
         (ticket.id,),
     )
 
+    tmp_db.commit()
+    conversations = MagicMock()
+    conversations.commit_and_credit_reply.side_effect = lambda _id, _recipient, operation: (
+        operation()
+    )
     revised = asyncio.run(
         actions.reject_ticket_proposal(
-            AsyncMock(),
+            conversations,
             tmp_db,
             ticket.id,
             message="  Preserve exact spacing.  ",
+            expected_proposal_revision=ticket.pending_proposal_revision,
             ctx=RequestContext(OWNER_PRINCIPAL),
             clock=fake_clock,
         )
@@ -248,6 +252,7 @@ def test_rejection_rolls_back_feedback_proposal_and_claim_together(
             tmp_db,
             ticket.id,
             message="Keep all rejection writes atomic.",
+            expected_proposal_revision=ticket.pending_proposal_revision,
             principal=OWNER_PRINCIPAL,
             now=20,
         )
@@ -259,41 +264,6 @@ def test_rejection_rolls_back_feedback_proposal_and_claim_together(
     assert days_data.list_day_tickets(tmp_db, "day_2026-07-04") == []
 
 
-def test_rejection_does_not_create_a_day_when_reply_lookup_crosses_the_boundary(
-    tmp_db: Connection,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    ticket = _park(tmp_db, OWNER_PRINCIPAL)
-    tmp_db.execute(
-        "UPDATE tickets SET conversation_id = 'c_boundary_rejection' WHERE id = ?",
-        (ticket.id,),
-    )
-    clock = MutableClock(parse_fake_now("2026-09-22T04:59:00+02:00"))
-
-    async def cross_the_boundary(*_args: object, **_kwargs: object) -> None:
-        clock.set(parse_fake_now("2026-09-22T05:01:00+02:00"))
-
-    monkeypatch.setattr(
-        message_delivery_service,
-        "revision_source_turn",
-        cross_the_boundary,
-    )
-    revised = asyncio.run(
-        actions.reject_ticket_proposal(
-            AsyncMock(),
-            tmp_db,
-            ticket.id,
-            message="No calendar placement after the reply lookup.",
-            ctx=RequestContext(OWNER_PRINCIPAL),
-            clock=clock,
-        )
-    )
-
-    assert revised.pending_proposal is None
-    assert days_data.list_day_tickets(tmp_db, "day_2026-09-22") == []
-    assert days_data.list_day_tickets(tmp_db, "day_2026-09-21") == []
-
-
 def test_revision_feedback_is_discarded_when_the_ticket_leaves_its_stage(
     tmp_db: Connection,
 ) -> None:
@@ -303,6 +273,7 @@ def test_revision_feedback_is_discarded_when_the_ticket_leaves_its_stage(
         tmp_db,
         ticket.id,
         message="Revise only this stage.",
+        expected_proposal_revision=ticket.pending_proposal_revision,
         principal=OWNER_PRINCIPAL,
         now=20,
     )
@@ -641,3 +612,68 @@ def test_only_a_move_returns_the_ceiling_not_any_other_edit(
     unchanged = data.read_ticket(tmp_db, ticket.id)
     assert unchanged.ceiling_holder == Principal(PrincipalKind.sprint_item, left)
     assert unchanged.guidance == ""
+
+
+def test_revision_retry_cannot_reapply_feedback_or_reject_new_proposal(tmp_db: Connection) -> None:
+    ticket = _park(tmp_db, OWNER_PRINCIPAL)
+    tmp_db.execute("UPDATE tickets SET conversation_id='worker' WHERE id=?", (ticket.id,))
+    revision = ticket.pending_proposal_revision
+
+    def reject() -> Ticket:
+        return data.reject_proposal(
+            tmp_db,
+            ticket.id,
+            message="Revise this.",
+            principal=OWNER_PRINCIPAL,
+            now=20,
+            expected_proposal_revision=revision,
+        )
+
+    reject()
+    feedback = revision_feedback.snapshot(tmp_db, ticket.id)
+    with pytest.raises(PlannerError) as resolved:
+        reject()
+    assert resolved.value.detail == {
+        "ticket_id": ticket.id,
+        "result": "already_resolved",
+        "current_revision": revision,
+    }
+    assert revision_feedback.snapshot(tmp_db, ticket.id) == feedback
+
+    new = data.file_current_proposal(
+        tmp_db,
+        ticket.id,
+        body="New proposal",
+        principal=Principal(PrincipalKind.ticket, ticket.id),
+        now=21,
+    )
+    with pytest.raises(PlannerError) as stale:
+        reject()
+    assert stale.value.detail == {
+        "ticket_id": ticket.id,
+        "result": "stale",
+        "current_revision": new.pending_proposal_revision,
+    }
+    assert data.read_ticket(tmp_db, ticket.id).pending_proposal == new.pending_proposal
+
+
+def test_revision_refuses_outer_transaction_before_reply_credit(
+    tmp_db: Connection, fake_clock: Clock
+) -> None:
+    ticket = _park(tmp_db, OWNER_PRINCIPAL)
+    conversations = MagicMock()
+    tmp_db.execute("BEGIN")
+    assert tmp_db.in_transaction
+    with pytest.raises(RuntimeError, match="without an open transaction"):
+        asyncio.run(
+            actions.reject_ticket_proposal(
+                conversations,
+                tmp_db,
+                ticket.id,
+                message="No credit",
+                ctx=RequestContext(OWNER_PRINCIPAL),
+                clock=fake_clock,
+                expected_proposal_revision=ticket.pending_proposal_revision,
+            )
+        )
+    conversations.commit_and_credit_reply.assert_not_called()

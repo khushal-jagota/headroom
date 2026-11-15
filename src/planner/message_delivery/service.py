@@ -50,6 +50,13 @@ async def revision_source_turn(
     return await conversations.active_turn_reference(source_conversation_id)
 
 
+def revision_sender_conversation_id(conn: sqlite3.Connection, ctx: RequestContext) -> str | None:
+    """Resolve the live sender conversation without waiting for it."""
+    if ctx.principal.kind is PrincipalKind.owner:
+        return None
+    return _sender_conversation_id(conn, ctx.principal)
+
+
 def sender_label(ctx: RequestContext) -> str:
     """Name the ordinary Panels caller without treating the label as authority."""
     if ctx.principal.kind is PrincipalKind.owner:

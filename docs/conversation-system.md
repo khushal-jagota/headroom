@@ -314,13 +314,24 @@ wire requirement as any other addressed prompt does. Automatic compaction is a s
 system-only control operation and creates no reply debt.
 
 Backend prose is runtime output only. Finishing a turn does not turn that prose into a
-message for the person who prompted it. Only Send Message creates an explicit addressed
-reply. A turn remembers each distinct principal whose addressed prompt it admitted,
+message for the person who prompted it. An accepted Send Message or a committed Ticket
+revision can credit an explicit reply. A turn remembers each distinct principal whose
+addressed prompt it admitted,
 including steers and a batch drained from the held queue. Immediately before the turn's
 ending row, Panels records one `explicit_reply_missing` system marker for each of those
-principals who did not receive an accepted Send Message. Repeated prompts from one
+principals who received neither an accepted Send Message nor a committed Ticket revision.
+Repeated prompts from one
 principal produce one marker; legacy and automatic runtime prompts have no principal and
 produce none. The markers and ending are one ordered transaction.
+
+Reply eligibility is live turn state. It is open while the turn can accept a reply and
+closes when turn ending starts deciding missing-reply markers. If persisting the ending
+fails, eligibility reopens. A successful short synchronous operation can capture the
+live turn, commit its change and credit the exact turn without yielding to an ending;
+if the operation fails, it grants no credit. The operation runs on the conversation's
+own event loop, performs no network or lock waits, and must fail promptly if its database
+is busy. A reply arriving after the turn has closed is still recorded but cannot change
+that turn's missing-reply decision.
 
 When a failed turn belongs to a Ticket's current conversation, that transaction also
 snapshots the Ticket's current ceiling holder. The existing owner attention flag handles

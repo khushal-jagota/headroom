@@ -194,41 +194,42 @@ async def reject_ticket_proposal(
     ticket_id: str,
     *,
     message: str | None,
+    expected_proposal_revision: int,
     ctx: RequestContext,
     clock: Clock,
 ) -> Ticket:
-    """Send the proposal back, with guidance for the executing agent or without."""
+    """Record revision and credit its source turn without waiting for conversation I/O."""
     if message is not None:
         admission.validate_revision_guidance(message)
     principal = ctx.principal
-    source_turn = await message_delivery_service.revision_source_turn(
-        conversation_system, conn, ctx=ctx
-    )
-    planning_now = clock.now()
-    now = int(planning_now.timestamp())
-    ticket = tickets_data.require_reject(
-        conn,
-        ticket_id,
-        principal=principal,
-        has_guidance=message is not None,
-    )
-    revised = tickets_data.reject_proposal(
-        conn,
-        ticket_id,
-        message=message,
-        principal=principal,
-        now=now,
-        expected_proposal=ticket.pending_proposal,
-    )
-    if source_turn is not None:
-        try:
-            await conversation_system.record_explicit_reply(
-                source_turn, Principal(PrincipalKind.ticket, ticket_id)
-            )
-        except Exception:
-            LOGGER.warning(
-                "could not record explicit reply for Ticket revision %s",
+    now = clock.now_unix()
+    if conn.in_transaction:
+        raise RuntimeError("revision requires a connection without an open transaction")
+    timeout = int(conn.execute("PRAGMA busy_timeout").fetchone()[0])
+    conn.execute("PRAGMA busy_timeout=0")
+    try:
+        sender_conversation_id = message_delivery_service.revision_sender_conversation_id(conn, ctx)
+
+        def commit() -> Ticket:
+            return tickets_data.reject_proposal(
+                conn,
                 ticket_id,
-                exc_info=True,
+                message=message,
+                principal=principal,
+                now=now,
+                expected_proposal_revision=expected_proposal_revision,
             )
-    return revised
+
+        return conversation_system.commit_and_credit_reply(
+            sender_conversation_id, Principal(PrincipalKind.ticket, ticket_id), commit
+        )
+    except sqlite3.OperationalError as exc:
+        if exc.sqlite_errorcode & 0xFF in (sqlite3.SQLITE_BUSY, sqlite3.SQLITE_LOCKED):
+            raise PlannerError(
+                ErrorCode.already_running,
+                "database busy; retry this revision",
+                {"retryable": True},
+            ) from exc
+        raise
+    finally:
+        conn.execute(f"PRAGMA busy_timeout={timeout}")

@@ -229,6 +229,7 @@ class GateCompletionBody(TypedDict, total=False):  # POST /tickets/{id}/complete
 
 class RejectionBody(TypedDict, total=False):  # POST /tickets/{id}/reject
     message: str | None  # optional guidance for the executing agent
+    expected_proposal_revision: int  # proposal the caller inspected
 
 
 class EmployeeConfigurationBody(TypedDict):

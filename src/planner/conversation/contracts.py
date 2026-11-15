@@ -586,6 +586,17 @@ class ConversationSystem(Protocol):
         """Record one addressed message that no backend receives."""
         ...
 
+    def commit_and_credit_reply[T](
+        self, conversation_id: str | None, recipient: Principal, operation: Callable[[], T]
+    ) -> T:
+        """Run a short synchronous commit and credit the captured eligible live turn.
+
+        The operation must not wait for locks or perform network I/O. It runs on the
+        conversation event loop and must fail promptly when its database is busy.
+        A failed operation receives no credit; a turn whose ending has begun receives none.
+        """
+        ...
+
     async def active_turn_reference(self, conversation_id: str) -> ConversationTurnReference | None:
         """Capture the exact active turn that a Send Message may answer."""
         ...

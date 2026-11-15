@@ -204,14 +204,18 @@ def test_batch_edit_forwards_one_existing_patch_body(
     ("arguments", "path", "body"),
     (
         (("t_one", "submit"), "/api/tickets/t_one/propose", {"body": "Proposal."}),
-        (("t_one", "revise"), "/api/tickets/t_one/reject", {"message": "Narrow it."}),
+        (
+            ("t_one", "revise", "--revision", "1"),
+            "/api/tickets/t_one/reject",
+            {"message": "Narrow it.", "expected_proposal_revision": 1},
+        ),
     ),
 )
 def test_proposal_actions_reuse_existing_writers(
     monkeypatch: pytest.MonkeyPatch,
-    arguments: tuple[str, str],
+    arguments: tuple[str, ...],
     path: str,
-    body: dict[str, str],
+    body: dict[str, Any],
 ) -> None:
     calls: list[tuple[str, str, dict[str, Any]]] = []
 
@@ -252,3 +256,53 @@ def test_proposal_action_uses_worker_ticket_when_id_is_omitted(
 
     assert result.exit_code == 0, result.output
     assert calls == ["/api/tickets/t_current/propose"]
+
+
+def test_revise_retries_lost_response_with_same_revision(monkeypatch: pytest.MonkeyPatch) -> None:
+    import httpx
+
+    bodies: list[dict[str, Any]] = []
+
+    def request(method: str, url: str, **kwargs: Any) -> httpx.Response:
+        bodies.append(kwargs["json"])
+        req = httpx.Request(method, url)
+        if len(bodies) == 1:
+            raise httpx.ReadTimeout("response lost", request=req)
+        return httpx.Response(
+            400,
+            json={
+                "error": {
+                    "code": "validation",
+                    "message": "proposal already resolved",
+                    "detail": {"result": "already_resolved", "current_revision": 7},
+                }
+            },
+            request=req,
+        )
+
+    monkeypatch.setattr(httpx, "request", request)
+    result = CliRunner().invoke(
+        main,
+        ["ticket", "proposal", "t_one", "revise", "--revision", "7", "--json"],
+        input="Feedback",
+    )
+    assert result.exit_code == 1
+    assert json.loads(result.output)["error"]["detail"]["result"] == "already_resolved"
+    assert bodies == [{"message": "Feedback", "expected_proposal_revision": 7}] * 2
+
+
+def test_ticket_show_proposal_displays_revision_in_text_and_json(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fake_send(method: str, path: str, **kwargs: Any) -> dict[str, Any]:
+        if path == "/api/worker-types":
+            return {"worker_types": [{"worker_type": "coding", "fields": [{"id": "brief"}]}]}
+        return {**_ticket_record("t_named"), "pending_proposal": {"body": "Draft", "revision": 7}}
+
+    monkeypatch.setattr(http, "send", fake_send)
+    args = ["ticket", "show", "t_named", "proposal"]
+    plain = CliRunner().invoke(main, args)
+    structured = CliRunner().invoke(main, [*args, "--json"])
+    assert plain.exit_code == structured.exit_code == 0
+    assert '"revision": 7' in plain.output
+    assert json.loads(structured.output)["parts"]["proposal"]["value"]["revision"] == 7

@@ -229,6 +229,7 @@ class _RunningTurn:
     )
     prompt_senders: dict[Principal, None] = field(default_factory=dict)
     explicit_reply_recipients: set[Principal] = field(default_factory=set)
+    reply_eligible: bool = True
     automatic_notice: bool = False
     ended: bool = False
     # Set when the core is part-way through ending this turn itself — an interrupt, or a
@@ -375,9 +376,28 @@ class SqliteProcessConversationSystem:
         self._unix_time_now = unix_time_now
         self._conversations: dict[str, _ConversationState] = {}
         self._conversations_lock = asyncio.Lock()
+        self._event_loop: asyncio.AbstractEventLoop | None = None
         self._idle_child_janitor: asyncio.Task[None] | None = None
 
     # --- the contract -------------------------------------------------------------------
+
+    def _require_event_loop(self) -> None:
+        loop = asyncio.get_running_loop()
+        if self._event_loop is None:
+            self._event_loop = loop
+        elif self._event_loop is not loop:
+            raise RuntimeError("conversation system called from a different event loop")
+
+    def commit_and_credit_reply[T](
+        self, conversation_id: str | None, recipient: Principal, operation: Callable[[], T]
+    ) -> T:
+        self._require_event_loop()
+        state = self._conversations.get(conversation_id) if conversation_id is not None else None
+        running = state.running_turn if state is not None else None
+        result = operation()
+        if running is not None and running.reply_eligible:
+            running.explicit_reply_recipients.add(recipient)
+        return result
 
     async def run_if_idle(self, conversation_id: str, operation: Callable[[], None]) -> bool:
         state = await self._conversation_state(conversation_id)
@@ -410,6 +430,7 @@ class SqliteProcessConversationSystem:
         what follows only fills a gap: whatever is there is what this process is using, and
         replacing it would strand a live child that nothing can reach any more.
         """
+        self._require_event_loop()
         resolved = resolve_conversation_start_request(request)
         if self._model_resolver is not None:
             current = await self._model_resolver.resolve(
@@ -838,6 +859,7 @@ class SqliteProcessConversationSystem:
             return bool(
                 running is not None
                 and running.token.turn_number == turn.turn_number
+                and running.reply_eligible
                 and recipient in running.prompt_senders
                 and recipient not in running.explicit_reply_recipients
             )
@@ -851,13 +873,17 @@ class SqliteProcessConversationSystem:
             return
         async with state.lock:
             running = state.running_turn
-            if running is not None and running.token.turn_number == turn.turn_number:
+            if (
+                running is not None
+                and running.token.turn_number == turn.turn_number
+                and running.reply_eligible
+            ):
                 running.explicit_reply_recipients.add(recipient)
 
     @staticmethod
     def _credit_explicit_reply(state: _ConversationState, recipient: Principal) -> None:
         running = state.running_turn
-        if running is not None:
+        if running is not None and running.reply_eligible:
             running.explicit_reply_recipients.add(recipient)
 
     async def kill(self, conversation_id: str) -> None:
@@ -2360,6 +2386,7 @@ class SqliteProcessConversationSystem:
                         reasoning_effort=carried_change.reasoning_effort,
                     )
                 state.has_delivered_prompt = True
+                self._require_event_loop()
                 state.running_turn = _RunningTurn(
                     token=reservation.token,
                     automatic_compaction=reservation.automatic_compaction,
@@ -2770,28 +2797,34 @@ class SqliteProcessConversationSystem:
             ),
             automatic_compaction_result=automatic_compaction_result,
         )
-        payloads: tuple[ConversationEventPayload, ...] = (
-            *(
-                ExplicitReplyMissingEventPayload(prompt_sender=prompt_sender)
-                for prompt_sender in running.prompt_senders
-                if prompt_sender not in running.explicit_reply_recipients
-            ),
-            ending_payload,
-        )
-        written = await self._persist(
-            state,
-            partial(
-                self._store.append_turn_ending,
-                state.record.conversation_id,
-                payloads,
-                agent_activity=not running.automatic_compaction,
-                automatic_compaction_confirmed=running.compaction_confirmed,
-                automatic_compaction_result=automatic_compaction_result,
-                create_failure_notice=(
-                    ending is ConversationTurnEnding.failed and not running.automatic_notice
+        async def persist_ending() -> tuple[StoredConversationEvent, ...]:
+            # Each storage attempt makes its own decision. If persistence pauses after a
+            # failure, replies may arrive before the next attempt makes that decision.
+            running.reply_eligible = False
+            payloads: tuple[ConversationEventPayload, ...] = (
+                *(
+                    ExplicitReplyMissingEventPayload(prompt_sender=prompt_sender)
+                    for prompt_sender in running.prompt_senders
+                    if prompt_sender not in running.explicit_reply_recipients
                 ),
-            ),
-        )
+                ending_payload,
+            )
+            try:
+                return await self._store.append_turn_ending(
+                    state.record.conversation_id,
+                    payloads,
+                    agent_activity=not running.automatic_compaction,
+                    automatic_compaction_confirmed=running.compaction_confirmed,
+                    automatic_compaction_result=automatic_compaction_result,
+                    create_failure_notice=(
+                        ending is ConversationTurnEnding.failed and not running.automatic_notice
+                    ),
+                )
+            except Exception:
+                running.reply_eligible = True
+                raise
+
+        written = await self._persist(state, persist_ending)
         running.ended = True
         running.pending_permission_ask_ids.clear()
         running.pending_user_input_questions.clear()

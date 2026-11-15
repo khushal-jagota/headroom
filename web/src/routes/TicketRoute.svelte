@@ -434,7 +434,7 @@
                       ceiling={detail.ceiling} holder={detail.ceiling_holder} sprintItem={ticketSprintItem} canReturn={Boolean(detail.conversation_id)}
                       onAccept={(payload) => acceptField(currentField, payload)}
                       onScope={updateScope}
-                      onReturn={(message) => mutateJson(`/api/tickets/${stableId}/reject`, { method:"POST", body:{ message } })}
+                      onReturn={(message) => mutateJson(`/api/tickets/${stableId}/reject`, { method:"POST", body:{ message, expected_proposal_revision: detail.pending_proposal!.revision } })}
                       contextRow={currentField === "brief" && kickoffCardShowsContextRow ? kickoffContextRow : undefined} />
                   {/key}
                 {:else}
