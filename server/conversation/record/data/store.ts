@@ -1,6 +1,16 @@
 import { HOME_MACHINE_ID } from '../../../execution_identity.ts';
 import { write_bindings } from '../../start_admission/index.ts';
 import type { AdmissionDatabase, StartRequest } from '../../start_admission/contracts.ts';
+import type { LocalChildIdentity } from '../../local_child_contracts.ts';
+import type { LocalChildCustodyRow, RecordedSourceSettlement } from '../../local_child_custody_contracts.ts';
+import type { WorkspaceIdentity } from '../../../ticket_workspaces/contracts.ts';
+import type { CapturedTurn } from '../../deploy_interruptions/contracts.ts';
+import type { TurnToken } from '../../backends/contracts.ts';
+import { BackendSpawnFailed } from '../../backends/contracts.ts';
+import { read_unresolved_turns } from '../../deploy_interruptions/capture.ts';
+import * as custody from './child_custody.ts';
+import * as supervision_records from '../../../worker_supervision/records.ts';
+import { release_worker_step_claim } from '../../../tickets/data/index.ts';
 /** Durable record primitives. Event append is completed with its projection in PR2. */
 import { randomUUID } from 'node:crypto';
 import { capture_savepoint_rollback } from '../../../core/database/index.ts';
@@ -128,6 +138,7 @@ function composer_catalog_to_json(entries: readonly ComposerCatalogEntry[]): str
 
 /** Common record reads and reservation primitives shared by the complete store. */
 export class ConversationStorePrimitives {
+  readonly blocked_local_conversations = new Set<string>();
   protected readonly database: Database;
   protected readonly integer_now: () => number;
   protected readonly transaction_participant: ConversationTransactionParticipant | null;
@@ -145,7 +156,7 @@ export class ConversationStorePrimitives {
   create_conversation(start: ResolvedConversationStart): ConversationRecord {
     const value = record_from_start(start, this.integer_now());
     try {
-      this.database.write((tx) =>
+      this.database.write((tx) => {
         tx.run(
           'INSERT INTO conversations (conversation_id,backend_key,model,reasoning_effort,workspace_folder,' +
             'workspace_path_policy,role_text,identity_environment_variables,access,vendor_session_cursor,' +
@@ -172,8 +183,9 @@ export class ConversationStorePrimitives {
             value.owner_read_through_sequence,
             value.created_at,
           ],
-        ),
-      );
+        );
+        custody.write_never_started(tx, value.conversation_id);
+      });
     } catch (error) {
       if (
         error !== null &&
@@ -252,6 +264,7 @@ export class ConversationStorePrimitives {
           randomUUID().replaceAll('-', ''),
           epoch.epoch,
         ]);
+        if (!this.blocked_local_conversations.has(conversation_id)) custody.bind_current_turn(tx, conversation_id);
         write_bindings(tx, { conversation_id, turn_number: number }, requests);
         apply_facts(tx, conversation_id, [
           {
