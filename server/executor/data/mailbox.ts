@@ -4,6 +4,7 @@
  * Row fences do not authenticate an executor. These helpers never own a connection.
  */
 import { randomUUID } from 'node:crypto';
+import { ORIGINAL_MAC_MACHINE_ID } from '../../execution_identity.ts';
 import type { ReadSql, TransactionSql } from '../../core/database/contracts.ts';
 import { isDeepStrictEqual } from 'node:util';
 import type { ChildReference } from '../../conversation/backends/contracts.ts';
@@ -246,7 +247,8 @@ function prepared_value<T>(value: Preparation<T>): T {
 export function read_fetch_rows(sql: ReadSql, incarnation: string, after: number): FetchRows {
   const presence =
     sql.get<FetchPresence>(
-      'SELECT executor_incarnation,last_lease_at_ms,identity_json,refusal_json FROM mac_executor_presence WHERE singleton=1',
+      'SELECT executor_incarnation,last_lease_at_ms,identity_json,refusal_json FROM mac_executor_presence WHERE machine_id=?',
+      [ORIGINAL_MAC_MACHINE_ID],
     ) ?? null;
   const replaced =
     presence?.executor_incarnation === incarnation
@@ -585,7 +587,7 @@ export function prompts_written_again(sql: ReadSql): readonly PromptWrittenAgain
     command_json: string;
   }>(
     'SELECT r.executor_incarnation,r.child_id,r.conversation_id,CAST(r.turn_number AS TEXT) AS turn_number,c.command_json FROM mac_runs AS r ' +
-      'JOIN mac_executor_presence AS p ON p.singleton=1 AND p.executor_incarnation=r.executor_incarnation ' +
+      'JOIN mac_executor_presence AS p ON p.machine_id=r.machine_id AND p.executor_incarnation=r.executor_incarnation ' +
       "JOIN executor_commands AS c ON c.conversation_id=r.conversation_id AND c.turn_number=r.turn_number AND c.operation='write_prompt' " +
       "AND c.child_id<>r.child_id AND c.state='withdrawn' AND json_extract(c.outcome_json,'$.child_outcome.result.reason')=? WHERE r.stop_state='open'",
     ['executor_process_replaced'],
@@ -701,7 +703,7 @@ export function tracked_waits(sql: ReadSql, _now: number): readonly TrackedWait[
   }
   for (const row of sql.all<{ command_id: string; conversation_id: string; created_at_ms: number }>(
     'SELECT c.command_id,c.conversation_id,c.created_at_ms FROM executor_commands AS c JOIN mac_runs AS r ON r.conversation_id=c.conversation_id ' +
-      'AND r.child_id=c.child_id AND r.executor_incarnation=c.executor_incarnation JOIN mac_executor_presence AS p ON p.singleton=1 ' +
+      'AND r.child_id=c.child_id AND r.executor_incarnation=c.executor_incarnation JOIN mac_executor_presence AS p ON p.machine_id=r.machine_id ' +
       "AND p.executor_incarnation=r.executor_incarnation WHERE c.operation='stop' AND c.state='finished' AND r.stop_state='stopping'",
   ))
     waits.push({

@@ -759,3 +759,10 @@ An empty object is truthy in TypeScript. A legacy `created_at: {}` therefore fai
 Existing update, installer, provider, and supervisor comparisons record these specific Python and TypeScript observations separately.
 The supervisor proof reuses its foreground restart for version `1.0` and retains refusal of version `1.5`.
 This decision does not change HTTP, executor wire, or database numeric boundaries. Metrics and status boundary holdouts retain exact-number handling.
+
+## Staging port — expected-open packages
+
+The foundation refresh adopts machine UUID rows and the current schema. It does not claim full staging parity.
+Executor routing and credential consumption remain with P2. Machine routes and credential authority follow in foundation PR B.
+The retained comparisons in [the expected-open list](../tests/compare/README.md#expected-open-staging-ports)
+name the packages that replace retired Worker launch and scratch fixtures. These cases do not count as passing parity.

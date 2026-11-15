@@ -16,6 +16,14 @@ The other Unit 18 startup checks still run.
 | `test_unit17_startup_environment` | P3 worker supervision | Codex containment and startup environment |
 | `test_unit18_containment_bytes` | P3 worker supervision | Supervisor launch bytes |
 | `test_unit18_adapter_real_core_parity` | P3 worker supervision | Claude launch custody through the real core |
+| `test_unit22_mac_leases` | P2 executors | Lease cleanup uncertainty after retired agent-process custody |
+| `test_unit22_mac_adapters` | P2 executors | Executor supervision replaces retired agent-process custody |
+
+P4 also owns the retired scratch policy and its deleted Git fixtures. The three cases in
+`test_unit21_ticket_scratch.py` remain expected-open P4. The scratch parameter in
+`test_unit21_environment_command_function_parity` retains cleanup coverage as expected-open P4.
+Its operator parameter still compares the other commands. The deferred parameter adds no
+runtime host and executes no fixture work.
 
 ## Add an area
 

@@ -22,7 +22,8 @@ ROOT = Path(__file__).resolve().parents[3]
 
 
 def _python(spec: dict[str, Any]) -> dict[str, Any]:
-    from planner.conversation.worker_unit import WorkerUnit
+    # P3 replaces this retired launch fixture. This helper belongs to its expected-open case.
+    from planner.conversation.worker_unit import WorkerUnit  # type: ignore[import-not-found]
 
     from planner.conversation.backends.codex_app_server import client
 
@@ -139,8 +140,9 @@ def _python(spec: dict[str, Any]) -> dict[str, Any]:
 
 @pytest.mark.xfail(
     run=False,
-    reason=("expected-open P3: replace the retired WorkerUnit launch fixture "
-            "with worker supervision"),
+    reason=(
+        "expected-open P3: replace the retired WorkerUnit launch fixture with worker supervision"
+    ),
 )
 def test_unit17_startup_environment(tmp_path: Path, request: pytest.FixtureRequest) -> None:
     """Protect account inheritance, copied-token refusal, and exact native argv."""

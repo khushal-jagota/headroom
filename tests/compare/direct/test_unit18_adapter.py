@@ -15,6 +15,7 @@ import sqlite3
 import subprocess
 import time
 from contextlib import contextmanager
+from importlib import import_module
 from pathlib import Path
 from typing import Any, cast
 from unittest.mock import patch
@@ -104,7 +105,8 @@ def snapshot(path: str) -> dict[str, list[dict[str, Any]]]:
 @contextmanager
 def owned_launch_boundary(spec: dict[str, str]) -> Any:
     """Use real argv construction, with every manager call fenced before spawn."""
-    from planner.conversation import worker_unit
+    # P3 replaces this retired fixture when its expected-open case returns.
+    worker_unit = import_module("planner.conversation.worker_unit")
 
     native_open = anyio.open_process
     native_spawn = asyncio.create_subprocess_exec
@@ -634,24 +636,30 @@ def comparison(result: dict[str, Any], language: str) -> dict[str, Any]:
     if language == "python":
         # The existing plain result emits input_tokens:5.0; native JSON counts it as 5.
         first = next(
-            row for row in compared["checkpoints"][0]["rows"]["conversation_events"]
+            row
+            for row in compared["checkpoints"][0]["rows"]["conversation_events"]
             if row["kind"] == "token_usage"
         )
         assert "input_tokens" not in first["payload"]
         for checkpoint in compared["checkpoints"]:
             for row in checkpoint["rows"]["conversation_events"]:
                 if (row["conversation_id"], row["sequence"]) == (
-                    first["conversation_id"], first["sequence"],
+                    first["conversation_id"],
+                    first["sequence"],
                 ):
                     row["payload"]["input_tokens"] = 5
             for row in checkpoint["rows"]["conversation_view_rows"]:
                 if (row["conversation_id"], row["sequence"]) == (
-                    first["conversation_id"], first["sequence"],
+                    first["conversation_id"],
+                    first["sequence"],
                 ) and row["rest_summary"] is not None:
                     summary = json.loads(row["rest_summary"])
                     summary["body"]["value"]["input_tokens"] = 5
                     row["rest_summary"] = json.dumps(
-                        summary, sort_keys=True, ensure_ascii=False, separators=(",", ":"),
+                        summary,
+                        sort_keys=True,
+                        ensure_ascii=False,
+                        separators=(",", ":"),
                     )
     return compared
 
@@ -999,7 +1007,8 @@ def launch_arguments(
 
 
 def containment_evidence(python: dict[str, Any], typescript: dict[str, Any]) -> dict[str, Any]:
-    from planner.conversation import worker_unit
+    # P3 replaces this retired fixture when its expected-open case returns.
+    worker_unit = import_module("planner.conversation.worker_unit")
 
     py = [
         row

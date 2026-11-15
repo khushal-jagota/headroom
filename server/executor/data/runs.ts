@@ -31,7 +31,7 @@ export class ExecutorStore {
           stop_state: string;
           current_incarnation: string | null;
         }>(
-          'SELECT r.executor_incarnation,r.child_id,r.conversation_id,CAST(r.turn_number AS TEXT) AS turn_number,r.delivery_uncertain,r.stop_state,p.executor_incarnation AS current_incarnation FROM mac_runs AS r LEFT JOIN mac_executor_presence AS p ON p.singleton=1 ORDER BY r.rowid',
+          'SELECT r.executor_incarnation,r.child_id,r.conversation_id,CAST(r.turn_number AS TEXT) AS turn_number,r.delivery_uncertain,r.stop_state,p.executor_incarnation AS current_incarnation FROM mac_runs AS r LEFT JOIN mac_executor_presence AS p ON p.machine_id=r.machine_id ORDER BY r.rowid',
         )
         .map(
           (row) =>
@@ -56,7 +56,7 @@ export class ExecutorStore {
   unresolved_runs_of_replaced_incarnations(): readonly ChildReference[] {
     return this.database.read((sql) =>
       sql.all<ChildReference>(
-        "SELECT r.executor_incarnation,r.child_id,r.conversation_id FROM mac_runs AS r LEFT JOIN mac_executor_presence AS p ON p.singleton=1 WHERE r.stop_state<>'closed' AND r.executor_incarnation IS NOT p.executor_incarnation ORDER BY r.rowid",
+        "SELECT r.executor_incarnation,r.child_id,r.conversation_id FROM mac_runs AS r LEFT JOIN mac_executor_presence AS p ON p.machine_id=r.machine_id WHERE r.stop_state<>'closed' AND r.executor_incarnation IS NOT p.executor_incarnation ORDER BY r.rowid",
       ),
     );
   }
@@ -116,7 +116,7 @@ export class ExecutorStore {
         [child.conversation_id],
       )!;
       tx.run(
-        "INSERT INTO mac_runs VALUES(?,?,?,?,?,?,0,'open') ON CONFLICT(conversation_id) DO UPDATE SET executor_incarnation=excluded.executor_incarnation,child_id=excluded.child_id,principal_kind=excluded.principal_kind,principal_id=excluded.principal_id,turn_number=excluded.turn_number,delivery_uncertain=0,stop_state='open'",
+        "INSERT INTO mac_runs(conversation_id,executor_incarnation,child_id,principal_kind,principal_id,turn_number,delivery_uncertain,stop_state) VALUES(?,?,?,?,?,?,0,'open') ON CONFLICT(conversation_id) DO UPDATE SET executor_incarnation=excluded.executor_incarnation,child_id=excluded.child_id,principal_kind=excluded.principal_kind,principal_id=excluded.principal_id,turn_number=excluded.turn_number,delivery_uncertain=0,stop_state='open'",
         [
           child.conversation_id,
           child.executor_incarnation,

@@ -306,6 +306,7 @@ def _seed(path: Path) -> None:
         store.register_child(
             _typed("ChildReference", _child(conversation)), "ticket", "fixture", NOW
         )
+    history_mailbox = SqliteCommandMailbox(str(path), clock=lambda: NOW)
     with closing(connect(str(path))) as connection:
         connection.execute(
             "INSERT INTO executor_incarnations"
@@ -320,7 +321,7 @@ def _seed(path: Path) -> None:
             finished: int | None = None,
             result: dict[str, Any] | None = None,
         ) -> None:
-            placed = SqliteCommandMailbox._insert(
+            placed = history_mailbox._insert(
                 connection,
                 wire.MailboxCommand(
                     0,
@@ -849,7 +850,10 @@ async def _outcome(work: Any) -> dict[str, Any]:
 def _comparable_outcome(outcome: dict[str, Any]) -> dict[str, Any]:
     """Compare failure categories while each runtime owns its diagnostic classes."""
     if outcome.get("ok") is False and outcome.get("type") in {
-        "ValidationError", "ValueError", "ExecutorValidationError", "JSONDecodeError"
+        "ValidationError",
+        "ValueError",
+        "ExecutorValidationError",
+        "JSONDecodeError",
     }:
         assert isinstance(outcome["message"], str) and outcome["message"]
         return {**outcome, "type": "validation", "message": "<validation diagnostic>"}
@@ -1091,7 +1095,9 @@ def test_unit22_mailbox_exchange(tmp_path: Path, request: pytest.FixtureRequest)
                     "answer_permission_ask",
                     "expiry",
                     arguments={
-                        "kind": "answer_permission_ask", "ask_id": "closed", "option_id": "allow"
+                        "kind": "answer_permission_ask",
+                        "ask_id": "closed",
+                        "option_id": "allow",
                     },
                 ),
                 _command("user-open", "answer_user_input", "expiry"),
@@ -1606,17 +1612,15 @@ def test_unit22_mailbox_exchange(tmp_path: Path, request: pytest.FixtureRequest)
             ]
             for path in copies:
                 for row in _observe(path)["rows"]:
-                    assert (
-                        json.loads(wire.encode_bounded(
+                    assert json.loads(
+                        wire.encode_bounded(
                             _typed("MailboxCommand", json.loads(row["command_json"]))
-                        ))
-                        == json.loads(row["command_json"])
-                    )
+                        )
+                    ) == json.loads(row["command_json"])
                     if row["outcome_json"] is not None:
                         decoded_result = _typed("CommandResult", json.loads(row["outcome_json"]))
-                        assert (
-                            json.loads(_outcome_json(decoded_result))
-                            == json.loads(row["outcome_json"])
+                        assert json.loads(_outcome_json(decoded_result)) == json.loads(
+                            row["outcome_json"]
                         )
             foreign_signals: list[int] = []
             forget_foreign = change_signal.subscribe(lambda: foreign_signals.append(1))
@@ -1990,11 +1994,9 @@ async def _presence_phases(source: _Source, node: Any, paired: Any, paths: list[
                     "WHERE command_sequence BETWEEN 7 AND 3006 ORDER BY command_sequence"
                 ).fetchall()
             )
+
     def replacement_meanings(rows: list[Any]) -> list[Any]:
-        return [
-            [*row[:3], None if row[3] is None else json.loads(row[3]), row[4]]
-            for row in rows
-        ]
+        return [[*row[:3], None if row[3] is None else json.loads(row[3]), row[4]] for row in rows]
 
     assert replacement_meanings(compared[0]) == replacement_meanings(compared[1])
     assert len(compared[0]) == len(compared[1]) == 3000

@@ -40,6 +40,7 @@ from planner.environments.app import (
 )
 from planner.environments.runtime_contracts import (
     NodeRuntimeContract,
+    RuntimeContract,
     RuntimeContractError,
 )
 from planner.environments.runtime_elf import (
@@ -346,7 +347,7 @@ def _admission_group_proof(
 def _admission_rules(root: Path) -> tuple[dict[str, Any], dict[str, Any]]:
     v1 = validate_app_manifest(root / "app/manifest.json").runtime_contract
     v2 = validate_app_manifest(root / "v2/manifest.json").runtime_contract
-    assert v1 is not None and isinstance(v2, NodeRuntimeContract)
+    assert isinstance(v1, RuntimeContract) and isinstance(v2, NodeRuntimeContract)
     facts: dict[str, Any] = dict(
         system="linux",
         architecture="x86_64",
@@ -378,26 +379,26 @@ def _admission_rules(root: Path) -> tuple[dict[str, Any], dict[str, Any]]:
 
         with (
             patch(
-                "planner.environments.runtime_admission.platform.system",
+                "planner.platform_runtime.linux.runtime.platform.system",
                 lambda: "Linux",
             ),
             patch(
-                "planner.environments.runtime_admission.platform.machine",
+                "planner.platform_runtime.linux.runtime.platform.machine",
                 lambda: "x86_64",
             ),
             patch(
-                "planner.environments.runtime_admission.platform.freedesktop_os_release",
+                "planner.platform_runtime.linux.runtime.platform.freedesktop_os_release",
                 lambda: {"ID": "ubuntu", "VERSION_ID": "24.04"},
             ),
             patch(
-                "planner.environments.runtime_admission.platform.libc_ver",
+                "planner.platform_runtime.linux.runtime.platform.libc_ver",
                 lambda: ("glibc", "2.39"),
             ),
             patch(
-                "planner.environments.runtime_admission.ctypes.CDLL", lambda name: None
+                "planner.platform_runtime.linux.runtime.ctypes.CDLL", lambda name: None
             ),
             patch(
-                "planner.environments.runtime_admission.shutil.which",
+                "planner.platform_runtime.linux.runtime.shutil.which",
                 lambda *args, **kwargs: "/synthetic/tool",
             ),
             patch.object(

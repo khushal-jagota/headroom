@@ -11,6 +11,7 @@ import json
 import os
 import subprocess
 import time
+from importlib import import_module
 from pathlib import Path
 from typing import Any, cast
 from unittest.mock import patch
@@ -21,7 +22,8 @@ ROOT = Path(__file__).resolve().parents[3]
 
 
 def _outcome(call: Any) -> Any:
-    from planner.conversation import worker_unit
+    # P3 replaces this retired fixture when its expected-open case returns.
+    worker_unit = import_module("planner.conversation.worker_unit")
 
     try:
         return call()
@@ -30,7 +32,8 @@ def _outcome(call: Any) -> Any:
 
 
 def _python_bytes(spec: dict[str, Any]) -> dict[str, Any]:
-    from planner.conversation import worker_unit
+    # P3 replaces this retired fixture when its expected-open case returns.
+    worker_unit = import_module("planner.conversation.worker_unit")
 
     attempts: list[str] = []
 
@@ -169,9 +172,7 @@ def test_unit18_containment_bytes(tmp_path: Path, request: pytest.FixtureRequest
         "real_children": ["owned Node evaluator"],
         "service_manager_calls": 0,
         "units_started": 0,
-        "normalization_rules": [
-            "Keep invalid-entry names and failure shape; allow native quotes."
-        ],
+        "normalization_rules": ["Keep invalid-entry names and failure shape; allow native quotes."],
     }
     destination = request.config.getoption("--compare-report-dir")
     if destination:
