@@ -306,8 +306,25 @@ def _inspect_record(
             return CleanupResult(False, "Recorded Worker processes remain")
         if record.get("unattributed_session_members"):
             return CleanupResult(False, "Unattributed isolated-session processes remain")
-        record.update(state="complete", reason="All identified Worker processes ended")
+        if getattr(primitives, "requires_containment", False):
+            from planner.platform_runtime.linux import worker_cgroups
+
+            if not record.get("cgroup_joined"):
+                return CleanupResult(
+                    False,
+                    record.get("cgroup_error")
+                    or "Legacy Worker record lacks complete cgroup custody",
+                )
+            if not worker_cgroups.empty(record["cgroup"]):
+                return CleanupResult(False, "Worker cgroup processes remain")
+        record.update(state="complete", reason="All owned Worker processes ended")
         records.write(path, record)
+        if record.get("cgroup_joined"):
+            try:
+                worker_cgroups.remove(record["cgroup"])
+            except OSError:
+                # The durable empty receipt already proves process retirement.
+                pass
         return CleanupResult(True, record["reason"])
     except (OSError, ValueError, TypeError, KeyError, TimeoutError) as error:
         return CleanupResult(False, f"Worker cleanup evidence unavailable: {error}")
@@ -347,6 +364,10 @@ def _stop_record(
                 for raw in record["processes"]
                 if not primitives.is_absent(_process(raw), deadline)
             ]
+            if signum == signal.SIGKILL and record.get("cgroup"):
+                from planner.platform_runtime.linux import worker_cgroups
+
+                worker_cgroups.kill(record["cgroup"])
             for process in remaining:
                 # A refused signal does not prove survival. A process can exit
                 # naturally while its native transport finishes teardown.
@@ -364,6 +385,10 @@ def _stop_record(
                 time.sleep(min(0.05, max(0, phase_deadline - time.monotonic())))
         record = records.read(path)
         reason = "Worker stop deadline expired"
+        if getattr(primitives, "requires_containment", False) and not record.get("cgroup_joined"):
+            reason += "; " + (
+                record.get("cgroup_error") or "Legacy Worker record lacks complete cgroup custody"
+            )
         if record.get("unattributed_session_members"):
             reason += "; unattributed isolated-session processes remain"
         record.update(state="not_proven", reason=reason)
