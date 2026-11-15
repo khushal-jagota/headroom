@@ -535,8 +535,12 @@ def test_real_core_and_scripted_acp_persist_confirmed_compaction_and_release_the
 
             after = await subject.conversation_record("c")
             assert after is not None
-            assert after.automatically_compacted_through_sequence == activity_sequence
             events = await subject.recorded_events("c")
+            compacted = next(
+                event for event in events if isinstance(event.payload, ContextCompactedEventPayload)
+            )
+            assert after.automatically_compacted_through_sequence == compacted.sequence
+            assert compacted.sequence > activity_sequence
             assert (
                 sum(isinstance(event.payload, ContextCompactedEventPayload) for event in events)
                 == 1
