@@ -21,7 +21,7 @@ The conversation system delivers that instruction and shows it in Full history a
 
 Protected decision operations retain the exact command and its outcome with the Ticket transition. A lost response can be recovered without a second decision. A receipt proves the transition, not delivery of a note or guidance into a conversation. Edited approval text and send-back guidance must fit the canonical limit before any receipt stores them. Receipt lookup reveals only the caller’s own operations. Unknown and other actors’ operations return the same supported absence. A new operation can change the Ticket, so submission refuses an unavailable identity without exposing its saved contents.
 
-The browser and iPhone use this same route. The browser saves unresolved decisions across closed tabs and checks their receipts when it opens again. An uncertain result retains the original decision and blocks a conflicting choice. A changed proposal requires another review.
+The browser and iPhone use this same route. The browser saves unresolved decisions across closed tabs and checks their receipts when it opens again. An uncertain result retains the original decision and blocks a conflicting choice. A changed proposal requires another review. Its replacement card keeps the refusal visible beside the proposal.
 
 If the index is not yet trustworthy, Review says it is unavailable instead of showing an empty queue that might be wrong.
 

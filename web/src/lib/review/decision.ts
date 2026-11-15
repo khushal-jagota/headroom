@@ -112,7 +112,9 @@ async function resolve(identity: string, saved: SavedDecision): Promise<Decision
     }), saved, false)!;
     forget(identity);
     const refusal = receipt.outcome === "refused"
-      ? new DecisionRefusedError(receipt.error!.message, receipt.error!.code, { detail: receipt.error!.detail }) : null;
+      ? new DecisionRefusedError(
+        `${saved.command.decision === "approve" ? "Approval" : "Send back"} did not apply. ${receipt.error!.message}`,
+        receipt.error!.code, { detail: receipt.error!.detail }) : null;
     // Keep the refusal above proposal membership before refresh can unmount its card.
     if (refusal) publish(identity, saved, refusal, false, true);
     // A refresh failure cannot undo a confirmed terminal decision.

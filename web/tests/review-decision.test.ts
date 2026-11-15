@@ -104,7 +104,7 @@ it("surfaces a terminal changed-proposal refusal and permits a distinct correcte
   vi.mocked(queryClient.invalidateQueries).mockImplementationOnce(async () => {
     // Refresh can remove the old proposal card. Its refusal already lives above it.
     expect(get(decisionRecovery)).toContainEqual(expect.objectContaining({
-      saved: original, terminal: true, error: expect.objectContaining({ message: "This changed, review again" })
+      saved: original, terminal: true, error: expect.objectContaining({ message: "Approval did not apply. This changed, review again" })
     }));
   });
   await expect(recoverReviewDecision(original)).rejects.toThrow("This changed, review again");

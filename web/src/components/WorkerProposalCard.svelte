@@ -6,7 +6,7 @@
   import ErrorLine from "./ErrorLine.svelte";
   import ComposerField from "./conversation/ComposerField.svelte";
   import { advanceTargetFor, fieldLabelFor, preferredScopeCeilingFor, type Lifecycle } from "../lib/lifecycle";
-  import { decisionIdentity, recallReviewDecision, submitReviewDecision } from "../lib/review/decision";
+  import { decisionIdentity, decisionRecovery, DecisionRefusedError, recallReviewDecision, submitReviewDecision } from "../lib/review/decision";
   import type { PendingTicketProposal, Principal } from "../lib/types";
 
   let { ticketId, proposal, lifecycle, stage, ceiling, holder, manager, onAccept, onScope, onReturn, canReturn = true, returnUnavailableReason = "No existing Worker conversation to send a revision to.", disabled = false, revisionEditor, revisionText = $bindable(""), holdDecisions = false, initialEditedBody, onEditedBodyChange, contextRow, utilityActions }: {
@@ -40,6 +40,10 @@
   let busy = $state(false);
   let resolved = $state(false);
   let error = $state<unknown>(null);
+  // A refusal names the Ticket and field, so it survives replacement of the reviewed revision.
+  let terminalRefusal = $derived($decisionRecovery.filter(entry => entry.terminal
+    && entry.saved.ticketId === ticketId && entry.saved.command.field === proposal.field).slice(-1)[0]?.error);
+  let visibleError = $derived(error ?? terminalRefusal);
   let lastKey: string | null = null;
   let newStage = $derived(advanceTargetFor(lifecycle, stage, ""));
   let nextCeiling = $derived(preferredScopeCeilingFor(lifecycle, newStage));
@@ -87,7 +91,7 @@
       } else {
         await onScope({ ...(change.ceiling === undefined ? {} : { ceiling:change.ceiling }), ceiling_holder:change.holder });
       }
-    } catch (err) { error = err; }
+    } catch (err) { error = err instanceof DecisionRefusedError ? null : err; }
     finally { busy = false; }
   }
   async function sendBack(message: string): Promise<void> {
@@ -104,7 +108,7 @@
       revisionText = "";
       resolved = true;
     }
-    catch (err) { error = err; }
+    catch (err) { error = err instanceof DecisionRefusedError ? null : err; }
     finally { busy = false; }
   }
   let revisionSlot = $state<HTMLElement | null>(null);
@@ -161,7 +165,7 @@
     approvalCeiling={nextCeiling} bind:controller={scopePicker}
     holderLabel={(value) => value ? reviewerLabel(value) : "User"} onComplete={(change) => void completeScope(change)} />
   {#if proposal.field !== "brief" && !canReturn}<p class="return-unavailable" data-return-unavailable>{returnUnavailableReason}</p>{/if}
-  {#if error}<ErrorLine {error} />{/if}
+  {#if visibleError}<ErrorLine error={visibleError} />{/if}
 </section>
 <style>
   /* THE CARD (page system). Its actions are the one Button, in one row at the card's right:

@@ -721,9 +721,19 @@ def run(browser, urls):
     expect(block()).to_have_attribute("data-field", "plan")
     choose("needs_implementation")
     expect(block()).to_contain_text("proposal changed")
+    expect(block()).to_contain_text("Approval did not apply.")
     assert len(approvals) == 4
     page.evaluate("window.__refresh()")
     expect(block().locator("[contenteditable]")).to_have_text("New plan revision")
+    # The refusal stays beside the replacement proposal after the keyed card changes.
+    expect(block()).to_contain_text("Approval did not apply.")
+    expect(block()).to_contain_text("proposal changed")
+    expect(block().locator(".error-message")).to_have_count(1)
+    expect(block().locator(".error-message")).to_be_visible()
+    if artifact_dir:
+        path = "stale-approval-refused-near-card.png"
+        page.screenshot(path=str(Path(artifact_dir) / path), full_page=True)
+        evidence.append(path)
     choose("needs_implementation")
     wait_count(approvals, 5)
     assert approvals[-1]["body"]["expected_proposal_revision"] == 2
