@@ -13,7 +13,6 @@ import time
 from pathlib import Path
 from typing import cast
 
-from tests.support.delegated_cgroup import require_delegated_cgroup
 from tests.support.executor_https import serve_executor_app
 from tests.support.executor_sleep_cycles import (
     CycleEndpoint,
@@ -28,7 +27,6 @@ from planner.platform_runtime.linux.worker_processes import LinuxWorkerProcesses
 
 
 def test_linux_executor_term_stops_active_supervised_worker(tmp_path: Path) -> None:
-    require_delegated_cgroup()
     class OneWorker(SleepCycles):
         # The fixture intentionally selects one worker from the inferred three-worker tuple.
         conversations = cast(tuple[str, str, str], ("ca",))
