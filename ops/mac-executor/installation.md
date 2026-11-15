@@ -85,11 +85,70 @@ panels machine replace-credential MACHINE_ID --json > machine-grant.json
 
 Install that grant into the same selected root. Restart only that executor so its clients use the replacement. Remove the transfer copy after installation.
 
-Until the first request authenticates with the new credential, the original Mac can fetch the same pending credential with its old authority. A lost reply or a crash before the private save needs no operator step. This retry also works after a home restart.
+Until the handover closes, the original Mac can fetch the same pending credential with its old authority. A lost reply or a crash before the private save needs no operator step. This retry also works after a home restart.
 
-The first authenticated request permanently closes the old authority, including its update requests, and removes the pending secret. The home log records issuance and closure times with the executor incarnation. A home restart or migration replay never reopens that authority. An older runtime without credential support cannot use it after rollback.
+The handover closes when the trial runtime sends a credentialed "current" update report. This permanently closes the old authority, including its update requests, and removes the pending secret. The home log records issuance and closure times with the executor incarnation. A home restart or migration replay never reopens that authority. An older runtime without credential support cannot use it after rollback.
 
 If the wrong device takes the credential, use the operator replacement command.
+
+## Recover a Mac locked out after its credential handover
+
+Use this procedure for the original Mac only, and only when all of these are true:
+
+- Settings → Machines shows the Mac away after an update.
+- `$EXECUTOR_ROOT/updates/failure.json` names a reverted trial.
+- The executor logs under `$EXECUTOR_ROOT/logs` show `HTTP 403` on every lease.
+
+In this state, the home closed the handover, but the supervisor restored the previous runtime. That runtime has no credential, so the home refuses it. The new runtime is still on disk, and its credential is saved. The recovery selects the new runtime by hand.
+
+Stop the executor with the steps in [Obtain successful graceful exit](#obtain-successful-graceful-exit). The quiesce request uses the local socket, so it works without the home.
+
+Find the request ID of the trial and the folder of the new runtime:
+
+```sh
+UPDATES="$EXECUTOR_ROOT/updates"
+cat "$UPDATES/failure.json"
+ls "$UPDATES/releases"
+```
+
+Each folder name in `releases` is `<revision>-<archive sha256>`. Select the folder whose revision is the revision that the home runs. Set `REQUEST_ID` to the `request_id` value from `failure.json`. Set `RELEASE` to the full path of the selected folder.
+
+Write the selection, then remove the failure record:
+
+```sh
+"$VENV/bin/python" -I -c '
+import json, os, sys
+from pathlib import Path
+updates, request_id, release = Path(sys.argv[1]), sys.argv[2], Path(sys.argv[3])
+selection = updates / "selection.json"
+previous = json.loads(selection.read_text())["runtime_path"] if selection.exists() else None
+record = {
+    "request_id": request_id,
+    "application_revision": release.name.partition("-")[0],
+    "runtime_path": str(release),
+    "previous_runtime_path": previous,
+}
+temporary = updates / ".selection.json.recovery"
+temporary.write_text(json.dumps(record, sort_keys=True) + "\n")
+os.replace(temporary, selection)
+' "$UPDATES" "$REQUEST_ID" "$RELEASE"
+rm "$UPDATES/failure.json"
+```
+
+Remove `failure.json` after the selection is written. If it stays, the new runtime reports the trial as reverted, not current.
+
+Start the job again:
+
+```sh
+launchctl bootstrap "gui/$(id -u)" "$PLIST"
+launchctl kickstart "$SERVICE"
+```
+
+Check that Settings → Machines shows the Mac present at the new revision.
+
+### After a home database restore
+
+A home database restore can remove the home's copy of the Mac credential. An upgraded runtime asks the home for its credential at each start, so the next update needs no Mac step. A runtime from before that change uses its saved file without a check. If the next update installs such a runtime, every trial gets `HTTP 403` and reverts. In that case, remove `$EXECUTOR_ROOT/machine-credential.json` before the next Mac update.
 
 ## Record inputs before changes
 
