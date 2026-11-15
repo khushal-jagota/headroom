@@ -150,6 +150,32 @@ test('machine commands preserve credential JSON and ticket destination inputs', 
     const replaced = await run(['machine', 'replace-credential', remote], environment);
     expect(JSON.parse(replaced.stdout)).toEqual(grant);
     expect(request.mock.lastCall?.slice(1)).toEqual(['POST', `/api/machines/${remote}/credential`]);
+    const private_grant = { ...grant, credential: 'x'.repeat(43) },
+      revision = 'a'.repeat(40);
+    request.mockResolvedValueOnce({ app_sha: revision }).mockResolvedValueOnce(private_grant);
+    const joined = await run(
+      ['machine', 'join-command', 'Build host', '--home', 'https://home.example'],
+      environment,
+    );
+    expect(joined.exit_code).toBe(0);
+    expect(request.mock.calls.slice(-2).map((call) => call.slice(1))).toEqual([
+      ['GET', '/api/meta'],
+      ['POST', '/api/machines', { json_body: { name: 'Build host' } }],
+    ]);
+    const command = joined.stdout
+      .split('\n')
+      .find((line) => line.startsWith('panels_join_script='))!;
+    expect(command).toContain(remote);
+    expect(command).toContain(revision);
+    expect(command).not.toContain(private_grant.credential);
+    expect(joined.stdout.split(private_grant.credential)).toHaveLength(2);
+    request.mockClear();
+    const invalid_home = await run(
+      ['machine', 'join-command', 'Build host', '--home', 'http://home.example'],
+      environment,
+    );
+    expect(invalid_home.exit_code).toBe(1);
+    expect(request).not.toHaveBeenCalled();
     request.mockResolvedValue({
       machines: [{ machine_id: remote, name: 'Build host', available: false }],
     });

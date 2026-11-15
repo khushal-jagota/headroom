@@ -293,7 +293,11 @@ export async function unpack_archive_child(
         throw new AppValidationError('app archive hash differs from publication receipt');
       }
     }
-    const reader = new ArchiveMembers(inspection ? 'mac-inspection' : 'extraction');
+    const reader = new ArchiveMembers(
+      inspection ? 'mac-inspection' : 'extraction',
+      undefined,
+      request.purpose === 'mac-inspection' ? request.platform : undefined,
+    );
     const second_digest = createHash('sha256');
     let compressed = 0,
       expanded = 0,
@@ -405,6 +409,7 @@ export async function unpack_archive_child(
         python: reader.python,
         node: reader.node,
         entrypoint: reader.entrypoint,
+        ...(reader.native_linux ? { native_linux: reader.native_linux } : {}),
       });
       fence();
       return;

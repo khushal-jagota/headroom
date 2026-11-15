@@ -8,6 +8,8 @@ import { JsonNumber, numeric_value, parse_numeric_json } from '../core/http/nume
 import { scalar_text as scalar } from './text.ts';
 import { ticket_argument } from './parser.ts';
 import { recap_preview } from '../tickets/logic/recap.ts';
+import { uuid } from './declarations.ts';
+import { shell_quote } from '../conversation/worker_unit/logic.ts';
 
 type Body = Record<string, any>;
 const quote = (value: string, slash = false): string => {
@@ -590,6 +592,66 @@ export async function run_work_command(inv: Invocation): Promise<CommandResult> 
     case 'machine register':
       data = await send(inv, 'POST', '/api/machines', { json_body: { name: v.name } });
       return emit(data, true, '');
+    case 'machine join-command': {
+      const { validate_server_url } = await import('../executor/mac/configuration.ts');
+      let home_url: string;
+      try {
+        home_url = validate_server_url(v.home_url);
+      } catch (error) {
+        return fail_validation(inv, error instanceof Error ? error.message : 'Invalid home origin');
+      }
+      const metadata = await send(inv, 'GET', '/api/meta'),
+        revision = metadata.app_sha;
+      if (
+        typeof revision !== 'string' ||
+        revision.length !== 40 ||
+        !/^[0-9a-f]{40}$/.test(revision)
+      )
+        return fail_validation(inv, 'Install a released home before you issue a join command');
+      const grant = await send(inv, 'POST', '/api/machines', { json_body: { name: v.name } });
+      let machine_id: string;
+      try {
+        machine_id = uuid(String(grant.machine_id)) as string;
+      } catch {
+        return fail_validation(inv, 'The home returned an invalid machine identity');
+      }
+      const credential = grant.credential;
+      if (
+        typeof credential !== 'string' ||
+        credential.length !== 43 ||
+        !/^[A-Za-z0-9_-]{43}$/.test(credential)
+      )
+        return fail_validation(inv, 'The home returned an invalid machine credential');
+      const route = `repos/khushal-jagota/headroom/contents/scripts/panels_install.py?ref=${revision}`;
+      const arguments_ = [
+        'join',
+        '--home',
+        home_url,
+        '--machine-id',
+        machine_id,
+        '--revision',
+        revision,
+      ];
+      const command =
+        'panels_join_script=$(mktemp) && gh api -H ' +
+        shell_quote('Accept: application/vnd.github.raw+json') +
+        ' ' +
+        shell_quote(route) +
+        ' > "$panels_join_script" && python3 "$panels_join_script" ' +
+        arguments_.map(shell_quote).join(' ');
+      return raw(
+        [
+          "Use this same home's trusted HTTPS origin. Check the address before you share the credential.",
+          'On the new machine, use an authenticated GitHub CLI and run:',
+          command,
+          'At the private credential prompt, paste this value:',
+          credential,
+          'Keep this value private. Credential replacement revokes it.',
+          'After the command, remove its temporary script: rm -- "$panels_join_script"',
+          '',
+        ].join('\n'),
+      );
+    }
     case 'machine replace-credential':
       data = await send(inv, 'POST', `/api/machines/${quote(v.machine_id)}/credential`);
       return emit(data, true, '');

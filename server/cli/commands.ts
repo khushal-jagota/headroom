@@ -1141,6 +1141,10 @@ export function create_commands(environment: NodeJS.ProcessEnv = {}): CliCommand
     argument('name', '<NAME>', text, {}),
     option('as_json', '--json', boolean, { default: false }),
   ]);
+  command('machine join-command', 'Register a machine and print its private join command.', [
+    argument('name', '<NAME>', text, {}),
+    option('home_url', '--home <TEXT>', text, { required: true }),
+  ]);
   command(
     'machine replace-credential',
     'Revoke the old credential and print its replacement once.',
@@ -1323,10 +1327,6 @@ export function create_commands(environment: NodeJS.ProcessEnv = {}): CliCommand
   ]);
   command('ticket proposal', 'Submit, accept, or revise the current Ticket proposal.', [
     argument('proposal_args', '[PROPOSAL_ARGS...]', text, {}),
-    option('expected_proposal_revision', '--expected-proposal-revision <INTEGER>', integer(1), {
-      description:
-        'The revision of the proposal you inspected. Omission pins the command-time read.',
-    }),
     option('ceiling', '--ceiling <TEXT>', text, {
       description: 'Next ceiling for an accepted proposal.',
     }),
@@ -1341,6 +1341,10 @@ export function create_commands(environment: NodeJS.ProcessEnv = {}): CliCommand
     }),
     option('kickoff_note_file', '--kickoff-note-file <TEXT>', text, {
       description: 'Edited Kickoff note, or - for stdin.',
+    }),
+    option('expected_proposal_revision', '--expected-proposal-revision <INTEGER>', integer(1), {
+      description:
+        'The revision of the proposal you inspected. Omission pins the command-time read.',
     }),
     option('as_json', '--json', boolean, {
       default: false,

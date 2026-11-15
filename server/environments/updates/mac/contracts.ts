@@ -32,6 +32,7 @@ export interface MacUpdateCompositionContext {
   readonly archive_root?: string;
   readonly platform?: string;
   readonly platform_for?: (machine_id: string) => string;
+  readonly linux_registered?: () => boolean;
   readonly attempts: FileUpdateAttemptStore;
   readonly provider: UpdateProvider | null;
   readonly current_app_sha: string | null;
@@ -42,6 +43,7 @@ export interface MacUpdateCompositionContext {
 }
 export interface MacUpdateServiceContract {
   for_machine(machine_id: string): MacUpdateServiceContract;
+  settled(): Promise<void>;
   prepare(release: PublishedUpdate): Promise<void>;
   check(): MacUpdateCheck;
   status(): MacUpdateStatus | null;

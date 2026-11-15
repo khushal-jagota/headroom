@@ -103,6 +103,69 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
+  linux-executor:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    outputs:
+      artifact_id: ${{ steps.executor.outputs.artifact-id }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '22'
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: '3.12'
+      - name: Prepare native tools and the admission host Node
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y patchelf binutils libicu-dev pkg-config
+          selected_node=$(env -i PATH="$PATH" node -p 'require("node:fs").realpathSync(process.execPath)')
+          if [ "$selected_node" != /usr/local/bin/node ]; then sudo ln -sfn "$selected_node" /usr/local/bin/node; fi
+          env -i PATH=/usr/local/bin:/usr/bin:/bin node -e 'const fs=require("node:fs");if(process.platform!=="linux"||process.arch!=="x64"||!/^22\.(?:1[89]|[2-9][0-9])\./.test(process.versions.node)||fs.realpathSync(process.execPath)!==process.argv[1])throw Error("Selected Linux Node22 >=22.18 is required in admission HOST_PATH")' "$selected_node"
+      - name: Build and prove the relocated Linux executor archive
+        run: |
+          set -euo pipefail
+          umask 077
+          private="$RUNNER_TEMP/panels-linux-executor-publication"
+          mkdir -p "$private"/{home/.codex,home/.claude,home/.hermes,config,cache,data/files,logs,backups,workspace,scratch,runtime,tmp}
+          env -i PATH="$PATH" LANG=C.UTF-8 LC_ALL=C.UTF-8 PYTHONDONTWRITEBYTECODE=1 \
+            GITHUB_ACTIONS=true GITHUB_WORKSPACE="$GITHUB_WORKSPACE" GITHUB_REPOSITORY="$GITHUB_REPOSITORY" \
+            GITHUB_SHA="$GITHUB_SHA" GITHUB_REF="$GITHUB_REF" GITHUB_EVENT_NAME="$GITHUB_EVENT_NAME" GITHUB_EVENT_PATH="$GITHUB_EVENT_PATH" \
+            GITHUB_WORKFLOW_REF="$GITHUB_WORKFLOW_REF" GITHUB_WORKFLOW_SHA="$GITHUB_WORKFLOW_SHA" GITHUB_RUN_ID="$GITHUB_RUN_ID" GITHUB_RUN_ATTEMPT="$GITHUB_RUN_ATTEMPT" \
+            PUBLICATION_ROOT="$private" HOME="$private/home" CODEX_HOME="$private/home/.codex" CLAUDE_CONFIG_DIR="$private/home/.claude" \
+            HERMES_HOME="$private/home/.hermes" PLAN_HERMES_HOME="$private/home/.hermes" XDG_CONFIG_HOME="$private/config" XDG_CACHE_HOME="$private/cache" \
+            XDG_DATA_HOME="$private/data" XDG_STATE_HOME="$private/data" XDG_RUNTIME_DIR="$private/runtime" TMPDIR="$private/tmp" TMP="$private/tmp" TEMP="$private/tmp" \
+            npm_config_cache="$private/cache/npm" PIP_CONFIG_FILE=/dev/null PIP_CACHE_DIR="$private/cache/pip" \
+            PLAN_CONFIG_PATH="$private/config.yaml" PLAN_DB_PATH="$private/data/planner.sqlite" PLAN_DATA_DIR="$private/data" PLAN_APP_ROOT="$private/app" \
+            PLAN_LOGS_DIR="$private/logs" PLAN_BACKUP_DIR="$private/backups" PLAN_WORKSPACE_ROOT="$private/workspace" PLAN_TICKET_FILES_DIR="$private/data/files" \
+            PLAN_TICKET_SCRATCH_ROOT="$private/scratch" PLAN_TICKET_SCRATCH_DATABASE="$private/data/planner.sqlite" PLAN_CREDENTIAL_KEY_PATH="$private/data/key" \
+            PLAN_DISPATCHER_LOCK_PATH="$private/runtime/dispatcher.lock" PLAN_SERVER_CONTROL_SOCKET="$private/runtime/control.sock" \
+            PLAN_SERVER_LIFECYCLE_LEASE_PATH="$private/runtime/lifecycle.lock" PLAN_SERVER_URL=http://127.0.0.1:0 PLAN_PORT=0 PLAN_TEST_MODE=0 PLAN_DISPATCH_ENABLED=false \
+            bash --noprofile --norc -euo pipefail <<'PUBLISH'
+          printf '{}\n' > "$PLAN_CONFIG_PATH"
+          python3 -I -S -B scripts/development_safety/bootstrap.py npm --prefix server ci
+          node --input-type=module -e 'import{writeFileSync}from"node:fs";const r=process.env.PUBLICATION_ROOT;writeFileSync(r+"/build-request.json",JSON.stringify({source_root:process.env.GITHUB_WORKSPACE,requested_sha:process.env.GITHUB_SHA,output_directory:r+"/linux-executor"}));'
+          node server/environments/linux_executor/build_main.ts "$PUBLICATION_ROOT/build-request.json"
+          PUBLISH
+      - name: Upload only the checked Linux executor archive and receipt
+        id: executor
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: panels-linux-executor
+          path: |
+            ${{ runner.temp }}/panels-linux-executor-publication/linux-executor/panels-linux-executor.tar.gz
+            ${{ runner.temp }}/panels-linux-executor-publication/linux-executor/linux-executor-publication.json
+          if-no-files-found: error
+          retention-days: 30
+          compression-level: 0
+
   mac:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: macos-15
@@ -161,8 +224,8 @@ jobs:
           compression-level: 0
 
   receipt:
-    needs: [linux, mac]
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.linux.result == 'success' && needs.mac.result == 'success'
+    needs: [linux, mac, linux-executor]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.linux.result == 'success' && needs.mac.result == 'success' && needs.linux-executor.result == 'success'
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     steps:
@@ -192,6 +255,8 @@ jobs:
           BUILD_ARTIFACT_ID: ${{ needs.linux.outputs.build_artifact_id }}
           MAC_ARTIFACT_ID: ${{ needs.mac.outputs.artifact_id }}
           MAC_BUILD_RESULT: ${{ needs.mac.result }}
+          LINUX_EXECUTOR_ARTIFACT_ID: ${{ needs.linux-executor.outputs.artifact_id }}
+          LINUX_EXECUTOR_BUILD_RESULT: ${{ needs.linux-executor.result }}
         run: |
           set -euo pipefail
           umask 077
@@ -202,6 +267,7 @@ jobs:
             GITHUB_SHA="$GITHUB_SHA" GITHUB_REF="$GITHUB_REF" GITHUB_EVENT_NAME="$GITHUB_EVENT_NAME" GITHUB_EVENT_PATH="$GITHUB_EVENT_PATH" \
             GITHUB_WORKFLOW_REF="$GITHUB_WORKFLOW_REF" GITHUB_WORKFLOW_SHA="$GITHUB_WORKFLOW_SHA" GITHUB_RUN_ID="$GITHUB_RUN_ID" GITHUB_RUN_ATTEMPT="$GITHUB_RUN_ATTEMPT" \
             GITHUB_TOKEN="$GITHUB_TOKEN" APP_ARTIFACT_ID="$APP_ARTIFACT_ID" BUILD_ARTIFACT_ID="$BUILD_ARTIFACT_ID" MAC_ARTIFACT_ID="$MAC_ARTIFACT_ID" MAC_BUILD_RESULT="$MAC_BUILD_RESULT" \
+            LINUX_EXECUTOR_ARTIFACT_ID="$LINUX_EXECUTOR_ARTIFACT_ID" LINUX_EXECUTOR_BUILD_RESULT="$LINUX_EXECUTOR_BUILD_RESULT" \
             PUBLICATION_ROOT="$private" HOME="$private/home" CODEX_HOME="$private/home/.codex" CLAUDE_CONFIG_DIR="$private/home/.claude" HERMES_HOME="$private/home/.hermes" PLAN_HERMES_HOME="$private/home/.hermes" \
             XDG_CONFIG_HOME="$private/config" XDG_CACHE_HOME="$private/cache" XDG_DATA_HOME="$private/data" XDG_STATE_HOME="$private/data" XDG_RUNTIME_DIR="$private/runtime" \
             TMPDIR="$private/tmp" TMP="$private/tmp" TEMP="$private/tmp" npm_config_cache="$private/cache/npm" PIP_CONFIG_FILE=/dev/null \
@@ -218,13 +284,13 @@ jobs:
           import { Readable } from 'node:stream';
           import { pipeline } from 'node:stream/promises';
           const e = process.env, root = e.PUBLICATION_ROOT;
-          for (const [name, id] of [['app', e.APP_ARTIFACT_ID], ['build', e.BUILD_ARTIFACT_ID], ['mac', e.MAC_ARTIFACT_ID]]) {
+          for (const [name, id] of [['app', e.APP_ARTIFACT_ID], ['build', e.BUILD_ARTIFACT_ID], ['mac', e.MAC_ARTIFACT_ID], ['linux-executor', e.LINUX_EXECUTOR_ARTIFACT_ID]]) {
             const signal = AbortSignal.timeout(600_000);
             const response = await fetch(`https://api.github.com/repos/${e.GITHUB_REPOSITORY}/actions/artifacts/${id}/zip`, { headers: { Authorization: `Bearer ${e.GITHUB_TOKEN}`, Accept: 'application/vnd.github+json' }, signal });
             if (!response.ok || response.body === null) throw Error('Raw artifact download failed');
             await pipeline(Readable.fromWeb(response.body), createWriteStream(`${root}/inputs/${name}.zip`, { flags: 'wx', mode: 0o600 }), { signal });
           }
-          writeFileSync(root + '/receipt-request.json', JSON.stringify({ source_root: e.GITHUB_WORKSPACE, linux_artifact_zip: root + '/inputs/app.zip', linux_build_artifact_zip: root + '/inputs/build.zip', mac_artifact_zip: root + '/inputs/mac.zip', output_directory: root + '/receipt', artifact_id: e.APP_ARTIFACT_ID, linux_build_artifact_id: e.BUILD_ARTIFACT_ID, mac_artifact_id: e.MAC_ARTIFACT_ID, mac_build_result: e.MAC_BUILD_RESULT }));
+          writeFileSync(root + '/receipt-request.json', JSON.stringify({ source_root: e.GITHUB_WORKSPACE, linux_artifact_zip: root + '/inputs/app.zip', linux_build_artifact_zip: root + '/inputs/build.zip', mac_artifact_zip: root + '/inputs/mac.zip', output_directory: root + '/receipt', artifact_id: e.APP_ARTIFACT_ID, linux_build_artifact_id: e.BUILD_ARTIFACT_ID, mac_artifact_id: e.MAC_ARTIFACT_ID, mac_build_result: e.MAC_BUILD_RESULT, linux_executor_artifact_zip: root + '/inputs/linux-executor.zip', linux_executor_artifact_id: e.LINUX_EXECUTOR_ARTIFACT_ID, linux_executor_build_result: e.LINUX_EXECUTOR_BUILD_RESULT }));
           JS
           node server/environments/release/publication_receipt_main.ts "$PUBLICATION_ROOT/receipt-request.json"
           RECEIPT

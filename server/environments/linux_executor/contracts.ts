@@ -16,6 +16,19 @@ export interface LinuxExecutorInstallRequest {
   readonly credential_file: string;
   readonly unit_directory: string;
 }
+export interface LinuxExecutorJoinRequest {
+  readonly archive: string;
+  readonly archive_sha256: string;
+  readonly archive_size: number;
+  readonly revision: string;
+  readonly home_url: string;
+  readonly machine_id: string;
+  readonly credential: string;
+  readonly root: string;
+  readonly home: string;
+  readonly node_executable: string;
+  readonly isolated_providers: boolean;
+}
 export interface LinuxExecutorArchiveApproval {
   readonly expected_sha256: string;
   readonly expected_size: number;

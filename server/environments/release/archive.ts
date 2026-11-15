@@ -186,7 +186,12 @@ export async function inspect_mac_archive(
   const actual = extract_archive(
     archive,
     null,
-    { purpose: 'mac-inspection', archive_sha256, archive_size },
+    {
+      purpose: 'mac-inspection',
+      archive_sha256,
+      archive_size,
+      ...(execution.platform ? { platform: execution.platform } : {}),
+    },
     execution.child_processes,
     filesystem_free_bytes,
     undefined,
@@ -219,6 +224,8 @@ function inspection_error(message: Record<string, unknown>): Error {
   if (typeof message.message !== 'string') throw new Error('invalid Mac inspection error');
   if (message.kind === 'archive' || message.kind === 'refusal')
     return new MacArchiveInspectionError(message.kind, message.message);
+  if (message.kind === 'json' && message.name === 'SyntaxError')
+    return new SyntaxError(message.message);
   if (
     !['os', 'json', 'unexpected'].includes(String(message.kind)) ||
     typeof message.name !== 'string'
@@ -243,7 +250,7 @@ async function extract_archive(
   purpose:
     | Omit<Extract<ArchiveUnpackRequest, { purpose: 'application' }>, 'spool_root' | 'destination'>
     | { purpose: 'source-export' }
-    | { purpose: 'mac-inspection'; archive_sha256: string; archive_size: number },
+    | Omit<Extract<ArchiveUnpackRequest, { purpose: 'mac-inspection' }>, 'spool_root'>,
   child_processes: OwnedChildProcesses,
   read_free_space: (path: string) => Promise<bigint>,
   execution?: ReleaseExecution,
@@ -405,12 +412,32 @@ async function extract_archive(
               Buffer.from(bytes, 'base64').length <= MAX_MAC_RUNTIME_MANIFEST_BYTES)
           ))
             throw new Error('invalid Mac inspection manifest bytes');
+          const native = message.native_linux;
+          if (purpose.purpose === 'mac-inspection' && purpose.platform === 'linux') {
+            // Existing Python Linux archives need no native Node metadata.
+            if (
+              !(native === undefined && message.python === true) &&
+              (!is_record(native) ||
+                native.version !== 2 ||
+                typeof native.app_sha !== 'string' ||
+                native.app_sha.length !== 40 ||
+                !/^[0-9a-f]{40}$/.test(native.app_sha) ||
+                typeof native.inventory_sha256 !== 'string' ||
+                native.inventory_sha256.length !== 64 ||
+                !/^[0-9a-f]{64}$/.test(native.inventory_sha256) ||
+                typeof native.panels !== 'boolean')
+            )
+              throw new Error('invalid Linux inspection evidence');
+          } else if (native !== undefined) throw new Error('unexpected Linux inspection evidence');
           // Decode only after the exact child's actual close, below.
           result = {
             manifest: bytes,
             python: message.python,
             node: message.node,
             entrypoint: message.entrypoint,
+            ...(native === undefined
+              ? {}
+              : { native_linux: native as MacArchiveInspection['native_linux'] }),
           };
           continue;
         }
@@ -530,6 +557,7 @@ async function extract_archive(
           python: inspected.python,
           node: inspected.node,
           entrypoint: inspected.entrypoint,
+          ...(inspected.native_linux ? { native_linux: inspected.native_linux } : {}),
         };
       } catch (error) {
         throw error instanceof MacArchiveJsonError ? error.original : error;

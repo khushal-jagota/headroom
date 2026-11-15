@@ -29,14 +29,20 @@ interface Operation {
   id?: string;
   report?: MacUpdateReport;
   health?: MacUpdateHealthRead | null;
+  registered?: boolean;
+  seconds?: number;
+  artifact_id?: number;
 }
 interface Request {
   root: string;
   releases: Record<string, Record<string, unknown>>;
   attempts: Record<string, Record<string, unknown>>;
   artifacts: Record<string, string>;
+  repairs?: Record<string, string>;
   operations: Operation[];
   inspections: Record<string, Inspection>;
+  linux_offers?: boolean;
+  abort_release_key?: string;
 }
 export async function mac_update_sequence(request: Request): Promise<unknown> {
   const owner = new ChildProcesses(),
@@ -48,6 +54,13 @@ export async function mac_update_sequence(request: Request): Promise<unknown> {
     stopping = false;
   let shutdown_failure: unknown;
   const work = new Set<string>();
+  const native_now = Object.getOwnPropertyDescriptor(performance, 'now');
+  let monotonic = 0;
+  if (request.linux_offers)
+    Object.defineProperty(performance, 'now', {
+      configurable: true,
+      value: () => monotonic * 1000,
+    });
   const descriptors = new Set<number>();
   const actual_close = () => {
     if (closed !== spawned || [...work].some((path) => existsSync(path)))
@@ -192,6 +205,13 @@ syncBuiltinESMExports();\n`,
     let emitted = 0,
       ready: PublishedUpdate | null = null;
     const downloads: unknown[] = [];
+    let registered = false;
+    const failures = new Set<number>();
+    const download_gate = () => ({
+      entered: Promise.withResolvers<void>(),
+      released: Promise.withResolvers<void>(),
+    });
+    const held = new Map<number, ReturnType<typeof download_gate>>();
     const attempts = new FileUpdateAttemptStore(
       join(request.root, 'update-attempt.json'),
       () => emitted++,
@@ -206,6 +226,12 @@ syncBuiltinESMExports();\n`,
       available: async () => null,
       async download_artifact(id, destination) {
         downloads.push(id);
+        const gate = held.get(id);
+        if (gate) {
+          gate.entered.resolve();
+          await gate.released.promise;
+        }
+        if (failures.has(id)) throw new Error('Linux artifact unavailable');
         await copyFile(request.artifacts[JSON.stringify(id)]!, destination);
       },
     };
@@ -215,6 +241,7 @@ syncBuiltinESMExports();\n`,
       new MacUpdateService({
         root,
         platform_for: (id) => platforms.get(id) ?? 'darwin',
+        linux_registered: () => registered,
         attempts,
         provider: available ? provider : null,
         current_app_sha: sha,
@@ -233,6 +260,40 @@ syncBuiltinESMExports();\n`,
           operation.machine_id ? primary.for_machine(operation.machine_id) : primary
         ) as MacUpdateService;
         switch (operation.action) {
+          case 'registered':
+            registered = operation.registered!;
+            break;
+          case 'clock':
+            monotonic += operation.seconds!;
+            break;
+          case 'hold':
+            held.set(operation.artifact_id!, download_gate());
+            break;
+          case 'wait_download':
+            await held.get(operation.artifact_id!)!.entered.promise;
+            break;
+          case 'release':
+            held.get(operation.artifact_id!)!.released.resolve();
+            break;
+          case 'fail':
+            failures.add(operation.artifact_id!);
+            break;
+          case 'recover':
+            failures.delete(operation.artifact_id!);
+            break;
+          case 'repair':
+            request.artifacts[String(operation.artifact_id!)] =
+              request.repairs![String(operation.artifact_id!)]!;
+            break;
+          case 'settled':
+            await primary.settled();
+            break;
+          case 'downloads':
+            result = [...downloads];
+            break;
+          case 'retention':
+            result = JSON.parse(await readFile(join(root, 'linux/retained-archives.json'), 'utf8'));
+            break;
           case 'platform':
             platforms.set(operation.machine_id!, operation.platform!);
             break;
@@ -257,6 +318,7 @@ syncBuiltinESMExports();\n`,
             ready = operation.key == null ? null : releases[operation.key]!;
             break;
           case 'restart':
+            await primary.settled();
             primary = make(operation.sha!, operation.provider!);
             break;
           case 'check':
@@ -316,9 +378,46 @@ syncBuiltinESMExports();\n`,
           message: (error as Error).message,
         });
       }
+      if (!request.linux_offers || operation.action === 'settled') actual_close();
+    }
+    await primary.settled();
+    actual_close();
+    const parity = { output, downloads: [...downloads], emitted };
+    let native_abort: unknown;
+    if (request.abort_release_key) {
+      const release = releases[request.abort_release_key]!;
+      const gate = download_gate(),
+        archives = join(root, 'linux/archives');
+      if (existsSync(join(archives, release.linux_executor!.archive_sha256 + '.tar.gz')))
+        throw new Error('Abort proof needs an unprepared Linux archive');
+      held.set(release.linux_executor!.artifact_id, gate);
+      ready = release;
+      registered = true;
+      const linux = primary.for_machine('11111111-1111-4111-8111-111111111111');
+      await primary.prepare(release);
+      await gate.entered.promise;
+      const retained = (await readdir(archives)).filter((name) => name.endsWith('.tar.gz')).sort();
+      one_shot_children.seal();
+      owner.seal();
+      let completed = false;
+      const settlement = primary.settled().then(() => {
+        completed = true;
+      });
+      await Promise.resolve();
+      const waited = !completed,
+        before = emitted;
+      gate.released.resolve();
+      await settlement;
+      const remaining = (await readdir(archives)).sort();
+      native_abort = {
+        waited,
+        temporary_removed: !remaining.some((name) => name.startsWith('.download-')),
+        archives_unchanged: JSON.stringify(remaining) === JSON.stringify(retained),
+        offered: linux.check().prefetch,
+        emitted_after_close: emitted - before,
+      };
       actual_close();
     }
-    const parity = { output, downloads: [...downloads], emitted };
     const inspections: Record<string, unknown> = {};
     for (const [name, spec] of Object.entries(request.inspections)) {
       if (stopping) throw new Error('Mac fixture terminated');
@@ -379,8 +478,17 @@ syncBuiltinESMExports();\n`,
       active = undefined;
       abort_inspection = undefined;
     }
-    return { parity, inspections, children: { spawned, closed } };
+    return {
+      parity,
+      inspections,
+      children: { spawned, closed },
+      ...(native_abort ? { native_abort } : {}),
+    };
   } finally {
+    if (request.linux_offers) {
+      if (native_now) Object.defineProperty(performance, 'now', native_now);
+      else Reflect.deleteProperty(performance, 'now');
+    }
     owner.seal();
     one_shot_children.seal();
     try {

@@ -408,7 +408,10 @@ export class UpdateService {
       deadline_at: this.drain_deadline(),
       backup: null,
       steps: { pressed: now },
-      mac_attempt_id: release.mac === null ? null : randomUUID().replaceAll('-', ''),
+      mac_attempt_id:
+        release.mac === null && release.linux_executor == null
+          ? null
+          : randomUUID().replaceAll('-', ''),
       extra: {},
     });
     this.schedule_advance();

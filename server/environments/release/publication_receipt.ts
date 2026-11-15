@@ -18,7 +18,11 @@ import {
   MAC_RUNTIME_ARCHIVE_NAME,
   MAX_MAC_RUNTIME_ARCHIVE_BYTES,
 } from '../updates/mac/configuration.ts';
-import type { PublishedMacUpdate, PublishedUpdate } from '../updates/contracts.ts';
+import type {
+  PublishedLinuxExecutorUpdate,
+  PublishedMacUpdate,
+  PublishedUpdate,
+} from '../updates/contracts.ts';
 import {
   APP_ARCHIVE_NAME,
   APP_FORMAT,
@@ -27,7 +31,8 @@ import {
   RUNTIME_INVENTORY_PATH,
 } from './configuration.ts';
 import { PUBLICATION_MAC_VALIDATION_SECONDS } from './publication_configuration.ts';
-import { extract_app_archive, remove_owned_tree } from './archive.ts';
+import { extract_app_archive, inspect_mac_archive, remove_owned_tree } from './archive.ts';
+import { MacArchiveInspectionUnsettled } from './contracts.ts';
 import { validate_app_manifest } from './identity.ts';
 import type { ReleaseExecution } from './contracts.ts';
 import { manifest_identity } from './logic/manifest.ts';
@@ -54,6 +59,9 @@ export interface PublicationReceiptOptions {
   readonly linux_build_artifact_id: string;
   readonly mac_artifact_id: string;
   readonly mac_build_result: string;
+  readonly linux_executor_artifact_zip?: string;
+  readonly linux_executor_artifact_id?: string;
+  readonly linux_executor_build_result?: string;
 }
 function record(value: unknown): Record<string, unknown> {
   if (!is_record(value)) throw new Error('Invalid publication evidence object');
@@ -71,6 +79,68 @@ function digest(value: unknown): string {
 }
 async function json_file(path: string): Promise<Record<string, unknown>> {
   return record(await publication_json_file(path));
+}
+/** The executor artifact uses the same source, byte and native proof gate as Python. */
+export async function validate_linux_executor_publication(
+  directory: string,
+  requested: string,
+  artifact_id: number,
+  build_result: string,
+  execution: ReleaseExecution,
+): Promise<PublishedLinuxExecutorUpdate> {
+  assert_release_execution(execution);
+  if (build_result !== 'success' || !Number.isSafeInteger(artifact_id) || artifact_id < 1)
+    throw new Error('Linux executor publication requires a successful native build');
+  const value = await json_file(join(directory, 'linux-executor-publication.json'));
+  const path = join(directory, 'panels-linux-executor.tar.gz');
+  const info = await stat(path);
+  if (
+    !info.isFile() ||
+    !Number.isSafeInteger(info.size) ||
+    info.size < 1 ||
+    info.size > MAX_MAC_RUNTIME_ARCHIVE_BYTES
+  )
+    throw new Error('Linux executor publication differs from its source or archive');
+  const archive_sha256 = await sha256_file(path);
+  const proof = is_record(value.proof) ? value.proof : null;
+  if (
+    !/^[0-9a-f]{40}$/.test(requested) ||
+    requested.length !== 40 ||
+    value.schema_version !== 1 ||
+    value.application_revision !== requested ||
+    value.platform !== 'linux' ||
+    value.architecture !== 'x86_64' ||
+    value.role !== 'executor' ||
+    value.archive_sha256 !== archive_sha256 ||
+    value.archive_size !== info.size ||
+    proof === null ||
+    ['native_startup', 'relocated_archive', 'executor_cli'].some((key) => proof[key] !== 'passed')
+  )
+    throw new Error('Linux executor publication differs from its source or archive');
+  if (execution.deadline === null)
+    throw new Error('Linux executor publication requires a finite deadline');
+  let inspected;
+  try {
+    inspected = await inspect_mac_archive(path, archive_sha256, info.size, {
+      ...execution,
+      deadline: execution.deadline,
+      platform: 'linux',
+    });
+  } catch (error) {
+    if (error instanceof MacArchiveInspectionUnsettled) {
+      await error.settled;
+      throw error.cause;
+    }
+    throw error;
+  }
+  if (
+    inspected.native_linux?.app_sha !== requested ||
+    !inspected.native_linux.panels ||
+    !inspected.entrypoint
+  )
+    throw new Error('Linux executor archive lacks its native source-bound runtime');
+  assert_release_execution(execution);
+  return { artifact_id, archive_sha256, archive_size: info.size };
 }
 export async function write_publication_receipt(
   options: PublicationReceiptOptions,
@@ -92,6 +162,21 @@ export async function write_publication_receipt(
   const artifact_id = integer(Number(publication_id(options.artifact_id, 'artifact ID'))),
     mac_artifact_id = integer(Number(publication_id(options.mac_artifact_id, 'Mac artifact ID')));
   publication_id(options.linux_build_artifact_id, 'Linux evidence artifact ID');
+  const linux_executor_fields = [
+    options.linux_executor_artifact_zip,
+    options.linux_executor_artifact_id,
+    options.linux_executor_build_result,
+  ];
+  const has_linux_executor = linux_executor_fields.some((value) => value !== undefined);
+  if (has_linux_executor && linux_executor_fields.some((value) => value === undefined))
+    throw new Error('Linux executor publication requires its complete artifact bundle');
+  const linux_executor_artifact_id = has_linux_executor
+    ? integer(
+        Number(publication_id(options.linux_executor_artifact_id, 'Linux executor artifact ID')),
+      )
+    : null;
+  if (has_linux_executor && options.linux_executor_build_result !== 'success')
+    throw new Error('Linux executor publication requires a successful native build');
   if (!github_token) throw new Error('Artifact binding requires the current GitHub token');
   for (const path of [
     options.source_root,
@@ -99,6 +184,7 @@ export async function write_publication_receipt(
     options.linux_build_artifact_zip,
     options.mac_artifact_zip,
     options.output_directory,
+    ...(has_linux_executor ? [options.linux_executor_artifact_zip!] : []),
   ])
     if (!isAbsolute(path) || path.includes('\0'))
       throw new Error('Publication paths must be absolute');
@@ -119,6 +205,15 @@ export async function write_publication_receipt(
         name: 'panels-publication-build',
       },
       { path: options.mac_artifact_zip, id: options.mac_artifact_id, name: 'panels-mac-runtime' },
+      ...(has_linux_executor
+        ? [
+            {
+              path: options.linux_executor_artifact_zip!,
+              id: options.linux_executor_artifact_id!,
+              name: 'panels-linux-executor',
+            },
+          ]
+        : []),
     ]) {
       fence();
       const response = await fetch(
@@ -299,6 +394,20 @@ export async function write_publication_receipt(
       archive_sha256: digest(mac.archive_sha256),
       archive_size: integer(mac.archive_size),
     };
+    let published_linux_executor: PublishedLinuxExecutorUpdate | undefined;
+    if (has_linux_executor) {
+      const executor_root = join(work, 'linux-executor');
+      await mkdir(executor_root, { mode: 0o700 });
+      for (const name of ['panels-linux-executor.tar.gz', 'linux-executor-publication.json'])
+        await member(options.linux_executor_artifact_zip!, name, join(executor_root, name));
+      published_linux_executor = await validate_linux_executor_publication(
+        executor_root,
+        source_run.source_sha,
+        linux_executor_artifact_id!,
+        options.linux_executor_build_result!,
+        execution,
+      );
+    }
     const ios_review = await check_head_review(source, source_run.source_sha, execution);
     for (const artifact of artifacts)
       if ((await sha256_file(artifact.path)) !== artifact.sha256)
@@ -311,6 +420,7 @@ export async function write_publication_receipt(
       manifest: actual_manifest,
       archive_sha256,
       mac: published_mac,
+      ...(published_linux_executor ? { linux_executor: published_linux_executor } : {}),
       schema_floor: SUPPORTED_UPDATE_SCHEMA_FLOOR,
       expires_at: new Date(Date.now() + UPDATE_ARTIFACT_RETENTION_DAYS * 86_400_000).toISOString(),
     };

@@ -3,7 +3,7 @@ import { counter } from '../../../executor/logic/counters.ts';
 /** Pinned Mac bytes and reports survive publication expiry and later VPS failures. */
 import { createHash } from 'node:crypto';
 import { closeSync, constants, fsyncSync, openSync, readFileSync, statSync } from 'node:fs';
-import { mkdir, mkdtemp, open, rename, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, open, readdir, rename, rm, unlink } from 'node:fs/promises';
 import { join } from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
 import yauzl from 'yauzl';
@@ -12,10 +12,12 @@ import { inspect_mac_archive } from '../../release/archive.ts';
 import {
   MacArchiveInspectionError,
   MacArchiveInspectionUnsettled,
+  AppValidationError,
 } from '../../release/contracts.ts';
 import { atomic_write_json, missing, UpdateConflict } from '../attempts.ts';
 import { attempt_to_dict, is_object, parse_attempt } from '../codec.ts';
 import type { PublishedUpdate, UpdateAttempt } from '../contracts.ts';
+import { UPDATE_AVAILABILITY_REFRESH_SECONDS } from '../configuration.ts';
 import { with_zip_member } from '../zip.ts';
 import type {
   MacUpdateCheck,
@@ -29,6 +31,8 @@ import type {
 } from './contracts.ts';
 import {
   MAC_RUNTIME_ARCHIVE_NAME,
+  LINUX_RUNTIME_ARCHIVE_NAME,
+  LINUX_RUNTIME_PROOF_NAME,
   MAC_UPDATE_SCHEMA_VERSION,
   MAX_MAC_RUNTIME_ARCHIVE_BYTES,
   MAX_MAC_UPDATE_DETAIL_CHARACTERS,
@@ -59,7 +63,12 @@ function archive_failure(error: unknown): never {
   if (error instanceof Error && 'errno' in error && typeof error.errno === 'number') throw error;
   throw new InvalidMacArchive('The Mac runtime archive is invalid.', { cause: error });
 }
-async function zip_runtime_size(path: string, signal: AbortSignal): Promise<number> {
+async function zip_runtime_size(
+  path: string,
+  signal: AbortSignal,
+  archive_name: string,
+  proof_name: string,
+): Promise<number> {
   signal.throwIfAborted();
   let archive: ZipFile;
   try {
@@ -113,7 +122,7 @@ async function zip_runtime_size(path: string, signal: AbortSignal): Promise<numb
         }
         if (names.has(entry.fileName)) duplicate = true;
         names.add(entry.fileName);
-        if (entry.fileName === MAC_RUNTIME_ARCHIVE_NAME) size = entry.uncompressedSize;
+        if (entry.fileName === archive_name) size = entry.uncompressedSize;
         archive.readEntry();
       });
       archive.once('end', () => {
@@ -121,9 +130,7 @@ async function zip_runtime_size(path: string, signal: AbortSignal): Promise<numb
           duplicate ||
           size === undefined ||
           names.size > 2 ||
-          [...names].some(
-            (name) => ![MAC_RUNTIME_ARCHIVE_NAME, 'mac-runtime-publication.json'].includes(name),
-          )
+          [...names].some((name) => ![archive_name, proof_name].includes(name))
         )
           reject(new UpdateConflict('The Mac runtime artifact is invalid.'));
         else resolve(size);
@@ -153,6 +160,10 @@ export class MacUpdateService implements MacUpdateServiceContract {
   private readonly applied_path: string;
   private readonly emit: () => void;
   private preparing: Promise<void> = Promise.resolve();
+  private linux_preparing = false;
+  private last_preparation: { digest: string; at: number } | undefined;
+  private readonly ready_archives = new Set<string>();
+  private rejected_archive_digest: string | undefined;
   constructor(context: MacUpdateCompositionContext) {
     this.context = context;
     this.root = context.root;
@@ -183,6 +194,7 @@ export class MacUpdateService implements MacUpdateServiceContract {
         machine_id,
         archive_root: linux?.root ?? this.archive_root,
         platform,
+        linux_registered: () => false,
       });
       kept.linux_archive_owner = linux;
       this.machines.set(machine_id, kept);
@@ -211,6 +223,12 @@ export class MacUpdateService implements MacUpdateServiceContract {
   private artifact(release: PublishedUpdate) {
     return this.platform === 'linux' ? (release.linux_executor ?? null) : release.mac;
   }
+  private get archive_name(): string {
+    return this.platform === 'linux' ? LINUX_RUNTIME_ARCHIVE_NAME : MAC_RUNTIME_ARCHIVE_NAME;
+  }
+  private get proof_name(): string {
+    return this.platform === 'linux' ? LINUX_RUNTIME_PROOF_NAME : 'mac-runtime-publication.json';
+  }
   private archive_path(release: PublishedUpdate): string {
     const mac = this.artifact(release);
     if (
@@ -233,6 +251,7 @@ export class MacUpdateService implements MacUpdateServiceContract {
         child_processes: this.child_processes,
         signal: this.signal,
         deadline: performance.now() / 1000 + MAC_RUNTIME_INSPECTION_TIMEOUT_SECONDS,
+        platform: this.platform === 'linux' ? 'linux' : 'darwin',
       });
     } catch (error) {
       if (!(error instanceof MacArchiveInspectionUnsettled)) throw error;
@@ -244,14 +263,22 @@ export class MacUpdateService implements MacUpdateServiceContract {
       }
       throw error.cause;
     }
-    const { manifest, python, node, entrypoint } = inspected;
+    const { manifest, python, node, entrypoint, native_linux } = inspected;
+    const linux = this.platform === 'linux';
+    const native = linux
+      ? native_linux?.version === 2 &&
+        native_linux.app_sha === release.manifest.app_sha &&
+        native_linux.panels &&
+        entrypoint
+      : node && entrypoint;
     if (
       !is_object(manifest) ||
       manifest.schema_version !== 1 ||
       manifest.application_revision !== release.manifest.app_sha ||
-      manifest.platform !== 'darwin' ||
-      manifest.architecture !== 'arm64' ||
-      !(python || (node && entrypoint))
+      manifest.platform !== (linux ? 'linux' : 'darwin') ||
+      manifest.architecture !== (linux ? 'x86_64' : 'arm64') ||
+      (linux && manifest.role !== 'executor') ||
+      !(python || native)
     )
       throw new UpdateConflict('The Mac runtime does not match its source and platform.');
   }
@@ -288,17 +315,103 @@ export class MacUpdateService implements MacUpdateServiceContract {
         atomic_write_json(this.applied_path, attempt_to_dict(attempt));
     }
   }
-  prepare(release: PublishedUpdate): Promise<void> {
-    this.signal.throwIfAborted();
-    // Linux archive production is a separate slice. Never inspect Linux bytes as Darwin.
-    if (this.platform === 'linux') return Promise.resolve();
-    // Reserve the queue before calling a provider. Every caller retains its own raw flight.
-    const actual = this.preparing.then(() => {
-      this.signal.throwIfAborted();
-      return this.prepare_once(release);
-    });
+  private queue_preparation(work: () => Promise<void>): Promise<void> {
+    const actual = this.preparing.then(work);
     this.preparing = actual.catch(() => {});
     return actual;
+  }
+  async settled(): Promise<void> {
+    const seen = new Set<MacUpdateService>();
+    const drain = async (service: MacUpdateService): Promise<void> => {
+      if (seen.has(service)) return;
+      seen.add(service);
+      await service.preparing;
+      await Promise.all([
+        ...[...service.machines.values()].map(drain),
+        ...(service.linux_archive_owner ? [drain(service.linux_archive_owner)] : []),
+      ]);
+    };
+    await drain(this);
+  }
+  prepare(release: PublishedUpdate): Promise<void> {
+    this.signal.throwIfAborted();
+    const owner = this.platform === 'linux' ? this.linux_owner() : this;
+    return owner.queue_preparation(async () => {
+      this.signal.throwIfAborted();
+      await owner.prepare_once(release);
+      if (owner.platform === 'darwin' && !owner.signal.aborted) {
+        try {
+          if (owner.context.linux_registered?.()) owner.schedule_linux_preparation(release);
+        } catch (error) {
+          console.warn('Linux executor archive preparation could not start', error);
+        }
+      }
+    });
+  }
+  private schedule_linux_preparation(release: PublishedUpdate | null): void {
+    if (this.signal.aborted || release?.linux_executor == null) return;
+    const owner = this.linux_owner(),
+      digest = release.linux_executor.archive_sha256;
+    if (
+      owner.ready_archives.has(digest) ||
+      owner.rejected_archive_digest === digest ||
+      owner.linux_preparing
+    )
+      return;
+    const now = performance.now() / 1000;
+    if (
+      owner.last_preparation?.digest === digest &&
+      now - owner.last_preparation.at < UPDATE_AVAILABILITY_REFRESH_SECONDS
+    )
+      return;
+    owner.last_preparation = { digest, at: now };
+    owner.linux_preparing = true;
+    const actual = owner.queue_preparation(async () => {
+      try {
+        owner.signal.throwIfAborted();
+        await owner.prepare_once(release);
+        owner.signal.throwIfAborted();
+        owner.retain_applied(owner.attempt());
+        await owner.prune_linux_archives(release);
+        owner.signal.throwIfAborted();
+        owner.ready_archives.add(digest);
+        owner.emit();
+      } finally {
+        owner.linux_preparing = false;
+      }
+    });
+    void actual.catch((error) => {
+      console.warn('Linux executor archive preparation failed', error);
+    });
+  }
+  private async prune_linux_archives(release: PublishedUpdate): Promise<void> {
+    const digest = release.linux_executor!.archive_sha256;
+    const retained_path = join(this.root, 'retained-archives.json');
+    let previous: string[];
+    try {
+      previous = (json(retained_path) as { archives: string[] }).archives;
+    } catch (error) {
+      if (!missing(error)) throw error;
+      previous = [];
+    }
+    const active = this.read_applied();
+    const active_digest =
+      active?.to_sha === this.current_app_sha
+        ? active?.release.linux_executor?.archive_sha256
+        : undefined;
+    const other =
+      (active_digest !== digest ? active_digest : undefined) ??
+      previous.find((value) => value !== digest);
+    const keep = other === undefined ? [digest] : [digest, other];
+    this.signal.throwIfAborted();
+    atomic_write_json(retained_path, { archives: keep });
+    for (const value of this.ready_archives)
+      if (!keep.includes(value)) this.ready_archives.delete(value);
+    for (const name of await readdir(join(this.archive_root, 'archives'))) {
+      this.signal.throwIfAborted();
+      if (name.endsWith('.tar.gz') && !keep.includes(name.slice(0, -7)))
+        await unlink(join(this.archive_root, 'archives', name));
+    }
   }
   private async prepare_once(release: PublishedUpdate): Promise<void> {
     try {
@@ -321,46 +434,67 @@ export class MacUpdateService implements MacUpdateServiceContract {
         const downloaded = join(temporary, 'artifact.zip');
         await this.provider.download_artifact(mac.artifact_id, downloaded, this.signal);
         this.signal.throwIfAborted();
-        if ((await zip_runtime_size(downloaded, this.signal)) !== mac.archive_size)
-          throw new UpdateConflict('The Mac runtime artifact size differs.');
-        this.signal.throwIfAborted();
-        const candidate = join(temporary, MAC_RUNTIME_ARCHIVE_NAME);
-        const output = await open(candidate, 'wx');
         try {
+          if (
+            (await zip_runtime_size(
+              downloaded,
+              this.signal,
+              this.archive_name,
+              this.proof_name,
+            )) !== mac.archive_size
+          )
+            throw new UpdateConflict('The Mac runtime artifact size differs.');
+          this.signal.throwIfAborted();
+          const candidate = join(temporary, this.archive_name);
+          const output = await open(candidate, 'wx');
           try {
-            await with_zip_member(downloaded, MAC_RUNTIME_ARCHIVE_NAME, async (source) => {
-              const interruption =
-                this.signal.reason instanceof Error
-                  ? this.signal.reason
-                  : new DOMException('Mac prepare stopped', 'AbortError');
-              const abort = () => source.destroy(interruption);
-              this.signal.addEventListener('abort', abort);
-              try {
-                this.signal.throwIfAborted();
-                for await (const chunk of source) {
+            try {
+              await with_zip_member(downloaded, this.archive_name, async (source) => {
+                const interruption =
+                  this.signal.reason instanceof Error
+                    ? this.signal.reason
+                    : new DOMException('Mac prepare stopped', 'AbortError');
+                const abort = () => source.destroy(interruption);
+                this.signal.addEventListener('abort', abort);
+                try {
                   this.signal.throwIfAborted();
-                  await output.writeFile(chunk);
+                  for await (const chunk of source) {
+                    this.signal.throwIfAborted();
+                    await output.writeFile(chunk);
+                  }
+                  this.signal.throwIfAborted();
+                  await output.sync();
+                } catch (error) {
+                  if (this.signal.aborted && error === interruption) throw this.signal.reason;
+                  throw error;
+                } finally {
+                  this.signal.removeEventListener('abort', abort);
                 }
-                this.signal.throwIfAborted();
-                await output.sync();
-              } catch (error) {
-                if (this.signal.aborted && error === interruption) throw this.signal.reason;
-                throw error;
-              } finally {
-                this.signal.removeEventListener('abort', abort);
-              }
-            });
-          } catch (error) {
-            if (this.signal.aborted && error === this.signal.reason) throw error;
-            archive_failure(error);
+              });
+            } catch (error) {
+              if (this.signal.aborted && error === this.signal.reason) throw error;
+              archive_failure(error);
+            }
+          } finally {
+            await output.close();
           }
-        } finally {
-          await output.close();
+          this.signal.throwIfAborted();
+          await this.validate_archive(candidate, release);
+        } catch (error) {
+          if (
+            this.platform === 'linux' &&
+            !this.signal.aborted &&
+            (error instanceof UpdateConflict ||
+              error instanceof InvalidMacArchive ||
+              error instanceof MacArchiveInspectionError ||
+              error instanceof AppValidationError ||
+              error instanceof SyntaxError)
+          )
+            this.rejected_archive_digest = mac.archive_sha256;
+          throw error;
         }
         this.signal.throwIfAborted();
-        await this.validate_archive(candidate, release);
-        this.signal.throwIfAborted();
-        await rename(candidate, destination);
+        await rename(join(temporary, this.archive_name), destination);
         const directory = openSync(parent, constants.O_RDONLY);
         try {
           fsyncSync(directory);
@@ -397,12 +531,15 @@ export class MacUpdateService implements MacUpdateServiceContract {
   }
   private target(): MacUpdateTarget | null {
     const attempt = this.selected_attempt();
-    // A Linux archive on disk is not validated readiness. Its producer follows next.
-    if (attempt === null || this.platform === 'linux') return null;
+    if (attempt === null) return null;
     const mac = this.artifact(attempt.release)!,
       request_id = attempt.mac_attempt_id!;
-    if (!file(this.archive_path(attempt.release)))
+    if (this.platform === 'linux' && !this.linux_owner().ready_archives.has(mac.archive_sha256))
+      return null;
+    if (!file(this.archive_path(attempt.release))) {
+      if (this.platform === 'linux') return null;
       throw new UpdateConflict('The Mac runtime archive for this update is unavailable.');
+    }
     return {
       request_id,
       application_revision: attempt.to_sha,
@@ -415,7 +552,11 @@ export class MacUpdateService implements MacUpdateServiceContract {
   }
   private prefetch_release(): PublishedUpdate | null {
     const release = this.ready_release();
-    if (release === null || this.artifact(release) === null || this.platform === 'linux')
+    if (release === null || this.artifact(release) === null) return null;
+    if (
+      this.platform === 'linux' &&
+      !this.linux_owner().ready_archives.has(this.artifact(release)!.archive_sha256)
+    )
       return null;
     try {
       return file(this.archive_path(release)) ? release : null;
@@ -425,6 +566,8 @@ export class MacUpdateService implements MacUpdateServiceContract {
     }
   }
   check(): MacUpdateCheck {
+    if (this.platform === 'linux')
+      this.schedule_linux_preparation(this.selected_attempt()?.release ?? this.ready_release());
     const release = this.prefetch_release(),
       mac = release === null ? null : this.artifact(release);
     return {
@@ -541,8 +684,6 @@ export class MacUpdateService implements MacUpdateServiceContract {
     return result;
   }
   archive(request_id: string): string {
-    if (this.platform === 'linux')
-      throw new UpdateConflict('The requested Mac runtime is not an update target.');
     for (const attempt of [this.selected_attempt(), this.read_applied()])
       if (attempt !== null && attempt.mac_attempt_id === request_id) {
         const path = this.archive_path(attempt.release);

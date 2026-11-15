@@ -12,6 +12,11 @@ import {
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { gunzipSync, gzipSync } from 'node:zlib';
+import { createHash } from 'node:crypto';
+import { inspect_mac_archive } from '../../../environments/release/archive.ts';
+import { ChildProcesses } from '../../../lifecycle/owned_processes.ts';
+import { Header } from 'tar';
 import { afterEach, expect, test } from 'vitest';
 import { FilesService } from '../files.ts';
 import { runtime_archive } from './testing/runtime_archive.ts';
@@ -124,4 +129,59 @@ test('admits Linux executor archives and retained revisions without a private in
   await expect(
     f.files.read_runtime_revision(f.destination, revision, LINUX_EXECUTOR),
   ).rejects.toThrow('Runtime inventory differs from contract.');
+});
+
+test('inspects a native Linux executor without a private Node and rejects an unbound inventory', async () => {
+  const f = fixture(false, LINUX_EXECUTOR);
+  const owner = new ChildProcesses();
+  const controller = new AbortController();
+  const inspect = () => {
+    const bytes = readFileSync(f.archive);
+    return inspect_mac_archive(
+      f.archive,
+      createHash('sha256').update(bytes).digest('hex'),
+      bytes.length,
+      {
+        child_processes: owner,
+        signal: controller.signal,
+        deadline: performance.now() / 1000 + 10,
+        platform: 'linux',
+      },
+    );
+  };
+  try {
+    const result = await inspect();
+    expect(result.python).toBe(false);
+    expect(result.node).toBe(false);
+    expect(result.entrypoint).toBe(true);
+    expect(result.native_linux).toMatchObject({ version: 2, app_sha: revision, panels: true });
+    const raw = gunzipSync(readFileSync(f.archive));
+    const inventory = raw.indexOf(Buffer.from('runtime/inventory.json'));
+    expect(inventory).toBeGreaterThanOrEqual(0);
+    const header = Buffer.alloc(512);
+    new Header({
+      path: '.venv/bin/python',
+      type: 'File',
+      size: 1,
+      mode: 0o755,
+      mtime: new Date(0),
+    }).encode(header);
+    const mixed = Buffer.concat([
+      raw.subarray(0, -1024),
+      header,
+      Buffer.from('x'),
+      Buffer.alloc(511 + 1024),
+    ]);
+    writeFileSync(f.archive, gzipSync(mixed));
+    const with_python = await inspect();
+    expect(with_python.python).toBe(true);
+    expect(with_python.native_linux).toMatchObject({ version: 2, app_sha: revision, panels: true });
+    mixed[inventory + 512] = '!'.charCodeAt(0);
+    writeFileSync(f.archive, gzipSync(mixed));
+    await expect(inspect()).rejects.toThrow('Runtime inventory differs from contract.');
+  } finally {
+    controller.abort();
+    owner.seal();
+    await owner.settled();
+  }
 });
