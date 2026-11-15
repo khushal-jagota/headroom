@@ -48,6 +48,7 @@ WALL = NOW * 1000
 TABLES = (
     "tickets",
     "ticket_paired_stage_openers",
+    "worker_step_dispatch_intents",
     "ticket_conversations",
     "agents",
     "conversations",

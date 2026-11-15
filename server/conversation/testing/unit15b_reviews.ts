@@ -67,6 +67,7 @@ export async function run(spec: Spec) {
       });
     },
   });
+  let monotonic = 100;
   let core = new SqliteProcessConversationSystem({
     store,
     delivery_model_refusal: (backend, model, ticket_id) =>
@@ -78,7 +79,7 @@ export async function run(spec: Spec) {
     backend_child_factories: registry.factories,
     message_files: new ConversationMessageFiles(spec.path),
     unix_time_now: () => 100,
-    monotonic_now: () => 100,
+    monotonic_now: () => monotonic,
   });
   const fates = [];
   const record = (id: string) =>
@@ -221,7 +222,13 @@ export async function run(spec: Spec) {
       fates.push(delivery_fate_json(await duplicate));
       fates.push(delivery_fate_json(await send()));
     }
-    if (current_batch) fates.push({ delivered: await deliver(current_batch) });
+    if (current_batch) {
+      const deferred = await deliver(current_batch);
+      if (deferred) throw new Error('Reassigned review bypassed start pacing');
+      fates.push({ delivered: deferred });
+      monotonic += 1;
+      fates.push({ delivered: await deliver(current_batch) });
+    }
     await core.wait_until_quiescent();
     const observations = Object.fromEntries(
       await Promise.all(['c', 'current'].map(async (id) => [id, await registry.inspect(id)])),
@@ -242,7 +249,7 @@ export async function run(spec: Spec) {
         backend_child_factories: registry.factories,
         message_files: new ConversationMessageFiles(spec.path),
         unix_time_now: () => 100,
-        monotonic_now: () => 100,
+        monotonic_now: () => monotonic,
       });
       fates.push(delivery_fate_json(await send()));
       if ((await registry.inspect('c')).length !== 0) throw new Error('Replay created a child');

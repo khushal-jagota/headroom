@@ -14,28 +14,53 @@ interface Scenario {
   waits: TrackedWait[];
   muted: boolean;
   check: boolean;
+  restart?: boolean;
+  presence?: {
+    machine_id: string;
+    last_contact_at_ms: number | null;
+    last_lease_at_ms: number | null;
+    continuous_since_ms: number | null;
+  }[];
 }
 const input = JSON.parse(readFileSync(0, 'utf8')) as {
   db_path: string;
   state_dir: string;
   steps: Scenario[];
+  checker_only?: boolean;
 };
 if (!input.db_path || !input.state_dir) throw new Error('comparison requires explicit test paths');
 const database = createDatabase(input.db_path);
 let now_ms = 0;
 let waits: TrackedWait[] = [];
-const checker = new StallChecker(
-  database,
-  new ProcessWaitRegistry(() => now_ms),
-  () => [{ tracked_waits: () => waits }],
-  () => now_ms,
-);
+const create_checker = () =>
+  new StallChecker(
+    database,
+    new ProcessWaitRegistry(() => now_ms),
+    () => [{ tracked_waits: () => waits }],
+    () => now_ms,
+  );
+let checker = create_checker();
 const results: unknown[] = [];
 try {
   for (const step of input.steps) {
     now_ms = step.now_ms;
     waits = step.waits;
+    if (step.restart) {
+      await checker.close();
+      checker = create_checker();
+    }
     database.write((sql) => {
+      for (const record of step.presence ?? [])
+        sql.run(
+          'UPDATE mac_executor_presence SET last_contact_at_ms=?,last_lease_at_ms=?,continuous_since_ms=? WHERE machine_id=?',
+          [
+            record.last_contact_at_ms,
+            record.last_lease_at_ms,
+            record.continuous_since_ms,
+            record.machine_id,
+          ],
+        );
+      if (input.checker_only) return;
       sql.run(
         `UPDATE notification_preferences SET enabled=?
         WHERE subject_key='panels' AND notification_type='stall_alarm'`,
@@ -43,6 +68,16 @@ try {
       );
     });
     if (step.check) checker.check_once();
+    if (input.checker_only) {
+      results.push({
+        name: step.name,
+        rows: database.read((sql) => ({
+          findings: sql.all('SELECT * FROM stall_findings ORDER BY finding_key'),
+          heartbeat: sql.all('SELECT * FROM stall_checker_heartbeat ORDER BY singleton'),
+        })),
+      });
+      continue;
+    }
     const sends: unknown[] = [];
     const chief: string[] = [];
     const web_push: WebPushAdapter = {
