@@ -2,7 +2,7 @@
 import type { FastifyInstance } from 'fastify';
 import type { UpdateBarrier } from '../environments/update_barrier.ts';
 import type { Clock } from '../core/clock.ts';
-import type { Database } from '../core/database/contracts.ts';
+import type { Database, ReadSql } from '../core/database/contracts.ts';
 import type { ChangeSignal } from '../core/changes/index.ts';
 import { legacyActor, PlannerError } from '../core/contracts.ts';
 import { ORIGINAL_MAC_MACHINE_ID, type ExecutorIdentity } from '../execution_identity.ts';
@@ -26,6 +26,12 @@ import { FileStaging, VpsFiles } from './vps_files.ts';
 import { VpsCatalogRelay } from './catalog_relay.ts';
 import { observe_promise } from '../core/promise_observer.ts';
 import { as_object, decode_event_arguments } from './protocol.ts';
+import {
+  authorize_retirement,
+  has_committed_retirement,
+  read_workspace_states_for_tickets,
+  register_workspace as register_ticket_workspace,
+} from '../ticket_workspaces/data.ts';
 import {
   require_current_incarnation_in_transaction,
   require_incarnation_owner,
@@ -67,6 +73,7 @@ export interface VpsExecutorOptions {
 export class VpsExecutor {
   readonly machine_id: string;
   private readonly database: Database;
+  private readonly clock: Clock;
   readonly db_path: string;
   readonly application_revision: string;
   readonly mailbox: SqliteCommandMailbox;
@@ -90,6 +97,7 @@ export class VpsExecutor {
   });
   constructor(database: Database, clock: Clock, options: VpsExecutorOptions) {
     this.database = database;
+    this.clock = clock;
     this.machine_id = options.machine_id ?? ORIGINAL_MAC_MACHINE_ID;
     this.db_path = options.db_path;
     this.application_revision = options.application_revision ?? 'unknown';
@@ -160,19 +168,24 @@ export class VpsExecutor {
     protect_update = false,
   ): Promise<T> {
     this.admit();
-    const task = Promise.resolve().then(() => {
-      this.admit();
-      if (!protect_update || !this.update_barrier) return work();
-      return this.update_barrier.operation((admitted) => {
-        if (!admitted) throw new PlannerError('retry_later', 'Home update in progress.');
-        return work();
-      });
-    });
+    const { promise: task, resolve, reject } = Promise.withResolvers<T>();
     this.owned.add(task);
     void task.then(
       () => this.owned.delete(task),
       () => this.owned.delete(task),
     );
+    try {
+      resolve(
+        !protect_update || !this.update_barrier
+          ? work()
+          : this.update_barrier.operation((admitted) => {
+              if (!admitted) throw new PlannerError('retry_later', 'Home update in progress.');
+              return work();
+            }),
+      );
+    } catch (error) {
+      reject(error);
+    }
     if (answer_within === undefined) return task;
     const answer = await observe_promise(task, answer_within * 1000);
     if (!answer.completed) throw new PlannerError('retry_later', 'the VPS is still saving this');
@@ -203,6 +216,106 @@ export class VpsExecutor {
       this.runs.require_conversations();
       return this.presence.accept_lease(request);
     }, LEASE_SERVER_LIMIT_SECONDS);
+  }
+  workspace_states(
+    identity: ExecutorIdentity,
+    request: WireValue<'WorkspaceStatesRequest'>,
+  ): Promise<WireValue<'WorkspaceStatesReply'>> {
+    return this.owned_work(
+      async () =>
+        this.database.read((sql) => {
+          require_current_incarnation_in_transaction(
+            sql,
+            identity.executor_incarnation,
+            this.machine_id,
+          );
+          for (const ticket_id of request.ticket_ids)
+            if (sql.get('SELECT 1 FROM ticket_workspace_lifecycle WHERE ticket_id=?', [ticket_id]))
+              this.require_ticket_owner(sql, ticket_id);
+          return {
+            states: read_workspace_states_for_tickets(sql, request.ticket_ids),
+            at_vps_ms: this.clock.nowUnix() * 1000,
+          };
+        }),
+      LIVE_READ_SERVER_LIMIT_SECONDS,
+    );
+  }
+  register_workspace(
+    identity: ExecutorIdentity,
+    registration: WireValue<'WorkspaceRegistrationRequest'>,
+  ): Promise<void> {
+    return this.owned_work(
+      async () => {
+        this.database.write((tx) => {
+          require_current_incarnation_in_transaction(
+            tx,
+            identity.executor_incarnation,
+            this.machine_id,
+          );
+          if (registration.child.executor_incarnation !== identity.executor_incarnation)
+            throw new PlannerError(
+              'agent_forbidden',
+              'workspace child belongs to another executor',
+            );
+          const assignment = this.runs.store.open_child_assignment(tx, registration.child);
+          if (assignment === null || assignment[0] !== 'ticket')
+            throw new PlannerError('agent_forbidden', 'workspace child has no Ticket assignment');
+          register_ticket_workspace(
+            tx,
+            assignment[1],
+            registration.child.conversation_id,
+            registration.workspace,
+          );
+        });
+      },
+      LIVE_READ_SERVER_LIMIT_SECONDS,
+      true,
+    );
+  }
+  retire_workspace(
+    identity: ExecutorIdentity,
+    state: WireValue<'WorkspaceState'>,
+    workspace: WireValue<'WorkspaceIdentity'>,
+    options: { replay?: boolean } = {},
+  ): Promise<WireValue<'WorkspaceRetirementReply'>> {
+    return this.owned_work(
+      async () =>
+        this.database.write((tx) => {
+          require_current_incarnation_in_transaction(
+            tx,
+            identity.executor_incarnation,
+            this.machine_id,
+          );
+          this.require_ticket_owner(tx, state.ticket_id);
+          const proof = tx.get(
+            'SELECT 1 FROM ticket_workspace_conversations w ' +
+              'JOIN executor_child_assignments a ON a.conversation_id=w.conversation_id ' +
+              'JOIN executor_incarnations i ON i.executor_incarnation=a.executor_incarnation ' +
+              'WHERE w.ticket_id=? AND w.machine_id=? AND w.workspace_id=? AND i.machine_id=? LIMIT 1',
+            [state.ticket_id, workspace.machine_id, workspace.workspace_id, this.machine_id],
+          );
+          if (proof === undefined)
+            throw new PlannerError('agent_forbidden', 'workspace belongs to another machine');
+          return {
+            authorized: options.replay
+              ? has_committed_retirement(tx, state, workspace)
+              : authorize_retirement(tx, state, this.clock.nowUnix(), workspace),
+          };
+        }),
+      LIVE_READ_SERVER_LIMIT_SECONDS,
+      true,
+    );
+  }
+  private require_ticket_owner(sql: ReadSql, ticket_id: string): void {
+    const owned = sql.get(
+      'SELECT 1 FROM tickets WHERE id=? AND machine_id=? UNION ALL ' +
+        'SELECT 1 FROM executor_child_assignments a JOIN executor_incarnations i ' +
+        "USING(executor_incarnation) WHERE a.principal_kind='ticket' AND a.principal_id=? " +
+        'AND i.machine_id=? LIMIT 1',
+      [ticket_id, this.machine_id, ticket_id, this.machine_id],
+    );
+    if (owned === undefined)
+      throw new PlannerError('agent_forbidden', 'Ticket belongs to another machine');
   }
   refuse_old_websocket(): Promise<void> {
     return this.owned_work(() => this.presence.refuse_old_websocket());
@@ -361,12 +474,7 @@ export class VpsExecutor {
         await child.event_sink.report(turn, decode_event_arguments(event) as never);
       }
     };
-    const task = report();
-    this.owned.add(task);
-    void task.then(
-      () => this.owned.delete(task),
-      () => this.owned.delete(task),
-    );
+    const task = this.owned_work(report);
     const answer = await observe_promise(task, LIVE_EVENT_SERVER_LIMIT_SECONDS * 1000);
     if (!answer.completed) {
       expired = true;
@@ -379,29 +487,35 @@ export class VpsExecutor {
       this.closed = true;
       this.actual_stop = this.actual_settlement;
       const pending = [...this.owned];
-      const services = [this.runs, this.catalog, this.inbox, this.files, this.presence];
-      for (const service of services) void service.stop(options).catch(() => {});
-      // Catalog cancellation owns a final waiting-row withdrawal through the mailbox.
-      const mailbox_drain = this.catalog
-        .settled()
-        .catch(() => {})
-        .then(async () => {
-          const results = await Promise.allSettled([
-            Promise.resolve().then(() => this.mailbox.stop(options)),
-            this.mailbox.settled(),
-          ]);
-          const errors = results.flatMap((result) =>
-            result.status === 'rejected' && !(result.reason instanceof ShutdownDeadlineExceeded)
-              ? [result.reason]
-              : [],
-          );
-          if (errors.length) throw new AggregateError(errors, 'Executor mailbox shutdown failed.');
-        });
-      const drain = Promise.allSettled([
-        ...pending,
-        ...services.map((service) => service.settled()),
-        mailbox_drain,
-      ]).then((results) => {
+      const drain = (async () => {
+        // Admitted saves can still enqueue run bookkeeping from their committed results.
+        const retained = await Promise.allSettled(pending);
+        const services = [this.runs, this.catalog, this.inbox, this.files, this.presence];
+        for (const service of services) void service.stop(options).catch(() => {});
+        // Catalog cancellation owns a final waiting-row withdrawal through the mailbox.
+        const mailbox_drain = this.catalog
+          .settled()
+          .catch(() => {})
+          .then(async () => {
+            const results = await Promise.allSettled([
+              Promise.resolve().then(() => this.mailbox.stop(options)),
+              this.mailbox.settled(),
+            ]);
+            const errors = results.flatMap((result) =>
+              result.status === 'rejected' && !(result.reason instanceof ShutdownDeadlineExceeded)
+                ? [result.reason]
+                : [],
+            );
+            if (errors.length)
+              throw new AggregateError(errors, 'Executor mailbox shutdown failed.');
+          });
+        const results = [
+          ...retained,
+          ...(await Promise.allSettled([
+            ...services.map((service) => service.settled()),
+            mailbox_drain,
+          ])),
+        ];
         const errors = [
           ...new Set(
             results.flatMap((result) =>
@@ -415,7 +529,7 @@ export class VpsExecutor {
           ),
         ];
         if (errors.length) throw new AggregateError(errors, 'Executor shutdown failed.');
-      });
+      })();
       void drain.then(this.resolve_settlement, this.reject_settlement);
     }
     return observe_shutdown(

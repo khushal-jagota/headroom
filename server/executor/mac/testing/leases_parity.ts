@@ -2,10 +2,13 @@
 import { decode_json, encode_bounded } from '../../protocol.ts';
 import { MacLeaseLoop, MacPresence } from '../transport/presence.ts';
 import type { MacLeaseOptions } from '../transport/presence.ts';
+import type { WorkerCleanupUncertainty } from '../../wire.generated.ts';
 export async function leases(input: {
   identity: string;
   replies: string[];
   working: string;
+  cleanup_uncertainties: WorkerCleanupUncertainty[];
+  legacy_cleanup_notice: string | null;
 }): Promise<unknown> {
   const identity = decode_json(input.identity, 'ExecutorIdentity');
   const presence = new MacPresence(identity, () => 1700000000000, 7);
@@ -46,6 +49,8 @@ export async function leases(input: {
       },
     },
     runner: {
+      cleanup_uncertainties: input.cleanup_uncertainties,
+      legacy_cleanup_notice: input.legacy_cleanup_notice,
       get admission_stopped() {
         return stopped;
       },

@@ -120,7 +120,7 @@ export type MailboxSettlements = readonly MailboxSettlement[];
 export type MailboxSettledListener = (
   command: WireValue<'MailboxCommand'>,
   result: WireValue<'CommandResult'>,
-) => void;
+) => void | Promise<void>;
 export interface MailboxFetchResult {
   reply: WireValue<'MailboxPollReply'> | null;
   settled: MailboxSettlements;

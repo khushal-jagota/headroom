@@ -13,6 +13,7 @@ import type {
   MacLocalStatus,
   MacUpdateCheck,
   WorkingTurn,
+  WorkerCleanupUncertainty,
 } from '../../wire.generated.ts';
 import type { AsyncCommandJournal } from '../storage/journal_contracts.ts';
 import type { OutboxStore } from '../storage/outbox.ts';
@@ -68,6 +69,8 @@ export interface MacLeaseOptions {
   readonly journal: Pick<AsyncCommandJournal, 'poll_cursor' | 'lower_poll_cursor'>;
   readonly runner: {
     readonly admission_stopped: boolean;
+    readonly cleanup_uncertainties: readonly WorkerCleanupUncertainty[];
+    readonly legacy_cleanup_notice: string | null;
     working_turns(): readonly WorkingTurn[];
     seal(): void;
   };
@@ -107,6 +110,8 @@ export class MacLeaseLoop {
       working_turns: [...runner.working_turns()],
       admission_stopped: runner.admission_stopped,
       going_to_sleep: presence.going_to_sleep,
+      cleanup_uncertainties: [...runner.cleanup_uncertainties],
+      legacy_cleanup_notice: runner.legacy_cleanup_notice,
     };
   }
   lease_once(): Promise<boolean> {

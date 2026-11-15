@@ -7,7 +7,7 @@ import { MacHttpClient } from '../transport/http.ts';
 import { read_credential } from '../../credential_file.ts';
 import { MacFileTransport } from '../transport/files.ts';
 import { FilesService } from '../files.ts';
-import { decode_bounded, encode_bounded } from '../../protocol.ts';
+import { decode_bounded, encode_bounded, ExecutorValidationError } from '../../protocol.ts';
 import type { WireRootName } from '../../protocol.ts';
 import { ExecutorHttpError, failure_name } from '../transport/errors.ts';
 import { ConnectionDiagnostics } from '../transport/diagnostics.ts';
@@ -181,6 +181,29 @@ export async function run(spec: Spec): Promise<unknown> {
     await save(() => client.poll_commands(1, 0, signal));
     await client.reset();
     await save(() => client.read(root('LiveReadRequest')), 'JsonObject');
+    const tickets = root('WorkspaceStatesRequest').ticket_ids;
+    await save(() => client.workspace_states(tickets, signal), 'WorkspaceStatesReply');
+    await save(async () => {
+      try {
+        return await client.workspace_states(tickets, signal);
+      } catch (error) {
+        assert.ok(error instanceof ExecutorValidationError);
+        assert.equal(error.message, 'executor response exceeds its size bound');
+        throw error;
+      }
+    });
+    await save(() =>
+      client.register_workspace(root('ChildReference'), root('WorkspaceIdentity'), signal),
+    );
+    await save(() =>
+      client.retire_workspace(root('WorkspaceState'), root('WorkspaceIdentity'), { signal }),
+    );
+    await save(() =>
+      client.retire_workspace(root('WorkspaceState'), root('WorkspaceIdentity'), {
+        replay: true,
+        signal,
+      }),
+    );
   } finally {
     const stop = { deadline: performance.now() / 1000 + 5 };
     await Promise.all([client.stop(stop), files.stop(stop)]);
