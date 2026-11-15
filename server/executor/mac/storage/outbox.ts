@@ -11,6 +11,7 @@ import {
   createDurableSidecarDatabase,
 } from '../../../core/database/index.ts';
 import type { Database, DurableSidecarOpenFailure } from '../../../core/database/contracts.ts';
+import { PRIVATE_TICKET_NAMES } from '../../../files/logic/paths.ts';
 import { observe_shutdown } from '../../../conversation/shutdown.ts';
 import { ServerLifecycleError } from '../../../lifecycle/contracts.ts';
 import type { StopOptions } from '../../../lifecycle/contracts.ts';
@@ -427,6 +428,7 @@ export class OutboxStore {
         if (held !== undefined) await this.files.close_directory(held);
       }
       for (const name of entries) {
+        if (folder === root && PRIVATE_TICKET_NAMES.has(name)) continue;
         const relative_path = relative(root, join(folder, name));
         let source: string, info: BigIntStats;
         try {
