@@ -22,10 +22,13 @@ Live batches carry only message deltas, thinking notices, and tool progress. The
 
 ## Routes and authority
 
-All thirteen executor endpoints require trusted Tailscale login, the configured executor ID, no browser Origin, and no duplicate security headers. There is no executor bearer token. Work requests carrying incarnation headers check the supported protocol and current identity before reading the body; a lease admits identity from its payload. Incarnation is a row fence, not a credential. Transaction participants compare affected row incarnations and relevant assignments with the admitted request. Updates remain reachable before work-version admission.
+Executor ingress requires trusted Tailscale login, a claimed executor ID, no browser Origin, and no duplicate security headers. The shared machine credential helper authenticates the destination before the registry selects or creates an endpoint. The original configured ID retains legacy authority until credential handover closes. Work requests then check the supported protocol and current identity before reading the body; a lease admits identity from its payload. Incarnation is a row fence, separate from the credential. Transaction participants compare affected row incarnations and relevant assignments with the admitted request. Updates remain reachable before work-version admission.
+
+Only the original configured executor can request bootstrap credentials, with no credential header and a supported identity. The shared helper owns its database write. Authentication alone keeps legacy authority open. An accepted credentialed `current` update report closes handover through the shared helper before the server confirms it. Refused reports, other phases, and legacy reports leave that authority unchanged.
 
 | Method | Path | Boundary |
 | --- | --- | --- |
+| POST | `/api/executor/credential` | Original executor credential bootstrap before handover closes |
 | POST | `/api/executor/lease` | Admit identity and versions, update presence, settle replacement custody |
 | GET | `/api/executor/commands` | Current executor's bounded mailbox poll |
 | POST | `/api/executor/commands/outcomes` | Current executor's typed command outcomes; stop success still needs exact proof |
@@ -40,7 +43,7 @@ All thirteen executor endpoints require trusted Tailscale login, the configured 
 | POST | `/api/executor/update` | Strict typed update report with current health |
 | WebSocket | `/api/executor/connect` | Refuse the obsolete transport before upgrade |
 
-`ComposedEnvironmentRuntime.mac_updates` supplies `for_machine(machine_id)` for each current or later endpoint's presence checks. The legacy HTTP and health routes still receive only the original endpoint until credential routes land. Update reports pass strict generated decoding before the current health snapshot and synchronous service call. The default production backend/environment dependency table remains a supplier-owned gate.
+`ComposedEnvironmentRuntime.mac_updates` supplies `for_machine(machine_id)` for each current or later endpoint's presence checks and update routes. Update reports pass strict generated decoding before the current health snapshot and synchronous service call. The health route selects the requested destination and keeps the original Mac's native-build generation adjustment exclusive to that destination. The default production backend/environment dependency table remains a supplier-owned gate.
 
 ## Stop and recovery ownership
 
