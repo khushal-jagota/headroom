@@ -260,7 +260,8 @@ def test_mac_cli_socket_parity(
                     if case.get("local"):
                         target = root / "python-credential" / "machine-credential.json"
                         fields["credential"] = dict(
-                            document=json.loads(target.read_text()), mode=target.stat().st_mode & 0o777,
+                            document=json.loads(target.read_text()),
+                            mode=target.stat().st_mode & 0o777,
                             files=sorted(path.name for path in target.parent.iterdir()),
                         )
                     expected.append(fields)
@@ -329,17 +330,21 @@ def test_mac_cli_socket_parity(
                     )
                 )
                 candidate["stderr"]["error"]["message"] = python_message
-            elif case["mode"] in {"credential_required", "credential_missing", "credential_invalid"}:
+            elif case["mode"] in {
+                "credential_required", "credential_missing", "credential_invalid"
+            }:
                 messages = {
                     "credential_required": (
                         "Missing option '--file'.", "required option '--file <FILE>' not specified"
                     ),
                     "credential_missing": (
-                        f"Invalid value for '--file': File '{root / 'not-present.json'}' does not exist.",
+                        "Invalid value for '--file': "
+                        f"File '{root / 'not-present.json'}' does not exist.",
                         f"The file does not exist: {root / 'not-present.json'}",
                     ),
                     "credential_invalid": (
-                        "Expecting property name enclosed in double quotes: line 1 column 2 (char 1)",
+                        "Expecting property name enclosed in double quotes: "
+                        "line 1 column 2 (char 1)",
                         "The machine credential file is invalid",
                     ),
                 }

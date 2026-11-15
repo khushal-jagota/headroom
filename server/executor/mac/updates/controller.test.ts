@@ -4,7 +4,9 @@ import { Socket } from 'node:net';
 import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { setTimeout as sleep } from 'node:timers/promises';
 import { afterEach, expect, test, vi } from 'vitest';
+import { Deferred } from '../../../conversation/runtime/state.ts';
 import type { ExecutorIdentity } from '../../../execution_identity.ts';
 import { decode_bounded } from '../../protocol.ts';
 import type { MacUpdateCheck, MacUpdateTarget } from '../../wire.generated.ts';
@@ -16,6 +18,12 @@ import { CONNECTORS } from '../transport/http.ts';
 import type { HttpRequest, ReplyReader } from '../transport/contracts.ts';
 import { MacUpdateController } from './controller.ts';
 import { runtime_archive } from './testing/runtime_archive.ts';
+import { EXECUTOR_HANDOVER_CLOSE_PATH } from '../../configuration.ts';
+
+vi.mock('node:timers/promises', async (importOriginal) => {
+  const original = await importOriginal<typeof import('node:timers/promises')>();
+  return { ...original, setTimeout: vi.fn(original.setTimeout) };
+});
 
 const roots: string[] = [],
   controllers: MacUpdateController[] = [],
@@ -44,6 +52,10 @@ function fixture(replay = false, trial = false) {
   const download_paths: string[] = [];
   let credential = 'a'.repeat(43);
   const authentication_trace: [string, string][] = [];
+  const closes: string[] = [];
+  const close_errors: Error[] = [];
+  let close_status = 200;
+  let close_hold: Promise<void> | undefined;
   class Peer extends HttpSessions {
     constructor() {
       super('https://fixture.invalid', CONNECTORS);
@@ -61,7 +73,13 @@ function fixture(replay = false, trial = false) {
       authentication_trace.push([input.method, credential]);
       credential = 'c'.repeat(43);
       let body: Buffer;
-      if (input.method === 'POST') {
+      if (input.path === EXECUTOR_HANDOVER_CLOSE_PATH) {
+        closes.push(credential);
+        const error = close_errors.shift();
+        if (error) throw error;
+        await close_hold;
+        body = Buffer.from('{"closed":true}');
+      } else if (input.method === 'POST') {
         expect(input.path).toBe('/api/executor/update');
         const report = decode_bounded(input.body as Uint8Array, 'MacUpdateReport');
         phases.push(report.phase);
@@ -72,7 +90,7 @@ function fixture(replay = false, trial = false) {
         body = archive.bytes;
       }
       const response = new IncomingMessage(new Socket());
-      response.statusCode = 200;
+      response.statusCode = input.path === EXECUTOR_HANDOVER_CLOSE_PATH ? close_status : 200;
       response.complete = true;
       response.push(body);
       response.push(null);
@@ -146,6 +164,12 @@ function fixture(replay = false, trial = false) {
     downloads: () => download_paths.length,
     download_paths,
     authentication_trace,
+    closes,
+    close_errors,
+    close_response(status: number, hold?: Promise<void>) {
+      close_status = status;
+      close_hold = hold;
+    },
     authenticate: () => {
       credential = 'b'.repeat(43);
     },
@@ -161,6 +185,9 @@ afterEach(async () => {
     await files.settled();
   }
   for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
+  const original =
+    await vi.importActual<typeof import('node:timers/promises')>('node:timers/promises');
+  vi.mocked(sleep).mockReset().mockImplementation(original.setTimeout);
 });
 test('prefetch supplies an offered activation and records handoff before exit', async () => {
   const f = fixture();
@@ -177,6 +204,7 @@ test('prefetch supplies an offered activation and records handoff before exit', 
     },
   });
   await f.ready_received;
+  expect(f.closes).toHaveLength(1);
   f.controller.offer(f.check({ ...f.target, activate: true }));
   await f.exit_requested;
   expect(f.download_paths).toEqual([prefetch_path]);
@@ -224,6 +252,7 @@ test('trial admission waits for supervisor selection, then cancellation resumes 
   });
   await atomic_record(f.files, join(f.root, 'updates', 'selection.json'), {
     request_id: 'current',
+    application_revision: f.identity.application_revision,
   });
   await atomic_record(f.files, join(f.root, 'updates', 'pending.json'), { request_id: 'current' });
   const current = {
@@ -232,14 +261,78 @@ test('trial admission waits for supervisor selection, then cancellation resumes 
     application_revision: f.identity.application_revision,
   };
   await f.controller.apply(f.check(current));
+  expect(await f.controller.kept_by_supervisor()).toBe(false);
   expect(f.runner.finish_planned_replay).not.toHaveBeenCalled();
   expect(JSON.parse(readFileSync(f.runtime.ready_path!, 'utf8')).request_id).toBe('current');
   await f.files.remove_runtime_record(join(f.root, 'updates', 'pending.json'));
+  await atomic_record(f.files, join(f.root, 'updates', 'selection.json'), {
+    request_id: 'current',
+    application_revision: 'a'.repeat(40),
+  });
   await f.controller.apply(f.check(current));
+  expect(f.runner.finish_planned_replay).not.toHaveBeenCalled();
+  expect(await f.controller.kept_by_supervisor()).toBe(false);
+  await atomic_record(f.files, join(f.root, 'updates', 'selection.json'), {
+    request_id: 'other',
+    application_revision: f.identity.application_revision,
+  });
+  expect(await f.controller.kept_by_supervisor()).toBe(false);
+  await atomic_record(f.files, join(f.root, 'updates', 'selection.json'), {
+    request_id: 'current',
+    application_revision: f.identity.application_revision,
+  });
+  await f.controller.apply(f.check(current));
+  expect(await f.controller.kept_by_supervisor()).toBe(true);
+  await f.controller.close_handover_once_kept();
+  expect(f.closes).toHaveLength(1);
   expect(f.runner.finish_planned_replay).toHaveBeenCalledTimes(1);
   expect(JSON.parse(readFileSync(f.runtime.handoff_path!, 'utf8')).replay_pending).toBe(false);
   await f.controller.apply(f.check(f.target));
   await f.controller.apply(f.check(null));
   expect(f.runner.resume_after_cancelled_update).toHaveBeenCalledTimes(2);
   expect(f.downloads()).toBe(0);
+});
+
+test('handover retries back off, then shutdown joins its admitted close without ending the host', async () => {
+  const f = fixture();
+  expect(await f.controller.kept_by_supervisor()).toBe(true);
+  f.close_response(503);
+  f.close_errors.push(
+    Object.assign(new Error('scripted HTTP parser failure'), { code: 'HPE_INVALID_HEADER_TOKEN' }),
+    Object.assign(new Error('scripted response close'), { code: 'ERR_STREAM_PREMATURE_CLOSE' }),
+  );
+  const waits: { milliseconds: number; release: Deferred<void> }[] = [];
+  vi.mocked(sleep).mockImplementation(async <T>(milliseconds?: number, value?: T) => {
+    const release = new Deferred<void>();
+    waits.push({ milliseconds: milliseconds!, release });
+    await release.promise;
+    return value as T;
+  });
+  const held = new Deferred<void>();
+  try {
+    const closing = f.controller.close_handover_once_kept();
+    for (const expected of [2000, 4000, 8000, 16000, 32000, 60000, 60000]) {
+      await vi.waitFor(() => expect(waits.at(-1)?.milliseconds).toBe(expected));
+      const previous = waits.length;
+      if (expected === 60000 && previous === 7) break;
+      waits.at(-1)!.release.resolve();
+      await vi.waitFor(() => expect(waits.length).toBeGreaterThan(previous));
+    }
+    f.close_response(200, held.promise);
+    waits.at(-1)!.release.resolve();
+    await vi.waitFor(() => expect(f.closes).toHaveLength(8));
+    let stopped = false;
+    const shutdown = f.controller.stop({ deadline: performance.now() / 1000 + 10 }).then(() => {
+      stopped = true;
+    });
+    await Promise.resolve();
+    expect(stopped).toBe(false);
+    held.resolve();
+    await closing;
+    await shutdown;
+    expect(f.on_failure).not.toHaveBeenCalled();
+  } finally {
+    held.resolve();
+    for (const wait of waits) wait.release.resolve();
+  }
 });
