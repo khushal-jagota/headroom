@@ -11,6 +11,10 @@ import type { PlanEntry } from "./wire";
 
 export type ConversationTaskProgress = {
   entries: readonly PlanEntry[];
+  /** Indexed count when the checklist body has not been requested. */
+  totalCount?: number;
+  onDemand?: () => void;
+  onRelease?: () => void;
   /** The one-based position of the current step. */
   currentPosition: number | null;
   currentEntry: PlanEntry | null;

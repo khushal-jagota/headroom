@@ -5,12 +5,10 @@
   let {
     href,
     fileName,
-    mediaType,
     byteCount
   }: {
     href: string;
     fileName: string;
-    mediaType: string;
     byteCount: number;
   } = $props();
 
@@ -25,45 +23,10 @@
 
 {#if target}
   <article class="conversation-file-card" data-conversation-piece="file" data-conversation-file-name={fileName}>
-    <div class="conversation-file-card__head">
-      <span class="conversation-file-card__name">{fileName}</span>
-      <span class="conversation-file-card__meta">{mediaType} · {formattedBytes(byteCount)}</span>
-      <a class="conversation-file-card__download" {href} download={fileName}>Download</a>
-    </div>
-    <FilePreview {target} mode="embedded" />
+    <FilePreview {target} mode="embedded" knownSizeLabel={formattedBytes(byteCount)} download={{href, fileName}} />
   </article>
 {/if}
 
 <style>
-  .conversation-file-card {
-    display: grid;
-    gap: var(--space-2);
-    margin-block: var(--space-2);
-    padding: var(--space-3);
-    border: var(--border-hairline) solid var(--border-color);
-    border-radius: var(--radius-sm);
-    background: var(--surface-recessed);
-    min-width: 0;
-  }
-  .conversation-file-card__head {
-    display: flex;
-    align-items: baseline;
-    gap: var(--space-2);
-    min-width: 0;
-    font-family: var(--font-ui);
-    font-size: var(--type-xs);
-  }
-  .conversation-file-card__name {
-    color: var(--text-strong);
-    font-weight: 600;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-  .conversation-file-card__meta { color: var(--text-faint); }
-  .conversation-file-card__download {
-    margin-inline-start: auto;
-    color: var(--accent-bright);
-    white-space: nowrap;
-  }
+  .conversation-file-card { min-width: 0; margin-block: var(--space-2); }
 </style>

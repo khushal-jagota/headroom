@@ -1,4 +1,5 @@
 <script lang="ts">
+  import SkeletonRegion from "./SkeletonRegion.svelte";
   import { createEmployeeConfigurationEditor } from "../lib/conversation/employeeConfigurationEditor.svelte";
   import type { EmployeeConfigurationSnapshot } from "../lib/types";
   import ErrorLine from "./ErrorLine.svelte";
@@ -6,10 +7,12 @@
 
   let {
     label,
+    description,
     value,
     onSave
   }: {
     label: string;
+    description?: string;
     value: EmployeeConfigurationSnapshot;
     onSave: (next: EmployeeConfigurationSnapshot) => Promise<EmployeeConfigurationSnapshot>;
   } = $props();
@@ -21,6 +24,7 @@
   <header class="worker-launch-defaults-head">
     <h2>{label} launch defaults</h2>
   </header>
+  {#if description}<p>{description}</p>{/if}
   <div class="worker-launch-defaults-controls">
     <UnifiedModelPicker
       view={editor.picker}
@@ -34,7 +38,7 @@
       onChooseBackend={editor.chooseBackend}
       onChooseModel={editor.chooseModel}
     />
-    {#if editor.loading}<span class="worker-launch-defaults-state">loading models…</span>{/if}
+    <SkeletonRegion shape="inline" loading={editor.loading} loadingText="Loading models…" />
     {#if editor.backendsError}<ErrorLine error={editor.backendsError} />{/if}
   </div>
   {#if editor.saveError}<div class="worker-row-error" data-launch-defaults-error><ErrorLine error={editor.saveError} /></div>{/if}
@@ -42,7 +46,4 @@
 
 <style>
   .worker-launch-defaults-controls { display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; }
-  .worker-launch-defaults-state {
-    color: var(--text-faintest); font-family: var(--font-mono); font-size: var(--type-xs);
-  }
 </style>

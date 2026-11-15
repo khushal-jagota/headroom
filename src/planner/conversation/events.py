@@ -28,6 +28,8 @@ from enum import StrEnum
 from typing import Any, ClassVar, Final, assert_never
 
 from planner.conversation.contracts import (
+    AnswerFate,
+    DeploymentRecoveryReference,
     PromptDeliveryMode,
     PromptDeliveryRefusalReason,
 )
@@ -37,6 +39,7 @@ from planner.conversation.message_content import (
     message_content_json_entries,
 )
 from planner.core.contracts import Principal, PrincipalKind
+from planner.credentials.requests.contracts import CredentialRequestRowBody
 
 
 class ConversationEventKind(StrEnum):
@@ -48,17 +51,20 @@ class ConversationEventKind(StrEnum):
     live tail frame, which is not a row.
     """
 
+    credential_request = "credential_request"
     prompt = "prompt"
     prompt_delivery_refused = "prompt_delivery_refused"
     prompt_delivery_uncertain = "prompt_delivery_uncertain"
     prompt_discarded = "prompt_discarded"
     agent_message = "agent_message"
     message_to_owner = "message_to_owner"
-    explicit_reply_missing = "explicit_reply_missing"
+    # Retired: stored history only, never written. See RetiredExplicitReplyMissingEventPayload.
+    retired_explicit_reply_missing = "explicit_reply_missing"
     tool_call_started = "tool_call_started"
     tool_call_finished = "tool_call_finished"
     permission_asked = "permission_asked"
     permission_answered = "permission_answered"
+    answer_applied = "answer_applied"
     user_input_requested = "user_input_requested"
     user_input_answered = "user_input_answered"
     user_input_failed = "user_input_failed"
@@ -66,6 +72,7 @@ class ConversationEventKind(StrEnum):
     model_changed = "model_changed"
     token_usage = "token_usage"
     context_compacted = "context_compacted"
+    command_reply = "command_reply"
     turn_ended = "turn_ended"
 
 
@@ -77,6 +84,7 @@ CONVERSATION_EVENT_KINDS_SHOWN_ONLY_BY_THE_OPEN_CONVERSATION: Final = frozenset(
         ConversationEventKind.plan_updated,
         ConversationEventKind.token_usage,
         ConversationEventKind.context_compacted,
+        ConversationEventKind.command_reply,
     }
 )
 """The kinds nothing outside an open conversation draws.
@@ -219,8 +227,12 @@ class PromptEventPayload:
     sent_at_unix_milliseconds: int | None = None
     sender: Principal | None = None
     recipient: Principal | None = None
+    recovery_references: tuple[DeploymentRecoveryReference, ...] = ()
     # Reviewed receipt settlement can identify an earlier unminted uncertainty row.
     reconciles_sequence: int | None = None
+    # Set only by the canonical system writer for internal, unaddressed automation.
+    # Absent legacy provenance stays unknown. No send request accepts this field.
+    system_generated: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -249,13 +261,15 @@ class PromptDeliveryRefusedEventPayload:
     sent_at_unix_milliseconds: int | None = None
     sender: Principal | None = None
     recipient: Principal | None = None
+    recovery_references: tuple[DeploymentRecoveryReference, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
 class PromptDeliveryUncertainEventPayload:
     """A prompt whose admission stayed unknown after possible transmission.
 
-    Panels does not retransmit it. A sender-id replay reads the latest explicit outcome.
+    Panels retransmits it only when its Mac command later proves it never arrived; it
+    then goes as the next message. A sender-id replay reads the latest explicit outcome.
     Reviewed provider evidence can append a later receipt that settles this row, while
     the original uncertainty remains in the append-only history.
     """
@@ -269,18 +283,16 @@ class PromptDeliveryUncertainEventPayload:
     sent_at_unix_milliseconds: int | None = None
     sender: Principal | None = None
     recipient: Principal | None = None
+    recovery_references: tuple[DeploymentRecoveryReference, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
 class PromptDiscardedEventPayload:
-    """A held message that was thrown away without ever being delivered.
+    """A message intentionally discarded before backend delivery.
 
-    Killing a conversation's activity empties its queue, and text a caller handed over
-    must never disappear without a trace — so each discarded message is written down,
-    with who sent it, in the order it was waiting in.
-
-    There is no mode: only a queue message is ever held, so there is nothing a
-    mode could tell anyone here.
+    Queue removal and final dispatch suppression retain the exact sender identity.
+    Suppression also records its domain reason. Historical queue discards remain
+    readable without a reason.
 
     ``sender_message_id`` is here for the same reason it is on a refusal: this is one of
     the three rows a sent message can become, and its sender has to recognise it.
@@ -294,6 +306,8 @@ class PromptDiscardedEventPayload:
     sent_at_unix_milliseconds: int | None = None
     sender: Principal | None = None
     recipient: Principal | None = None
+    recovery_references: tuple[DeploymentRecoveryReference, ...] = ()
+    suppression_reason: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -325,15 +339,15 @@ class AgentMessageEventPayload:
 
 
 @dataclass(frozen=True, slots=True)
-class ExplicitReplyMissingEventPayload:
-    """A turn ended without an explicit message to one of its prompt senders.
+class RetiredExplicitReplyMissingEventPayload:
+    """A retired marker that a turn ended without an explicit reply to one prompt sender.
 
-    This is a system marker, not an addressed message. ``prompt_sender`` identifies the
-    person whose delivered prompt went unanswered without making the marker itself a
-    message to that person.
+    Panels no longer asks agents to reply to each sender, and nothing writes this kind.
+    Records written before then still hold it, so it still loads, and every view shows
+    nothing for it. ``prompt_sender`` is kept only so the stored row reads back exactly.
     """
 
-    kind: ClassVar[ConversationEventKind] = ConversationEventKind.explicit_reply_missing
+    kind: ClassVar[ConversationEventKind] = ConversationEventKind.retired_explicit_reply_missing
 
     prompt_sender: Principal
 
@@ -381,6 +395,16 @@ class PermissionAnsweredEventPayload:
 
     ask_id: str
     option_id: str
+    fate: AnswerFate = AnswerFate.applied
+    answer_id: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class AnswerAppliedEventPayload:
+    """Proof that the original callback took a previously saved answer."""
+
+    kind: ClassVar[ConversationEventKind] = ConversationEventKind.answer_applied
+    answer_id: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -401,6 +425,8 @@ class UserInputAnsweredEventPayload:
 
     request_id: str
     answers: tuple[UserInputAnswer, ...]
+    fate: AnswerFate = AnswerFate.applied
+    answer_id: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -484,6 +510,19 @@ class ContextCompactedEventPayload:
 
 
 @dataclass(frozen=True, slots=True)
+class CommandReplyEventPayload:
+    """The backend's own answer to a slash command, such as a refused or inspected goal.
+
+    It is stored, unlike agent prose, because nothing streams it: without this row the
+    reply is shown nowhere. It is plain words, and it is not model context.
+    """
+
+    kind: ClassVar[ConversationEventKind] = ConversationEventKind.command_reply
+
+    reply_text: str
+
+
+@dataclass(frozen=True, slots=True)
 class TurnEndedEventPayload:
     """A turn that has stopped running, and why.
 
@@ -498,17 +537,27 @@ class TurnEndedEventPayload:
     automatic_compaction_result: AutomaticCompactionResult | None = None
 
 
+@dataclass(frozen=True, slots=True)
+class CredentialRequestEventPayload:
+    """A metadata-only snapshot of one durable credential request."""
+
+    kind: ClassVar[ConversationEventKind] = ConversationEventKind.credential_request
+    request: CredentialRequestRowBody
+
+
 type ConversationEventPayload = (
-    PromptEventPayload
+    CredentialRequestEventPayload
+    | PromptEventPayload
     | PromptDeliveryRefusedEventPayload
     | PromptDeliveryUncertainEventPayload
     | PromptDiscardedEventPayload
     | MessageToOwnerEventPayload
     | AgentMessageEventPayload
-    | ExplicitReplyMissingEventPayload
+    | RetiredExplicitReplyMissingEventPayload
     | ToolCallStartedEventPayload
     | ToolCallFinishedEventPayload
     | PermissionAskedEventPayload
+    | AnswerAppliedEventPayload
     | PermissionAnsweredEventPayload
     | UserInputRequestedEventPayload
     | UserInputAnsweredEventPayload
@@ -517,6 +566,7 @@ type ConversationEventPayload = (
     | ModelChangedEventPayload
     | TokenUsageEventPayload
     | ContextCompactedEventPayload
+    | CommandReplyEventPayload
     | TurnEndedEventPayload
 )
 
@@ -593,12 +643,28 @@ def conversation_event_payload_from_canonical_json(
 
 def _payload_json_object(payload: ConversationEventPayload) -> dict[str, Any]:
     match payload:
+        case CredentialRequestEventPayload():
+            return {"request": payload.request}
         case PromptEventPayload():
             return {
                 **message_content_json_entries(payload.content),
                 "sender_label": payload.sender_label,
                 "mode": str(payload.mode),
+                **({"system_generated": True} if payload.system_generated else {}),
                 **_entry_if_minted("sender_message_id", payload.sender_message_id),
+                **(
+                    {
+                        "recovery_references": [
+                            {
+                                "interruption_id": r.interruption_id,
+                                "expected_stage": r.expected_stage,
+                            }
+                            for r in payload.recovery_references
+                        ]
+                    }
+                    if payload.recovery_references
+                    else {}
+                ),
                 **_entry_if_minted("sent_at_unix_milliseconds", payload.sent_at_unix_milliseconds),
                 **_entry_if_minted("reconciles_sequence", payload.reconciles_sequence),
                 **_principal_entries(payload.sender, payload.recipient),
@@ -611,6 +677,19 @@ def _payload_json_object(payload: ConversationEventPayload) -> dict[str, Any]:
                 "refusal_reason": str(payload.refusal_reason),
                 "refusal_detail": payload.refusal_detail,
                 **_entry_if_minted("sender_message_id", payload.sender_message_id),
+                **(
+                    {
+                        "recovery_references": [
+                            {
+                                "interruption_id": r.interruption_id,
+                                "expected_stage": r.expected_stage,
+                            }
+                            for r in payload.recovery_references
+                        ]
+                    }
+                    if payload.recovery_references
+                    else {}
+                ),
                 **_entry_if_minted("sent_at_unix_milliseconds", payload.sent_at_unix_milliseconds),
                 **_principal_entries(payload.sender, payload.recipient),
             }
@@ -620,6 +699,19 @@ def _payload_json_object(payload: ConversationEventPayload) -> dict[str, Any]:
                 "sender_label": payload.sender_label,
                 "mode": str(payload.mode),
                 **_entry_if_minted("sender_message_id", payload.sender_message_id),
+                **(
+                    {
+                        "recovery_references": [
+                            {
+                                "interruption_id": r.interruption_id,
+                                "expected_stage": r.expected_stage,
+                            }
+                            for r in payload.recovery_references
+                        ]
+                    }
+                    if payload.recovery_references
+                    else {}
+                ),
                 **_entry_if_minted("sent_at_unix_milliseconds", payload.sent_at_unix_milliseconds),
                 **_principal_entries(payload.sender, payload.recipient),
             }
@@ -627,7 +719,21 @@ def _payload_json_object(payload: ConversationEventPayload) -> dict[str, Any]:
             return {
                 **message_content_json_entries(payload.content),
                 "sender_label": payload.sender_label,
+                **_entry_if_minted("suppression_reason", payload.suppression_reason),
                 **_entry_if_minted("sender_message_id", payload.sender_message_id),
+                **(
+                    {
+                        "recovery_references": [
+                            {
+                                "interruption_id": r.interruption_id,
+                                "expected_stage": r.expected_stage,
+                            }
+                            for r in payload.recovery_references
+                        ]
+                    }
+                    if payload.recovery_references
+                    else {}
+                ),
                 **_entry_if_minted("sent_at_unix_milliseconds", payload.sent_at_unix_milliseconds),
                 **_principal_entries(payload.sender, payload.recipient),
             }
@@ -641,7 +747,7 @@ def _payload_json_object(payload: ConversationEventPayload) -> dict[str, Any]:
             }
         case AgentMessageEventPayload():
             return message_content_json_entries(payload.content)
-        case ExplicitReplyMissingEventPayload():
+        case RetiredExplicitReplyMissingEventPayload():
             return {
                 "prompt_sender": {
                     "kind": payload.prompt_sender.kind.value,
@@ -676,7 +782,17 @@ def _payload_json_object(payload: ConversationEventPayload) -> dict[str, Any]:
                 ],
             }
         case PermissionAnsweredEventPayload():
-            return {"ask_id": payload.ask_id, "option_id": payload.option_id}
+            return {
+                "ask_id": payload.ask_id,
+                "option_id": payload.option_id,
+                **(
+                    {"fate": payload.fate.value, "answer_id": payload.answer_id}
+                    if payload.answer_id is not None
+                    else {}
+                ),
+            }
+        case AnswerAppliedEventPayload():
+            return {"answer_id": payload.answer_id}
         case UserInputRequestedEventPayload():
             return {
                 "request_id": payload.request_id,
@@ -700,6 +816,11 @@ def _payload_json_object(payload: ConversationEventPayload) -> dict[str, Any]:
             }
         case UserInputAnsweredEventPayload():
             return {
+                **(
+                    {"fate": payload.fate.value, "answer_id": payload.answer_id}
+                    if payload.answer_id is not None
+                    else {}
+                ),
                 "request_id": payload.request_id,
                 "answers": {
                     answer.question_id: {"answers": list(answer.answers)}
@@ -725,6 +846,8 @@ def _payload_json_object(payload: ConversationEventPayload) -> dict[str, Any]:
             }
         case ContextCompactedEventPayload():
             return {}
+        case CommandReplyEventPayload():
+            return {"reply_text": payload.reply_text}
         case TurnEndedEventPayload():
             return {
                 "ending": str(payload.ending),
@@ -753,10 +876,16 @@ def _payload_from_json_object(
                 sender_label=_text(stored, "sender_label"),
                 mode=_prompt_delivery_mode_from_stored(stored),
                 sender_message_id=_optional_text(stored, "sender_message_id"),
+                recovery_references=tuple(
+                    DeploymentRecoveryReference(**r) for r in stored.get("recovery_references", [])
+                ),
                 sent_at_unix_milliseconds=_optional_whole_number(
                     stored, "sent_at_unix_milliseconds"
                 ),
                 reconciles_sequence=_optional_whole_number(stored, "reconciles_sequence"),
+                system_generated=_boolean(stored, "system_generated")
+                if "system_generated" in stored
+                else False,
                 sender=_optional_principal(stored, "sender"),
                 recipient=_optional_principal(stored, "recipient"),
             )
@@ -768,6 +897,9 @@ def _payload_from_json_object(
                 refusal_reason=PromptDeliveryRefusalReason(_text(stored, "refusal_reason")),
                 refusal_detail=_optional_text(stored, "refusal_detail"),
                 sender_message_id=_optional_text(stored, "sender_message_id"),
+                recovery_references=tuple(
+                    DeploymentRecoveryReference(**r) for r in stored.get("recovery_references", [])
+                ),
                 sent_at_unix_milliseconds=_optional_whole_number(
                     stored, "sent_at_unix_milliseconds"
                 ),
@@ -780,6 +912,9 @@ def _payload_from_json_object(
                 sender_label=_text(stored, "sender_label"),
                 mode=_prompt_delivery_mode_from_stored(stored),
                 sender_message_id=_optional_text(stored, "sender_message_id"),
+                recovery_references=tuple(
+                    DeploymentRecoveryReference(**r) for r in stored.get("recovery_references", [])
+                ),
                 sent_at_unix_milliseconds=_optional_whole_number(
                     stored, "sent_at_unix_milliseconds"
                 ),
@@ -790,7 +925,11 @@ def _payload_from_json_object(
             return PromptDiscardedEventPayload(
                 content=message_content_from_stored(stored),
                 sender_label=_text(stored, "sender_label"),
+                suppression_reason=_optional_text(stored, "suppression_reason"),
                 sender_message_id=_optional_text(stored, "sender_message_id"),
+                recovery_references=tuple(
+                    DeploymentRecoveryReference(**r) for r in stored.get("recovery_references", [])
+                ),
                 sent_at_unix_milliseconds=_optional_whole_number(
                     stored, "sent_at_unix_milliseconds"
                 ),
@@ -814,11 +953,11 @@ def _payload_from_json_object(
             )
         case ConversationEventKind.agent_message:
             return AgentMessageEventPayload(content=message_content_from_stored(stored))
-        case ConversationEventKind.explicit_reply_missing:
+        case ConversationEventKind.retired_explicit_reply_missing:
             prompt_sender = _optional_principal(stored, "prompt_sender")
             if prompt_sender is None:
                 raise ValueError("explicit_reply_missing requires prompt_sender")
-            return ExplicitReplyMissingEventPayload(prompt_sender=prompt_sender)
+            return RetiredExplicitReplyMissingEventPayload(prompt_sender=prompt_sender)
         case ConversationEventKind.tool_call_started:
             return ToolCallStartedEventPayload(
                 tool_call_id=_text(stored, "tool_call_id"),
@@ -848,8 +987,13 @@ def _payload_from_json_object(
             )
         case ConversationEventKind.permission_answered:
             return PermissionAnsweredEventPayload(
-                ask_id=_text(stored, "ask_id"), option_id=_text(stored, "option_id")
+                ask_id=_text(stored, "ask_id"),
+                option_id=_text(stored, "option_id"),
+                fate=AnswerFate(stored.get("fate", "applied")),
+                answer_id=stored.get("answer_id"),
             )
+        case ConversationEventKind.answer_applied:
+            return AnswerAppliedEventPayload(answer_id=_text(stored, "answer_id"))
         case ConversationEventKind.user_input_requested:
             return UserInputRequestedEventPayload(
                 request_id=_text(stored, "request_id"),
@@ -876,6 +1020,8 @@ def _payload_from_json_object(
             if not isinstance(answers, dict):
                 raise ValueError("answers must be an object")
             return UserInputAnsweredEventPayload(
+                fate=AnswerFate(stored.get("fate", "applied")),
+                answer_id=stored.get("answer_id"),
                 request_id=_text(stored, "request_id"),
                 answers=tuple(
                     UserInputAnswer(
@@ -886,6 +1032,10 @@ def _payload_from_json_object(
                     if isinstance(question_id, str) and isinstance(answer, dict)
                 ),
             )
+        case ConversationEventKind.credential_request:
+            from planner.credentials.requests.logic.validation import decode_snapshot
+
+            return CredentialRequestEventPayload(decode_snapshot(stored["request"]))
         case ConversationEventKind.user_input_failed:
             return UserInputFailedEventPayload(
                 request_id=_text(stored, "request_id"),
@@ -915,6 +1065,8 @@ def _payload_from_json_object(
             )
         case ConversationEventKind.context_compacted:
             return ContextCompactedEventPayload()
+        case ConversationEventKind.command_reply:
+            return CommandReplyEventPayload(reply_text=_text(stored, "reply_text"))
         case ConversationEventKind.turn_ended:
             return TurnEndedEventPayload(
                 ending=ConversationTurnEnding(_text(stored, "ending")),
@@ -957,7 +1109,11 @@ def _optional_principal(stored: dict[str, Any], field_name: str) -> Principal | 
     principal_id = value.get("id")
     if not isinstance(kind, str) or not isinstance(principal_id, str):
         raise ValueError(f"{field_name} must contain text kind and id")
-    return Principal(PrincipalKind(kind), principal_id)
+    # Archived event payloads retain their original sender bytes. This decoder is
+    # only for stored events, not request principals.
+    return Principal(
+        PrincipalKind.manager if kind == "sprint_item" else PrincipalKind(kind), principal_id
+    )
 
 
 def _text(stored: dict[str, Any], field_name: str) -> str:

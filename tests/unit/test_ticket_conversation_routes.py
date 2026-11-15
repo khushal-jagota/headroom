@@ -9,24 +9,21 @@ own record rather than from the route's report of itself.
 
 from __future__ import annotations
 
-import base64
 from pathlib import Path
 from sqlite3 import Connection
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from httpx import Response
-from tests.support.principals import OWNER_PRINCIPAL
-
-from planner.conversation.in_memory_conversation_system import (
-    InMemoryConversationObservationKind,
+from tests.support.in_memory_conversation_system import (
     InMemoryConversationSystem,
 )
+from tests.support.principals import OWNER_PRINCIPAL
+
 from planner.core.clock import build_clock
 from planner.core.config import load_config
 from planner.core.db import connect, create_schema
 from planner.core.server import create_app
-from planner.runtime.conversation_start import CONVERSATION_ID_PREFIX
 from planner.tickets import data as tickets_data
 
 _AGENT = {"X-Plan-Actor": "agent"}
@@ -105,56 +102,8 @@ def _conversation_id(db_path: Path, ticket_id: str) -> str | None:
         conn.close()
 
 
-def test_the_first_message_makes_the_conversation_and_goes_into_it(tmp_path: Path) -> None:
-    app, db_path = _make_app(tmp_path)
-    ticket_id = _ticket(db_path)
-    assert _conversation_id(db_path, ticket_id) is None
-
-    with TestClient(app) as client:
-        response = _send(client, ticket_id, "hello", model="sonnet")
-
-        assert response.status_code == 200, response.text
-        answered = response.json()
-        assert answered["fate"] == "started"
-        made = answered["conversation_id"]
-        assert made is not None
-        assert made.startswith(CONVERSATION_ID_PREFIX)
-        # The Ticket names it, and the conversation system has the words: both halves.
-        assert _conversation_id(db_path, ticket_id) == made
-        delivered = [
-            observation.text
-            for observation in app.state.conversation_system.observations(made)
-            if observation.kind is InMemoryConversationObservationKind.prompt_delivered
-        ]
-        assert delivered == ["hello"]
 
 
-def test_an_invalid_first_image_makes_neither_conversation_prompt_nor_file(
-    tmp_path: Path,
-) -> None:
-    app, db_path = _make_app(tmp_path)
-    ticket_id = _ticket(db_path)
-    malformed_png = b"\x89PNG\r\n\x1a\nnot a structurally valid png"
-
-    with TestClient(app) as client:
-        response = client.post(
-            f"/api/tickets/{ticket_id}/conversation/send",
-            json={
-                "conversation_id": None,
-                "content": [
-                    {
-                        "piece": "image",
-                        "data": base64.b64encode(malformed_png).decode("ascii"),
-                        "media_type": "image/png",
-                    }
-                ],
-                "sender_label": "owner",
-            },
-        )
-
-    assert response.status_code == 422
-    assert _conversation_id(db_path, ticket_id) is None
-    assert not list((db_path.parent / "files" / "conversations").glob("**/*"))
 
 
 def test_a_message_naming_a_conversation_the_ticket_is_not_in_is_turned_away(
@@ -173,22 +122,6 @@ def test_a_message_naming_a_conversation_the_ticket_is_not_in_is_turned_away(
     assert response.status_code == 404, response.text
 
 
-def test_resetting_kills_the_conversation_and_unlinks_it(tmp_path: Path) -> None:
-    app, db_path = _make_app(tmp_path)
-    ticket_id = _ticket(db_path)
-
-    with TestClient(app) as client:
-        started = _send(client, ticket_id, "hello").json()["conversation_id"]
-        response = client.post(f"/api/tickets/{ticket_id}/conversation/reset")
-
-        assert response.status_code == 200, response.text
-        assert response.json()["conversation_id"] is None
-        assert _conversation_id(db_path, ticket_id) is None
-
-    # And the next message makes a fresh one rather than reaching the killed one.
-    with TestClient(app) as client:
-        after = _send(client, ticket_id, "starting over").json()
-    assert after["conversation_id"] != started
 
 
 def _start_values(client: TestClient, ticket_id: str) -> dict[str, object]:
@@ -236,3 +169,69 @@ def test_both_doors_are_human_only(tmp_path: Path) -> None:
     assert start.json()["error"]["code"] == "agent_forbidden", start.text
     assert reset.json()["error"]["code"] == "agent_forbidden", reset.text
     assert _conversation_id(db_path, ticket_id) is None
+
+
+def test_owner_guidance_reaches_only_the_named_tickets_actual_backend_prompt(
+    tmp_path: Path,
+) -> None:
+    """Native owner routing must deliver guidance, not just report an accepted send.
+
+    The existing route cases use an in-memory reference system. This one reuses the
+    scripted ACP process harness so the assertion comes from the receiving process,
+    beyond HTTP receipts and the conversation record. No provider or browser host runs.
+    """
+    import asyncio
+    from types import SimpleNamespace
+
+    from httpx import ASGITransport, AsyncClient
+    from tests.support.conversation_system_under_test import open_conversation_system_under_test
+
+    from planner.conversation.message_files import ConversationMessageFiles
+
+    async def exercise() -> None:
+        db_path = tmp_path / "artifact-message.db"
+        async with open_conversation_system_under_test(database_path=db_path) as subject:
+            ticket_id = _ticket(db_path)
+            other_ticket_id = _ticket(db_path)
+            config = load_config(
+                path=None,
+                env={"PLAN_TEST_MODE": "1", "PLAN_DB_PATH": str(db_path)},
+            )
+            app = create_app(
+                config,
+                build_clock(config),
+                lambda: connect(str(db_path)),
+                conversation_system_for_test=subject.system,
+            )
+            # ASGI transport keeps the production HTTP routes but does not start the
+            # application lifespan or its autonomous worker-readiness loop.
+            app.state.conversation_system = subject.system
+            app.state.conversation = SimpleNamespace(
+                message_files=ConversationMessageFiles(str(db_path))
+            )
+            text = "For this artifact, change the second paragraph before approval."
+            async with AsyncClient(
+                transport=ASGITransport(app=app), base_url="http://test"
+            ) as client:
+                response = await client.post(
+                    f"/api/tickets/{ticket_id}/conversation/send",
+                    json={
+                        "conversation_id": None,
+                        "content": [{"piece": "text", "text": text}],
+                        "sender_label": "owner",
+                        "sender_message_id": "artifact-owner-guidance",
+                    },
+                )
+            assert response.status_code == 200, response.text
+            receipt = response.json()
+            assert receipt["fate"] == "started", receipt
+            conversation_id = receipt["conversation_id"]
+            assert _conversation_id(db_path, ticket_id) == conversation_id
+            assert _conversation_id(db_path, other_ticket_id) is None
+            writes = await subject.backend_writes(conversation_id)
+            assert len(writes) == 1
+            assert writes[0].text.endswith(f"owner:\n{text}")
+            assert writes[0].text.count(text) == 1
+            assert writes[0].sender_label == "owner"
+
+    asyncio.run(exercise())

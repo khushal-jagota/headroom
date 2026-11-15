@@ -1,8 +1,8 @@
 import type { AgentState } from "./types";
 
 export type WorkAttentionFacts = {
-  awaiting_reply: boolean;
-  awaiting_answer?: boolean;
+  awaiting_reply: boolean | null;
+  awaiting_answer?: boolean | null;
   awaiting_approval: boolean;
   assigned: boolean;
 };
@@ -31,7 +31,7 @@ export function primaryWorkAttention(
 
 export type AgentHoldFacts = {
   ticket_status?: string;
-  agent_state?: AgentState;
+  agent_state?: AgentState | null;
 };
 
 // Whether a worker has this Ticket. Two facts answer it, and the durable one leads.

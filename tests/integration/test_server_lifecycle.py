@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import os
 import signal
 import socket
@@ -12,7 +11,9 @@ from collections.abc import Callable
 from pathlib import Path
 
 import httpx
-from tests.support.server import BOOT_BUDGET_S, PLAN_BIN, REPO_ROOT, ServerHandle
+import pytest
+from tests.support.server import PLAN_BIN, REPO_ROOT, ServerHandle
+from tests.support.server_fixtures import _first_meta_answer, _scrubbed_env
 
 
 def _direct_children(parent_pid: int) -> list[int]:
@@ -36,26 +37,6 @@ def _process_exists(pid: int) -> bool:
     except ProcessLookupError:
         return False
     return True
-
-
-def _process_is_zombie(pid: int) -> bool:
-    result = subprocess.run(
-        ["ps", "-o", "stat=", "-p", str(pid)],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    return result.returncode == 0 and result.stdout.strip().startswith("Z")
-
-
-def _process_is_stopped(pid: int) -> bool:
-    result = subprocess.run(
-        ["ps", "-o", "stat=", "-p", str(pid)],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    return result.returncode == 0 and result.stdout.strip().startswith("T")
 
 
 def _wait_until(predicate: Callable[[], bool], message: str, timeout: float = 10.0) -> None:
@@ -83,24 +64,16 @@ def _wait_for_one_child(parent_pid: int, *, different_from: int | None = None) -
     return child
 
 
-def _wait_for_http(base: str) -> None:
-    def ready() -> bool:
-        try:
-            response = httpx.get(f"{base}/api/meta", timeout=0.5)
-        except httpx.HTTPError:
-            return False
-        return response.status_code == 200
-
-    _wait_until(ready, f"{base} did not become ready", timeout=BOOT_BUDGET_S)
-
-
 def _isolated_server_env(handle: ServerHandle, control_socket: Path) -> dict[str, str]:
-    env = {key: value for key, value in os.environ.items() if not key.startswith("PLAN_")}
+    # The second supervisor competes for the fixture's exact lease, even though
+    # it deliberately requests a different control socket.
+    env = _scrubbed_env(handle.log_path.parent)
     env.update(
         {
             "PLAN_TEST_MODE": "1",
             "PLAN_DB_PATH": str(handle.db_path),
             "PLAN_PORT": str(handle.port),
+            "PLAN_SERVER_URL": handle.base,
             "PLAN_LOGS_DIR": str(handle.log_path.parent / "second-logs"),
             "PLAN_DISPATCHER_LOCK_PATH": str(handle.log_path.parent / "second-dispatcher.lock"),
             "PLAN_SERVER_CONTROL_SOCKET": str(control_socket),
@@ -126,7 +99,8 @@ def _run_restart(handle: ServerHandle, cwd: Path = REPO_ROOT) -> subprocess.Comp
 
 
 def _restart_env(handle: ServerHandle) -> dict[str, str]:
-    env = {key: value for key, value in os.environ.items() if not key.startswith("PLAN_")}
+    env = _scrubbed_env(handle.log_path.parent)
+    env["PLAN_SERVER_URL"] = handle.base
     env["PLAN_SERVER_CONTROL_SOCKET"] = str(handle.control_socket_path)
     return env
 
@@ -141,7 +115,7 @@ def test_second_supervisor_with_different_socket_cannot_replace_owner(
     tmp_path: Path,
 ) -> None:
     application_pid = _wait_for_one_child(server.proc.pid)
-    second_socket = Path("/tmp") / f"panels-second-{server.port}.sock"
+    second_socket = Path(os.environ.get("TMPDIR", "/tmp")) / f"panels-second-{server.port}.sock"
     second_socket.unlink(missing_ok=True)
 
     result = subprocess.run(
@@ -161,8 +135,28 @@ def test_second_supervisor_with_different_socket_cannot_replace_owner(
 
 
 def test_operator_shutdown_removes_child_socket_and_listener(server: ServerHandle) -> None:
+    from planner.server_lifecycle.control import resolve_event_loop_tasks_socket_path
+
     application_pid = _wait_for_one_child(server.proc.pid)
     assert server.control_socket_path.exists()
+    event_loop_tasks_socket = resolve_event_loop_tasks_socket_path(server.control_socket_path)
+    assert event_loop_tasks_socket.exists()
+
+    # SIGUSR1 previously terminated the application. Exercise the real signal on
+    # this existing disposable host, then keep the ordinary shutdown proof below.
+    os.kill(application_pid, signal.SIGUSR1)
+    def snapshot_written() -> bool:
+        text = server.log_path.read_text()
+        heading = f"Python thread dump pid={application_pid}"
+        return heading in text and "End Python thread dump" in text.split(heading, 1)[1]
+
+    _wait_until(snapshot_written, "the application did not write its Python thread snapshot")
+    dump = server.log_path.read_text().split(f"Python thread dump pid={application_pid}", 1)[1]
+    assert "Thread name='MainThread'" in dump
+    assert dump.count("Thread name=") >= 2
+    assert "Current thread 0x" in server.log_path.read_text()
+    assert httpx.get(f"{server.base}/api/meta").status_code == 200
+    assert _direct_children(server.proc.pid) == [application_pid]
 
     server.proc.terminate()
     server.proc.wait(timeout=10.0)
@@ -170,55 +164,9 @@ def test_operator_shutdown_removes_child_socket_and_listener(server: ServerHandl
     assert server.proc.returncode == 0
     _wait_until(lambda: not _process_exists(application_pid), "application child remained alive")
     assert not server.control_socket_path.exists()
+    # The application's SIGTERM shutdown removes its own socket too.
+    assert not event_loop_tasks_socket.exists()
     _wait_until(lambda: _nothing_listens(server.port), "server port remained open")
-
-
-def test_unexpected_child_exit_wins_over_a_queued_restart(
-    server_factory: Callable[..., ServerHandle],
-) -> None:
-    server = server_factory()
-    supervisor_pid = server.proc.pid
-    application_pid = _wait_for_one_child(supervisor_pid)
-    client = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-    supervisor_resumed = False
-    try:
-        os.kill(supervisor_pid, signal.SIGSTOP)
-        _wait_until(
-            lambda: _process_is_stopped(supervisor_pid),
-            "supervisor did not stop before the queued restart setup",
-        )
-        client.connect(str(server.control_socket_path))
-        request = json.dumps({"version": 1, "operation": "restart"}).encode() + b"\n"
-        client.sendall(request)
-        os.kill(application_pid, signal.SIGKILL)
-        _wait_until(
-            lambda: _process_is_zombie(application_pid),
-            "killed application child did not become observable before supervisor resume",
-        )
-        os.kill(supervisor_pid, signal.SIGCONT)
-        supervisor_resumed = True
-        client.settimeout(5.0)
-        try:
-            response = client.recv(4096)
-        except (ConnectionResetError, TimeoutError):
-            response = b""
-    finally:
-        if not supervisor_resumed:
-            os.kill(supervisor_pid, signal.SIGCONT)
-        client.close()
-
-    try:
-        server.proc.wait(timeout=0.75)
-        supervisor_ended = True
-    except subprocess.TimeoutExpired:
-        supervisor_ended = False
-        server.proc.terminate()
-        server.proc.wait(timeout=10.0)
-
-    assert b'"status":"accepted"' not in response
-    assert supervisor_ended
-    assert server.proc.returncode != 0
-    assert not server.control_socket_path.exists()
 
 
 def test_restart_from_ticket_worktree_uses_captured_launch_root(
@@ -236,8 +184,126 @@ def test_restart_from_ticket_worktree_uses_captured_launch_root(
 
     assert result.returncode == 0, result.stderr
     _wait_for_one_child(server.proc.pid, different_from=application_pid)
-    _wait_for_http(server.base)
+    # The supervisor keeps the fixture's listener across the restart, so this request
+    # waits in its queue for the replacement child.
+    _first_meta_answer(
+        server.base, server.log_path, lambda: f"panels serve (rc={server.proc.poll()})"
+    )
     replacement_shell = httpx.get(f"{server.base}/").text
     assert "data-svelte-app" in replacement_shell
     assert replacement_shell == original_shell
     assert not (ticket_worktree / "web" / "dist").exists()
+
+
+@pytest.mark.skipif(not Path("/proc/self/status").exists(), reason="requires Linux /proc masks")
+def test_incomplete_control_request_cannot_block_shutdown_or_child_signal_mask(
+    server: ServerHandle,
+) -> None:
+    application_pid = _wait_for_one_child(server.proc.pid)
+    status = Path(f"/proc/{application_pid}/status").read_text()
+    mask_text = next(line.split()[1] for line in status.splitlines() if line.startswith("SigBlk:"))
+    watched = sum(1 << (value - 1) for value in (signal.SIGINT, signal.SIGTERM, signal.SIGCHLD))
+    assert int(mask_text, 16) & watched == 0
+    with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
+        client.connect(str(server.control_socket_path))
+        client.sendall(b'{"version":')
+        server.proc.terminate()
+        server.proc.wait(timeout=5)
+        assert server.proc.returncode == 0
+    assert not server.control_socket_path.exists()
+    assert not _process_exists(application_pid)
+    assert _nothing_listens(server.port)
+
+
+def test_unexpected_child_exit_wins_over_accepted_restart_with_open_client(
+    server: ServerHandle,
+) -> None:
+    application_pid = _wait_for_one_child(server.proc.pid)
+    with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
+        client.settimeout(5)
+        client.connect(str(server.control_socket_path))
+        client.sendall(b'{"version":1,"operation":"restart"}\n')
+        assert b'"accepted"' in client.recv(4096)
+        # The acceptance response proves that this open client holds the restart.
+        # Verify direct fixture parentage immediately before the exact-child signal.
+        assert _direct_children(server.proc.pid) == [application_pid]
+        os.kill(application_pid, signal.SIGKILL)
+        server.proc.wait(timeout=5)
+        assert server.proc.returncode == 1
+    assert not server.control_socket_path.exists()
+    assert not _process_exists(application_pid)
+    assert _nothing_listens(server.port)
+
+
+@pytest.mark.parametrize("pythonpath", [None, "", "first path::second/π:$literal"])
+def test_real_application_spawn_preserves_environment_and_listener(
+    tmp_path: Path,
+    pythonpath: str | None,
+) -> None:
+    """Popen must preserve caller bytes and pass the actual listener descriptor."""
+    import json
+    import sys
+
+    from planner.server_lifecycle.supervisor import (
+        PortScopedServerLifecycleLease,
+        ServerSupervisor,
+    )
+
+    root = tmp_path / "launch-root"
+    root.mkdir()
+    output = tmp_path / "child.json"
+    probe = tmp_path / "probe-python"
+    probe.write_text(
+        f"#!{sys.executable}\n"
+        "import json, os, socket\n"
+        "from pathlib import Path\n"
+        "fd = int(os.environ['PLAN_SERVER_LISTENER_FD'])\n"
+        "with socket.socket(fileno=fd) as listener:\n"
+        "    address = listener.getsockname()\n"
+        f"Path({str(output)!r}).write_text(json.dumps(dict(\n"
+        "    pythonpath=os.environ.get('PYTHONPATH'), cwd=os.getcwd(),\n"
+        "    control=os.environ['PLAN_SERVER_CONTROL_SOCKET'],\n"
+        "    address=address, session=os.getsid(0), pid=os.getpid())))\n"
+    )
+    probe.chmod(0o700)
+    environment = {
+        key: value
+        for key, value in os.environ.items()
+        if key != "PYTHONPATH" and not key.startswith(("PLAN_", "PANELS_"))
+    }
+    if pythonpath is not None:
+        environment["PYTHONPATH"] = pythonpath
+    control = tmp_path / "control.sock"
+    with socket.socket() as listener:
+        listener.bind(("127.0.0.1", 0))
+        listener.listen()
+        environment["PLAN_SERVER_LISTENER_FD"] = str(listener.fileno())
+        supervisor = ServerSupervisor(
+            launch_root=root,
+            interpreter=str(probe),
+            environ=environment,
+            control_socket_path=control,
+            lease=PortScopedServerLifecycleLease(tmp_path / "unused.lock", 0),
+        )
+        supervisor._spawn_application_child()
+        child = supervisor._application_child
+        assert child is not None
+        try:
+            assert child.wait(timeout=10) == 0
+        finally:
+            if child.poll() is None:
+                child.kill()
+                child.wait(timeout=5)
+        data = json.loads(output.read_text())
+        assert data["pythonpath"] == pythonpath
+        assert data["cwd"] == str(root)
+        assert data["control"] == str(control)
+        assert data["address"] == list(listener.getsockname())
+        assert data["session"] == data["pid"]
+        assert environment.get("PYTHONPATH") == pythonpath
+
+
+def test_editable_startup_without_pythonpath_from_unrelated_directory(tmp_path: Path) -> None:
+    from tests.support.lifecycle_startup import assert_lifecycle_startup
+
+    assert_lifecycle_startup(REPO_ROOT, tmp_path / "editable", packaged=False)

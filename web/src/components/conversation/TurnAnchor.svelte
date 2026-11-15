@@ -17,12 +17,10 @@
    * turn ends moves everything under it for no reason anybody reading could name.
    */
   import {
-    elapsedSecondsSince,
-    foldedWorkSentence,
-    millisecondsUntilNextSecond,
     turnFoldLabel,
     workingSentence
   } from "../../lib/conversation/transcript";
+  import { elapsedTurnTime } from "../../lib/conversation/elapsedTime.svelte";
   import type { ConversationTurnEnding } from "../../lib/conversation/wire";
 
   /** How long a sign of life is still recent. Long enough to ride out the gaps between
@@ -30,6 +28,7 @@
   const LIVELINESS_DECAY_MS = 2_000;
 
   let {
+    activityUncertain = false,
     settled = false,
     stopped = false,
     startedAtUnixMilliseconds = null,
@@ -39,9 +38,9 @@
     toolCallCount = 0,
     foldedMessageCount = 0,
     expanded = false,
-    livenessPulse = 0,
-    onToggle
+    livenessPulse = 0
   }: {
+    activityUncertain?: boolean;
     settled?: boolean;
     stopped?: boolean;
     /** When the turn began, in unix milliseconds, so a reload counts from the truth and
@@ -67,10 +66,9 @@
   let fresh = $state(true);
   // The one thing that changes every second. The transcript is not rebuilt on a tick and
   // no row is touched: only this number moves.
-  let elapsedSeconds = $state<number | null>(null);
+  const elapsed = elapsedTurnTime(() => settled ? null : startedAtUnixMilliseconds);
 
   let foldLabel = $derived(turnFoldLabel({ durationSeconds, ending, isLatest }));
-  let countLabel = $derived(foldedWorkSentence(toolCallCount, foldedMessageCount));
   // A turn that only talked folds too: five paragraphs of commentary is exactly as long
   // to scroll past as five tool calls.
   let somethingBehindTheFold = $derived(toolCallCount > 0 || foldedMessageCount > 0);
@@ -88,23 +86,6 @@
     return () => clearTimeout(decay);
   });
 
-  $effect(() => {
-    if (settled || startedAtUnixMilliseconds === null) {
-      elapsedSeconds = null;
-      return;
-    }
-    const begun = startedAtUnixMilliseconds;
-    let waiting: ReturnType<typeof setTimeout> | undefined;
-    // Each tick is aimed at the next whole second since the turn began, and the number is
-    // worked out from that instant every time — so nothing drifts and nothing accumulates.
-    const tick = (): void => {
-      const now = Date.now();
-      elapsedSeconds = elapsedSecondsSince(begun, now);
-      waiting = setTimeout(tick, millisecondsUntilNextSecond(begun, now));
-    };
-    tick();
-    return () => clearTimeout(waiting);
-  });
 </script>
 
 {#if visible}
@@ -115,21 +96,7 @@
     data-conversation-turn-stopped={stopped ? "true" : undefined}
     data-conversation-turn-expanded={expanded ? "true" : "false"}
   >
-    {#if foldVisible && onToggle}
-      <button
-        type="button"
-        class="c2-turn-fold"
-        data-conversation-turn-fold
-        aria-expanded={expanded}
-        onclick={onToggle}
-      >
-        <span data-conversation-turn-label>{foldLabel}</span>
-        {#if expanded}
-          <span class="c2-turn-count" data-conversation-turn-count>{countLabel}</span>
-        {/if}
-        <span aria-hidden="true" class="c2-turn-chevron" class:is-open={expanded}>›</span>
-      </button>
-    {:else if settled && (!stopped || foldVisible)}
+    {#if settled && (!stopped || foldVisible)}
       <!-- Nothing is folded in this presentation, so there is nothing to open. The head
            stays where it has been since the turn began. It is the same line that was
            counting a moment ago, and a line that removes itself when a turn ends moves
@@ -144,17 +111,17 @@
     {:else if !settled}
       <div
         class="c2-alive"
-        class:is-fresh={fresh}
+        class:is-fresh={fresh && !activityUncertain}
         data-conversation-alive
-        data-conversation-alive-fresh={fresh ? "true" : "false"}
+        data-conversation-alive-fresh={fresh && !activityUncertain ? "true" : "false"}
         role="status"
       >
         <span
           class="c2-alive-word"
-          class:live-text-shimmer={fresh}
+          class:live-text-shimmer={fresh && !activityUncertain}
           data-conversation-alive-word
         >
-          {workingSentence(elapsedSeconds)}
+          {activityUncertain ? "Current activity on this machine is unknown." : workingSentence(elapsed.seconds)}
         </span>
       </div>
     {/if}
@@ -203,13 +170,4 @@
   /* Same line, same place, nothing to open: it keeps the geometry and drops the affordance. */
   .c2-turn-settled { cursor: default; }
   .c2-turn-settled:hover { color: var(--text-faintest); background: transparent; }
-  .c2-turn-count { color: var(--text-faintest); }
-  .c2-turn-chevron {
-    display: inline-block;
-    transition: transform var(--motion-fast) var(--motion-ease);
-  }
-  .c2-turn-chevron.is-open { transform: rotate(90deg); }
-  @media (prefers-reduced-motion: reduce) {
-    .c2-turn-chevron { transition: none; }
-  }
 </style>

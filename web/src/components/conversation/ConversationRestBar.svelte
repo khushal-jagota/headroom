@@ -1,195 +1,65 @@
 <script lang="ts">
-  /** The line above the composer at rest.
-   *
-   * One line, and at rest it is the whole of the conversation that is on the screen. The
-   * job it exists for is the loud one: nothing in this design opens itself, so a
-   * permission ask that is waiting shows here or the person never learns about it at all.
-   * The waiting request stays in the line's text. Circular attention dots are reserved
-   * for direct messages in the exact conversation.
-   *
-   * The rest of the time it is as quiet as the turn head it is made of: the same mono
-   * line, counting the same seconds off the same instant, so moving the conversation
-   * between its states never changes what the number says.
-   */
-  import {
-    elapsedSecondsSince,
-    formatDuration,
-    millisecondsUntilNextSecond
-  } from "../../lib/conversation/transcript";
-  import type { RestLine } from "../../lib/conversation/restLine";
-  import TaskProgress from "./TaskProgress.svelte";
-
-  let { line }: { line: RestLine | null } = $props();
-
-  /** The one thing on this line that changes on its own. Nothing else is touched by a
-   *  tick, and the line is redrawn from the record as the record changes. */
-  let elapsedSeconds = $state<number | null>(null);
-  // Held apart from the line itself so a record that changed under a running turn does
-  // not restart the counting.
-  let workingSince = $derived(line?.workingSinceUnixMilliseconds ?? null);
-
-  $effect(() => {
-    const begun = workingSince;
-    if (begun === null) {
-      elapsedSeconds = null;
-      return;
-    }
-    let waiting: ReturnType<typeof setTimeout> | undefined;
-    // Each tick is aimed at the next whole second since the turn began, and the number is
-    // worked out from that instant every time — so nothing drifts and nothing accumulates.
-    const tick = (): void => {
-      const now = Date.now();
-      elapsedSeconds = elapsedSecondsSince(begun, now);
-      waiting = setTimeout(tick, millisecondsUntilNextSecond(begun, now));
-    };
-    tick();
-    return () => clearTimeout(waiting);
-  });
+  import { elapsedTurnTime } from "../../lib/conversation/elapsedTime.svelte";
+  import { formatDuration } from "../../lib/conversation/transcript";
+  /** Activity and the unread preview belong to the conversation surface.
+   * Delivery and request feedback remains independent of the control that opens it. */
+  let { preview = null, roleLabel = "Worker", activityKnown = true, connectionTrouble = false,
+    running = false, startedAtUnixMilliseconds = null, backgroundWork = null, feedback = null, onOpen }: { preview?: string | null;
+    roleLabel?: "Worker" | "Manager" | "Chief" | "Goal"; activityKnown?: boolean; connectionTrouble?: boolean;
+    running?: boolean; startedAtUnixMilliseconds?: number | null; backgroundWork?: string | null; feedback?: string | null; onOpen: () => void } = $props();
+  const elapsed = elapsedTurnTime(() => running ? startedAtUnixMilliseconds : null);
+  let activity = $derived(running ? elapsed.seconds === null ? "Working" : `Working · ${formatDuration(elapsed.seconds)}` : backgroundWork ?? (activityKnown ? `${roleLabel} idle` : null));
 </script>
 
-<div class="c2-rest" class:is-waiting={line?.waiting ?? false} data-conversation-rest-bar>
-  {#if line}
-    <!-- Running and failed turns keep their status shapes. Questions stay in the text;
-         only a direct message creates a conversation attention mark. -->
-    {#if line.marks.running || line.marks.unreadReply || line.marks.failed}
-    <span class="c2-marks" data-conversation-rest-marks>
-      {#if line.marks.running}
-        <span
-          class="c2-mark c2-mark--running"
-          data-conversation-mark="running"
-          role="img"
-          aria-label="working"
-        ></span>
-      {/if}
-      {#if line.marks.unreadReply}
-        <span
-          class="c2-mark c2-mark--reply"
-          data-conversation-mark="reply"
-          role="img"
-          aria-label="a reply you have not read"
-        ></span>
-      {/if}
-      {#if line.marks.failed}
-        <span
-          class="c2-mark c2-mark--failed"
-          data-conversation-mark="failed"
-          role="img"
-          aria-label="the turn failed"
-        ></span>
-      {/if}
+<!-- The composer's status line, where staging placed it: above the composer, what the agent is
+     doing on the left and the way to open the conversation at the right (its 32px target on the
+     composer's right edge), the latest unread message under them (as staging: no dot here). -->
+<button type="button" class="c2-rest" data-conversation-rest-bar data-conversation-expand data-conversation-state-control
+  aria-label="Open the conversation full height" title="Open the conversation full height" onclick={onOpen}>
+  <span class="c2-rest-status">
+    <span class="c2-rest-activity">
+      {#if running || backgroundWork}<span class="c2-mark--running" aria-label="working"></span>{/if}
+      {#if connectionTrouble}<span class="chat-conn-dot" role="img" aria-label="Connection trouble"></span>{/if}
+      {#if activity}<span data-conversation-rest-line>{activity}</span>{/if}
     </span>
-    {/if}
-    {#if line.taskProgress}
-      <TaskProgress progress={line.taskProgress} variant="rest" />
-    {:else if workingSince !== null}
-      <span class="c2-rest-working">{formatDuration(elapsedSeconds ?? 0)}</span>
-      <span class="c2-rest-seam" aria-hidden="true">·</span>
-    {/if}
-    {#if line.who}
-      <span class="c2-rest-who" data-conversation-rest-who>{line.who}</span>
-    {/if}
-    <span class="c2-rest-line" data-conversation-rest-line>{line.text}</span>
-    {#if line.taskProgress && elapsedSeconds !== null}
-      <span class="c2-rest-aside" data-conversation-rest-aside>{formatDuration(elapsedSeconds)}</span>
-    {:else if line.aside}
-      <span class="c2-rest-aside" data-conversation-rest-aside>{line.aside}</span>
-    {/if}
-  {/if}
-</div>
+    <span class="c2-rest-control" aria-hidden="true">
+      <svg viewBox="0 0 24 24"><path d="M12 19V5M5 12l7-7 7 7" /></svg>
+    </span>
+  </span>
+  {#if preview}<span class="c2-rest-preview" data-conversation-unread-preview>{preview}</span>{/if}
+</button>
+{#if feedback}<div class="c2-rest-feedback" role="status" data-conversation-dock-feedback>{feedback}</div>{/if}
 
 <style>
-  /* The same mono line the turn head is, because at rest it is standing in for it. */
-  /* The top of the composer's own card, not a bar above it. It carries the card's sides
-     and its rounded top, sits on the page's colour rather than the recessed one the input
-     uses, and rests flush on the box below — whose own top edge is the line between them,
-     which is why that edge is squared off and no rule is drawn here. */
-  .c2-rest {
-    display: flex;
-    align-items: center;
-    gap: var(--space-3);
-    min-width: 0;
-    max-width: 100%;
-    /* Inside the card, above the line. It draws nothing of its own: the card carries the
-       surface and the outline, and the line beneath is the well's own top edge. */
-    padding: var(--space-3) 0;
-    /* Quiet by default. What the line is for is the exception it carries — the words
-       themselves stay bright below; the name, the clock and the seam around them do not
-       compete with the message. Faint is 7.3 to one on the card's plane, well clear of the
-       readability floor. */
-    color: var(--text-faint);
-    font-family: var(--font-mono);
-    /* The app's smallest step. The design put this line one step up, and built that way it
-       read as a heading over the conversation rather than a status under it. The owner asked
-       for it smaller after seeing it, and that is the size on the screen now: an intentional
-       refinement of the artifact, not a misreading of it. */
-    font-size: var(--type-xs);
-    line-height: 1.5;
-    min-block-size: calc(1.5em + var(--space-3) + var(--space-3));
-    letter-spacing: var(--tracking-mono);
-  }
-  /* The marks sit together at the head of the line and keep their own order, so a
-     conversation that gains one does not move the words beside it. */
-  .c2-marks {
-    flex: none;
-    display: inline-flex;
-    align-items: center;
-    gap: var(--space-2);
-  }
-  .c2-mark { flex: none; display: block; }
-  /* Working: the turn head's own spinner, at the size of the line. The design draws these
-     against a 13px line; this line is a step below that on the owner's direction, so the
-     marks keep the size they are drawn at rather than growing past the words. */
-  .c2-mark--running {
-    width: 11px;
-    height: 11px;
-    border-radius: var(--radius-pill);
-    border: 1.5px solid rgba(230, 210, 175, 0.18);
-    border-top-color: var(--text-muted);
-    animation: c2-mark-spin 900ms linear infinite;
-  }
-  @keyframes c2-mark-spin { to { transform: rotate(360deg); } }
-  /* A reply nobody has read: the accent the app already means "there is something here"
-     by, pointed at the conversation. */
-  .c2-mark--reply {
-    width: 0;
-    height: 0;
-    border-style: solid;
-    border-width: 5px 0 5px 7px;
-    border-color: transparent transparent transparent var(--accent-bright);
-  }
-  /* A turn that failed, in the app's own error colour and its own shape. */
-  .c2-mark--failed {
-    width: 9px;
-    height: 9px;
-    border-radius: var(--radius-sm);
-    background: var(--accent-error);
-    transform: rotate(45deg);
-  }
-  @media (prefers-reduced-motion: reduce) {
-    .c2-mark--running { animation: none; }
-  }
-  .c2-rest-working {
-    flex: none;
-    font-variant-numeric: tabular-nums;
-  }
-  .c2-rest-seam { flex: none; color: var(--text-faintest); }
-  .c2-rest-who { flex: none; }
-  .c2-rest-who::after { content: "·"; padding-inline-start: var(--space-1); }
-  /* One line whatever is in it: what will not fit is cut here rather than wrapping the
-     bar into two rows and moving the composer down the page. */
-  .c2-rest-line {
-    flex: 1;
-    min-width: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    color: var(--text-strong);
-  }
-  .c2-rest-aside {
-    flex: none;
-    font-variant-numeric: tabular-nums;
-  }
-  /* Being waited on is not a state to read past: what is being asked comes up to the
-     brightest text in the scale, beside the accent that says it needs answering. */
-  .c2-rest.is-waiting .c2-rest-line { color: var(--text-strong); }
+  /* Staging's status line in the page's tokens: Small print in the tertiary tone, a 32px row
+     over the composer with the open arrow's 32px target at its right end, and the unread
+     message under it in Body, the secondary tone, at most three lines. It stands tight under
+     the page's line and 8px over the composer (owner: no dead space above the composer). */
+  .c2-rest { display:flex; flex:none; flex-direction:column; align-items:stretch; gap:var(--space-1);
+    width:100%; min-width:0; min-height:calc(var(--conversation-target) + var(--space-2));
+    border:0; padding:0 0 var(--space-2); background:transparent; color:var(--tone-tertiary);
+    text-align:left; cursor:pointer; font-family:var(--font-ui); font-size:var(--type-small); line-height:18px; font-weight:var(--weight-small); font-variant-numeric:tabular-nums; }
+  .c2-rest-status { display:flex; align-items:center; justify-content:space-between; gap:var(--space-3);
+    min-width:0; min-height:var(--conversation-target); }
+  .c2-rest-activity { display:flex; align-items:center; gap:var(--space-2); min-width:0; }
+  [data-conversation-rest-line] { overflow:hidden; white-space:nowrap; text-overflow:ellipsis; }
+  /* The arrow alone answers dock hover and the line's focus; its 32px backing ends on the
+     composer's right edge. */
+  .c2-rest-control { display:grid; place-items:center; width:var(--conversation-target); height:var(--conversation-target);
+    flex:none; border-radius:var(--radius-pill); color:var(--tone-secondary); background-color:transparent;
+    transition:color var(--motion-base) var(--motion-ease), background-color var(--motion-base) var(--motion-ease); }
+  .c2-rest:hover .c2-rest-control, :global([data-conversation-dock-hover]) .c2-rest-control, .c2-rest:focus-visible .c2-rest-control {
+    color:var(--tone-strong); background-color:var(--wash-hover); }
+  .c2-rest-control svg { width:calc(var(--conversation-glyph) - var(--space-2)); height:calc(var(--conversation-glyph) - var(--space-2));
+    fill:none; stroke:currentColor; stroke-width:1.5; stroke-linecap:round; stroke-linejoin:round; }
+  .c2-rest:focus-visible { outline:var(--focus-width) solid var(--focus-ring); outline-offset:var(--space-1); border-radius:var(--radius-sm); }
+  /* The unread message under the status line keeps the prose measure, never the pane's width. */
+  .c2-rest-preview { max-width:var(--page-prose-measure); display:-webkit-box; -webkit-box-orient:vertical; -webkit-line-clamp:3; line-clamp:3; overflow:hidden;
+    white-space:normal; color:var(--tone-secondary); font:var(--weight-body) var(--type-body)/var(--leading-body) var(--font-ui); }
+  .c2-rest-feedback { flex:none; padding-bottom:var(--space-2); color:var(--tone-tertiary); font:var(--weight-small) var(--type-small)/18px var(--font-ui); }
+  .c2-mark--running { flex:none; width:calc(var(--space-2) + var(--border-strong)); height:calc(var(--space-2) + var(--border-strong));
+    border-radius:var(--radius-pill); border:1.5px solid var(--tone-tertiary); border-top-color:var(--tone-secondary);
+    animation:spin var(--motion-loop-spin) linear infinite; }
+  @keyframes spin { to { transform:rotate(360deg); } }
+  @media (prefers-reduced-motion:reduce) { .c2-mark--running { animation:none; } .c2-rest-control { transition:none; } }
 </style>

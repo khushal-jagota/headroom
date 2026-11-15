@@ -18,6 +18,10 @@ already knows how to answer.
 
 Nothing here makes a conversation on its own. One made and not spoken into is one nobody
 can see and nobody can send from, which is what a separate start door left behind.
+
+Every database operation runs on a worker thread through ``run_on_worker_thread``.
+Reads also consume synchronous SQLite time. Link locks and conversation calls stay
+on the event loop. A database step under a link lock stays there.
 """
 
 from __future__ import annotations
@@ -26,23 +30,25 @@ import asyncio
 import json
 import sqlite3
 from collections.abc import Collection
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Final
 from uuid import uuid4
 from weakref import WeakValueDictionary
 
-from planner.conversation.backend_state import require_enabled_model
+from planner.conversation.backend_state import require_usable_model
 from planner.conversation.contracts import (
-    AddressedPromptDeliveryReceipt,
     ConversationBackendKey,
     ConversationMessageContent,
     ConversationStartRequest,
     ConversationSystem,
+    NativeMessageOperation,
     PromptDeliveryFate,
     PromptDeliveryMode,
+    PromptDeliveryRefusalReason,
     PromptDeliveryRefused,
     PromptDeliveryStarted,
+    WorkspacePathPolicy,
 )
 from planner.conversation.logic.conversation_start_resolution import (
     resolve_conversation_start_request,
@@ -51,6 +57,11 @@ from planner.conversation.message_content import MessageContent
 from planner.conversation.storage import ensure_started_conversation_record
 from planner.core.contracts import Principal
 from planner.core.errors import ErrorCode, PlannerError
+from planner.core.task_settlement import run_on_worker_thread
+from planner.files.lifecycle import database_path
+from planner.files.logic.paths import chief_files_root, manager_files_root, ticket_files_root
+from planner.machines.contracts import HOME_MACHINE_ID
+from planner.machines.data import read_machine
 from planner.projects import data as projects_data
 from planner.runtime.logic.conversation_start_resolution import (
     NO_CONVERSATION_START_OVERRIDES,
@@ -58,21 +69,25 @@ from planner.runtime.logic.conversation_start_resolution import (
     ConversationStartOverrides,
     ConversationStartValues,
     resolve_agent_conversation_start,
-    resolve_sprint_item_supervisor_conversation_start,
+    resolve_manager_conversation_start,
     resolve_worker_conversation_start,
 )
+from planner.runtime.workspaces import workspace_root_for_connection
+from planner.ticket_workspaces.contracts import WorkspaceIdentity
 from planner.tickets import data as tickets_data
 from planner.tickets import locale_configuration
-from planner.tickets.contracts import Ticket
+from planner.tickets.contracts import Ticket, TicketLocale
 from planner.worker_settings.service import (
+    CHIEF_SETTINGS_KEY,
     read_chief_settings,
     read_worker_launch_defaults_for_ticket_creation,
 )
 from planner.worker_types.configuration import configured_worker_type_registry
+from planner.worker_types.guidance import render_workflow_guide
 from planner.worker_types.registry import WorkerTypeRegistry
 
 if TYPE_CHECKING:
-    from planner.sprints.contracts import SprintItem
+    from planner.managers.contracts import Manager
 
 CONVERSATION_ID_PREFIX: Final = "conv_"
 
@@ -95,8 +110,8 @@ async def _message_content_for(
     return await content(conversation_id) if callable(content) else content
 
 
-def _default_workspace_folder() -> Path:
-    """The folder an agent runs in, from the server module that owns application paths.
+def _default_workspace_folder(conn: sqlite3.Connection) -> Path:
+    """The application's registered workspace, or the unchanged host default.
 
     Imported at call time rather than at module level: the server module reaches this
     package through the Ticket routes, so a top-level import here would run while the
@@ -104,7 +119,18 @@ def _default_workspace_folder() -> Path:
     """
     from planner.core.server import resolve_worker_workspace_root
 
-    return resolve_worker_workspace_root()
+    configured = workspace_root_for_connection(conn)
+    return configured if configured is not None else resolve_worker_workspace_root()
+
+
+def chief_home_folder(conn: sqlite3.Connection) -> Path:
+    """The Chief's own folder, which its conversation starts in unless told otherwise."""
+    return chief_files_root(database_path(conn))
+
+
+def manager_home_folder(conn: sqlite3.Connection, manager_id: str) -> Path:
+    """A Manager's own folder: its files folder, beside the ``artifacts/`` the owner sees."""
+    return manager_files_root(database_path(conn)) / manager_id
 
 
 def new_conversation_id() -> str:
@@ -135,14 +161,27 @@ def worker_resolve(
     registry = worker_type_registry
     if registry is None:
         registry = configured_worker_type_registry()
-    launch_defaults = read_worker_launch_defaults_for_ticket_creation(registry, ticket.worker_type)
-    values = resolve_worker_conversation_start(
-        ticket_id=ticket.id,
-        worker_type_launch_defaults=ConversationStartConfiguration(
+    if ticket.employee_launch_model is not None:
+        defaults_configuration = ConversationStartConfiguration(
+            backend_key=ConversationBackendKey(ticket.employee_backend),
+            model=ticket.employee_launch_model,
+            reasoning_effort=ticket.employee_launch_reasoning_effort,
+        )
+    else:
+        if ticket.worker_type is None:
+            raise PlannerError(ErrorCode.validation, "custom Ticket requires a launch model")
+        launch_defaults = read_worker_launch_defaults_for_ticket_creation(
+            registry, ticket.worker_type
+        )
+        defaults_configuration = ConversationStartConfiguration(
             backend_key=ConversationBackendKey(launch_defaults.employee_backend),
             model=launch_defaults.employee_launch_model,
             reasoning_effort=launch_defaults.employee_launch_reasoning_effort,
-        ),
+        )
+    selected_workspace, workspace_policy = _worker_workspace(conn, ticket, workspace_folder)
+    values = resolve_worker_conversation_start(
+        ticket_id=ticket.id,
+        worker_type_launch_defaults=defaults_configuration,
         ticket_last_chosen=(
             None
             if ticket.employee_launch_model is None
@@ -153,23 +192,94 @@ def worker_resolve(
             )
         ),
         overrides=overrides,
-        workspace_folder=_worker_workspace_folder(conn, ticket, workspace_folder),
+        workspace_folder=selected_workspace,
+        workspace_path_policy=workspace_policy,
     )
+    values = replace(
+        values,
+        role_materials=replace(
+            values.role_materials,
+            identity_environment_variables=values.role_materials.identity_environment_variables
+            + (("PLAN_TICKET_WORKSPACE_MANAGED", "1"),),
+            role_text=values.role_materials.role_text
+            + "\n\n[Ticket workflow guidance]\n"
+            + render_workflow_guide(ticket.workflow)
+            + "\n[/Ticket workflow guidance]"
+            + "\n\n[Ticket machine]\n"
+            + f"This Ticket runs on {read_machine(conn, ticket.machine_id).name}. "
+            + f"Its fixed destination is {ticket.machine_id}. "
+            + "A rename never changes this destination.\n[/Ticket machine]",
+        ),
+    )
+    if ticket.machine_id == HOME_MACHINE_ID:
+        artifact_folder = ticket_files_root(database_path(conn)) / ticket.id / "artifacts"
+        values = replace(
+            values,
+            role_materials=replace(
+                values.role_materials,
+                role_text=values.role_materials.role_text
+                + "\n\n[Panels-owned Ticket workspace]\n"
+                + f"Panels supplies this worktree: {selected_workspace}. "
+                + f"Put reviewable output in {artifact_folder}. "
+                + "Follow the repository setup instructions and install dependencies yourself. "
+                + "Use this worktree for code, dependencies, and scratch. "
+                + "Do not create or remove worktrees. Workers commit, push, open PRs, and merge "
+                + "through the approved repository route. Stop the processes you start. "
+                + "Panels removes the full Ticket folder seven days after the Ticket ends, "
+                + "unless unpublished work or a failed safety check prevents removal. "
+                + "This workspace instruction supersedes older instructions to create or "
+                + "remove your own worktree.\n[/Panels-owned Ticket workspace]",
+            ),
+        )
     if ticket.employee_launch_model is None or overrides.model is not None:
-        require_enabled_model(conn, values.backend_key, values.model)
+        require_usable_model(conn, values.backend_key, values.model, ticket.machine_id)
     return values
 
 
-def _worker_workspace_folder(
+def _worker_workspace(
     conn: sqlite3.Connection, ticket: Ticket, explicit: Path | None
-) -> Path:
+) -> tuple[Path, WorkspacePathPolicy]:
+    read_machine(conn, ticket.machine_id)
+    if ticket.machine_id != HOME_MACHINE_ID:
+        # Each executor resolves its own repository and Ticket root.
+        return workspace_for_project(conn, TicketLocale.macos, ticket.project_id, explicit=explicit)
+    return (
+        ticket_files_root(database_path(conn)) / ticket.id / "worktree",
+        WorkspacePathPolicy.home_relative,
+    )
+
+
+def workspace_for_project(
+    conn: sqlite3.Connection,
+    locale: TicketLocale,
+    project_id: str | None,
+    *,
+    explicit: Path | None = None,
+) -> tuple[Path, WorkspacePathPolicy]:
+    """Choose one start folder for both drafts and real starts.
+
+    An explicit folder wins. A Mac Ticket otherwise starts in the Mac's own workspace:
+    the Project's folder there when it has a Project, the workspace itself when not.
+    The server's Project path never goes to the Mac.
+    """
     if explicit is not None:
-        return explicit
-    if ticket.project_id is not None:
-        project_folder = projects_data.read_project(conn, ticket.project_id).folder_path
+        if locale == TicketLocale.macos:
+            return explicit, WorkspacePathPolicy.absolute
+        return explicit, WorkspacePathPolicy.home_relative
+    if locale == TicketLocale.macos:
+        if project_id is not None:
+            return mac_project_workspace_folder(project_id), WorkspacePathPolicy.executor_default
+        return Path("/"), WorkspacePathPolicy.executor_default
+    if project_id is not None:
+        project_folder = projects_data.read_project(conn, project_id).folder_path
         if project_folder is not None and project_folder.is_dir():
-            return project_folder.resolve(strict=False)
-    return _default_workspace_folder()
+            return project_folder.resolve(strict=False), WorkspacePathPolicy.home_relative
+    return _default_workspace_folder(conn), WorkspacePathPolicy.home_relative
+
+
+def mac_project_workspace_folder(project_id: str) -> Path:
+    """A Project's folder inside the Mac workspace, written with that workspace as ``/``."""
+    return Path("/") / "projects" / project_id
 
 
 def agent_resolve(
@@ -191,23 +301,23 @@ def agent_resolve(
             reasoning_effort=launch_defaults.employee_launch_reasoning_effort,
         ),
         overrides=overrides,
-        workspace_folder=(
-            _default_workspace_folder() if workspace_folder is None else workspace_folder
-        ),
+        workspace_folder=chief_home_folder(conn) if workspace_folder is None else workspace_folder,
+        shared_workspace_folder=_default_workspace_folder(conn),
     )
-    require_enabled_model(conn, values.backend_key, values.model)
+    require_usable_model(conn, values.backend_key, values.model, TicketLocale.vps)
     return values
 
 
-def sprint_item_supervisor_resolve(
-    item: SprintItem,
+def manager_resolve(
+    conn: sqlite3.Connection,
+    item: Manager,
     overrides: ConversationStartOverrides = NO_CONVERSATION_START_OVERRIDES,
     *,
     workspace_folder: Path | None = None,
 ) -> ConversationStartValues:
-    launch = item.supervisor_launch_configuration
-    return resolve_sprint_item_supervisor_conversation_start(
-        sprint_item_id=item.id,
+    launch = item.manager_launch_configuration
+    values = resolve_manager_conversation_start(
+        manager_id=item.id,
         launch_configuration=ConversationStartConfiguration(
             backend_key=launch.employee_backend,
             model=launch.employee_launch_model,
@@ -215,9 +325,12 @@ def sprint_item_supervisor_resolve(
         ),
         overrides=overrides,
         workspace_folder=(
-            _default_workspace_folder() if workspace_folder is None else workspace_folder
+            manager_home_folder(conn, item.id) if workspace_folder is None else workspace_folder
         ),
+        shared_workspace_folder=_default_workspace_folder(conn),
     )
+
+    return values
 
 
 @dataclass(frozen=True, slots=True)
@@ -257,6 +370,36 @@ async def start_ticket_conversation(
     conversation that will never be spoken into, which is the whole of what this rule is
     against.
     """
+    identity: WorkspaceIdentity | None = None
+    if ticket.machine_id == HOME_MACHINE_ID:
+        from planner.ticket_workspaces.filesystem import prepare_workspace, workspace_identity
+
+        def preparation_paths() -> tuple[Path, Path | None]:
+            project_folder = (
+                projects_data.read_project(conn, ticket.project_id).folder_path
+                if ticket.project_id is not None
+                else None
+            )
+            return ticket_files_root(database_path(conn)) / ticket.id, project_folder
+
+        ticket_folder, project_folder = await run_on_worker_thread(preparation_paths)
+        import subprocess
+
+        try:
+            workspace = await asyncio.to_thread(
+                prepare_workspace,
+                ticket_folder,
+                project_folder,
+                ticket.id,
+            )
+        except (OSError, RuntimeError, ValueError, subprocess.TimeoutExpired) as exc:
+            raise PlannerError(
+                ErrorCode.validation,
+                f"Cannot prepare the Ticket workspace: {exc}",
+                {"ticket_id": ticket.id},
+            ) from exc
+        values = replace(values, workspace_folder=workspace)
+        identity = await run_on_worker_thread(workspace_identity, ticket_folder)
     request = ConversationStartRequest(
         conversation_id=conversation_id,
         backend_key=values.backend_key,
@@ -264,30 +407,13 @@ async def start_ticket_conversation(
         reasoning_effort=values.reasoning_effort,
         role_materials=values.role_materials,
         workspace_folder=values.workspace_folder,
+        workspace_path_policy=values.workspace_path_policy,
         access=values.access,
     )
     await system.start_conversation(request)
     try:
-        ensure_started_conversation_record(
-            conn, resolve_conversation_start_request(request), created_at=now
-        )
-        actual_start = conn.execute(
-            "SELECT model,reasoning_effort FROM conversations WHERE conversation_id=?",
-            (conversation_id,),
-        ).fetchone()
-        linked = tickets_data.write_ticket_conversation_start(
-            conn,
-            ticket.id,
-            conversation_id=conversation_id,
-            expected_configuration=tickets_data.employee_launch_configuration(ticket),
-            backend=values.backend_key.value,
-            model=values.model if actual_start is None else actual_start["model"],
-            reasoning_effort=(
-                values.reasoning_effort
-                if actual_start is None
-                else actual_start["reasoning_effort"]
-            ),
-            now=now,
+        linked = await run_on_worker_thread(
+            _record_and_link_ticket_conversation, conn, ticket.id, request, values, now, identity
         )
     except BaseException as start_error:
         try:
@@ -303,6 +429,54 @@ async def start_ticket_conversation(
     return LinkedConversation(conversation_id=now_in, made_here=now_in == conversation_id)
 
 
+def _record_and_link_ticket_conversation(
+    conn: sqlite3.Connection,
+    ticket_id: str,
+    request: ConversationStartRequest,
+    values: ConversationStartValues,
+    now: int,
+    identity: WorkspaceIdentity | None = None,
+) -> Ticket:
+    """Atomically validate the record, link the Ticket, and register its prepared folder."""
+    with conn:
+        return _record_and_link_ticket_conversation_in_transaction(
+            conn, ticket_id, request, values, now, identity
+        )
+
+
+def _record_and_link_ticket_conversation_in_transaction(
+    conn: sqlite3.Connection,
+    ticket_id: str,
+    request: ConversationStartRequest,
+    values: ConversationStartValues,
+    now: int,
+    identity: WorkspaceIdentity | None,
+) -> Ticket:
+    ensure_started_conversation_record(
+        conn, resolve_conversation_start_request(request), created_at=now
+    )
+    actual_start = conn.execute(
+        "SELECT model,reasoning_effort FROM conversations WHERE conversation_id=?",
+        (request.conversation_id,),
+    ).fetchone()
+    linked = tickets_data.write_ticket_conversation_start(
+        conn,
+        ticket_id,
+        conversation_id=request.conversation_id,
+        backend=values.backend_key.value,
+        model=values.model if actual_start is None else actual_start["model"],
+        reasoning_effort=(
+            values.reasoning_effort if actual_start is None else actual_start["reasoning_effort"]
+        ),
+        now=now,
+    )
+    if identity is not None:
+        from planner.ticket_workspaces.data import register_workspace
+
+        register_workspace(conn, ticket_id, request.conversation_id, identity)
+    return linked
+
+
 @dataclass(frozen=True, slots=True)
 class DeliveredMessage:
     """What happened to a message, and which conversation it happened in.
@@ -314,56 +488,6 @@ class DeliveredMessage:
 
     conversation_id: str | None
     fate: PromptDeliveryFate
-    newly_accepted: bool = True
-
-
-async def _send_with_addressed_receipt(
-    system: ConversationSystem,
-    conversation_id: str,
-    content: MessageContent,
-    *,
-    sender_label: str,
-    mode: PromptDeliveryMode,
-    model_change: str | None = None,
-    reasoning_effort_change: str | None = None,
-    sender_message_id: str | None,
-    sent_at_unix_milliseconds: int | None,
-    sender: Principal | None,
-    recipient: Principal | None,
-    reply_requested: bool,
-    record_refusal: bool = False,
-) -> AddressedPromptDeliveryReceipt:
-    """Use the internal freshness receipt only for an addressed employee send."""
-    if sender is not None and recipient is not None:
-        refusal_options = {"record_refusal": True} if record_refusal else {}
-        return await system.send_with_receipt(
-            conversation_id,
-            content,
-            sender_label=sender_label,
-            mode=mode,
-            model_change=model_change,
-            reasoning_effort_change=reasoning_effort_change,
-            sender_message_id=sender_message_id,
-            sent_at_unix_milliseconds=sent_at_unix_milliseconds,
-            sender=sender,
-            recipient=recipient,
-            reply_requested=reply_requested,
-            **refusal_options,
-        )
-    fate = await system.send(
-        conversation_id,
-        content,
-        sender_label=sender_label,
-        mode=mode,
-        model_change=model_change,
-        reasoning_effort_change=reasoning_effort_change,
-        sender_message_id=sender_message_id,
-        sent_at_unix_milliseconds=sent_at_unix_milliseconds,
-    )
-    return AddressedPromptDeliveryReceipt(
-        fate=fate,
-        newly_accepted=not isinstance(fate, PromptDeliveryRefused),
-    )
 
 
 async def send_to_ticket_conversation(
@@ -377,13 +501,16 @@ async def send_to_ticket_conversation(
     runs_under: ConversationStartOverrides = NO_CONVERSATION_START_OVERRIDES,
     sender_label: str,
     mode: PromptDeliveryMode = PromptDeliveryMode.queue,
+    owner_read_through_sequence: int | None = None,
     sender_message_id: str | None = None,
     sent_at_unix_milliseconds: int | None = None,
     sender: Principal | None = None,
     recipient: Principal | None = None,
-    reply_requested: bool = True,
     worker_type_registry: WorkerTypeRegistry | None = None,
+    retain_definite_start_refusal: bool = False,
+    workspace_activity_recorded: bool = False,
     now: int,
+    recording_receipt: NativeMessageOperation | None = None,
 ) -> DeliveredMessage:
     """Send a message into this Ticket's conversation, making one if there is none yet.
 
@@ -414,6 +541,8 @@ async def send_to_ticket_conversation(
 
     Creating and delivering are one act. If the delivery does not land, the conversation
     goes with it and the Ticket is left with none, which is the state it was in before.
+    Automatic Worker attempts can opt into retaining a definite backend start failure
+    for explicit recovery. This does not retain other refusals or raised exceptions.
 
     A message carrying a change also updates the Ticket's last-chosen columns, but only
     when the delivery started. A held message applies its change when it later runs, and a
@@ -422,40 +551,48 @@ async def send_to_ticket_conversation(
     went into, so a Ticket pointed at a fresh conversation while the send was out keeps its
     own values.
     """
-    ticket = tickets_data.read_ticket(conn, ticket_id)
-    # This locale refusal is a local instance of the general delivery/readiness problem.
-    # A message must always be deliverable and must never start a step that the readiness
-    # machinery would refuse: deliver and hold, do not start. This guard only protects
-    # local execution. The general runtime fix must decide whether it subsumes this
-    # refusal so that separate admission mechanisms do not disagree.
-    if ticket.locale != locale_configuration.CURRENT_EXECUTION_LOCALE:
-        raise PlannerError(
-            ErrorCode.validation,
-            f"the Ticket locale is {ticket.locale.value}, so it cannot start on "
-            f"this {locale_configuration.CURRENT_EXECUTION_LOCALE.value} machine",
-            {
-                "ticket_id": ticket_id,
-                "locale": ticket.locale.value,
-                "machine_locale": locale_configuration.CURRENT_EXECUTION_LOCALE.value,
-            },
-        )
+
+    def read_deliverable_ticket() -> Ticket:
+        ticket = tickets_data.read_ticket(conn, ticket_id)
+        if not locale_configuration.can_execute_machine(conn, ticket.machine_id):
+            raise PlannerError(
+                ErrorCode.validation,
+                locale_configuration.machine_unavailable_reason(conn, ticket.machine_id),
+                {
+                    "ticket_id": ticket_id,
+                    "locale": ticket.locale.value,
+                    "machine_locale": locale_configuration.CURRENT_EXECUTION_LOCALE.value,
+                },
+            )
+        return ticket
+
+    ticket = await run_on_worker_thread(read_deliverable_ticket)
+    async def record_activity() -> None:
+        if not workspace_activity_recorded:
+            from planner.ticket_workspaces.data import ensure_workspace_activity
+
+            await run_on_worker_thread(ensure_workspace_activity, conn, ticket_id, now)
+
     if conversation_id is None and ticket.conversation_id is None:
+        await record_activity()
         return await _make_a_conversation_and_send_into_it(
             system,
             conn,
             ticket,
             content,
             created_conversation_id=created_conversation_id,
+            retain_definite_start_refusal=retain_definite_start_refusal,
             runs_under=runs_under,
             sender_label=sender_label,
             mode=mode,
+            owner_read_through_sequence=owner_read_through_sequence,
             sender_message_id=sender_message_id,
             sent_at_unix_milliseconds=sent_at_unix_milliseconds,
             sender=sender,
             recipient=recipient,
-            reply_requested=reply_requested,
             worker_type_registry=worker_type_registry,
             now=now,
+            recording_receipt=recording_receipt,
         )
     # The sender had none but the Ticket has gained one — the readiness loop starts
     # conversations too. The message joins it rather than making a second, and what it says
@@ -467,6 +604,7 @@ async def send_to_ticket_conversation(
             "the ticket is not in that conversation",
             {"ticket_id": ticket_id, "conversation_id": conversation_id},
         )
+    await record_activity()
     return await _send_into_the_conversation_the_ticket_is_in(
         system,
         conn,
@@ -476,12 +614,13 @@ async def send_to_ticket_conversation(
         runs_under=runs_under,
         sender_label=sender_label,
         mode=mode,
+        owner_read_through_sequence=owner_read_through_sequence,
         sender_message_id=sender_message_id,
         sent_at_unix_milliseconds=sent_at_unix_milliseconds,
         sender=sender,
         recipient=recipient,
-        reply_requested=reply_requested,
         now=now,
+        recording_receipt=recording_receipt,
     )
 
 
@@ -495,12 +634,13 @@ async def _send_into_the_conversation_the_ticket_is_in(
     runs_under: ConversationStartOverrides,
     sender_label: str,
     mode: PromptDeliveryMode,
+    owner_read_through_sequence: int | None = None,
     sender_message_id: str | None,
     sent_at_unix_milliseconds: int | None,
     sender: Principal | None,
     recipient: Principal | None,
-    reply_requested: bool,
     now: int,
+    recording_receipt: NativeMessageOperation | None = None,
 ) -> DeliveredMessage:
     """Deliver into a conversation that is already there, carrying what it changes.
 
@@ -515,43 +655,93 @@ async def _send_into_the_conversation_the_ticket_is_in(
     own values — and the value it keeps for a field this message did not change is read
     back now rather than taken from before the send, for the same reason.
     """
-    captured_ticket = tickets_data.read_ticket(conn, ticket_id)
-    expected_configuration = tickets_data.employee_launch_configuration(captured_ticket)
-    receipt = await _send_with_addressed_receipt(
-        system,
+    from planner.ticket_workspaces.data import (
+        conversation_workspace_retired,
+    )
+
+    if await run_on_worker_thread(conversation_workspace_retired, conn, sending_into):
+        if await system.is_running(sending_into):
+            raise PlannerError(
+                ErrorCode.already_running, "The retired workspace still has an active conversation"
+            )
+        await system.kill(sending_into)
+        await run_on_worker_thread(
+            tickets_data.clear_ticket_conversation_link,
+            conn,
+            ticket_id,
+            expected_conversation_id=sending_into,
+            now=now,
+        )
+        return await _make_a_conversation_and_send_into_it(
+            system,
+            conn,
+            await run_on_worker_thread(tickets_data.read_ticket, conn, ticket_id),
+            content,
+            runs_under=runs_under,
+            sender_label=sender_label,
+            mode=mode,
+            owner_read_through_sequence=owner_read_through_sequence,
+            sender_message_id=sender_message_id,
+            sent_at_unix_milliseconds=sent_at_unix_milliseconds,
+            sender=sender,
+            recipient=recipient,
+            worker_type_registry=None,
+            now=now,
+            recording_receipt=recording_receipt,
+        )
+    fate = await system.send(
         sending_into,
         content,
         sender_label=sender_label,
         mode=mode,
         model_change=runs_under.model,
         reasoning_effort_change=runs_under.reasoning_effort,
+        reasoning_effort_is_set=runs_under.reasoning_effort_is_set,
+        owner_read_through_sequence=owner_read_through_sequence,
         sender_message_id=sender_message_id,
         sent_at_unix_milliseconds=sent_at_unix_milliseconds,
         sender=sender,
         recipient=recipient,
-        reply_requested=reply_requested,
+        recording_receipt=recording_receipt,
     )
-    fate = receipt.fate
-    carries_a_change = runs_under.model is not None or runs_under.reasoning_effort is not None
-    if carries_a_change and isinstance(fate, PromptDeliveryStarted):
-        ticket = tickets_data.read_ticket(conn, ticket_id)
-        tickets_data.write_ticket_last_chosen_configuration(
+    if isinstance(fate, PromptDeliveryStarted) and (
+        runs_under.model is not None
+        or runs_under.reasoning_effort is not None
+        or runs_under.reasoning_effort_is_set
+    ):
+        await run_on_worker_thread(
+            _record_the_change_a_started_message_carried,
             conn,
             ticket_id,
-            expected_conversation_id=sending_into,
-            expected_configuration=expected_configuration,
-            model=(ticket.employee_launch_model if runs_under.model is None else runs_under.model),
-            reasoning_effort=(
-                ticket.employee_launch_reasoning_effort
-                if runs_under.reasoning_effort is None
-                else runs_under.reasoning_effort
-            ),
-            now=now,
+            sending_into,
+            runs_under,
+            now,
         )
     return DeliveredMessage(
         conversation_id=sending_into,
         fate=fate,
-        newly_accepted=receipt.newly_accepted,
+    )
+
+
+def _record_the_change_a_started_message_carried(
+    conn: sqlite3.Connection,
+    ticket_id: str,
+    sending_into: str,
+    runs_under: ConversationStartOverrides,
+    now: int,
+) -> None:
+    current = tickets_data.read_ticket(conn, ticket_id)
+    tickets_data.write_ticket_last_chosen_configuration(
+        conn,
+        ticket_id,
+        expected_conversation_id=sending_into,
+        model=current.employee_launch_model if runs_under.model is None else runs_under.model,
+        reasoning_effort=(
+            current.employee_launch_reasoning_effort
+            if runs_under.reasoning_effort is None and not runs_under.reasoning_effort_is_set
+            else runs_under.reasoning_effort
+        ),
+        now=now,
     )
 
 
@@ -565,13 +755,15 @@ async def _make_a_conversation_and_send_into_it(
     runs_under: ConversationStartOverrides,
     sender_label: str,
     mode: PromptDeliveryMode,
+    owner_read_through_sequence: int | None = None,
     sender_message_id: str | None,
     sent_at_unix_milliseconds: int | None,
     sender: Principal | None,
     recipient: Principal | None,
-    reply_requested: bool,
     worker_type_registry: WorkerTypeRegistry | None,
+    retain_definite_start_refusal: bool = False,
     now: int,
+    recording_receipt: NativeMessageOperation | None = None,
 ) -> DeliveredMessage:
     """Bring a conversation into being with the message that is its first, or neither.
 
@@ -586,11 +778,14 @@ async def _make_a_conversation_and_send_into_it(
     So the undo is on the way out, not on the answer.
     """
     making = created_conversation_id or new_conversation_id()
+    values = await run_on_worker_thread(
+        worker_resolve, conn, ticket, runs_under, worker_type_registry=worker_type_registry
+    )
     linked = await start_ticket_conversation(
         system,
         conn,
         ticket,
-        worker_resolve(conn, ticket, runs_under, worker_type_registry=worker_type_registry),
+        values,
         conversation_id=making,
         now=now,
     )
@@ -613,34 +808,64 @@ async def _make_a_conversation_and_send_into_it(
             runs_under=runs_under,
             sender_label=sender_label,
             mode=mode,
+            owner_read_through_sequence=owner_read_through_sequence,
             sender_message_id=sender_message_id,
             sent_at_unix_milliseconds=sent_at_unix_milliseconds,
             sender=sender,
             recipient=recipient,
-            reply_requested=reply_requested,
             now=now,
+            recording_receipt=recording_receipt,
         )
     # From here the conversation is this call's own: it was made here, on the values this
     # message says it runs under, so the message has nothing to change and carries none.
     try:
-        receipt = await _send_with_addressed_receipt(
-            system,
+        fate = await system.send(
             making,
             await _message_content_for(content, making),
             sender_label=sender_label,
             mode=mode,
+            model_change=runs_under.model,
+            reasoning_effort_change=runs_under.reasoning_effort,
+            reasoning_effort_is_set=runs_under.reasoning_effort_is_set,
+            owner_read_through_sequence=owner_read_through_sequence,
             sender_message_id=sender_message_id,
             sent_at_unix_milliseconds=sent_at_unix_milliseconds,
             sender=sender,
             recipient=recipient,
-            reply_requested=reply_requested,
+            recording_receipt=recording_receipt,
         )
-        fate = receipt.fate
+        if isinstance(fate, PromptDeliveryStarted):
+            await run_on_worker_thread(
+                tickets_data.write_ticket_last_chosen_configuration,
+                conn,
+                ticket.id,
+                expected_conversation_id=making,
+                employee_backend=values.backend_key.value,
+                model=values.model,
+                reasoning_effort=values.reasoning_effort,
+                now=now,
+            )
+    except asyncio.CancelledError:
+        # The conversation core owns the shielded exchange and its recording.
+        # A departing caller cannot retire that source while acknowledgment is pending.
+        raise
     except BaseException:
         await _let_go_of_a_conversation_that_was_never_spoken_in(
             system, conn, ticket.id, making, now=now
         )
         raise
+    if (
+        isinstance(fate, PromptDeliveryRefused)
+        and retain_definite_start_refusal
+        and fate.refusal_reason
+        in {
+            PromptDeliveryRefusalReason.backend_did_not_start,
+            PromptDeliveryRefusalReason.model_resolution_failed,
+        }
+    ):
+        # This exact conversation holds the refusal for explicit recovery. Do not
+        # relink it: a concurrent reset can already have selected a newer one.
+        return DeliveredMessage(conversation_id=making, fate=fate)
     if isinstance(fate, PromptDeliveryRefused):
         await _let_go_of_a_conversation_that_was_never_spoken_in(
             system, conn, ticket.id, making, now=now
@@ -648,12 +873,10 @@ async def _make_a_conversation_and_send_into_it(
         return DeliveredMessage(
             conversation_id=None,
             fate=fate,
-            newly_accepted=receipt.newly_accepted,
         )
     return DeliveredMessage(
         conversation_id=making,
         fate=fate,
-        newly_accepted=receipt.newly_accepted,
     )
 
 
@@ -667,8 +890,12 @@ async def _let_go_of_a_conversation_that_was_never_spoken_in(
 ) -> None:
     """Undo a conversation whose first message did not land, and only that one."""
     await system.kill(conversation_id)
-    tickets_data.remove_ticket_conversation_start(
-        conn, ticket_id, conversation_id=conversation_id, now=now
+    await run_on_worker_thread(
+        tickets_data.remove_ticket_conversation_start,
+        conn,
+        ticket_id,
+        conversation_id=conversation_id,
+        now=now,
     )
 
 
@@ -709,10 +936,10 @@ def read_agent_conversations(
     return {str(row[0]): str(row[1]) for row in rows}
 
 
-def read_sprint_item_supervisor_conversation_history(
-    conn: sqlite3.Connection, sprint_item_id: str
+def read_manager_conversation_history(
+    conn: sqlite3.Connection, manager_id: str
 ) -> list[dict[str, str | int]]:
-    """Find every durable transcript started under one Sprint Item identity."""
+    """Find every durable transcript started under one Manager identity."""
     rows = conn.execute(
         "SELECT conversation_id,identity_environment_variables,created_at "
         "FROM conversations ORDER BY created_at,conversation_id"
@@ -730,10 +957,7 @@ def read_sprint_item_supervisor_conversation_history(
             for pair in identity
             if isinstance(pair, list) and len(pair) == 2
         }
-        if (
-            values.get("PLAN_ACTOR") != "sprint_item_supervisor"
-            or values.get("PLAN_SPRINT_ITEM_ID") != sprint_item_id
-        ):
+        if values.get("PLAN_ACTOR") != "manager" or values.get("PLAN_MANAGER_ID") != manager_id:
             continue
         history.append(
             {
@@ -751,7 +975,7 @@ async def start_agent_conversation(
     values: ConversationStartValues,
     *,
     conversation_id: str,
-    required_sprint_item_id: str | None = None,
+    required_manager_id: str | None = None,
 ) -> LinkedConversation:
     """Start a conversation for an agent that is not a Ticket, under a minted name.
 
@@ -760,7 +984,19 @@ async def start_agent_conversation(
     that does not exist. The link lands only on an agent that has none, for the reason a
     Ticket's does — an agent has one conversation, and the loser of a race would otherwise
     be left live and unreachable.
+
+    The Chief and a Manager start in a home folder of their own, which does not exist
+    until their first start. It is made here, because a backend refuses to start in a
+    folder that is not there. Any other folder is the caller's, and is left as it is.
     """
+    if agent_key == CHIEF_SETTINGS_KEY:
+        home: Path | None = await run_on_worker_thread(chief_home_folder, conn)
+    elif required_manager_id is not None:
+        home = await run_on_worker_thread(manager_home_folder, conn, required_manager_id)
+    else:
+        home = None
+    if home is not None and values.workspace_folder == home:
+        await run_on_worker_thread(home.mkdir, parents=True, exist_ok=True)
     await system.start_conversation(
         ConversationStartRequest(
             conversation_id=conversation_id,
@@ -769,11 +1005,35 @@ async def start_agent_conversation(
             reasoning_effort=values.reasoning_effort,
             role_materials=values.role_materials,
             workspace_folder=values.workspace_folder,
+            workspace_path_policy=values.workspace_path_policy,
             access=values.access,
         )
     )
+    now_in = await run_on_worker_thread(
+        _link_agent_conversation, conn, agent_key, conversation_id, required_manager_id
+    )
+    if now_in is None:
+        await system.kill(conversation_id)
+        raise PlannerError(
+            ErrorCode.not_found,
+            "Manager no longer exists",
+            {"manager_id": required_manager_id},
+        )
+    return LinkedConversation(conversation_id=now_in, made_here=now_in == conversation_id)
+
+
+def _link_agent_conversation(
+    conn: sqlite3.Connection,
+    agent_key: str,
+    conversation_id: str,
+    required_manager_id: str | None,
+) -> str | None:
+    """Point an agent with no conversation at this one. Returns the one it is now in.
+
+    None means the link was for a Manager that no longer exists, so the agent is in none.
+    """
     with conn:
-        if required_sprint_item_id is None:
+        if required_manager_id is None:
             conn.execute(
                 "INSERT INTO agents (agent_key, conversation_id) VALUES (?, ?) "
                 "ON CONFLICT(agent_key) DO UPDATE SET conversation_id = excluded.conversation_id "
@@ -784,19 +1044,13 @@ async def start_agent_conversation(
             linked = conn.execute(
                 "UPDATE agents SET conversation_id=? WHERE agent_key=? "
                 "AND conversation_id IS NULL AND EXISTS ("
-                "SELECT 1 FROM sprint_items WHERE id=? "
-                "AND 'sprint_item_supervisor_' || id=agents.agent_key)",
-                (conversation_id, agent_key, required_sprint_item_id),
+                "SELECT 1 FROM managers WHERE id=? "
+                "AND 'manager_' || id=agents.agent_key)",
+                (conversation_id, agent_key, required_manager_id),
             )
             if linked.rowcount == 0 and read_agent_conversation(conn, agent_key) is None:
-                await system.kill(conversation_id)
-                raise PlannerError(
-                    ErrorCode.not_found,
-                    "Sprint Item supervisor no longer exists",
-                    {"sprint_item_id": required_sprint_item_id},
-                )
-    now_in = read_agent_conversation(conn, agent_key) or conversation_id
-    return LinkedConversation(conversation_id=now_in, made_here=now_in == conversation_id)
+                return None
+    return read_agent_conversation(conn, agent_key) or conversation_id
 
 
 async def send_to_agent_conversation(
@@ -811,13 +1065,14 @@ async def send_to_agent_conversation(
     runs_under: ConversationStartOverrides = NO_CONVERSATION_START_OVERRIDES,
     sender_label: str,
     mode: PromptDeliveryMode = PromptDeliveryMode.queue,
+    owner_read_through_sequence: int | None = None,
     sender_message_id: str | None = None,
     sent_at_unix_milliseconds: int | None = None,
     sender: Principal | None = None,
     recipient: Principal | None = None,
-    reply_requested: bool = True,
-    required_sprint_item_id: str | None = None,
+    required_manager_id: str | None = None,
     retain_created_conversation: bool = False,
+    recording_receipt: NativeMessageOperation | None = None,
 ) -> DeliveredMessage:
     """Send a message into this agent's conversation, making one if there is none yet.
 
@@ -831,7 +1086,19 @@ async def send_to_agent_conversation(
     Such an agent can receive a message, but Panels cannot invent a role or launch
     configuration to start it.
     """
-    in_now = read_agent_conversation(conn, agent_key)
+    in_now = await run_on_worker_thread(read_agent_conversation, conn, agent_key)
+    if required_manager_id is not None and in_now is not None:
+        from planner.managers.launch_settings import manager_reuse_overrides
+
+        steer_current_turn = mode is PromptDeliveryMode.steer and await system.is_running(in_now)
+        runs_under = await run_on_worker_thread(
+            manager_reuse_overrides,
+            conn,
+            required_manager_id,
+            values,
+            runs_under,
+            steer_current_turn=steer_current_turn,
+        )
     if conversation_id is None and in_now is None:
         if values is None:
             raise PlannerError(
@@ -846,26 +1113,25 @@ async def send_to_agent_conversation(
             agent_key,
             values,
             conversation_id=making,
-            required_sprint_item_id=required_sprint_item_id,
+            required_manager_id=required_manager_id,
         )
         if linked.made_here:
             # Made here, on the values this message says it runs under, so the message has
             # nothing to change and carries none.
             try:
-                receipt = await _send_with_addressed_receipt(
-                    system,
+                fate = await system.send(
                     making,
                     await _message_content_for(content, making),
                     sender_label=sender_label,
                     mode=mode,
+                    owner_read_through_sequence=owner_read_through_sequence,
                     sender_message_id=sender_message_id,
                     sent_at_unix_milliseconds=sent_at_unix_milliseconds,
                     sender=sender,
                     recipient=recipient,
-                    reply_requested=reply_requested,
                     record_refusal=retain_created_conversation,
+                    recording_receipt=recording_receipt,
                 )
-                fate = receipt.fate
             except BaseException:
                 if not retain_created_conversation:
                     await _let_go_of_an_agent_conversation(system, conn, agent_key, making)
@@ -876,12 +1142,10 @@ async def send_to_agent_conversation(
                 return DeliveredMessage(
                     conversation_id=making if retain_created_conversation else None,
                     fate=fate,
-                    newly_accepted=receipt.newly_accepted,
                 )
             return DeliveredMessage(
                 conversation_id=making,
                 fate=fate,
-                newly_accepted=receipt.newly_accepted,
             )
         # The race went the other way. The conversation made here will never be spoken
         # into, so it is let go of, and the message joins the agent's on the ordinary
@@ -895,25 +1159,25 @@ async def send_to_agent_conversation(
             "the agent is not in that conversation",
             {"agent_key": agent_key, "conversation_id": conversation_id},
         )
-    receipt = await _send_with_addressed_receipt(
-        system,
+    fate = await system.send(
         sending_into,
         await _message_content_for(content, sending_into),
         sender_label=sender_label,
         mode=mode,
         model_change=runs_under.model,
         reasoning_effort_change=runs_under.reasoning_effort,
+        reasoning_effort_is_set=runs_under.reasoning_effort_is_set,
+        owner_read_through_sequence=owner_read_through_sequence,
         sender_message_id=sender_message_id,
         sent_at_unix_milliseconds=sent_at_unix_milliseconds,
         sender=sender,
         recipient=recipient,
-        reply_requested=reply_requested,
         record_refusal=retain_created_conversation,
+        recording_receipt=recording_receipt,
     )
     return DeliveredMessage(
         conversation_id=sending_into,
-        fate=receipt.fate,
-        newly_accepted=receipt.newly_accepted,
+        fate=fate,
     )
 
 
@@ -929,6 +1193,13 @@ async def _let_go_of_an_agent_conversation(
     that is pointing at somebody else's — the race went the other way — is left alone.
     """
     await system.kill(conversation_id)
+    await run_on_worker_thread(_unlink_agent_conversation, conn, agent_key, conversation_id)
+
+
+def _unlink_agent_conversation(
+    conn: sqlite3.Connection, agent_key: str, conversation_id: str
+) -> None:
+    """Cut the agent loose from this conversation, and only while it still names it."""
     with conn:
         conn.execute(
             "UPDATE agents SET conversation_id = NULL WHERE agent_key = ? AND conversation_id = ?",
@@ -956,16 +1227,11 @@ async def reset_agent_conversation(
     file removed now would turn a picture somebody sent into a picture nobody can see.
     """
     async with conversation_link_lock(f"agent:{agent_key}"):
-        conversation_id = read_agent_conversation(conn, agent_key)
+        conversation_id = await run_on_worker_thread(read_agent_conversation, conn, agent_key)
         if conversation_id is None:
             return
         await system.kill(conversation_id)
-        with conn:
-            conn.execute(
-                "UPDATE agents SET conversation_id = NULL "
-                "WHERE agent_key = ? AND conversation_id = ?",
-                (agent_key, conversation_id),
-            )
+        await run_on_worker_thread(_unlink_agent_conversation, conn, agent_key, conversation_id)
 
 
 async def reset_ticket_conversation(
@@ -995,11 +1261,14 @@ async def reset_ticket_conversation(
     ``planner.conversation.message_files`` gives: the record still holds those messages.
     """
     async with conversation_link_lock(f"ticket:{ticket_id}"):
-        conversation_id = tickets_data.read_ticket(conn, ticket_id).conversation_id
+        conversation_id = (
+            await run_on_worker_thread(tickets_data.read_ticket, conn, ticket_id)
+        ).conversation_id
         if conversation_id is None:
             return
         await system.kill(conversation_id)
-        tickets_data.clear_ticket_conversation_link(
+        await run_on_worker_thread(
+            tickets_data.clear_ticket_conversation_link,
             conn,
             ticket_id,
             expected_conversation_id=conversation_id,

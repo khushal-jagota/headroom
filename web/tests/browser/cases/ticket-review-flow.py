@@ -1,0 +1,2474 @@
+# ruff: noqa: E501
+"""Ticket and Review interactions, including stale response field suppression."""
+
+
+def run(browser, urls):
+    import runpy
+    from pathlib import Path
+
+
+    fixture = runpy.run_path(
+        str(Path(__file__).resolve().parents[2] / "support/navigation/browser-fixture.py")
+    )
+    navigation_response = fixture["navigation_response"]
+    scoped_navigation_response = fixture["scoped_navigation_response"]
+    import json
+    import os
+    import time
+    from urllib.parse import parse_qs
+
+    from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
+    from playwright.sync_api import expect
+
+    ticket = dict(
+        project_id="project_one",
+        project="One",
+        manager_id="outcome_kept",
+        manager_title="Kept outcome",
+        id="t_review",
+        locale="vps",
+        title="Review ticket",
+        worker_type="coding",
+        employee_backend="codex",
+        employee_launch_model=None,
+        employee_launch_reasoning_effort=None,
+        employee_configuration_editable=False,
+        stage="needs_success_condition",
+        ceiling="needs_success_condition",
+        ticket_status="awaiting_approval",
+        ceiling_holder={"kind": "chief", "id": "chief"},
+        conversation_id=None,
+        conversation_history=[],
+        blocked=False,
+        is_backlogged=False,
+        blocker_summary={"blocked_by": []},
+        recap="Orientation",
+        # A stale response must not reintroduce the retired Ticket field.
+        guidance="Retired guidance sentinel",
+        field_values={"brief": "Request"},
+        pending_proposal={
+            "field": "success_condition",
+            "body": "A result",
+            "proposed_by": "agent",
+            "created_at": 1,
+            "revision": 1,
+        },
+    )
+    stages = [
+        dict(
+            id=s,
+            label=label,
+            gating_field=f,
+            is_terminal=f is None,
+            ownership_mode="worker" if f else None,
+        )
+        for s, label, f in [
+            ("needs_brief", "Kickoff", "brief"),
+            ("needs_success_condition", "Success", "success_condition"),
+            ("done", "Done", None),
+        ]
+    ]
+    personal_stages = [
+        dict(id=s, label=label, gating_field=f, is_terminal=f is None, ownership_mode=o)
+        for s, label, f, o in [
+            ("needs_brief", "Kickoff", "brief", "user"),
+            ("needs_outcome", "Outcome", "outcome", "user"),
+            ("needs_consequences", "Closeout", "consequences", "worker"),
+            ("done", "Done", None, None),
+        ]
+    ]
+    manifest = {
+        "worker_types": [
+            dict(
+                worker_type="coding",
+                label="Coding",
+                stages=stages,
+                advance={
+                    "needs_brief": "needs_success_condition",
+                    "needs_success_condition": "done",
+                },
+                ceiling_range=["needs_brief", "needs_success_condition", "done"],
+                default_ceiling="needs_success_condition",
+                worker_profile_id="panels-worker-coding",
+                default_backend="codex",
+                default_model=None,
+                default_reasoning_effort=None,
+                fields=[
+                    {"id": "brief", "label": "Kickoff"},
+                    {"id": "success_condition", "label": "Success"},
+                ],
+            ),
+            dict(
+                worker_type="personal",
+                label="Personal",
+                stages=personal_stages,
+                advance={
+                    "needs_brief": "needs_outcome",
+                    "needs_outcome": "needs_consequences",
+                    "needs_consequences": "done",
+                },
+                ceiling_range=["needs_brief", "needs_outcome", "needs_consequences", "done"],
+                default_ceiling="needs_brief",
+                worker_profile_id="panels-worker-personal-task",
+                default_backend="codex",
+                default_model=None,
+                default_reasoning_effort=None,
+                fields=[
+                    {"id": "brief", "label": "Kickoff"},
+                    {"id": "outcome", "label": "Outcome"},
+                    {"id": "consequences", "label": "Closeout"},
+                ],
+            ),
+        ]
+    }
+    canonical_worker_types = json.loads(json.dumps(manifest["worker_types"]))
+    worker_detail = {
+        "manifest": manifest["worker_types"][0],
+        "settings": {
+            "worker_type": "coding",
+            "specialist_skill": {
+                "name": "panels-worker-coding",
+                "description": "Coding worker",
+                "markdown_body": "# Coding",
+            },
+            "launch_defaults": {
+                "employee_backend": "codex",
+                "employee_launch_model": None,
+                "employee_launch_reasoning_effort": None,
+            },
+        },
+    }
+    requests = []
+    writes = []
+    placement_writes = []
+    ceiling_writes = []
+    approvals = []
+    backlog_writes = []
+    held_details = []
+    held_field_saves = []
+    fail_field_save = False
+    hold_field_save = False
+    hold_detail = False
+    refuse_scope_save = False
+    snapshot_unavailable = False
+    runtime_working = False
+    server_revision = None
+    navigation_proposal = None
+    source_deleted = False
+    retained_conversation = None
+    parent_project = {"id": "project_one", "name": "One"}
+    variant_seed = json.loads(json.dumps(ticket))
+    fixture_overrides = {}
+    revisions = []
+    session_revised = False
+    review_messages = []
+    review_read = 0
+    review_sibling_messages = []
+    review_sibling_read = 0
+    review_sibling_held = []
+    review_sibling_transferred = False
+    review_message_sends = []
+    review_note_sends = []
+    decision_response = None
+    approval_attempts = []
+    decision_receipts = {}
+    hold_decision_lookup = False
+    held_decision_lookups = []
+    review_held = []
+    review_send_fate = "refused"
+    review_message_mode = False
+    final_rows = None
+    final_workers = 0
+    chief_pointer = None
+    chief_sends = []
+    chief_held = []
+    chief_send_fate = "refused"
+    hold_chief_send = False
+    held_chief_sends = []
+    hold_next_review_window = False
+    held_review_windows = []
+
+    def fixture_ticket(identity):
+        if identity in fixture_overrides:
+            return fixture_overrides[identity]
+        if identity == "t_personal_pending":
+            return {
+                **variant_seed,
+                "ticket_status": "awaiting_approval",
+                "id": "t_personal_pending",
+                "worker_type": "personal",
+                "stage": "needs_outcome",
+                "ceiling": "needs_outcome",
+                "ceiling_holder": {"kind": "owner", "id": "owner"},
+                "field_values": {"brief": "Original personal brief"},
+                "pending_proposal": {
+                    "field": "outcome",
+                    "body": "Original personal outcome proposal",
+                    "revision": 1,
+                    "proposed_by": "agent",
+                    "created_at": 2,
+                },
+            }
+        if identity == "t_artifacts":
+            return {
+                **variant_seed,
+                "id": "t_artifacts",
+                "title": "Artifact links in place",
+                "conversation_id": "artifact-conversation",
+                "conversation_history": [
+                    {"conversation_id": "past-artifact-conversation", "created_at": 1},
+                    {"conversation_id": "artifact-conversation", "created_at": 2},
+                ],
+                "field_values": {
+                    "brief": "Saved [HTML plan](/files/managers/si_artifacts/artifacts/plan.html?mode=read#summary). [Ticket document](/files/tickets/t_artifacts/artifacts/plan.md) [Receipt](/files/tickets/t_artifacts/artifacts/receipt.json) [Raw receipt](/files/managers/si_artifacts/artifacts/receipt.json) [Unsupported](/files/managers/si_artifacts/artifacts/archive.zip) [External](https://example.test/files/managers/si_artifacts/plan.html) [Dev preview](/dev/tickets/t_artifacts/8791/) [Malformed](/files/managers/si_artifacts/artifacts/%252e%252e/plan.html) [Explicit receipt](#/preview?source=ticket&ticket=t_artifacts&path=artifacts%2Freceipt.json)"
+                },
+                "pending_proposal": {
+                    "field": "success_condition",
+                    "body": "Proposed [Markdown plan](/files/managers/si_artifacts/artifacts/plan.md).",
+                    "proposed_by": "agent",
+                    "created_at": 1,
+                    "revision": 1,
+                },
+            }
+        if identity == "t_personal":
+            return {
+                **variant_seed,
+                "id": identity,
+                "worker_type": "personal",
+                "stage": "needs_outcome",
+                "ceiling": "needs_outcome",
+                "field_values": {"brief": "Context"},
+                "pending_proposal": None,
+                "ticket_status": "empty",
+                "assigned": True,
+            }
+        if identity == "t_kickoff":
+            return {
+                **variant_seed,
+                "id": identity,
+                "stage": "needs_brief",
+                "ceiling": "needs_brief",
+                "ceiling_holder": {"kind": "chief", "id": "chief"},
+                "manager_id": None,
+                "manager_title": None,
+                "pending_proposal": {
+                    "field": "brief",
+                    "body": "Opened for somebody else",
+                    "proposed_by": "chief",
+                    "created_at": 1,
+                    "revision": 1,
+                },
+                "field_values": {},
+            }
+        if identity == "t_with_session":
+            return {**variant_seed, "id": identity, "conversation_id": "existing-worker-session"}
+        if identity == "t_open":
+            return {
+                **variant_seed,
+                "id": identity,
+                "ticket_status": "empty",
+                "pending_proposal": None,
+                "ceiling_holder": {"kind": "owner", "id": "owner"},
+            }
+        if identity == "t_done":
+            return {
+                **variant_seed,
+                "id": identity,
+                "stage": "done",
+                "ticket_status": "empty",
+                "pending_proposal": None,
+            }
+        return ticket
+
+    source_revision = 0
+    last_records = None
+
+    def review_snapshot(*, force_publication=False):
+        nonlocal retained_conversation, source_revision, last_records
+        source = [
+            fixture_ticket(identity)
+            for identity in [
+                "t_review",
+                "t_personal",
+                "t_personal_pending",
+                "t_artifacts",
+                "t_kickoff",
+                "t_with_session",
+                "t_open",
+                "t_done",
+            ]
+            if identity != "t_review" or not source_deleted
+        ]
+        if review_message_mode:
+            source = [row for row in source if row["id"] == "t_review"]
+        if final_rows is not None:
+            source = final_rows + [
+                {
+                    **variant_seed,
+                    "id": f"t_running_{index}",
+                    "stage": "needs_success_condition",
+                    "pending_proposal": None,
+                    "ticket_status": "agent",
+                    "conversation_id": f"running-{index}",
+                    "conversation_signal": {"working": True, "message_for_owner": False},
+                }
+                for index in range(final_workers)
+            ]
+        parent = {
+            "id": "outcome_kept",
+            "title": "Kept outcome",
+            "settled": review_sibling_transferred,
+            "created_at": 1,
+            "project_id": parent_project["id"],
+            "project": parent_project["name"],
+            "conversation_id": None,
+            "tickets": [],
+        }
+        response = navigation_response(
+            {"columns": [{"cards": source}], "managers": [parent]},
+            {"chief_of_staff": {"label": "Chief of Staff", "conversation_id": chief_pointer}},
+        )
+        rows = {row["id"]: row for row in source}
+        for record in response["snapshot"]["records"]:
+            if record["kind"] == "ticket":
+                row = rows[record["id"]]
+                proposal = (
+                    navigation_proposal
+                    if row["id"] == "t_review" and navigation_proposal
+                    else row["pending_proposal"]
+                )
+                definition = next(
+                    worker
+                    for worker in canonical_worker_types
+                    if worker["worker_type"] == row["worker_type"]
+                )
+                stage = next(stage for stage in definition["stages"] if stage["id"] == row["stage"])
+                record["value"].update(
+                    ceiling=row["ceiling"],
+                    ceiling_holder=row["ceiling_holder"],
+                    gating_field=stage["gating_field"],
+                    stage_label=stage["label"],
+                    workflow_label=definition["label"],
+                    stage_ownership=stage["ownership_mode"],
+                    terminal=stage["is_terminal"],
+                    proposal_field=proposal["field"] if proposal else None,
+                    proposal_created_at=proposal["created_at"] if proposal else None,
+                    proposal_revision=proposal["revision"] if proposal else 0,
+                )
+            elif record["kind"] == "conversation" and record["id"] == ticket["conversation_id"]:
+                if review_message_mode:
+                    unread = [event for event in review_messages if event["sequence"] > review_read]
+                    record["value"]["first_unread_owner_message_at"] = (
+                        unread[0]["created_at"] if unread else None
+                    )
+                    record["value"]["owner_read_through_sequence"] = review_read
+                    record["value"]["latest_sequence"] = (
+                        review_messages[-1]["sequence"] if review_messages else 0
+                    )
+
+                record["value"]["attention"]["current"]["signal"]["working"] = runtime_working
+                retained_conversation = json.loads(json.dumps(record))
+        if source_deleted and retained_conversation is not None:
+            response["snapshot"]["records"].append(retained_conversation)
+        if review_sibling_messages and final_rows is None:
+            sibling = json.loads(json.dumps(retained_conversation))
+            sibling["id"] = "review-sibling"
+            unread = [
+                event
+                for event in review_sibling_messages
+                if event["sequence"] > review_sibling_read
+            ]
+            sibling["value"].update(
+                first_unread_owner_message_at=unread[0]["created_at"] if unread else None,
+                owner_read_through_sequence=review_sibling_read,
+                latest_sequence=review_sibling_messages[-1]["sequence"],
+            )
+            sibling["value"]["attention"]["durable"]["message_for_owner"] = bool(unread)
+            sibling["value"]["attention"]["current"]["signal"]["message_for_owner"] = bool(unread)
+            response["snapshot"]["records"].extend(
+                [
+                    sibling,
+                    {
+                        "kind": "address",
+                        "id": "review-sibling-address",
+                        "value": {
+                            "owner_kind": "ticket",
+                            "owner_id": "t_review",
+                            "conversation_id": "review-sibling",
+                            "current": False,
+                            "parent_kind": "manager",
+                            "parent_id": "outcome_kept",
+                        },
+                    },
+                ]
+            )
+        if review_sibling_transferred and final_rows is None:
+            response["snapshot"]["records"].append(
+                {
+                    "kind": "address",
+                    "id": "review-manager-address",
+                    "value": {
+                        "owner_kind": "manager",
+                        "owner_id": "outcome_kept",
+                        "conversation_id": "review-sibling",
+                        "current": True,
+                        "parent_kind": None,
+                        "parent_id": None,
+                    },
+                }
+            )
+        authored = json.dumps(response["snapshot"]["records"], sort_keys=True)
+        if force_publication or authored != last_records:
+            source_revision += 1
+            last_records = authored
+        response["snapshot"]["revision"] = str(source_revision)
+        navigation_response.__globals__["_navigation_revision"] = source_revision
+        return response
+
+    def finish_read(route, result):
+        if isinstance(result, dict) and "worker_type" in result and "field_values" in result:
+            # Each Ticket owns its workflow. The mutable preset list cannot change it.
+            definition = next(
+                worker
+                for worker in canonical_worker_types
+                if worker["worker_type"] == result["worker_type"]
+            )
+            result = {**result, "workflow": json.loads(json.dumps(definition))}
+        original = route.request.url.split("/api/", 1)[1]
+        if original.startswith("resource-body?"):
+            key = parse_qs(original.split("?", 1)[1])["key"][0]
+            if key.endswith("/workspace"):
+                definition = result["workflow"]
+                stage = next(row for row in definition["stages"] if row["id"] == result["stage"])
+                fields = result["field_values"]
+                result = {
+                    **result,
+                    "field_values": {
+                        name: value
+                        for name, value in fields.items()
+                        if name == stage["gating_field"]
+                    },
+                    "field_summaries": {
+                        name: {"revision": value, "byte_count": len(value.encode())}
+                        for name, value in fields.items()
+                    },
+                }
+                result.pop("conversation_history", None)
+            result = {
+                "epoch": "fixture",
+                "key": key,
+                "revision": str(source_revision),
+                "body": result,
+            }
+        route.fulfill(status=200, content_type="application/json", body=json.dumps(result))
+
+    def respond(route):
+        nonlocal \
+            navigation_proposal, \
+            session_revised, \
+            fail_field_save, \
+            review_read, \
+            review_sibling_read, \
+            chief_pointer
+        path = route.request.url.split("/api/", 1)[1]
+        requests.append(path)
+        if path.startswith("resource-body?"):
+            path = parse_qs(path.split("?", 1)[1])["key"][0].removeprefix("/api/")
+            requests.append(path)
+        if path.startswith("tickets/") and path.endswith("/workspace"):
+            path = path.removesuffix("/workspace")
+        if path.startswith("tickets?"):
+            path = "tickets/" + parse_qs(path.split("?", 1)[1])["id"][0]
+        if path == "machines":
+            result = fixture["MACHINE_CATALOG"]
+        elif path == "updates":
+            result = {
+                "state": "up_to_date", "allowed_actions": [], "activity": "unknown",
+                "available": None, "attempt": None, "app_sha": "fixture", "detail": None,
+                "deadline_at": None, "mac_details": None,
+            }
+        elif path == "chief/conversation":
+            result = {"conversation_id": chief_pointer}
+        elif path == "chief/conversation/send":
+            payload = route.request.post_data_json
+            chief_sends.append(payload)
+            assert "owner_read_through_sequence" not in payload
+            if chief_send_fate == "lost-queued":
+                chief_held.append({"sender_message_id": payload["sender_message_id"]})
+                route.abort("connectionreset")
+                return
+            delivered_id = payload["conversation_id"]
+            if chief_send_fate == "started" and delivered_id is None:
+                delivered_id = "chief-created"
+                chief_pointer = delivered_id
+            result = {"conversation_id": delivered_id, "fate": chief_send_fate}
+            if chief_send_fate == "refused":
+                result["refusal_reason"] = "backend_did_not_start"
+            if hold_chief_send:
+                held_chief_sends.append((route, result))
+                return
+        elif path.startswith("conversation/conversations/chief-original"):
+            assert (
+                "/events" not in path and "/view/tail" not in path and "/owner-read" not in path
+            ), path
+            if "/view/receipts?" in path:
+                result = {"conversation_id": "chief-original", "receipts": []}
+            else:
+                result = {
+                    "conversation_id": "chief-original",
+                    "latest_sequence": 17,
+                    "owner_read_through_sequence": 5,
+                    "held_prompts": chief_held,
+                }
+        elif final_rows is not None and path.startswith("tickets/t_final_"):
+            result = next(row for row in final_rows if row["id"] == path.split("/")[1])
+        elif review_message_mode and (
+            path.startswith("conversation/conversations/review-message")
+            or path.startswith("conversation/conversations/review-sibling")
+        ):
+            sibling = path.startswith("conversation/conversations/review-sibling")
+            conversation_id = "review-sibling" if sibling else "review-message"
+            events = review_sibling_messages if sibling else review_messages
+            boundary = review_sibling_read if sibling else review_read
+            held = review_sibling_held if sibling else review_held
+            if "/events?" in path:
+                after = int(parse_qs(path.split("?", 1)[1])["after"][0])
+                result = {"events": [event for event in events if event["sequence"] > after]}
+            elif path.endswith("/owner-read"):
+                boundary = route.request.post_data_json["through_sequence"]
+                if sibling:
+                    review_sibling_read = boundary
+                else:
+                    review_read = boundary
+                    ticket["conversation_signal"]["message_for_owner"] = any(
+                        event["sequence"] > review_read for event in review_messages
+                    )
+                result = {"owner_read_through_sequence": boundary}
+            elif "/view/receipts?" in path:
+                result = {"conversation_id": conversation_id, "receipts": []}
+            else:
+                result = {
+                    "conversation_id": conversation_id,
+                    "latest_sequence": events[-1]["sequence"],
+                    "owner_read_through_sequence": boundary,
+                    "held_prompts": held,
+                }
+        elif review_message_mode and path == "tickets/t_review/conversation/send":
+            payload = route.request.post_data_json
+            review_message_sends.append(payload)
+            conversation_id = payload["conversation_id"]
+            sibling = conversation_id == "review-sibling"
+            if review_send_fate == "refused":
+                result = {
+                    "conversation_id": conversation_id,
+                    "fate": "refused",
+                    "refusal_reason": "backend_did_not_start",
+                }
+            else:
+                if sibling:
+                    review_sibling_read = payload["owner_read_through_sequence"]
+                else:
+                    review_read = payload["owner_read_through_sequence"]
+                    ticket["conversation_signal"]["message_for_owner"] = any(
+                        event["sequence"] > review_read for event in review_messages
+                    )
+                if review_send_fate == "lost-queued":
+                    (review_sibling_held if sibling else review_held).append(
+                        {"sender_message_id": payload["sender_message_id"]}
+                    )
+                    route.abort("connectionreset")
+                    return
+                result = {"conversation_id": conversation_id, "fate": review_send_fate}
+        elif path.split("?")[0] == "test/navigation-publication":
+            assert route.request.method == "POST"
+            result = review_snapshot(force_publication=True)
+            result = scoped_navigation_response(result, json.loads(parse_qs(path.split("?", 1)[1])["view"][0]))
+        elif path.split("?")[0] == "navigation/view/snapshot":
+            if snapshot_unavailable:
+                route.fulfill(
+                    status=503,
+                    content_type="application/json",
+                    body=json.dumps(
+                        {
+                            "error": {
+                                "code": "unavailable",
+                                "message": "Workspace unavailable",
+                                "detail": None,
+                            }
+                        }
+                    ),
+                )
+                return
+            result = review_snapshot()
+            descriptor = json.loads(parse_qs(path.split("?", 1)[1])["view"][0])
+            result = scoped_navigation_response(result, descriptor)
+            if hold_next_review_window and any(window.get("anchor") for window in descriptor["windows"]):
+                held_review_windows.append((route, result))
+                return
+        elif path.startswith("resource-versions?"):
+            keys = json.loads(parse_qs(path.split("?", 1)[1])["keys"][0])
+            result = {
+                "epoch": "fixture",
+                "resources": [{"key": key, "revision": None} for key in keys],
+            }
+        elif "/workspace/fields/" in path:
+            identity, field = path.split("/")[1], path.rsplit("/", 1)[1]
+            value = (ticket if identity == "t_review" else fixture_ticket(identity))[
+                "field_values"
+            ].get(field, "")
+            result = {"ticket_id": identity, "field": field, "value": value, "revision": value}
+        elif path.startswith("artifact-catalog/"):
+            result = {
+                "revision": "fixture",
+                "directory": "",
+                "offset": 0,
+                "total": 0,
+                "entries": [],
+            }
+        elif path.startswith("conversation-history/ticket/"):
+            identity = path.split("?", 1)[0].rsplit("/", 1)[1]
+            history = (ticket if identity == "t_review" else fixture_ticket(identity)).get(
+                "conversation_history", []
+            )
+            result = {
+                "revision": "fixture",
+                "offset": 0,
+                "total": len(history),
+                "active_index": None,
+                "entries": [{**row, "label": str(row["created_at"])} for row in history],
+            }
+        elif path.startswith("conversation/conversations/") and "artifact-conversation" not in path:
+            identity = path.split("/")[2]
+            if path.split("?")[0].endswith("/events"):
+                result = {"events": []}
+            elif path.endswith("/owner-read"):
+                result = {"owner_read_through_sequence": 0}
+            else:
+                result = {
+                    "conversation_id": identity,
+                    "backend_key": "codex",
+                    "supports_steer": True,
+                    "model": "gpt-test",
+                    "reasoning_effort": None,
+                    "workspace_folder": "/tmp",
+                    "access": "full",
+                    "role_text": None,
+                    "identity_environment_variable_names": [],
+                    "latest_sequence": 0,
+                    "owner_read_through_sequence": 0,
+                    "is_running": False,
+                    "held_prompts": [],
+                    "pending_permission_ask": None,
+                    "pending_user_input": None,
+                    "composer_catalog": [],
+                }
+        elif path == "tickets/t_review/conversation/send":
+            review_note_sends.append(route.request.post_data_json)
+            result = {"conversation_id": "ticket-delivered-local", "fate": "started"}
+        elif path == "tickets/t_review/conversation/reset":
+            result = {}
+        elif path.endswith("/conversation/start-values"):
+            result = {"backend_key": "codex", "model": None, "reasoning_effort": None}
+        elif path == "review":
+            raise AssertionError("competing review summary query remains")
+        elif path == "tickets/t_review":
+            if hold_detail and route.request.method == "GET":
+                held_details.append(route)
+                return
+            if route.request.method == "PATCH":
+                body = route.request.post_data_json
+                assert not {"project_id", "sprint_id", "manager_id"} & set(body)
+                assert "guidance" not in body
+                if "field_values" in body:
+                    if fail_field_save:
+                        fail_field_save = False
+                        route.fulfill(
+                            status=503,
+                            content_type="application/json",
+                            body=json.dumps(
+                                {
+                                    "error": {
+                                        "code": "unavailable",
+                                        "message": "Save unavailable",
+                                        "detail": None,
+                                    }
+                                }
+                            ),
+                        )
+                        return
+                    writes.append({"value": body["field_values"]})
+                    ticket["field_values"].update(body["field_values"])
+                    if hold_field_save:
+                        held_field_saves.append(route)
+                        return
+                elif "ceiling" in body or "ceiling_holder" in body:
+                    ceiling_writes.append(body)
+                    if refuse_scope_save:
+                        route.fulfill(status=409, content_type="application/json", body=json.dumps({"error":{"code":"validation","message":"Server refused this action","detail":None}}))
+                        return
+                    if (
+                        "ceiling_holder" in body
+                        and body["ceiling_holder"] != ticket["ceiling_holder"]
+                        and (ticket["pending_proposal"] is not None)
+                    ):
+                        ticket["pending_proposal"]["revision"] += 1
+                    ticket.update(body)
+                else:
+                    placement_writes.append(body)
+                    ticket.update(body)
+            result = ticket
+        elif path in ["tickets/t_review/backlog", "tickets/t_review/resume"]:
+            assert route.request.method == "POST"
+            backlog_writes.append(
+                {"action": path.rsplit("/", 1)[1], "body": route.request.post_data_json}
+            )
+            ticket["is_backlogged"] = path.endswith("/backlog")
+            route.fulfill(
+                status=200,
+                content_type="application/json",
+                body=json.dumps(ticket),
+            )
+            return
+        elif path == "tickets/t_open" and route.request.method == "PATCH":
+            body = route.request.post_data_json
+            ceiling_writes.append(body)
+            result = {**fixture_ticket("t_open"), **body}
+            fixture_overrides["t_open"] = result
+        elif path == "tickets/t_personal/complete/outcome":
+            assert route.request.method == "POST"
+            body = route.request.post_data_json
+            writes.append({"personal_outcome": body})
+            result = {
+                **fixture_ticket("t_personal"),
+                "stage": "needs_consequences",
+                "ceiling": "needs_consequences",
+                "field_values": {"brief": "Context", "outcome": body["body"]},
+                "pending_proposal": None,
+                "ticket_status": "empty",
+                "assigned": False,
+            }
+            fixture_overrides["t_personal"] = result
+        elif path == "tickets/t_personal_pending":
+            result = fixture_ticket("t_personal_pending")
+        elif path == "tickets/t_artifacts":
+            result = fixture_ticket("t_artifacts")
+        elif path == "conversation/conversations/artifact-conversation":
+            result = dict(
+                conversation_id="artifact-conversation",
+                backend_key="codex",
+                supports_steer=True,
+                model="gpt-test",
+                reasoning_effort=None,
+                workspace_folder="/tmp",
+                access="full",
+                role_text=None,
+                identity_environment_variable_names=[],
+                latest_sequence=1,
+                owner_read_through_sequence=1,
+                is_running=False,
+                held_prompts=[],
+                pending_permission_ask=None,
+                pending_user_input=None,
+                composer_catalog=[],
+            )
+        elif path.startswith("conversation/conversations/artifact-conversation/events?"):
+            result = {
+                "events": [
+                    dict(
+                        conversation_id="artifact-conversation",
+                        sequence=1,
+                        created_at=1,
+                        kind="message_to_owner",
+                        payload={
+                            "text": "Conversation [Audio plan](/files/managers/si_artifacts/artifacts/plan.wav).",
+                            "sender_label": "Worker",
+                            "sender": {"kind": "ticket", "id": "t_artifacts"},
+                            "recipient": {"kind": "owner", "id": "owner"},
+                        },
+                    )
+                ]
+            }
+        elif path.endswith("/tail"):
+            route.fulfill(status=200, content_type="text/event-stream", body="")
+            return
+        elif path.startswith("tickets/") and "/decision-operations/" in path:
+            _, ticket_id, _, operation_id = path.split("/")
+            receipt = decision_receipts.get(operation_id)
+            if route.request.method == "GET":
+                if hold_decision_lookup:
+                    held_decision_lookups.append((route, receipt))
+                    return
+                result = {"receipt_contract": 1, "receipt": receipt}
+            elif receipt is not None:
+                result = {"receipt_contract": 1, "receipt": receipt}
+            else:
+                command = route.request.post_data_json
+                assert "decision_id" not in command
+                body = {key: value for key, value in command.items() if key not in {"decision", "field"}}
+                error = None
+                if command["decision"] == "send_back":
+                    assert ticket_id == "t_with_session"
+                    revisions.append(body)
+                    session_revised = True
+                    fixture_overrides[ticket_id] = {**fixture_ticket(ticket_id), "pending_proposal": None}
+                else:
+                    approval_attempts.append(body)
+                    if decision_response == "network":
+                        route.abort("failed")
+                        return
+                    if decision_response == "http503":
+                        route.fulfill(status=503, json={"error": {"code": "unavailable", "message": "Decision response unavailable"}})
+                        return
+                    if server_revision is not None and command["expected_proposal_revision"] != server_revision:
+                        error = {"code": "validation", "message": "the visible proposal changed; read it again before accepting", "detail": {}}
+                    else:
+                        approvals.append(body)
+                        ticket.update(pending_proposal=None, ticket_status="empty")
+                        navigation_proposal = None
+                receipt = {
+                    "operation_id": operation_id, "ticket_id": ticket_id,
+                    "decision": command["decision"], "field": command["field"],
+                    "expected_proposal_revision": command["expected_proposal_revision"],
+                    "outcome": "refused" if error else "applied", "error": error,
+                    "transition": None if error else {
+                        "stage": ticket["stage"], "ceiling": ticket["ceiling"],
+                        "ceiling_holder": ticket["ceiling_holder"], "ticket_status": "empty",
+                        "pending_proposal_revision": command["expected_proposal_revision"] + 1,
+                    }, "created_at": 123,
+                }
+                decision_receipts[operation_id] = receipt
+                result = {"receipt_contract": 1, "receipt": receipt}
+        elif path in [
+            "tickets/t_personal", "tickets/t_kickoff", "tickets/t_with_session",
+            "tickets/t_open", "tickets/t_done",
+        ]:
+            result = fixture_ticket(path.split("/")[1])
+        elif path.startswith("worker-types/") and path.endswith("/manifest"):
+            worker_type = path.split("/")[1]
+            matches = [row for row in manifest["worker_types"] if row["worker_type"] == worker_type]
+            if not matches:
+                route.fulfill(
+                    status=404,
+                    json={
+                        "error": {
+                            "code": "unknown_worker_type",
+                            "message": f"Unknown worker type: {worker_type}",
+                        }
+                    },
+                )
+                return
+            result = {"worker_types": matches}
+        elif path == "worker-types":
+            result = manifest
+        elif path == "worker-types/coding":
+            result = {
+                **canonical_worker_types[0],
+                "guidance": "",
+                "profile": {
+                    "specialist_skill": "panels-worker-coding",
+                    "default_backend": "codex",
+                    "default_model": "fixture-model",
+                    "default_reasoning_effort": None,
+                    "toolset_profile": "default",
+                },
+            }
+        elif path == "workers/coding":
+            result = worker_detail
+        elif path == "conversation/backends":
+            result = {"backends": []}
+        else:
+            result = {}
+        finish_read(route, result)
+
+    context = browser.new_context()
+    page = context.new_page()
+
+    def drive(expression):
+        # Flush before each awaited fixture operation so an intentionally held
+        # request cannot hide the phase from the browser runner's receipt.
+        print(f"ticket-review phase start: {expression}", flush=True)
+        result = page.evaluate(expression)
+        print(f"ticket-review phase done: {expression}", flush=True)
+        return result
+    page.on("pageerror", lambda e: print(str(e), flush=True))
+    page.route("**/api/**", respond)
+
+    def serve_file(route):
+        path = route.request.url.split("?", 1)[0]
+        if path.endswith(".html"):
+            route.fulfill(
+                content_type="text/html",
+                body='<html><body style="background:#fff;color:#17202a;padding:24px;font:18px system-ui"><h1>Artifact plan</h1><p>Opened over the Ticket.</p></body></html>',
+            )
+        elif path.endswith(".md"):
+            route.fulfill(
+                content_type="text/markdown",
+                body="# Markdown plan\n\nRead [Nested image](/files/managers/si_artifacts/artifacts/image.svg).",
+            )
+        elif path.endswith(".svg"):
+            route.fulfill(
+                content_type="image/svg+xml",
+                body='<svg xmlns="http://www.w3.org/2000/svg" width="300" height="180"><rect width="300" height="180" fill="steelblue"/></svg>',
+            )
+        else:
+            route.fulfill(content_type="application/octet-stream", body="fixture")
+
+    page.route("**/files/**", serve_file)
+
+    def wait_for_write(predicate):
+        # Routes record a write before they fulfill it, so the write's own finished
+        # request is the earliest moment the record is complete. Callers assert.
+        if not predicate():
+            try:
+                page.wait_for_event("requestfinished", lambda _: predicate(), timeout=5000)
+            except PlaywrightTimeoutError:
+                pass
+
+    def composing_enter(field):
+        # Enter that confirms an input method's text is not a send.
+        return field.evaluate(
+            """field => {
+              const event = new KeyboardEvent('keydown', {key:'Enter', keyCode:229, isComposing:true, bubbles:true, cancelable:true});
+              field.dispatchEvent(event);
+              return event.defaultPrevented;
+            }"""
+        )
+
+    def assert_enter_rules_leave_a_draft(field, draft, writes):
+        """Shift+Enter adds a line and composing Enter does nothing: no write, words kept."""
+        before = writes()
+        field.fill(draft)
+        field.press("End")
+        field.press("Shift+Enter")
+        expect(field).to_have_value(draft + "\n")
+        assert not composing_enter(field)
+        page.wait_for_timeout(100)
+        assert writes() == before
+        expect(field).to_have_value(draft + "\n")
+        field.fill(draft)
+
+    def assert_proposal_note_keys_leave_a_draft(field, draft):
+        """Text entry must not select either proposal decision or send a plain note."""
+        def writes():
+            return len(approval_attempts) + len(revisions) + len(review_note_sends)
+
+        assert_enter_rules_leave_a_draft(field, draft, writes)
+        before = writes()
+        field.press("End")
+        field.press("Enter")
+        expect(field).to_have_value(draft + "\n")
+        for key in ("Control+Enter", "Meta+Enter"):
+            field.fill(draft)
+            field.press(key)
+            assert field.input_value().rstrip("\n") == draft
+        page.wait_for_timeout(100)
+        assert writes() == before
+        field.fill(draft)
+
+    def wait_for_held(predicate):
+        # A held route never finishes its request, so poll the fixture while the
+        # driver hands the route to its handler. Callers assert.
+        deadline = time.monotonic() + 5
+        while not predicate() and time.monotonic() < deadline:
+            page.wait_for_timeout(10)
+
+    def frames_after_resize(width):
+        # Resize observers and media queries run before the next frame paints.
+        page.wait_for_function("width => window.innerWidth === width", arg=width)
+        page.evaluate(
+            "() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))"
+        )
+    page.goto([__file__, *urls][1])
+    expect(page.locator(".error-line")).to_have_count(0)
+    assert page.evaluate("window.__badgeProof()") == dict(
+        emptyHidden=True,
+        emptyVisible=False,
+        nonemptyHidden=False,
+        positiveVisible=True,
+        wrongCount=False,
+        positiveHidden=False,
+        absent=False,
+    )
+    expect(page.locator("[data-project-fact]")).to_have_text("One")
+    expect(page.locator("[data-ticket-identity]")).to_have_text("VPS One · Coding")
+    expect(page.locator(".ticket-title [contenteditable]")).to_have_text("Review ticket")
+    expect(page.locator("[data-ticket-backlog-action]")).to_have_text("Backlog ticket")
+    page.locator("[data-ticket-backlog-action]").click()
+    # The click returns before the browser's request reaches the route: wait for its record.
+    wait_for_write(lambda: len(backlog_writes) == 1)
+    assert backlog_writes == [{"action": "backlog", "body": {}}]
+    # Confirmed writes refetch the loaded body before source publication.
+    expect(page.locator("[data-ticket-backlog-action]")).to_have_text("Resume ticket")
+    assert ticket["is_backlogged"] is True
+    drive("window.__batch()")
+    expect(page.locator("[data-ticket-backlogged]")).to_have_text("Backlogged")
+    expect(page.locator("[data-ticket-backlog-action]")).to_have_text("Resume ticket")
+    page.locator("[data-ticket-backlog-action]").click()
+    wait_for_write(lambda: len(backlog_writes) == 2)
+    assert backlog_writes[-1] == {"action": "resume", "body": {}}
+    page.evaluate(
+        "() => {\n      const control=document.querySelector('[data-ticket-lifecycle]');\n      window.__heldLifecycle={control,parent:control.parentNode,next:control.nextSibling};control.remove();\n    }"
+    )
+    page.evaluate("window.__batch()")
+    page.evaluate(
+        "() => {\n      const held=window.__heldLifecycle;held.parent.insertBefore(held.control,held.next);\n    }"
+    )
+    drive("window.__batch()")
+    expect(page.locator("[data-ticket-backlogged]")).to_have_count(0)
+    expect(page.locator("[data-ticket-backlog-action]")).to_have_text("Backlog ticket")
+    page.locator("[data-stage-fold]").evaluate("(element)=>element.open=true")
+    page.locator("[data-stage-fold] [data-field=brief]").evaluate("(element)=>element.open=true")
+    original = dict(ticket)
+    hold_detail = True
+    ticket.update(
+        title="Canonical masthead",
+        worker_type="personal",
+        stage="needs_consequences",
+        ceiling="needs_consequences",
+        ticket_status="empty",
+        field_values={"brief": "Request", "outcome": "Canonical user outcome"},
+        pending_proposal=None,
+        conversation_id="masthead-current",
+        conversation_signal={"working": True, "message_for_owner": True},
+    )
+    parent_project = {"id": "project_current", "name": "Current Project"}
+    runtime_working = True
+    drive("window.__batch()")
+    expect(page.locator(".ticket-title [contenteditable]")).to_have_text("Canonical masthead")
+    expect(page.locator("[data-ticket-identity]")).to_have_text("VPS Current Project · Personal")
+    expect(page.locator(".ticket-title [data-conversation-id]")).to_have_attribute(
+        "data-conversation-id", "masthead-current"
+    )
+    expect(page.locator(".ticket-title [data-conversation-signal]")).to_have_attribute(
+        "data-conversation-signal", "message"
+    )
+    expect(page.locator("[data-approval-block] [contenteditable]")).to_have_text("A result")
+    expect(page.locator("[data-ticket-section]")).to_have_attribute(
+        "data-section-stage", "needs_success_condition"
+    )
+    expect(page.locator("[data-worker-live-card] h2")).to_contain_text("Success")
+    assert page.locator("[data-stage-fold]").evaluate("(element)=>element.open")
+    assert page.locator("[data-stage-fold] [data-field=brief]").evaluate("(element)=>element.open")
+    # The browser sends the save despite navigation/detail disagreement.
+    # The server remains the authority and its refusal stays visible.
+    refuse_scope_save = True
+    page.locator("[data-reviewer-heading]").click()
+    page.locator("[data-ceiling-picker-choice=owner]").click()
+    expect(page.locator("[data-approval-block] .error-line")).to_contain_text(
+        "Server refused this action"
+    )
+    expect(page.locator("[data-approval-block] .error-code")).to_have_text("validation")
+    assert len(ceiling_writes) == 1 and approvals == []
+    ceiling_writes.clear()
+    refuse_scope_save = False
+    # The request stays held until Python supplies the deliberately stale reply.
+    # Do not await invalidateQueries here: it waits for that same reply.
+    drive("() => { void window.__detail(); }")
+    wait_for_held(lambda: held_details)
+    assert held_details
+    for stage in manifest["worker_types"][1]["stages"]:
+        if stage["id"] == "needs_consequences":
+            stage["gating_field"] = "outcome"
+    drive("window.__manifest()")
+    hold_detail = False
+    for route in held_details:
+        if route.request.failure is None:
+            finish_read(route, ticket)
+    held_details.clear()
+    # The correct Ticket detail can admit the new section even while the preset
+    # list disagrees. Controls now use the Ticket's own saved workflow.
+    expect(page.locator("[data-ticket-section]")).to_have_attribute(
+        "data-section-stage", "needs_consequences"
+    )
+    expect(page.locator("[data-worker-live-card] h2")).to_have_text("Currently working on Closeout")
+    expect(page.get_by_text("Loading ticket...", exact=True)).to_have_count(0)
+    expect(page.locator("[data-approval-block]")).to_have_count(0)
+    for stage in manifest["worker_types"][1]["stages"]:
+        if stage["id"] == "needs_consequences":
+            stage["gating_field"] = "consequences"
+    drive("window.__manifest()")
+    expect(page.locator("[data-ticket-section]")).to_have_attribute(
+        "data-section-stage", "needs_consequences"
+    )
+    expect(page.locator("[data-worker-live-card] h2")).to_have_text("Currently working on Closeout")
+    expect(page.locator("[data-approval-block]")).to_have_count(0)
+    assert page.locator("[data-stage-fold]").evaluate("(element)=>element.open")
+    assert page.locator("[data-stage-fold] [data-field=brief]").evaluate("(element)=>element.open")
+    ticket["conversation_signal"]["message_for_owner"] = False
+    drive("window.__batch()")
+    # A page title never shows the working spinner (owner): the status line over the composer
+    # says Working. With no message for the owner, the title carries no signal at all.
+    expect(page.locator(".ticket-title [data-conversation-signal]")).to_have_count(0)
+    source_deleted = True
+    drive("window.__batch()")
+    expect(page.locator(".ticket-title [contenteditable]")).to_have_text("Canonical masthead")
+    expect(page.locator(".ticket-title [data-conversation-signal]")).to_have_count(0)
+    snapshot_unavailable = True
+    drive("window.__refresh()")
+    expect(page.locator(".ticket-title [data-conversation-signal]")).to_have_count(0)
+    expect(page.locator("[data-worker-live-card] h2")).to_have_text("Waiting at Closeout")
+    expect(page.locator(".ticket-title [contenteditable]")).to_have_text("Canonical masthead")
+    retained_conversation["value"]["attention"]["current"]["signal"]["message_for_owner"] = True
+    retained_conversation["value"]["attention"]["durable"]["message_for_owner"] = True
+    retained_conversation["value"]["latest_sequence"] = 21
+    snapshot_unavailable = False
+    drive("window.__refresh()")
+    expect(page.locator(".ticket-title [data-conversation-signal]")).to_have_count(0)
+    snapshot_unavailable = True
+    drive("window.__refresh()")
+    expect(page.locator(".ticket-title [data-conversation-signal]")).to_have_count(0)
+    # A deleted owner has no address that authorizes an orphan conversation signal.
+    expect(page.locator(".ticket-title [data-conversation-id]")).to_have_count(0)
+    retained_conversation = None
+    snapshot_unavailable = False
+    drive("window.__refresh()")
+    expect(page.locator(".ticket-title [data-conversation-signal]")).to_have_count(0)
+    assert not page.evaluate(
+        "window.__navigation.selectors.effective.conversations.has('masthead-current')"
+    )
+    source_deleted = False
+    ticket.clear()
+    ticket.update(original)
+    hold_detail = False
+    for route in held_details:
+        if route.request.failure is None:
+            finish_read(route, ticket)
+    held_details.clear()
+    parent_project = {"id": "project_one", "name": "One"}
+    runtime_working = False
+    drive("window.__batch()")
+    # Scoped publication restores the masthead. The loaded lifecycle body uses
+    # its ordinary detail query, independent of navigation publication.
+    drive("window.__detail()")
+    expect(page.locator("[data-ticket-section]")).to_have_attribute(
+        "data-section-stage", "needs_success_condition"
+    )
+    expect(page.locator("[data-approval-block] [contenteditable]")).to_have_text("A result")
+    expect(page.locator("[data-ticket-identity]")).to_have_text("VPS One · Coding")
+    expect(page.locator("[data-parent-link]")).to_have_count(0)
+    assert (
+        page.locator(
+            "[data-project-control], [data-outcome-control], [data-sprint-control]"
+        ).count()
+        == 0
+    )
+    assert page.get_by_label("Ticket project").count() == 0
+    assert page.get_by_label("Ticket outcome").count() == 0
+    assert page.get_by_label("Ticket Sprint").count() == 0
+    assert page.locator("[data-ticket-guidance], [data-ticket-history]").count() == 0
+    expect(page.locator("body")).not_to_contain_text("Retired guidance sentinel")
+    assert page.get_by_text("Old unapproved draft").count() == 0
+    expect(page.locator("[data-send-back]")).to_be_disabled()
+    expect(page.locator("[data-return-unavailable]")).to_contain_text(
+        "No existing Worker conversation"
+    )
+    parked_leash = page.locator("[data-approval-block]")
+    expect(parked_leash.locator("[data-scope-ceiling]")).to_have_count(0)
+    parked_leash.locator("[data-reviewer-heading]").click()
+    expect(parked_leash.get_by_role("listbox")).to_have_attribute(
+        "aria-label", "Who holds the ceiling"
+    )
+    assert parked_leash.locator("[data-ceiling-picker-locked]").count() == 0
+    assert not parked_leash.locator('[data-ceiling-part="ceiling"]').is_disabled()
+    parked_leash.locator('[data-ceiling-part="holder"]').click()
+    parked_leash.get_by_role("listbox").press("u")
+    assert ceiling_writes == []
+    parked_leash.get_by_role("listbox").press("Enter")
+    wait_for_write(lambda: ceiling_writes)
+    assert ceiling_writes == [{"ceiling_holder": {"kind": "owner", "id": "owner"}}]
+    drive("window.__batch()")
+    assert approvals == []
+    page.evaluate("window.__showTicket('t_open')")
+    page.locator('[data-ticket-id="t_open"]').wait_for()
+    leash = page.locator("[data-leash]")
+    expect(leash.locator("[data-scope-ceiling]")).to_have_attribute(
+        "aria-label", "Approved until Success, then User reviews"
+    )
+    assert leash.locator("select").count() == 0
+    assert leash.locator("[data-scope-ceiling]").count() == 1
+    assert leash.locator("[data-scope-holder]").count() == 0
+    leash.locator("[data-scope-ceiling]").click()
+    assert leash.locator("[data-ceiling-picker-panel]").count() == 1
+    expect(leash.get_by_role("listbox")).to_have_attribute("aria-label", "Ceiling stage")
+    assert (
+        leash.locator('[data-ceiling-part="ceiling"] .picker-rail-row-detail').inner_text()
+        == "Success"
+    )
+    assert (
+        leash.locator('[data-ceiling-part="holder"] .picker-rail-row-detail').inner_text() == "User"
+    )
+    leash.get_by_role("listbox").press("End")
+    leash.get_by_role("listbox").press("Enter")
+    expect(leash.get_by_role("listbox")).to_have_attribute("aria-label", "Who holds the ceiling")
+    expect(leash.locator('[data-ceiling-part="ceiling"] .picker-rail-row-detail')).to_have_text(
+        "Done"
+    )
+    leash.get_by_role("listbox").press("Escape")
+    expect(leash.get_by_role("listbox")).to_have_count(0)
+    page.wait_for_timeout(200)
+    assert ceiling_writes == [{"ceiling_holder": {"kind": "owner", "id": "owner"}}], ceiling_writes
+    assert (
+        leash.locator("[data-scope-ceiling]").get_attribute("aria-label")
+        == "Approved until Success, then User reviews"
+    )
+    leash.locator("[data-scope-ceiling]").click()
+    expect(leash.get_by_role("listbox")).to_have_attribute("aria-label", "Ceiling stage")
+    assert (
+        leash.locator('[role="option"][aria-selected="true"]').get_attribute(
+            "data-ceiling-picker-choice"
+        )
+        == "needs_success_condition"
+    )
+    assert "Approved until Success" in leash.locator("[data-scope-ceiling]").get_attribute(
+        "aria-label"
+    )
+    assert "then User reviews" in leash.locator("[data-scope-ceiling]").get_attribute("aria-label")
+    leash.locator('[data-ceiling-part="holder"]').click()
+    expect(leash.get_by_role("listbox")).to_have_attribute("aria-label", "Who holds the ceiling")
+    leash.locator('[data-ceiling-part="ceiling"]').click()
+    expect(leash.get_by_role("listbox")).to_have_attribute("aria-label", "Ceiling stage")
+    leash.get_by_role("listbox").press("End")
+    leash.get_by_role("listbox").press("Enter")
+    expect(leash.get_by_role("listbox")).to_have_attribute("aria-label", "Who holds the ceiling")
+    leash.get_by_role("listbox").press("c")
+    leash.get_by_role("listbox").press("Enter")
+    expect(leash.get_by_role("listbox")).to_have_count(0)
+    wait_for_write(lambda: len(ceiling_writes) == 2)
+    assert ceiling_writes[-1] == {
+        "ceiling": "done",
+        "ceiling_holder": {"kind": "chief", "id": "chief"},
+    }, ceiling_writes
+    drive("window.__batch()")
+    leash.locator("[data-scope-ceiling]").click()
+    leash.locator('[data-ceiling-part="holder"]').click()
+    expect(leash.get_by_role("listbox")).to_have_attribute("aria-label", "Who holds the ceiling")
+    leash.locator('[data-ceiling-picker-choice="owner"]').click()
+    expect(leash.get_by_role("listbox")).to_have_count(0)
+    wait_for_write(lambda: len(ceiling_writes) == 3)
+    assert ceiling_writes[-1] == {"ceiling_holder": {"kind": "owner", "id": "owner"}}, (
+        ceiling_writes
+    )
+    drive("window.__batch()")
+    leash.locator("[data-scope-ceiling]").click()
+    expect(leash.get_by_role("listbox")).to_have_attribute("aria-label", "Ceiling stage")
+    leash.get_by_role("listbox").press("d")
+    leash.locator('[data-ceiling-part="holder"]').click()
+    leash.get_by_role("listbox").press("c")
+    assert (
+        leash.locator("[data-listbox-picker-active]").get_attribute("data-ceiling-picker-choice")
+        == "chief"
+    )
+    leash.get_by_role("listbox").press("Escape")
+    expect(leash.get_by_role("listbox")).to_have_count(0)
+    page.wait_for_timeout(200)
+    assert len(ceiling_writes) == 3, ceiling_writes
+    assert (
+        leash.locator("[data-scope-ceiling]").get_attribute("aria-label")
+        == "Approved until Done, then User reviews"
+    )
+    leash.locator("[data-scope-ceiling]").click()
+    page.locator(".ticket-title").click()
+    expect(leash.get_by_role("listbox")).to_have_count(0)
+    assert page.locator("[data-copy], [data-ticket-takeover-toggle]").count() == 0
+    assert placement_writes == []
+    assert page.locator(".ticket-operating").count() == 0
+
+    def assert_ticket_layout(width):
+        page.set_viewport_size({"width": width, "height": 900})
+        frames_after_resize(width)
+        assert page.evaluate(
+            "() => Math.max(document.documentElement.scrollWidth, document.body.scrollWidth) <= window.innerWidth + 1"
+        )
+        identity_box = page.locator("[data-ticket-identity]").bounding_box()
+        title_box = page.locator(".ticket-title").bounding_box()
+        leash.locator("[data-scope-ceiling]").click()
+        menu_box = leash.locator("[data-ceiling-picker-panel]").bounding_box()
+        assert identity_box and title_box and menu_box
+        assert identity_box["y"] + identity_box["height"] <= title_box["y"] + 1
+        assert menu_box["x"] >= -1
+        assert menu_box["x"] + menu_box["width"] <= width + 1
+        assert page.evaluate(
+            "() => Math.max(document.documentElement.scrollWidth, document.body.scrollWidth) <= window.innerWidth + 1"
+        )
+        leash.get_by_role("listbox").press("Escape")
+
+    assert_ticket_layout(1280)
+    assert_ticket_layout(390)
+    page.set_viewport_size({"width": 1280, "height": 900})
+    page.evaluate("window.__showTicket('t_review')")
+    title_editor = page.locator(".ticket-title [contenteditable]")
+    title_editor.fill("Local masthead edit")
+    page.evaluate("window.__batch()")
+    title_editor.press("Enter")
+    page.evaluate("window.__batch()")
+    expect(title_editor).to_have_text("Local masthead edit")
+    composer = page.locator("[data-conversation-input]")
+    composer.fill("Ticket pointer continuation")
+    composer.press("Enter")
+    page.wait_for_function(
+        "() => [...window.__openStreams].some(url=>url.includes('ticket-delivered-local'))"
+    )
+    assert "conversation/conversations/ticket-delivered-local" in requests
+    expect(page.locator("[data-conversation-pane]")).to_have_attribute(
+        "data-conversation-id", "ticket-delivered-local"
+    )
+    drive("window.__detail()")
+    drive("window.__batch()")
+    assert page.evaluate(
+        "[...window.__openStreams].some(url=>url.includes('ticket-delivered-local'))"
+    )
+    ticket["conversation_id"] = "ticket-canonical-next"
+    drive("window.__batch()")
+    page.wait_for_function(
+        "() => [...window.__openStreams].some(url=>url.includes('ticket-canonical-next'))"
+    )
+    page.locator("[data-conversation-expand]").click()
+    page.locator(".chat-overflow > .chat-overflow-btn").click()
+    page.locator("[data-conversation-new-arm]").click()
+    page.locator("[data-conversation-new-confirm]").click()
+    page.wait_for_function(
+        "() => ![...window.__openStreams].some(url=>url.includes('ticket-canonical-next'))"
+    )
+    drive("window.__detail()")
+    drive("window.__batch()")
+    assert not page.evaluate(
+        "[...window.__openStreams].some(url=>url.includes('ticket-canonical-next'))"
+    ), "unchanged canonical pointer cannot undo local reset"
+    ticket["conversation_id"] = None
+    drive("window.__batch()")
+    page.locator('[data-ticket-id="t_review"]').wait_for()
+    assert page.locator("[data-accept]").count() == 1
+    proposal = page.locator(
+        '[data-approval-block][data-field="success_condition"] [contenteditable]'
+    )
+    page.locator("[data-conversation-collapse]").click()
+    proposal.click()
+    proposal.fill("Edited pending result")
+    proposal.press("Tab")
+    page.wait_for_function("document.body.textContent.includes('Edited pending result')")
+    page.locator("[data-stage-fold]").evaluate("(element) => element.open = true")
+    page.locator('[data-stage-fold] [data-field="brief"]').evaluate(
+        "(element) => element.open = true"
+    )
+    saved = page.locator('[data-stage-fold] [data-field="brief"] [contenteditable]')
+    saved.click()
+    saved.fill("Edited saved kickoff")
+    saved.press("Tab")
+    page.wait_for_function("document.body.textContent.includes('kickoff')")
+    assert page.locator("summary").filter(has_text="Notes").count() == 0
+    assert writes == [{"value": {"brief": "Edited saved kickoff"}}]
+    # Closing a lazy stage must preserve failed and pending edits across remounts.
+    expect(saved).to_have_attribute("contenteditable", "true")
+    # An edit that was never committed survives its editor's teardown, unsaved.
+    # Chromium blurs a removed editor, which commits; WebKit and Gecko do not,
+    # so swallow the blur to reach the teardown path those browsers take.
+    saved.click()
+    saved.fill("Unsaved edit survives a closed stage")
+    writes_before_close = len(writes)
+    page.evaluate("""() => {
+        window.__swallowBlur = event => event.stopImmediatePropagation();
+        for (const type of ["blur", "focusout"]) window.addEventListener(type, window.__swallowBlur, true);
+    }""")
+    page.locator("[data-stage-fold]").evaluate("node => { node.open = false; }")
+    expect(saved).to_have_count(0)
+    page.evaluate("""() => {
+        for (const type of ["blur", "focusout"]) window.removeEventListener(type, window.__swallowBlur, true);
+    }""")
+    page.locator("[data-stage-fold]").evaluate("node => { node.open = true; }")
+    page.locator('[data-stage-fold] [data-field="brief"]').evaluate("node => { node.open = true; }")
+    expect(saved).to_have_text("Unsaved edit survives a closed stage")
+    assert len(writes) == writes_before_close
+    fail_field_save = True
+    saved.click()
+    saved.fill("Draft survives a closed stage")
+    saved.press("Tab")
+    expect(page.locator('[data-field="brief"] .error-line')).to_contain_text("Save unavailable")
+    page.locator("[data-stage-fold]").evaluate("node => { node.open = false; }")
+    expect(saved).to_have_count(0)
+    page.locator("[data-stage-fold]").evaluate("node => { node.open = true; }")
+    page.locator('[data-stage-fold] [data-field="brief"]').evaluate("node => { node.open = true; }")
+    expect(saved).to_have_text("Draft survives a closed stage")
+    expect(page.locator('[data-field="brief"] .error-line')).to_contain_text("Save unavailable")
+    hold_field_save = True
+    saved.click()
+    saved.press("Tab")
+    wait_for_held(lambda: held_field_saves)
+    assert len(held_field_saves) == 1
+    page.locator("[data-stage-fold]").evaluate("node => { node.open = false; }")
+    expect(saved).to_have_count(0)
+    page.locator("[data-stage-fold]").evaluate("node => { node.open = true; }")
+    page.locator('[data-stage-fold] [data-field="brief"]').evaluate("node => { node.open = true; }")
+    expect(saved).to_have_attribute("contenteditable", "false")
+    hold_field_save = False
+    finish_read(held_field_saves.pop(), ticket)
+    expect(saved).to_have_attribute("contenteditable", "true")
+    expect(page.locator('[data-field="brief"] .error-line')).to_have_count(0)
+    expect(saved).to_have_text("Draft survives a closed stage")
+    page.evaluate("window.__showTicket('t_personal')")
+    page.locator('[data-ticket-id="t_personal"]').wait_for()
+    page.locator("[data-conversation-collapse]").click()
+    personal_outcome = page.locator(
+        '[data-worker-live-card] [data-field="outcome"] [contenteditable]'
+    )
+    expect(personal_outcome).to_have_count(1)
+    assert page.locator('[data-field="consequences"] [contenteditable]').count() == 0
+    personal_outcome.fill("Completed by user")
+    personal_outcome.press("Tab")
+    expect(page.locator('[data-ticket-section="t_personal"]')).to_have_attribute(
+        "data-section-stage", "needs_consequences"
+    )
+    # Completion moves the value into lazy history. Open it before checking the saved body.
+    page.locator("[data-stage-fold]").evaluate("node => { node.open = true; }")
+    page.locator('[data-stage-fold] [data-field="outcome"]').evaluate(
+        "node => { node.open = true; }"
+    )
+    page.wait_for_function("document.body.textContent.includes('Completed by user')")
+    assert writes[-1] == {"personal_outcome": {"body": "Completed by user"}}
+    page.evaluate("window.__showTicket('t_kickoff')")
+    page.locator('[data-ticket-id="t_kickoff"]').wait_for()
+    expect(page.locator("[data-project-fact]")).to_have_text("One")
+    assert page.locator("[data-outcome-fact]").count() == 0
+    assert page.locator("[data-copy]").count() == 0
+    kickoff_leash = page.locator("[data-approval-block]")
+    expect(page.locator("[data-send-back]")).to_have_count(0)
+    kickoff_leash.locator("[data-accept]").click()
+    assert not kickoff_leash.locator('[data-ceiling-part="ceiling"]').is_disabled()
+    kickoff_leash.locator('[data-ceiling-part="holder"]').click()
+    expect(kickoff_leash.locator('[role="option"]')).to_have_count(2)
+    assert [
+        option.get_attribute("data-ceiling-picker-choice")
+        for option in kickoff_leash.locator('[role="option"]').all()
+    ] == ["owner", "chief"]
+    kickoff_leash.get_by_role("listbox").press("Escape")
+    page.evaluate("window.__showTicket('t_with_session')")
+    page.locator('[data-ticket-id="t_with_session"]').wait_for()
+    expect(page.locator("[data-send-back]")).to_be_enabled()
+    expect(page.locator("[data-return-unavailable]")).to_have_count(0)
+    if shots := os.environ.get("PANELS_PROPOSAL_SCREENSHOTS"):
+        Path(shots).mkdir(parents=True, exist_ok=True)
+        page.screenshot(path=str(Path(shots) / "ticket-after.png"), full_page=True, animations="disabled")
+        page.set_viewport_size({"width": 390, "height": 844})
+        expect(page.locator("[data-revision-note]")).to_be_visible()
+        assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
+        page.screenshot(path=str(Path(shots) / "ticket-narrow-after.png"), full_page=True, animations="disabled")
+        page.set_viewport_size({"width": 1280, "height": 900})
+    expect(page.locator("[data-revision-note]")).to_be_visible()
+    expect(page.locator("[data-accept]")).to_be_visible()
+    expect(page.locator("[data-send-back]")).to_have_count(1)
+    page.locator("[data-send-back]").click()
+    expect(page.locator("[data-revision-note]")).to_be_focused()
+    exact_revision = "Keep the agreed scope.\nPreserve the attributed details."
+    assert_proposal_note_keys_leave_a_draft(page.locator("[data-revision-note]"), "Draft note")
+    page.locator("[data-revision-note]").fill(exact_revision)
+    page.locator("[data-send-back]").click()
+    wait_for_write(lambda: revisions)
+    assert revisions == [{"message": exact_revision, "expected_proposal_revision": 1}]
+    drive("window.__batch()")
+    expect(
+        page.locator('[data-ticket-id="t_with_session"] [data-approval-block][data-mode="pending"]')
+    ).to_have_count(0)
+    assert revisions == [{"message": exact_revision, "expected_proposal_revision": 1}]
+    page.evaluate("window.__showTicket('t_done')")
+    page.locator('[data-ticket-id="t_done"]').wait_for()
+    expect(page.locator("[data-ticket-backlog-action], [data-ticket-backlogged]")).to_have_count(0)
+    assert page.locator("[data-copy]").count() == 0
+    assert page.locator(".ticket-operating").count() == 0
+    page.evaluate("window.__showTicket('t_personal_pending')")
+    historical = page.locator('[data-ticket-id="t_personal_pending"]')
+    expect(historical).to_have_attribute("data-stage", "needs_outcome")
+    expect(historical).to_contain_text("Original personal outcome proposal")
+    expect(page.locator("[data-ticket-manifest-error]")).to_have_count(0)
+    page.evaluate("window.__showReview('t_personal_pending', 'outcome')")
+    historical_review = page.locator('[data-review-card][data-ticket-id="t_personal_pending"]')
+    expect(historical_review).to_have_attribute("data-field", "outcome")
+    expect(historical_review).to_contain_text("Original personal outcome proposal")
+    expect(page.locator("[data-review-manifest-error]")).to_have_count(0)
+    ticket["conversation_id"] = "review-worker"
+    ticket["ceiling_holder"] = {"kind": "owner", "id": "owner"}
+    drive("window.__refresh()")
+    page.evaluate("window.__showReview()")
+    review = page.locator('[data-review-card][data-ticket-id="t_review"]')
+    expect(review).to_be_visible()
+    expect(review.locator("[data-ticket-guidance]")).to_have_count(0)
+    expect(review).not_to_contain_text("Retired guidance sentinel")
+    if os.environ.get("PANELS_REVIEW_SCREENSHOT"):
+        page.screenshot(
+            path=os.environ["PANELS_REVIEW_SCREENSHOT"], full_page=True, animations="disabled"
+        )
+    if shots := os.environ.get("PANELS_PROPOSAL_SCREENSHOTS"):
+        page.screenshot(path=str(Path(shots) / "review-after.png"), full_page=True, animations="disabled")
+        page.set_viewport_size({"width": 390, "height": 844})
+        expect(page.locator("[data-review-revision-input]")).to_be_visible()
+        assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
+        page.screenshot(path=str(Path(shots) / "review-narrow-after.png"), full_page=True, animations="disabled")
+        page.set_viewport_size({"width": 1280, "height": 900})
+    # Review shows what the author wrote. The edit on the Ticket page was never saved
+    # over it, because an edited proposal is approved as the edit or it is nothing.
+    expect(page.locator('[data-approval-block][data-field="success_condition"]')).to_contain_text(
+        "A result"
+    )
+    assert page.locator("[data-accept]").count() == 1
+    approve_row = page.locator('[data-approval-block][data-field="success_condition"]')
+    expect(approve_row.locator("[data-scope-ceiling]")).to_have_count(0)
+    approve_row.locator("[data-reviewer-heading]").click()
+    expect(approve_row.get_by_role("listbox")).to_have_attribute(
+        "aria-label", "Who holds the ceiling"
+    )
+    expect(approve_row.locator('[role="option"]')).to_have_count(3)
+    choices = [
+        option.get_attribute("data-ceiling-picker-choice")
+        for option in approve_row.locator('[role="option"]').all()
+    ]
+    print(f"Review reviewer choices: {choices}", flush=True)
+    assert choices == ["owner", "outcome_kept", "chief"], choices
+    expect(approve_row.get_by_role("option", name="Manager", exact=True)).to_have_count(1)
+    approve_row.get_by_role("listbox").press("Escape")
+    # An ambiguous decision keeps its exact request across Ticket, Review, and reload.
+    # The existing browser host proves that these controls never pre-send plain chat.
+    decision_check_started = time.monotonic()
+    review_note_sends.clear()
+    original_note = "  Keep the existing approval boundary.\n\nPreserve café and all whitespace.  "
+    note_input = page.locator("[data-review-revision-input]")
+    assert_proposal_note_keys_leave_a_draft(note_input, original_note)
+    note_input.fill(original_note)
+    retained_editor = page.locator("[data-approval-block] [data-edit]")
+    retained_editor.click()
+    retained_editor.fill("Retained local draft")
+    retained_editor.press("Tab")
+    decision_response = "network"
+
+    def retry_decision(expected_count):
+        page.locator("[data-accept]").click()
+        wait_for_write(lambda: len(approval_attempts) == expected_count)
+        expect(page.locator("[data-accept]")).to_be_enabled()
+        assert not approvals
+        assert not review_note_sends
+        assert all(row == approval_attempts[0] for row in approval_attempts)
+
+    retry_decision(1)
+    note_input.fill("A changed draft cannot replace the ambiguous decision.")
+    page.locator("[data-accept]").click()
+    expect(page.locator("[data-approval-block] .error-message")).to_contain_text("original note")
+    assert len(approval_attempts) == 1
+    page.evaluate("window.__showTicket('t_review')")
+    expect(page.locator("[data-revision-note]")).to_have_value(original_note)
+    expect(page.locator("[data-approval-block] [data-edit]")).to_contain_text("Retained local draft")
+    retry_decision(2)
+    if shots := os.environ.get("PANELS_PROPOSAL_SCREENSHOTS"):
+        page.screenshot(path=str(Path(shots) / "decision-uncertain.png"), full_page=True, animations="disabled")
+    page.close()
+    page = context.new_page()
+    page.route("**/api/**", respond)
+    page.route("**/files/**", serve_file)
+    page.goto([__file__, *urls][1])
+    page.evaluate("window.__showReview()")
+    review = page.locator('[data-review-card][data-ticket-id="t_review"]')
+    expect(review).to_be_visible()
+    expect(page.locator("[data-review-revision-input]")).to_have_value(original_note)
+    wait_for_write(lambda: len(approval_attempts) == 3)
+    decision_response = "http503"
+    retry_decision(4)
+    decision_response = None
+    server_revision = 999
+    page.locator("[data-accept]").click()
+    expect(page.locator("[data-approval-block] .error-message")).to_contain_text("visible proposal changed")
+    assert len(approval_attempts) == 5
+    if shots := os.environ.get("PANELS_PROPOSAL_SCREENSHOTS"):
+        page.screenshot(path=str(Path(shots) / "decision-refused.png"), full_page=True, animations="disabled")
+    assert not approvals
+    assert not review_note_sends
+    server_revision = 2
+    # This fixture ends after Success, so approval retains its reviewer without a scope choice.
+    page.locator("[data-accept]").click()
+    expect(page.get_by_role("listbox")).to_have_count(0)
+    wait_for_write(lambda: approvals)
+    assert len(approvals) == 1
+    assert len(approval_attempts) == 6
+    assert all(row == approval_attempts[0] for row in approval_attempts)
+    assert not review_note_sends
+    assert approvals[0]["next_ceiling"] == "none"
+    assert approvals[0]["next_holder"] == {"kind": "owner", "id": "owner"}
+    assert approvals[0]["expected_proposal_revision"] == 2
+    assert approvals[0]["message"] == original_note
+    assert approvals[0]["edited_body"] == "Retained local draft"
+    if shots := os.environ.get("PANELS_PROPOSAL_SCREENSHOTS"):
+        page.screenshot(path=str(Path(shots) / "decision-applied.png"), full_page=True, animations="disabled")
+    # A crash after server commit can leave a journal entry after the proposal leaves Review.
+    applied_operation = next(
+        operation_id for operation_id, value in decision_receipts.items()
+        if value["ticket_id"] == "t_review" and value["outcome"] == "applied"
+        and value["expected_proposal_revision"] == 2
+    )
+    journal_key = 'panels:decision-operation:v1:["t_review",2]'
+    saved_operation = {
+        "version": 1, "ticketId": "t_review", "operationId": applied_operation,
+        "command": {"decision": "approve", "field": "success_condition", **approvals[0]},
+    }
+    page.evaluate("([key,value]) => localStorage.setItem(key, JSON.stringify(value))", [journal_key, saved_operation])
+    attempts_before_recovery = len(approval_attempts)
+    hold_decision_lookup = True
+    page.reload()
+    wait_for_held(lambda: held_decision_lookups)
+    recovery_tab = context.new_page()
+    recovery_tab.route("**/api/**", respond)
+    recovery_tab.goto([__file__, *urls][1])
+    recovery_tab.wait_for_function("""async () => {
+        const locks = await navigator.locks.query();
+        return locks.held.length === 1 && locks.pending.length === 1;
+    }""")
+    assert len(held_decision_lookups) == 1
+    hold_decision_lookup = False
+    lookup_route, saved_receipt = held_decision_lookups.pop()
+    lookup_route.fulfill(json={"receipt_contract": 1, "receipt": saved_receipt})
+    page.wait_for_function("key => localStorage.getItem(key) === null", arg=journal_key)
+    recovery_tab.wait_for_function("key => localStorage.getItem(key) === null", arg=journal_key)
+    recovery_tab.close()
+    assert len(approval_attempts) == attempts_before_recovery
+    page.evaluate("window.__showReview()")
+    print(f"Review decision recovery: {time.monotonic() - decision_check_started:.3f}s", flush=True)
+    expect(page.locator('[data-review-card][data-ticket-id="t_review"]')).to_have_count(0)
+    remaining = page.locator('[data-review-ticket-card][data-ticket-id="t_personal_pending"]')
+    expect(remaining).to_have_count(1)
+    remaining.locator("[data-skip]").click()
+    expect(page.locator("[data-review-card]")).to_have_count(0)
+    ticket.update(
+        ticket_status="awaiting_approval",
+        pending_proposal={
+            "field": "success_condition",
+            "body": "A result",
+            "proposed_by": "agent",
+            "created_at": 2,
+            "revision": 2,
+        },
+    )
+    drive("window.__refresh()")
+    expect(page.locator('[data-review-empty]')).to_be_visible()
+    expect(page.locator("[data-review-card]")).to_have_count(0)
+    page.locator("[data-review-return]").click()
+    # The newly published proposal precedes the previously skipped personal ask.
+    expect(page.locator("[data-review-card]")).to_have_count(1)
+    expect(page.locator('[data-review-card][data-ticket-id="t_review"]')).to_be_visible()
+    navigation_proposal = dict(ticket["pending_proposal"])
+    ticket["title"] = "Canonical Review title"
+    drive("window.__refresh()")
+    try:
+        expect(page.locator(".review-ticket-title [contenteditable]")).to_have_text(
+            "Canonical Review title"
+        )
+    except AssertionError:
+        print(
+            "REVIEW_TITLE_DIAGNOSTIC",
+            json.dumps(
+                page.evaluate(
+                    "() => ({source:window.__navigation.state.effective?.publication.records.filter(row=>row.kind==='ticket'), cards:[...document.querySelectorAll('[data-review-card]')].map(node=>({id:node.dataset.ticketId,title:node.querySelector('.review-ticket-title')?.textContent}))})"
+                )
+            ),
+        )
+        raise
+    for stage in manifest["worker_types"][0]["stages"]:
+        if stage["id"] == "needs_success_condition":
+            stage["gating_field"] = "plan"
+    drive("window.__manifest()")
+    expect(page.locator("[data-review-card]")).to_have_count(1)
+    navigation_proposal = {
+        **ticket["pending_proposal"],
+        "created_at": 3,
+        "revision": 3,
+        "body": "Replacement body",
+    }
+    hold_detail = True
+    drive("window.__refresh()")
+    expect(page.locator("[data-review-card]")).to_have_count(0)
+    wait_for_held(lambda: held_details)
+    assert held_details
+    finish_read(held_details.pop(0), ticket)
+    expect(page.locator("[data-review-card]")).to_have_count(0)
+    ticket["pending_proposal"] = navigation_proposal
+    hold_detail = False
+    for route in held_details:
+        finish_read(route, ticket)
+    held_details.clear()
+    expect(page.locator("[data-approval-block]")).to_contain_text("Replacement body")
+    expect(page.locator("[data-approval-block]")).not_to_contain_text("A result")
+    server_revision = 4
+    approve_row = page.locator("[data-approval-block]")
+    approve_row.locator("[data-accept]").click()
+    expect(page.get_by_role("listbox")).to_have_count(0)
+    expect(page.locator("[data-approval-block] .error-message")).to_contain_text("visible proposal changed")
+    assert len(approvals) == 1
+    server_revision = 3
+    proposal_editor = approve_row.locator("[data-edit]")
+    proposal_editor.click()
+    proposal_editor.fill("Edited replacement body")
+    proposal_editor.press("Tab")
+    approve_row.locator("[data-accept]").click()
+    expect(page.get_by_role("listbox")).to_have_count(0)
+    wait_for_write(lambda: len(approvals) == 2)
+    assert approvals[1]["expected_proposal_revision"] == 3
+    assert approvals[1]["edited_body"] == "Edited replacement body"
+    assert approvals[1]["next_ceiling"] == "none"
+    assert approvals[1]["next_holder"] == {"kind": "owner", "id": "owner"}
+    expect(remaining).to_have_count(1)
+    remaining.locator("[data-skip]").click()
+    expect(page.locator("[data-review-card]")).to_have_count(0)
+    runtime_working = True
+    drive("window.__refresh()")
+    expect(page.locator("[data-shell-presence]")).to_have_count(0)
+    expect(page.locator(".review-empty-meta")).to_have_text("1 agent in progress")
+    snapshot_unavailable = True
+    # A failed replacement read does not revoke the still-valid active stream.
+    # Exercise actual active-stream loss for this fail-closed runtime assertion.
+    page.evaluate("window.__navigationSource.onerror?.(); window.__refresh()")
+    expect(page.locator("[data-shell-presence]")).to_have_count(0)
+    expect(page.locator("[data-review-empty]")).to_contain_text("Review is unavailable right now.")
+    expect(page.locator(".review-empty-meta")).to_have_count(0)
+    snapshot_unavailable = False
+    runtime_working = False
+    drive("window.__refresh()")
+    expect(page.locator("[data-shell-presence]")).to_have_count(0)
+    expect(page.locator(".review-empty-meta")).to_have_text("0 agents in progress")
+    artifact_started = time.monotonic()
+    # End the deliberate incompatible-manifest scenario before the next Ticket visit.
+    manifest["worker_types"] = json.loads(json.dumps(canonical_worker_types))
+    drive("window.__manifest()")
+    page.evaluate("window.__showTicket('t_artifacts')")
+    page.locator('[data-ticket-id="t_artifacts"]').wait_for()
+    page.locator("[data-conversation-rest-bar], [data-conversation-input]").first.wait_for()
+    rest = page.locator("[data-conversation-rest-bar]")
+    if rest.count() and rest.is_visible():
+        rest.click()
+    page.locator("[data-conversation-input]").click()
+    expand = page.locator("[data-conversation-expand]")
+    if expand.count() and expand.is_visible():
+        expand.click()
+    page.locator('[data-conversation-lens-choice="full"]').click()
+    expect(page.locator("[data-conversation-input]")).to_be_visible()
+    expect(page.get_by_role("button", name="Conversation options")).to_be_visible()
+    page.get_by_role("button", name="Conversation options").click()
+    expect(page.locator("[data-conversation-history]")).to_have_count(0)
+    page.keyboard.press("Escape")
+    page.locator("[data-conversation-collapse]").click()
+    page.locator("[data-stage-fold]").evaluate("(element) => element.open = true")
+    page.locator('[data-stage-fold] [data-field="brief"]').evaluate(
+        "(element) => element.open = true"
+    )
+    saved_artifacts = page.locator('[data-stage-fold] [data-field="brief"]')
+    # A Manager file link is a preview card like a Ticket or goal file link (staging, PR 613).
+    # The HTML plan's card names it with a link that opens the Manager file in place.
+    html_link = saved_artifacts.locator(".file-preview-artifact-link").filter(has_text="HTML plan")
+    assert html_link.get_attribute("href").startswith("#/preview?source=manager&")
+    original_url = page.url
+
+    def click_was_claimed(link, **options):
+        return link.evaluate(
+            "(anchor, options) => {\n          let claimed;\n          document.addEventListener('click', event => {\n            claimed = event.defaultPrevented;\n            event.preventDefault();\n          }, {once:true});\n          anchor.dispatchEvent(new MouseEvent('click', {bubbles:true, cancelable:true, ...options}));\n          return claimed;\n        }",
+            options,
+        )
+
+    for modifier in ["ctrlKey", "metaKey", "shiftKey", "altKey"]:
+        assert not click_was_claimed(html_link, **{modifier: True})
+    assert not click_was_claimed(html_link, button=1)
+    html_link.evaluate("a => a.setAttribute('target', '_blank')")
+    assert not click_was_claimed(html_link)
+    html_link.evaluate("a => a.removeAttribute('target')")
+    html_link.evaluate("a => a.setAttribute('download', '')")
+    assert not click_was_claimed(html_link)
+    html_link.evaluate("a => a.removeAttribute('download')")
+    html_link.evaluate(
+        "a => a.addEventListener('click', event => event.preventDefault(), {once:true})"
+    )
+    assert click_was_claimed(html_link)
+    expect(page.locator("[data-ticket-artifact]")).to_have_count(0)
+    # Downloads (the Receipt, Raw receipt and Unsupported cards) and links that name no
+    # managed file stay the browser's.
+    downloads = saved_artifacts.locator("a.file-preview-link[download]")
+    expect(downloads).to_have_count(3)
+    for link in [
+        *downloads.all(),
+        *(saved_artifacts.get_by_role("link", name=label, exact=True)
+          for label in ["External", "Dev preview", "Malformed"]),
+    ]:
+        assert not click_was_claimed(link)
+    # The opened conversation owns the full pane. Return to the document before a real click.
+    for _ in range(2):
+        if page.locator('[data-conversation-pane][data-conversation-state="rest"]').count():
+            break
+        page.keyboard.press("Escape")
+    expect(page.locator("[data-conversation-pane]")).to_have_attribute(
+        "data-conversation-state", "rest"
+    )
+    html_link.click()
+    viewer = page.locator("[data-ticket-artifact]")
+    expect(viewer).to_have_attribute("aria-label", "plan.html")
+    expect(
+        viewer.frame_locator("iframe").get_by_role("heading", name="Artifact plan")
+    ).to_be_visible()
+    assert page.url == original_url
+    if os.environ.get("PANELS_ARTIFACT_SCREENSHOT"):
+        page.screenshot(path=os.environ["PANELS_ARTIFACT_SCREENSHOT"], full_page=True)
+    viewer.get_by_role("button", name="Close", exact=True).click()
+    # The proposal's Manager file link is its card; the card's name opens it in place.
+    page.locator("[data-approval-block] .file-preview-artifact-link").filter(has_text="Markdown plan").click()
+    expect(viewer).to_have_attribute("aria-label", "plan.md")
+    # The document's own Manager image link is its image, shown in the document (PR 613).
+    nested = viewer.locator('[data-file-preview-kind="image"] img')
+    expect(nested).to_have_attribute("src", "/files/managers/si_artifacts/artifacts/image.svg")
+    expect(nested).to_be_visible()
+    viewer.get_by_role("button", name="Close", exact=True).click()
+    # The artifact takes the focus when it opens and hands it back to the pressed link
+    # when it closes, so the keyboard is where the reading is and then where it was.
+    # This is the link that can prove it, deliberately: a field body is a contenteditable,
+    # and Chromium focuses the editable host rather than an anchor inside it, so a press
+    # on a raw Markdown link in a field leaves the field holding the focus. This link
+    # lives in the mounted preview slot, which is contenteditable="false", so it is a real
+    # focusable anchor. Do not move this proof back onto one of the raw links.
+    open_link = saved_artifacts.locator(".file-preview-artifact-link").filter(has_text="Ticket document")
+    open_link.click()
+    expect(viewer).to_have_attribute("aria-label", "plan.md")
+    expect(viewer).to_be_focused()
+    viewer.get_by_role("button", name="Close", exact=True).click()
+    expect(viewer).to_have_count(0)
+    expect(open_link).to_be_focused()
+    saved_artifacts.get_by_role("link", name="Explicit receipt", exact=True).click()
+    expect(viewer).to_have_attribute("aria-label", "receipt.json")
+    expect(viewer.get_by_role("link", name="Download receipt.json", exact=True)).to_have_attribute(
+        "download", ""
+    )
+    viewer.get_by_role("button", name="Close", exact=True).click()
+    if page.locator('[data-conversation-pane][data-conversation-state="rest"]').count():
+        page.locator("[data-conversation-expand]").click()
+    expect(page.locator("[data-conversation-pane]")).to_have_attribute(
+        "data-conversation-state", "opened"
+    )
+    # In the conversation too a Manager file link is its card (PR 613); its Open link opens it.
+    page.locator("[data-conversation-pane]").get_by_role("link", name="Open plan.wav", exact=True).click()
+    expect(viewer).to_have_attribute("aria-label", "plan.wav")
+    expect(viewer.locator("audio")).to_have_attribute(
+        "src", "/files/managers/si_artifacts/artifacts/plan.wav"
+    )
+    expect(page.locator("[data-conversation-pane]")).to_have_attribute(
+        "data-conversation-state", "rest"
+    )
+    assert page.url == original_url
+
+    # The document underneath keeps the place the reader left it, and Close gives it back.
+    # Measure only after the conversation's dock has settled: the dock reserves part of
+    # the screen, what it finally reserves is what the document has left to scroll in, and
+    # a reader that connects later changes the dock's height, which clamps the document's
+    # scroll position out from under the measurement.
+    page.set_viewport_size({"width": 1280, "height": 560})
+    viewer.get_by_role("button", name="Close", exact=True).click()
+    expect(viewer).to_have_count(0)
+    conversation_pane = page.locator("[data-conversation-pane]")
+    expect(conversation_pane).to_have_attribute("data-conversation-state", "rest")
+    expect(page.locator("[data-conversation-rest-bar]")).to_be_visible()
+    document_box = page.locator(".ticket-doc")
+    # The attribute and the bar report the state before the layout follows it: for a few
+    # frames after the resize the document is still sized for the old window and the dock
+    # is still shrinking. Wait until the document fits the window and its geometry holds
+    # still for several frames, or the position measured below comes from a stale range.
+    page.evaluate(
+        """() => new Promise((resolve, reject) => {
+            const document_box = document.querySelector(".ticket-doc");
+            const geometry = () => [
+                document_box.clientHeight,
+                document_box.scrollHeight,
+                document.querySelector("[data-conversation-pane]").getBoundingClientRect().height,
+            ].join();
+            let previous = "", still = 0, frames = 0;
+            const check = () => {
+                still = document_box.clientHeight <= innerHeight && geometry() === previous
+                    ? still + 1 : 0;
+                previous = geometry();
+                if (still >= 5) resolve();
+                else if (++frames > 300) reject(new Error("Layout did not settle: " + previous));
+                else requestAnimationFrame(check);
+            };
+            requestAnimationFrame(check);
+        })"""
+    )
+    reading_range = document_box.evaluate(
+        "(element) => element.scrollHeight - element.clientHeight"
+    )
+    assert reading_range > 0, reading_range
+    # Set the reading position outright and dispatch the press rather than clicking it:
+    # the driver scrolls an element into view before a real click, which would move the
+    # very position being measured. The real click is proved above.
+    kept_scroll = document_box.evaluate(
+        "(element) => { element.scrollTop = Math.round("
+        "(element.scrollHeight - element.clientHeight) / 2); return element.scrollTop; }"
+    )
+    assert kept_scroll > 0, (reading_range, kept_scroll)
+    html_link.dispatch_event("click")
+    expect(viewer).to_have_attribute("aria-label", "plan.html")
+    under = document_box.evaluate("(element) => element.scrollTop")
+    assert abs(under - kept_scroll) <= 1, (kept_scroll, under)
+    viewer.get_by_role("button", name="Close", exact=True).click()
+    expect(viewer).to_have_count(0)
+    given_back = document_box.evaluate("(element) => element.scrollTop")
+    assert abs(given_back - kept_scroll) <= 1, (kept_scroll, under, given_back)
+
+    # Escape belongs to whatever is on top, and on this screen that is a deliberate
+    # change: the Ticket used to close the artifact from behind an open conversation, and
+    # now it defers to the conversation covering it.
+    html_link.click()
+    expect(viewer).to_have_count(1)
+    expect(conversation_pane).to_have_attribute("data-conversation-state", "rest")
+    page.keyboard.press("Escape")
+    expect(viewer).to_have_count(0)
+    html_link.click()
+    expect(viewer).to_have_count(1)
+    page.locator("[data-conversation-rest-bar]").click()
+    expect(conversation_pane).to_have_attribute("data-conversation-state", "opened")
+    page.keyboard.press("Escape")
+    expect(conversation_pane).to_have_attribute("data-conversation-state", "rest")
+    expect(viewer).to_have_count(1)
+    page.keyboard.press("Escape")
+    expect(viewer).to_have_count(0)
+
+    # The one-document address still works on its own, which is the way in from a
+    # notification or a shared link, where there is no pane to draw the file over.
+    page.evaluate(
+        "window.__showPreview"
+        "('#/preview?source=ticket&ticket=t_artifacts&path=artifacts%2Fplan.md')"
+    )
+    expect(
+        page.locator("[data-file-preview-route]").get_by_role("heading", name="Markdown plan")
+    ).to_be_visible()
+    page.evaluate("history.replaceState(null, '', location.pathname)")
+    page.set_viewport_size({"width": 1280, "height": 900})
+    assert page.url == original_url
+    print(f"Artifact link browser coverage: {time.monotonic() - artifact_started:.2f}s", flush=True)
+    # Reuse this host for the new browser boundary: the complete unread run, a draft
+    # through publication/Skip, attachments, failed send, and a later unread message.
+    review_message_mode = True
+    source_deleted = False
+    ticket.update(
+        conversation_id="review-message",
+        title="Messages in review",
+        recap="The reply stays beside the unread messages.",
+        conversation_signal={"working": False, "message_for_owner": True},
+        stage="needs_success_condition",
+        ticket_status="awaiting_approval",
+        pending_proposal={
+            "field": "success_condition",
+            "body": "A separate decision",
+            "created_at": 500,
+            "revision": 1,
+        },
+    )
+    navigation_proposal = None
+
+    def owner_message(sequence, text):
+        return {
+            "conversation_id": "review-message",
+            "sequence": sequence,
+            "kind": "message_to_owner",
+            "created_at": sequence,
+            "payload": {
+                "text": text,
+                "sender_label": "worker",
+                "sender": {"kind": "ticket", "id": "t_review"},
+                "recipient": {"kind": "owner", "id": "owner"},
+            },
+        }
+
+    review_messages[:] = [owner_message(i, f"Unread message {i}") for i in range(1, 122)]
+    review_messages[120]["payload"]["text"] += (
+        "\n\n[HTML plan](/files/tickets/t_review/artifacts/plan.html)"
+    )
+    page.evaluate("window.__showTicket('t_review')")
+    drive("window.__refresh()")
+    page.evaluate("window.__showReview()")
+    message_card = page.locator(
+        '[data-review-item-type="message"][data-conversation-id="review-message"]'
+    )
+    expect(message_card.locator("[data-review-message-sequence]")).to_have_count(121)
+    expect(message_card.locator('[data-review-message-sequence="121"]')).to_contain_text(
+        "Unread message 121"
+    )
+    message_card.locator('[data-review-message-sequence="121"]').scroll_into_view_if_needed()
+    latest = message_card.locator('[data-review-message-sequence="121"]')
+    expect(latest.locator('a.file-preview-artifact-link')).to_have_text('HTML plan')
+    expect(latest.locator('iframe')).to_have_count(0)
+    assert review_read == 0, "Showing review must not mark messages read"
+    reply = message_card.locator("[data-review-reply]")
+    assert_enter_rules_leave_a_draft(reply, "Keep these words", lambda: len(review_message_sends))
+    page.evaluate("window.__replyNode=document.querySelector('[data-review-reply]')")
+    drive("window.__batch()")
+    expect(reply).to_have_value("Keep these words")
+    assert page.evaluate("window.__replyNode===document.querySelector('[data-review-reply]')")
+    message_card.locator('input[type="file"]').set_input_files(
+        {"name": "notes.txt", "mimeType": "text/plain", "buffer": b"An attachment"}
+    )
+    expect(message_card.locator(".review-attachment")).to_contain_text("notes.txt")
+    expect(message_card.locator("[data-review-attach]")).to_be_enabled()
+    expect(message_card.locator("[data-voice-record]")).to_have_count(1)
+    # One Ticket supplies one header and one queue stop for both constituents.
+    combined = page.locator('[data-review-ticket-card][data-ticket-id="t_review"]')
+    expect(combined.locator(".review-ticket-title")).to_have_count(1)
+    expect(combined.locator('[data-review-item-type="proposal"]')).to_be_visible()
+    page.locator("body").click(position={"x": 1, "y": 1})
+    page.keyboard.press("s")
+    expect(combined).to_have_count(0)
+    expect(page.locator("[data-review-empty]")).to_be_visible()
+    page.evaluate("window.__showTicket('t_review')")
+    page.evaluate("window.__showReview()")
+    expect(reply).to_have_value("Keep these words")
+    expect(message_card.locator(".review-attachment")).to_contain_text("notes.txt")
+    server_revision = 1
+    combined.locator("[data-accept]").click()
+    expect(page.get_by_role("listbox")).to_have_count(0)
+    expect(combined.locator('[data-review-item-type="proposal"]')).to_have_count(0)
+    expect(message_card.locator("[data-review-message-sequence]")).to_have_count(121)
+    expect(reply).to_have_value("Keep these words")
+    assert approvals[-1]["expected_proposal_revision"] == 1
+    assert approvals[-1]["next_ceiling"] == "none"
+    assert approvals[-1]["next_holder"] == ticket["ceiling_holder"]
+    assert review_read == 0
+    ticket.update(ticket_status="awaiting_approval", pending_proposal={"field":"success_condition","body":"A separate decision","created_at":500,"revision":1})
+    drive("window.__refresh()")
+    expect(combined.locator('[data-review-item-type="proposal"]')).to_be_visible()
+    reply.press("Control+Enter")
+    expect(message_card.locator(".error-line")).to_be_visible()
+    expect(reply).to_have_value("Keep these words")
+    expect(reply).to_be_enabled()
+    assert review_read == 0
+    assert review_message_sends[-1]["owner_read_through_sequence"] == 121
+    assert review_message_sends[-1]["content"][-1]["piece"] == "file"
+    refused_identity = review_message_sends[-1]["sender_message_id"]
+    # A later message arrives after the run was drawn. The reply cannot consume it.
+    review_messages.append(owner_message(122, "This arrived during your reply."))
+    review_send_fate = "queued"
+    page.evaluate("""() => {
+      const original = Element.prototype.animate;
+      window.__reviewFades=[];
+      Element.prototype.animate=function(frames,options) {
+        if(this.matches('[data-review-item-type="message"]')) {
+          window.__reviewFades.push({options, text:this.querySelector('textarea')?.value,
+            files:this.querySelectorAll('.review-attachment').length, height:this.getBoundingClientRect().height});
+        }
+        return original.call(this,frames,options);
+      };
+    }""")
+    reply.press("Enter")
+    expect(message_card.locator('[data-review-message-sequence="122"]')).to_be_visible()
+    expect(message_card.locator("[data-review-message-sequence]")).to_have_count(1)
+    assert review_read == 121
+    fade = page.evaluate("window.__reviewFades[0]")
+    assert fade["text"] == "Keep these words" and fade["files"] == 1
+    assert fade["options"]["duration"] == 160
+    assert fade["options"]["easing"] == "cubic-bezier(.3,0,.8,.15)"
+    assert review_message_sends[-1]["sender_message_id"] != refused_identity
+    expect(reply).to_have_value("")
+    assert len(review_message_sends) == 2
+    expect(message_card.locator("[data-open-conversation]")).to_have_attribute(
+        "href", "#/workspace/t_review?conversation=review-message"
+    )
+    # Screenshot the actual implementation at useful desktop and narrow widths.
+    shots = os.environ.get("PANELS_REVIEW_SCREENSHOTS")
+    if shots:
+        from pathlib import Path
+
+        Path(shots).mkdir(parents=True, exist_ok=True)
+        page.set_viewport_size({"width": 1100, "height": 850})
+        page.screenshot(path=str(Path(shots) / "review-desktop.png"), full_page=True)
+        page.set_viewport_size({"width": 390, "height": 844})
+        page.screenshot(path=str(Path(shots) / "review-narrow.png"), full_page=True)
+        assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
+        page.set_viewport_size({"width": 1280, "height": 900})
+    message_card.locator("[data-review-mark-read]").click()
+    expect(message_card).to_have_count(0)
+    assert review_read == 122
+    expect(page.locator('[data-review-item-type="proposal"]')).to_be_visible()
+    # A queued send whose response is lost clears the last queue item on the server.
+    # The held card and immutable attempt must survive that publication until retry
+    # discovers queue admission, without sending its attachment a second time.
+    ticket["pending_proposal"] = None
+    ticket["ticket_status"] = "agent"
+    ticket["conversation_signal"]["message_for_owner"] = True
+    review_messages.extend([owner_message(123, "Please read the attached plan.\n\n[HTML plan](/files/tickets/t_review/artifacts/plan.html)"),
+                            owner_message(124, "The revised plan keeps the original scope.")])
+    drive("window.__refresh()")
+    expect(message_card.locator('[data-review-message-sequence]')).to_have_count(2)
+    # Admit a second conversation after the first card already owns its held run.
+    review_sibling_messages[:] = [{**owner_message(i, f"Historical message {i}"), "conversation_id":"review-sibling", "created_at":1000+i} for i in (1, 2)]
+    drive("window.__refresh()")
+    sibling_card = page.locator('[data-review-item-type="message"][data-conversation-id="review-sibling"]')
+    expect(sibling_card.locator('[data-review-message-sequence]')).to_have_count(2)
+    sibling_reply = sibling_card.locator('[data-review-reply]')
+    sibling_reply.fill("Keep the new conversation draft.")
+    message_card.locator("[data-review-mark-read]").click()
+    expect(message_card).to_have_count(0)
+    assert review_read == 124
+    expect(sibling_reply).to_have_value("Keep the new conversation draft.")
+    message_card = sibling_card
+    reply = sibling_reply
+    reply.fill("Keep the scope and the attachment.")
+    message_card.locator('input[type="file"]').set_input_files(
+        {"name": "scope.txt", "mimeType": "text/plain", "buffer": b"Keep scope"}
+    )
+    expect(message_card.locator(".review-attachment")).to_contain_text("scope.txt")
+    review_send_fate = "lost-queued"
+    message_card.locator("[data-review-send]").click()
+    expect(message_card.locator(".error-line")).to_be_visible()
+    expect(reply).to_have_value("Keep the scope and the attachment.")
+    drive("window.__refresh()")
+    expect(message_card).to_be_visible()
+    expect(reply).to_be_disabled()
+    sent_count = len(review_message_sends)
+    message_card.locator("[data-review-send]").click()
+    expect(message_card).to_have_count(0)
+    expect(page.locator("[data-review-empty]")).to_be_visible()
+    assert review_read == 124
+    assert review_sibling_read == 2
+    assert review_message_sends[-1]["conversation_id"] == "review-sibling"
+    assert len(review_message_sends) == sent_count
+    # A retained Ticket message must leave Review when its canonical address moves
+    # to a settled Manager, even though the former Ticket remains live.
+    review_sibling_messages.append({**owner_message(3,"A message before transfer"),"conversation_id":"review-sibling","created_at":1003})
+    drive("window.__refresh()")
+    expect(page.locator('[data-review-empty]')).to_be_visible()
+    expect(sibling_card).to_have_count(0)
+    page.locator("[data-review-return]").click()
+    expect(sibling_card).to_be_visible()
+    sibling_reply.fill("A draft before transfer")
+    review_sibling_transferred = True
+    drive("window.__refresh()")
+    expect(sibling_card).to_have_count(0)
+    expect(page.locator("[data-review-ticket-card]")).to_have_count(0)
+    expect(page.locator("[data-review-empty]")).to_be_visible()
+    # The terminal screen is a stable workspace: publication changes its status,
+    # never the mounted draft. Reuse this host and real navigation owner.
+    final_started = time.monotonic()
+    review_message_mode = False
+    final_rows = []
+    chief_pointer = "chief-original"
+    final_workers = 3
+    page.evaluate("window.__showTicket('t_review')")
+    drive("window.__refresh()")
+    page.evaluate("window.__showReview()")
+    terminal = page.locator("[data-review-empty]")
+    chief_form = page.locator("[data-review-chief-composer]")
+    chief_input = chief_form.get_by_role("textbox", name="Message Chief", exact=True)
+    expect(terminal).to_contain_text("Nothing needs you right now.")
+    expect(terminal.locator(".review-empty-meta")).to_have_text("3 agents in progress")
+    expect(chief_input).to_be_visible()
+    chief_request_start = len(requests)
+    page.set_viewport_size({"width": 1440, "height": 1000})
+
+    def final_capture(name):
+        if shots:
+            page.screenshot(path=str(Path(shots) / name), full_page=True)
+
+    final_capture("review-final-workers.png")
+    final_workers = 0
+    drive("window.__refresh()")
+    expect(terminal.locator('.review-empty-meta')).to_have_text('0 agents in progress')
+    final_capture('review-final-no-workers.png')
+    page.evaluate("window.__chiefInput=document.querySelector('[data-review-chief-composer] textarea')")
+    final_rows = [{**variant_seed, "id": f"t_final_{i}", "title": f"Arrival {i}",
+                   "conversation_id": None, "ticket_status": "awaiting_approval",
+                   "ceiling_holder": {"kind": "owner", "id": "owner"}} for i in range(3)]
+    drive("window.__refresh()")
+    expect(terminal).to_contain_text('3 things await review')
+    expect(page.locator('[data-review-ticket-card]')).to_have_count(0)
+    assert page.evaluate("window.__chiefInput===document.querySelector('[data-review-chief-composer] textarea')")
+    # Arrival also preserves active typing and layout; disappearing work restores truthful copy.
+    chief_input.fill("Keep this thought and its attachment.")
+    # Text-only persistence can fail before transport. Such a failure must keep
+    # the draft editable and must never create an uncorrelatable Chief delivery.
+    page.evaluate("""() => {
+      window.__originalSetItem=Storage.prototype.setItem;
+      Storage.prototype.setItem=function(key,value){
+        if(key==='panels.conversation.outgoing.review-chief-attempt')throw new DOMException('Full','QuotaExceededError');
+        return window.__originalSetItem.call(this,key,value);
+      };
+    }""")
+    before_storage_failure = len(chief_sends)
+    chief_form.locator("[data-review-send]").click()
+    expect(chief_form.get_by_role("alert")).to_be_visible()
+    expect(chief_input).to_be_enabled()
+    expect(chief_input).to_have_value("Keep this thought and its attachment.")
+    assert len(chief_sends) == before_storage_failure
+    page.evaluate("() => { Storage.prototype.setItem=window.__originalSetItem; }")
+    chief_input.focus()
+    chief_form.locator('input[type="file"]').set_input_files(
+        {"name": "thought.txt", "mimeType": "text/plain", "buffer": b"A thought"}
+    )
+    expect(chief_form.locator(".review-attachment")).to_contain_text("thought.txt")
+    chief_input.focus()
+    initial_box = chief_input.bounding_box()
+    final_rows = []
+    drive("window.__refresh()")
+    expect(terminal).to_contain_text('Nothing needs you right now.')
+    final_rows = [{**variant_seed, "id": f"t_final_{i}", "title": f"Arrival {i}",
+                   "conversation_id": None, "ticket_status": "awaiting_approval",
+                   "ceiling_holder": {"kind": "owner", "id": "owner"}} for i in range(3)]
+    drive("window.__refresh()")
+    expect(terminal).to_contain_text('3 things await review')
+    expect(chief_input).to_be_focused()
+    expect(chief_input).to_have_value("Keep this thought and its attachment.")
+    assert chief_input.bounding_box() == initial_box
+    final_capture("review-final-arrivals.png")
+    if shots:
+        page.set_viewport_size({"width": 390, "height": 844})
+        final_capture("review-final-arrivals-mobile.png")
+        assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
+        page.set_viewport_size({"width": 1440, "height": 1000})
+    # A definite rejection restores editing. Lost success is correlated against the
+    # captured destination even if Chief's current pointer changes before checking.
+    chief_form.locator("[data-review-send]").click()
+    expect(chief_form.get_by_role("alert")).to_be_visible()
+    expect(chief_input).to_be_enabled()
+    expect(chief_input).to_have_value("Keep this thought and its attachment.")
+    expect(chief_form.locator(".review-attachment")).to_contain_text("thought.txt")
+    refused_chief_identity = chief_sends[-1]["sender_message_id"]
+    chief_send_fate = "lost-queued"
+    chief_form.locator("[data-review-send]").click()
+    expect(chief_form.get_by_role("button", name="Check delivery", exact=True)).to_be_visible()
+    expect(chief_form.get_by_role("alert")).to_be_visible()
+    expect(chief_input).to_be_disabled()
+    assert chief_sends[-1]['sender_message_id'] != refused_chief_identity
+    assert chief_sends[-1]['conversation_id'] == 'chief-original'
+    assert chief_sends[-1]['content'][-1]['piece'] == 'file'
+    chief_pointer = 'chief-reset'
+    drive("window.__refresh()")
+    chief_send_count = len(chief_sends)
+    check_request_start = len(requests)
+    chief_form.get_by_role("button", name="Check delivery", exact=True).click()
+    expect(chief_input).to_have_value("")
+    expect(chief_input).to_be_enabled()
+    assert len(chief_sends) == chief_send_count
+    assert any(
+        "/chief-original/view/receipts?" in path and chief_sends[-1]["sender_message_id"] in path
+        for path in requests[check_request_start:]
+    )
+    assert not any("/chief-reset" in path for path in requests[check_request_start:])
+    assert chief_input.bounding_box() == initial_box
+    expect(terminal).to_contain_text("3 things await review")
+    assert not any(
+        "/owner-read" in path or "/events" in path or "/view/tail" in path
+        for path in requests[chief_request_start:]
+        if "chief-original" in path or "chief-reset" in path
+    )
+    assert not any("chief-original" in path for path in page.evaluate("[...window.__openStreams]"))
+    # The same normal Chief door can create its first conversation. A direct
+    # success clears the multiline draft while retaining its expanded geometry.
+    chief_pointer = None
+    chief_send_fate = "started"
+    chief_input.fill("A first conversation.\nKeep the second line.\nAnd the third.")
+    first_conversation_box = chief_input.bounding_box()
+    chief_form.locator("[data-review-send]").click()
+    expect(chief_input).to_have_value("")
+    expect(chief_form.get_by_role("status")).to_contain_text("Sent to Chief")
+    assert chief_sends[-1]["conversation_id"] is None
+    assert "owner_read_through_sequence" not in chief_sends[-1]
+    assert chief_pointer == "chief-created"
+    assert chief_input.bounding_box() == first_conversation_box
+    expect(terminal).to_contain_text("3 things await review")
+    # A send can finish after its route disappears. Completing the older send
+    # must not erase a newer draft another Chief view wrote to the shared key.
+    chief_input.fill("The older pending message.")
+    hold_chief_send = True
+    chief_form.locator("[data-review-send]").click()
+    wait_for_held(lambda: held_chief_sends)
+    assert held_chief_sends
+    page.evaluate("window.__showTicket('t_review')")
+    expect(chief_form).to_have_count(0)
+    page.evaluate("window.__writeChiefDraft('A newer Chief thought.')")
+    hold_chief_send = False
+    for held_route, response in held_chief_sends:
+        held_route.fulfill(status=200, content_type="application/json", body=json.dumps(response))
+    held_chief_sends.clear()
+    page.wait_for_function(
+        "sessionStorage.getItem('panels:review-chief-attempt-destination')===null"
+    )
+    assert page.evaluate("window.__readChiefDraft()") == "A newer Chief thought."
+    page.evaluate("window.__writeChiefDraft('')")
+    # Return to a terminal screen so the explicit return check still exercises
+    # fresh admission against work that arrived during this visit.
+    final_rows = []
+    drive("window.__refresh()")
+    page.evaluate("window.__showReview()")
+    expect(terminal).to_contain_text('Nothing needs you right now.')
+    final_rows = [{**variant_seed, "id": f"t_final_{i}", "title": f"Arrival {i}",
+                   "conversation_id": None, "ticket_status": "awaiting_approval",
+                   "ceiling_holder": {"kind": "owner", "id": "owner"}} for i in range(3)]
+    drive("window.__refresh()")
+    expect(terminal).to_contain_text('3 things await review')
+    # A fresh authoritative request is required before releasing the latch.
+    request_count = len(requests)
+    page.locator("[data-review-return]").click()
+    expect(page.locator("[data-review-ticket-card]")).to_have_count(1)
+    assert any(path.startswith("navigation/view/snapshot") for path in requests[request_count:])
+    expect(terminal).to_have_count(0)
+    # Returning fresh follows current queue normally, rather than restoring a latch.
+    page.evaluate("window.__showTicket('t_review')")
+    page.evaluate("window.__showReview()")
+    expect(page.locator("[data-review-ticket-card]")).to_have_count(1)
+    expect(terminal).to_have_count(0)
+    # The old window is still visible while its continuation loads. It must not
+    # be mistaken for the end of review, or latch out the thirty-first item.
+    final_rows = [
+        {
+            **variant_seed,
+            "id": f"t_final_{i:02}",
+            "title": f"Window item {i:02}",
+            "conversation_id": None,
+            "ticket_status": "awaiting_approval",
+            "ceiling_holder": {"kind": "owner", "id": "owner"},
+        }
+        for i in range(31)
+    ]
+    page.evaluate("window.__showTicket('t_review')")
+    drive("window.__refresh()")
+    hold_next_review_window = True
+    page.evaluate("window.__showReview()")
+    for index in range(30):
+        expect(page.locator(".review-ticket-title")).to_contain_text(f"Window item {index:02}")
+        page.locator("body").click(position={"x": 1, "y": 1})
+        page.keyboard.press("s")
+    wait_for_held(lambda: held_review_windows)
+    assert held_review_windows, "Continuation window was not requested"
+    expect(terminal).to_have_count(0)
+    hold_next_review_window = False
+    for held_route, response in held_review_windows:
+        held_route.fulfill(status=200, content_type="application/json", body=json.dumps(response))
+    held_review_windows.clear()
+    expect(page.locator(".review-ticket-title")).to_contain_text("Window item 30")
+    expect(terminal).to_have_count(0)
+    page.locator("body").click(position={"x": 1, "y": 1})
+    page.keyboard.press("s")
+    expect(terminal).to_be_visible()
+    # The skipped ledger survives every continuation window and one whole return.
+    # This extends the existing host: real Svelte demand, server projection, cursor,
+    # and DOM admission must agree before the final screen changes its label.
+    return_button = page.locator("[data-review-return]")
+    expect(return_button).to_have_text("Back to skipped items")
+    final_capture("review-final-all-skipped.png")
+    return_button.click()
+    for index in range(31):
+        expect(page.locator(".review-ticket-title")).to_contain_text(f"Window item {index:02}")
+        page.locator("body").click(position={"x": 1, "y": 1})
+        page.keyboard.press("s")
+    expect(terminal).to_be_visible()
+    expect(return_button).to_have_text("Back to skipped items")
+    chief_input.fill("Keep the skipped review thought.")
+    chief_input.focus()
+    page.evaluate(
+        "window.__skippedChiefInput=document.querySelector('[data-review-chief-composer] textarea')"
+    )
+    # Removed identities do not count as skipped work. A new, later-sorted cohort
+    # spans two windows and still comes before the oldest skipped item.
+    skipped_rows = final_rows[1:]
+    fresh_rows = [
+        {
+            **variant_seed,
+            "id": f"t_final_new_{i:02}",
+            "title": f"New arrival {i:02}",
+            "conversation_id": None,
+            "ticket_status": "awaiting_approval",
+            "ceiling_holder": {"kind": "owner", "id": "owner"},
+        }
+        for i in range(31)
+    ]
+    final_rows = fresh_rows
+    drive("window.__refresh()")
+    expect(return_button).to_have_text('Back to review')
+    final_rows = skipped_rows + fresh_rows
+    drive("window.__refresh()")
+    expect(terminal).to_contain_text('61 things await review')
+    expect(return_button).to_have_text('Back to review')
+    expect(chief_input).to_be_focused()
+    expect(chief_input).to_have_value("Keep the skipped review thought.")
+    assert page.evaluate(
+        "window.__skippedChiefInput===document.querySelector('[data-review-chief-composer] textarea')"
+    )
+    final_capture("review-final-mixed.png")
+    # Failed authoritative admission retains the same draft and final workspace.
+    snapshot_unavailable = True
+    return_button.click()
+    expect(terminal.locator(".error-line")).to_be_visible()
+    expect(chief_input).to_have_value("Keep the skipped review thought.")
+    assert page.evaluate(
+        "window.__skippedChiefInput===document.querySelector('[data-review-chief-composer] textarea')"
+    )
+    snapshot_unavailable = False
+    return_button.click()
+    for index in range(31):
+        expect(page.locator(".review-ticket-title")).to_contain_text(f"New arrival {index:02}")
+        if index == 0:
+            final_capture("review-return-new-before-skipped.png")
+        page.locator("body").click(position={"x": 1, "y": 1})
+        page.keyboard.press("s")
+    # The old first skipped item was removed. The next skipped item, rather than
+    # another new cohort or an early final screen, starts the lower-priority cohort.
+    expect(page.locator(".review-ticket-title")).to_contain_text("Window item 01")
+    final_capture("review-return-skipped-after-new.png")
+    for index in range(1, 31):
+        expect(page.locator(".review-ticket-title")).to_contain_text(f"Window item {index:02}")
+        page.locator("body").click(position={"x": 1, "y": 1})
+        page.keyboard.press("s")
+    expect(terminal).to_be_visible()
+    expect(return_button).to_have_text("Back to skipped items")
+    expect(chief_input).to_have_value("Keep the skipped review thought.")
+    # Once every still-pending identity disappears, history cannot claim work.
+    final_rows = []
+    drive("window.__refresh()")
+    expect(terminal).to_contain_text('Nothing needs you right now.')
+    expect(return_button).to_have_text('Back to review')
+    # Automatic history-demand rejection must expose the same final refusal even
+    # with more cards in the current window. The shared Chief draft survives it;
+    # refusing the demand must not schedule an automatic retry or discard history.
+    chief_input.fill("Keep the demand refusal thought.")
+    final_rows = [
+        {
+            **variant_seed,
+            "id": f"t_final_refusal_{i}",
+            "title": f"Refusal item {i}",
+            "conversation_id": None,
+            "ticket_status": "awaiting_approval",
+            "ceiling_holder": {"kind": "owner", "id": "owner"},
+        }
+        for i in range(2)
+    ]
+    page.evaluate("window.__showTicket('t_review')")
+    drive("window.__refresh()")
+    page.evaluate("window.__showReview()")
+    expect(page.locator(".review-ticket-title")).to_contain_text("Refusal item 0")
+    page.evaluate("window.__rejectSkippedReviewDemand=true")
+    page.locator("body").click(position={"x": 1, "y": 1})
+    page.keyboard.press("s")
+    expect(terminal).to_be_visible()
+    expect(terminal.locator(".error-line")).to_contain_text("Navigation view request is too large")
+    expect(page.locator("[data-review-ticket-card]")).to_have_count(0)
+    expect(chief_input).to_have_value("Keep the demand refusal thought.")
+    refused_demands = page.evaluate("window.__refusedReviewDemands")
+    assert len(refused_demands) == 1
+    assert refused_demands[0]['review_skipped_keys'] == [{"kind": "ticket", "id": "t_final_refusal_0"}]
+    page.evaluate("window.__refusalChiefInput=document.querySelector('[data-review-chief-composer] textarea')")
+    drive("window.__refresh()")
+    expect(terminal.locator('.error-line')).to_be_visible()
+    expect(chief_input).to_have_value('Keep the demand refusal thought.')
+    assert page.evaluate("window.__refusalChiefInput===document.querySelector('[data-review-chief-composer] textarea')")
+    assert page.evaluate('window.__refusedReviewDemands.length') == 1
+    page.evaluate("window.__rejectSkippedReviewDemand=false")
+    print(
+        f"Final Review workspace browser coverage: {time.monotonic() - final_started:.2f}s",
+        flush=True,
+    )
+    page.evaluate("window.__showConfig()")
+    editor = page.locator("[data-preset-workflow]")
+    editor.locator("[data-workflow-stage]").first.wait_for()
+    editable_rows = len(
+        [stage for stage in canonical_worker_types[0]["stages"] if not stage["is_terminal"]]
+    )
+    assert editable_rows > 0
+    assert editor.locator("[data-workflow-stage] select").count() == editable_rows
+    assert editor.locator("[data-workflow-stage] input").count() > 0
+    expect(page.locator("[data-worker-skill] [contenteditable]")).to_have_count(0)
+    # Scope changes can leave a live snapshot handler during teardown. All UI
+    # assertions are complete; close the fixture without waiting for live requests.
+    page.unroute_all(behavior="ignoreErrors")
+    context.close()

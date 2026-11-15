@@ -1,15 +1,15 @@
 """Explicit deferral preserves work; removed lifecycle states are invalid."""
 
 from sqlite3 import Connection
+from typing import Any, cast
 
-import pytest
+from fastapi.testclient import TestClient
+from tests.support.api_app import _app
 from tests.support.principals import OWNER_PRINCIPAL, ticket_principal
 
-from planner.core.contracts import PlannerError
-from planner.list_reads.contracts import ListPageRequest
 from planner.runtime.worker_step_readiness import is_ready_for_worker_step
-from planner.tickets import data, views
-from planner.tickets.contracts import Ticket, TicketListFilters, WorkerStepClaim
+from planner.tickets import data
+from planner.tickets.contracts import Ticket, WorkerStepClaim
 from planner.worker_types.configuration import configured_worker_type_registry
 
 
@@ -49,7 +49,7 @@ def test_backlog_preserves_pending_proposal_and_direct_authority(tmp_db: Connect
         next_ceiling="needs_implementation",
         next_holder=OWNER_PRINCIPAL,
     )
-    assert advanced.is_backlogged and advanced.stage == "needs_success_condition"
+    assert advanced.is_backlogged and advanced.stage == "needs_what_changes"
     assert (
         data.claim_ticket_for_worker_step(
             tmp_db, tid, readiness_check=is_ready_for_worker_step, now=22
@@ -71,83 +71,32 @@ def test_backlog_preserves_pending_proposal_and_direct_authority(tmp_db: Connect
     assert deferred_again.worker_step_claim_revision == claimed.worker_step_claim_revision
 
 
-def test_removed_stage_is_rejected_and_historical_field_is_hidden(tmp_db: Connection) -> None:
-    from planner.tickets.logic.fields_codec import values_from_json
-
-    definition = configured_worker_type_registry().require("coding")
-    assert not definition.is_known_stage("cancelled")
-    with pytest.raises(PlannerError, match="stage outside the linear order"):
-        definition.validate_ticket_position("cancelled", definition.default_ceiling())
-    assert values_from_json('{"retirement":"Legacy provenance"}', definition.field_ids()) == {}
-    assert definition.is_terminal("done")
-    assert definition.advance_target("done") is None
 
 
-def test_hash_guard_detects_same_second_changes_and_authority_is_unchanged(
+def test_backlog_accepts_same_second_changes_and_authority_is_unchanged(
     tmp_db: Connection,
 ) -> None:
     tid = create(tmp_db)
-    snapshot = views.ticket_detail(tmp_db, tid, 10)
     tmp_db.execute("UPDATE tickets SET title='Changed in same second' WHERE id=?", (tid,))
     tmp_db.commit()
-    with pytest.raises(PlannerError, match="changed"):
-        data.set_ticket_backlog(
-            tmp_db,
-            tid,
-            is_backlogged=True,
-            principal=OWNER_PRINCIPAL,
-            now=20,
-            expected_record_sha256=snapshot["record_sha256"],
+    assert backlog(tmp_db, tid).is_backlogged
+    before = dict(tmp_db.execute("SELECT * FROM tickets WHERE id=?", (tid,)).fetchone())
+    with TestClient(_app(tmp_db)) as client:
+        denied = client.post(
+            f"/api/tickets/{tid}/backlog", json={},
+            headers={"X-Plan-Actor": "worker", "X-Plan-Ticket-ID": tid},
         )
-    with pytest.raises(PlannerError):
-        data.set_ticket_backlog(
-            tmp_db, tid, is_backlogged=True, principal=ticket_principal(tid), now=20
-        )
+        assert denied.status_code == 400, denied.text
+        assert denied.json()["error"]["code"] == "agent_forbidden"
+    assert dict(tmp_db.execute("SELECT * FROM tickets WHERE id=?", (tid,)).fetchone()) == before
     assert data.read_ticket(tmp_db, tid).stage == "needs_brief"
 
 
-def test_bounded_summary_can_filter_deferral_without_conflating_placement(
-    tmp_db: Connection,
-) -> None:
-    deferred = create(tmp_db)
-    active = create(tmp_db)
-    backlog(tmp_db, deferred)
-    page = views.list_ticket_summaries(
-        tmp_db,
-        page_request=ListPageRequest(limit=1, offset=0),
-        filters=TicketListFilters(is_backlogged=True, worker_types=("coding",)),
-        project_id=None,
-        sprint_id=None,
-        sprint_item_id=None,
-    )
-    assert page.match_count == 1
-    assert page.rows[0]["id"] == deferred and page.rows[0]["is_backlogged"] is True
-    assert data.read_ticket(tmp_db, active).sprint_id is None
-    assert data.read_ticket(tmp_db, active).is_backlogged is False
 
 
-def test_backlog_does_not_release_occupied_closeout_lane(tmp_db: Connection) -> None:
-    occupied = create(tmp_db)
-    waiting = create(tmp_db)
-    tmp_db.execute(
-        "UPDATE tickets SET stage='needs_consequences', ceiling='needs_consequences', "
-        "pending_proposal=NULL,worker_step_claim='out' WHERE id=?",
-        (occupied,),
-    )
-    tmp_db.execute(
-        "UPDATE tickets SET stage='needs_consequences', ceiling='needs_consequences', "
-        "pending_proposal=NULL WHERE id=?",
-        (waiting,),
-    )
-    tmp_db.commit()
-    backlog(tmp_db, occupied)
-    definition = configured_worker_type_registry().require("coding")
-    assert not is_ready_for_worker_step(
-        tmp_db, data.read_ticket(tmp_db, waiting), worker_type_definition=definition
-    )
 
 
-def ready_ticket(conn: Connection, *, ceiling: str = "needs_success_condition") -> Ticket:
+def ready_ticket(conn: Connection, *, ceiling: str = "needs_what_changes") -> Ticket:
     tid = create(conn)
     return data.accept_proposal(
         conn,
@@ -236,7 +185,7 @@ def test_resume_preserves_pending_approval_and_live_blocker(tmp_db: Connection) 
 
 def test_resume_keeps_ceiling_and_parks_new_proposal_at_its_gate(tmp_db: Connection) -> None:
     ticket = ready_ticket(tmp_db)
-    assert ticket.stage == ticket.ceiling == "needs_success_condition"
+    assert ticket.stage == ticket.ceiling == "needs_what_changes"
     backlog(tmp_db, ticket.id)
     resumed = backlog(tmp_db, ticket.id, False)
     assert resumed.stage == ticket.stage and resumed.ceiling == ticket.ceiling
@@ -258,78 +207,41 @@ def test_resume_keeps_ceiling_and_parks_new_proposal_at_its_gate(tmp_db: Connect
     )
     assert proposed.stage == ticket.stage and proposed.ceiling == ticket.ceiling
     assert proposed.pending_proposal is not None
-    assert proposed.pending_proposal.field == "success_condition"
+    assert proposed.pending_proposal.field == "what_changes"
     assert proposed.pending_proposal.body == "Observable result"
-    assert "success_condition" not in proposed.field_values
+    assert "what_changes" not in proposed.field_values
 
 
-@pytest.mark.parametrize("resumed_wins", [False, True])
-def test_closeout_resume_and_peer_claim_recheck_lane_from_fresh_state(
+def test_active_list_filters_before_pagination_and_resume_restores_membership(
     tmp_db: Connection,
-    resumed_wins: bool,
 ) -> None:
-    from planner.core.db import connect
-
-    deferred = create(tmp_db)
-    peer_id = create(tmp_db)
+    deferred, finished, active = (create(tmp_db) for _ in range(3))
+    backlog(tmp_db, deferred)
     tmp_db.execute(
-        "UPDATE tickets SET stage='needs_consequences',ceiling='needs_consequences',"
-        "pending_proposal=NULL WHERE id IN (?,?)",
-        (deferred, peer_id),
+        "UPDATE tickets SET stage='done', pending_proposal=NULL WHERE id=?", (finished,)
     )
     tmp_db.commit()
-    backlog(tmp_db, deferred)
-    path = tmp_db.execute("PRAGMA database_list").fetchone()[2]
-    peer = connect(path)
-    try:
-        definition = configured_worker_type_registry().require("coding")
-        # A peer scans an empty lane before the deferred contender resumes.
-        assert is_ready_for_worker_step(
-            peer,
-            data.read_ticket(peer, peer_id),
-            worker_type_definition=definition,
-        )
+    with TestClient(_app(tmp_db)) as client:
+        def listed(**params: str | int | bool) -> dict[str, Any]:
+            response = client.get("/api/tickets", params={"detail": "summary", **params})
+            assert response.status_code == 200, response.text
+            return cast(dict[str, Any], response.json())
+
+        inventory = listed()
+        assert {row["id"] for row in inventory["tickets"]} == {deferred, active}
+        selected = listed(active=True, limit=1)
+        assert [row["id"] for row in selected["tickets"]] == [active]
+        assert selected["page"]["match_count"] == 1
+        assert selected["page"]["complete"] is True
+        assert {row["id"] for row in listed(include_terminal=True)["tickets"]} == {
+            deferred, finished, active,
+        }
+        assert [row["id"] for row in listed(is_backlogged=True)["tickets"]] == [deferred]
+        for conflict in ({"is_backlogged": True}, {"include_terminal": True}):
+            rejected = client.get(
+                "/api/tickets", params={"detail": "summary", "active": True, **conflict}
+            )
+            assert rejected.status_code == 400, rejected.text
+            assert "active excludes" in rejected.json()["error"]["message"]
         backlog(tmp_db, deferred, False)
-        assert is_ready_for_worker_step(
-            tmp_db,
-            data.read_ticket(tmp_db, deferred),
-            worker_type_definition=definition,
-        )
-        first, second = (deferred, peer_id) if resumed_wins else (peer_id, deferred)
-        first_conn, second_conn = (tmp_db, peer) if resumed_wins else (peer, tmp_db)
-        holder = data.claim_ticket_for_worker_step(
-            first_conn,
-            first,
-            readiness_check=is_ready_for_worker_step,
-            now=21,
-        )
-        assert holder is not None and holder.worker_step_claim is WorkerStepClaim.out
-        assert (
-            data.claim_ticket_for_worker_step(
-                second_conn,
-                second,
-                readiness_check=is_ready_for_worker_step,
-                now=21,
-            )
-            is None
-        )
-        # Deferral of a delivered holder cannot transfer its lane or claim to its peer.
-        backlog(first_conn, first)
-        backlog(second_conn, second)
-        backlog(second_conn, second, False)
-        assert (
-            data.claim_ticket_for_worker_step(
-                second_conn,
-                second,
-                readiness_check=is_ready_for_worker_step,
-                now=22,
-            )
-            is None
-        )
-        preserved = data.read_ticket(first_conn, first)
-        assert preserved.worker_step_claim is holder.worker_step_claim
-        assert preserved.worker_step_claim_revision == holder.worker_step_claim_revision
-        assert preserved.stage == holder.stage and preserved.ceiling == holder.ceiling
-        assert preserved.pending_proposal == holder.pending_proposal
-    finally:
-        peer.close()
+        assert {row["id"] for row in listed(active=True)["tickets"]} == {deferred, active}

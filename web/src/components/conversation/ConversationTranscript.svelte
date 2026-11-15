@@ -6,6 +6,11 @@
    * end and disappears the moment its finished row lands.
    */
   import MarkdownBlock from "../MarkdownBlock.svelte";
+  import ConversationCredentialRequestCard from './ConversationCredentialRequestCard.svelte';
+  import { MessageExits } from "../../lib/conversation/messageExits";
+  import ViewItem from "./view/ViewItem.svelte";
+  import UserMessage from "./UserMessage.svelte";
+  import type { OutgoingMessage } from "../../lib/conversation/outgoing";
   import MessagePieces from "./MessagePieces.svelte";
   import TurnAnchor from "./TurnAnchor.svelte";
   import WorkGroup from "./WorkGroup.svelte";
@@ -22,7 +27,6 @@
     AUTOMATIC_COMPACTION_NOT_CONFIRMED_SENTENCE,
     askDeadSentence,
     CONTEXT_COMPACTED_SENTENCE,
-    explicitReplyMissingSentence,
     promptLabelFor,
     turnEndingSentence,
     PROMPT_DISCARDED_SENTENCE,
@@ -33,14 +37,23 @@
   import { SvelteMap, SvelteSet } from "svelte/reactivity";
 
   let {
+    activityUncertain = false,
     rows,
     visibleRows,
     lens,
     conversationId,
     models = [],
     ownSenderLabel = null,
-    livenessPulse = 0
+    livenessPulse = 0,
+    projectedItems = null,
+    outgoingMessages = [], onStopDrawingMessage, onSendAgain, acknowledgedMessageIds = new Set<string>()
   }: {
+    outgoingMessages?: readonly OutgoingMessage[];
+    onStopDrawingMessage?: (id: string) => Promise<void> | void;
+    onSendAgain?: (id: string) => Promise<void> | void;
+    acknowledgedMessageIds?: ReadonlySet<string>;
+    projectedItems?: readonly ThreadItem[] | null;
+    activityUncertain?: boolean;
     rows: readonly TranscriptRow[];
     visibleRows: readonly TranscriptRow[];
     lens: ConversationLens;
@@ -55,7 +68,7 @@
     ownSenderLabel?: string | null;
   } = $props();
 
-  let items = $derived<ThreadItem[]>(conversationThreadItemsForLens(rows, visibleRows, lens));
+  let items = $derived<readonly ThreadItem[]>(projectedItems ?? conversationThreadItemsForLens(rows, visibleRows, lens));
   // Opening a turn opens every run inside it, so there is one place to open a turn
   // rather than one per batch of tool calls in it.
   let expandedTurns = $state<Record<string, boolean>>({});
@@ -77,15 +90,43 @@
     )
   );
 
-  function toggleTurn(turnKey: string): void {
-    expandedTurns = { ...expandedTurns, [turnKey]: expandedTurns[turnKey] !== true };
-  }
-
-  function modeChip(mode: string): string | null {
-    if (mode === "send_now") return "sent now";
-    if (mode === "steer") return "steered";
-    return null;
-  }
+  type Display = { key: string; item: ThreadItem | null; local: OutgoingMessage | null; afterKey: string | null };
+  const exits = new MessageExits<Display>();
+  let exitRevision = $state(0);
+  let previousDisplay: Display[] = [];
+  let localSlots: Display[] = [];
+  let slotsConversation: string | null = null;
+  const display = $derived.by(() => {
+    exitRevision;
+    if (slotsConversation !== conversationId) { localSlots = []; previousDisplay = []; slotsConversation = conversationId; }
+    const locals = new Map(outgoingMessages.map(message => [message.displayMessageId ?? message.messageId, message]));
+    const records = new Map(shown.flatMap(item => item.kind === 'row' && 'senderMessageId' in item.row && item.row.senderMessageId ? [[item.row.senderMessageId, item] as const] : []));
+    const claimed = new Set<string>();
+    const kept: Display[] = [];
+    for (const old of localSlots) {
+      const local = locals.get(old.key) ?? old.local!;
+      const item = records.get(local.messageId) ?? null;
+      if (!locals.has(old.key) && item === null && (old.item !== null || !acknowledgedMessageIds.has(local.messageId))) continue;
+      if (item) claimed.add(item.key);
+      kept.push({...old, local, item});
+      locals.delete(old.key);
+    }
+    for (const [key, local] of locals) {
+      const item = records.get(local.messageId) ?? null;
+      if (item) claimed.add(item.key);
+      kept.push({key,local,item,afterKey:shown.at(-1)?.key ?? null});
+    }
+    localSlots = kept;
+    const result: Display[] = shown.filter(item=>!claimed.has(item.key)).map(item=>({key:`record:${item.key}`,item,local:null,afterKey:null}));
+    for (const slot of [...kept].reverse()) {
+      const position = slot.afterKey === null ? -1 : result.findIndex(entry=>entry.item?.key===slot.afterKey);
+      result.splice(position + 1,0,slot);
+    }
+    const retained = exits.retain(result, previousDisplay, () => { exitRevision += 1; });
+    localSlots = retained.filter(slot=>slot.local!==null);
+    previousDisplay = retained;
+    return retained;
+  });
 
   function runValuesLine(model: string | null, reasoningEffort: string | null): string {
     const parts = [modelDisplayName(models, model) ?? "the backend's own model"];
@@ -94,12 +135,18 @@
   }
 
   function askStateLine(row: Extract<TranscriptRow, { kind: "permission_ask" }>): string {
+    if (activityUncertain && row.state === "live") return "pending · availability on this machine unknown";
+    if (row.answerFate === "saved") return "Answer saved at home; delivery to the machine is pending";
+    if (row.answerFate === "unconfirmed") return "Answer was saved; application on the machine is unconfirmed";
     if (row.state === "answered") return `answered · ${row.answeredOptionLabel ?? ""}`;
     if (row.state === "dead") return askDeadSentence(row.deadReason);
     return "waiting for you";
   }
 
   function userInputStateLine(row: Extract<TranscriptRow, { kind: "user_input" }>): string {
+    if (activityUncertain && row.state === "live") return "pending · availability on this machine unknown";
+    if (row.answerFate === "saved") return "Answer saved at home; delivery to the machine is pending";
+    if (row.answerFate === "unconfirmed") return "Answer was saved; application on the machine is unconfirmed";
     if (row.state === "answered") return "answered";
     if (row.state === "failed") return `failed · ${row.failureDetail ?? "the answer could not be delivered"}`;
     if (row.state === "dead") return askDeadSentence(row.deadReason);
@@ -108,9 +155,15 @@
 </script>
 
 <div class="c2-transcript" data-conversation-transcript>
-  {#each shown as item (item.key)}
+  {#each display as slot (slot.key)}
+    {@const item = slot.item}
+    {#if slot.local !== null}
+      <ViewItem itemKey={item?.key ?? slot.key} displayKey={slot.key} registerDisplayNode={exits.register}>
+      <UserMessage presentationRowKey={item?.key ?? null} row={item?.kind === 'row' && (item.row.kind === 'prompt' || item.row.kind === 'prompt_refused' || item.row.kind === 'prompt_uncertain' || item.row.kind === 'prompt_discarded') ? item.row : null} local={slot.local} {conversationId} {ownSenderLabel} {onStopDrawingMessage} {onSendAgain}/>
+      </ViewItem>
+    {:else if item !== null}
     {#if item.kind === "turn"}
-      <TurnAnchor
+      <TurnAnchor {activityUncertain}
         settled={item.settled}
         stopped={item.stopped}
         startedAtUnixMilliseconds={item.startedAtUnixMilliseconds}
@@ -121,10 +174,10 @@
         foldedMessageCount={item.foldedMessageCount}
         expanded={lens === "full" || expandedTurns[item.turnKey] === true}
         {livenessPulse}
-        onToggle={lens === "full" ? undefined : () => toggleTurn(item.turnKey)}
       />
     {:else if item.kind === "work_group"}
-      <WorkGroup
+      {#if lens === "full"}
+      <WorkGroup {activityUncertain}
         openRows={openToolCallRows}
         wholeDetails={wholeToolCallDetails}
         entries={item.entries}
@@ -132,57 +185,19 @@
         showAll={lens === "full"}
         {conversationId}
       />
-    {:else if item.row.kind === "prompt"}
-      {@const label = promptLabelFor(item.row.senderLabel, ownSenderLabel)}
-      {@const chip = modeChip(item.row.mode)}
-      <!-- A message somebody else sent is a different kind of thing on the page, not the
-           reader's own with a note attached. A thread is scanned by shape before it is
-           read by label, so drawing the loop's prompts in the reader's own voice says
-           "you said this" and only then quietly corrects itself. -->
-      <article
-        class={label === null ? "chat-u" : "chat-system"}
-        data-conversation-row="prompt"
-      >
-        {#if label || chip}
-          <div class="c2-label" data-conversation-prompt-label>
-            {label ?? ""}{#if chip}<span class="c2-chip">{chip}</span>{/if}
-          </div>
-        {/if}
-        <MessagePieces content={item.row.content} {conversationId} />
-      </article>
-    {:else if item.row.kind === "prompt_refused"}
-      <article class="chat-system c2-refused" data-conversation-row="prompt_refused">
-        <div class="c2-label">
-          {promptLabelFor(item.row.senderLabel, ownSenderLabel) ?? "your message"} · not delivered · {item.row.sentence}
-        </div>
-        <MessagePieces content={item.row.content} {conversationId} />
-      </article>
-    {:else if item.row.kind === "prompt_uncertain"}
-      <article class="chat-system c2-refused" data-conversation-row="prompt_uncertain">
-        <div class="c2-label">
-          {promptLabelFor(item.row.senderLabel, ownSenderLabel) ?? "your message"} · delivery uncertain · do not resend
-        </div>
-        <MessagePieces content={item.row.content} {conversationId} />
-      </article>
-    {:else if item.row.kind === "prompt_discarded"}
-      <article class="chat-system" data-conversation-row="prompt_discarded">
-        <div class="c2-label">
-          {promptLabelFor(item.row.senderLabel, ownSenderLabel) ?? "your message"} · {PROMPT_DISCARDED_SENTENCE}
-        </div>
-        <MessagePieces content={item.row.content} {conversationId} />
-      </article>
+      {/if}
+    {:else if item.row.kind === "prompt" || item.row.kind === "prompt_refused" || item.row.kind === "prompt_uncertain" || item.row.kind === "prompt_discarded"}
+      <UserMessage presentationRowKey={item.key} row={item.row} {conversationId} {ownSenderLabel}/>
     {:else if item.row.kind === "agent_message"}
-      <article class="chat-a" data-conversation-row="agent_message">
-        <MessagePieces content={item.row.content} {conversationId} />
+      <article class="chat-a" data-conversation-row="agent_message" data-conversation-source-key={item.row.key}>
+        <MessagePieces presentationRowKey={item.key} content={item.row.content} {conversationId} />
       </article>
-    {:else if item.row.kind === "explicit_reply_missing"}
-      <div class="acp-turn-end" data-conversation-row="explicit_reply_missing">
-        {explicitReplyMissingSentence(item.row.promptSender)}
-      </div>
     {:else if item.row.kind === "streaming_agent_message"}
       <article class="chat-a c2-streaming" data-conversation-row="streaming">
         <MarkdownBlock text={item.row.text} />
       </article>
+    {:else if item.row.kind === 'credential_request'}
+      <ConversationCredentialRequestCard request={item.row.request} />
     {:else if item.row.kind === "permission_ask"}
       {@const detail = readableConversationDetail(item.row.detail)}
       <div
@@ -230,6 +245,10 @@
       <div class="acp-compaction" role="separator" data-conversation-row="context_compacted">
         <span>{CONTEXT_COMPACTED_SENTENCE}</span>
       </div>
+    {:else if item.row.kind === "command_reply"}
+      <!-- The backend answered a slash command itself. Its words are kept whole, quiet and
+           in the tool voice, because they are the backend's output rather than the agent's. -->
+      <p class="acp-command-reply" data-conversation-row="command_reply">{item.row.replyText}</p>
     {:else if item.row.kind === "turn_ended" && item.row.automaticCompactionResult === "not_compacted"}
       <div class="acp-compaction" role="status" data-conversation-row="turn_ended">
         {AUTOMATIC_COMPACTION_NOT_CONFIRMED_SENTENCE}
@@ -245,6 +264,7 @@
     {:else if item.row.kind === "turn_stopped"}
       <div class="acp-turn-end" data-conversation-row="turn_stopped">{TURN_STOPPED_SENTENCE}</div>
     {/if}
+    {/if}
   {/each}
 </div>
 
@@ -257,26 +277,19 @@
     letter-spacing: var(--tracking-mono);
     margin-block-end: var(--space-1);
   }
-  .c2-chip {
-    margin-inline-start: var(--space-2);
-    border: var(--border-hairline) solid var(--border-color);
-    border-radius: var(--radius-pill);
-    color: var(--accent-bright);
-    padding: 0 var(--space-2);
-  }
-  .c2-refused .c2-label { color: var(--accent-error); }
   .c2-streaming { color: var(--text-muted); }
   .c2-ask-row {
     align-self: stretch;
-    border-inline-start: var(--border-hairline) solid var(--accent-bright);
-    padding-inline-start: var(--space-3);
+    padding: var(--space-2) var(--space-3);
+    border-radius: var(--radius-md);
+    background: var(--accent-surface);
     color: var(--text-default);
     font-family: var(--font-ui);
     font-size: var(--type-sm);
     overflow-wrap: anywhere;
   }
   .c2-ask-row.is-dead {
-    border-inline-start-color: var(--text-faintest);
+    background: var(--surface-2);
     color: var(--text-faintest);
   }
   .c2-ask-row.is-dead .c2-label { color: var(--text-faintest); }

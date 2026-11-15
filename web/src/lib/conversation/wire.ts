@@ -1,3 +1,8 @@
+import type { BackendScopeRequest } from "./modelResolutionWire";
+export type { BackendScopeRequest, TicketBackendScope, DraftBackendScope } from "./modelResolutionWire";
+
+import { mutationHeaders } from "../releaseMonitor";
+import { DiagnosticExpiredError, isDiagnosticExpiry } from './diagnosticExpiry';
 /** The conversation system's HTTP wire, as the browser speaks it.
  *
  * Every shape here is exactly what `/api/conversation` serializes, and every call is a
@@ -42,6 +47,7 @@ export type ToolCallStatus = "completed" | "failed";
 export type PromptDeliveryRefusalReason =
   | "no_such_conversation"
   | "model_resolution_failed"
+  | "backend_rejected_prompt"
   | "backend_did_not_start"
   | "session_did_not_load"
   | "write_to_backend_failed"
@@ -51,7 +57,8 @@ export type PromptDeliveryRefusalReason =
   | "running_turn_cannot_accept_steer"
   | "message_cannot_be_steered"
   | "backend_rejected_steer"
-  | "command_cannot_join_running_turn";
+  | "command_cannot_join_running_turn"
+  | "remote_steer_not_delivered";
 
 /** What one message is made of: written words, pictures, and files.
  *
@@ -81,7 +88,7 @@ export type MessageContent = MessagePiece[];
 export type StoredMessageContent = { text: string } | { content: MessagePiece[] };
 
 export type Principal = {
-  kind: "owner" | "chief" | "sprint_item" | "ticket";
+  kind: "owner" | "chief" | "manager" | "ticket" | "goal";
   id: string;
 };
 
@@ -132,6 +139,8 @@ export type PermissionAskOption = {
   label: string;
   option_kind: string;
 };
+
+export type AnswerFate = "applied" | "saved" | "refused";
 
 export type PendingPermissionAsk = {
   ask_id: string;
@@ -189,17 +198,15 @@ export type ConversationView = {
   supports_steer: boolean;
   model: string | null;
   reasoning_effort: string | null;
-  workspace_folder: string;
+  workspace_folder: string | null;
+  workspace_path_policy?: "home_relative" | "absolute" | "executor_default";
   access: string;
-  role_text: string | null;
-  identity_environment_variable_names: string[];
   latest_sequence: number;
   owner_read_through_sequence: number;
   is_running: boolean;
   held_prompts: HeldPrompt[];
   pending_permission_ask: PendingPermissionAsk | null;
   pending_user_input: PendingUserInput | null;
-  composer_catalog: ComposerCatalogEntry[];
 };
 
 /** One earlier conversation of the same owner, as the record lists it.
@@ -265,7 +272,7 @@ export type ConversationEvent =
     >
   | Row<
       "prompt_discarded",
-      StoredMessageContent & { sender_label: string; sender_message_id?: string }
+      StoredMessageContent & { sender_label: string; sender_message_id?: string; suppression_reason?: string | null }
         & AddressedMessageFields
     >
   | Row<
@@ -277,7 +284,6 @@ export type ConversationEvent =
       } & SenderMintedPromptFields
     >
   | Row<"agent_message", StoredMessageContent>
-  | Row<"explicit_reply_missing", { prompt_sender: Principal }>
   | Row<
       "tool_call_started",
       { tool_call_id: string; title: string; tool_kind: string; detail: string | null }
@@ -298,16 +304,18 @@ export type ConversationEvent =
       "permission_asked",
       { ask_id: string; title: string; detail: string | null; options: PermissionAskOption[] }
     >
-  | Row<"permission_answered", { ask_id: string; option_id: string }>
+  | Row<"permission_answered", { ask_id: string; option_id: string; fate?: AnswerFate; answer_id?: string | null }>
+  | Row<"answer_applied", { answer_id: string }>
   | Row<
       "user_input_requested",
       { request_id: string; questions: UserInputQuestion[] }
     >
   | Row<
       "user_input_answered",
-      { request_id: string; answers: UserInputAnswers }
+      { request_id: string; answers: UserInputAnswers; fate?: AnswerFate; answer_id?: string | null }
     >
   | Row<"user_input_failed", { request_id: string; detail: string }>
+  | Row<'credential_request', { request: import('./view/contracts').CredentialRequestRowBody }>
   | Row<"model_changed", { model: string | null; reasoning_effort: string | null }>
   /** What a turn has cost, as its backend counts it. Every field is absent when the
    *  backend did not say — never zero, because a backend silent about cached tokens has
@@ -324,6 +332,9 @@ export type ConversationEvent =
   /** The backend summarised what came before and dropped it. No payload: that it
    *  happened, and where, is the whole of it. */
   | Row<"context_compacted", Record<string, never>>
+  /** The backend's own answer to a slash command, such as a refused or inspected goal.
+   *  Nothing streams it, so this row is the only place it is shown. */
+  | Row<"command_reply", { reply_text: string }>
   /** The agent's plan as it stands now. Each row is the whole plan, not a change to it,
    *  so the newest one is the plan and the ones before it are history. */
   | Row<"plan_updated", { entries: PlanEntry[] }>
@@ -356,7 +367,8 @@ export type PromptDeliveryFate =
   | { fate: "queued"; queue_position: number }
   | { fate: "injected" }
   | { fate: "refused"; refusal_reason: PromptDeliveryRefusalReason }
-  | { fate: "uncertain" };
+  | { fate: "uncertain" }
+  | { fate: "suppressed"; reason: string };
 
 export type HeldPromptPromotionResult =
   | { promoted: false }
@@ -365,6 +377,7 @@ export type HeldPromptPromotionResult =
       | { fate: "injected" }
       | { fate: "refused"; refusal_reason: PromptDeliveryRefusalReason }
       | { fate: "uncertain" }
+      | { fate: "suppressed"; reason: string }
     ));
 
 export type BackendIdentity = {
@@ -379,19 +392,17 @@ export type BackendModel = {
   display_name: string | null;
   /** Provider-owned variant and its current concrete model. */
   selected_variant?: string | null;
+  version?: number[];
   resolved_model_id?: string | null;
   /** A failed catalogue refresh can leave a last known-good model available. */
-  catalogue_warning?: string | null;
   /** Disabled models remain visible on Backends, but no picker offers them for a run. */
   enabled: boolean;
   /** What this model really is, when the name alone does not say — an alias and the
    *  version it reaches, for instance. Optional: a catalog that offers none is read the
    *  same way as one that has not started offering them yet. */
   detail?: string | null;
-  /** The reasoning efforts this particular model takes, where they differ per model
-   *  rather than per backend. Absent means the backend's own list is the answer; an
-   *  empty list means this model takes none, and no effort control exists for it. */
-  reasoning_effort_options?: string[];
+  /** Per-model metadata. Null or absent means unknown; an empty list is known empty. */
+  reasoning_effort_options?: string[] | null;
 };
 
 export type BackendUpdateAdvisory = {
@@ -464,7 +475,8 @@ export type BackendModelEnablementResult = {
 export type SentMessagePiece =
   | { piece: "text"; text: string }
   | { piece: "image"; data: string; media_type: string; file_name?: string }
-  | { piece: "file"; data: string; media_type: string; file_name: string };
+  | { piece: "file"; data: string; media_type: string; file_name: string }
+  | { piece: "video_upload"; upload_id: string };
 
 export type SendPromptBody = {
   content: SentMessagePiece[];
@@ -481,10 +493,13 @@ export type SendPromptBody = {
  * to a conversation that does not exist yet they are what to create it on.
  */
 export type OwnerSendBody = {
+  owner_read_through_sequence?: number;
   conversation_id: string | null;
   backend_key?: string;
   model?: string;
-  reasoning_effort?: string;
+  /** Omitted preserves effort; null explicitly requests provider default. */
+  reasoning_effort?: string | null;
+  /** Ticket model intent only; omitted preserves historical classification. */
   content: SentMessagePiece[];
   sender_label: string;
   mode: PromptDeliveryMode;
@@ -505,6 +520,8 @@ export type OwnerSendBody = {
  * is on reported no catalogue. A start on that is refused rather than guessed at.
  */
 export type ConversationStartValues = {
+  workspace_folder?: string | null;
+  workspace_path_policy?: "home_relative" | "absolute" | "executor_default";
   backend_key: ConversationBackendKey;
   model: string | null;
   reasoning_effort: string | null;
@@ -533,7 +550,38 @@ export class ConversationWireError extends Error {
   }
 }
 
+/** Private owner submission. Error text never includes the submitted request body. */
+export class CredentialRequestWireError extends Error {
+  constructor(message: string, readonly stale: boolean) { super(message); this.name = 'CredentialRequestWireError'; }
+}
+
+export async function mutateCredentialRequest(
+  requestId: string,
+  action: 'save' | 'reject' | 'review' | 'retry-delivery',
+  body?: { name: string; value: string; expected_revision: number | null }
+): Promise<import('./view/contracts').CredentialRequestRowBody> {
+  let response: Response;
+  try {
+    response = await fetch(`/api/credentials/requests/${encodeURIComponent(requestId)}/${action}`, {
+      method: 'POST', ...(body === undefined ? {} : { headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
+    });
+  } catch { throw new CredentialRequestWireError('The server could not be reached.', false); }
+  if (!response.ok) {
+    let code: unknown;
+    try { code = (await response.json()).error?.code; } catch { /* Never echo arbitrary server payloads into this private form. */ }
+    throw new CredentialRequestWireError(
+      action === 'save' ? 'Could not save. Try again.' : 'The request could not be completed. Try again.',
+      response.status === 409 && code === 'stale_claim'
+    );
+  }
+  try { return await response.json(); }
+  catch { throw new CredentialRequestWireError('The result could not be read. Check the conversation before another attempt.', false); }
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
+  if (init?.method && !["GET", "HEAD", "OPTIONS"].includes(init.method.toUpperCase())) {
+    init = { ...init, headers: await mutationHeaders(init.headers) };
+  }
   let response: Response;
   try {
     response = await fetch(`${CONVERSATION_BASE}${path}`, init);
@@ -549,6 +597,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
       throw new ConversationWireError("The server sent something that is not JSON.", response.status);
     }
   }
+  if (isDiagnosticExpiry(raw)) throw new DiagnosticExpiredError();
   throw new ConversationWireError(detailSentence(raw, response.status), response.status);
 }
 
@@ -577,6 +626,21 @@ export function readConversation(conversationId: string): Promise<ConversationVi
   return request<ConversationView>(`/conversations/${encodeURIComponent(conversationId)}`);
 }
 
+/** The composer's typeahead menu, which is read on its own occasions.
+ *
+ * It used to arrive inside the record, where it was 97.4% of it - 66 KB of commands and
+ * skills against about 950 bytes of conversation - and the record is re-read every time
+ * the conversation gains a row. Watching an agent work for seventy seconds sent the same
+ * closed menu 68 times. */
+export async function readComposerCatalog(
+  conversationId: string
+): Promise<ComposerCatalogEntry[]> {
+  const answer = await request<{ composer_catalog: ComposerCatalogEntry[] }>(
+    `/conversations/${encodeURIComponent(conversationId)}/composer-catalog`
+  );
+  return answer.composer_catalog;
+}
+
 export async function advanceOwnerRead(
   conversationId: string,
   throughSequence: number
@@ -601,10 +665,11 @@ export async function readEventsAfter(
 /** The whole output of one finished tool call, which an open does not carry. */
 export async function readToolCallDetail(
   conversationId: string,
-  sequence: number
+  sequence: number,
+  signal?: AbortSignal
 ): Promise<string | null> {
   const answer = await request<{ detail: string | null }>(
-    `/conversations/${encodeURIComponent(conversationId)}/events/${sequence}/detail`
+    `/conversations/${encodeURIComponent(conversationId)}/events/${sequence}/detail`, {signal}
   );
   return answer.detail;
 }
@@ -627,8 +692,8 @@ export function answerPermissionAsk(
   conversationId: string,
   askId: string,
   optionId: string
-): Promise<{ landed: boolean }> {
-  return request<{ landed: boolean }>(
+): Promise<{ fate: AnswerFate }> {
+  return request<{ fate: AnswerFate }>(
     `/conversations/${encodeURIComponent(conversationId)}/permission-answers`,
     postJson({ ask_id: askId, option_id: optionId })
   );
@@ -638,8 +703,8 @@ export function answerUserInput(
   conversationId: string,
   requestId: string,
   answers: UserInputAnswers
-): Promise<{ landed: boolean }> {
-  return request<{ landed: boolean }>(
+): Promise<{ fate: AnswerFate }> {
+  return request<{ fate: AnswerFate }>(
     `/conversations/${encodeURIComponent(conversationId)}/user-input-answers`,
     postJson({ request_id: requestId, answers })
   );
@@ -671,6 +736,15 @@ export function promoteHeldPrompt(
       + `/held-prompts/${encodeURIComponent(heldPromptId)}/promote`,
     postJson({ mode })
   );
+}
+
+export async function readScopedBackends(
+  selection: BackendScopeRequest, refresh = false
+): Promise<BackendSnapshot[]> {
+  const answer = await request<{backends: BackendSnapshot[]}>(
+    `/backends${refresh ? "?refresh=true" : ""}`, postJson({ ticket_id: selection.ticket_id })
+  );
+  return answer.backends;
 }
 
 export async function readBackends(refresh = false): Promise<BackendSnapshot[]> {

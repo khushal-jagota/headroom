@@ -10,14 +10,28 @@ from planner.conversation.contracts import ConversationAttention, ConversationSy
 from planner.conversation.logic.signals import conversation_signal
 from planner.conversation.signals import read_conversation_signals
 from planner.conversation.storage import ConversationStore
-from planner.core import ticket_blocks
 from planner.core.contracts import OWNER_PRINCIPAL, JsonDict
+from planner.core.task_settlement import run_on_worker_thread
+from planner.navigation import data as navigation_data
 from planner.tickets import derivation
 from planner.tickets.contracts import StageOwnershipMode, TicketStatus, WorkAttention
-from planner.tickets.derivation import AgentState, TicketFacts
+from planner.tickets.derivation import AgentState
 from planner.tickets.logic import machine
 from planner.worker_settings.service import CHIEF_SETTINGS_KEY
-from planner.worker_types.configuration import configured_worker_type_registry
+from planner.worker_types.contracts import WorkflowDefinition
+
+
+def _current_conversation_ids(conn: sqlite3.Connection) -> set[str]:
+    rows = conn.execute(
+        "SELECT conversation_id FROM tickets WHERE conversation_id IS NOT NULL "
+        "UNION SELECT conversation_id FROM agents WHERE agent_key = ? "
+        "AND conversation_id IS NOT NULL "
+        "UNION SELECT a.conversation_id FROM managers si JOIN agents a "
+        "ON a.agent_key = 'manager_' || si.id "
+        "WHERE a.conversation_id IS NOT NULL",
+        (CHIEF_SETTINGS_KEY,),
+    ).fetchall()
+    return {str(row["conversation_id"]) for row in rows}
 
 
 async def read_running_conversation_count(
@@ -26,17 +40,9 @@ async def read_running_conversation_count(
     conversation_record: ConversationStore,
 ) -> int:
     """Count each current Worker, supervisor or Chief conversation's work once."""
-    rows = conn.execute(
-        "SELECT conversation_id FROM tickets WHERE conversation_id IS NOT NULL "
-        "UNION SELECT conversation_id FROM agents WHERE agent_key = ? "
-        "AND conversation_id IS NOT NULL "
-        "UNION SELECT a.conversation_id FROM sprint_items si JOIN agents a "
-        "ON a.agent_key = 'sprint_item_supervisor_' || si.id "
-        "WHERE a.conversation_id IS NOT NULL",
-        (CHIEF_SETTINGS_KEY,),
-    ).fetchall()
+    conversation_ids = await run_on_worker_thread(_current_conversation_ids, conn)
     conversations = await read_conversation_signals(
-        conversation_system, conversation_record, {str(row["conversation_id"]) for row in rows}
+        conversation_system, conversation_record, conversation_ids
     )
     return sum(conversation.signal["working"] for conversation in conversations.values())
 
@@ -58,14 +64,20 @@ def _empty_attention() -> WorkAttention:
     }
 
 
-def _ticket_rows(conn: sqlite3.Connection, ticket_ids: set[str]) -> dict[str, sqlite3.Row]:
+def _ticket_records(conn: sqlite3.Connection, ticket_ids: set[str]) -> dict[str, sqlite3.Row]:
+    """Each Ticket's stored navigation facts, which every write keeps current."""
     if not ticket_ids:
         return {}
+    navigation_data.require_records_current(conn)
     placeholders = ",".join("?" for _ in ticket_ids)
     rows = conn.execute(
-        "SELECT id, stage, worker_type, worker_step_claim, pending_proposal, ceiling_holder, "
-        "conversation_id "
-        f"FROM tickets WHERE id IN ({placeholders})",
+        "SELECT id, json_extract(value, '$.ticket_status') AS ticket_status, "
+        "json_extract(value, '$.stage') AS stage, "
+        "json_extract(value, '$.ceiling_holder') AS ceiling_holder, "
+        "json_extract(value, '$.stage_ownership') AS stage_ownership, "
+        "json_extract(value, '$.conversation_id') AS conversation_id, "
+        "json_type(value, '$.integrity_error') IS NOT NULL AS broken "
+        f"FROM navigation_records WHERE kind = 'ticket' AND id IN ({placeholders})",
         tuple(sorted(ticket_ids)),
     ).fetchall()
     return {str(row["id"]): row for row in rows}
@@ -74,34 +86,33 @@ def _ticket_rows(conn: sqlite3.Connection, ticket_ids: set[str]) -> dict[str, sq
 def _ticket_attention(
     row: sqlite3.Row,
     conversation: ConversationAttention | None,
-    *,
-    facts: TicketFacts,
 ) -> WorkAttention:
     holder = json.loads(str(row["ceiling_holder"]))
     owner_holds_ceiling = holder == {
         "kind": OWNER_PRINCIPAL.kind.value,
         "id": OWNER_PRINCIPAL.id,
     }
-    parked = facts.ticket_status is TicketStatus.awaiting_approval
+    ticket_status = TicketStatus(str(row["ticket_status"]))
+    parked = ticket_status is TicketStatus.awaiting_approval
     awaiting_approval = parked and owner_holds_ceiling
     awaiting_agent_approval = parked and not owner_holds_ceiling
     signal = (
         conversation.signal
         if conversation
-        else conversation_signal(is_running=False, unread_message_to_owner=False)
+        else conversation_signal(
+            turn_is_running=False, has_live_background_task=False, unread_message_to_owner=False
+        )
     )
     awaiting_reply = signal["message_for_owner"]
     awaiting_answer = conversation.awaiting_answer if conversation else False
-    running = signal["working"]
+    working = signal["working"]
     last_turn_failed = conversation.last_turn_failed if conversation else False
-    assigned = ticket_assignment_from_values(
-        stage=str(row["stage"]),
-        worker_type=str(row["worker_type"]),
-    )
+    ownership = row["stage_ownership"]
+    assigned = ticket_is_assigned(None if ownership is None else StageOwnershipMode(ownership))
     agent_state = derivation.agent_state(
-        facts.ticket_status,
+        ticket_status,
         stage=str(row["stage"]),
-        turn_is_running=running,
+        agent_is_working=working,
         last_turn_failed=last_turn_failed,
     )
     return {
@@ -125,9 +136,11 @@ def ticket_is_assigned(ownership: StageOwnershipMode | None) -> bool:
     return ownership is StageOwnershipMode.user
 
 
-def ticket_assignment_from_values(*, stage: str, worker_type: str) -> bool:
+def ticket_assignment_from_values(
+    *, stage: str, worker_type: str | None, worker_type_definition: WorkflowDefinition
+) -> bool:
     """Derive assignment from the Worker type's ownership declaration."""
-    definition = configured_worker_type_registry().require(worker_type)
+    definition = worker_type_definition
     ownership = machine.stage_ownership_mode(
         stage,
         worker_type_definition=definition,
@@ -154,37 +167,29 @@ def _roll_up(children: Iterable[WorkAttention]) -> WorkAttention:
     }
 
 
-async def add_work_attention(
-    conn: sqlite3.Connection,
-    conversation_system: ConversationSystem,
-    conversation_record: ConversationStore,
-    *,
-    tickets: Iterable[JsonDict] = (),
-    sprint_items: Iterable[JsonDict] = (),
-) -> None:
-    """Attach what the owner is being asked for, and the shared agent-state facts."""
-    ticket_rows = tuple(tickets)
-    item_rows = tuple(sprint_items)
-    direct_ticket_ids = {str(row["id"]) for row in ticket_rows}
-    item_ids = {str(row["id"]) for row in item_rows}
+def _read_stored_attention(
+    conn: sqlite3.Connection, direct_ticket_ids: set[str], item_ids: set[str]
+) -> tuple[dict[str, list[str]], dict[str, sqlite3.Row], dict[str, str]]:
+    """Each Manager's child Tickets, every Ticket's stored facts, each Manager's conversation."""
     child_ids_by_item: dict[str, list[str]] = {item_id: [] for item_id in item_ids}
     if item_ids:
         placeholders = ",".join("?" for _ in item_ids)
         for row in conn.execute(
-            f"SELECT id, sprint_item_id FROM tickets WHERE sprint_item_id IN ({placeholders})",
+            f"SELECT id, manager_id FROM tickets WHERE manager_id IN ({placeholders}) "
+            "AND is_backlogged = 0",
             tuple(sorted(item_ids)),
         ).fetchall():
-            child_ids_by_item[str(row["sprint_item_id"])].append(str(row["id"]))
+            child_ids_by_item[str(row["manager_id"])].append(str(row["id"]))
     all_ticket_ids = direct_ticket_ids | {
         ticket_id for ticket_ids in child_ids_by_item.values() for ticket_id in ticket_ids
     }
-    stored_tickets = _ticket_rows(conn, all_ticket_ids)
+    stored_tickets = _ticket_records(conn, all_ticket_ids)
     item_conversations: dict[str, str] = {}
     if item_ids:
         placeholders = ",".join("?" for _ in item_ids)
         rows = conn.execute(
-            "SELECT si.id, a.conversation_id FROM sprint_items si LEFT JOIN agents a "
-            "ON a.agent_key = 'sprint_item_supervisor_' || si.id "
+            "SELECT si.id, a.conversation_id FROM managers si LEFT JOIN agents a "
+            "ON a.agent_key = 'manager_' || si.id "
             f"WHERE si.id IN ({placeholders})",
             tuple(sorted(item_ids)),
         ).fetchall()
@@ -193,29 +198,53 @@ async def add_work_attention(
             for row in rows
             if row["conversation_id"] is not None
         }
+    return child_ids_by_item, stored_tickets, item_conversations
+
+
+async def add_work_attention(
+    conn: sqlite3.Connection,
+    conversation_system: ConversationSystem,
+    conversation_record: ConversationStore,
+    *,
+    tickets: Iterable[JsonDict] = (),
+    managers: Iterable[JsonDict] = (),
+) -> None:
+    """Attach what the owner is being asked for, and the shared agent-state facts.
+
+    The stored facts are read on a worker thread. The live conversation state is read on
+    the event loop, which owns it.
+    """
+    ticket_rows = tuple(tickets)
+    item_rows = tuple(managers)
+    child_ids_by_item, stored_tickets, item_conversations = await run_on_worker_thread(
+        _read_stored_attention,
+        conn,
+        {str(row["id"]) for row in ticket_rows},
+        {str(row["id"]) for row in item_rows},
+    )
     conversation_ids = {
-        str(row["conversation_id"])
-        for row in stored_tickets.values()
-        if row["conversation_id"] is not None
+        str(stored_row["conversation_id"])
+        for stored_row in stored_tickets.values()
+        if stored_row["conversation_id"] is not None
     } | set(item_conversations.values())
     conversations = await read_conversation_signals(
         conversation_system, conversation_record, conversation_ids
     )
-    blocked_ticket_ids = ticket_blocks.blocked_ticket_ids(conn)
-    ticket_attention = {
-        ticket_id: _ticket_attention(
-            row,
-            conversations.get(str(row["conversation_id"]))
-            if row["conversation_id"] is not None
-            else None,
-            facts=derivation.derive_ticket_facts(
-                derivation.stored_facts_from_row(
-                    row, has_live_blocker=ticket_id in blocked_ticket_ids
-                )
-            ),
+    ticket_attention: dict[str, WorkAttention] = {}
+    for ticket_id, stored_row in stored_tickets.items():
+        conversation = conversations.get(str(stored_row["conversation_id"]))
+        if stored_row["broken"]:
+            ticket_attention[ticket_id] = {
+                **_empty_attention(),
+                "awaiting_reply": bool(conversation and conversation.signal["message_for_owner"]),
+                "awaiting_answer": bool(conversation and conversation.awaiting_answer),
+                "agent_state": AgentState.errored.value,
+            }
+            continue
+        ticket_attention[ticket_id] = _ticket_attention(
+            stored_row,
+            conversation if stored_row["conversation_id"] is not None else None,
         )
-        for ticket_id, row in stored_tickets.items()
-    }
     for row in ticket_rows:
         row.update(ticket_attention.get(str(row["id"]), _empty_attention()))
         stored = stored_tickets.get(str(row["id"]))
@@ -223,7 +252,9 @@ async def add_work_attention(
         row["conversation_signal"] = (
             conversation.signal
             if conversation
-            else conversation_signal(is_running=False, unread_message_to_owner=False)
+            else conversation_signal(
+                turn_is_running=False, has_live_background_task=False, unread_message_to_owner=False
+            )
         )
     for row in item_rows:
         item_id = str(row["id"])
@@ -231,11 +262,13 @@ async def add_work_attention(
         signal = (
             own_conversation.signal
             if own_conversation
-            else conversation_signal(is_running=False, unread_message_to_owner=False)
+            else conversation_signal(
+                turn_is_running=False, has_live_background_task=False, unread_message_to_owner=False
+            )
         )
         awaiting_reply = signal["message_for_owner"]
         awaiting_answer = own_conversation.awaiting_answer if own_conversation else False
-        running = signal["working"]
+        working = signal["working"]
         failed = own_conversation.last_turn_failed if own_conversation else False
         row.update(
             {
@@ -247,7 +280,7 @@ async def add_work_attention(
                 "assigned": False,
                 "agent_state": (
                     AgentState.working.value
-                    if running
+                    if working
                     else AgentState.errored.value
                     if failed
                     else AgentState.idle.value

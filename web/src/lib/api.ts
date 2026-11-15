@@ -1,3 +1,5 @@
+import { mutationHeaders } from "./releaseMonitor";
+
 export type JsonValue =
   | null
   | boolean
@@ -10,9 +12,12 @@ export type JsonObject = { [key: string]: JsonValue };
 
 export type FetchOptions = {
   method?: string;
+  cache?: RequestCache;
   body?: unknown;
   signal?: AbortSignal;
   headers?: Record<string, string>;
+  /** Optional response evidence. Domain results and error behavior stay unchanged. */
+  responseMetadata?: { decodedBytes?: number };
 };
 
 export class PlannerFetchError extends Error {
@@ -38,10 +43,15 @@ function makePlannerError(envelope: JsonObject, status: number): PlannerFetchErr
 }
 
 export async function fetchJson<T = unknown>(path: string, options: FetchOptions = {}): Promise<T> {
-  const headers: Record<string, string> = { ...(options.headers || {}) };
+  let headers: Record<string, string> = { ...(options.headers || {}) };
+  const method = (options.method || "GET").toUpperCase();
+  if (!["GET", "HEAD", "OPTIONS"].includes(method)) {
+    headers = await mutationHeaders(headers);
+  }
   const init: RequestInit = {
     method: options.method || "GET",
     headers,
+    cache: options.cache,
     signal: options.signal
   };
   if (options.body !== undefined && options.body !== null) {
@@ -57,6 +67,9 @@ export async function fetchJson<T = unknown>(path: string, options: FetchOptions
   }
 
   const raw = await response.text();
+  if (options.responseMetadata) {
+    options.responseMetadata.decodedBytes = new TextEncoder().encode(raw).byteLength;
+  }
   if (response.ok) {
     try {
       return (raw === "" ? {} : JSON.parse(raw)) as T;

@@ -2,13 +2,15 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Final
+from dataclasses import dataclass, field
+from typing import Final, Literal
 
 from planner.core.contracts import Principal, PrincipalKind
 
 TICKET_NOTIFICATION_SUBJECT_KEY: Final = "tickets"
-SPRINT_ITEM_SUPERVISOR_NOTIFICATION_SUBJECT_KEY: Final = "sprint_item_supervisors"
+MANAGER_NOTIFICATION_SUBJECT_KEY: Final = "managers"
+PANELS_NOTIFICATION_SUBJECT_KEY: Final = "panels"
+STALL_ALARM_NOTIFICATION_TYPE: Final = "stall_alarm"
 
 
 @dataclass(frozen=True, slots=True)
@@ -23,7 +25,8 @@ class NotificationType:
 class NotificationSubject:
     key: str
     label: str
-    principal_kind: PrincipalKind
+    # None for Panels itself, which is not a principal.
+    principal_kind: PrincipalKind | None
     notification_type_ids: tuple[str, ...]
 
 
@@ -58,12 +61,19 @@ NOTIFICATION_TYPES: Final[tuple[NotificationType, ...]] = (
         "A worker turn or Ticket failed and needs attention.",
         True,
     ),
+    # Raised by the stall watchdog unit, not by an attention edge.
+    NotificationType(
+        STALL_ALARM_NOTIFICATION_TYPE,
+        "Stalled work",
+        "Panels work stopped moving and needs a look.",
+        True,
+    ),
 )
 NOTIFICATION_TYPE_BY_ID: Final[dict[str, NotificationType]] = {
     item.id: item for item in NOTIFICATION_TYPES
 }
 
-# What each subject offers. A Sprint Item conversation offers one switch: a failed
+# What each subject offers. A Manager conversation offers one switch: a failed
 # turn. Nothing it does reaches the user by itself, and the user is present for the
 # turns it takes, because a message of theirs is the only thing that starts one.
 NOTIFICATION_SUBJECTS: Final[tuple[NotificationSubject, ...]] = (
@@ -86,10 +96,16 @@ NOTIFICATION_SUBJECTS: Final[tuple[NotificationSubject, ...]] = (
         ("awaiting_reply", "awaiting_answer", "errored"),
     ),
     NotificationSubject(
-        SPRINT_ITEM_SUPERVISOR_NOTIFICATION_SUBJECT_KEY,
-        "Sprint Item supervisors",
-        PrincipalKind.sprint_item,
+        MANAGER_NOTIFICATION_SUBJECT_KEY,
+        "Managers",
+        PrincipalKind.manager,
         ("awaiting_reply", "awaiting_answer", "errored"),
+    ),
+    NotificationSubject(
+        PANELS_NOTIFICATION_SUBJECT_KEY,
+        "Panels",
+        None,
+        (STALL_ALARM_NOTIFICATION_TYPE,),
     ),
 )
 NOTIFICATION_SUBJECT_BY_KEY: Final[dict[str, NotificationSubject]] = {
@@ -113,11 +129,30 @@ class EdgeKey:
 
 
 @dataclass(frozen=True, slots=True)
+class NotificationReply:
+    """The original message destination, independent of later conversation changes."""
+
+    conversation_id: str
+    message_id: str
+    recipient_kind: str
+    recipient_id: str
+
+
+@dataclass(frozen=True, slots=True)
+class NotificationMessage:
+    sender_label: str
+    preview: str
+    reply: NotificationReply | None
+
+
+@dataclass(frozen=True, slots=True)
 class AttentionEdge:
     key: EdgeKey
     subject: Principal
     subject_label: str
     occurred_at: int
+    message: NotificationMessage | None = None
+    stage_label: str | None = None
 
     @property
     def notification_type(self) -> str:
@@ -130,6 +165,7 @@ class NotificationIntent:
     body: str
     route: str
     tag: str
+    reply: NotificationReply | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -159,3 +195,39 @@ class WebPushResult:
     delivered: bool
     expired: bool = False
     error: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class APNsConfig:
+    key_path: str = field(repr=False)
+    key_id: str
+    team_id: str
+    bundle_ids: tuple[str, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class APNsDevice:
+    device_id: str
+    device_token: str = field(repr=False)
+    bundle_id: str
+    environment: Literal["development", "production"]
+    registration_version: int
+    updated_at: int
+
+
+@dataclass(frozen=True, slots=True)
+class PendingAPNsDelivery:
+    edge: EdgeKey
+    device: APNsDevice
+    intent: NotificationIntent
+    attempts: int
+    created_at: int
+
+
+@dataclass(frozen=True, slots=True)
+class APNsResult:
+    delivered: bool
+    dead_token: bool = False
+    retryable: bool = False
+    error: str | None = None
+    invalidated_at_ms: int | None = None

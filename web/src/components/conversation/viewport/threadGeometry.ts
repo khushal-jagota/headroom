@@ -1,19 +1,14 @@
 import {
-  MOST_HELD_LINES,
   NEAR_NEWEST_LINE_PIXELS,
   NEWEST_LINE_BOTTOM_GAP_PIXELS,
   SENT_MESSAGE_TOP_GAP_PIXELS
 } from "./viewportConfiguration";
 
-export type HeldView = {
-  scrollTop: number;
-  lines: { element: Element; top: number }[];
-};
-
 export type ThreadReading = {
   newestLineBottomPixels: number;
   remainingReservedSpacePixels: number;
   newestLineIsInSight: boolean;
+  newestLineIsBelowTheView: boolean;
 };
 
 export type ThreadGeometry = {
@@ -24,25 +19,37 @@ export type ThreadGeometry = {
     reservedSpacePixels: number
   ): ThreadReading;
   newestLineIsInSight(cachedNewestLineBottomPixels: number): boolean;
+  newestLineIsBelowTheView(cachedNewestLineBottomPixels: number): boolean;
   newestLineScrollTop(cachedNewestLineBottomPixels: number): number;
   sentMessage(messageId: string): Element | null;
   /** Where the thread must be for this element to sit at the top, clear of the fade. */
   elementAtTheTopScrollTop(element: Element): number;
   answerRoomMessage(): Element | null;
   answerRoomPixels(message: Element): number;
+  baseHeight(): number;
+  gap(): number;
   sentMessageScrollTop(message: Element): number;
-  holdView(): HeldView;
-  restoredScrollTop(held: HeldView): number | null;
 };
+
+/** The browser exposes an integer scroll extent, even for fractional content. */
+export function retirementGeometry(top: number, height: number, base: number, budget: number, insetDelta = 0): { top: number; tail: number; insetDelta: number } | null {
+  const oldMaximum = Math.max(0, Math.round(base + budget) - height);
+  // An inset change near either edge can otherwise race native clamping.
+  const safeInset = top + insetDelta >= 0 && top < oldMaximum - Math.abs(insetDelta) ? insetDelta : 0;
+  const preserved = top + safeInset;
+  const targetBase = base + safeInset;
+  const tail = preserved <= Math.max(0, Math.round(targetBase) - height)
+    ? 0 : Math.max(0, Math.ceil(preserved + height) - targetBase);
+  if (tail > budget + .001) return null;
+  return { top: preserved, tail: Math.min(tail, budget), insetDelta: safeInset };
+}
 
 /** A live, read-only view of where things are in one conversation thread. */
 export function threadGeometry(
   thread: HTMLDivElement,
   reservedSpaceElement: HTMLDivElement | null
 ): ThreadGeometry {
-  /** Where the thread must be for this element to sit at the top, clear of the fade.
-   *  A message you have just sent and a request still waiting on you want the same
-   *  thing, so they ask for it the same way. */
+  /** Where a sent message sits at the top, clear of the fade. */
   function elementAtTheTopScrollTop(element: Element): number {
     return Math.max(0, topWithin(element) - SENT_MESSAGE_TOP_GAP_PIXELS);
   }
@@ -88,10 +95,13 @@ export function threadGeometry(
     );
   }
 
+  /** Only a newest line below the fold is reached by scrolling down. */
+  function newestLineIsBelowTheView(cachedNewestLineBottomPixels: number): boolean {
+    return newestLineScrollTop(cachedNewestLineBottomPixels) - thread.scrollTop > NEAR_NEWEST_LINE_PIXELS;
+  }
+
   function newestLineIsInSight(cachedNewestLineBottomPixels: number): boolean {
-    const beyondTheFold =
-      newestLineScrollTop(cachedNewestLineBottomPixels) - thread.scrollTop;
-    if (beyondTheFold > NEAR_NEWEST_LINE_PIXELS) return false;
+    if (newestLineIsBelowTheView(cachedNewestLineBottomPixels)) return false;
     return cachedNewestLineBottomPixels >= thread.scrollTop;
   }
 
@@ -118,7 +128,8 @@ export function threadGeometry(
     return {
       newestLineBottomPixels,
       remainingReservedSpacePixels,
-      newestLineIsInSight: newestLineIsInSight(newestLineBottomPixels)
+      newestLineIsInSight: newestLineIsInSight(newestLineBottomPixels),
+      newestLineIsBelowTheView: newestLineIsBelowTheView(newestLineBottomPixels)
     };
   }
 
@@ -139,15 +150,14 @@ export function threadGeometry(
     readFromNewestLineBottom,
 
     newestLineIsInSight,
+    newestLineIsBelowTheView,
     newestLineScrollTop,
 
     sentMessage(messageId: string): Element | null {
       const drawn = Array.from(
         thread.querySelectorAll<HTMLElement>("[data-conversation-outgoing]")
       ).find((element) => element.dataset.conversationOutgoing === messageId);
-      if (drawn !== undefined) return drawn;
-      const recorded = thread.querySelectorAll('[data-conversation-row="prompt"]');
-      return recorded[recorded.length - 1] ?? null;
+      return drawn ?? null;
     },
 
     answerRoomMessage(): Element | null {
@@ -156,56 +166,29 @@ export function threadGeometry(
       return drawn[drawn.length - 1] ?? recorded[recorded.length - 1] ?? null;
     },
 
+    gap(): number { return Number.parseFloat(getComputedStyle(thread).rowGap) || 0; },
+    baseHeight(): number {
+      const style = getComputedStyle(thread);
+      return Math.max(newestLineBottom(), Number.parseFloat(style.paddingTop) || 0)
+        + (Number.parseFloat(style.paddingBottom) || 0);
+    },
     answerRoomPixels(message: Element): number {
-      return Math.max(
+      const gap = Number.parseFloat(getComputedStyle(thread).rowGap) || 0;
+      const space = Math.max(
         0,
         Math.ceil(
           thread.clientHeight
           - (newestLineBottom() - topWithin(message))
           - SENT_MESSAGE_TOP_GAP_PIXELS
+          - NEWEST_LINE_BOTTOM_GAP_PIXELS
+          - (Number.parseFloat(getComputedStyle(thread).rowGap) || 0)
         )
       );
+      return space > 0 ? space + gap : 0;
     },
 
     elementAtTheTopScrollTop,
 
-    sentMessageScrollTop: elementAtTheTopScrollTop,
-
-    holdView(): HeldView {
-      const lines: HeldView["lines"] = [];
-      for (const element of contentElements()) {
-        const top = topWithin(element);
-        const height = element.getBoundingClientRect().height;
-        if (top + height <= thread.scrollTop) continue;
-        // Even a short message can grow above its visible paragraph when delayed
-        // media arrives. Prefer that paragraph before its unchanged article top.
-        if (lines.length < MOST_HELD_LINES - 2) {
-          const blocks = element.ownerDocument.createTreeWalker(element, NodeFilter.SHOW_ELEMENT, {
-            acceptNode: (node) => (node as Element).matches("p, li, pre, h1, h2, h3, h4, h5, h6")
-              ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_SKIP
-          });
-          for (let block = blocks.nextNode() as Element | null; block !== null; block = blocks.nextNode() as Element | null) {
-            if (!block.textContent?.trim() || block.getClientRects().length === 0) continue;
-            const blockTop = topWithin(block);
-            if (blockTop + block.getBoundingClientRect().height <= thread.scrollTop) continue;
-            lines.push({ element: block, top: blockTop });
-            // Stop the lazy walk and reserve room for message/survivor fallbacks.
-            if (lines.length >= MOST_HELD_LINES - 2) break;
-          }
-        }
-        lines.push({ element, top });
-        if (lines.length >= MOST_HELD_LINES) break;
-      }
-      return { scrollTop: thread.scrollTop, lines };
-    },
-
-    restoredScrollTop(held: HeldView): number | null {
-      const survivor = held.lines.find((line) => thread.contains(line.element) && line.element.getClientRects().length > 0);
-      if (survivor === undefined) return null;
-      return Math.max(
-        0,
-        held.scrollTop + topWithin(survivor.element) - survivor.top
-      );
-    }
+    sentMessageScrollTop: elementAtTheTopScrollTop
   };
 }

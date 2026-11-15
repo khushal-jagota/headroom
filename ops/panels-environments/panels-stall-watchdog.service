@@ -1,0 +1,11 @@
+[Unit]
+Description=Panels stall watchdog: alarm on stalled work and on a stopped stall checker
+
+[Service]
+Type=oneshot
+Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin
+Environment=PLAN_CONFIG_PATH=%h/Deployments/Panels/current/data/config.yaml
+Environment=PLAN_PORT=8767
+ExecStart=%h/Deployments/Panels/current/app/bin/panels stalls watchdog --db %h/Deployments/Panels/current/data/planner.db --state-dir %h/Deployments/Panels/current/data/stall-watchdog
+TimeoutStartSec=300
+NoNewPrivileges=yes

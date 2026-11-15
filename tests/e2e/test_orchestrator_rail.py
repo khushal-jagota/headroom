@@ -12,6 +12,7 @@ from __future__ import annotations
 import re
 import sqlite3
 from collections.abc import Callable
+from datetime import UTC, datetime
 from pathlib import Path
 
 from playwright.sync_api import BrowserContext, Page, expect
@@ -20,26 +21,24 @@ from tests.e2e.harness import (
     ApiHelper,
     JsonObject,
     ServerHandle,
-    _append_rows,
     capture_success,
 )
-from tests.support.connected_rows import _conversation, _message
+from tests.support.connected_rows import _bind, _conversation, _message, _post
 from tests.support.server_fixtures import rail_server as rail_server
 
-from planner.conversation.events import UserInputQuestion, UserInputRequestedEventPayload
 from planner.core.contracts import CHIEF_PRINCIPAL, Principal, PrincipalKind
 
-EVIDENCE = Path("/home/vps/Deployments/Panels/current/data/files/tickets/t_9fh1vzxc/artifacts/rail")
 LONG_TITLE = "Review the entire Worker title when the adjustable rail clips this long approval row"
 
 
-
-
-def _seed(server: ServerHandle, api: ApiHelper) -> tuple[JsonObject, JsonObject, JsonObject]:
+def _seed(
+    server: ServerHandle,
+    api: ApiHelper,
+) -> tuple[JsonObject, JsonObject, JsonObject, JsonObject]:
     project = api.direct_post(server, "/api/projects", {"name": "Rail proof"})
     item = api.direct_post(
         server,
-        "/api/items",
+        "/api/managers",
         {
             "title": "Review the connected retirement rail",
             "project_id": project["id"],
@@ -47,9 +46,9 @@ def _seed(server: ServerHandle, api: ApiHelper) -> tuple[JsonObject, JsonObject,
     )
     empty = api.direct_post(
         server,
-        "/api/items",
+        "/api/managers",
         {
-            "title": "Empty orchestrator stays visible",
+            "title": "Empty manager stays visible",
             "project_id": project["id"],
         },
     )
@@ -60,7 +59,7 @@ def _seed(server: ServerHandle, api: ApiHelper) -> tuple[JsonObject, JsonObject,
             "title": LONG_TITLE,
             "worker_type": "coding",
             "brief": "Review the brief.",
-            "orchestrator": {"kind": "sprint_item", "id": item["id"]},
+            "manager": {"kind": "manager", "id": item["id"]},
         },
     )
     # Empty and Blocked children belong in the hover details, not attention groups.
@@ -75,7 +74,7 @@ def _seed(server: ServerHandle, api: ApiHelper) -> tuple[JsonObject, JsonObject,
                 "title": title,
                 "worker_type": "coding",
                 "brief": "Agreed brief.",
-                "orchestrator": {"kind": "sprint_item", "id": item["id"]},
+                "manager": {"kind": "manager", "id": item["id"]},
                 "blocked_by_ticket_ids": blockers,
             },
         )
@@ -91,7 +90,7 @@ def _seed(server: ServerHandle, api: ApiHelper) -> tuple[JsonObject, JsonObject,
             "title": "Answer only Worker with no direct message",
             "worker_type": "coding",
             "brief": "Agreed brief.",
-            "orchestrator": {"kind": "sprint_item", "id": item["id"]},
+            "manager": {"kind": "manager", "id": item["id"]},
         },
     )
     api.direct_post(
@@ -100,56 +99,19 @@ def _seed(server: ServerHandle, api: ApiHelper) -> tuple[JsonObject, JsonObject,
         {"next_ceiling": "none", "next_holder": {"kind": "owner", "id": "owner"}},
     )
     _conversation(server, "rail-question")
-    with sqlite3.connect(server.db_path) as conn:
-        conn.execute(
-            "UPDATE tickets SET conversation_id=? WHERE id=?", ("rail-question", question["id"])
-        )
-        conn.execute(
-            "INSERT INTO ticket_conversations(conversation_id,ticket_id) VALUES (?,?)",
-            ("rail-question", question["id"]),
-        )
-    _append_rows(
-        server,
-        "rail-question",
-        UserInputRequestedEventPayload(
-            request_id="rail-question",
-            questions=(
-                UserInputQuestion(
-                    question_id="scope",
-                    header="Scope",
-                    question="Which result do you want?",
-                    options=(),
-                    multi_select=False,
-                    allow_other=True,
-                ),
-            ),
-        ),
-    )
+    _bind(server, "ticket", question["id"], "rail-question")
+    _post(server, "/api/test/signals/rail-question/start", {})
+    _post(server, "/api/test/signals/rail-question/questions", {})
     _conversation(server, "rail-unread")
-    with sqlite3.connect(server.db_path) as conn:
-        conn.execute(
-            "UPDATE tickets SET conversation_id=? WHERE id=?", ("rail-unread", ticket["id"])
-        )
-        conn.execute(
-            "INSERT INTO ticket_conversations(conversation_id,ticket_id) VALUES (?,?)",
-            ("rail-unread", ticket["id"]),
-        )
+    _bind(server, "ticket", ticket["id"], "rail-unread")
     _message(
         server, "rail-unread", Principal(PrincipalKind.ticket, ticket["id"]), "Rail direct message"
     )
     for conversation in ("rail-chief", "rail-supervisor"):
         _conversation(server, conversation)
-    with sqlite3.connect(server.db_path) as conn:
-        conn.execute(
-            "UPDATE agents SET conversation_id=? WHERE agent_key=?",
-            ("rail-supervisor", item["supervisor"]["agent_key"]),
-        )
-        conn.execute(
-            "INSERT INTO agents(agent_key,conversation_id) VALUES ('chief_of_staff',?) "
-            "ON CONFLICT(agent_key) DO UPDATE SET conversation_id=excluded.conversation_id",
-            ("rail-chief",),
-        )
-    return item, empty, ticket
+    _bind(server, "agent", item["manager"]["agent_key"], "rail-supervisor")
+    _bind(server, "agent", "chief_of_staff", "rail-chief")
+    return item, empty, ticket, question
 
 
 def test_settle_reopen_keeps_outstanding_work_and_worker_address(
@@ -157,44 +119,76 @@ def test_settle_reopen_keeps_outstanding_work_and_worker_address(
     context_factory: Callable[[], BrowserContext],
     open_page: Callable[..., Page],
     api: ApiHelper,
+    tmp_path: Path,
 ) -> None:
     server = rail_server
-    item, empty, ticket = _seed(server, api)
+    item, empty, ticket, question = _seed(server, api)
     context = context_factory()
-    page = open_page(context, server, "#/workspace?view=items", '[data-screen="workspace"]')
+    context.add_init_script("""
+      window.__railOrchestratorFields = {};
+      const Source = window.EventSource;
+      window.EventSource = class extends Source {
+        constructor(...args) {
+          super(...args);
+          for (const type of ['snapshot', 'patch']) this.addEventListener(type, event => {
+            const frame = JSON.parse(event.data);
+            for (const record of frame.content?.records ?? frame.upserts ?? []) {
+              if (record.kind === 'manager')
+                window.__railOrchestratorFields[record.id] = Object.keys(record.value).sort();
+            }
+          });
+        }
+      };
+    """)
+    page = open_page(context, server, "#/workspace?view=managers", '[data-screen="workspace"]')
     page.set_default_timeout(WAIT_MS)
     page.set_viewport_size({"width": 1440, "height": 1000})
     left = page.locator(".board-workspace-left")
-    card = left.locator(f'[data-sprint-item="{item["id"]}"]')
+    card = left.locator(f'[data-manager="{item["id"]}"]')
     row = card.locator(f'[data-ticket-id="{ticket["id"]}"]')
     expect(left.locator("[data-chief-destination]")).to_be_visible(timeout=WAIT_MS)
     expect(card).to_be_visible(timeout=WAIT_MS)
-    expect(left.locator(".orchestrator-card").first).to_have_class(re.compile(r"\bchief\b"))
+    expect(left.locator(".manager-card").first).to_have_class(re.compile(r"\bchief\b"))
     expect(
-        left.locator(".orchestrator-card.chief").get_by_role("button", name="Settle", exact=False)
+        left.locator(".manager-card.chief").get_by_role("button", name="Settle", exact=False)
     ).to_have_count(0)
-    expect(card.locator(".orchestrator-eyebrow")).to_contain_text("Rail proof")
-    expect(left.locator(f'[data-sprint-item="{empty["id"]}"]')).to_be_visible()
-    expect(row.get_by_role("img", name="Unread message")).to_be_visible(timeout=WAIT_MS)
+    expect(card.locator(".manager-eyebrow")).to_contain_text("Rail proof")
+    expect(left.locator(f'[data-manager="{empty["id"]}"]')).to_be_visible()
+    empty_settled = api.direct_patch(
+        server, f"/api/managers/{empty['id']}/settled", {"settled": True}
+    )
+    # Advance the fixed clock so the later settlement is newer through the server's write door.
+    next_update = datetime.fromtimestamp(int(empty_settled["updated_at"]) + 1, UTC)
+    api.direct_post(server, "/api/test/set-now", {"now": next_update.isoformat()})
+    # The row waits on the owner's approval, so its mark column shows the Review mark, which
+    # outranks its unread message's dot (redesign, owner). The mark stays through settle,
+    # reopen and the other conversations' reads below.
+    attention = row.get_by_role("img", name="Needs your approval")
+    expect(attention).to_be_visible(timeout=WAIT_MS)
     expect(card.locator(".item-head .stage-mark")).to_have_count(0)
     expect(left.locator("[data-chief-destination] .stage-mark")).to_have_count(0)
-    question_row = card.get_by_role(
-        "button", name="Answer only Worker with no direct message", exact=True
-    )
+    question_row = card.locator(f'[data-ticket-id="{question["id"]}"]')
     expect(question_row).to_be_visible(timeout=WAIT_MS)
-    expect(question_row.get_by_role("img")).to_have_count(0)
+    expect(question_row).to_contain_text("Answer only Worker with no direct message")
+    working_mark = question_row.get_by_role("img", name="Working", exact=True)
+    expect(working_mark).to_have_count(1)
+    expect(working_mark).to_be_visible()
     expect(card.locator('[data-bucket-key="awaiting_approval"]')).to_contain_text(LONG_TITLE)
     row.click()
     worker_hash = page.evaluate("location.hash")
     expect(page.locator(f'[data-screen="ticket"][data-ticket-id="{ticket["id"]}"]')).to_be_visible()
+    # Settle accepts pointer input only after the owner enters the header.
+    card.locator(".identity").hover()
     with page.expect_response(
         lambda response: (
-            response.url.endswith(f"/api/items/{item['id']}/settled")
+            response.url.endswith(f"/api/managers/{item['id']}/settled")
             and response.request.method == "PATCH"
         )
     ) as write:
         card.get_by_role("button", name=f"Settle {item['title']}", exact=True).click()
     assert write.value.ok
+    # Keep this membership proof outside the intentional Worker-hover freeze.
+    page.mouse.move(1000, 50)
     expect(card).to_have_count(0, timeout=WAIT_MS)
     assert write.value.json()["settled"] is True
     assert page.evaluate("location.hash") == worker_hash
@@ -209,10 +203,33 @@ def test_settle_reopen_keeps_outstanding_work_and_worker_address(
     page.wait_for_function("location.hash === '#/workspace'", timeout=WAIT_MS)
     expect(page.locator("[data-backlog-tickets]")).to_have_count(0)
     left.get_by_role("button", name="Settled", exact=False).click()
+    lean_title = left.locator(f'[data-settled-item="{empty["id"]}"] .settled-title')
+    expect(lean_title).to_be_visible(timeout=WAIT_MS)
+    page.wait_for_function(
+        "id => JSON.stringify(window.__railOrchestratorFields[id]) === "
+        "JSON.stringify(['conversation_id','created_at','settled','title','updated_at'])",
+        arg=empty["id"],
+        timeout=WAIT_MS,
+    )
+    lean_title.hover()
+    lean_title.focus()
+    page.evaluate(
+        "() => new Promise(done => requestAnimationFrame(() => requestAnimationFrame(done)))"
+    )
+    expect(page.locator("[data-rail-hover-panel]")).to_have_attribute("aria-hidden", "true")
+    capture_success(page, str(tmp_path / "settled-lean-no-popover.png"))
     scoped_parent = left.locator(f'[data-settled-item="{item["id"]}"]')
+    expect(scoped_parent).to_be_visible(timeout=WAIT_MS)
+    expect(left.locator('[data-settled-item] .settled-title > span')).to_have_text(
+        [item["title"], empty["title"]]
+    )
+    expect(left.locator('[data-settled-scroll] [data-message-conversation]')).to_have_count(0)
+    expect(left.locator('[data-settled-scroll] [data-workspace-messages]')).to_have_count(0)
+    expect(scoped_parent.get_by_role("button", name=f"Reopen {item['title']}")).to_be_visible()
+    capture_success(page, str(tmp_path / "settled-managers-only.png"))
     scoped_parent.locator(".settled-title").click()
-    scoped_pane = page.locator(f'[data-sprint-item-workspace="{item["id"]}"]')
-    scoped_row = scoped_pane.locator(f'[data-sprint-ticket-id="{ticket["id"]}"]')
+    scoped_pane = page.locator(f'[data-manager-workspace="{item["id"]}"]')
+    scoped_row = scoped_pane.locator(f'[data-worker-ticket-id="{ticket["id"]}"]')
     # An absent row can mean loading, so inspect the mounted fold before toggling it.
     scoped_group = scoped_pane.locator('[data-workspace-group="awaiting_approval"]')
     expect(scoped_group).to_be_visible(timeout=WAIT_MS)
@@ -235,26 +252,26 @@ def test_settle_reopen_keeps_outstanding_work_and_worker_address(
     expect(card).to_be_visible(timeout=WAIT_MS)
     with sqlite3.connect(server.db_path) as conn:
         assert (
-            conn.execute("SELECT settled FROM sprint_items WHERE id=?", (item["id"],)).fetchone()[0]
+            conn.execute("SELECT settled FROM managers WHERE id=?", (item["id"],)).fetchone()[0]
             == 0
         )
-    expect(row.get_by_role("img", name="Unread message")).to_be_visible()
-    capture_success(page, str(EVIDENCE / "rail-1440.png"))
+    expect(attention).to_be_visible()
+    capture_success(page, str(tmp_path / "rail-1440.png"))
     _message(server, "rail-chief", CHIEF_PRINCIPAL, "Chief own direct message")
     _message(
         server,
         "rail-supervisor",
-        Principal(PrincipalKind.sprint_item, item["id"]),
+        Principal(PrincipalKind.manager, item["id"]),
         "Supervisor own direct message",
     )
     page.reload()
     expect(card.locator(".item-head .stage-mark")).to_be_visible(timeout=WAIT_MS)
     expect(left.locator("[data-chief-destination] .stage-mark")).to_be_visible(timeout=WAIT_MS)
-    expect(row.get_by_role("img", name="Unread message")).to_be_visible()
+    expect(attention).to_be_visible()
     api.direct_post(
         server, "/api/conversation/conversations/rail-chief/owner-read", {"through_sequence": 1}
     )
     expect(left.locator("[data-chief-destination] .stage-mark")).to_have_count(0, timeout=WAIT_MS)
     expect(card.locator(".item-head .stage-mark")).to_be_visible()
-    expect(row.get_by_role("img", name="Unread message")).to_be_visible()
-    capture_success(page, str(EVIDENCE / "own-conversation-marks.png"))
+    expect(attention).to_be_visible()
+    capture_success(page, str(tmp_path / "own-conversation-marks.png"))

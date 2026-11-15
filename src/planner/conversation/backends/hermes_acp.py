@@ -93,6 +93,8 @@ from acp.transports import spawn_stdio_transport
 
 from planner import __version__
 from planner.conversation.backends.contracts import (
+    AgentMessageCompleted,
+    AgentMessageDelta,
     BackendEventSink,
     BackendPermissionAsk,
     BackendPromptAccepted,
@@ -101,21 +103,38 @@ from planner.conversation.backends.contracts import (
     BackendSteerOutcome,
     BackendSteerRefused,
     BackendSteerUncertain,
+    ComposerCatalogReported,
+    ContextCompacted,
+    ModelThinkingHappened,
     NeedsRebind,
     PermissionAnswerWriteFailed,
+    PermissionAskRaised,
+    PlanUpdated,
     PromptWriteFailed,
     SessionLoadFailed,
+    TokenUsageReported,
+    ToolCallFinished,
+    ToolCallStarted,
+    TurnEnded,
     TurnToken,
     UserInputAnswerWriteFailed,
+    VendorSessionCursorRebound,
+)
+from planner.conversation.backends.contracts import (
+    ToolCallProgress as BackendToolCallProgress,
 )
 from planner.conversation.backends.failure_summary import normalized_failure_summary
+from planner.conversation.backends.task_ending import end_task
+from planner.conversation.child_custody import process_identity
 from planner.conversation.contracts import (
+    AnswerFate,
     ComposerCatalogEntry,
     ComposerCatalogEntryKind,
     ConversationAccess,
     PromptDeliveryMode,
     PromptDeliveryRefusalReason,
     ResolvedConversationStart,
+    WorkspacePathPolicy,
 )
 from planner.conversation.events import (
     ConversationTurnEnding,
@@ -141,6 +160,10 @@ from planner.conversation.message_files import (
     ConversationMessageFiles,
     MessageFileMissing,
 )
+from planner.conversation.worker_scratch import WorkerScratch
+from planner.core.task_settlement import run_on_worker_thread
+from planner.worker_supervision import WorkerCleanupError, WorkerSupervisor
+from planner.worker_supervision.config import NATIVE_PHASE_SECONDS
 
 LOGGER = logging.getLogger("planner.conversation.backends.hermes_acp")
 
@@ -326,6 +349,9 @@ def _child_environment(
     role_materials = resolved_start.role_materials
     if role_materials is not None:
         environment.update(role_materials.identity_environment_variables)
+    if (role_materials is not None
+            and dict(role_materials.identity_environment_variables).get("PLAN_TICKET_ID")):
+        environment["PLAN_CONVERSATION_ID"] = resolved_start.conversation_id
     return environment
 
 
@@ -367,6 +393,9 @@ class HermesAcpBackendChild:
         self._sink = event_sink
         self._message_files = message_files
         self._processes = AsyncExitStack()
+        self._native_process: asyncio.subprocess.Process | None = None
+        self._worker_scratch: WorkerScratch | None = None
+        self._worker_supervisor: WorkerSupervisor | None = None
         self._connection: ClientSideConnection | None = None
         self._session_id: str | None = None
         self._session_configuration_options: tuple[Any, ...] = ()
@@ -404,6 +433,8 @@ class HermesAcpBackendChild:
         was never given and cannot be asked to stop — leaving a hermes running, its wire
         open and its reader tasks alive, for a conversation that has no child at all.
         """
+        if resolved_start.workspace_path_policy == WorkspacePathPolicy.executor_default:
+            raise BackendSpawnFailed("executor workspace requires native resolution")
         self._resolved_start = resolved_start
         try:
             connection = await self._spawn(resolved_start)
@@ -428,6 +459,7 @@ class HermesAcpBackendChild:
         model_change: str | None,
         reasoning_effort_change: str | None,
         automatic_compaction: bool = False,
+        reasoning_effort_is_set: bool = False,
     ) -> BackendPromptAccepted:
         """Put the session on carried values and start a prompt or native command.
 
@@ -437,9 +469,7 @@ class HermesAcpBackendChild:
         way to name that again — the child as it stands is no longer what the conversation
         is running on, and the honest answer is to start it again.
         """
-        native_command = (
-            sender_message_count == 1 and self._is_catalog_command(sender_content)
-        )
+        native_command = sender_message_count == 1 and self._is_catalog_command(sender_content)
         if automatic_compaction:
             content = await self._automatic_compaction_content(sender_content)
         elif native_command:
@@ -459,7 +489,10 @@ class HermesAcpBackendChild:
 
         try:
             prompt = await self._write_prompt_to_the_wire(
-                turn_token, content, sender_label=sender_label, mode=mode
+                turn_token,
+                content,
+                sender_label=sender_label,
+                mode=mode,
             )
         except PromptWriteFailed:
             if model_change is not None or reasoning_effort_change is not None:
@@ -616,7 +649,14 @@ class HermesAcpBackendChild:
                 CANCELLED_TURN_ENDING_TIMEOUT_SECONDS,
             )
 
-    async def answer_permission_ask(self, ask_id: str, option_id: str) -> None:
+    async def answer_permission_ask(
+        self,
+        ask_id: str,
+        option_id: str,
+        *,
+        answer_id: str | None = None,
+        turn_token: TurnToken | None = None,
+    ) -> AnswerFate:
         """Give hermes the option a person chose, and wait for it to be on the wire.
 
         The answer is the response to a request hermes is holding open, so it is on the
@@ -656,10 +696,16 @@ class HermesAcpBackendChild:
             raise PermissionAnswerWriteFailed(ask_id) from never_sent
         self._permission_answer_waiters.pop(parked.request_id, None)
         turn.parked_asks.pop(ask_id, None)
+        return AnswerFate.applied
 
     async def answer_user_input(
-        self, request_id: str, answers: tuple[UserInputAnswer, ...]
-    ) -> None:
+        self,
+        request_id: str,
+        answers: tuple[UserInputAnswer, ...],
+        *,
+        answer_id: str | None = None,
+        turn_token: TurnToken | None = None,
+    ) -> AnswerFate:
         """Hermes ACP exposes permission requests, not an agent-question request."""
         del answers
         raise UserInputAnswerWriteFailed(request_id)
@@ -670,6 +716,16 @@ class HermesAcpBackendChild:
         except PromptWriteFailed as gone:
             raise PermissionAnswerWriteFailed(ask_id) from gone
 
+    @property
+    def stop_outside_lock(self) -> bool:
+        return False
+
+    async def withdraw_delivery(self) -> bool:
+        return True
+
+    async def detach(self) -> None:
+        await self.stop()
+
     async def stop(self) -> None:
         """Shut the child down: stop reading, close the wire, end the process."""
         turn = self._turn
@@ -678,13 +734,15 @@ class HermesAcpBackendChild:
             self._settle_parked_asks(turn)
             self._forget(turn.prompt, "prompt")
         self._give_up_on_unsent_permission_answers("this child is being shut down")
-        for task in (self._standard_error_reader, self._child_watcher):
+        for what, task in (
+            ("the stderr reader", self._standard_error_reader),
+            ("the child watcher", self._child_watcher),
+        ):
             if task is not None:
-                task.cancel()
-                with suppress(asyncio.CancelledError):
-                    await task
+                await end_task(task, what=f"hermes: {what}", logger=LOGGER)
         self._standard_error_reader = None
         self._child_watcher = None
+        await self._stop_worker()
         connection = self._connection
         self._connection = None
         if connection is not None:
@@ -692,25 +750,105 @@ class HermesAcpBackendChild:
             # shut down has no use for the complaint.
             with suppress(Exception):
                 await connection.close()
+        if self._worker_supervisor is None:
+            await self._processes.aclose()
+        if self._worker_scratch is not None:
+            await self._worker_scratch.aclose()
+
+    async def _stop_worker(self) -> None:
+        supervisor = self._worker_supervisor
+        if supervisor is not None:
+            result = await supervisor.stop(native_stop=self._stop_native_process)
+            if not result.complete:
+                raise WorkerCleanupError(result.reason)
+
+    async def _stop_native_process(self) -> None:
+        process = self._native_process
+        # ACP's EOF and TERM grace periods exhaust the shared callback budget
+        # before its KILL phase. Retain the exact handle and escalate here first.
+        if process is not None and process.returncode is None:
+            if process.stdin is not None:
+                process.stdin.close()
+            for action in (None, process.terminate, process.kill):
+                if process.returncode is not None:
+                    break
+                if action is not None:
+                    try:
+                        action()
+                    except ProcessLookupError:
+                        pass
+                try:
+                    await asyncio.wait_for(process.wait(), NATIVE_PHASE_SECONDS)
+                except TimeoutError:
+                    continue
+            if process.returncode is None:
+                raise WorkerCleanupError(
+                    "The owned Hermes process did not stop before its deadline"
+                )
         await self._processes.aclose()
 
     # --- starting -----------------------------------------------------------------------
 
-    async def _spawn(self, resolved_start: ResolvedConversationStart) -> ClientSideConnection:
+    async def _spawn(
+        self,
+        resolved_start: ResolvedConversationStart,
+    ) -> ClientSideConnection:
         """Get the process up and speaking ACP, or say it would not start."""
         launch = self._launch
+        environment = _child_environment(launch, resolved_start)
+        role_identity = (dict(resolved_start.role_materials.identity_environment_variables)
+                    if resolved_start.role_materials else {})
+        if role_identity.get("PLAN_TICKET_ID"):
+            self._worker_supervisor = await WorkerSupervisor.create(
+                environment, resolved_start.workspace_folder
+            )
+            try:
+                self._worker_scratch = await WorkerScratch.create(environment)
+            except BaseException:
+                if self._worker_supervisor is not None:
+                    await self._worker_supervisor.cancel_unspawned()
+                raise
+            environment = self._worker_scratch.environment
+            if self._worker_supervisor is not None:
+                self._worker_supervisor.environment.update(environment)
+        supervisor = self._worker_supervisor
+        if supervisor is not None:
+            environment = supervisor.environment
+            reporter = getattr(self._sink, "record_local_child_supervision", None)
+            if reporter is not None:
+                try:
+                    await reporter(str(supervisor.path))
+                except BaseException:
+                    await supervisor.cancel_unspawned()
+                    raise
         try:
+            argv = launch.argv if supervisor is None else supervisor.argv(launch.argv)
             reader, writer, process = await self._processes.enter_async_context(
                 spawn_stdio_transport(
-                    launch.argv[0],
-                    *launch.argv[1:],
-                    env=_child_environment(launch, resolved_start),
+                    argv[0],
+                    *argv[1:],
+                    env=environment,
                     cwd=resolved_start.workspace_folder,
                     limit=CHILD_OUTPUT_LINE_LIMIT_BYTES,
                 )
             )
         except OSError as would_not_spawn:
+            if supervisor is not None:
+                await supervisor.cancel_unspawned()
             raise BackendSpawnFailed(str(would_not_spawn)) from would_not_spawn
+        self._native_process = process
+        if supervisor is not None:
+            await supervisor.spawned(process.pid)
+            await supervisor.started(process.pid)
+        reporter = getattr(self._sink, "record_local_child_custody", None)
+        if reporter is not None:
+            if supervisor is None:
+                identity = await run_on_worker_thread(process_identity, process.pid)
+            else:
+                identity = await run_on_worker_thread(supervisor.identity)
+            if identity is None:
+                raise BackendSpawnFailed("Cannot establish the Hermes process identity")
+            await reporter(identity)
         if process.stderr is not None:
             self._standard_error_reader = asyncio.create_task(
                 self._read_standard_error(process.stderr),
@@ -744,11 +882,16 @@ class HermesAcpBackendChild:
                 cwd=str(resolved_start.workspace_folder), mcp_servers=[]
             )
         except Exception as would_not_create:
-            raise SessionLoadFailed(str(would_not_create)) from would_not_create
+            detail = str(would_not_create)
+            if isinstance(would_not_create, RequestError) and would_not_create.data is not None:
+                detail += f": {would_not_create.data}"
+            raise SessionLoadFailed(detail) from would_not_create
         self._session_id = response.session_id
         self._session_configuration_options = tuple(response.config_options or ())
         self._session_model = _current_model_from_metadata(response.field_meta)
-        await self._sink.vendor_session_cursor_rebound(response.session_id)
+        await self._sink.report(
+            None, VendorSessionCursorRebound(vendor_session_cursor=response.session_id)
+        )
 
     async def _load_session(
         self,
@@ -1115,24 +1258,28 @@ class HermesAcpBackendChild:
         """
         if not isinstance(usage, Usage):
             return
-        await self._sink.token_usage_reported(
+        await self._sink.report(
             turn.token,
-            input_tokens=usage.input_tokens,
-            output_tokens=usage.output_tokens,
-            cached_input_tokens=usage.cached_read_tokens,
-            cost_usd=None,
+            TokenUsageReported(
+                input_tokens=usage.input_tokens,
+                output_tokens=usage.output_tokens,
+                cached_input_tokens=usage.cached_read_tokens,
+                cost_usd=None,
+            ),
         )
 
     async def _report_a_stated_cost(self, turn: _TurnInFlight, cost: Any) -> None:
         """What hermes says the session has cost, when it says it in dollars."""
         if cost is None or str(cost.currency).upper() not in _DOLLAR_CURRENCY_CODES:
             return
-        await self._sink.token_usage_reported(
+        await self._sink.report(
             turn.token,
-            input_tokens=None,
-            output_tokens=None,
-            cached_input_tokens=None,
-            cost_usd=float(cost.amount),
+            TokenUsageReported(
+                input_tokens=None,
+                output_tokens=None,
+                cached_input_tokens=None,
+                cost_usd=float(cost.amount),
+            ),
         )
 
     async def _end_turn(
@@ -1150,14 +1297,16 @@ class HermesAcpBackendChild:
             and turn.automatic_compaction
             and _confirms_hermes_compaction(turn.completed_agent_messages)
         ):
-            await self._sink.context_compacted(turn.token)
+            await self._sink.report(turn.token, ContextCompacted())
         self._settle_parked_asks(turn)
-        await self._sink.turn_ended(
+        await self._sink.report(
             turn.token,
-            ending=ending,
-            error_summary=error_summary,
-            standard_error_tail=(
-                self._standard_error_tail() if ending is ConversationTurnEnding.failed else None
+            TurnEnded(
+                ending=ending,
+                error_summary=error_summary,
+                standard_error_tail=self._standard_error_tail()
+                if ending is ConversationTurnEnding.failed
+                else None,
             ),
         )
 
@@ -1181,7 +1330,7 @@ class HermesAcpBackendChild:
         content = joined_runs_of_text(pieces)
         if turn.automatic_compaction:
             turn.completed_agent_messages.append(content)
-        await self._sink.agent_message_completed(turn.token, content)
+        await self._sink.report(turn.token, AgentMessageCompleted(content=content))
 
     def _settle_parked_asks(self, turn: _TurnInFlight) -> None:
         """A turn's asks die with it, and hermes is told so rather than left waiting."""
@@ -1219,8 +1368,11 @@ class HermesAcpBackendChild:
             # every one of them would be dropped.
             self._available_commands = tuple(update.available_commands)
             self._first_available_commands_arrived.set()
-            await self._sink.composer_catalog_reported(
-                _composer_catalog_entries(self._available_commands)
+            await self._sink.report(
+                None,
+                ComposerCatalogReported(
+                    composer_catalog=_composer_catalog_entries(self._available_commands)
+                ),
             )
             return
         turn = self._turn
@@ -1232,19 +1384,23 @@ class HermesAcpBackendChild:
             case AgentThoughtChunk():
                 # What it thought is dropped where it arrives: never stored, never
                 # forwarded. That it thought is forwarded, and is all that is.
-                await self._sink.model_thinking_happened(turn.token)
+                await self._sink.report(turn.token, ModelThinkingHappened())
                 return
             case AgentPlanUpdate():
-                await self._sink.plan_updated(turn.token, _plan_entries(update.entries))
+                await self._sink.report(
+                    turn.token, PlanUpdated(entries=_plan_entries(update.entries))
+                )
             case AgentMessageChunk():
                 await self._on_agent_message_chunk(turn, update)
             case ToolCallStart():
-                await self._sink.tool_call_started(
+                await self._sink.report(
                     turn.token,
-                    tool_call_id=update.tool_call_id,
-                    title=update.title,
-                    tool_kind=str(update.kind) if update.kind is not None else "other",
-                    detail=_tool_call_detail(update.content),
+                    ToolCallStarted(
+                        tool_call_id=update.tool_call_id,
+                        title=update.title,
+                        tool_kind=str(update.kind) if update.kind is not None else "other",
+                        detail=_tool_call_detail(update.content),
+                    ),
                 )
             case ToolCallProgress():
                 status = _FINISHED_TOOL_CALL_STATUSES.get(str(update.status))
@@ -1255,15 +1411,20 @@ class HermesAcpBackendChild:
                     # can read, and there is nothing to show for it.
                     detail = _tool_call_detail(update.content)
                     if detail is not None:
-                        await self._sink.tool_call_progress(
-                            turn.token, tool_call_id=update.tool_call_id, detail=detail
+                        await self._sink.report(
+                            turn.token,
+                            BackendToolCallProgress(
+                                tool_call_id=update.tool_call_id, detail=detail
+                            ),
                         )
                     return
-                await self._sink.tool_call_finished(
+                await self._sink.report(
                     turn.token,
-                    tool_call_id=update.tool_call_id,
-                    tool_call_status=status,
-                    detail=_tool_call_detail(update.content),
+                    ToolCallFinished(
+                        tool_call_id=update.tool_call_id,
+                        tool_call_status=status,
+                        detail=_tool_call_detail(update.content),
+                    ),
                 )
             case UsageUpdate():
                 # What this update carries is how full the session's context is — used out
@@ -1280,13 +1441,11 @@ class HermesAcpBackendChild:
                 await self._report_a_stated_cost(turn, update.cost)
             case SessionInfoUpdate():
                 if not turn.automatic_compaction and _names_a_compaction(update.field_meta):
-                    await self._sink.context_compacted(turn.token)
+                    await self._sink.report(turn.token, ContextCompacted())
             case _:
                 return
 
-    async def _on_agent_message_chunk(
-        self, turn: _TurnInFlight, update: AgentMessageChunk
-    ) -> None:
+    async def _on_agent_message_chunk(self, turn: _TurnInFlight, update: AgentMessageChunk) -> None:
         # The lock is taken before the piece is made, because making it is what lets go
         # of the loop: a picture is read and written while this runs, and the turn's
         # ending must not slip in between that and the piece being put on the message.
@@ -1307,7 +1466,7 @@ class HermesAcpBackendChild:
         # Only words stream. A picture arrives whole or not at all, so there is no
         # half-finished version of one to show and nothing is sent to the tail for it.
         if isinstance(piece, MessageText):
-            await self._sink.agent_message_delta(turn.token, piece.text)
+            await self._sink.report(turn.token, AgentMessageDelta(text_delta=piece.text))
 
     async def _on_request_permission(
         self, tool_call: ToolCallUpdate, options: Sequence[PermissionOption]
@@ -1327,20 +1486,22 @@ class HermesAcpBackendChild:
             asyncio.get_running_loop().create_future()
         )
         turn.parked_asks[ask_id] = _ParkedPermissionAsk(answer=answer, request_id=request_id)
-        await self._sink.permission_ask_raised(
+        await self._sink.report(
             turn.token,
-            BackendPermissionAsk(
-                ask_id=ask_id,
-                title=tool_call.title or tool_call.tool_call_id,
-                detail=_tool_call_detail(tool_call.content),
-                options=tuple(
-                    PermissionAskOption(
-                        option_id=option.option_id,
-                        label=option.name,
-                        option_kind=str(option.kind),
-                    )
-                    for option in options
-                ),
+            PermissionAskRaised(
+                ask=BackendPermissionAsk(
+                    ask_id=ask_id,
+                    title=tool_call.title or tool_call.tool_call_id,
+                    detail=_tool_call_detail(tool_call.content),
+                    options=tuple(
+                        PermissionAskOption(
+                            option_id=option.option_id,
+                            label=option.name,
+                            option_kind=str(option.kind),
+                        )
+                        for option in options
+                    ),
+                )
             ),
         )
         return await answer
@@ -1382,6 +1543,14 @@ class HermesAcpBackendChild:
         would wait forever instead of being told it did not.
         """
         await process.wait()
+        try:
+            await self._stop_worker()
+        except WorkerCleanupError as error:
+            self._wire_broken = True
+            self._give_up_on_unsent_permission_answers(str(error))
+            return
+        if self._worker_scratch is not None:
+            await self._worker_scratch.aclose()
         self._wire_broken = True
         self._give_up_on_unsent_permission_answers("the backend process ended")
 

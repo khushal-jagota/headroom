@@ -1,70 +1,25 @@
 # Projects
 
-Projects are a small catalog, not a fixed enum. Each project has a stable ID, a
-display name, an optional folder path, and a summary. New rows can be added without
-changing code.
+A Project is a named catalog entry that classifies work and points at a folder. Projects exist so Tickets, Managers, Ideas, goals, and measures can say what they belong to, and so agents start work in the right place. The catalog is data: adding a Project needs no code change.
 
-```
-Project ──► Ticket ──► optional Sprint Item classification
-   └─────► Sprint Item
-   └─────► Idea
-```
+## What it is made of
 
-Each Project folder is explicit and does not depend on the Project name. Panels expands
-paths that start with `~` and stores an absolute path. The folder can be absent on disk.
-Panels does not create it. A clear operation returns the stored path to `null`.
+A stable id, a display name, a summary, and an optional folder on disk. The summary is context for people and agents: what the Project is and which paths matter. Headroom stores the folder but does not create it or manage its contents. A repository can live inside it, and the folder is not implied by the name. The catalog has no delete and no archive. It grows by create and changes by edit.
 
-Each project also has one free-text summary. That summary is the project context
-for humans and agents: what the project is, what matters about it, and any repo or
-file locations worth remembering. A repository can be one item inside the Project
-folder. Panels does not define or manage the folder contents.
+## How work is classified
 
-Sprint Items, ideas, and standalone Tickets store `project_id`. A parented Ticket derives
-its Project from its Sprint Item. API responses
-also include the legacy `project` field as the display name so older callers can keep
-reading it. Placement and categorization writes accept either `project_id` or the
-legacy project name. If both are sent and they point to different rows, the server
-rejects the request.
+Managers, standalone Tickets, and Ideas each store a Project. A Ticket under a Manager takes its effective Project from that Manager. Moving a Manager moves its children. Goals and measure sources are scoped to a Project too. A source's datasets must match its Project.
 
-A Ticket has an effective Project and an optional Sprint. When it names a Sprint Item,
-the Item owns its Project classification. Moving a Sprint Item changes each child Ticket's
-effective Project and updates schedule templates, without changing any Sprint placement.
+## What the folder does
 
-Workspace groups Tickets by their assigned Chief or ordinary orchestrator. Project facts
-remain visible on individual Ticket and orchestrator pages as text. The removed global
-Workers page no longer supplies a project-filtered list.
+The folder is where a Worker's conversation starts. On the VPS, an existing folder becomes the conversation's working directory, and a missing one falls back to the default workspace. On the Mac the folder path is used as given. The same folder is where a Ticket's application preview is found. The summary does not enter a prompt by itself. An agent that wants it reads the Project.
 
-## Surfaces
+## Where it shows up
 
-- `GET /api/projects?detail=summary|full` reads the catalog at the level asked for.
-  `detail` is required and has no default. Add `id=<project_id>` with `detail=full` to
-  read one canonical Project record.
-- `POST /api/projects {name, summary?, folder_path?}` creates a Project.
-- `PATCH /api/projects/{project_id}` updates the name, summary, or folder path.
-- `panels project list`, `panels project show <project_id> [summary]`,
-  `panels project create --name ... --summary ... --folder-path ...`, and
-  `panels project set <project_id> name|summary|folder-path --value ...` expose the same
-  catalog. Use `--clear` to clear the folder path.
-- Frontend project selectors fetch the `projects` resource and use project IDs as
-  values with project names as labels.
+Project selectors on Idea capture and Ticket and Manager editing. `panels project` and `/api/projects` read and write the same catalog.
 
-_Code paths:_ `src/planner/projects/`, `src/planner/core/db.py`,
-`src/planner/tickets/views.py`,
-`web/src/routes/IdeasRoute.svelte`, `web/src/routes/TicketRoute.svelte`,
-`web/src/routes/BoardRoute.svelte`.
+## Code
 
-## Handoffs
+`src/planner/projects/`. The folder rule is in `src/planner/runtime/conversation_start.py`, and previews read it in `src/planner/previews/`.
 
-- **Sprints** (`sprints.md`) — Tickets and Sprint Items use Projects in sprint tracking.
-- **Tickets & the gates** (`tickets-and-gates.md`) — Tickets expose effective Project
-  placement.
-- **Backlog & Ideas** (`backlog-and-ideas.md`) — both capture surfaces use the catalog.
-
-## Deferred
-
-- **Project removal.** There is no delete or archive flow. Trigger: the catalog needs
-  lifecycle management beyond name and context edits.
-
----
-
-_Last verified: 2026-09-23._
+_Last verified: 2026-11-04._

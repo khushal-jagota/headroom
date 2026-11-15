@@ -19,7 +19,6 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 PLAN_BIN = Path(sys.executable).parent / "panels"
 FAKE_NOW = "2026-07-04T12:00:00"
 WAIT_MS = 10_000  # every Playwright wait
-BOOT_BUDGET_S = 15.0  # server readiness budget
 
 # A decoded JSON object, as the API and the CLI's --json hand one back. The values stay
 # ``Any`` on purpose: this is somebody else's JSON, and pretending to know its shape here

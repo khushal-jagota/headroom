@@ -1,26 +1,27 @@
 <script lang="ts">
+  import PresetWorkflowEditor from "../components/PresetWorkflowEditor.svelte";
+  import SkeletonRegion from "../components/SkeletonRegion.svelte";
   import { untrack } from "svelte";
   import { createQuery } from "@tanstack/svelte-query";
   import "../lib/config/config.css";
   import ErrorLine from "../components/ErrorLine.svelte";
+  import ManagerLaunchSettings from "../components/ManagerLaunchSettings.svelte";
   import ManagedLaunchDefaults from "../components/ManagedLaunchDefaults.svelte";
   import ResourceState from "../components/ResourceState.svelte";
   import RoleSkillEditor from "../components/RoleSkillEditor.svelte";
-  import { fetchJson } from "../lib/api";
   import { mutateJson } from "../lib/mutate";
   import { queries } from "../lib/queryCatalogue";
   import { resourceStateForQueries } from "../lib/resourceStateForQueries";
+  import { saveSkillField } from "../lib/skills";
   import type { ConfigSelection } from "../lib/shellRouting";
-  import type { WorkerTypeManifest } from "../lib/lifecycle";
-  import { errorMessage, labelize } from "../lib/ui";
+  import { prefixHref, type UtilityHref } from "../lib/utilityAddress";
+  import { labelize } from "../lib/ui";
   import type {
     ChiefManagementSettings,
     EmployeeConfigurationSnapshot,
     ManagedSkill,
-    StageOwnershipMode,
     WorkerManagementDetail,
-    WorkerManagementSettings,
-    WorkerTypeRecord
+    WorkerManagementSettings
   } from "../lib/types";
 
   const roleSkillProfiles: Record<string, {
@@ -30,12 +31,12 @@
     bodyAriaLabel: string;
     bodyPlaceholder: string;
   }> = {
-    "panels-sprint-item-supervisor": {
-      label: "Sprint Item supervisor",
+    "panels-manager": {
+      label: "Manager",
       fact: "Role skill",
-      descriptionAriaLabel: "Sprint Item supervisor skill description",
-      bodyAriaLabel: "Sprint Item supervisor skill Markdown body",
-      bodyPlaceholder: "Write the complete Sprint Item supervisor skill body..."
+      descriptionAriaLabel: "Manager skill description",
+      bodyAriaLabel: "Manager skill Markdown body",
+      bodyPlaceholder: "Write the complete Manager skill body..."
     },
     "panels-worker": {
       label: "Worker skill",
@@ -46,7 +47,8 @@
     }
   };
 
-  let { roleKind, roleId, baseHref = "#/settings/config" }: ConfigSelection & { baseHref?: string } = $props();
+  let { roleKind, roleId, href = prefixHref("#/settings/config") }:
+    ConfigSelection & { href?: UtilityHref } = $props();
   const stableRoleKind = untrack(() => roleKind);
   const stableRoleId = untrack(() => roleId || null);
 
@@ -83,46 +85,15 @@
     new Map((supportedWorkerTypes.data?.worker_types || []).map((item) => [item.worker_type, item]))
   );
   let sharedWorkerSkill = $derived(indexedSkills.get("panels-worker"));
-  let supervisorSkill = $derived(indexedSkills.get("panels-sprint-item-supervisor"));
-  let roleSkill = $derived(stableRoleId ? indexedSkills.get(stableRoleId) : undefined);
+  // The canonical role can use the retained row until the owner applies the skill manifest.
+  let managerSkill = $derived(indexedSkills.get("panels-manager"));
+  let roleSkill = $derived(stableRoleId === "panels-manager" ? managerSkill : stableRoleId ? indexedSkills.get(stableRoleId) : undefined);
   let roleSkillProfile = $derived(
     stableRoleId ? roleSkillProfiles[stableRoleId] : undefined
   );
 
   function displaySkillForEdit(settings: WorkerManagementSettings): ManagedSkill {
     return settings.candidate_specialist_skill || settings.specialist_skill;
-  }
-
-  async function saveWorkerSkillField(
-    settings: WorkerManagementSettings,
-    field: "description" | "markdown_body",
-    raw: string
-  ): Promise<void> {
-    await mutateJson<WorkerManagementSettings>(
-      `/api/workers/${encodeURIComponent(settings.worker_type)}/skill`,
-      { method: "PATCH", body: { [field]: raw } }
-    );
-  }
-
-  async function saveChiefSkillField(
-    field: "description" | "markdown_body",
-    raw: string
-  ): Promise<void> {
-    await mutateJson<ChiefManagementSettings>("/api/workers/chief-of-staff/skill", {
-      method: "PATCH",
-      body: { [field]: raw }
-    });
-  }
-
-  async function saveRoleSkillField(
-    skillName: string,
-    field: "description" | "markdown_body",
-    raw: string
-  ): Promise<void> {
-    await mutateJson<ManagedSkill>(`/api/skills/${encodeURIComponent(skillName)}`, {
-      method: "PATCH",
-      body: { [field]: raw }
-    });
   }
 
   function saveWorkerLaunchDefaults(
@@ -144,71 +115,6 @@
     }).then((saved) => saved.launch_defaults);
   }
 
-  const ownerOptions: Array<{ value: StageOwnershipMode; label: string }> = [
-    { value: "worker", label: "worker" },
-    { value: "user", label: "user" }
-  ];
-
-  // What the row shows while its save is in flight, and what went wrong if it failed.
-  // A finished save clears the pending value, so the table falls back to what the
-  // refetched record says. A failed save clears it too, which reverts the control.
-  let pendingOwners = $state<Record<string, StageOwnershipMode>>({});
-  let ownerSaving = $state<Record<string, boolean>>({});
-  let ownerErrors = $state<Record<string, unknown>>({});
-
-  function stageOwnerValue(
-    stage: { id: string; ownership_mode: StageOwnershipMode | null }
-  ): string {
-    return pendingOwners[stage.id] || stage.ownership_mode || "";
-  }
-
-  // Owner saves run one at a time. Each one reads the whole record and writes it
-  // back, so a second Stage changed while the first is in flight must not read the
-  // record from before that write and post the old value over it.
-  let ownerWrites: Promise<void> = Promise.resolve();
-
-  // A Worker type is coherent only as a whole record, so there is no write for one
-  // Stage's owner. Read the stored record, change this Stage, and post it back.
-  async function saveStageOwner(
-    workerType: string,
-    stage: string,
-    ownershipMode: StageOwnershipMode
-  ): Promise<void> {
-    pendingOwners = { ...pendingOwners, [stage]: ownershipMode };
-    ownerSaving = { ...ownerSaving, [stage]: true };
-    const { [stage]: _cleared, ...remainingErrors } = ownerErrors;
-    ownerErrors = remainingErrors;
-    const write = ownerWrites.then(async () => {
-      const record = await fetchJson<WorkerTypeRecord>(
-        `/api/worker-types/${encodeURIComponent(workerType)}`
-      );
-      await mutateJson<WorkerTypeRecord>("/api/worker-types", {
-        method: "POST",
-        body: {
-          ...record,
-          stages: record.stages.map((candidate) =>
-            candidate.id === stage ? { ...candidate, ownership_mode: ownershipMode } : candidate
-          )
-        }
-      });
-    });
-    // A refused write stops that row, not the queue behind it.
-    ownerWrites = write.catch(() => undefined);
-    try {
-      await write;
-    } catch (error) {
-      ownerErrors = { ...ownerErrors, [stage]: error };
-    } finally {
-      const { [stage]: _settled, ...remainingPending } = pendingOwners;
-      pendingOwners = remainingPending;
-      ownerSaving = { ...ownerSaving, [stage]: false };
-    }
-  }
-
-  function gatedFieldLabel(manifest: WorkerTypeManifest, fieldId: string | null): string {
-    if (!fieldId) return "";
-    return manifest.fields.find((field) => field.id === fieldId)?.label || labelize(fieldId);
-  }
 
 </script>
 
@@ -220,10 +126,7 @@
 >
   {#if stableRoleKind === "index"}
     <div class="agents-page agents-page--index">
-      <header class="agents-page-head">
-        <h1>Config</h1>
-      </header>
-      <ResourceState
+      <ResourceState shape="document"
         {...resourceStateForQueries(workers, skillsHome)}
         loadingText="Loading configuration..."
       >
@@ -233,7 +136,7 @@
             <div class="agents-destination-list">
               <a
                 class="agents-destination"
-                href={`${baseHref}/chief-of-staff`}
+                href={href(["chief-of-staff"])}
                 data-agent-destination
               >
                 <span class="agents-destination-copy">
@@ -243,15 +146,15 @@
                 </span>
                 <span class="agents-destination-arrow" aria-hidden="true">→</span>
               </a>
-              {#if supervisorSkill}
+              {#if managerSkill}
                 <a
                   class="agents-destination"
-                  href={`${baseHref}/sprint-item-supervisor`}
+                  href={href(["manager"])}
                   data-agent-destination
                 >
                   <span class="agents-destination-copy">
                     <span class="agents-destination-name" data-destination-name>
-                      Sprint Item supervisor
+                      Manager
                     </span>
                   </span>
                   <span class="agents-destination-arrow" aria-hidden="true">→</span>
@@ -260,7 +163,7 @@
               {#if sharedWorkerSkill}
                 <a
                   class="agents-destination"
-                  href={`${baseHref}/worker-skill`}
+                  href={href(["worker-skill"])}
                   data-agent-destination
                 >
                   <span class="agents-destination-copy">
@@ -280,17 +183,19 @@
                 {@const manifest = indexedWorkerTypes.get(item.worker_type)}
                 <a
                   class="agents-destination"
-                  href={`${baseHref}/workers/${encodeURIComponent(item.worker_type)}`}
+                  href={href(["workers", encodeURIComponent(item.worker_type)])}
                   data-worker-destination
                 >
                   <span class="agents-destination-copy">
                     <span class="agents-destination-name" data-destination-name>{item.label}</span>
                     <span class="agents-destination-description" data-destination-description>
+                      <SkeletonRegion shape="inline" loading={!manifest && supportedWorkerTypes.isFetching} loadingText="Loading Stages…">
                       {#if manifest}
                         {manifest.stages.length} {manifest.stages.length === 1 ? "Stage" : "Stages"}
                       {:else}
-                        {supportedWorkerTypes.isFetching ? "Loading Stages…" : "Stages unavailable"}
+                        {#if !supportedWorkerTypes.isFetching}Stages unavailable{/if}
                       {/if}
+                      </SkeletonRegion>
                     </span>
                   </span>
                   <span class="agents-destination-arrow" aria-hidden="true">→</span>
@@ -303,8 +208,8 @@
     </div>
   {:else if stableRoleKind === "agent"}
     <div class="agents-page agents-page--detail">
-      <a class="agents-back" href={baseHref} data-agents-back>← Back to Config</a>
-      <ResourceState
+      <a class="agents-back" href={href([])} data-agents-back>← Back to Config</a>
+      <ResourceState shape="document"
         error={workers.error}
         loading={workers.isFetching}
         hasData={Boolean(workers.data)}
@@ -336,7 +241,7 @@
                 descriptionAriaLabel="Chief skill description"
                 bodyAriaLabel="Chief skill Markdown body"
                 bodyPlaceholder="Write the complete Chief skill body..."
-                onSave={saveChiefSkillField}
+                onSave={(field, raw) => saveSkillField(chief.skill.name, field, raw)}
               />
             </div>
           </article>
@@ -345,8 +250,8 @@
     </div>
   {:else if stableRoleKind === "skill"}
     <div class="agents-page agents-page--detail">
-      <a class="agents-back" href={baseHref} data-agents-back>← Back to Config</a>
-      <ResourceState
+      <a class="agents-back" href={href([])} data-agents-back>← Back to Config</a>
+      <ResourceState shape="document"
         error={skillsHome.error}
         loading={skillsHome.isFetching}
         hasData={Boolean(roleSkill && roleSkillProfile)}
@@ -363,6 +268,8 @@
               <p class="config-identity" aria-hidden="true" data-role-purpose>{roleSkill.description}</p>
             </header>
 
+            {#if stableRoleId === "panels-manager"}<ManagerLaunchSettings />{/if}
+
             <div
               data-role-skill
               data-shared-worker-skill={roleSkill.name === "panels-worker" ? "" : undefined}
@@ -373,7 +280,7 @@
                 descriptionAriaLabel={roleSkillProfile.descriptionAriaLabel}
                 bodyAriaLabel={roleSkillProfile.bodyAriaLabel}
                 bodyPlaceholder={roleSkillProfile.bodyPlaceholder}
-                onSave={(field, raw) => saveRoleSkillField(roleSkill.name, field, raw)}
+                onSave={(field, raw) => saveSkillField(roleSkill.name, field, raw)}
               />
             </div>
           </article>
@@ -382,8 +289,8 @@
     </div>
   {:else}
     <div class="agents-page agents-page--detail">
-      <a class="agents-back" href={baseHref} data-agents-back>← Back to Config</a>
-      <ResourceState
+      <a class="agents-back" href={href([])} data-agents-back>← Back to Config</a>
+      <ResourceState shape="document"
         error={worker.error}
         loading={worker.isFetching}
         hasData={Boolean(worker.data)}
@@ -409,70 +316,23 @@
               onSave={(next) => saveWorkerLaunchDefaults(detail.settings, next)}
             />
 
-            <section class="worker-stage-table-shell" aria-labelledby="config-stages-title">
-              <header class="worker-stages-head"><h2 id="config-stages-title">Stages</h2></header>
-              <table class="worker-stage-table" data-worker-stage-table>
-                <thead>
-                  <tr>
-                    <th>Stage</th>
-                    <th class="worker-stage-gated-field">Gated field</th>
-                    <th>Owner</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {#each manifest.stages as stage}
-                    <tr data-worker-stage-row data-stage={stage.id} data-terminal={stage.is_terminal ? "true" : "false"}>
-                      <td data-stage-label>
-                        <span class="worker-stage-name">{stage.label}</span>
-                        <span class="worker-stage-id config-identity" aria-hidden="true">{stage.id}</span>
-                      </td>
-                      <td class="worker-stage-gated-field" data-gated-field>{gatedFieldLabel(manifest, stage.gating_field)}</td>
-                      <td data-stage-owner={stage.is_terminal ? "" : stageOwnerValue(stage)}>
-                        {#if stage.is_terminal}
-                          <span class="worker-readonly-owner" data-terminal-owner>terminal</span>
-                        {:else}
-                          <select
-                            class="worker-owner-select"
-                            aria-label={`Owner for ${stage.label}`}
-                            data-stage-owner-select
-                            data-saving={ownerSaving[stage.id] ? "true" : "false"}
-                            value={stageOwnerValue(stage)}
-                            onchange={(event) => void saveStageOwner(
-                              detail.settings.worker_type,
-                              stage.id,
-                              event.currentTarget.value as StageOwnershipMode
-                            )}
-                          >
-                            {#each ownerOptions as option}
-                              <option value={option.value}>{option.label}</option>
-                            {/each}
-                          </select>
-                          {#if ownerErrors[stage.id]}
-                            <div class="worker-row-error" data-stage-owner-error>
-                              {errorMessage(ownerErrors[stage.id])}
-                            </div>
-                          {/if}
-                        {/if}
-                      </td>
-                    </tr>
-                  {/each}
-                </tbody>
-              </table>
-            </section>
+            <PresetWorkflowEditor workerType={detail.settings.worker_type} />
 
-            <div data-worker-skill>
-              <RoleSkillEditor
-                heading="Specialist skill"
-                skill={editableSkill}
-                descriptionAriaLabel="Specialist skill description"
-                bodyAriaLabel="Specialist skill Markdown body"
-                bodyPlaceholder="Write the complete specialist skill body..."
-                onSave={(field, raw) => saveWorkerSkillField(detail.settings, field, raw)}
-              />
-            </div>
+            <details class="generated-skill" data-worker-skill>
+              <summary>Generated specialist skill</summary>
+              <p>{editableSkill.description}</p>
+              <pre>{editableSkill.markdown_body}</pre>
+            </details>
           </article>
         {/if}
       </ResourceState>
     </div>
   {/if}
 </section>
+
+<style>
+  .generated-skill { margin-top: var(--space-7); }
+  .generated-skill summary { cursor: pointer; color: var(--text-muted); font-size: var(--type-sm); }
+  .generated-skill p { margin-top: var(--space-3); color: var(--text-muted); }
+  .generated-skill pre { white-space: pre-wrap; overflow-wrap: anywhere; margin-top: var(--space-3); padding: var(--space-4); background: var(--surface-recessed); border-radius: var(--radius-sm); font: var(--type-xs)/1.6 var(--font-mono); }
+</style>

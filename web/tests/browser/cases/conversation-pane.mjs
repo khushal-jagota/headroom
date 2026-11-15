@@ -14,7 +14,316 @@ const indexPath = join(scratchRoot, `conversation-layer-index-${process.pid}.htm
   await writeFile(
     hostPath,
     String.raw`<script lang="ts">
-  import { tick } from "svelte";
+  import { tick, flushSync } from "svelte";
+  import LiveConversation from "../src/components/conversation/LiveConversation.svelte";
+  import { installMachineEvidenceFixture } from "../tests/support/machineEvidenceFixture";
+  import WorkerRow from "../src/components/WorkerRow.svelte";
+  import { queryClient } from "../src/lib/queryClient";
+  const machinesOnly=new URLSearchParams(location.search).has('machines');
+  if(machinesOnly)installMachineEvidenceFixture();
+
+  import {installConversationViewReaderFixture} from "../tests/support/conversationViewReaderFixture";
+  import {ConversationViewReader} from "../src/lib/conversation/view/reader.svelte";
+  const intentOnly=new URLSearchParams(window.location.search).has("intent");
+  const intentLoads: ((admitted:boolean)=>void)[]=[];
+  function makeIntentReader() {
+    const value=new ConversationViewReader('same-conversation','focus',true);
+    value.pages=[{scope:{kind:'timeline',key:null},older:null,newer:null,
+      items:Array.from({length:30},(_,index)=>({kind:'row' as const,key:'intent-'+index,
+        row_kind:'agent_message' as const,order:{sequence:index,slot:0},source_sequence:index,
+        sender_message_id:null,changed_through_sequence:index,created_at:index,
+        turn_key:null,work_group_key:null,fold_rule:'never' as const,
+        body:{kind:'inline' as const,value:{kind:'agent_message' as const,to_owner:true,
+          content:[{piece:'text' as const,text:('Intent row '+index+'. ').repeat(30)}]}}}))}];
+    // This synthetic reader already owns its initial admitted content.
+    value.entryPhase='complete';
+    value.load=(_scope,_cursor,_direction,replace)=>replace
+      ?new Promise<boolean>(resolve=>intentLoads.push(resolve)):Promise.resolve(false);
+    return value;
+  }
+  let intentReader=$state.raw(makeIntentReader());
+  (window as any).__intentProbe={loads:intentLoads,
+    finish:(index:number,admitted:boolean)=>intentLoads[index](admitted),
+    swap:()=>{intentReader=makeIntentReader();},
+    swapSynchronously:()=>flushSync(()=>{intentReader=makeIntentReader();})};
+  import PageChart from "../src/components/pageKit/PageChart.svelte";
+  import {Chart as BrowserChart} from "chart.js";
+  import {parseMarkdown} from "../src/lib/markdownPipeline";
+  const chartsOnly=new URLSearchParams(location.search).has("charts");
+  // The product currently ships dark tokens only. This fixture checks shared
+  // chart compatibility with a light host without adding a product theme.
+  if(chartsOnly && new URLSearchParams(location.search).get("chartTheme")==="light") {
+    const lightTokens={"surface-1":"#f7f7f7","surface-2":"#ffffff","surface-recessed":"#ededed",
+      "surface-input":"#e3e3e3","surface-input-hover":"#d8d8d8","surface-selected":"#d3d3d3","surface-raised":"#ffffff",
+      "tone-strong":"#151515","tone-primary":"#252525","tone-secondary":"#555555","tone-tertiary":"#666666",
+      "chart-surface":"#ffffff","chart-surface-raised":"#f1f1f1","chart-surface-muted":"#ededed",
+      "chart-grid":"#0000001a","chart-border-strong":"#00000024","chart-reference":"#777777"};
+    for(const [token,value] of Object.entries(lightTokens))document.documentElement.style.setProperty("--"+token,value);
+  }
+  const chartTicks=String.fromCharCode(96).repeat(3);
+  const chartFence=(value:unknown,close=true)=>[chartTicks+"panels-chart",JSON.stringify(value),...(close?[chartTicks]:[])].join("\n");
+  const chartSeries=[
+    {name:"Panels",points:[{label:"Week 1",value:3},{label:"Week 2",value:7},{label:"Week 3",value:5}]},
+    {name:"Tools",points:[{label:"Week 1",value:2},{label:"Week 2",value:4},{label:"Week 3",value:6}]}
+  ];
+  const chartSpec=(kind="bar",title="Merged PRs per week")=>({kind,title,series:chartSeries});
+  const chartExamples=[
+    chartFence({...chartSpec(),series:chartSeries.map((series,index)=>index===0?{...series,points:series.points.map((point,i)=>i===2?{...point,value:null}:point)}:series)}),
+    chartFence(chartSpec("line","Weekly trend")),
+    chartFence({...chartSpec("bar","Stacked PRs"),stacked:true}),
+    chartFence({...chartSpec("bar","Single series"),series:[chartSeries[0]]}),
+    [chartTicks+"panels-chart",'{"kind":"bar","series":false}',chartTicks].join("\n"),
+    "After the malformed chart."
+  ].join("\n\n");
+  let chartSource=$state(chartExamples);
+  let chartRows=$derived([{key:"chart-message",kind:"agent_message" as const,sequence:1,createdAt:1,toOwner:true,
+    content:[{piece:"text" as const,text:chartSource}]}]);
+  let chartEditor=$state<HTMLDivElement>();
+  let chartEditable:import("../src/lib/managedMarkdown").EditableManagedMarkdownSurface|null=null;
+  import {createManagedMarkdownSurface} from "../src/lib/managedMarkdown";
+  (window as any).__chatChartProbe={
+    copiedCharts:(source:string)=>{
+      const count=(nodes:import("../src/lib/markdown/contracts").MarkdownTreeNode[]):number=>nodes.reduce((total,node)=>total+(node.chart?1:0)+count(node.children??[]),0);
+      return count(parseMarkdown(source).children);
+    },
+    barColors:(canvas:HTMLCanvasElement)=>BrowserChart.getChart(canvas)?.data.datasets.map(item=>item.backgroundColor),
+    bars:()=>[...document.querySelectorAll<HTMLCanvasElement>('[data-chat-chart-fixture] canvas')].map(canvas=>{
+      const chart=BrowserChart.getChart(canvas);return {datasets:chart?.data.datasets.map(item=>({label:item.label,data:item.data})),stacked:chart?.options.scales?.x?.stacked};
+    }),
+    examples:()=>{chartSource=chartExamples;},
+    stream:(complete:boolean)=>{chartSource=chartFence(chartSpec("line","Streamed chart"),complete);},
+    unsafe:()=>{chartSource=chartFence(chartSpec("line",'<img src=x onerror="window.chartInjected=true">'));},
+    long:()=>{chartSource=chartFence(chartSpec("line","Long message chart"))+"\n\n"+Array.from({length:700},(_,index)=>"Paragraph "+index+" "+"Retained text. ".repeat(12)).join("\n\n");},
+    remove:()=>{chartSource="Chart removed.";},
+    editable:()=>{chartEditable??=createManagedMarkdownSurface(chartEditor!,{mode:"editable"});chartEditable.update(chartFence(chartSpec()));},
+    readEditable:()=>chartEditable?.read()
+  };
+  const readerOnly=new URLSearchParams(window.location.search).has("reader");
+  const readerPeek=new URLSearchParams(window.location.search).has("reader-peek");
+  let readerState=$state<"opened"|"rest">(new URLSearchParams(window.location.search).has("reader-rest")?"rest":readerPeek?"opened":"opened");
+  if(readerOnly)installConversationViewReaderFixture();
+  (window as any).__readerState=(state:typeof readerState)=>readerState=state;
+
+  import MarkdownBlock from "../src/components/MarkdownBlock.svelte";
+  import FilePreview from "../src/components/FilePreview.svelte";
+  import FileDocument from "../src/components/FileDocument.svelte";
+  import VisibleMessageImage from "../src/components/conversation/VisibleMessageImage.svelte";
+  import { observeVisibleContent } from "../src/lib/visibleContent";
+  import { presentationReady } from "../src/components/conversation/viewport/placement";
+  // Detached native DOM isolates readiness from viewport admission and network timing.
+  function presentationReadinessProof() {
+    const started = performance.now();
+    const rows: {name:string, expected:boolean, actual:boolean, pass:boolean}[] = [];
+    const record = (name:string, element:Element, expected:boolean) => {
+      const actual = presentationReady(element);
+      rows.push({name, expected, actual, pass:actual === expected});
+    };
+    for (const marker of ["aria-busy", "data-markdown-rendering"]) {
+      const root = document.createElement("div");
+      record(marker + "/empty", root, true);
+      root.setAttribute(marker, "true");
+      record(marker + "/unmanaged-root", root, false);
+      root.removeAttribute(marker);
+      const busy = document.createElement("div");
+      busy.setAttribute(marker, "true");
+      root.append(busy);
+      record(marker + "/unmanaged-descendant", root, false);
+      for (const dormant of ["released", "retained"]) {
+        const ancestor = document.createElement("section");
+        ancestor.dataset.visibleContentState = dormant;
+        ancestor.append(root);
+        // The queried root itself can inherit dormancy from outside its subtree.
+        root.dataset.visibleContentState = "active";
+        record(marker + "/" + dormant + "/nested-active", root, true);
+        record(marker + "/" + dormant + "/busy-root-inherits", busy, true);
+        root.removeAttribute("data-visible-content-state");
+        root.remove();
+        busy.dataset.visibleContentState = dormant;
+        record(marker + "/" + dormant + "/busy-self", root, true);
+        record(marker + "/" + dormant + "/queried-busy-self", busy, true);
+        busy.dataset.visibleContentState = "active";
+        record(marker + "/" + dormant + "/active-busy", root, false);
+        busy.removeAttribute(marker);
+        record(marker + "/" + dormant + "/active-clear", root, true);
+        busy.setAttribute(marker, "true");
+        busy.removeAttribute("data-visible-content-state");
+      }
+    }
+    return {rows, milliseconds:performance.now()-started, newHosts:0, newNavigations:0};
+  }
+  // Queue delivery is controlled only for this marked leaf. Every other native
+  // observer target on the existing preview page keeps its ordinary deliveries.
+  (window as any).__visibilityQueueProof = async () => {
+    const NativeObserver = window.IntersectionObserver;
+    const rows: any[] = [];
+    const started = performance.now();
+    const text = "Exact queued visibility text — preserved.";
+    let target: HTMLElement | null = null;
+    let callback: IntersectionObserverCallback | null = null;
+    let observer: IntersectionObserver | null = null;
+    let cleanup: (() => void) | null = null;
+    let stateObserver: MutationObserver | null = null;
+    let updates: boolean[] = [];
+    let states: (string | null)[] = [];
+    let mounts = 0;
+    let originalNode: Node | null = null;
+    let scheduled = 0;
+    const drain = (records: MutationRecord[]) => {
+      for (const record of records) states.push(record.oldValue);
+    };
+    const snapshot = () => {
+      if (stateObserver) drain(stateObserver.takeRecords());
+      return {state:target?.getAttribute("data-visible-content-state") ?? null,
+        text:target?.textContent ?? "", updates:[...updates], mounts,
+        states:[...states], sameNode:originalNode !== null && target?.firstChild === originalNode};
+    };
+    const dispose = () => {
+      cleanup?.(); cleanup = null;
+      stateObserver?.disconnect(); stateObserver = null;
+      target?.remove(); target = null;
+    };
+    const fresh = () => {
+      dispose();
+      target = document.createElement("div");
+      target.dataset.visibilityQueueProof = "";
+      target.style.cssText = "position:fixed;left:0;top:0;width:220px;height:32px;pointer-events:none";
+      document.body.append(target);
+      updates = []; states = []; mounts = 0; originalNode = null;
+      cleanup = observeVisibleContent(target, visible => {
+        updates.push(visible);
+        if (visible && !target!.firstChild) {
+          originalNode = document.createTextNode(text); target!.append(originalNode); mounts++;
+        } else if (!visible) target!.replaceChildren();
+      });
+      stateObserver = new MutationObserver(drain);
+      stateObserver.observe(target, {attributes:true, attributeOldValue:true,
+        attributeFilter:["data-visible-content-state"]});
+    };
+    const foreign = document.createElement("div");
+    const entry = (inside:boolean, time:number, element:Element = target!) =>
+      ({target:element, isIntersecting:inside, time} as IntersectionObserverEntry);
+    const deliver = (entries:IntersectionObserverEntry[]) => callback!(entries, observer!);
+    const record = (name:string, expected:string, pass:boolean, details:any) =>
+      rows.push({name, expected, pass, ...details});
+    window.IntersectionObserver = class extends NativeObserver {
+      constructor(receive:IntersectionObserverCallback, options?:IntersectionObserverInit) {
+        super((entries, instance) => {
+          const native = entries.filter(value => !value.target.hasAttribute("data-visibility-queue-proof"));
+          if (native.length) receive(native, instance);
+        }, options);
+        const nativeObserve = this.observe.bind(this);
+        this.observe = (element:Element) => {
+          if (element.hasAttribute("data-visibility-queue-proof")) { callback = receive; observer = this; }
+          nativeObserve(element);
+        };
+      }
+    };
+    try {
+      for (const equalTimes of [false, true]) {
+        const lastTime = equalTimes ? 10 : 20;
+        fresh();
+        deliver([entry(false,10), entry(true,lastTime)]);
+        const admission = snapshot();
+        record("outside-to-inside"+(equalTimes?"-equal-time":""), "active with exact native text",
+          admission.state === "active" && admission.text === text && admission.mounts === 1,
+          {equalTimes, actual:admission});
+        // Independent admission makes the reverse failure observable even when
+        // the old consumer failed the preceding direction in this same run.
+        fresh(); deliver([entry(true,1)]);
+        const admitted = snapshot();
+        deliver([entry(true,10), entry(false,lastTime)]);
+        const retained = snapshot();
+        record("inside-to-outside"+(equalTimes?"-equal-time":""), "retained with identical native text node",
+          admitted.state === "active" && retained.state === "retained" && retained.sameNode && retained.text === text && retained.updates.length === 1,
+          {equalTimes, actual:retained});
+      }
+      fresh();
+      deliver([entry(true,1), entry(false,2)]);
+      const transient = snapshot();
+      record("released-final-outside", "released without transient admission or mount",
+        transient.state === "released" && transient.updates.length === 0 && transient.mounts === 0 && !transient.states.includes("active"), {actual:transient});
+      fresh();
+      deliver([entry(false,0,foreign), entry(false,1), entry(true,2), entry(false,3,foreign)]);
+      const matched = snapshot();
+      record("target-identity", "active using the final matching target",
+        matched.state === "active" && matched.text === text && matched.mounts === 1, {actual:matched});
+      fresh(); deliver([entry(true,1)]);
+      for (const state of ["active", "retained"]) {
+        if (state === "retained") deliver([entry(false,2)]);
+        for (const [name, batch] of [["empty", []], ["foreign-only", [entry(true,3,foreign),entry(false,4,foreign)]]] as const) {
+          const before = snapshot();
+          deliver([...batch]);
+          const after = snapshot();
+          record(state+"-"+name, "no publication, updates, or node replacement",
+            before.state === state && after.state === state && after.sameNode && after.text === text &&
+            after.updates.length === before.updates.length && after.states.length === before.states.length,
+            {before, actual:after});
+        }
+      }
+      const saved = callback!;
+      cleanup!(); cleanup = null;
+      target!.replaceChildren();
+      const beforeCleanupDelivery = snapshot();
+      const nativeFrame = window.requestAnimationFrame;
+      const nativeTimeout = window.setTimeout;
+      try {
+        window.requestAnimationFrame = (action:FrameRequestCallback) => { scheduled++; return nativeFrame.call(window,action); };
+        window.setTimeout = ((...args:any[]) => { scheduled++; return (nativeTimeout as any).apply(window,args); }) as typeof window.setTimeout;
+        saved([entry(true,5)],observer!);
+      } finally { window.requestAnimationFrame = nativeFrame; window.setTimeout = nativeTimeout; }
+      document.dispatchEvent(new Event("visibilitychange"));
+      await Promise.resolve();
+      await new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+      const destroyed = snapshot();
+      record("destroyed-queued-callback", "no state, mount, update, or scheduled work after cleanup",
+        destroyed.state === null && destroyed.text === "" && destroyed.updates.length === beforeCleanupDelivery.updates.length &&
+        destroyed.mounts === beforeCleanupDelivery.mounts && destroyed.states.length === beforeCleanupDelivery.states.length && scheduled === 0,
+        {before:beforeCleanupDelivery, actual:destroyed, scheduled});
+    } finally {
+      try { dispose(); } finally { window.IntersectionObserver = NativeObserver; }
+    }
+    return {rows, readiness:presentationReadinessProof(), seconds:(performance.now()-started)/1000, newHosts:0, newNavigations:0,
+      nativeObserverRestored:window.IntersectionObserver === NativeObserver};
+  };
+  import { VISIBLE_CONTENT_INACTIVE_LIMIT } from "../src/lib/visibleContent/config";
+  (window as any).__inactiveLimit=VISIBLE_CONTENT_INACTIVE_LIMIT;
+  let retainedKind=$state('preview');
+  let retainedTarget=$state('/files/tickets/t_preview/retained.html');
+  let retainedReload=$state(0);
+  (window as any).__retained=(kind:string,target='/files/tickets/t_preview/retained.html',reload=0)=>{
+    previewMode='retained';retainedKind=kind;retainedTarget=target;retainedReload=reload;
+  };
+  import { targetFromHref } from "../src/lib/filePreview";
+  const previewsOnly=new URLSearchParams(window.location.search).has("previews");
+  let previewMode=$state("media");
+  let containerRevision=$state(0);
+  const containerMarkdown='| Name | Detail | Outcome |\n| --- | --- | --- |\n'+Array.from({length:49},(_,i)=>'| Row '+i+' | A representative exact table cell with text | Preserved |').join('\n')+'\n\n'+Array.from({length:54},(_,i)=>(i+1)+'. A representative ordered-list item retains its exact numbering.').join('\n');
+  (window as any).__containerRevision=()=>{containerRevision+=1;previewMode='containers';};
+  const largeMarkdown=Array.from({length:1600},(_,index)=>"## Paragraph "+index+"\n\n"+"This exact logical document stays readable while the parser runs away from input. ".repeat(3)).join("\n\n");
+  (window as any).__previewMode=(mode:string)=>{previewMode=mode;};
+  import { QueryClient, QueryClientProvider } from "@tanstack/svelte-query";
+  import ConversationHistoryPicker from "../src/components/conversation/ConversationHistoryPicker.svelte";
+  import ArtifactsBand from "../src/components/ArtifactsBand.svelte";
+  const catalogsOnly=new URLSearchParams(window.location.search).has("catalogs");
+  const catalogClient=new QueryClient({defaultOptions:{queries:{retry:false}}});
+  let catalogSelected=$state<string|null>(null);
+  let catalogOwner=$state("t_catalog");
+  (window as any).__catalogOwner=(owner:string)=>catalogOwner=owner;
+  import ManagerHeader from "../src/components/ManagerHeader.svelte";
+  import { workspaceHeaderDomMatches } from "../tests/support/managerWorkspaceDom";
+  const managerLayoutOnly=new URLSearchParams(window.location.search).has("manager-layout");
+  let layoutRecap=$state("The recap belongs below the title.");
+  const headerFacts={project:"Panels",title:"Workspace clarity",settled:false,conversation_id:null};
+  (window as any).__layoutUpdate=(recap:string)=>{layoutRecap=recap;};
+  (window as any).__layoutHeaderMatches=()=>workspaceHeaderDomMatches(document.querySelector('[data-layout-proof]')!,headerFacts);
+  import ManagerFrame from "../src/components/ManagerFrame.svelte";
+  import { conversationDock } from "../src/lib/conversation/layout/dock";
+  import { createConversationDismissal } from "../src/lib/conversation/dismissal";
+  import ArtifactPreview from "../src/components/ArtifactPreview.svelte";
+  const cardArtifact = new URLSearchParams(location.search).has("card-artifact");
+  let artifactClicks = $state(0);
+  (window as any).__artifactClicks = () => artifactClicks;
+  const ticketGestures = new URLSearchParams(window.location.search).has("ticket");
   import ConversationPane from "../src/components/conversation/ConversationPane.svelte";
   import { discardHeldPrompt, promoteHeldPrompt } from "../src/lib/conversation/wire";
   import type { ConversationState } from "../src/lib/conversation/conversationState";
@@ -35,10 +344,14 @@ const indexPath = join(scratchRoot, `conversation-layer-index-${process.pid}.htm
   let scrollReplacementGeneration = 0;
   let running = $state(false);
   let ownerReadThroughSequence = $state(0);
+  (window as any).__setReadWatermark=(value:number)=>{ownerReadThroughSequence=value;};
+  (window as any).__appendLabelTools=()=>{rows=[...rows,...[29,30].map(sequence=>({key:'label-tool-'+sequence,kind:'tool_call',sequence,createdAt:sequence,toolCallId:'label-tool-'+sequence,title:'Unread tool '+sequence,toolKind:'read',detail:null,startedDetail:null,status:'completed',progress:null}))];};
   let heldPromptRows = $state<any[]>([]);
   let supportsSteer = $state(false);
   let outgoingMessages = $state<any[]>([]);
   let composerDisabled = $state(false);
+  let fixturePlaceholder=$state<string|undefined>(undefined);
+  (window as any).__fixturePlaceholder=(value:string|undefined)=>fixturePlaceholder=value;
   let ask = $state<any>(null);
 
   // The connected test proves real writers and automatic SSE. This former E2E
@@ -50,9 +363,19 @@ const indexPath = join(scratchRoot, `conversation-layer-index-${process.pid}.htm
     heldPromptRows = await response.json();
   }
   async function actOnQueueMatrix(heldPromptId: string, mode: "discard" | "steer" | "send_now"): Promise<void> {
+    const promoted = heldPromptRows.find(row => row.heldPromptId === heldPromptId);
     if (mode === "discard") await discardHeldPrompt("browser-fixture", heldPromptId);
     else await promoteHeldPrompt("browser-fixture", heldPromptId, mode);
     await refreshQueueMatrix();
+    if ((window as any).__recordingFlow && mode !== "discard" && promoted) {
+      // Promotion refreshes durable history; it is not a new local composer send.
+      const sequence = Math.max(0, ...rows.map(row => row.sequence)) + 1;
+      const prompt = {key:"promoted-"+heldPromptId, kind:"prompt", sequence,
+        createdAt:Date.now(), content:promoted.content, senderLabel:"owner", mode,
+        sentAtUnixMilliseconds:Date.now()};
+      rows = [...rows, prompt];
+      if (visibleRows !== null) visibleRows = [...visibleRows, prompt];
+    }
   }
   document.addEventListener("visibilitychange", () => { void refreshQueueMatrix(); });
   (window as any).__loadQueueMatrix = async () => {
@@ -83,11 +406,32 @@ const indexPath = join(scratchRoot, `conversation-layer-index-${process.pid}.htm
       description: "Stop the worker", argument_hint: null }
   ];
   let conversationState = $state<ConversationState>("rest");
+  let fixtureConversationId = $state("browser-fixture");
+  let scrollSnapshotNumber = 0;
+  // These synthetic conversations intentionally share text and a Ticket-owned file.
+  // Select a coherent snapshot through ordinary Pane inputs, preserving scoped keys.
+  (window as any).__selectEquivalentScrollConversation = () => {
+    const snapshot = {
+      id: "browser-fixture-scroll-" + ++scrollSnapshotNumber,
+      rows: rows.map(row => ({...row}))
+    };
+    flushSync(() => {
+      fixtureConversationId = snapshot.id;
+      rows = snapshot.rows;
+    });
+    return snapshot.id;
+  };
   let lens = $state<"focus" | "full">("focus");
 
   async function captureSend(content: any[], mode: string, picked: any): Promise<boolean> {
     (window as any).__sentModes = [...((window as any).__sentModes ?? []), mode];
     (window as any).__sentRuns = [...((window as any).__sentRuns ?? []), picked];
+    if ((window as any).__recordingFlow) {
+      outgoingMessages = [{messageId:"recording-refused-steer",content,senderLabel:"owner",mode,
+        sentAtUnixMilliseconds:Date.now(),knownFate:"nothing_yet"}];
+      await new Promise(resolve=>setTimeout(resolve,850));
+      outgoingMessages=[];
+    }
     heldPromptRows = [{
       key: "composer-fallback",
       heldPromptId: "composer-fallback",
@@ -98,16 +442,11 @@ const indexPath = join(scratchRoot, `conversation-layer-index-${process.pid}.htm
     return true;
   }
 
-  function dismissConversation(): void {
-    conversationState = "rest";
-  }
-
-  function dismissBesidePane(event: MouseEvent): void {
-    const pressed = event.target;
-    if (!(pressed instanceof Element)) return;
-    if (pressed.closest("[data-conversation-pane]") !== null) return;
-    dismissConversation();
-  }
+  // The Ticket layout uses the same production predicate as TicketRoute. The
+  // manager below mounts its actual production workspace and handlers.
+  const ticketDismissal = createConversationDismissal(() => { conversationState = "rest"; });
+  const dismissTicketOutside = ticketDismissal.surface;
+  (window as any).__setConversationState = (state: ConversationState) => conversationState = state;
 
   (window as any).__appendConversationLine = () => {
     const index = nextRowIndex++;
@@ -124,23 +463,25 @@ const indexPath = join(scratchRoot, `conversation-layer-index-${process.pid}.htm
   };
   // Controlled content replay. Responses stay pending while the reader chooses a
   // position, then browser-owned image/Markdown completion changes the same rows.
-  (window as any).__setupScrollRegression = (kind: string) => {
-    conversationState = "peeked";
+  (window as any).__setupScrollRegression = (kind: string, mode = "scrollback") => {
+    conversationState = "opened";
     lens = "full";
     running = false;
     const paragraphs = Array.from({ length: 32 }, (_, index) =>
-      "Tall paragraph " + index + ": " + words(index)).join("\n\n");
+      "Tall paragraph " + index + ": " + words(index));
+    const previewAt = mode === "following" ? 30 : 14;
     rows = Array.from({ length: 28 }, (_, index) => ({
       key: "regression-" + index,
       kind: "agent_message",
       sequence: index + 1,
       createdAt: 1_000 + index,
-      content: index === 12 && kind !== "plain"
+      content: index === (mode === "following" ? 27 : 12) && kind !== "plain"
         ? [
+            {piece: "text", text: paragraphs.slice(0, previewAt).join("\n\n")},
             kind === "image"
               ? {piece: "image", stored_file_id: "delayed.png", file_name: "delayed.png"}
               : {piece: "text", text: "[Delayed Markdown](/files/tickets/t_scrollregression/delayed.md)"},
-            {piece: "text", text: paragraphs}
+            {piece: "text", text: paragraphs.slice(previewAt).join("\n\n")}
           ]
         : [{piece: "text", text: words(index)}]
     }));
@@ -153,7 +494,7 @@ const indexPath = join(scratchRoot, `conversation-layer-index-${process.pid}.htm
   };
   (window as any).__sendScrollRegression = (moveLayer: boolean) => {
     outgoingMessages = [{messageId: "scroll-send", content: [{piece: "text", text: "Regression prompt"}],
-      senderLabel: "owner", mode: "queue", sentAtUnixMilliseconds: 20_000, knownFate: "nothing_yet"}];
+      senderLabel: "owner", mode: "queue", sentAtUnixMilliseconds: 20_000, knownFate: "nothing_yet", accepted: true}];
     if (moveLayer) conversationState = "opened";
   };
   (window as any).__answerScrollRegression = (paragraphCount: number) => {
@@ -172,6 +513,10 @@ const indexPath = join(scratchRoot, `conversation-layer-index-${process.pid}.htm
   };
   (window as any).__dropFirstConversationLines = (count: number) => {
     rows = rows.slice(count);
+  };
+  (window as any).__shortenFirstConversationLine = () => {
+    rows = rows.map((row, index) => index === 0
+      ? {...row, content: [{piece:"text", text:"A short message."}]} : row);
   };
   (window as any).__growFirstConversationLine = () => {
     rows = rows.map((row, index) =>
@@ -230,15 +575,11 @@ const indexPath = join(scratchRoot, `conversation-layer-index-${process.pid}.htm
   };
   (window as any).__showUnansweredSend = () => {
     supportsSteer = true;
-    heldPromptRows = [{
-      key: "local:sent-into-the-dark",
-      heldPromptId: null,
-      senderMessageId: "sent-into-the-dark",
-      content: [{ piece: "text", text: "did this arrive" }],
-      senderLabel: "owner",
-      sentAtUnixMilliseconds: 10,
-      state: "unknown",
-      queueReason: null
+    heldPromptRows = [];
+    outgoingMessages = [{
+      messageId: "sent-into-the-dark", content: [{piece:"text",text:"did this arrive"}],
+      senderLabel: "owner", mode:"steer", sentAtUnixMilliseconds:10,
+      knownFate:"answer_never_came_back"
     }];
   };
   (window as any).__setComposerDisabled = (disabled: boolean) => {
@@ -391,13 +732,20 @@ const indexPath = join(scratchRoot, `conversation-layer-index-${process.pid}.htm
         createdAt: 4_001,
         content: [{ piece: "text", text: "hidden commentary" }]
       },
+      {key:"owner-first",kind:"agent_message",sequence:3_002,createdAt:4_002,
+        content:[{piece:"text",text:"Owner answer one."}],toOwner:true},
+      {key:"middle-commentary",kind:"agent_message",sequence:3_003,createdAt:4_003,
+        content:[{piece:"text",text:"middle commentary"}],toOwner:false},
+      {key:"owner-second",kind:"agent_message",sequence:3_004,createdAt:4_004,
+        content:[{piece:"text",text:"Owner answer two."}],toOwner:true},
       ...[1, 2, 3, 4].map(tool),
       {
         key: "full-answer",
         kind: "agent_message",
         sequence: 3_200,
         createdAt: 4_200,
-        content: [{ piece: "text", text: "final answer" }]
+        content: [{ piece: "text", text: "final answer" }],
+        toOwner: true
       },
       {
         key: "full-end",
@@ -409,7 +757,7 @@ const indexPath = join(scratchRoot, `conversation-layer-index-${process.pid}.htm
         automaticCompactionResult: null
       }
     ];
-    visibleRows = null;
+    visibleRows = rows.filter(row => row.kind === "prompt" || (row.kind === "agent_message" && row.toOwner === true));
     lens = "focus";
     conversationState = "opened";
   };
@@ -458,20 +806,104 @@ const indexPath = join(scratchRoot, `conversation-layer-index-${process.pid}.htm
   };
 </script>
 
-<main class="fixture-ticket" class:ticket-screen={queueMatrixEnabled}>
-  <section class="fixture-document">
-    <button type="button" data-ticket-behind onclick={dismissConversation}>Ticket content</button>
+{#if chartsOnly}
+  <div data-chat-chart-fixture style="height:1100px;max-height:100dvh;width:min(760px, 100%);margin:auto;display:flex;flex-direction:column">
+    <ConversationPane conversationId="chat-chart-proof" conversationExists conversationState="opened" rows={chartRows} lens="full" running={false} />
+  </div>
+  <div data-goal-chart-comparison style="width:min(760px,100%);margin:auto">
+    <PageChart block={{type:'chart',id:'goal-comparison',kind:'bar',title:'Goal comparison',series:chartSeries}} values={[]} goalId="goal-comparison" narrow={false} />
+  </div>
+  <div bind:this={chartEditor} data-chat-chart-editor contenteditable="true"></div>
+{:else if machinesOnly}
+  <QueryClientProvider client={queryClient}>
+    <div style="height:750px;display:flex;flex-direction:column;max-width:700px;margin:auto">
+      <WorkerRow title="Mac Worker" locale="macos" signal={{working:true,message_for_owner:false}} conversationId="machine-conversation" />
+      <WorkerRow title="VPS Worker" locale="vps" signal={{working:true,message_for_owner:false}} conversationId="vps-conversation" />
+      <LiveConversation locale="macos" conversationId="machine-conversation" persistenceKey="machine-evidence" label="Worker" conversationState="opened" sendMessage={async()=>({conversation_id:'machine-conversation',fate:'started'})}/>
+    </div>
+  </QueryClientProvider>
+{:else if managerLayoutOnly}
+<QueryClientProvider client={catalogClient}>
+  <main class="manager-column" style="max-width:768px;margin:auto;padding:0 32px" data-layout-proof>
+    <ManagerHeader recap={layoutRecap}>
+      {#snippet eyebrow()}<div class="page-eyebrow"><span>Panels</span><button class="page-settle" aria-label="Settle Workspace clarity">Settle</button></div>{/snippet}
+      {#snippet title()}{headerFacts.title}{/snippet}
+    </ManagerHeader>
+  </main>
+</QueryClientProvider>
+{:else if intentOnly}
+  <div style="height:700px;width:700px;display:flex;flex-direction:column">
+    <ConversationPane conversationId="same-conversation" conversationExists conversationState="opened"
+      reader={intentReader} rows={[]} lens="focus" running={false} />
+  </div>
+{:else if readerOnly && readerPeek}
+  <QueryClientProvider client={queryClient}>
+  <div style="height:700px;width:min(700px, 100%);display:flex;flex-direction:column">
+    <ManagerFrame bind:conversationState={readerState}>
+      <p>Conversation document</p>
+      {#snippet conversation()}<LiveConversation conversationId="bounded-reader" persistenceKey="bounded-reader" label="Worker" bind:conversationState={readerState} sendMessage={async()=>({conversation_id:"bounded-reader",fate:"started"})}/>{/snippet}
+    </ManagerFrame>
+  </div>
+  </QueryClientProvider>
+{:else if readerOnly}
+  <div style="height:700px;width:min(700px, 100%);display:flex;flex-direction:column">
+    <LiveConversation conversationId="bounded-reader" persistenceKey="bounded-reader" label="Worker" bind:conversationState={readerState} sendMessage={async()=>({conversation_id:"bounded-reader",fate:"started"})}/>
+  </div>
+{:else if previewsOnly}
+  <input aria-label="Parser input" />
+  <div data-conversation-thread data-preview-fixture style="height:600px;overflow:auto">
+  {#if previewMode === "large"}
+    <MarkdownBlock text={largeMarkdown} />
+  {:else if previewMode === "copy"}
+    <div data-copy-selection>
+      <p data-copy-before>OUTSIDE BEFORE prefix KEEP START</p>
+      <div data-copy-first data-conversation-thread style="height:160px;overflow:auto">
+        <MarkdownBlock text={largeMarkdown.replaceAll('Paragraph ', 'FIRST Paragraph ')} />
+      </div>
+      <p data-copy-middle>OUTSIDE BETWEEN messages</p>
+      <div data-copy-second data-conversation-thread style="height:160px;overflow:auto">
+        <MarkdownBlock text={largeMarkdown.replaceAll('Paragraph ', 'SECOND Paragraph ')} />
+      </div>
+      <p data-copy-after>KEEP END suffix OUTSIDE AFTER</p>
+    </div>
+  {:else if previewMode === "containers"}
+    <MarkdownBlock text={containerMarkdown+'\n\nRevision '+containerRevision} />
+  {:else if previewMode === "retained"}
+    <section data-retention-content>
+      {#if retainedKind === 'preview' || retainedKind === 'nested'}
+        <FilePreview target={targetFromHref(retainedTarget)} mode="full" />
+      {:else if retainedKind === 'document'}
+        <div style="height:500px"><FileDocument target={targetFromHref(retainedTarget)} reloadSignal={retainedReload} /></div>
+      {:else if retainedKind === 'image'}
+        <VisibleMessageImage src={()=>retainedTarget} alt="Retained image" outgoing={false} />
+      {:else}
+        <MarkdownBlock text={largeMarkdown} />
+      {/if}
+    </section>
+    <div style="height:1200px" data-retention-away>Scroll destination</div>
+  {:else if previewMode === "media"}
+    {#each Array.from({length:24},(_,index)=>index) as index}
+      <div style="min-height:340px" data-preview-index={index}>
+        <FilePreview target={targetFromHref('/files/tickets/t_preview/preview'+index+'.html')} mode="full" />
+        <FilePreview target={targetFromHref('/files/tickets/t_preview/image'+index+'.png')} />
+      </div>
+    {/each}
+  {/if}
+  </div>
+{:else if catalogsOnly}
+<QueryClientProvider client={catalogClient}>
+  <section style="padding:40px;width:600px;" data-catalog-fixture>
+    <ConversationHistoryPicker owner={{kind:"ticket",id:"t_catalog"}} bind:selected={catalogSelected} label="Prior conversation" conversationExists={true} />
+    <output data-history-selection>{catalogSelected ?? "current"}</output>
+    <ArtifactsBand owner={{kind:"ticket",id:catalogOwner}} />
   </section>
-  <section
-    class="conversation-layer"
-    data-conversation-layer-host
-    onclickcapture={dismissBesidePane}
-  >
-    <div class="conversation-column">
+</QueryClientProvider>
+{:else}
+{#snippet conversationPane()}
       <ConversationPane
         bind:conversationState
         bind:lens
-        conversationId="browser-fixture"
+        conversationId={fixtureConversationId}
         conversationExists
         {rows}
         {visibleRows}
@@ -487,7 +919,7 @@ const indexPath = join(scratchRoot, `conversation-layer-index-${process.pid}.htm
         backendKey="claude"
         current={{ model: "opus", reasoningEffort: "high" }}
         models={[
-          { model_id: "opus", display_name: "Opus", enabled: true },
+          { model_id: "opus", display_name: "Opus", enabled: true, reasoning_effort_options: ["high"] },
           { model_id: "sonnet", display_name: "Sonnet", enabled: true,
             reasoning_effort_options: [] }
         ]}
@@ -495,20 +927,49 @@ const indexPath = join(scratchRoot, `conversation-layer-index-${process.pid}.htm
         {outgoingMessages}
         ownSenderLabel="owner"
         composerDisabled={composerDisabled}
+        composerPlaceholder={fixturePlaceholder}
         {composerCatalog}
         onSend={captureSend}
         onDiscardHeldPrompt={(heldPromptId: string) => actOnQueueMatrix(heldPromptId, "discard")}
         onPromoteHeldPrompt={(heldPromptId: string, mode: "steer" | "send_now") => actOnQueueMatrix(heldPromptId, mode)}
         onStopDrawingHeldPrompt={(senderMessageId: string) => {
           (window as any).__stoppedDrawing = senderMessageId;
+          outgoingMessages=outgoingMessages.filter(message=>message.messageId!==senderMessageId);
         }}
         onSendHeldPromptAgain={(senderMessageId: string) => {
           (window as any).__sentAgain = senderMessageId;
         }}
       />
+{/snippet}
+<div class="fixture-ticket" class:ticket-screen={queueMatrixEnabled || ticketGestures}>
+  {#if ticketGestures}
+    <div class="ticket-page" use:conversationDock use:dismissTicketOutside>
+    <div class="ticket-reading">
+    <main class="ticket-doc fixture-document">
+      <!-- The Ticket page's column and its bands' 48px foot, which together keep the room to
+           scroll clear of the composer zone. -->
+      <div class="ticket-col"><div style="padding-bottom:var(--space-7)"><button type="button" data-ticket-behind>Ticket content</button><div style="height:1200px"></div><button type="button" data-document-bottom>Bottom control</button></div></div>
+    </main>
+    {#if cardArtifact}<ArtifactPreview target={{kind:"ticket-file", ticketId:"t_cardmotion",path:"artifact.html"}}
+      registerArtifactFrame={ticketDismissal.registerArtifactFrame} onRefresh={() => artifactClicks += 1} onClose={() => artifactClicks += 1} />{/if}
     </div>
-  </section>
-</main>
+    <section class="conversation-layer">
+      <div class="conversation-column">{@render conversationPane()}</div>
+    </section>
+    </div>
+  {:else}
+    <QueryClientProvider client={queryClient}>
+    <ManagerFrame bind:conversationState
+      openedFile={cardArtifact ? {kind:"ticket-file",ticketId:"t_cardmotion",path:"artifact.html"} : null}
+      onOpenFile={() => artifactClicks += 1}>
+      <button type="button" data-ticket-behind>Ticket content</button><div style="height:1200px"></div><button type="button" data-document-bottom>Bottom control</button>
+      {#snippet conversation()}{@render conversationPane()}{/snippet}
+    </ManagerFrame>
+    </QueryClientProvider>
+  {/if}
+</div>
+
+{/if}
 
 <style>
   :global(html), :global(body), :global(#app) {
@@ -526,18 +987,15 @@ const indexPath = join(scratchRoot, `conversation-layer-index-${process.pid}.htm
     flex: 1;
     min-height: 0;
   }
-  .fixture-document button {
+  :global([data-ticket-behind]) {
     position: fixed;
     inset: 4px auto auto 4px;
     z-index: 3;
   }
-  .conversation-layer {
+  .fixture-ticket :global(.conversation-layer) {
     align-items: center;
   }
-  .fixture-ticket:not(.ticket-screen) .conversation-column {
-    box-sizing: border-box;
-    width: min(680px, calc(100% - 96px));
-  }
+
   .fixture-ticket.ticket-screen {
     height: 100%;
     padding: 0;
@@ -560,5 +1018,6 @@ const indexPath = join(scratchRoot, `conversation-layer-index-${process.pid}.htm
   );
 
 
-  return {inputs: [indexPath], arguments: [indexPath], python: fileURLToPath(new URL("./conversation-pane.py", import.meta.url))};
+  return {resources: [{path:"/files/tickets/t_cardmotion/artifact.html",contentType:"text/html",body:
+    '<!doctype html><html><head><script>window.addEventListener("pointerdown",event=>{if(event.isPrimary&&event.button===0)parent.postMessage({cardTimingPress:performance.timeOrigin+performance.now()},"*")},true)</script></head><body><button id="artifact-button" onclick="document.body.dataset.clicked=String(true)">Artifact control</button></body></html>'}], inputs: [indexPath], arguments: [indexPath], python: fileURLToPath(new URL("./conversation-pane.py", import.meta.url))};
 }

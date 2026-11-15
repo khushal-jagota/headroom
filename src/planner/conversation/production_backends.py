@@ -17,7 +17,7 @@ from __future__ import annotations
 import os
 import shutil
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Final
 
@@ -51,15 +51,6 @@ from planner.environments.hermes_home import (
 type ExecutablePathResolver = Callable[[str], str | None]
 
 CLAUDE_EXECUTABLE_OVERRIDE: Final = "PLAN_CLAUDE_EXECUTABLE"
-PANELS_OWNED_CLAUDE_EXECUTABLE: Final = (
-    Path(os.environ.get("PLAN_APP_ROOT", Path(__file__).resolve().parents[3]))
-    / "agent_backends"
-    / "node_modules"
-    / "@anthropic-ai"
-    / "claude-code"
-    / "bin"
-    / "claude.exe"
-)
 
 
 @dataclass(frozen=True, slots=True)
@@ -78,6 +69,7 @@ class ProductionBackendLaunches:
 def production_backend_launches(
     *,
     panels_server_url: str,
+    worker_process_root: Path | None = None,
     executable_path: ExecutablePathResolver = shutil.which,
 ) -> ProductionBackendLaunches:
     """This machine's three agents, resolved.
@@ -88,19 +80,34 @@ def production_backend_launches(
     fact about the server that is running now — a conversation resumed after a restart must
     reach the server that resumed it, not the one it was started under.
     """
-    return ProductionBackendLaunches(
+    launches = ProductionBackendLaunches(
         hermes=_hermes_launch(panels_server_url),
         codex=codex_app_server_child_launch(
             codex_executable=_on_path(executable_path, "codex"),
             panels_server_url=panels_server_url,
         ),
-        claude=_claude_launch(panels_server_url),
+        claude=_claude_launch(panels_server_url, executable_path),
+    )
+    if worker_process_root is None:
+        return launches
+    root = str(worker_process_root.expanduser().resolve())
+    return ProductionBackendLaunches(
+        hermes=replace(launches.hermes, environment_overrides=(
+            *launches.hermes.environment_overrides, ("PLAN_WORKER_PROCESS_ROOT", root),
+        )),
+        codex=replace(launches.codex, environment_overrides=(
+            *launches.codex.environment_overrides, ("PLAN_WORKER_PROCESS_ROOT", root),
+        )),
+        claude=replace(launches.claude, environment_overrides=(
+            *launches.claude.environment_overrides, ("PLAN_WORKER_PROCESS_ROOT", root),
+        )),
     )
 
 
 def production_backend_child_factories(
     *,
     panels_server_url: str,
+    worker_process_root: Path | None = None,
     executable_path: ExecutablePathResolver = shutil.which,
     remembered_codex_login_rejection: CodexLoginRejectionMemory | None = None,
 ) -> Mapping[ConversationBackendKey, BackendChildFactory]:
@@ -111,7 +118,8 @@ def production_backend_child_factories(
     conversation uses.
     """
     launches = production_backend_launches(
-        panels_server_url=panels_server_url, executable_path=executable_path
+        panels_server_url=panels_server_url, executable_path=executable_path,
+        worker_process_root=worker_process_root,
     )
     return {
         ConversationBackendKey.hermes: HermesAcpBackendChildFactory(launches.hermes),
@@ -138,14 +146,25 @@ def _hermes_launch(panels_server_url: str) -> AcpChildLaunch:
     )
 
 
-def _claude_launch(panels_server_url: str) -> ClaudeAgentSdkChildLaunch:
-    """Claude as Panels' tested CLI, unless the operator names another executable."""
+def _claude_launch(
+    panels_server_url: str,
+    executable_path: ExecutablePathResolver = shutil.which,
+) -> ClaudeAgentSdkChildLaunch:
+    """Use the owner's Claude, independently of the selected app release."""
     override = os.environ.get(CLAUDE_EXECUTABLE_OVERRIDE)
+    app_root = os.environ.get("PLAN_APP_ROOT")
+    # Older permanent Mac supervisors select this exact bundled path at each handoff.
+    # Keep external operator overrides, but do not let that generated selection pin Claude.
+    if override is not None and app_root is not None:
+        legacy = (
+            Path(app_root) / "agent_backends/node_modules/@anthropic-ai/claude-code/bin/claude.exe"
+        )
+        if Path(override).expanduser() == legacy:
+            override = None
     return ClaudeAgentSdkChildLaunch(
         claude_executable=(
             Path(override).expanduser()
-            if override is not None
-            else PANELS_OWNED_CLAUDE_EXECUTABLE
+            if override is not None else _on_path(executable_path, "claude")
         ),
         environment_overrides=(("PLAN_SERVER_URL", panels_server_url),),
     )

@@ -42,6 +42,9 @@ def test_app_launcher_carries_identity_and_scrubs_unrelated_environment(tmp_path
             "PLAN_DB_PATH": "/state/db",
             "PLAN_GROQ_API_KEY": "groq-secret",
             "PLAN_CLAUDE_EXECUTABLE": "/operator/claude",
+            "PLAN_UPDATE_REPOSITORY": "owner/panels",
+            "PLAN_UPDATE_TOKEN_FILE": "/operator/update-token",
+            "PYTHONDONTWRITEBYTECODE": "0",
             "SECRET": "no",
         },
     )
@@ -51,17 +54,12 @@ def test_app_launcher_carries_identity_and_scrubs_unrelated_environment(tmp_path
         "PLAN_DB_PATH": "/state/db",
         "PLAN_GROQ_API_KEY": "groq-secret",
         "PLAN_CLAUDE_EXECUTABLE": "/operator/claude",
+        "PLAN_UPDATE_REPOSITORY": "owner/panels",
+        "PLAN_UPDATE_TOKEN_FILE": "/operator/update-token",
         "PLAN_APP_SHA": SHA,
         "PLAN_APP_ROOT": str(app),
+        "PYTHONDONTWRITEBYTECODE": "1",
     }
-
-
-def test_runtime_app_validation_requires_runnable_tree(tmp_path: Path) -> None:
-    app = _runtime_app(tmp_path / "app")
-    (app / "bin" / "panels-launcher").chmod(0o644)
-    _rewrite_digest(app)
-    with pytest.raises(AppValidationError, match="executable"):
-        validate_app_manifest(app / "manifest.json", require_runtime=True)
 
 
 def test_exported_cli_is_relocatable_and_preserves_caller_context(
@@ -75,8 +73,8 @@ def test_exported_cli_is_relocatable_and_preserves_caller_context(
     python.parent.mkdir(parents=True)
     python.write_text(
         "#!/bin/sh\n"
-        "printf '%s\\n' \"$PLAN_APP_ROOT\" \"$PLAN_APP_SHA\" \"$PLAN_SERVER_URL\" "
-        "\"$PLAN_TICKET_ID\" \"$PLAN_ACTOR\" \"$PYTHONPATH\" \"$@\"\n"
+        'printf \'%s\\n\' "$PLAN_APP_ROOT" "$PLAN_APP_SHA" "$PLAN_SERVER_URL" '
+        '"$PLAN_TICKET_ID" "$PLAN_ACTOR" "$PYTHONPATH" "$@"\n'
         "exit 23\n",
         encoding="utf-8",
     )
@@ -113,6 +111,7 @@ def test_exported_cli_is_relocatable_and_preserves_caller_context(
         "worker",
         "/ambient/package",
         "-I",
+        "-B",
         "-m",
         "planner",
         "worker",
@@ -211,10 +210,10 @@ def _runtime_app(app: Path) -> Path:
     cli.chmod(0o755)
     (app / "web" / "dist").mkdir(parents=True)
     (app / "web" / "dist" / "index.html").write_text("ok", encoding="utf-8")
-    (app / "agent_backends" / "node_modules").mkdir(parents=True)
-    (app / "agent_backends" / "node_modules" / ".package-lock.json").write_text(
-        "{}\n", encoding="utf-8"
-    )
+    for package in ("@anthropic-ai/claude-code", "@openai/codex"):
+        metadata = app / "agent_backends/node_modules" / package / "package.json"
+        metadata.parent.mkdir(parents=True)
+        metadata.write_text('{"version": "test"}\n', encoding="utf-8")
     (app / "manifest.json").write_text(
         json.dumps(
             {

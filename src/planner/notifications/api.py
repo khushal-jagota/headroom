@@ -3,14 +3,16 @@
 from __future__ import annotations
 
 import sqlite3
-from typing import cast
+from typing import Literal, cast
 from urllib.parse import urlsplit
 
 from fastapi import APIRouter, Request
 from pydantic import BaseModel, Field
 
+from planner.core.authctx import require_authenticated_owner
 from planner.core.errors import ErrorCode, PlannerError
-from planner.notifications import data
+from planner.notifications import apns_data, data
+from planner.notifications.apns import canonical_server_origin
 from planner.notifications.contracts import (
     NOTIFICATION_SUBJECTS,
     NOTIFICATION_TYPE_BY_ID,
@@ -32,6 +34,57 @@ class SubscriptionKeys(BaseModel):
 class SubscriptionWrite(BaseModel):
     endpoint: str = Field(min_length=12, max_length=4096)
     keys: SubscriptionKeys
+
+
+class APNsDeviceWrite(BaseModel):
+    # APNs tokens are variable-length bytes, encoded as lowercase hex by iOS.
+    device_token: str = Field(min_length=2, max_length=512, pattern=r"^(?:[0-9a-f]{2})+$")
+    bundle_id: str = Field(min_length=1, max_length=255, pattern=r"^[A-Za-z0-9.-]+$")
+    environment: Literal["development", "production"]
+
+
+@router.put("/apns/devices")
+def register_apns_device(body: APNsDeviceWrite, request: Request) -> dict[str, bool]:
+    require_authenticated_owner(request)
+    config = request.app.state.config.apns
+    if (
+        config is None
+        or canonical_server_origin(request.app.state.config.trusted_ingress_canonical_origin)
+        is None
+    ):
+        raise PlannerError(ErrorCode.gateway_offline, "native push delivery is not configured")
+    if body.bundle_id not in config.bundle_ids:
+        raise PlannerError(ErrorCode.validation, "native push bundle ID is not allowed")
+    conn = _conn(request)
+    try:
+        apns_data.register_device(
+            conn,
+            device_token=body.device_token,
+            bundle_id=body.bundle_id,
+            environment=body.environment,
+            now=request.app.state.clock.now_unix(),
+        )
+        return {"registered": True}
+    finally:
+        conn.close()
+
+
+@router.delete("/apns/devices")
+def unregister_apns_device(body: APNsDeviceWrite, request: Request) -> dict[str, bool]:
+    require_authenticated_owner(request)
+    # Revocation remains available after keys or an allowed bundle have been removed.
+    conn = _conn(request)
+    try:
+        return {
+            "removed": apns_data.remove_device(
+                conn,
+                device_token=body.device_token,
+                bundle_id=body.bundle_id,
+                environment=body.environment,
+            )
+        }
+    finally:
+        conn.close()
 
 
 def _conn(request: Request) -> sqlite3.Connection:

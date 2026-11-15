@@ -8,7 +8,7 @@ import logging
 import sqlite3
 import threading
 from collections.abc import AsyncIterator, Callable
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, nullcontext
 from time import monotonic
 from uuid import uuid4
 
@@ -16,18 +16,23 @@ from planner.conversation.contracts import (
     ConversationSystem,
     PromptDeliveryMode,
     PromptDeliveryRefused,
+    PromptDeliverySuppressed,
     PromptDeliveryUncertain,
 )
 from planner.conversation.message_content import text_message_content
+from planner.conversation.start_admission.contracts import StartRequest
+from planner.conversation.workspace_admission import WorkspaceAdmission
 from planner.core.clock import Clock
 from planner.core.contracts import PrincipalKind
 from planner.core.db import connect
 from planner.core.errors import ErrorCode, PlannerError
+from planner.core.task_settlement import run_on_worker_thread
+from planner.machines.contracts import HOME_MACHINE_ID
 from planner.manager_wakes import data
 from planner.manager_wakes.contracts import WakeBatch, WakeBatchStatus
+from planner.managers import data as managers_data
+from planner.managers import service as managers_service
 from planner.runtime import conversation_start
-from planner.sprints import data as sprints_data
-from planner.sprints import service as sprints_service
 from planner.tickets import data as tickets_data
 from planner.worker_settings.service import CHIEF_SETTINGS_KEY
 
@@ -46,9 +51,7 @@ def reconcile_batch_outcomes(conn: sqlite3.Connection, *, now: int) -> int:
     for batch in data.batches_waiting_for_outcome(conn):
         if batch.conversation_id is None:
             continue
-        outcome = data.delivery_outcome_kind(
-            conn, batch.conversation_id, batch.sender_message_id
-        )
+        outcome = data.delivery_outcome_kind(conn, batch.conversation_id, batch.sender_message_id)
         if outcome == "prompt":
             data.close_delivered_batch(conn, batch.id, now=now)
             settled += 1
@@ -71,8 +74,7 @@ def reconcile_batch_outcomes(conn: sqlite3.Connection, *, now: int) -> int:
             )
             settled += 1
         elif (
-            outcome == "prompt_delivery_uncertain"
-            and batch.status is not WakeBatchStatus.uncertain
+            outcome == "prompt_delivery_uncertain" and batch.status is not WakeBatchStatus.uncertain
         ):
             data.record_batch_uncertain(
                 conn,
@@ -94,35 +96,67 @@ async def deliver_batch(
     process_token: str,
     now: Callable[[], int],
 ) -> bool:
+    admission = getattr(conversation_system, "workspace_admission", None)
+    with admission.operation() if admission is not None else nullcontext(True) as admitted:
+        if not admitted:
+            return False
+        return await _admitted_deliver_batch(
+            batch,
+            connect_database=connect_database,
+            conversation_system=conversation_system,
+            process_token=process_token,
+            now=now,
+        )
+
+
+async def _admitted_deliver_batch(
+    batch: WakeBatch,
+    *,
+    connect_database: Callable[[], sqlite3.Connection],
+    conversation_system: ConversationSystem,
+    process_token: str,
+    now: Callable[[], int],
+) -> bool:
     """Deliver one immutable batch through its principal's ordinary conversation door."""
-    conn = connect_database()
+    conn = await run_on_worker_thread(connect_database)
     intended_conversation_id: str | None = None
+    starts = getattr(conversation_system, "start_admission", None)
+    offered = False
+    admitted_start = False
     try:
         target = batch.target
         lifecycle = (
-            sprints_service.supervisor_lifecycle_lock(target.id)
-            if target.kind is PrincipalKind.sprint_item
+            managers_service.manager_lifecycle_lock(target.id)
+            if target.kind is PrincipalKind.manager
             else _no_lifecycle_lock()
         )
         async with lifecycle:
             try:
-                if target.kind is PrincipalKind.sprint_item:
-                    item = sprints_data.read_item(conn, target.id).item
-                    agent_key = item.supervisor_agent_key
-                    resolved = conversation_start.sprint_item_supervisor_resolve(item)
-                    required_sprint_item_id = target.id
+                if target.kind is PrincipalKind.manager:
+                    item = (
+                        await run_on_worker_thread(managers_data.read_manager, conn, target.id)
+                    ).item
+                    agent_key = item.manager_agent_key
+                    resolved = await run_on_worker_thread(
+                        conversation_start.manager_resolve, conn, item
+                    )
+                    required_manager_id = target.id
                 elif target.kind is PrincipalKind.chief:
                     agent_key = CHIEF_SETTINGS_KEY
-                    resolved = conversation_start.agent_resolve(conn)
-                    required_sprint_item_id = None
+                    resolved = await run_on_worker_thread(conversation_start.agent_resolve, conn)
+                    required_manager_id = None
                 else:
-                    ticket = tickets_data.read_ticket(conn, target.id)
+                    ticket = await run_on_worker_thread(tickets_data.read_ticket, conn, target.id)
                     agent_key = None
-                    resolved = conversation_start.worker_resolve(conn, ticket)
-                    required_sprint_item_id = None
+                    resolved = await run_on_worker_thread(
+                        conversation_start.worker_resolve, conn, ticket
+                    )
+                    required_manager_id = None
             except PlannerError as error:
                 if error.code is ErrorCode.not_found:
-                    data.close_undeliverable_batch(conn, batch.id, now=now())
+                    await run_on_worker_thread(
+                        data.close_undeliverable_batch, conn, batch.id, now=now()
+                    )
                     return False
                 raise
 
@@ -130,20 +164,50 @@ async def deliver_batch(
             async with conversation_start.conversation_link_lock(link_key):
                 if agent_key is None:
                     try:
-                        current = tickets_data.read_ticket(conn, target.id).conversation_id
+                        current = (
+                            await run_on_worker_thread(tickets_data.read_ticket, conn, target.id)
+                        ).conversation_id
                     except PlannerError as error:
                         if error.code is ErrorCode.not_found:
-                            data.close_undeliverable_batch(conn, batch.id, now=now())
+                            await run_on_worker_thread(
+                                data.close_undeliverable_batch, conn, batch.id, now=now()
+                            )
                             return False
                         raise
                 else:
-                    current = conversation_start.read_agent_conversation(conn, agent_key)
+                    current = await run_on_worker_thread(
+                        conversation_start.read_agent_conversation, conn, agent_key
+                    )
                 if current is not None and await conversation_system.is_running(current):
-                    data.release_pending_batch(conn, batch.id, process_token=process_token)
+                    if starts is not None:
+                        starts.finish_unbound(batch.sender_message_id)
+                    await run_on_worker_thread(
+                        data.release_pending_batch, conn, batch.id, process_token=process_token
+                    )
                     return False
+                if starts is not None:
+                    destination = HOME_MACHINE_ID
+                    if agent_key is None:
+                        ticket = await run_on_worker_thread(
+                            tickets_data.read_ticket, conn, target.id
+                        )
+                        destination = ticket.machine_id
+                    if not starts.try_start(
+                        StartRequest(
+                            batch.sender_message_id,
+                            "worker" if agent_key is None else "supervisor",
+                            destination,
+                        )
+                    ):
+                        await run_on_worker_thread(
+                            data.release_pending_batch, conn, batch.id, process_token=process_token
+                        )
+                        return False
+                    admitted_start = True
                 created = conversation_start.new_conversation_id()
                 intended_conversation_id = current or created
-                data.record_batch_offering(
+                await run_on_worker_thread(
+                    data.record_batch_offering,
                     conn,
                     batch.id,
                     conversation_id=intended_conversation_id,
@@ -162,7 +226,6 @@ async def deliver_batch(
                             sender_label=WAKE_SENDER_LABEL,
                             mode=PromptDeliveryMode.queue,
                             sender_message_id=batch.sender_message_id,
-                            reply_requested=False,
                             now=now(),
                         )
                     else:
@@ -177,11 +240,11 @@ async def deliver_batch(
                             sender_label=WAKE_SENDER_LABEL,
                             mode=PromptDeliveryMode.queue,
                             sender_message_id=batch.sender_message_id,
-                            reply_requested=False,
-                            required_sprint_item_id=required_sprint_item_id,
+                            required_manager_id=required_manager_id,
                         )
                 except BaseException:
-                    data.record_batch_uncertain(
+                    await run_on_worker_thread(
+                        data.record_batch_uncertain,
                         conn,
                         batch.id,
                         conversation_id=intended_conversation_id,
@@ -189,8 +252,17 @@ async def deliver_batch(
                         now=now(),
                     )
                     raise
+                offered = True
+                if starts is not None:
+                    if isinstance(
+                        delivered.fate, (PromptDeliveryRefused, PromptDeliverySuppressed)
+                    ):
+                        starts.finish(batch.sender_message_id)
+                    elif isinstance(delivered.fate, PromptDeliveryUncertain):
+                        starts.uncertain(batch.sender_message_id)
                 if isinstance(delivered.fate, PromptDeliveryRefused):
-                    data.record_batch_failure(
+                    await run_on_worker_thread(
+                        data.record_batch_failure,
                         conn,
                         batch.id,
                         status=WakeBatchStatus.refused,
@@ -198,29 +270,45 @@ async def deliver_batch(
                         now=now(),
                     )
                     return False
+                if isinstance(delivered.fate, PromptDeliverySuppressed):
+                    # Final admission already wrote the exact discard receipt and
+                    # retired obsolete sources. Do not reinterpret it as acceptance.
+                    await run_on_worker_thread(reconcile_batch_outcomes, conn, now=now())
+                    return False
                 if isinstance(delivered.fate, PromptDeliveryUncertain):
-                    data.record_batch_uncertain(
+                    await run_on_worker_thread(
+                        data.record_batch_uncertain,
                         conn,
                         batch.id,
-                        conversation_id=delivered.conversation_id
-                        or intended_conversation_id,
+                        conversation_id=delivered.conversation_id or intended_conversation_id,
                         process_token=process_token,
                         now=now(),
                     )
                     return False
                 assert delivered.conversation_id is not None
-                data.record_batch_accepted(
+                await run_on_worker_thread(
+                    data.record_batch_accepted,
                     conn,
                     batch.id,
                     conversation_id=delivered.conversation_id,
                     process_token=process_token,
                     now=now(),
                 )
-                reconcile_batch_outcomes(conn, now=now())
-                return True
+                await run_on_worker_thread(reconcile_batch_outcomes, conn, now=now())
+                return (
+                    await run_on_worker_thread(
+                        data.delivery_outcome_kind,
+                        conn,
+                        delivered.conversation_id,
+                        batch.sender_message_id,
+                    )
+                    == "prompt"
+                )
 
     finally:
-        conn.close()
+        if starts is not None and admitted_start and not offered:
+            starts.finish_unbound(batch.sender_message_id)
+        await run_on_worker_thread(conn.close)
 
 
 class ManagerWakeLoop:
@@ -234,7 +322,9 @@ class ManagerWakeLoop:
         conversation_system: ConversationSystem,
         asyncio_loop: asyncio.AbstractEventLoop,
         busy_timeout_ms: int = 5000,
+        workspace_admission: WorkspaceAdmission | None = None,
     ) -> None:
+        self._workspace_admission = workspace_admission
         self._db_path = db_path
         self._clock = clock
         self._conversation_system = conversation_system
@@ -251,35 +341,48 @@ class ManagerWakeLoop:
         self._wake.set()
 
     def poll_once(self) -> list[int]:
-        conn = connect(self._db_path, self._busy_timeout_ms)
-        try:
-            now = self._clock.now_unix()
-            reconcile_batch_outcomes(conn, now=now)
-            data.preserve_interrupted_dispatches(
-                conn, process_token=self._process_token, now=now
-            )
-            data.recover_accepted_batches_from_other_processes(
-                conn, process_token=self._process_token, now=now
-            )
-            batches = list(data.pending_batches(conn))
-            attempted_targets = {batch.target for batch in batches}
-            while True:
-                batch = data.claim_next_batch(
+        with (
+            self._workspace_admission.operation()
+            if self._workspace_admission
+            else nullcontext(True)
+        ) as admitted:
+            if not admitted:
+                return []
+            conn = connect(self._db_path, self._busy_timeout_ms)
+            try:
+                now = self._clock.now_unix()
+                reconcile_batch_outcomes(conn, now=now)
+                data.preserve_interrupted_dispatches(
                     conn, process_token=self._process_token, now=now
                 )
-                if batch is None:
-                    break
-                if batch.target in attempted_targets:
-                    break
-                attempted_targets.add(batch.target)
-                batches.append(batch)
-        finally:
-            conn.close()
-        return [batch.id for batch in batches if self._schedule(batch)]
+                data.recover_accepted_batches_from_other_processes(
+                    conn, process_token=self._process_token, now=now
+                )
+                batches = list(data.pending_batches(conn))
+                attempted_targets = {batch.target for batch in batches}
+                while True:
+                    batch = data.claim_next_batch(conn, process_token=self._process_token, now=now)
+                    if batch is None:
+                        break
+                    if batch.target in attempted_targets:
+                        break
+                    attempted_targets.add(batch.target)
+                    batches.append(batch)
+            finally:
+                conn.close()
+            starts = getattr(self._conversation_system, "start_admission", None)
+            if starts is not None:
+                starts.retain_deferred(
+                    "manager_delivery_wake_", {b.sender_message_id for b in batches}
+                )
+            return [batch.id for batch in batches if self._schedule(batch)]
 
     def _schedule(self, batch: WakeBatch) -> bool:
         with self._in_flight_lock:
             if self._stop.is_set() or batch.id in self._in_flight.values():
+                return False
+            starts = getattr(self._conversation_system, "start_admission", None)
+            if starts is not None and len(self._in_flight) >= starts.limit:
                 return False
         future = asyncio.run_coroutine_threadsafe(
             deliver_batch(
@@ -344,5 +447,6 @@ class ManagerWakeLoop:
                 self.poll_once()
             except Exception:
                 _LOG.exception("manager wake poll failed")
-            self._wake.wait(interval)
+            starts = getattr(self._conversation_system, "start_admission", None)
+            self._wake.wait(starts.poll_delay(interval) if starts is not None else interval)
             self._wake.clear()

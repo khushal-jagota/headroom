@@ -16,37 +16,94 @@ lives in ``tests/support/conversation_claude_agent_sdk_bench.py``.
 from __future__ import annotations
 
 import asyncio
+import json
+import sqlite3
 from pathlib import Path
+from types import SimpleNamespace
+from typing import cast
+from unittest.mock import AsyncMock
+from uuid import UUID
 
 import pytest
-from claude_agent_sdk import ResultMessage, TextBlock
+from anyio.abc import Process
+from claude_agent_sdk import (
+    AssistantMessage,
+    ClaudeAgentOptions,
+    CLINotFoundError,
+    SystemMessage,
+    TaskNotificationMessage,
+    TaskStartedMessage,
+    TaskUpdatedMessage,
+    TextBlock,
+)
+from claude_agent_sdk._internal.transport.subprocess_cli import SubprocessCLITransport
 from tests.support.conversation_claude_agent_sdk_bench import (
     ANOTHER_SESSION_ID,
-    CLAUDE_MODEL,
-    CLAUDE_OTHER_MODEL,
     SESSION_ID,
     TURN,
     TURN_2,
     _assistant,
     _bench,
-    _bench_on_real_claude,
     _run,
+    _ScriptedClaudeSdkClient,
     _start_request,
-    _until_the_turn_ends,
     _write,
-    real_claude_only,
 )
 
-from planner.conversation.backends.claude_agent_sdk import _result_error_summary
+from planner.conversation.backends.claude_agent_sdk import (
+    _ClaudeCleanupTransport,
+    _ClaudeProtocolTransport,
+    _ObservedClaudeSdkClient,
+)
+from planner.conversation.backends.cli_compatibility import BackendCliIncompatible
 from planner.conversation.backends.contracts import (
-    BackendSteerAccepted,
+    BackendSpawnFailed,
+    BackendStreamEnded,
+    BackgroundTaskEnded,
+    BackgroundTaskStarted,
     NeedsRebind,
+    PromptWriteFailed,
     SessionLoadFailed,
     TurnToken,
 )
-from planner.conversation.contracts import PromptDeliveryMode
-from planner.conversation.events import ConversationTurnEnding, UserInputAnswer
+from planner.conversation.contracts import ConversationRoleMaterials, PromptDeliveryMode
+from planner.conversation.events import ConversationTurnEnding
 from planner.conversation.message_content import text_message_content
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"cancelled": [], "still_queued": [], "future_field": True},
+        {},
+        {"still_queued": []},
+        {"cancelled": [], "still_queued": "unknown"},
+        {"cancelled": [None], "still_queued": []},
+    ],
+)
+def test_raw_stop_receipt_requires_explicit_queue_evidence(
+    monkeypatch: pytest.MonkeyPatch, payload: dict[str, object],
+) -> None:
+    """An old or malformed response cannot masquerade as a confirmed empty queue."""
+    async def exercise() -> None:
+        transport = _ClaudeProtocolTransport(AsyncMock())
+
+        async def reply(data: str) -> None:
+            request = json.loads(data)
+            assert request["request"] == {"subtype": "interrupt", "cancel_queued": True}
+            transport._observe({
+                "type": "control_response",
+                "response": {"request_id": request["request_id"], "response": payload},
+            })
+
+        monkeypatch.setattr(transport, "write", reply)
+        if "future_field" in payload:
+            assert await transport.interrupt_and_cancel_queued() == (frozenset(), frozenset())
+        else:
+            with pytest.raises(PromptWriteFailed, match="confirm queued command cancellation"):
+                await transport.interrupt_and_cancel_queued()
+
+    _run(exercise)
 
 
 def test_a_resume_that_answers_under_another_session_is_refused(tmp_path: Path) -> None:
@@ -57,10 +114,25 @@ def test_a_resume_that_answers_under_another_session_is_refused(tmp_path: Path) 
     """
 
     async def exercise() -> None:
-        child, sink, clients = _bench(_start_request(workspace_folder=tmp_path))
-        await child.start(
-            _start_request(workspace_folder=tmp_path), vendor_session_cursor=SESSION_ID
+        start = _start_request(
+            workspace_folder=tmp_path,
+            reasoning_effort="medium",
+            role_materials=ConversationRoleMaterials("Worker", (("PLAN_ACTOR", "worker"),)),
         )
+        child, sink, clients = _bench(start)
+        await child.start(start, vendor_session_cursor=SESSION_ID)
+        options = clients[0].options
+        assert options.settings is None
+        assert options.setting_sources is None
+        assert options.cwd == str(tmp_path)
+        assert options.cli_path == Path("/usr/bin/claude")
+        assert options.model == start.model
+        assert options.effort == "medium"
+        assert options.env == {"PLAN_ACTOR": "worker"}
+        assert options.permission_mode == "bypassPermissions"
+        assert options.can_use_tool is not None
+        assert options.resume == SESSION_ID
+        assert options.session_id is None
         await _write(child)
         clients[0].say(_assistant(TextBlock(text="hi"), session_id=ANOTHER_SESSION_ID))
         await clients[0].until_taken_in()
@@ -83,9 +155,26 @@ def test_a_manager_wake_crosses_the_claude_adapter_with_its_sender_label(
     tmp_path: Path,
 ) -> None:
     async def exercise() -> None:
-        start = _start_request(workspace_folder=tmp_path)
+        start = _start_request(
+            workspace_folder=tmp_path,
+            reasoning_effort="medium",
+            role_materials=ConversationRoleMaterials("Worker", (("PLAN_ACTOR", "worker"),)),
+        )
         child, _sink, clients = _bench(start)
         await child.start(start, vendor_session_cursor=None)
+        options = clients[0].options
+        assert options.settings is None
+        assert options.setting_sources is None
+        assert options.cwd == str(tmp_path)
+        assert options.cli_path == Path("/usr/bin/claude")
+        assert options.model == start.model
+        assert options.effort == "medium"
+        assert options.env == {"PLAN_ACTOR": "worker"}
+        assert options.permission_mode == "bypassPermissions"
+        assert options.can_use_tool is not None
+        assert options.resume is None
+        assert options.session_id is not None
+        assert UUID(options.session_id).version == 4
         content = text_message_content("Review the manager wake.")
         await child.write_prompt(
             TurnToken(conversation_id="c-claude-1", turn_number=1),
@@ -104,264 +193,557 @@ def test_a_manager_wake_crosses_the_claude_adapter_with_its_sender_label(
     _run(exercise)
 
 
-def _failed_result(**changes: object) -> ResultMessage:
-    values: dict[str, object] = {
-        "subtype": "error_during_execution",
-        "duration_ms": 1,
-        "duration_api_ms": 1,
-        "is_error": True,
-        "num_turns": 1,
-        "session_id": SESSION_ID,
-    }
-    values.update(changes)
-    return ResultMessage(**values)  # type: ignore[arg-type]
+def test_a_claude_model_change_rebinds_the_child_and_preserves_the_conversation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A same-provider model change must cross Claude's fresh-child boundary."""
+    from claude_agent_sdk import ResultMessage
+
+    from planner.conversation.backends.claude_agent_sdk import (
+        ClaudeAgentSdkBackendChild,
+        ClaudeAgentSdkBackendChildFactory,
+        ClaudeAgentSdkChildLaunch,
+    )
+    from planner.conversation.child_custody import host_boot_identity
+    from planner.conversation.contracts import (
+        ConversationBackendKey,
+        ConversationStartRequest,
+        PromptDeliveryStarted,
+        ResolvedConversationStart,
+    )
+    from planner.conversation.live_tail import ConversationLiveTail
+    from planner.conversation.local_child_contracts import LocalChildIdentity
+    from planner.conversation.message_files import ConversationMessageFiles
+    from planner.conversation.storage import ConversationStore
+    from planner.conversation.system import SqliteProcessConversationSystem
+    from planner.core.db import connect, create_schema
+
+    original_start = ClaudeAgentSdkBackendChild.start
+
+    async def start_scripted_child(
+        child: ClaudeAgentSdkBackendChild,
+        resolved_start: ResolvedConversationStart,
+        *,
+        vendor_session_cursor: str | None,
+    ) -> None:
+        await original_start(
+            child, resolved_start, vendor_session_cursor=vendor_session_cursor
+        )
+        # The scripted client has no process. Never identify pytest as its child.
+        host = host_boot_identity()
+        assert host is not None
+        await child._sink.record_local_child_custody(  # type: ignore[attr-defined]
+            LocalChildIdentity(pid=2_147_483_647, birth="test-child", boot=host.boot)
+        )
+
+    monkeypatch.setattr(ClaudeAgentSdkBackendChild, "start", start_scripted_child)
+    db_path = str(tmp_path / "claude-model-change.db")
+    conn = connect(db_path)
+    create_schema(conn)
+    conn.close()
+
+    async def exercise() -> None:
+        clients: list[_ScriptedClaudeSdkClient] = []
+
+        def make(options: ClaudeAgentOptions) -> _ScriptedClaudeSdkClient:
+            client = _ScriptedClaudeSdkClient(options)
+            clients.append(client)
+            return client
+
+        store = ConversationStore(db_path)
+        system = SqliteProcessConversationSystem(
+            store=store,
+            message_files=ConversationMessageFiles(db_path),
+            backend_child_factories={
+                key: ClaudeAgentSdkBackendChildFactory(
+                    ClaudeAgentSdkChildLaunch(claude_executable=Path("/usr/bin/claude")),
+                    client_factory=make,
+                )
+                for key in ConversationBackendKey
+            },
+            live_tail=ConversationLiveTail(),
+        )
+
+        async def finish(client: _ScriptedClaudeSdkClient, session: str) -> None:
+            client.say(ResultMessage(
+                subtype="success", duration_ms=1, duration_api_ms=1,
+                is_error=False, num_turns=1, session_id=session,
+            ))
+            await client.until_taken_in()
+            await system.wait_until_quiescent()
+
+        try:
+            await system.start_conversation(ConversationStartRequest(
+                conversation_id="claude-model-change", backend_key=ConversationBackendKey.claude,
+                model="opus", workspace_folder=tmp_path,
+            ))
+            first = await system.send(
+                "claude-model-change", text_message_content("First turn"), sender_label="owner",
+            )
+            assert isinstance(first, PromptDeliveryStarted)
+            session = clients[0].options.session_id
+            assert session is not None
+            await finish(clients[0], session)
+            changed = await system.send(
+                "claude-model-change", text_message_content("Use Sonnet"),
+                sender_label="owner", model_change="sonnet",
+            )
+            assert isinstance(changed, PromptDeliveryStarted)
+            assert [client.options.model for client in clients] == ["opus", "sonnet"]
+            assert clients[0].disconnected
+            assert len(clients[0].prompts) == 1
+            assert clients[1].options.resume == session
+            assert len(clients[1].prompts) == 1
+            assert "Use Sonnet" in clients[1].prompts[0]
+            record = await store.read_conversation("claude-model-change")
+            assert record is not None
+            assert record.model == "sonnet"
+            assert record.vendor_session_cursor == session
+            await finish(clients[1], session)
+        finally:
+            await system.shutdown()
+
+    _run(exercise)
 
 
-def test_claude_401_result_reports_authentication_rejection_without_guessing() -> None:
-    result = _failed_result(api_error_status=401, result="credential may be expired")
-    assert _result_error_summary(result) == "authentication was rejected (HTTP 401)"
+def test_background_tasks_follow_claudes_live_set(tmp_path: Path) -> None:
+    """Claude's live set alone says which tasks are live, so an end it never announced
+    still clears the task, and each end says how it happened. The frames follow claude's
+    real order, including a terminated claude stopping its tasks before its stream ends.
+    """
+
+    def live(*task_ids: str, ambient: str | None = None) -> SystemMessage:
+        tasks: list[dict[str, object]] = [
+            {"task_id": task_id, "task_type": "local_bash", "description": f"sleep for {task_id}"}
+            for task_id in task_ids
+        ]
+        if ambient is not None:
+            watcher = {"task_id": ambient, "task_type": "monitor", "description": "watch"}
+            tasks.append({**watcher, "ambient": True})
+        return SystemMessage(
+            subtype="background_tasks_changed",
+            data={"type": "system", "subtype": "background_tasks_changed", "tasks": tasks},
+        )
+
+    def started(task_id: str) -> TaskStartedMessage:
+        return TaskStartedMessage(
+            subtype="task_started",
+            data={},
+            task_id=task_id,
+            description=f"sleep for {task_id}",
+            uuid=f"u-{task_id}",
+            session_id=SESSION_ID,
+        )
+
+    def notified(task_id: str, status: str) -> TaskNotificationMessage:
+        return TaskNotificationMessage(
+            subtype="task_notification",
+            data={},
+            task_id=task_id,
+            status=status,  # type: ignore[arg-type]
+            output_file="/tmp/out",
+            summary="",
+            uuid=f"n-{task_id}",
+            session_id=SESSION_ID,
+        )
+
+    def updated(task_id: str, status: str) -> TaskUpdatedMessage:
+        return TaskUpdatedMessage(
+            subtype="task_updated",
+            data={},
+            task_id=task_id,
+            patch={"status": status},
+            status=status,  # type: ignore[arg-type]
+            session_id=SESSION_ID,
+        )
+
+    async def exercise() -> None:
+        start = _start_request(workspace_folder=tmp_path)
+        child, sink, clients = _bench(start)
+        await child.start(start, vendor_session_cursor=SESSION_ID)
+        clients[0].say(
+            live("a", ambient="w"),
+            started("a"),
+            updated("a", "completed"),
+            notified("a", "completed"),
+            live(ambient="w"),
+            # Stopped by the agent, which goes on working: the stop is the task's own end.
+            live("b"),
+            started("b"),
+            updated("b", "killed"),
+            live(),
+            _assistant(TextBlock(text="stopped it")),
+            # A shell whose end claude never announced leaves the live set all the same.
+            live("e"),
+            started("e"),
+            live(),
+            _assistant(TextBlock(text="carrying on")),
+            # A watcher claude marks ambient stops being activity while it goes on.
+            live("m"),
+            live(ambient="m"),
+            # Stopped while claude itself is being terminated: the stream ends next.
+            live("c"),
+            started("c"),
+            notified("c", "stopped"),
+            updated("c", "killed"),
+            live(),
+        )
+        clients[0].end_the_stream()
+        await clients[0].until_taken_in()
+
+        assert sink.session_news == [
+            BackgroundTaskStarted(task_id="a", task_description="sleep for a"),
+            BackgroundTaskEnded(task_id="a", task_status="completed"),
+            BackgroundTaskStarted(task_id="b", task_description="sleep for b"),
+            BackgroundTaskEnded(task_id="b", task_status="killed"),
+            BackgroundTaskStarted(task_id="e", task_description="sleep for e"),
+            BackgroundTaskEnded(task_id="e", task_status="unreported"),
+            BackgroundTaskStarted(task_id="m", task_description="sleep for m"),
+            BackgroundTaskEnded(task_id="m", task_status="ambient"),
+            BackgroundTaskStarted(task_id="c", task_description="sleep for c"),
+            BackgroundTaskEnded(task_id="c", task_status="killed"),
+            BackendStreamEnded(),
+        ]
+        await child.stop()
+
+    _run(exercise)
 
 
-def test_claude_result_without_failure_detail_uses_the_honest_fallback() -> None:
-    result = _failed_result(subtype="")
-    assert _result_error_summary(result) == "the turn failed for an unknown reason"
+def test_claudes_own_command_reply_is_reported_only_when_nothing_else_says_it(
+    tmp_path: Path,
+) -> None:
+    """Claude answers a local command with a ``<synthetic>`` message and no streamed text.
+
+    That message is the only place a command's reply exists. It is held, and reported as
+    soon as the model works on (``/goal set`` starts the goal in the same turn) or just
+    before a completed ending. A failed turn already shows its error, which Claude also
+    writes this way, and automatic compaction records its own outcome, so neither
+    repeats it. Ordinary model text stays ordinary agent output.
+    """
+    from claude_agent_sdk import ResultMessage, ToolUseBlock
+
+    goal_set = "Goal set: the file done.txt exists"
+    refusal = "/goal can't run while hooks are restricted."
+
+    def result(*, is_error: bool = False, text: str | None = None) -> ResultMessage:
+        return ResultMessage(
+            subtype="error_during_execution" if is_error else "success",
+            duration_ms=1,
+            duration_api_ms=0,
+            is_error=is_error,
+            num_turns=0,
+            session_id=SESSION_ID,
+            result=text,
+        )
+
+    def synthetic(text: str) -> AssistantMessage:
+        return _assistant(TextBlock(text=text), model="<synthetic>")
+
+    async def exercise() -> None:
+        start = _start_request(workspace_folder=tmp_path)
+        child, sink, clients = _bench(start)
+        await child.start(start, vendor_session_cursor=SESSION_ID)
+        # The order Claude 2.1.259 uses for /goal set: its reply, then the goal's work.
+        await _write(child, "/goal the file done.txt exists", TURN)
+        clients[0].say(
+            synthetic(goal_set),
+            _assistant(ToolUseBlock(id="write-1", name="Write", input={"file_path": "done.txt"})),
+            _assistant(TextBlock(text="Done.")),
+            result(),
+        )
+        await clients[0].until_taken_in()
+        assert sink.calls_in_order == [
+            "command_reply", "tool_call_started", "token_usage", "turn_ended",
+        ]
+        await _write(child, "/goal finish the work", TURN_2)
+        clients[0].say(synthetic(refusal), result())
+        await clients[0].until_taken_in()
+        failing_turn = TurnToken(conversation_id=TURN.conversation_id, turn_number=3)
+        await _write(child, "hello", failing_turn)
+        overloaded = "API Error: 529 Overloaded"
+        clients[0].say(synthetic(overloaded), result(is_error=True, text=overloaded))
+        await clients[0].until_taken_in()
+        compaction_turn = TurnToken(conversation_id=TURN.conversation_id, turn_number=4)
+        compact = text_message_content("/compact")
+        await child.write_prompt(
+            compaction_turn,
+            compact,
+            sender_content=compact,
+            sender_label="Panels",
+            mode=PromptDeliveryMode.queue,
+            model_change=None,
+            reasoning_effort_change=None,
+            automatic_compaction=True,
+        )
+        clients[0].say(synthetic("Error: No messages to compact"), result())
+        await clients[0].until_taken_in()
+
+        assert sink.command_replies == [(TURN, goal_set), (TURN_2, refusal)]
+        assert sink.message_texts == [(TURN, "Done.")]
+        assert [ending["ending"] for ending in sink.endings] == [
+            ConversationTurnEnding.completed,
+            ConversationTurnEnding.completed,
+            ConversationTurnEnding.failed,
+            ConversationTurnEnding.completed,
+        ]
+        await child.stop()
+
+    _run(exercise)
 
 
 # --- the claude on this machine ------------------------------------------------------------------
 
 
-@real_claude_only
-def test_real_claude_holds_a_conversation_across_a_stop_and_a_resume(
+@pytest.mark.parametrize(
+    ("failure", "cursor", "expected_error"),
+    [
+        (CLINotFoundError("Claude executable is absent"), SESSION_ID, BackendSpawnFailed),
+        (BackendCliIncompatible("Update Claude to at least 2.1.219"),
+         SESSION_ID, BackendSpawnFailed),
+        (BackendSpawnFailed("Cannot save the Claude process identity: disk full"),
+         SESSION_ID, BackendSpawnFailed),
+        (RuntimeError("Not logged in. Run /login."), None, BackendSpawnFailed),
+        (RuntimeError("Requested session is unavailable"), SESSION_ID, SessionLoadFailed),
+    ],
+)
+def test_unavailable_claude_start_preserves_adapter_failure_and_sends_no_prompt(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    failure: Exception,
+    cursor: str | None,
+    expected_error: type[Exception],
 ) -> None:
-    """A codeword given before the child was stopped comes back after it is resumed.
+    async def refuse_connect(self: _ScriptedClaudeSdkClient) -> None:
+        raise failure
 
-    This is the whole of the durable-session claim: the cursor the adapter minted names a
-    session the next child picks the conversation up from.
-    """
-
-    async def exercise() -> None:
-        resolved_start = _start_request(workspace_folder=tmp_path, model=CLAUDE_MODEL)
-        child, sink, _ = _bench_on_real_claude(resolved_start)
-        await child.start(resolved_start, vendor_session_cursor=None)
-        assert len(sink.cursors) == 1
-        cursor = sink.cursors[0]
-
-        await _write(child, "Remember the codeword ZARDOZ. Reply with just: OK")
-        await _until_the_turn_ends(sink)
-        assert sink.endings[-1]["ending"] is ConversationTurnEnding.completed
-        await child.stop()
-
-        resumed, resumed_sink, _ = _bench_on_real_claude(resolved_start)
-        await resumed.start(resolved_start, vendor_session_cursor=cursor)
-        await _write(resumed, "What was the codeword? Reply with just the word.")
-        await _until_the_turn_ends(resumed_sink)
-        said = " ".join(text for _, text in resumed_sink.message_texts)
-        assert "ZARDOZ" in said.upper()
-        await resumed.stop()
-
-    _run(exercise, seconds=300.0)
-
-
-@real_claude_only
-def test_real_claude_refuses_a_session_it_does_not_have(tmp_path: Path) -> None:
-    """The named build obligation, against the CLI itself: never a fresh thread in silence."""
+    monkeypatch.setattr(_ScriptedClaudeSdkClient, "connect", refuse_connect)
 
     async def exercise() -> None:
-        resolved_start = _start_request(workspace_folder=tmp_path, model=CLAUDE_MODEL)
-        child, _, _ = _bench_on_real_claude(resolved_start)
-        with pytest.raises(SessionLoadFailed) as would_not_load:
-            await child.start(
-                resolved_start,
-                vendor_session_cursor="00000000-0000-4000-8000-000000000000",
-            )
-        assert "No conversation found" in str(would_not_load.value)
+        start = _start_request(workspace_folder=tmp_path)
+        child, sink, clients = _bench(start)
+        try:
+            with pytest.raises(expected_error) as refusal:
+                await child.start(start, vendor_session_cursor=cursor)
+            assert str(refusal.value) == str(failure)
+            assert refusal.value.__cause__ is failure
+            assert len(clients) == 1
+            assert clients[0].prompts == []
+            assert clients[0].streamed_messages == []
+            assert sink.cursors == []
+            assert sink.endings == []
+        finally:
+            await child.stop()
 
-    _run(exercise, seconds=120.0)
+    _run(exercise)
 
 
-@real_claude_only
-def test_real_claude_accepts_a_uuid_steer_and_keeps_one_panels_turn(
-    tmp_path: Path,
+@pytest.mark.parametrize("failure", [RuntimeError("disconnect failed"), asyncio.CancelledError()])
+def test_failed_disconnect_retains_client_and_fences_prompt_and_restart(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failure: BaseException
 ) -> None:
     async def exercise() -> None:
-        resolved_start = _start_request(workspace_folder=tmp_path, model=CLAUDE_MODEL)
-        child, sink, _ = _bench_on_real_claude(resolved_start)
-        await child.start(resolved_start, vendor_session_cursor=None)
-        await _write(
-            child,
-            "Run one foreground Bash call: `sleep 4; echo first`. "
-            "After it returns, reply with exactly ORIGINAL-DONE.",
-        )
-        while not sink.tools_started:
-            await asyncio.sleep(0.1)
+        start = _start_request(workspace_folder=tmp_path)
+        child, _sink, clients = _bench(start)
+        await child.start(start, vendor_session_cursor=None)
+        client = clients[0]
+        original_disconnect = client.disconnect
 
-        outcome = await child.steer(
-            TURN,
-            text_message_content(
-                "After the current command, include PANELS-FIRST-STEER in your reply."
-            ),
-            sender_label="owner",
-        )
-        assert isinstance(outcome, BackendSteerAccepted)
-        second_outcome = await child.steer(
-            TURN,
-            text_message_content(
-                "Also include PANELS-SECOND-STEER in your final reply."
-            ),
-            sender_label="owner",
-        )
-        assert isinstance(second_outcome, BackendSteerAccepted)
-        await _until_the_turn_ends(sink)
-        assert len(sink.endings) == 1
-        assert sink.endings[0]["turn"] == TURN
-        assert sink.token_usage
-        assert all(report["turn"] == TURN for report in sink.token_usage)
-        assert all(token == TURN for token, _ in sink.message_texts)
-        assert sink.tools_finished
-        assert all(tool["turn"] == TURN for tool in sink.tools_started)
-        assert all(tool["turn"] == TURN for tool in sink.tools_finished)
-        assert sink.calls_in_order[-1] == "turn_ended"
-        said = " ".join(text for _, text in sink.message_texts)
-        assert "PANELS-FIRST-STEER" in said
-        assert "PANELS-SECOND-STEER" in said
-        await child.stop()
+        async def fail() -> None:
+            raise failure
 
-    _run(exercise, seconds=300.0)
-
-
-@real_claude_only
-def test_real_claude_stops_a_running_turn_when_it_is_cancelled(tmp_path: Path) -> None:
-    async def exercise() -> None:
-        resolved_start = _start_request(workspace_folder=tmp_path, model=CLAUDE_MODEL)
-        child, sink, _ = _bench_on_real_claude(resolved_start)
-        await child.start(resolved_start, vendor_session_cursor=None)
-        await _write(
-            child,
-            "Run one foreground Bash command: `sleep 60; echo finished`. "
-            "After it returns, reply with exactly FINISHED.",
-        )
-        while not sink.tools_started:
-            await asyncio.sleep(0.1)
-        steer_outcome = await child.steer(
-            TURN,
-            text_message_content(
-                "After the command, reply with exactly MUST-NOT-RUN-AFTER-STOP."
-            ),
-            sender_label="owner",
-        )
-        assert isinstance(steer_outcome, BackendSteerAccepted)
-        await child.cancel_running_turn()
-        assert sink.endings[-1]["ending"] is ConversationTurnEnding.interrupted
-
-        await _write(child, "Reply with exactly RESUMED-AFTER-STOP.", TURN_2)
-        await _until_the_turn_ends(sink)
-        resumed_ending = sink.endings[-1]
-        assert resumed_ending["turn"] == TURN_2
-        assert resumed_ending["ending"] is ConversationTurnEnding.completed
-        assert "RESUMED-AFTER-STOP" in " ".join(
-            text for token, text in sink.message_texts if token == TURN_2
-        )
-        assert "MUST-NOT-RUN-AFTER-STOP" not in " ".join(
-            text for _, text in sink.message_texts
-        )
-        await child.stop()
-
-    _run(exercise, seconds=300.0)
-
-
-@real_claude_only
-def test_real_claude_keeps_the_conversation_across_a_model_change(
-    tmp_path: Path,
-) -> None:
-    """The rebind is the core's, and this is the half the adapter owes it: the same session
-    comes back up on the new model with the conversation intact."""
-
-    async def exercise() -> None:
-        resolved_start = _start_request(workspace_folder=tmp_path, model=CLAUDE_MODEL)
-        child, sink, _ = _bench_on_real_claude(resolved_start)
-        await child.start(resolved_start, vendor_session_cursor=None)
-        cursor = sink.cursors[0]
-        await _write(child, "Remember the codeword XANADU. Reply with just: OK")
-        await _until_the_turn_ends(sink)
-
+        monkeypatch.setattr(client, "disconnect", fail)
+        with pytest.raises(type(failure)):
+            await child.stop()
+        assert child._client is client
+        assert child._reader is None
         with pytest.raises(NeedsRebind):
-            content = text_message_content(
-                "What was the codeword? Reply with just the word."
-            )
-            await child.write_prompt(
-                TURN,
-                content,
-                sender_content=content,
-                sender_label="owner",
-                mode=PromptDeliveryMode.queue,
-                model_change=CLAUDE_OTHER_MODEL,
-                reasoning_effort_change=None,
-            )
+            await _write(child, "must not reach provider")
+        with pytest.raises(BackendSpawnFailed, match="cleanup handles"):
+            await child.start(start, vendor_session_cursor=None)
+        assert len(clients) == 1
+        assert client.prompts == []
+        monkeypatch.setattr(client, "disconnect", original_disconnect)
         await child.stop()
+        await child.stop()
+        assert child._client is None
+        assert client.disconnected
 
-        on_the_new_model = _start_request(
-            workspace_folder=tmp_path, model=CLAUDE_OTHER_MODEL
-        )
-        rebound, rebound_sink, _ = _bench_on_real_claude(on_the_new_model)
-        await rebound.start(on_the_new_model, vendor_session_cursor=cursor)
-        await rebound.write_prompt(
-            TURN,
-            content,
-            sender_content=content,
-            sender_label="owner",
-            mode=PromptDeliveryMode.queue,
-            model_change=CLAUDE_OTHER_MODEL,
-            reasoning_effort_change=None,
-        )
-        await _until_the_turn_ends(rebound_sink)
-        said = " ".join(text for _, text in rebound_sink.message_texts)
-        assert "XANADU" in said.upper()
-        await rebound.stop()
-
-    _run(exercise, seconds=420.0)
+    _run(exercise)
 
 
-@real_claude_only
-def test_real_claude_is_told_the_answer_the_owner_chose(tmp_path: Path) -> None:
-    """The whole of the claim, against the CLI: claude asks, the owner answers, claude knows.
+def test_prequery_connect_failure_cannot_skip_retained_transport_exit_proof(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The actual SDK drops a pre-query transport without closing its live process."""
+    monkeypatch.setattr(
+        "planner.conversation.backends.claude_agent_sdk.ensure_cli_compatible", AsyncMock()
+    )
+    async def exercise() -> None:
+        options = ClaudeAgentOptions()
+        transport = _ClaudeCleanupTransport("", options)
+        observed = _ObservedClaudeSdkClient(options, _ClaudeProtocolTransport(transport))
+        process = SimpleNamespace(returncode=None)
+        closes = 0
 
-    The proof is claude's own next sentence naming the colour that was chosen here. Anything
-    less — the ask rendering nicely, the callback returning — would not show that the answer
-    reached the model at all.
-    """
+        async def partial_connect(self: SubprocessCLITransport) -> None:
+            self._process = cast(Process, process)
+            raise RuntimeError("post-spawn pre-query failure")
+
+        async def sdk_close(self: SubprocessCLITransport) -> None:
+            nonlocal closes
+            closes += 1
+            self._process = None
+
+        monkeypatch.setattr(SubprocessCLITransport, "connect", partial_connect)
+        monkeypatch.setattr(SubprocessCLITransport, "close", sdk_close)
+        with pytest.raises(RuntimeError, match="termination remains unconfirmed"):
+            await observed.connect()
+        assert observed._client._query is None
+        assert closes == 1  # Startup attempts cleanup but cannot prove native exit.
+        assert transport._cleanup_process is cast(Process, process)
+        with pytest.raises(RuntimeError, match="termination remains unconfirmed"):
+            await observed.disconnect()
+        # The SDK now lost its handle. Its no-op disconnect still cannot establish
+        # exit for the exact process that our wrapper continues to own.
+        assert observed._client._transport is None
+        assert transport._cleanup_process is cast(Process, process)
+        with pytest.raises(RuntimeError, match="termination remains unconfirmed"):
+            await observed.disconnect()
+        assert closes == 3
+        process.returncode = 0
+        await observed.disconnect()
+        await observed.disconnect()
+        assert closes == 5
+        assert transport._cleanup_process is cast(Process, process)
+
+    _run(exercise)
+
+
+@pytest.mark.parametrize("admission", [True, False, None])
+def test_ordinary_send_requires_observed_uuid_admission(
+    tmp_path: Path, admission: bool | None,
+) -> None:
+    from planner.conversation.backends.contracts import BackendPromptRejected, PromptWriteFailed
 
     async def exercise() -> None:
-        resolved_start = _start_request(workspace_folder=tmp_path, model=CLAUDE_MODEL)
-        child, sink, _ = _bench_on_real_claude(resolved_start)
-        await child.start(resolved_start, vendor_session_cursor=None)
-        await _write(
-            child,
-            "Use the AskUserQuestion tool to ask me whether I prefer the colour red, blue "
-            "or green. After I answer, reply with exactly one sentence naming the colour I "
-            "chose.",
-        )
+        start = _start_request(workspace_folder=tmp_path)
+        child, _sink, clients = _bench(start)
+        await child.start(start, vendor_session_cursor=None)
+        clients[0].steer_admission = admission
+        content = text_message_content("exact request")
+        try:
+            if admission is True:
+                result = await child.write_prompt(
+                    TurnToken("c-claude-1", 1), content, sender_content=content,
+                    sender_label="owner", mode=PromptDeliveryMode.queue,
+                    model_change=None, reasoning_effort_change=None,
+                )
+                assert result.composed_content_delivered is True
+            else:
+                expected = BackendPromptRejected if admission is False else PromptWriteFailed
+                with pytest.raises(expected):
+                    await _write(child)
+            assert len(clients[0].watched_user_message_uuids) == 1
+        finally:
+            await child.stop()
+    _run(exercise)
 
-        async def until_asked() -> None:
-            while not sink.user_input_requests:
-                await asyncio.sleep(0.1)
 
-        await asyncio.wait_for(until_asked(), 120.0)
-        request = sink.user_input_requests[0]
-        question = request.questions[0]
-        blue = next(
-            option for option in question.options if "blue" in option.label.lower()
-        )
+def test_observed_admission_survives_subsequent_query_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def exercise() -> None:
+        start = _start_request(workspace_folder=tmp_path)
+        child, sink, clients = _bench(start)
+        await child.start(start, vendor_session_cursor=None)
+        client = clients[0]
+        original = client.query
 
-        await child.answer_user_input(
-            request.request_id,
-            (UserInputAnswer(question.question_id, (blue.label,)),),
+        async def accepted_then_failed(prompt: object) -> None:
+            await original(prompt)  # type: ignore[arg-type]
+            raise RuntimeError("wire failed after provider admission")
+
+        monkeypatch.setattr(client, "query", accepted_then_failed)
+        content = text_message_content("request")
+        try:
+            result = await child.write_prompt(
+                TurnToken("c-claude-1", 1), content, sender_content=content,
+                sender_label="owner", mode=PromptDeliveryMode.queue,
+                model_change=None, reasoning_effort_change=None,
+            )
+            assert result.composed_content_delivered is True
+            assert sink.endings[0]["ending"] is ConversationTurnEnding.failed
+        finally:
+            await child.stop()
+    _run(exercise)
+
+
+def test_transport_records_identity_before_sdk_protocol_initialization(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The observed client's reporter reaches the SDK's pre-initialization transport seam."""
+    import threading
+
+    from planner.conversation.local_child_contracts import LocalChildIdentity
+
+    identity = LocalChildIdentity(123, "birth", "boot")
+    stages = []
+    loop_thread = threading.get_ident()
+
+    def inspect(pid):  # type: ignore[no-untyped-def]
+        assert threading.get_ident() != loop_thread
+        return identity
+    monkeypatch.setattr(
+        "planner.conversation.backends.claude_agent_sdk.ensure_cli_compatible", AsyncMock()
+    )
+    monkeypatch.setattr(
+        "planner.conversation.backends.claude_agent_sdk.process_identity", inspect
+    )
+
+    async def native_connect(transport):  # type: ignore[no-untyped-def]
+        stages.append("spawn")
+        transport._process = SimpleNamespace(pid=123, returncode=0)
+    monkeypatch.setattr(SubprocessCLITransport, "connect", native_connect)
+
+    async def exercise() -> None:
+        transport = _ClaudeCleanupTransport("", ClaudeAgentOptions(
+            cli_path="/scripted/claude", cwd=str(tmp_path),
+        ))
+        client = _ObservedClaudeSdkClient(
+            ClaudeAgentOptions(), _ClaudeProtocolTransport(transport)
         )
-        await _until_the_turn_ends(sink)
-        assert sink.endings[-1]["ending"] is ConversationTurnEnding.completed
-        said = " ".join(text for _, text in sink.message_texts).lower()
-        assert "blue" in said
-        assert "did not answer" not in said
+        async def record(value):  # type: ignore[no-untyped-def]
+            assert value == identity
+            stages.append("custody")
+        client.set_custody_reporter(record)
+        await transport.connect()
+        stages.append("initialize")
+        assert stages == ["spawn", "custody", "initialize"]
+
+    _run(exercise)
+
+
+def test_a_reader_that_died_with_an_error_does_not_keep_the_client_open(tmp_path: Path) -> None:
+    """A dead task raises its error on every await, so stop() once never reached disconnect."""
+
+    async def exercise() -> None:
+        start = _start_request(workspace_folder=tmp_path)
+        child, _sink, clients = _bench(start)
+        await child.start(start, vendor_session_cursor=None)
+        assert child._reader is not None
+        child._reader.cancel()
+        await asyncio.gather(child._reader, return_exceptions=True)
+
+        async def died_of_a_lock() -> None:
+            raise sqlite3.OperationalError("database is locked")
+
+        child._reader = asyncio.create_task(died_of_a_lock())
+        await asyncio.gather(child._reader, return_exceptions=True)
+
         await child.stop()
 
-    _run(exercise, seconds=300.0)
+        assert child._reader is None
+        assert child._client is None
+        assert clients[0].disconnected
+
+    _run(exercise)

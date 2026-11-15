@@ -1,103 +1,37 @@
-# Database and managed-file backups
+# Backups
 
-Panels protects its canonical SQLite record and its managed-file tree with small local
-snapshots. A backup can run while Panels is serving requests: SQLite copies the live database
-through its online backup API, so committed WAL data is included without stopping the
-application, and the managed-file tree is copied alongside it.
+A backup is a small verified snapshot of Headroom's record, taken so an operator can return it to a recent state. It holds the database, the worker-settings folder, and the managed skill copies. It runs while Headroom is serving, using SQLite's online backup.
 
-```
-live SQLite database ──online copy──┐
-managed-file tree    ──file copy────┤
-                                     ▼
-                            temporary snapshot
-                            │ integrity + checksums
-                            ▼
-                    atomic verified snapshot
-                            │ keep newest seven verified snapshots
-                            ▼
-                    operator-selected restore
-```
+## What a snapshot holds
 
-Each snapshot is a directory containing `database.sqlite`, `metadata.json`, and — when any
-managed root exists — a `files/` directory holding a copy of each captured root plus a
-`manifest.json` of every file's checksum. Metadata records the deployed revision, creation time,
-the database checksum, the format, the list of captured managed roots with the manifest's
-checksum, and the fact that verification passed.
+- **The database.** Everything canonical, including the skill history, notification choices, registered devices, and the Web Push identity. Restoring the database keeps registered devices working.
+- **Worker settings and managed skills.** Copied beside the database. Headroom could rebuild the skill files from the database, but the snapshot keeps them anyway.
 
-The managed-file tree includes **ticket files** (`files/`) and the Panels **skills**
-(`skills/`) beside the database. The skills there are copies Panels writes from the
-database, so the database is what actually has to be restored; the copies are rebuilt
-from it whenever it is opened.
-The user's normal Hermes, Codex, and Claude homes only link to that authority; backup
-does not capture or replace unrelated user-installed skills. The managed skills root is
-captured only once it exists; until then its absence is normal, not a failure.
+It leaves out Ticket files and uploads under `files/`, agent homes, and anything off the host. On a fresh machine those artifacts are simply absent, and the app still starts from the restored database. Off-host copies are not part of this system.
 
-The temporary directory is never published, and a snapshot publishes only when both the database
-integrity check and the managed-file manifest verify. A failed copy, integrity check,
-verification, metadata write, or atomic publish therefore leaves existing verified snapshots
-untouched. Retention runs only after publication and keeps the seven newest verified snapshots,
-removing only verified recovery points beyond that set. If removal fails, the older recovery point
-remains.
+The database and the folders are copied back to back, not at one transactional instant. This is recovery to a recent night, not point-in-time history.
 
-The database and managed-file tree are independently verified recovery artifacts captured
-back-to-back at nightly granularity; they are not a single transactional point-in-time. This is
-recoverability to recent state, not point-in-time versioning.
+## How snapshots are made and kept
 
-The SQLite record keeps immutable copies of every managed skill version and the versions
-bound to worker-step messages. The managed `skills/` tree keeps the current editable files.
-A normal snapshot preserves both the current skills and their earlier recorded content.
+A snapshot is written to a temporary folder and published only after the database integrity check and the file checksums pass. A failure leaves earlier snapshots untouched. Only the newest few verified snapshots are kept. Two callers take them, both through the installed app: the nightly timer described in [Environments](environments.md), and [Deployment](deployment.md) before an update whose new release changes the database schema, while the server still runs. If that backup fails, the live app is not replaced. A mismatch against the installed app record logs a warning and does not block a backup. The strict file check at install time stays.
 
-Notification choices, device subscriptions, delivery state, and the Web Push identity
-are all part of the SQLite record. The ordinary verified database snapshot therefore
-preserves them together. Restoring that database keeps installed devices usable; replacing
-only the application does not rotate the identity.
+## Restore
 
-The general repository command is:
+Restore runs only while the service is stopped. It validates the whole snapshot before it touches anything, then replaces the database and swaps in each folder the snapshot holds. Each step undoes itself if it fails, but the restore as a whole is not one transaction. It restores only the folders the snapshot lists, so a new snapshot leaves an existing `files/` tree alone.
 
-```sh
-panels environment backup --source-db /path/to/planner.db --backup-dir /path/to/backups --deployed-revision "$REVISION"
-```
+Deployment's own recovery uses a snapshot only before the new app is proven. After that, nothing rewinds data automatically. Any other restore is a deliberate operator act. Prove a snapshot on isolated copies, never on live, and never stop production just to check that a snapshot opens. The steps are in [ops/panels-environments/backup-restore.md](../ops/panels-environments/backup-restore.md).
 
-Nightly and pre-deployment automation both enter through the validated deployed app:
+## Decisions that shape it
 
-```sh
-"$HOME/Deployments/Panels/current/app/bin/panels-launcher" environment backup-current \
-  --source-db ~/Deployments/Panels/current/data/planner.db \
-  --backup-dir ~/Deployments/Panels/current/data/backups \
-  --current-app ~/Deployments/Panels/current/app
-```
+- Verified or nothing: a snapshot exists only after its checks pass.
+- The record, not the artifacts. Uploads and Ticket files are outside the snapshot and outside app replacement.
+- Restore is offline and validates first.
 
-The systemd user timer runs this command as `vps`. The deployment transaction completes
-the same verified command before it replaces `current/app`. If the backup fails, the
-live app is unchanged. Neither path needs sudo or a separate manager checkout.
+## Code
 
-Restore is deliberately stopped-only. It validates the whole snapshot — the database and every
-managed-root manifest — before touching anything. It restores the database first (staging any
-existing `-wal` and `-shm` files and atomically replacing it), then restores each captured
-managed root to its live location through an atomic directory swap. A database replacement
-failure restores the old database sidecars; the managed roots roll back among themselves if any
-one swap fails:
+- `src/planner/environments/backup.py`: capture, verification, retention, and restore.
+- The `environment backup`, `backup-current`, and `restore` commands in `src/planner/environments/cli.py`.
+- `ops/panels-environments/panels-db-backup.*`: the Linux nightly unit.
+- [Mac source installation](../ops/mac-home/installation.md): the login-session backup schedule and isolated restore procedure.
 
-```sh
-panels environment restore --snapshot /path/to/backups/snapshot-... --destination-db /path/to/planner.db --live-stopped
-```
-
-Both commands derive every managed root from the database path, so the nightly setup
-needs no additional inputs.
-
-The concrete nightly setup, configurable paths, inspection commands, and pre-deployment hook
-are in [ops/panels-environments/backup-restore.md](../ops/panels-environments/backup-restore.md).
-
-Code paths: `src/planner/environments/backup.py` and `src/planner/environments/cli.py`.
-
-## Handoffs
-
-The live service and its operator-owned paths are described in [runtime environments](environments.md).
-
-## Deferred
-
-Off-host copies and a broader disaster recovery product remain out of scope until a separate
-recovery design exists. Deployment's automatic app recovery is described in
-[production deployment](deployment.md); it does not restore persistent state.
-
-_Last verified: 2026-08-10._
+_Last verified: 2026-11-04._

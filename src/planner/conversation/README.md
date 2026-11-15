@@ -17,9 +17,8 @@ the layer being replaced. Renaming it is the job of whoever deletes that layer.
 - `logic/conversation_start_resolution.py` — the pure rule that applies the floor
   defaults to a start request. It lives with the contract, not inside each
   implementation, so every implementation resolves from one source.
-- `in_memory_conversation_system.py` — a deterministic in-memory implementation. It is a
-  real implementation of the contract, usable as a stand-in wherever a conversation
-  system is needed but a child process is not.
+- `tests/support/in_memory_conversation_system.py` — the deterministic implementation for tests.
+  Production does not import or export it.
 - `message_content.py` — the ordered text, image, and file pieces in each message.
 - `message_files.py` — the durable bytes that image and file pieces name.
 - `file_validation.py` — the accepted document and data formats and their size boundary.
@@ -36,12 +35,18 @@ of the backend is internal to the conversation system and appears nowhere here.
 Permissions are internal too — they have no method, only rules, and those rules are on
 the Protocol's docstring.
 
-A message can contain text, images, and attached documents or data files. Panels accepts
+A message can contain text, images, attached documents, data files, and videos. Panels accepts
 PDF, UTF-8 text, Markdown, CSV, TSV, JSON, and JSONL files. One message can carry at most
 10 MiB of these files. The server validates every attachment before it stores any file.
 It derives each file's media type and byte count rather than trusting browser metadata.
 Conversation send routes reject request bodies above 20 MiB before JSON parsing. This
 ceiling leaves room for the base64 form of both file and image budgets plus JSON metadata.
+
+Video takes a separate bounded upload before message intake. The send carries a ready
+upload reference, which the shared converter adopts as an ordinary durable file piece.
+The destination lock checks the upload before conversation creation. See
+`video_uploads/` and [Conversations](../../../docs/conversations.md)
+for the transfer, retention, quota, and pending-send rules.
 
 The durable message stores a managed file id, the original file name, the canonical media
 type, and the byte count. Hermes receives an ACP resource link. Codex and Claude receive
@@ -53,19 +58,35 @@ conversation runs on the named value. There is no separate set-model operation �
 change rides the message (commit-on-send), a held message applies it when it runs, and a
 refused delivery changes nothing. How a backend realizes the change is internal.
 
-Sprint Item supervisors use the same send operation for targeted Worker guidance. The
+Managers use the same send operation for targeted Worker guidance. The
 item-scoped service requires the Ticket's exact current conversation and records the
 supervisor agent key as sender. It never creates a Worker conversation. Ticket lifecycle
 facts remain outside this send and use their canonical domain actions.
 
 ## The real build lives here too
 
+The authoritative Signal producer lives in `publication/`. Its public types remain in
+`contracts.py`. It publishes complete attention for each exact conversation, with a
+producer epoch, conversation revision and a cursor across conversations.
+
+The producer shares a short synchronous gate with runtime mutations and source
+transactions. It changes actual runtime fields and restores them on rollback. It never
+reconstructs live work from persisted lifecycle status. Explicit persistence repair uses
+private operation evidence and cannot repeat a provider action.
+
+The runtime accepts an injected producer and the retained transaction adapters. Enabling
+the producer without those adapters fails explicitly. The coordinator borrows the
+existing conversation-owner handle and never acquires or closes another lease. Generic
+connection admission, navigation installation and delivery remain separate integrations.
+See [producer composition and repair](publication/README.md) for the exact domain setup
+and the limits of isolated fixture evidence.
+
 What the contract deferred has since been built, in this same package: the event
 record and storage (`events.py`, `storage.py`, one migration), the real system
 (`system.py`), the three backend adapters (`backends/`), and the reading side —
 events-after-a-position, a live tail, and the backend cards (`api.py`,
 `live_tail.py`, `snapshot.py`). The conformance suite runs against the real system
-through a process-backed binder in `tests/unit/test_conversation_conformance.py`.
+through a process-backed binder in `tests/integration/test_conversation_conformance.py`.
 The transcript read and the schema are typed by the real build, not by the
 contract — the seam above still deliberately says nothing about them.
 

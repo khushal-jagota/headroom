@@ -2,18 +2,18 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Request
 
 from planner.conversation.api import delivery_fate_json
 from planner.core.contracts import JsonDict, Principal, PrincipalKind
 from planner.core.errors import ErrorCode, PlannerError
-from planner.message_delivery import service
+from planner.message_delivery import recap_request, service
 from planner.message_delivery.contracts import (
     MessageDeliveryMode,
     MessageDeliveryResult,
     MessageRecordedToOwner,
 )
-from planner.tickets.api import Clk, Conversations, Ctx, DbConn
+from planner.tickets.api import Clk, Conversations, Ctx, connection_off_the_loop
 
 router = APIRouter()
 
@@ -27,7 +27,7 @@ def _principal(raw: object) -> Principal:
     if not isinstance(raw_kind, str):
         raise PlannerError(
             ErrorCode.validation,
-            "recipient kind must be owner, chief, sprint_item, or ticket",
+            "recipient kind must be owner, chief, manager, or ticket",
             {"kind": raw_kind},
         )
     try:
@@ -35,9 +35,18 @@ def _principal(raw: object) -> Principal:
     except ValueError as exc:
         raise PlannerError(
             ErrorCode.validation,
-            "recipient kind must be owner, chief, sprint_item, or ticket",
+            "recipient kind must be owner, chief, manager, or ticket",
             {"kind": raw_kind},
         ) from exc
+    if kind not in (
+        PrincipalKind.owner,
+        PrincipalKind.chief,
+        PrincipalKind.manager,
+        PrincipalKind.ticket,
+    ):
+        raise PlannerError(
+            ErrorCode.validation, "unknown message recipient kind", {"kind": raw_kind}
+        )
     raw_id = raw.get("id")
     if not isinstance(raw_id, str) or not raw_id.strip():
         raise PlannerError(
@@ -91,14 +100,31 @@ def _result_json(result: MessageDeliveryResult) -> JsonDict:
 @router.post("/messages/send")
 async def send_message(
     body: JsonDict,
-    conn: DbConn,
+    request: Request,
     ctx: Ctx,
     clock: Clk,
     conversations: Conversations,
 ) -> JsonDict:
     recipient = _principal(body.get("target"))
-    service.require_reach(conn, ctx.principal, recipient)
     message = _message_text(body.get("message"))
     mode = _message_delivery_mode(body.get("mode", _MISSING))
-    result = await service.send_message(conversations, conn, clock, ctx, recipient, message, mode)
+    async with connection_off_the_loop(request) as conn:
+        result = await service.send_message(
+            conversations, conn, clock, ctx, recipient, message, mode
+        )
+    return _result_json(result)
+
+
+@router.post("/recap-requests")
+async def request_recap(
+    body: JsonDict,
+    request: Request,
+    ctx: Ctx,
+    clock: Clk,
+    conversations: Conversations,
+) -> JsonDict:
+    """Ask an agent below the caller for a fresh recap."""
+    recipient = _principal(body.get("target"))
+    async with connection_off_the_loop(request) as conn:
+        result = await recap_request.request_recap(conversations, conn, clock, ctx, recipient)
     return _result_json(result)
