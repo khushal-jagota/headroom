@@ -388,7 +388,8 @@ def model_refusal(
     disabled = disabled_models(conn, backend_key)
     choices = ", ".join(model for model in offered if model not in disabled)
     return (
-        f'Model "{model_id}" is not offered by {backend_key.value} on {_machine_name(conn, machine)}. '
+        f'Model "{model_id}" is not offered by {backend_key.value} '
+        f"on {_machine_name(conn, machine)}. "
         f"Choose one of: {choices}."
     )
 

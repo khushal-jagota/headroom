@@ -10,7 +10,9 @@ import shutil
 import stat
 import tarfile
 import urllib.request
+from http.client import HTTPMessage
 from pathlib import Path
+from typing import IO
 
 TARGET_REPOSITORY = "library/node"
 TARGET_IMAGE_DIGEST = "sha256:b0ea3309e53992217c31c10aea3ef3ce47c3fffba7416a1e4a5a60b60373b1ed"
@@ -92,7 +94,15 @@ def apply_layer(layer: Path, root: Path) -> None:
 class _DropAuthorizationOnRedirect(urllib.request.HTTPRedirectHandler):
     """Registry blobs redirect to a CDN with signed links that reject our bearer token."""
 
-    def redirect_request(self, req, fp, code, msg, headers, newurl):
+    def redirect_request(
+        self,
+        req: urllib.request.Request,
+        fp: IO[bytes],
+        code: int,
+        msg: str,
+        headers: HTTPMessage,
+        newurl: str,
+    ) -> urllib.request.Request | None:
         redirected = super().redirect_request(req, fp, code, msg, headers, newurl)
         if redirected is not None:
             redirected.remove_header("Authorization")
