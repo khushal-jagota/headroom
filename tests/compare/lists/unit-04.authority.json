@@ -5,6 +5,7 @@
     "src/planner/projects/",
     "src/planner/navigation/",
     "src/planner/machines/",
+    "src/planner/skills/",
     "src/planner/tickets/"
   ],
   "seed_requests": [
@@ -67,6 +68,12 @@
     }
   ],
   "requests": [
+    {
+      "area": "machines",
+      "method": "GET",
+      "path": "/api/skills/stale",
+      "status": 200
+    },
     {
       "method": "GET",
       "path": "/api/projects?detail=full",
