@@ -119,6 +119,7 @@ import {
   deliver_automatic_compaction,
   background_tasks_ended_with_child,
   IdleChildJanitor,
+  LostBackgroundTaskNotices,
   detach_children,
   tell_agent_about_lost_background_tasks,
 } from './runtime/maintenance.ts';
@@ -211,6 +212,7 @@ export class SqliteProcessConversationSystem implements DeliveryServices, Conver
   private update_stop_failed = false;
   private acknowledged_event_failures = new Map<string, number>();
   private idle_janitor: IdleChildJanitor | null = null;
+  readonly lost_task_notices: LostBackgroundTaskNotices;
   private background_tasks_left_by_previous_process: ReadonlyMap<string, readonly string[]>;
   constructor(options: ConversationCoreOptions) {
     for (const key of Object.values(ConversationBackendKey)) {
@@ -222,6 +224,7 @@ export class SqliteProcessConversationSystem implements DeliveryServices, Conver
     if (typeof options.delivery_model_refusal !== 'function')
       throw new Error('Conversation model admission is required');
     this.options = options;
+    this.lost_task_notices = new LostBackgroundTaskNotices(this);
     this.start_admission = new AutomaticStartAdmission({ clock: () => this.monotonic_now() });
     const adopted = remote.initialize_retained_runs(this);
     this.background_tasks_left_by_previous_process = new Map(
@@ -231,13 +234,10 @@ export class SqliteProcessConversationSystem implements DeliveryServices, Conver
   async tell_agents_of_background_tasks_lost_at_restart(): Promise<void> {
     this.require_runtime_ownership();
     const left_behind = this.background_tasks_left_by_previous_process;
-    const remaining = new Map(left_behind);
-    this.background_tasks_left_by_previous_process = remaining;
+    this.background_tasks_left_by_previous_process = new Map();
     for (const [conversation_id, task_ids] of [...left_behind].sort(([first], [second]) =>
       first < second ? -1 : first > second ? 1 : 0,
     )) {
-      if (this.options.execution_refusal(conversation_id) !== null) continue;
-      remaining.delete(conversation_id);
       try {
         const state = this.conversation_state(conversation_id);
         if (state === null) continue;
@@ -2330,6 +2330,7 @@ export class SqliteProcessConversationSystem implements DeliveryServices, Conver
     });
     void this.shutdown_task.catch(() => {});
     this.shutting_down = true;
+    this.lost_task_notices.seal();
     if (this.deferred_start_timer !== null) clearTimeout(this.deferred_start_timer);
     this.deferred_start_timer = null;
     this.deferred_start_conversations.clear();

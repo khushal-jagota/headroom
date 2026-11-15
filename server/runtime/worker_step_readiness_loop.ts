@@ -1,4 +1,5 @@
 import { ensure_workspace_activity } from '../ticket_workspaces/data.ts';
+import { manual_start_exempt } from '../conversation/start_admission/index.ts';
 /** Explicit per-Ticket start path. Polling and scheduling remain in Unit 9. */
 import {
   ConversationStartAborted,
@@ -95,145 +96,194 @@ async function _admitted_start_ready_worker_step(
   // The connection capability is borrowed. Its application owner closes it.
   const database = options.connect_database();
   const system = options.conversation_system;
-  return conversation_start.conversation_link_lock(`ticket:${ticket_id}`).run(async () => {
-    const ticket = database.read((sql) => tickets_data.read_ticket(sql, ticket_id));
-    if (
-      database.read((sql) =>
-        conversation_start.configured_ticket_execution_refusal(database, sql, ticket),
-      ) !== null
-    )
-      return new WorkerStepStartResult({ started: false });
-    let conversation_id = ticket.conversation_id;
-    if (
-      conversation_id !== null &&
-      (await observe_conversation_operation(
-        () => system.is_running(conversation_id!),
-        options.signal,
-      ))
-    ) {
-      return new WorkerStepStartResult({ started: false });
-    }
-    if (
-      !database.read((sql) =>
-        worker_step_readiness.is_ready_for_worker_step(sql, ticket, {
-          worker_type_definition: ticket.workflow,
-        }),
-      )
-    )
-      return new WorkerStepStartResult({ started: false });
-    const claimed = database.write((sql) =>
-      tickets_data.claim_ticket_for_worker_step(sql, ticket_id, {
-        readiness_check: worker_step_readiness.is_ready_for_worker_step,
-        now: options.now(),
-      }),
-    );
-    if (claimed === null) return new WorkerStepStartResult({ started: false });
-    const taken_claim = claimed.worker_step_claim;
-    const taken_claim_revision = claimed.worker_step_claim_revision;
-    const paired_opener = database.read(
-      (sql) =>
-        sql.get('SELECT 1 FROM ticket_paired_stage_openers WHERE ticket_id=? AND stage=?', [
-          ticket_id,
-          claimed.stage,
-        ]) !== undefined,
-    );
-    const sender_message_id = worker_memory.new_worker_step_message_id();
-    function give_the_claim_back(opener_succeeded = false): void {
-      database.write((sql) => {
-        const released = tickets_data.release_worker_step_claim(sql, ticket_id, {
-          expected_claim: taken_claim,
-          expected_claim_revision: taken_claim_revision,
-          now: options.now(),
-        });
-        if (released && paired_opener && !opener_succeeded) {
-          tickets_data.forget_user_stage_opener(sql, ticket_id, { stage: claimed!.stage });
-        }
-      });
-    }
-    let fate: PromptDeliveryFate;
-    try {
-      const prompt = database.read((sql) => {
-        const current_ticket = tickets_data.read_ticket(sql, ticket_id);
-        return compose_worker_step_prompt(current_ticket, {
-          worker_type_definition: claimed.workflow,
-          memory_was_lost: worker_memory.conversation_holds_an_unanswered_memory_loss(
-            sql,
-            claimed.conversation_id,
-          ),
-        });
-      });
-      database.write((sql) => ensure_workspace_activity(sql, ticket_id, options.now()));
-      const delivered = await conversation_start.send_to_ticket_conversation(
-        system,
-        database,
-        ticket_id,
-        text_message_content(prompt.model_text),
-        {
-          conversation_id: claimed.conversation_id,
-          created_conversation_id: conversation_start.new_conversation_id(),
-          sender_label: LOOP_SENDER_LABEL,
-          mode: 'queue',
-          sender_message_id,
-          worker_type_registry: options.worker_type_registry,
-          retain_definite_start_refusal: !paired_opener,
-          workspace_activity_recorded: true,
-          now: options.now(),
-          signal: options.signal,
-        },
-      );
-      conversation_id = delivered.conversation_id;
-      fate = delivered.fate;
-    } catch (error) {
-      if (error instanceof ConversationStartAborted) throw error;
-      console.error(
-        `worker step could not be started (ticket=${ticket_id} conversation=${conversation_id})`,
-        error,
-      );
-      give_the_claim_back();
-      return new WorkerStepStartResult({ started: false });
-    }
-    if (fate instanceof PromptDeliveryRefused) {
-      console.error(
-        `worker step send was refused (ticket=${ticket_id} conversation=${conversation_id} reason=${fate.refusal_reason})`,
-      );
+  const starts = manual_start_exempt() ? undefined : system.start_admission;
+  let automatic_identity: string | null = null;
+  let automatic_sent = false;
+  try {
+    return await conversation_start.conversation_link_lock(`ticket:${ticket_id}`).run(async () => {
+      const ticket = database.read((sql) => tickets_data.read_ticket(sql, ticket_id));
+      let conversation_id = ticket.conversation_id;
       if (
-        !paired_opener &&
-        (fate.refusal_reason === 'backend_did_not_start' ||
-          fate.refusal_reason === 'model_resolution_failed')
+        conversation_id !== null &&
+        (await observe_conversation_operation(
+          () => system.is_running(conversation_id!),
+          options.signal,
+        ))
       ) {
-        database.write((sql) =>
+        starts?.finish_unbound(`worker-preparation:${ticket.id}`);
+        return new WorkerStepStartResult({ started: false });
+      }
+      if (
+        database.read((sql) =>
+          conversation_start.configured_ticket_execution_refusal(database, sql, ticket),
+        ) !== null
+      ) {
+        starts?.finish_unbound(`worker-preparation:${ticket.id}`);
+        return new WorkerStepStartResult({ started: false });
+      }
+      if (
+        !database.read((sql) =>
+          worker_step_readiness.is_ready_for_worker_step(sql, ticket, {
+            worker_type_definition: ticket.workflow,
+          }),
+        )
+      )
+        return new WorkerStepStartResult({ started: false });
+      if (starts) {
+        automatic_identity = `worker-preparation:${ticket.id}`;
+        if (
+          !starts.try_start({
+            identity: automatic_identity,
+            work_class: 'worker',
+            destination: ticket.machine_id,
+          })
+        ) {
+          automatic_identity = null;
+          return new WorkerStepStartResult({ started: false });
+        }
+      }
+      const claimed = database.write((sql) =>
+        tickets_data.claim_ticket_for_worker_step(sql, ticket_id, {
+          readiness_check: worker_step_readiness.is_ready_for_worker_step,
+          now: options.now(),
+        }),
+      );
+      if (claimed === null) return new WorkerStepStartResult({ started: false });
+      const taken_claim = claimed.worker_step_claim;
+      const taken_claim_revision = claimed.worker_step_claim_revision;
+      const paired_opener = database.read(
+        (sql) =>
+          sql.get('SELECT 1 FROM ticket_paired_stage_openers WHERE ticket_id=? AND stage=?', [
+            ticket_id,
+            claimed.stage,
+          ]) !== undefined,
+      );
+      const sender_message_id = worker_memory.worker_step_message_id_for_claim(
+        ticket.id,
+        taken_claim_revision,
+      );
+      let dispatch_admitted = true;
+      if (starts && automatic_identity !== null) {
+        dispatch_admitted = starts.transfer(automatic_identity, {
+          identity: sender_message_id,
+          work_class: 'worker',
+          destination: claimed.machine_id,
+        });
+        automatic_identity = sender_message_id;
+      }
+      function give_the_claim_back(opener_succeeded = false): void {
+        database.write((sql) => {
+          const released = tickets_data.release_worker_step_claim(sql, ticket_id, {
+            expected_claim: taken_claim,
+            expected_claim_revision: taken_claim_revision,
+            now: options.now(),
+          });
+          if (released && paired_opener && !opener_succeeded) {
+            tickets_data.forget_user_stage_opener(sql, ticket_id, { stage: claimed!.stage });
+          }
+        });
+      }
+      if (!dispatch_admitted) {
+        give_the_claim_back();
+        return new WorkerStepStartResult({ started: false });
+      }
+      let fate: PromptDeliveryFate;
+      try {
+        const prompt = database.read((sql) => {
+          const current_ticket = tickets_data.read_ticket(sql, ticket_id);
+          return compose_worker_step_prompt(current_ticket, {
+            worker_type_definition: claimed.workflow,
+            memory_was_lost: worker_memory.conversation_holds_an_unanswered_memory_loss(
+              sql,
+              claimed.conversation_id,
+            ),
+          });
+        });
+        database.write((sql) => {
+          tickets_data.mark_worker_step_dispatch_started(sql, ticket_id, taken_claim_revision);
+          ensure_workspace_activity(sql, ticket_id, options.now());
+        });
+        const delivered = await conversation_start.send_to_ticket_conversation(
+          system,
+          database,
+          ticket_id,
+          text_message_content(prompt.model_text),
+          {
+            conversation_id: claimed.conversation_id,
+            created_conversation_id: conversation_start.new_conversation_id(),
+            sender_label: LOOP_SENDER_LABEL,
+            mode: 'queue',
+            sender_message_id,
+            worker_type_registry: options.worker_type_registry,
+            retain_definite_start_refusal: !paired_opener,
+            workspace_activity_recorded: true,
+            now: options.now(),
+            signal: options.signal,
+          },
+        );
+        conversation_id = delivered.conversation_id;
+        fate = delivered.fate;
+        automatic_sent = true;
+      } catch (error) {
+        if (error instanceof ConversationStartAborted) throw error;
+        console.error(
+          `worker step could not be started (ticket=${ticket_id} conversation=${conversation_id})`,
+          error,
+        );
+        give_the_claim_back();
+        return new WorkerStepStartResult({ started: false });
+      }
+      if (starts && automatic_identity !== null) {
+        if (fate instanceof PromptDeliveryRefused || fate instanceof PromptDeliverySuppressed)
+          starts.finish(automatic_identity);
+        else if (fate instanceof PromptDeliveryUncertain) starts.uncertain(automatic_identity);
+      }
+      if (fate instanceof PromptDeliveryRefused) {
+        console.error(
+          `worker step send was refused (ticket=${ticket_id} conversation=${conversation_id} reason=${fate.refusal_reason})`,
+        );
+        if (
+          !paired_opener &&
+          (fate.refusal_reason === 'backend_did_not_start' ||
+            fate.refusal_reason === 'model_resolution_failed')
+        ) {
+          database.write((sql) =>
+            tickets_data.mark_worker_step_claim_errored(sql, ticket_id, {
+              expected_claim: taken_claim,
+              expected_claim_revision: taken_claim_revision,
+              now: options.now(),
+              error_reason: `could not start (${fate.refusal_reason})`,
+            }),
+          );
+        } else give_the_claim_back();
+        return WorkerStepStartResult.from_delivery_fate(fate);
+      }
+      if (fate instanceof PromptDeliverySuppressed) {
+        give_the_claim_back();
+        return WorkerStepStartResult.from_delivery_fate(fate);
+      }
+      if (fate instanceof PromptDeliveryUncertain) {
+        const marked = database.write((sql) =>
           tickets_data.mark_worker_step_claim_errored(sql, ticket_id, {
             expected_claim: taken_claim,
             expected_claim_revision: taken_claim_revision,
             now: options.now(),
-            error_reason: `could not start (${fate.refusal_reason})`,
+            error_reason: 'delivery uncertain',
           }),
         );
-      } else give_the_claim_back();
+        if (marked)
+          console.error(
+            `worker step delivery was uncertain (ticket=${ticket_id} conversation=${conversation_id})`,
+          );
+        return WorkerStepStartResult.from_delivery_fate(fate);
+      }
+      if (paired_opener) give_the_claim_back(true);
       return WorkerStepStartResult.from_delivery_fate(fate);
-    }
-    if (fate instanceof PromptDeliverySuppressed) {
-      give_the_claim_back();
-      return WorkerStepStartResult.from_delivery_fate(fate);
-    }
-    if (fate instanceof PromptDeliveryUncertain) {
-      const marked = database.write((sql) =>
-        tickets_data.mark_worker_step_claim_errored(sql, ticket_id, {
-          expected_claim: taken_claim,
-          expected_claim_revision: taken_claim_revision,
-          now: options.now(),
-          error_reason: 'delivery uncertain',
-        }),
-      );
-      if (marked)
-        console.error(
-          `worker step delivery was uncertain (ticket=${ticket_id} conversation=${conversation_id})`,
-        );
-      return WorkerStepStartResult.from_delivery_fate(fate);
-    }
-    if (paired_opener) give_the_claim_back(true);
-    return WorkerStepStartResult.from_delivery_fate(fate);
-  }, options.signal);
+    }, options.signal);
+  } finally {
+    if (starts && automatic_identity !== null && !automatic_sent)
+      starts.finish_unbound(automatic_identity);
+  }
 }
 
 export async function tell_a_worker_it_lost_its_memory(
@@ -306,6 +356,9 @@ export async function tell_a_worker_it_lost_its_memory(
 export class WorkerStepReadinessLoop {
   private readonly controllers = new Map<string, AbortController>();
   private readonly in_flight = new Map<string, Promise<unknown>>();
+  private readonly in_flight_counts = new Map<string, number>();
+  private readonly ticket_destinations = new Map<string, string>();
+  private last_destination: string | null = null;
   private readonly actual = new Set<Promise<void>>();
   private closing: Promise<void> | undefined;
   private shutdown_settlement: Promise<void> | undefined;
@@ -327,7 +380,8 @@ export class WorkerStepReadinessLoop {
             WHERE json_extract(stage.value, '$.id')=t.stage
               AND json_extract(stage.value, '$.is_terminal'))
         ORDER BY t.updated_at, t.id`);
-      const ready = rows
+      this.ticket_destinations.clear();
+      let ready = rows
         .filter(({ id }) => {
           try {
             const ticket = tickets_data.read_ticket(sql, id);
@@ -335,20 +389,77 @@ export class WorkerStepReadinessLoop {
               conversation_start.configured_ticket_execution_refusal(database, sql, ticket) !== null
             )
               return false;
-            return worker_step_readiness.is_ready_for_worker_step(sql, ticket, {
-              worker_type_definition: ticket.workflow,
-            });
+            if (
+              !worker_step_readiness.is_ready_for_worker_step(sql, ticket, {
+                worker_type_definition: ticket.workflow,
+              })
+            )
+              return false;
+            this.ticket_destinations.set(id, ticket.machine_id);
+            return true;
           } catch (error) {
             if (error instanceof PlannerError && error.code === 'not_found') return false;
             throw error;
           }
         })
         .map(({ id }) => id);
-      return [...new Set([...ready, ...decision_messages.pending_ticket_ids(sql)])];
+      const starts = this.options.conversation_system.start_admission;
+      if (starts) {
+        starts.retain_deferred(
+          'worker-preparation:',
+          new Set(ready.map((id) => `worker-preparation:${id}`)),
+        );
+        ready.sort(
+          (left, right) =>
+            starts.priority([`worker-preparation:${left}`])[1] -
+            starts.priority([`worker-preparation:${right}`])[1],
+        );
+      }
+      const groups = new Map<string, string[]>();
+      for (const id of ready) {
+        const destination = this.ticket_destinations.get(id)!;
+        const group = groups.get(destination) ?? [];
+        group.push(id);
+        groups.set(destination, group);
+      }
+      let destinations = [...groups.keys()];
+      const previous =
+        this.last_destination === null ? -1 : destinations.indexOf(this.last_destination);
+      if (previous >= 0)
+        destinations = [
+          ...destinations.slice(previous + 1),
+          ...destinations.slice(0, previous + 1),
+        ];
+      ready = [];
+      while (destinations.length) {
+        const destination = destinations.shift()!;
+        const group = groups.get(destination)!;
+        ready.push(group.shift()!);
+        if (group.length) destinations.push(destination);
+      }
+      for (const id of decision_messages.pending_ticket_ids(sql)) {
+        if (ready.includes(id)) continue;
+        ready.push(id);
+        this.ticket_destinations.set(id, tickets_data.read_ticket(sql, id).machine_id);
+      }
+      return ready;
     });
   }
   private schedule(ticket_id: string, notice = false): boolean {
     if (this.stop_requested || this.in_flight.has(ticket_id)) return false;
+    const destination =
+      this.ticket_destinations.get(ticket_id) ??
+      this.options
+        .connect_database()
+        .read(
+          (sql) =>
+            sql.get<{ machine_id: string }>('SELECT machine_id FROM tickets WHERE id=?', [
+              ticket_id,
+            ])?.machine_id,
+        );
+    if (destination === undefined) return false;
+    const starts = this.options.conversation_system.start_admission;
+    if (starts && (this.in_flight_counts.get(destination) ?? 0) >= starts.limit) return false;
     if (
       !this.options
         .connect_database()
@@ -367,6 +478,8 @@ export class WorkerStepReadinessLoop {
         : start_ready_worker_step(ticket_id, options),
     );
     this.in_flight.set(ticket_id, task);
+    this.in_flight_counts.set(destination, (this.in_flight_counts.get(destination) ?? 0) + 1);
+    this.last_destination = destination;
     const actual = task
       .then(
         () => {},
@@ -386,6 +499,9 @@ export class WorkerStepReadinessLoop {
       .finally(() => {
         this.in_flight.delete(ticket_id);
         this.controllers.delete(ticket_id);
+        const count = this.in_flight_counts.get(destination)! - 1;
+        if (count) this.in_flight_counts.set(destination, count);
+        else this.in_flight_counts.delete(destination);
       });
     return true;
   }
@@ -427,7 +543,12 @@ export class WorkerStepReadinessLoop {
     } catch (error) {
       console.error('worker-step readiness poll failed', error);
     }
-    if (!this.stop_requested) this.timer = setTimeout(() => this.tick(), this.interval_ms);
+    if (!this.stop_requested) {
+      const fallback = this.interval_ms! / 1000;
+      const delay =
+        this.options.conversation_system.start_admission?.poll_delay(fallback) ?? fallback;
+      this.timer = setTimeout(() => this.tick(), delay * 1000);
+    }
   }
   start(interval_seconds: number): void {
     if (this.interval_ms !== undefined || this.stop_requested)

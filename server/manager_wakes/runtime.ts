@@ -1,5 +1,6 @@
 /** Durable notices use the same conversation doors as ordinary messages. */
 import { randomUUID } from 'node:crypto';
+import { HOME_MACHINE_ID } from '../execution_identity.ts';
 import { automatic_ticket_admitted } from '../runtime/automatic_work.ts';
 import type {
   Database,
@@ -235,6 +236,9 @@ async function admitted_deliver_batch(
     throw error;
   }
   const link_key = agent_key === null ? `ticket:${target.id}` : `agent:${agent_key}`;
+  const starts = conversation_system.start_admission;
+  let admitted_start = false;
+  let offered = false;
   return observe_conversation_operation(
     () =>
       conversation_start.conversation_link_lock(link_key).run(async () => {
@@ -261,10 +265,30 @@ async function admitted_deliver_batch(
             : false;
         observer.check();
         if (running) {
+          starts?.finish_unbound(batch.sender_message_id);
           database.write((sql) => data.release_pending_batch(sql, batch.id, { process_token }), {
             changeSignal: 'silent',
           });
           return false;
+        }
+        if (starts !== undefined) {
+          const destination =
+            agent_key === null
+              ? database.read((sql) => read_ticket(sql, target.id).machine_id)
+              : HOME_MACHINE_ID;
+          if (
+            !starts.try_start({
+              identity: batch.sender_message_id,
+              work_class: agent_key === null ? 'worker' : 'supervisor',
+              destination,
+            })
+          ) {
+            database.write((sql) => data.release_pending_batch(sql, batch.id, { process_token }), {
+              changeSignal: 'silent',
+            });
+            return false;
+          }
+          admitted_start = true;
         }
         const created = conversation_start.new_conversation_id();
         const intended_conversation_id = current ?? created;
@@ -324,6 +348,14 @@ async function admitted_deliver_batch(
         }
         observer.check();
         observer.settled();
+        offered = true;
+        if (
+          delivered.fate instanceof PromptDeliveryRefused ||
+          delivered.fate instanceof PromptDeliverySuppressed
+        )
+          starts?.finish(batch.sender_message_id);
+        else if (delivered.fate instanceof PromptDeliveryUncertain)
+          starts?.uncertain(batch.sender_message_id);
         if (delivered.fate instanceof PromptDeliveryRefused) {
           database.write((sql) =>
             data.record_batch_failure(sql, batch.id, {
@@ -365,7 +397,9 @@ async function admitted_deliver_batch(
         );
       }, observer.signal),
     observer.signal,
-  );
+  ).finally(() => {
+    if (admitted_start && !offered) starts?.finish_unbound(batch.sender_message_id);
+  });
 }
 
 /** Construction is inert. Only the lifecycle composer explicitly starts the timer. */
@@ -437,8 +471,14 @@ export class ManagerWakeLoop {
     }
     const ids: number[] = [];
     const deliveries: Promise<unknown>[] = [];
+    const starts = conversation_system.start_admission;
+    starts?.retain_deferred(
+      'manager_delivery_wake_',
+      new Set(batches.map((batch) => batch.sender_message_id)),
+    );
     for (const batch of batches) {
       if (this.stopped || this.in_flight.has(batch.id)) continue;
+      if (starts !== undefined && this.in_flight.size >= starts.limit) continue;
       ids.push(batch.id);
       const observer = new WakeDeliveryObserver(this.options.assert_database_owned);
       this.observers.set(batch.id, observer);
@@ -511,7 +551,10 @@ export class ManagerWakeLoop {
             this.rerun = false;
             this.wake();
           } else {
-            this.timer = setTimeout(() => this.wake(), this.interval);
+            const delay =
+              this.options.conversation_system.start_admission?.poll_delay(this.interval / 1000) ??
+              this.interval / 1000;
+            this.timer = setTimeout(() => this.wake(), delay * 1000);
             this.timer.unref();
           }
         });
