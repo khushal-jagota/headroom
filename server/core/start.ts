@@ -38,6 +38,7 @@ export type {
 } from '../lifecycle/contracts.ts';
 import { assert_test_database_path } from './test_paths.ts';
 import { ServerServices } from './server_services.ts';
+import type { UpdateBarrier } from '../environments/update_barrier.ts';
 
 export interface ExecutorCompositionContext {
   readonly database: Database;
@@ -60,6 +61,7 @@ export interface ConversationCompositionContext extends Omit<
   one_shot_children: OwnedOneShotChildren;
   child_processes: OwnedChildProcesses;
   executor?: VpsExecutor | null;
+  update_barrier?: UpdateBarrier;
 }
 export interface TestCompositionContext extends ConversationCompositionContext {
   /** Existing original stop only. Test close hooks must never create another budget. */
@@ -208,6 +210,7 @@ export async function startServer(options: ServerOptions = {}): Promise<StartedS
         services.app.value?.server.close(() => {});
       });
       stages.own('video timer', () => clearInterval(services.video_cleanup_timer));
+      stages.own('normal work release', () => services.stop_normal_work_release());
       stages.own('publication', services.revokeSignal);
       stages.own('record admission and subscriptions', () => areas.sealRecord());
       // Stop order is explicit; every independent stop starts before a drain waits.

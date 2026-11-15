@@ -1,4 +1,5 @@
 import Fastify from 'fastify';
+import type { UpdateBarrier } from './environments/update_barrier.ts';
 import type { FastifyInstance } from 'fastify';
 import { fileURLToPath } from 'node:url';
 import { resolve, join } from 'node:path';
@@ -31,6 +32,7 @@ export interface AppServices {
   changes?: Changes;
   areas?: readonly Area[];
   workspaceAdmission?: WorkspaceAdmission;
+  updateBarrier?: UpdateBarrier;
   executor?: VpsExecutor | null;
 }
 export async function createApp(config: Config, services: AppServices): Promise<FastifyInstance> {
@@ -45,7 +47,14 @@ export async function createApp(config: Config, services: AppServices): Promise<
   const request_lifetime = install_request_lifetime(app, services.request_lifetime);
   const changes = services.changes ?? new ChangeSignal();
   installCompatibility(app);
-  installMiddleware(app, config, services.workspaceAdmission, undefined, request_lifetime);
+  installMiddleware(
+    app,
+    config,
+    services.workspaceAdmission,
+    undefined,
+    request_lifetime,
+    services.updateBarrier,
+  );
   const configuredRoot = process.env.PLAN_APP_ROOT;
   const root = configuredRoot
     ? resolve(

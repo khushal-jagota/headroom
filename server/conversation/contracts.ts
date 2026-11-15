@@ -325,6 +325,9 @@ export interface ConversationSystem {
   automatic_start_request?(identity: string, conversation_id: string): Promise<StartRequest>;
   readonly workspace_admission: WorkspaceAdmission;
   workspace_activity(): 'idle' | 'busy' | 'unknown';
+  prepare_update(mode: 'idle' | 'now', signal?: AbortSignal): Promise<boolean>;
+  update_waiting_work(): readonly string[];
+  cancel_update(): boolean;
   run_with_workspace_admission(
     operation: () => void,
     options: { require_idle: boolean },

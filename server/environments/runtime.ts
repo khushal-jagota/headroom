@@ -1,5 +1,6 @@
 /** Per-server composition. External release and executor operations remain explicit. */
 import { dirname, join } from 'node:path';
+import { UpdateBarrier } from './update_barrier.ts';
 import type { Config } from '../core/config.ts';
 import { HOST } from '../core/config.ts';
 import { observe_shutdown } from '../conversation/shutdown.ts';
@@ -54,6 +55,8 @@ export async function createEnvironmentRuntime(
   const { config, changes } = context;
   const database = await resolved_path(config.db_path);
   const data_directory = dirname(database);
+  const update_barrier =
+    context.update_barrier ?? new UpdateBarrier(join(data_directory, 'update-barrier.json'));
   const current_root = dirname(data_directory);
   const installed = await installed_update_root(
     config.app_sha,
@@ -119,6 +122,7 @@ export async function createEnvironmentRuntime(
     staging: operations.staging,
     installer: operations.installer,
     mac: mac.operations,
+    update_barrier,
   });
   const deployment = () =>
     deployment_status(attempts.read(), config.app_sha, {
@@ -130,6 +134,26 @@ export async function createEnvironmentRuntime(
   let actual_stop: Promise<void> | undefined;
   return {
     mac_updates: mac.service,
+    update_barrier,
+    recover_update_barrier() {
+      if (!update_barrier.frozen) return;
+      const generation = update_barrier.generation;
+      const attempt_id = attempts.read()?.attempt_id ?? '';
+      if (updates.owns_preparation(attempt_id)) return;
+      update_barrier.installer_guard(attempt_id, (active) => {
+        if (active) {
+          updates.installer_observed(attempt_id);
+          return;
+        }
+        if (updates.owns_preparation(attempt_id)) return;
+        const released = updates.recover_orphaned_attempt(attempt_id, generation);
+        if (released !== null) update_barrier.remove(released);
+      });
+    },
+    update_attempt_id: () => attempts.read()?.attempt_id ?? '',
+    reopen_update_work(attempt_id) {
+      updates.reopen_trial_work(attempt_id);
+    },
     areas: [
       { prefix: '/api', routes: create_update_routes(updates, mac.reads) },
       { prefix: '/api', routes: create_metrics_routes(metrics) },

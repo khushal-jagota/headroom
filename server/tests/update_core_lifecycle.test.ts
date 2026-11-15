@@ -1,13 +1,27 @@
 /** Real core admission and native shutdown are absent from the in-memory update proofs. */
 import { afterEach, expect, test, vi } from 'vitest';
-import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import {
+  closeSync,
+  copyFileSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  openSync,
+  readFileSync,
+  rmSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, relative } from 'node:path';
 import { fixture, fixture_path } from './ticket_fixture.ts';
+import * as integrity_notices from '../tickets/integrity_notice.ts';
+import { FileUpdateAttemptStore } from '../environments/updates/attempts.ts';
 import { startServer } from '../core/start.ts';
 import type { TestCompositionContext } from '../core/start.ts';
 import type { Database } from '../core/database/contracts.ts';
 import { createReadAccess } from '../core/database/index.ts';
+import * as worker_skill_startup from '../worker_settings/startup.ts';
+import { UpdateBarrier } from '../environments/update_barrier.ts';
+import { flock } from '../core/locks/flock.ts';
 import { acquireRuntimeOwnership } from '../core/locks/index.ts';
 import { BackgroundLoops } from '../core/loops.ts';
 import { SqliteProcessConversationSystem } from '../conversation/system.ts';
@@ -128,7 +142,13 @@ function release(): PublishedUpdate {
     mac: null,
   };
 }
-async function owned_server(installer?: Partial<InstallerOperations>) {
+async function owned_server(
+  installer?: Partial<InstallerOperations>,
+  startup?: {
+    before_start(root: string): void;
+    configure_environment(environment: ComposedEnvironmentRuntime): void;
+  },
+) {
   const root = mkdtempSync(join(tmpdir(), 'panels-update-core-'));
   const path = join(root, 'data/planner.db');
   const registry = new ScriptedBackendRegistry();
@@ -187,6 +207,7 @@ async function owned_server(installer?: Partial<InstallerOperations>) {
     },
   };
   try {
+    startup?.before_start(root);
     const server = await startServer({
       enableWorkerReadiness: true,
       createConversationCore(value) {
@@ -252,6 +273,7 @@ async function owned_server(installer?: Partial<InstallerOperations>) {
           // The status collector is real and is never requested by these proofs.
           collect_status: collect_vps_status,
         });
+        startup?.configure_environment(environment);
         return environment;
       },
     });
@@ -376,7 +398,7 @@ test('real core completion admits an idle update, refuses HTTP writes without mu
       attempt: JSON.parse(readFileSync(join(owned.root, 'data/update-attempt.json'), 'utf8')),
     }));
     expect(owned.context.core!.runtime_turn(delivery.conversation_id)).toBeNull();
-    expect((await owned.status()).attempt.state).toBe('preparing');
+    expect((await owned.status()).attempt.state).toBe('installing');
     expect(owned.context.core!.workspace_admission.closed).toBe(true);
     const refused = async (text: string) => {
       const before = canonical_rows(owned.context.database);
@@ -404,8 +426,9 @@ test('real core completion admits an idle update, refuses HTTP writes without mu
     expect(created.status).toBe(200);
     const resumed = await owned.send('native work after failed update');
     expect(resumed.status).toBe(200);
-    expect((await resumed.json()).fate).toBe('started');
-    await child.finish();
+    const resumed_delivery = await resumed.json();
+    expect(resumed_delivery.fate).toBe('started');
+    await owned.registry.child(resumed_delivery.conversation_id).finish();
   } finally {
     backup.resolve(join(owned.root, 'backups/scripted-snapshot'));
     launch.reject(new Error('test cleanup'));
@@ -413,27 +436,13 @@ test('real core completion admits an idle update, refuses HTTP writes without mu
   }
 }, 20_000);
 
-test('forced update finalizes automatically after a raw provider outlives shutdown grace', async () => {
+test('forced update waits for an admitted provider and ordinary shutdown retains ownership beyond grace', async () => {
   const loops_stop = vi.spyOn(BackgroundLoops.prototype, 'stop');
   const metrics_stop = vi.spyOn(MetricsRuntime.prototype, 'stop');
   const updates_stop = vi.spyOn(UpdateService.prototype, 'stop');
-  const launch_entered = deferred<void>(),
-    trigger_stop = deferred<void>(),
-    stop_started = deferred<void>();
-  let stop_server!: () => Promise<void>;
+  const launch = vi.fn(async () => {});
   let closing: Promise<void> | undefined;
-  const owned = await owned_server({
-    launch: async () => {
-      launch_entered.resolve();
-      await trigger_stop.promise;
-      // Model the service manager's stop after successful external installer launch.
-      // Never await shutdown here: UpdateService.stop joins this advancing flight.
-      closing = stop_server();
-      void closing.catch(() => {});
-      stop_started.resolve();
-    },
-  });
-  stop_server = () => owned.server.close({ deadline: performance.now() / 1000 + 0.5 });
+  const owned = await owned_server({ launch });
   const receipt = deferred<void>(),
     receipt_entered = deferred<void>();
   let child: ScriptedChild | undefined;
@@ -471,14 +480,23 @@ test('forced update finalizes automatically after a raw provider outlives shutdo
       confirm_activity: true,
     });
     expect(forced.status).toBe(200);
-    expect((await forced.json()).attempt.mode).toBe('now');
-    await reached(launch_entered.promise, 'forced installer launch');
-    expect((await owned.status()).attempt.state).toBe('installing');
-    expect(owned.context.core!.workspace_admission.closed).toBe(true);
+    const attempt = (await forced.json()).attempt;
+    expect(attempt.mode).toBe('now');
+    await vi.waitFor(() =>
+      expect(owned.context.core!.workspace_admission.starts_closed).toBe(true),
+    );
+    expect((await owned.status()).attempt.state).toBe('waiting');
+    expect(launch).not.toHaveBeenCalled();
     expect(
       JSON.parse(readFileSync(join(owned.root, 'data/update-attempt.json'), 'utf8'))
         .confirm_activity,
     ).toBe(true);
+
+    expect(owned.context.core!.workspace_admission.closed).toBe(false);
+    expect(
+      (await owned.post('/api/updates/attempts/' + attempt.attempt_id + '/cancel', {})).status,
+    ).toBe(200);
+    expect(owned.context.core!.workspace_admission.starts_closed).toBe(false);
     // Database capabilities are frozen. Observe the actual store/publication doors
     // without replacing their SQL, settlement, or native cleanup behavior.
     const store = owned.context.record.store;
@@ -505,8 +523,8 @@ test('forced update finalizes automatically after a raw provider outlives shutdo
       },
       () => {},
     );
-    trigger_stop.resolve();
-    await reached(stop_started.promise, 'external launch requests server shutdown');
+    closing = owned.server.close({ deadline: performance.now() / 1000 + 0.5 });
+    void closing.catch(() => {});
     await reached(child.wait_for_barrier('owned-detach'), 'original native detach');
     expect(loops_stop).toHaveBeenCalledOnce();
     expect(metrics_stop).toHaveBeenCalledOnce();
@@ -556,7 +574,6 @@ test('forced update finalizes automatically after a raw provider outlives shutdo
       successor.close();
     }
   } finally {
-    trigger_stop.resolve();
     receipt.resolve();
     if (child) await Promise.allSettled([child.release('owned-detach')]);
     await owned.close();
@@ -564,3 +581,166 @@ test('forced update finalizes automatically after a raw provider outlives shutdo
     await provider_return;
   }
 }, 20_000);
+
+test('a retained installer keeps startup health-only and orphan recovery retries without file changes', async () => {
+  // Existing update hosts prove active updates, but not frozen startup or a failed
+  // recovery dispatch with unchanged files. Reuse that host and its scripted adapters.
+  let installer_lock: number | undefined;
+  let fail_recovery = false;
+  let recover_calls = 0;
+  let failed_calls = 0;
+  const metrics_start = vi.spyOn(MetricsRuntime.prototype, 'start');
+  const skill_publication = vi.spyOn(worker_skill_startup, 'publish_worker_skills');
+  const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
+  const owned = await owned_server(undefined, {
+    before_start(root) {
+      new UpdateBarrier(join(root, 'data/update-barrier.json')).freeze('orphan');
+      installer_lock = openSync(join(root, 'data/update-installer.lock'), 'a+');
+      expect(flock(installer_lock, 'try-exclusive')).toBe(0);
+    },
+    configure_environment(environment) {
+      const recover = environment.recover_update_barrier!.bind(environment);
+      environment.recover_update_barrier = () => {
+        recover_calls++;
+        if (fail_recovery) {
+          fail_recovery = false;
+          failed_calls++;
+          throw new Error('scripted recovery dispatch failure');
+        }
+        recover();
+      };
+    },
+  });
+  try {
+    expect(
+      (await fetch(owned.server.address + '/api/health?expected_sha=' + 'a'.repeat(40))).status,
+    ).toBe(200);
+    expect(metrics_start).not.toHaveBeenCalled();
+    expect(skill_publication).not.toHaveBeenCalled();
+    expect(existsSync(join(owned.root, 'workspace/.agents/skills'))).toBe(false);
+    expect(owned.context.core!.workspace_admission.closed).toBe(true);
+    expect((await owned.post('/api/projects', { name: 'held', summary: 'proof' })).status).toBe(
+      503,
+    );
+    expect(owned.environment.update_barrier!.frozen).toBe(true);
+    expect(recover_calls).toBeGreaterThan(0);
+    // The abandoned installer releases only its kernel lock. Its marker never changes.
+    fail_recovery = true;
+    closeSync(installer_lock!);
+    installer_lock = undefined;
+    await vi.waitFor(() => expect(failed_calls).toBe(1), { timeout: 3500 });
+    expect(owned.environment.update_barrier!.frozen).toBe(true);
+    await vi.waitFor(() => expect(metrics_start).toHaveBeenCalledOnce(), { timeout: 3500 });
+    expect(owned.environment.update_barrier!.frozen).toBe(false);
+    expect(skill_publication).toHaveBeenCalledOnce();
+    expect(existsSync(join(owned.root, 'workspace/.agents/skills'))).toBe(true);
+    expect(owned.context.core!.workspace_admission.closed).toBe(false);
+    expect(
+      errors.mock.calls.some(([message]) =>
+        String(message).includes('Normal work could not resume'),
+      ),
+    ).toBe(true);
+    expect((await owned.post('/api/projects', { name: 'released', summary: 'proof' })).status).toBe(
+      200,
+    );
+  } finally {
+    if (installer_lock !== undefined) closeSync(installer_lock);
+    await owned.close();
+  }
+}, 15000);
+
+test('admitted startup notices finish and a stale observer cannot reopen a replacement attempt', async () => {
+  // The existing host proves frozen startup. This case closes start admission
+  // between admitted notices and swaps the observed attempt within recovery.
+  const notices = vi
+    .spyOn(integrity_notices, 'notify_chief')
+    .mockImplementation(async (_db, core) => {
+      core.workspace_admission.close_starts();
+    });
+  const lost_work = vi.spyOn(
+    SqliteProcessConversationSystem.prototype,
+    'tell_agents_of_background_tasks_lost_at_restart',
+  );
+  const owned = await owned_server();
+  try {
+    await vi.waitFor(() => expect(lost_work).toHaveBeenCalledOnce());
+    expect(notices).toHaveBeenCalledOnce();
+    const attempts = new FileUpdateAttemptStore(
+      join(owned.root, 'data/update-attempt.json'),
+      () => {},
+    );
+    const record = {
+      attempt_id: 'observed-A',
+      from_sha: 'a'.repeat(40),
+      to_sha: 'b'.repeat(40),
+      mode: 'idle' as const,
+      confirm_activity: false,
+      state: 'done' as const,
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+      release: release(),
+      detail: null,
+      deadline_at: null,
+      backup: null,
+      steps: {},
+      mac_attempt_id: null,
+      extra: {},
+    };
+    attempts.create(record);
+    const barrier = owned.environment.update_barrier!;
+    const original_reopen = owned.environment.reopen_update_work!.bind(owned.environment);
+    const reopens = vi.fn(original_reopen);
+    owned.environment.reopen_update_work = reopens;
+    let swapped = false;
+    owned.environment.recover_update_barrier = () => {
+      barrier.release();
+      attempts.remove(record.attempt_id, new Set(['done']));
+      attempts.create({ ...record, attempt_id: 'replacement-B' });
+      owned.context.core!.workspace_admission.close_starts();
+      swapped = true;
+    };
+    barrier.freeze(record.attempt_id);
+    await vi.waitFor(() => expect(swapped).toBe(true), { timeout: 3500 });
+    expect(reopens).toHaveBeenCalledExactlyOnceWith(record.attempt_id);
+    expect(owned.context.core!.workspace_admission.starts_closed).toBe(true);
+    await new Promise((resolve) => setTimeout(resolve, 550));
+    expect(reopens).toHaveBeenCalledOnce();
+    expect(owned.context.core!.workspace_admission.starts_closed).toBe(true);
+  } finally {
+    await owned.close();
+  }
+}, 10000);
+
+test('a partial normal startup failure is one-shot while the update observer stays active', async () => {
+  let installer_lock: number | undefined;
+  const failed_start = vi.fn(async () => {
+    throw new Error('scripted partial startup failure');
+  });
+  const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
+  const owned = await owned_server(undefined, {
+    before_start(root) {
+      new UpdateBarrier(join(root, 'data/update-barrier.json')).freeze('orphan');
+      installer_lock = openSync(join(root, 'data/update-installer.lock'), 'a+');
+      expect(flock(installer_lock, 'try-exclusive')).toBe(0);
+    },
+    configure_environment(environment) {
+      environment.start = failed_start;
+    },
+  });
+  try {
+    closeSync(installer_lock!);
+    installer_lock = undefined;
+    await vi.waitFor(() => expect(failed_start).toHaveBeenCalledOnce(), { timeout: 3500 });
+    const failures = () =>
+      errors.mock.calls.filter(([message]) =>
+        String(message).includes('Normal work could not resume after the update trial'),
+      );
+    await vi.waitFor(() => expect(failures()).toHaveLength(1));
+    await new Promise((resolve) => setTimeout(resolve, 800));
+    expect(failed_start).toHaveBeenCalledOnce();
+    expect(failures()).toHaveLength(1);
+  } finally {
+    if (installer_lock !== undefined) closeSync(installer_lock);
+    await owned.close();
+  }
+}, 10000);

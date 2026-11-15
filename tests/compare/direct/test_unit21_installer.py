@@ -128,6 +128,13 @@ def _python(scratch: Scratch, scenario: str) -> tuple[dict[str, Any], str]:
             str(scratch.root / "data/planner.db"),
             "--live-stopped",
         ]
+        # Staging arms an independent restore alarm before exec and retains its
+        # installer lifetime descriptor. Compare the actual restore command below.
+        assert argv[1:5] == ["-I", "-S", "-B", "-c"]
+        assert "signal.alarm" in argv[5] and argv[6] == "900"
+        assert len(options["pass_fds"]) == 1
+        os.fstat(options["pass_fds"][0])
+        argv = argv[7:]
         assert argv == expected, f"unadmitted subprocess: {argv}"
         assert options["check"] and options["timeout"] == 900.0
         events.append(["restore", argv[4], argv[6]])
@@ -167,10 +174,6 @@ def _python(scratch: Scratch, scenario: str) -> tuple[dict[str, Any], str]:
     }, capture_detail
 
 
-@pytest.mark.xfail(
-    run=False,
-    reason="expected-open P5: #916 Linux installer adds the durable update barrier",
-)
 def test_installer_algorithm_and_configured_paths(
     tmp_path: Path, request: pytest.FixtureRequest
 ) -> None:

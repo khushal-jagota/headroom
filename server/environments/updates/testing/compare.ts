@@ -6,6 +6,7 @@ import { attempt_to_dict, parse_attempt, parse_release } from '../codec.ts';
 import type { UpdateAttempt } from '../contracts.ts';
 export {
   probe_service,
+  probe_preparation,
   probe_continuations,
   probe_update_routes,
   probe_node_frontier,
