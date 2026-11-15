@@ -22,7 +22,7 @@ from planner.tickets.contracts import (
 )
 from planner.tickets.logic import admission, fields_codec, machine
 from planner.tickets.logic.decisions import Decision
-from planner.worker_types.contracts import WorkflowDefinition
+from planner.worker_types.contracts import CONSEQUENCES_FIELD_ID, WorkflowDefinition
 
 
 def _accept_gating_proposal(
@@ -83,7 +83,7 @@ def decide_file_proposal(
         field,
         worker_type_definition=worker_type_definition,
     )
-    if parked_destination is None:
+    if parked_destination is None or field == CONSEQUENCES_FIELD_ID:
         return _accept_gating_proposal(
             ticket,
             field,
@@ -131,6 +131,10 @@ def decide_accept(
     resolved_ceiling = machine.resolve_next_ceiling(
         target, next_ceiling, worker_type_definition=worker_type_definition
     )
+    if next_holder is None and machine.completion_follows(
+        ticket.stage, worker_type_definition=worker_type_definition
+    ):
+        next_holder = ticket.ceiling_holder
     if next_holder is None:
         raise PlannerError(
             ErrorCode.scope_missing,
@@ -209,7 +213,13 @@ def decide_complete_user_owned_gate(
         ticket,
         field,
         new_body,
-        target,
+        (
+            worker_type_definition.completed_stage()
+            if machine.completion_follows(
+                ticket.stage, worker_type_definition=worker_type_definition
+            )
+            else target
+        ),
         principal,
         worker_type_definition=worker_type_definition,
     )

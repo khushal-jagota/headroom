@@ -63,7 +63,7 @@ def manager_json(item: Manager) -> JsonDict:
 def manager_tickets(conn: sqlite3.Connection, item_id: str) -> list[JsonDict]:
     """Per-item ticket rows for the tracking-page disclosure: id/title/stage
     plus the board-card signals the sprint ticket row colours off —
-    has_pending_proposal, ticket_status, waiting_to_closeout, gating_field, and
+    has_pending_proposal, ticket_status, gating_field, and
     blocked — ordered created_at, id (matching the loose-ticket ordering). A light
     projection — not full ticket_json — since the disclosure only lists rows that link
     to the ticket.
@@ -110,7 +110,6 @@ def manager_tickets(conn: sqlite3.Connection, item_id: str) -> list[JsonDict]:
                 # looking at is its own.
                 "ceiling_holder": json.loads(str(r["ceiling_holder"])),
                 "ticket_status": facts.ticket_status.value,
-                "waiting_to_closeout": facts.waiting_to_closeout,
                 "gating_field": gating_field,
                 "blocked": facts.blocked,
                 "employee_backend": str(r["employee_backend"]),

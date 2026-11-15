@@ -29,7 +29,6 @@ export type TicketFacts = {
   awaiting_agent_approval: boolean;
   assigned: boolean;
   agent_state: AgentState;
-  waiting_to_closeout: boolean;
   is_done: boolean;
 };
 
@@ -44,7 +43,6 @@ export function ticketFacts(overrides: Partial<TicketFacts> = {}): TicketFacts {
     awaiting_agent_approval: false,
     assigned: false,
     agent_state: "idle",
-    waiting_to_closeout: false,
     is_done: false,
     ...overrides
   };
@@ -111,7 +109,6 @@ function boardCard(facts: TicketFacts): BoardCard {
     is_done: facts.is_done,
     blocked: facts.ticket_status === "blocked",
     conversation_id: "c_reading",
-    waiting_to_closeout: facts.waiting_to_closeout,
     manager_id: null,
     manager_title: null,
     awaiting_reply: facts.awaiting_reply,

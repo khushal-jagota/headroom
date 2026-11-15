@@ -10,7 +10,7 @@ from __future__ import annotations
 from collections.abc import Callable
 
 from playwright.sync_api import BrowserContext, Page, expect
-from tests.e2e.harness import WAIT_MS, ApiHelper, ServerHandle
+from tests.e2e.harness import WAIT_MS, ApiHelper, ServerHandle, capture_success
 from tests.support.connected_rows import _bind, _conversation, _message, _propose
 from tests.support.principals import ticket_principal
 from tests.support.server_fixtures import rail_server  # noqa: F401
@@ -122,6 +122,48 @@ def test_ticket_backlog_resume_and_settled_discovery(
     page.locator("[data-conversation-expand]").click(timeout=WAIT_MS)
     page.locator('[data-conversation-lens-choice="full"]').click()
     expect(page.get_by_text(transcript, exact=True)).to_be_visible()
+
+    page.get_by_role("button", name="Return to the conversation dock").click()
+
+    # The final decision crosses the actual protected-write and reactive-read boundary.
+    api.direct_post(
+        server, f"/api/tickets/{ticket_id}/accept/what_changes",
+        {"next_ceiling": "needs_implementation", "next_holder": {"kind": "owner", "id": "owner"}},
+    )
+    _propose(server, ticket_id, "The implementation is verified; integrate the reviewed result.")
+    final_card = worker.locator('[data-approval-block][data-field="implementation"]')
+    expect(final_card).to_be_visible()
+    approve = final_card.get_by_role("button", name="Approve", exact=True)
+    expect(approve).to_be_visible()
+    with page.expect_response(
+        lambda response: response.request.method == "POST"
+        and "/decision-operations/" in response.url
+    ) as decision_response:
+        approve.click()
+    assert decision_response.value.ok, decision_response.value.text()
+    submitted = decision_response.value.request.post_data_json
+    assert isinstance(submitted, dict)
+    assert "next_ceiling" not in submitted
+    assert "next_holder" not in submitted
+    after_approval = api.get(server, path)
+    assert after_approval["stage"] == "needs_consequences"
+    assert after_approval["pending_proposal"] is None
+    expect(worker.locator('[data-section-stage="needs_consequences"]')).to_be_visible()
+    expect(final_card).to_have_count(0)
+    expect(worker.locator("[data-stage-fold-open]")).to_contain_text("3 of 4 done")
+    expect(worker).to_contain_text("At Consequences")
+    expect(worker.locator("[data-leash]")).to_have_count(0)
+    capture_success(page, "consequences-follow-through.png")
+    _propose(server, ticket_id, "The approved integration is complete and verified.")
+    completed = api.get(server, path)
+    assert completed["stage"] == "done"
+    assert completed["pending_proposal"] is None
+    expect(worker.get_by_role("button", name="Approve", exact=True)).to_have_count(0)
+    expect(worker.locator("[data-stage-fold-open]")).to_contain_text("4 of 4 done")
+    worker.locator("[data-stage-fold-open]").click()
+    worker.locator('[data-field="consequences"] > summary').click()
+    expect(worker).to_contain_text("The approved integration is complete and verified.")
+    capture_success(page, "consequences-done.png")
 
     api.direct_patch(server, f"/api/managers/{item['id']}/settled", {"settled": True})
     page.goto(server.base + "/#/workspace")

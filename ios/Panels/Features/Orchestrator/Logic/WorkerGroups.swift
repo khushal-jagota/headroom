@@ -15,7 +15,6 @@ protocol GroupedWorker: Identifiable where ID == String {
     var assigned: Bool { get }
     var awaitingAgentApproval: Bool { get }
     var agentState: String { get }
-    var waitingToCloseout: Bool? { get }
     var activityAt: Double? { get }
     var conversationSignal: ConversationSignal? { get }
 }
@@ -23,7 +22,7 @@ extension ManagerTicket: GroupedWorker { var isBlocked: Bool { blocked } }
 extension TicketSummary: GroupedWorker { var isBlocked: Bool { blocked == true } }
 
 enum WorkerGroup: String, CaseIterable, Identifiable {
-    case approval, answer, yours, errored, agent, consequences, agentApproval, empty, blocked, backlogged, done
+    case approval, answer, yours, errored, agent, agentApproval, empty, blocked, backlogged, done
     var id: String { rawValue }
     var title: String {
         switch self {
@@ -32,7 +31,6 @@ enum WorkerGroup: String, CaseIterable, Identifiable {
         case .yours: "Yours"
         case .errored: "Errored"
         case .agent: "Agent"
-        case .consequences: "Waiting on Consequences"
         case .agentApproval: "Awaiting an Agent’s Approval"
         case .empty: "Empty"
         case .blocked: "Blocked"
@@ -54,7 +52,6 @@ enum WorkerGroup: String, CaseIterable, Identifiable {
         if ticket.ticketStatus == "blocked" || ticket.isBlocked { return .blocked }
         if ticket.agentState == "errored" { return .errored }
         if ticket.ticketStatus == "agent" || ticket.agentState == "working" { return .agent }
-        if ticket.waitingToCloseout == true { return .consequences }
         if ticket.awaitingAgentApproval { return .agentApproval }
         return .empty
     }

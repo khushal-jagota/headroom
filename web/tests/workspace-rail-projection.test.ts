@@ -70,7 +70,7 @@ describe("manager rail projection", () => {
 
   it("filters ineligible overlap before grouping and keeps quiet work in the sidebar", () => {
     const rows = [card("working", { conversation_signal:{working:true,message_for_owner:false} }),
-      card("closeout", { ticket_status:"empty", waiting_to_closeout:true }),
+      card("closeout", { ticket_status:"empty", gating_field:"consequences" }),
       card("agent-review", { ticket_status:"empty", awaiting_agent_approval:true }),
       card("idle", { ticket_status:"empty" }),
       card("blocked-status", {ticket_status:"blocked", agent_state:"working", awaiting_approval:true}),
@@ -86,8 +86,7 @@ describe("manager rail projection", () => {
     const rail = buildWorkspaceRail(rows, managers(rows));
     for (const groups of [rail.chiefGroups, rail.items[0].groups, rail.settledItems[0].groups]) {
       expect(groups.map((group) => [group.label, group.cards.map((row) => row.id)]))
-        .toEqual([["Agent", ["working"]], ["Waiting on Consequences", ["closeout"]],
-          ["Awaiting an agent's approval", ["agent-review"]], ["Other", ["idle"]]]);
+        .toEqual([["Agent", ["working"]], ["Awaiting an agent's approval", ["agent-review"]], ["Other", ["closeout", "idle"]]]);
     }
     expect(rail.groups.find((group) => group.key === "empty")?.label).toBe("Empty");
     const released = rows.map((row) => dependencies.includes(row) ? {...row, blocked:false, activity_at:100} : row);
@@ -511,7 +510,7 @@ describe('canonical navigation workspace presentation',()=>{
       expect(last.awaiting_approval).toBe(false);expect(last.awaiting_agent_approval).toBe(true);
     } finally {adapter.destroy();}
   });
-  it('moves the Consequences category from the same publication even while the label manifest stays stale',()=>{
+  it('keeps Consequences in ordinary resting work while the label manifest stays stale',()=>{
     const adapter=createNavigationCollection(),knowledge=createNavigationKnowledge();
     const staleLabels=buildLifecycle({worker_type:'coding',label:'Coding',stages:[{id:'needs_implementation',label:'Implementation',gating_field:'implementation',is_terminal:false,ownership_mode:'worker'}],advance:{},fields:[{id:'implementation',label:'Implementation'}],ceiling_range:[],default_ceiling:'needs_implementation',worker_profile_id:'worker',default_backend:'codex',default_model:null,default_reasoning_effort:null});
     const records=[{...sourceTicket,value:{...sourceTicket.value,conversation_id:null}},...sourceRecords.slice(2)];
@@ -524,7 +523,7 @@ describe('canonical navigation workspace presentation',()=>{
       adapter.publishSnapshot(currentSnapshot({...continuity,records}),'before');
       const batch={...continuity,base_revision:'0',revision:'1',upserts:[{...sourceTicket,value:{...sourceTicket.value,conversation_id:null,gating_field:'consequences'}}],deletes:[]};
       adapter.publishBatch(envelope(batch),encodeCursor(batch),'gating-only');
-      expect(seen).toEqual(['empty','waiting_to_closeout']);
+      expect(seen).toEqual(['empty','empty']);
       expect(staleLabels.gatingField.needs_implementation).toBe('implementation');
       const ticket=navigationWorkspacePresentation(knowledge.getView()!).tickets[0];
       expect(ticket.gating_field).toBe('consequences');

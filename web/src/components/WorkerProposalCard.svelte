@@ -5,7 +5,7 @@
   import InlineEdit from "./InlineEdit.svelte";
   import ErrorLine from "./ErrorLine.svelte";
   import ComposerField from "./conversation/ComposerField.svelte";
-  import { advanceTargetFor, fieldLabelFor, preferredScopeCeilingFor, type Lifecycle } from "../lib/lifecycle";
+  import { advanceTargetFor, finalApprovalFor, fieldLabelFor, preferredScopeCeilingFor, type Lifecycle } from "../lib/lifecycle";
   import { decisionIdentity, decisionRecovery, DecisionRefusedError, recallReviewDecision, submitReviewDecision } from "../lib/review/decision";
   import type { PendingTicketProposal, Principal } from "../lib/types";
 
@@ -47,7 +47,7 @@
   let lastKey: string | null = null;
   let newStage = $derived(advanceTargetFor(lifecycle, stage, ""));
   let nextCeiling = $derived(preferredScopeCeilingFor(lifecycle, newStage));
-  let finalApproval = $derived(newStage !== null && lifecycle.stageIsTerminal[newStage] === true);
+  let finalApproval = $derived(finalApprovalFor(lifecycle, stage));
   let identity = $derived([ticketId, proposal.field, proposal.created_at, proposal.revision, lifecycle.workerType, newStage, finalApproval, lifecycle.stageOrder.join(","), lifecycle.ceilingRange.join(","), manager?.id || ""].join("|"));
   let decisionKey = $derived(decisionIdentity(ticketId, proposal.revision));
   $effect(() => {
@@ -78,10 +78,11 @@
     const text = revisionText;
     busy = true; error = null;
     try {
-      if (change.approval && change.ceiling) {
+      if (change.approval && (change.ceiling || finalApproval)) {
         await submitReviewDecision(ticketId, proposal.field, { action: "approve", body: {
           message: text || null,
-          next_ceiling: change.ceiling, next_holder: change.holder, expected_proposal_revision: revision,
+          ...(!finalApproval ? { next_ceiling: change.ceiling, next_holder: change.holder } : {}),
+          expected_proposal_revision: revision,
           ...(editedBody !== proposal.body ? { edited_body: editedBody } : {})
         } });
         if (!mounted || decisionKey !== key) return;
@@ -157,7 +158,7 @@
       <!-- Approve wears Send it back's fill (owner): its place, furthest right, marks it. -->
       <Button variant="secondary" data-accept aria-haspopup={finalApproval ? undefined : "listbox"} aria-expanded={finalApproval ? undefined : scopePicker?.expanded ?? false} aria-controls={finalApproval ? undefined : scopePicker?.controls}
         onkeydown={(event: KeyboardEvent) => { if (!finalApproval && (event.key === "ArrowDown" || event.key === "ArrowUp")) { event.preventDefault(); scopePicker?.openApproval(event.currentTarget as HTMLElement); } }} disabled={disabled || busy || resolved || holdDecisions || !nextCeiling}
-        onclick={(event) => finalApproval ? void completeScope({ approval:true, ceiling:"none", holder }) : scopePicker?.openApproval(event.currentTarget as HTMLElement)}>Approve</Button>
+        onclick={(event) => finalApproval ? void completeScope({ approval:true, holder }) : scopePicker?.openApproval(event.currentTarget as HTMLElement)}>Approve</Button>
     </div>
   </div>
   <p class="revision-hint">{proposal.field === "brief" ? "Enter adds a line. Choose Approve." : "Enter adds a line. Choose Send it back or Approve."}</p>

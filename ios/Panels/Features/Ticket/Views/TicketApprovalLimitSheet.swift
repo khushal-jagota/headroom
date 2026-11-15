@@ -16,7 +16,10 @@ struct TicketApprovalLimitSheet: View {
         self.save = save
         self.approval = approval
         self.guidance = guidance
-        _ceiling = State(initialValue: approval ? (presentation.manifest.advance?[presentation.ticket.stage] ?? presentation.ticket.ceiling) : presentation.ticket.ceiling)
+        let requested = approval ? presentation.manifest.advance?[presentation.ticket.stage] : presentation.ticket.ceiling
+        let initial = presentation.ceilingOptions.first { $0.id == requested }?.id
+            ?? presentation.ceilingOptions.first?.id ?? "done"
+        _ceiling = State(initialValue: initial)
         _holder = State(initialValue: presentation.holders.contains(presentation.ticket.ceilingHolder) ? presentation.ticket.ceilingHolder : Principal(kind: "owner", id: "owner"))
     }
 
@@ -26,9 +29,6 @@ struct TicketApprovalLimitSheet: View {
                 Section("Approved until") {
                     Picker("Approval limit", selection: $ceiling) {
                         if !approval { Text("No further").tag("none") }
-                        if !presentation.ceilingOptions.contains(where: { $0.id == presentation.ticket.ceiling }), presentation.ticket.ceiling != "none" {
-                            Text(presentation.ceilingLabel).tag(presentation.ticket.ceiling)
-                        }
                         ForEach(approval ? Array(presentation.ceilingOptions.dropFirst()) : presentation.ceilingOptions) { stage in Text(stage.label).tag(stage.id) }
                     }.pickerStyle(.inline).labelsHidden().accessibilityIdentifier("ticket-ceiling-picker")
                 }

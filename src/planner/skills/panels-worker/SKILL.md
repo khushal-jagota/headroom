@@ -49,6 +49,8 @@ When the current approved step creates a Ticket, load and follow `panels-ticket-
 
 File proposals canonically and stop at the gate. Let Panels route review and continuation. Do not duplicate a proposal or its status in chat. Enter Consequences only through system admission.
 
+After the last decision is approved, perform only the authorized Consequences work and verify the result. Submit the Consequences report with `panels worker propose`. Panels settles that report and finishes the Ticket without another approval. If the work fails or needs new authority, request help instead of reporting completion. Automatic settlement does not grant permission for human-owned work.
+
 Explicit owner requests still apply.
 
 ## To be a useful worker:

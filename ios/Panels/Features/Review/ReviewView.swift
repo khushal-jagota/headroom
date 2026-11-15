@@ -372,10 +372,10 @@ private struct ReviewCardView: View {
         guard let decision, decision.ready else { return }
         approvalGuidance = decision.approvalGuidance(api: store.client)
         Haptics.light()
-        if decision.nextStage == "done", let holder = decision.ticket?.ceilingHolder {
+        if decision.finalApproval {
             busyAction = "approve"
             Task {
-                if await decision.approve(api: store.client, ceiling: "done", holder: holder, guidance: approvalGuidance) { complete() }
+                if await decision.approve(api: store.client, guidance: approvalGuidance) { complete() }
                 else { busyAction = nil; ReviewStyle.error() }
             }
         } else { decision.approvalFlow = DecisionApprovalFlow(); sheet = .approve }

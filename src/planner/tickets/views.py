@@ -35,7 +35,6 @@ from planner.tickets.integrity import (
 from planner.tickets.logic import fields_codec, machine, proposal_routing
 from planner.tickets.logic.creation_receipt import supervision_receipt
 from planner.tickets.logic.review import eligible_for_owner_review
-from planner.worker_types.contracts import CONSEQUENCES_FIELD_ID
 from planner.worker_types.registry import workflow_manifest
 from planner.worker_types.store import workflow_from_row
 
@@ -193,10 +192,6 @@ def _ticket_summary_json(row: sqlite3.Row) -> JsonDict:
     ticket_status = str(row["ticket_status"])
     return {
         "is_backlogged": bool(row["is_backlogged"]),
-        "waiting_to_closeout": (
-            row["gating_field"] == CONSEQUENCES_FIELD_ID
-            and ticket_status == TicketStatus.empty.value
-        ),
         "id": str(row["id"]),
         "title": str(row["title"]),
         "locale": str(row["locale"]),

@@ -123,7 +123,23 @@ def validate_revision_guidance(message: str) -> None:
         )
 
 
-def parse_next_ceiling(raw: str | None, worker_type_definition: WorkflowDefinition) -> str | None:
+def parse_next_ceiling(
+    raw: str | None,
+    worker_type_definition: WorkflowDefinition,
+    *,
+    current_stage: str | None = None,
+) -> str | None:
+    from planner.tickets.logic import machine
+
+    if current_stage is not None and machine.completion_follows(
+        current_stage, worker_type_definition=worker_type_definition
+    ):
+        target = worker_type_definition.advance_target(current_stage)
+        if raw in (None, NO_FURTHER, target, worker_type_definition.completed_stage()):
+            return worker_type_definition.completed_stage()
+        raise PlannerError(
+            ErrorCode.scope_invalid, "final approval authorizes completion through Done"
+        )
     if raw is None:
         return None
     if raw == NO_FURTHER:
