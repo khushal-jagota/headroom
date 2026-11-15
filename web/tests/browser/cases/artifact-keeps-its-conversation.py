@@ -739,8 +739,17 @@ def run(browser, urls):
     writes.clear()
     artifact_link(page.locator('[data-review-ticket-card]'), "t_elsewhere").click()
     expect(viewer).to_be_visible()
+    # An artifact opened from a proposal answers to that proposal: its decision area, with
+    # the note already written, stands where the Worker chat does for every other artifact.
+    decision = viewer.locator('[data-review-item-type="proposal"]')
+    expect(decision).to_be_visible()
+    expect(decision.locator('[data-review-revision-input]')).to_have_value("Keep this proposed revision")
+    expect(decision.locator('[data-accept]')).to_be_visible()
+    expect(viewer.locator("[data-conversation-pane]")).to_have_count(0)
+    decision.locator('[data-review-revision-input]').fill("Revised beside the artifact")
     viewer.locator('[data-ticket-artifact-close]').click()
-    expect(revision).to_have_value("Keep this proposed revision")
+    expect(revision).to_have_value("Revised beside the artifact")
+    revision.fill("Keep this proposed revision")
     expect(proposal.locator('[data-edit]')).to_have_text("Keep this edited proposal body")
     assert not writes, writes
 
