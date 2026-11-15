@@ -897,8 +897,7 @@ async def credential_transcript(
         ("other_phase", "POST", original, failed),
         ("named_report", "POST", named, failed),
         ("confirmed", "POST", original, current),
-        ("legacy_closed", "GET", legacy, None),
-        ("credential_kept", "GET", original, None),
+        ("legacy_open", "GET", legacy, None),
     ]
     routed: list[
         tuple[str, str, str, dict[str, str] | list[tuple[str, str]], dict[str, str] | None]
@@ -909,6 +908,17 @@ async def credential_transcript(
          {**legacy, "Origin": "https://owner.invalid"}, {}),
         *((name, method, "/api/executor/update", headers, body)
           for name, method, headers, body in operations),
+        ("close_legacy", "POST", "/api/executor/credential/handover/close", legacy, None),
+        ("close_foreign", "POST", "/api/executor/credential/handover/close",
+         {**original, "X-Panels-Executor-Credential": "b" * 43}, None),
+        ("close_duplicate", "POST", "/api/executor/credential/handover/close",
+         [*original.items(), ("X-Panels-Executor-Credential", "a" * 43)], None),
+        ("close", "POST", "/api/executor/credential/handover/close",
+         {key: value for key, value in original.items()
+          if key != "X-Panels-Executor-Incarnation"}, None),
+        ("close_repeat", "POST", "/api/executor/credential/handover/close", original, None),
+        ("legacy_closed", "GET", "/api/executor/update", legacy, None),
+        ("credential_kept", "GET", "/api/executor/update", original, None),
         ("enrollment", "POST", "/api/machines", {},
          {"name": "Enrolled Linux", "platform": "linux"}),
     ]
@@ -951,12 +961,15 @@ async def credential_transcript(
             else:
                 answers.append(await call())
     assert [answer["status"] for answer in answers] == [
-        403, 403, 403, 200, 200, 403, 403, 409, 200, 200, 200, 200, 403, 200, 200,
+        403, 403, 403, 200, 200, 403, 403, 409, 200, 200, 200, 200, 200,
+        403, 403, 403, 200, 200, 403, 200, 200,
     ]
     for answer in answers:
         rows = {row["machine_id"]: row for row in answer["credentials"]}
         original_row = rows[ORIGINAL_MAC_MACHINE_ID]
-        closed = answer["name"] in {"confirmed", "legacy_closed", "credential_kept", "enrollment"}
+        closed = answer["name"] in {
+            "close", "close_repeat", "legacy_closed", "credential_kept", "enrollment"
+        }
         assert original_row["legacy_closed_at_ms"] == (NOW if closed else None)
         assert original_row["pending_credential"] == (None if closed else "a" * 43)
         assert original_row["platform"] == "darwin"
@@ -972,6 +985,9 @@ async def credential_transcript(
     )
     assert by_name["authenticate"]["body"]["prefetch"]["application_revision"] == "a" * 40
     assert by_name["platform"]["body"]["prefetch"]["application_revision"] == "b" * 40
+    assert by_name["confirmed"]["body"] == {"confirmed": True}
+    assert by_name["close"]["body"] == by_name["close_repeat"]["body"] == {"closed": True}
+    assert by_name["close"]["credentials"] == by_name["close_repeat"]["credentials"]
     assert by_name["enrollment"]["body"] == {
         "machine_id": ENROLLED_MACHINE, "credential": ENROLLED_CREDENTIAL, "issued_at_ms": NOW,
     }
@@ -1138,7 +1154,7 @@ def test_executor_credentialed_update_handover(
             assert [report[1] for report in updates.reports] == [
                 "darwin", "darwin", "darwin", "linux", "darwin",
             ]
-            # The recording service sees open authority. The confirmed response sees its commit.
+            # Reports leave authority open. Only the explicit close response sees its commit.
             assert all(
                 row["legacy_closed_at_ms"] is None
                 for report in updates.reports for row in report[4]

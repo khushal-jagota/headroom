@@ -80,6 +80,7 @@ export class MacUpdateController {
   private prepared: string | null = null;
   private confirmed: string | null = null;
   private gate_pending: boolean;
+  private supervisor_kept = false;
   private prefetch: { sha: string; done: boolean; task: Promise<void> } | undefined;
   private readonly options: MacUpdateControllerOptions;
   constructor(options: MacUpdateControllerOptions) {
@@ -454,14 +455,18 @@ export class MacUpdateController {
     this.gate_pending = false;
   }
   async kept_by_supervisor(): Promise<boolean> {
-    if (this.options.runtime.ready_path === null) return true;
+    if (this.supervisor_kept || this.options.runtime.ready_path === null) return true;
+    const confirmed = this.confirmed;
     const selected = await read_record(this.options.files, join(this.root, 'selection.json'));
-    return (
-      this.confirmed !== null &&
-      selected?.request_id === this.confirmed &&
+    // A concurrent stale read cannot undo the supervisor's final decision.
+    if (
+      confirmed !== null &&
+      selected?.request_id === confirmed &&
       selected.application_revision === this.options.presence.identity.application_revision &&
       (await this.options.files.read_runtime_record(join(this.root, 'pending.json'))) === null
-    );
+    )
+      this.supervisor_kept = true;
+    return this.supervisor_kept;
   }
   close_handover_once_kept(): Promise<void> {
     this.signal.throwIfAborted();

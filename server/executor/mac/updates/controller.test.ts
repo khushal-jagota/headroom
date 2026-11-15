@@ -283,8 +283,21 @@ test('trial admission waits for supervisor selection, then cancellation resumes 
   });
   await f.controller.apply(f.check(current));
   expect(await f.controller.kept_by_supervisor()).toBe(true);
+  await f.controller.apply(f.check({ ...current, request_id: 'same-revision-new-request' }));
+  expect(JSON.parse(readFileSync(f.runtime.ready_path!, 'utf8')).request_id).toBe(
+    'same-revision-new-request',
+  );
+  expect(JSON.parse(readFileSync(join(f.root, 'updates', 'selection.json'), 'utf8'))).toEqual({
+    request_id: 'current',
+    application_revision: f.identity.application_revision,
+  });
+  await atomic_record(f.files, join(f.root, 'updates', 'pending.json'), {
+    request_id: 'later-attempt',
+  });
+  expect(await f.controller.kept_by_supervisor()).toBe(true);
   await f.controller.close_handover_once_kept();
   expect(f.closes).toHaveLength(1);
+  await f.files.remove_runtime_record(join(f.root, 'updates', 'pending.json'));
   expect(f.runner.finish_planned_replay).toHaveBeenCalledTimes(1);
   expect(JSON.parse(readFileSync(f.runtime.handoff_path!, 'utf8')).replay_pending).toBe(false);
   await f.controller.apply(f.check(f.target));
