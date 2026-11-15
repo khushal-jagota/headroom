@@ -30,6 +30,7 @@ import type {
   ReleaseExecution,
   MacArchiveInspection,
   MacInspectionExecution,
+  RuntimeTarget,
 } from './contracts.ts';
 import { assert_release_execution } from './process.ts';
 import {
@@ -59,8 +60,15 @@ export async function hash_archive(path: string): Promise<string> {
     digest.update(chunk);
   return digest.digest('hex');
 }
-export async function create_app_archive(app: string, archive: string): Promise<string> {
-  await validate_app_manifest(join(app, 'manifest.json'), { require_runtime: true });
+export async function create_app_archive(
+  app: string,
+  archive: string,
+  expected_target?: RuntimeTarget,
+): Promise<string> {
+  await validate_app_manifest(join(app, 'manifest.json'), {
+    require_runtime: true,
+    expected_target,
+  });
   const root = await resolved_path(app),
     target = await resolved_path(archive);
   if (path_is_within(root, target))
@@ -123,11 +131,12 @@ export async function extract_app_archive(
   child_processes: OwnedChildProcesses,
   read_free_space: (path: string) => Promise<bigint> = filesystem_free_bytes,
   execution?: ReleaseExecution,
+  expected_target?: RuntimeTarget,
 ): Promise<AppManifest> {
   return (await extract_archive(
     archive,
     destination,
-    { purpose: 'application', archive_sha256, expected_sha },
+    { purpose: 'application', archive_sha256, expected_sha, expected_target },
     child_processes,
     read_free_space,
     execution,

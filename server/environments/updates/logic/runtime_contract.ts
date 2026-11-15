@@ -1,7 +1,7 @@
 /** Closed Python/Node release metadata validation, not a runtime admission probe. */
 import { isDeepStrictEqual as equal } from 'node:util';
 import { is_record as object } from '../../../core/records.ts';
-import type { RuntimeContract, RuntimePlatform } from '../contracts.ts';
+import type { DarwinNodeRuntimeContract, RuntimeContract, RuntimePlatform } from '../contracts.ts';
 export const SUPPORTED_PLATFORMS: readonly RuntimePlatform[] = [
   { distribution: 'debian', version: '13', minimum_glibc: '2.41' },
   { distribution: 'ubuntu', version: '24.04', minimum_glibc: '2.39' },
@@ -42,9 +42,54 @@ function fail(message: string): never {
 function fullmatch(pattern: RegExp, value: string): boolean {
   return pattern.exec(value)?.[0] === value;
 }
+function parse_darwin_contract(value: Record<string, unknown>): DarwinNodeRuntimeContract {
+  const required = [
+    'version',
+    'system',
+    'architecture',
+    'role',
+    'minimum_os',
+    'node_major',
+    'minimum_node_version',
+    'inventory_sha256',
+    'external_libraries',
+  ];
+  if (!equal(Object.keys(value).sort(), required.sort()))
+    fail('Mac runtime contract has missing or unknown fields');
+  for (const key of [
+    'system',
+    'architecture',
+    'role',
+    'minimum_os',
+    'minimum_node_version',
+    'inventory_sha256',
+  ])
+    if (typeof value[key] !== 'string')
+      fail('Mac runtime contract identity fields must be strings');
+  if (!equal(value.external_libraries, ['/usr/lib/', '/System/Library/']))
+    fail('non-system Mac runtime libraries must be bundled');
+  if (
+    value.version !== 2 ||
+    value.system !== 'darwin' ||
+    value.architecture !== 'arm64' ||
+    value.role !== 'home'
+  )
+    fail('runtime requires a darwin arm64 home artifact');
+  if (value.minimum_os !== '15.0') fail('unsupported Mac runtime minimum OS');
+  if (value.node_major !== 22) fail('runtime requires host Node major 22');
+  if (value.minimum_node_version !== MINIMUM_NODE_VERSION)
+    fail(`runtime requires minimum Node ${MINIMUM_NODE_VERSION}`);
+  if (!fullmatch(/^[0-9a-f]{64}$/, value.inventory_sha256 as string))
+    fail('invalid runtime inventory SHA256');
+  return {
+    ...value,
+    external_libraries: [...(value.external_libraries as string[])],
+  } as unknown as DarwinNodeRuntimeContract;
+}
 export function parse_optional_runtime_contract(value: unknown): RuntimeContract | null {
   if (value === null || value === undefined) return null;
   if (!object(value)) fail('runtime contract must be an object');
+  if (value.system === 'darwin') return parse_darwin_contract(value);
   const node = value.version === 2;
   const required = [
     'version',

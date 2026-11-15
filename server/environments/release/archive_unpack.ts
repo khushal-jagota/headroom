@@ -424,6 +424,7 @@ export async function unpack_archive_child(
     if (request.purpose === 'application') {
       const manifest = await validate_app_manifest(join(request.destination, 'manifest.json'), {
         expected_sha: request.expected_sha,
+        expected_target: request.expected_target,
         require_runtime: true,
         verify_artifact_digest: false,
       });
