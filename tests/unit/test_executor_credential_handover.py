@@ -173,13 +173,13 @@ def test_handover_closes_only_at_a_credentialed_close_request(
 
 
 @pytest.mark.parametrize(
-    ("trial", "supervisor_poll_seconds"),
+    ("trial", "supervisor_poll_seconds", "supervisor_deadline_seconds"),
     [
-        ("kept", 0.01),
-        ("dies_before_marker", 0.01),
+        ("kept", 0.01, 5.0),
+        ("dies_before_marker", 0.01, 5.0),
         # The supervisor polls once, at launch, and next at its deadline. The marker
         # lands between the two, as a "current" report near the deadline does.
-        ("marker_after_last_poll", 0.3),
+        ("marker_after_last_poll", 0.3, 0.3),
     ],
 )
 def test_old_authority_stays_open_until_the_real_supervisor_keeps_the_trial(
@@ -187,6 +187,7 @@ def test_old_authority_stays_open_until_the_real_supervisor_keeps_the_trial(
     monkeypatch: pytest.MonkeyPatch,
     trial: str,
     supervisor_poll_seconds: float,
+    supervisor_deadline_seconds: float,
 ) -> None:
     """The real supervise() runs stand-in runtimes. The real close loop asks the real home."""
     root = tmp_path / "executor" / "updates"
@@ -233,7 +234,9 @@ def test_old_authority_stays_open_until_the_real_supervisor_keeps_the_trial(
     monkeypatch.setenv("PLAN_EXECUTOR_ROOT", str(root.parent))
     monkeypatch.setenv(MAC_RUNTIME_READY_ENV, str(root / "ready" / "trial.json"))
     monkeypatch.setattr(runtime_bootstrap, "_launch", launch)
-    monkeypatch.setattr(runtime_bootstrap, "MAC_RUNTIME_READY_TIMEOUT_SECONDS", 0.3)
+    monkeypatch.setattr(
+        runtime_bootstrap, "MAC_RUNTIME_READY_TIMEOUT_SECONDS", supervisor_deadline_seconds
+    )
     monkeypatch.setattr(runtime_bootstrap, "MAC_UPDATE_POLL_SECONDS", supervisor_poll_seconds)
     monkeypatch.setattr(mac_updates, "MAC_UPDATE_POLL_SECONDS", 0.01)
     trial_started = threading.Event()

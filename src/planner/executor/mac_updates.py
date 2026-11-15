@@ -111,6 +111,7 @@ class MacUpdateController:
         self._runtime_gate_pending = (
             runner.planned_update_replay or os.environ.get(MAC_RUNTIME_READY_ENV) is not None
         )
+        self._kept_by_supervisor = False
         self._lock = asyncio.Lock()
         # The newest target a lease reply offered, applied by run() in its own task.
         self.latest: MacUpdateCheck | None = None
@@ -433,16 +434,19 @@ class MacUpdateController:
         its baseline. A trial is kept once selection.json names this attempt and this
         revision and no attempt is pending. Every supervisor reverts only before that.
         """
-        if os.environ.get(MAC_RUNTIME_READY_ENV) is None:
+        if self._kept_by_supervisor or os.environ.get(MAC_RUNTIME_READY_ENV) is None:
             return True
         selected = read_record(self.root / "selection.json")
-        return (
+        # The keep is final, so it holds even if the home later offers this revision
+        # under another request ID.
+        self._kept_by_supervisor = (
             self.confirmed_request is not None
             and selected is not None
             and selected.get("request_id") == self.confirmed_request
             and selected.get("application_revision") == self.presence.identity.application_revision
             and not (self.root / "pending.json").exists()
         )
+        return self._kept_by_supervisor
 
     async def close_handover_once_kept(self) -> None:
         """Close the original Mac's old authority once the supervisor keeps this runtime.

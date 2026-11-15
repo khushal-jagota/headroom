@@ -93,7 +93,7 @@ If the wrong device takes the credential, use the operator replacement command.
 
 ## Recover a Mac locked out after its credential handover
 
-A runtime from before the close request closed the handover at its "current" update report, before the supervisor kept it. Only such a runtime can cause this lockout.
+A home from before the close request closed the handover at the trial's credentialed "current" update report, before the supervisor kept the trial. Only such a home can cause this lockout.
 
 Use this procedure for the original Mac only, and only when all of these are true:
 
