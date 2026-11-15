@@ -42,7 +42,10 @@ P3 also owns the recorded custody proofs that block idle updates, skip already r
 Until those custody proofs land, TypeScript retains native child stop and final-event drainage. The custody difference remains expected-open.
 Executor update reads select a cached service for each machine through the registered platform.
 Each machine keeps separate request IDs and reports. Darwin machines share archive bytes, and Linux storage stays separate.
-First-home installation, enrollment, Linux executor archive production and offers, and Darwin home support remain later P5 slices.
+First-home installation remains a P7 slice. Enrollment, Linux executor archive production and offers remain P5 slices.
+P7 adds configured account skill homes with shared ownership locks, Darwin APP custody and short private sockets,
+Home-machine preview eligibility, native Darwin preview evidence and metrics, and in-place Darwin log cleanup.
+Real Darwin ABI acceptance runs in the existing hosted lifecycle workflow. First-install service acceptance remains open.
 
 The real-core proofs now cover idle-update admission after a native turn completes, HTTP write refusal without database mutation,
 continued reads, and admission reopening after installer launch failure. They use ordinary routes and scripted external operations.
@@ -70,7 +73,9 @@ The collector reads proc, sysfs, cgroups, and bounded service output without pro
 Baselines include boot, PID/start time, device membership, and cgroup inode. Slow evidence stays cached between slow passes.
 A held old Node process, a new process, and Python prove Linux clock continuity across replacements.
 Darwin matches CPython's `mach_absolute_time` through existing Koffi, with integer timebase conversion.
-Native Linux statistics and all Darwin native branches remain unexecuted here. Hosted platform verification is still required.
+The Darwin collector uses the existing native bridge for host and process observations.
+Linux-only pressure, cgroup, thermal, device, and systemd readings stay unavailable on Darwin.
+Populated synthetic snapshots match Python. Native Linux statistics and real Darwin ABI acceptance require hosted platform verification.
 
 VPS status and backup evidence use the existing response shapes. Cleanup rechecks targets before deletion and keeps live references.
 This part reads backup evidence. Part 3's operator CLI will call `apply_cleanup_inventory`.

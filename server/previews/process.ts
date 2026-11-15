@@ -184,7 +184,8 @@ export class LinuxProcessInspector {
   }
 
   async check(identity: ProcessIdentity, deadline = inspectionDeadline()): Promise<void> {
-    if (typeof identity.listener_inode === 'bigint') throw new PreviewError('Preview process identity changed.', 410);
+    if (typeof identity.listener_inode === 'bigint')
+      throw new PreviewError('Preview process identity changed.', 410);
     const observed = await this.identity(
       identity.pid,
       identity.listener_inode,

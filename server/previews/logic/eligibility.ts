@@ -2,7 +2,9 @@ import { HOME_MACHINE_ID } from '../../execution_identity.ts';
 import { PreviewError, type TicketEligibility } from '../contracts.ts';
 export function require_home(ticket: TicketEligibility): void {
   if (ticket.machine_id !== HOME_MACHINE_ID)
-    throw new PreviewError('Application previews are unavailable for Tickets on a remote Mac executor.');
+    throw new PreviewError(
+      'Application previews are unavailable for Tickets on a remote Mac executor.',
+    );
 }
 export function require_eligible(ticket: TicketEligibility): void {
   require_home(ticket);

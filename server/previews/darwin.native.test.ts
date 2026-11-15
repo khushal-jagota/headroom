@@ -11,7 +11,8 @@ test.skipIf(process.env.GITHUB_ACTIONS !== 'true' || process.platform !== 'darwi
   'native Mac preview pins its owned listener and accepted connection, and records native samples',
   async () => {
     const began = performance.now();
-    const server = createServer(), accepted = once(server, 'connection');
+    const server = createServer(),
+      accepted = once(server, 'connection');
     server.listen(0, '127.0.0.1');
     await once(server, 'listening');
     const address = server.address();
@@ -37,12 +38,20 @@ test.skipIf(process.env.GITHUB_ACTIONS !== 'true' || process.platform !== 'darwi
       expect(second.processes.some((value) => value.identity.pid === process.pid)).toBe(true);
       expect(second.metrics['pressure.cpu.some.avg10']!.value).toBeNull();
       expect(second.services).toEqual([]);
-      await new Promise<void>((resolve) => { peer!.destroy(); client!.destroy(); server.close(() => resolve()); });
+      await new Promise<void>((resolve) => {
+        peer!.destroy();
+        client!.destroy();
+        server.close(() => resolve());
+      });
       await expect(inspector.check(identity)).rejects.toThrow();
     } finally {
-      peer?.destroy(); client?.destroy();
+      peer?.destroy();
+      client?.destroy();
       if (server.listening) await new Promise<void>((resolve) => server.close(() => resolve()));
-      console.info(`Darwin preview and metrics native ABI: ${Math.round(performance.now() - began)}ms`);
+      console.info(
+        `Darwin preview and metrics native ABI: ${Math.round(performance.now() - began)}ms`,
+      );
     }
-  }, 15_000,
+  },
+  15_000,
 );

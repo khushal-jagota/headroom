@@ -49,7 +49,10 @@ export function from_row(row: PreviewRow): PreviewRecord {
             boot_id: row.boot_id!,
             pid: row.pid,
             start_ticks: row.start_ticks!,
-            listener_inode: BigInt(row.listener_inode!) <= BigInt(Number.MAX_SAFE_INTEGER) ? Number(row.listener_inode) : BigInt(row.listener_inode!),
+            listener_inode:
+              BigInt(row.listener_inode!) <= BigInt(Number.MAX_SAFE_INTEGER)
+                ? Number(row.listener_inode)
+                : BigInt(row.listener_inode!),
             port: row.port!,
             worktree: row.worktree,
           },
@@ -62,14 +65,18 @@ export function get(sql: ReadSql, ticket_id: string, generation?: string): Previ
           `SELECT *,CAST(listener_inode AS TEXT) AS listener_inode FROM ${TABLE} WHERE ticket_id=? ORDER BY created_at DESC, rowid DESC LIMIT 1`,
           [ticket_id],
         )
-      : sql.get<PreviewRow>(`SELECT *,CAST(listener_inode AS TEXT) AS listener_inode FROM ${TABLE} WHERE ticket_id=? AND generation=?`, [
-          ticket_id,
-          generation,
-        ]);
+      : sql.get<PreviewRow>(
+          `SELECT *,CAST(listener_inode AS TEXT) AS listener_inode FROM ${TABLE} WHERE ticket_id=? AND generation=?`,
+          [ticket_id, generation],
+        );
   return row ? from_row(row) : null;
 }
 export const live = (sql: ReadSql): PreviewRecord[] =>
-  sql.all<PreviewRow>(`SELECT *,CAST(listener_inode AS TEXT) AS listener_inode FROM ${TABLE} WHERE state!='ended'`).map(from_row);
+  sql
+    .all<PreviewRow>(
+      `SELECT *,CAST(listener_inode AS TEXT) AS listener_inode FROM ${TABLE} WHERE state!='ended'`,
+    )
+    .map(from_row);
 export function end(tx: TransactionSql, generation: string, reason: string): void {
   tx.run(`UPDATE ${TABLE} SET state='ended',ended_reason=? WHERE generation=? AND state!='ended'`, [
     reason,
