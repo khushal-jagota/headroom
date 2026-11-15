@@ -46,7 +46,7 @@ import {
   require_node_database_frontier,
   schema_change_pending,
 } from '../migrations.ts';
-import { AppValidationError } from '../contracts.ts';
+import { AppValidationError, MAC_HOME } from '../contracts.ts';
 
 import { parse_dynamic } from '../native/elf.ts';
 import { resolve_provider } from '../native/providers.ts';
@@ -376,6 +376,9 @@ export async function builder_parity(
         NODE_OPTIONS: 'must-not-pass',
         UNRELATED_SECRET: 'must-not-pass',
       }),
+      launch_darwin_target_refused: await refused(() =>
+        build_app_launch_env(join(root, 'v2'), {}, MAC_HOME),
+      ),
     });
     await run_release_command(
       [

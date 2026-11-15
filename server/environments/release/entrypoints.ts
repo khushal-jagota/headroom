@@ -11,6 +11,7 @@ import type {
   PackagedLauncherArguments,
   ReleaseBuildDependencies,
   ReleaseExecution,
+  RuntimeTarget,
 } from './contracts.ts';
 import { assert_release_execution } from './process.ts';
 import { validate_app_manifest, validate_app_sha, validate_app_tree } from './identity.ts';
@@ -76,11 +77,12 @@ export async function write_app_entrypoints(
 export async function build_app_launch_env(
   app_root: string,
   ambient: Readonly<Record<string, string>>,
+  expected_target?: RuntimeTarget,
 ): Promise<Record<string, string>> {
   const root = await resolved_path(app_root);
   const manifest = await validate_app_manifest(join(root, 'manifest.json'), {
     require_runtime: true,
-    ...(process.platform === 'darwin' ? { expected_target: MAC_HOME } : {}),
+    expected_target,
   });
   if (manifest.runtime_contract?.version !== 2)
     throw new AppValidationError('Node launcher requires a version-2 runtime contract');
@@ -108,7 +110,11 @@ export async function launch_app(
   if (process.platform === 'darwin' && args.mode === 'managed-linux')
     throw new AppValidationError('Linux managed launch is unavailable on macOS');
   const root = await resolved_path(app_root);
-  const environment = await build_app_launch_env(root, ambient);
+  const environment = await build_app_launch_env(
+    root,
+    ambient,
+    process.platform === 'darwin' ? MAC_HOME : undefined,
+  );
   const version = /^22\.(\d+)\.(\d+)$/.exec(process.versions.node);
   if (!version || Number(version[1]) < 18)
     throw new AppValidationError('Node launcher requires host Node 22 >=22.18.0');

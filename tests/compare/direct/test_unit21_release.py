@@ -1219,6 +1219,7 @@ def test_unit21_release_identity_archive_and_frontier(
         PLAN_APP_ROOT=str(v2),
         PLAN_APP_SHA=SHA,
     )
+    assert built["launch_darwin_target_refused"] is True
     hostile_native = actual["hostile_native"]
     if hostile_native["executed"]:
         assert hostile_native["refused"] is True
