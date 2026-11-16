@@ -98,7 +98,8 @@ export type PendingTicketProposal = {
 };
 
 export type Principal = {
-  kind: "owner" | "chief" | "manager" | "ticket" | "goal";
+  // The server's full caller set. It never stores or returns "unidentified".
+  kind: "owner" | "chief" | "manager" | "ticket" | "goal" | "unidentified";
   id: string;
 };
 

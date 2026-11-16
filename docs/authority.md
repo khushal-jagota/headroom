@@ -6,23 +6,15 @@ Khushal, Chief, Managers, and Workers all call the same routes. There is no sepa
 
 ## Who can call
 
-The server knows four kinds of caller: the **owner** (Khushal), **Chief**, a **Manager**, and a **Ticket** (its Worker). Goals have no agent. Old goal transcripts remain stored without a goal conversation interface. The authenticated browser is the owner. An agent's `panels` calls carry its identity, set by the conversation that launched it.
+The server knows four kinds of caller: the **owner** (Khushal), **Chief**, a **Manager**, and a **Ticket** (its Worker). A call that is none of these is unidentified. Goals have no agent. Old goal transcripts remain stored without a goal conversation interface. An agent's `panels` calls carry its identity, set by the conversation that launched it.
 
-The live service sets `PLAN_REFUSE_UNIDENTIFIED_AGENT_CALLS=1`. For loopback calls without a nonempty `X-Plan-Actor`, the server checks the socket's holders through `/proc`. Ticket or Manager IDs alone do not skip this check. Workers and their tools now share `panels-live.service` with the home. The guard refuses unidentified callers there with `agent_forbidden` and asks them to restore `PLAN_ACTOR`. It also recognizes the retired `panels-workers.slice` for legacy processes. At least one readable holder must establish the caller's identity. Every readable holder must remain outside these cgroups.
+On the live host, the owner is the caller Tailscale Serve vouches for. The browser and the iPhone app reach Headroom through Tailscale Serve, which adds Khushal's login header, so their calls are the owner. A call that names an agent is that agent.
 
-Calls with a nonempty actor, authenticated browser calls, and nonloopback callers retain their existing path without a socket lookup. Missing or unknown client addresses still require evidence.
+A call on the live host that names no identity and carries no login header is **unidentified**. It stands above nothing. It can read what any caller can read, and it can send a message to Chief. Every other write is refused with `agent_forbidden`. The refusal says how to fix it: an agent restores `PLAN_ACTOR`, and Khushal uses the web app or the iOS app. Chief sees such a message as from an unidentified caller, not from Khushal. A terminal with no identity, the stall watchdog, the Hermes gateway, and an agent that lost `PLAN_ACTOR` are all callers of this kind.
 
-If a same-user process has unreadable descriptors, the server checks its cgroup. The server skips that process only if the cgroup is readable and outside the recognized cgroups. Otherwise it refuses the call. The refusal detail and debug log include the number of skipped processes. Missing socket evidence or unreadable holder evidence also causes refusal. Other local callers remain the owner.
+A server without trusted ingress, such as staging, a Ticket's server, or a local checkout, has no Tailscale to vouch for anyone. A call with no identity there is the owner.
 
-This environment-only setting defaults to off. The application removes it from its environment at startup, so agents and their scratch servers do not inherit it. Generic agents with no role identity also lose implicit owner access to Panels when the setting is on.
-
-The Hermes gateway (`hermes-gateway.service`) is a known owner-level caller outside Panels. Its calls without identity remain the owner.
-
-A known gap remains: a local process can send a forged `tailscale-user-login` header directly to loopback. Trusted ingress then treats it as the owner. This rule does not close that gap.
-
-Uvicorn also trusts `X-Forwarded-For` from `127.0.0.1` by default. A local process can forge a nonloopback address there and skip this check. This deliberate forgery stays out of scope.
-
-Deliberate forgery through hidden descriptors outside the agent cgroups is also outside this rule. The scan cannot inspect descriptors that the kernel hides from it.
+There are no other guards. A local program can fake the Tailscale login header by sending it straight to the loopback port, and the server then treats it as Khushal. Khushal accepts this. The rule catches accidents, such as an agent that lost its identity. It does not stop an agent that sets out to act as him, which could equally drive his Mac by computer use.
 
 Manager requests use the `manager` actor and `X-Plan-Manager-ID`. Old Sprint Item actors and identity headers do not establish authority.
 
@@ -59,7 +51,7 @@ Who must look at a parked proposal, the holder, is a narrower fact owned by the 
 
 The rule decides what a caller may do. It does not prove who the caller is. The browser and the command line state an identity and the server believes it. It is not a login system.
 
-Reading Tickets and Managers is open to every caller. The rule guards writes.
+Reading Tickets and Managers is open to every caller, including an unidentified one. The rule guards writes.
 
 Recap requests follow the same hierarchy. The owner can request any agent. Chief can request Managers and Tickets. Managers can request their child Tickets. A Ticket can request none. Each request names its caller and clears the old recap before delivery.
 
@@ -69,6 +61,7 @@ Recap requests follow the same hierarchy. The owner can request any agent. Chief
 - **Self-approval is impossible by structure.** It falls out of position, so no route can forget to forbid it.
 - **Authority cannot be handed away.** Re-parenting is reserved for the top.
 - **Identity is trusted, not proven.** Keeping strangers out is the host's job, not this rule's.
+- **Losing an identity never makes you the owner on the live host.** The owner is the caller Tailscale Serve vouches for, so an agent that loses `PLAN_ACTOR` can only read and message Chief.
 
 ## Code
 
@@ -77,4 +70,4 @@ Recap requests follow the same hierarchy. The owner can request any agent. Chief
 - `src/planner/core/authority/service.py`: supplies the database facts for the rank rule.
 - `src/planner/core/authctx.py`: turns a request into a caller, and holds the owner-only doors.
 
-_Last verified: 2026-11-12._
+_Last verified: 2026-11-16._

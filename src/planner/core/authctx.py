@@ -1,8 +1,12 @@
 """Truthful request identity: who is asking, before anything asks what they may do.
 
-The request boundary translates transport headers into one shared Principal. An
-unattributed browser or ordinary CLI request is the owner. Employee requests name
-the Chief, a Ticket, or a Manager. Header names stay private to this adapter.
+The request boundary translates transport headers into one shared Principal. Employee
+requests name the Chief, a Ticket, or a Manager. On a server behind trusted ingress, the
+live host, a request that names no agent is the owner only if Tailscale Serve vouched
+for the allowed login: that is the browser and the iPhone app. Any other such request is
+unidentified and stands above nothing. A server without trusted ingress has no Tailscale
+to vouch, so a request there that names no agent is the owner. Header names stay
+private to this adapter.
 
 Whether that principal may act on a given thing is planner.core.authority, which asks
 one question. The guards that used to live here each named their own set of principal
@@ -19,6 +23,7 @@ from fastapi import Request
 from planner.core.contracts import (
     CHIEF_PRINCIPAL,
     OWNER_PRINCIPAL,
+    UNIDENTIFIED_PRINCIPAL,
     Principal,
     PrincipalKind,
     principal_legacy_actor,
@@ -33,6 +38,8 @@ X_PLAN_MANAGER_ID: Final = "X-Plan-Manager-ID"
 PLAN_ACTOR_SCOPE_KEY: Final = "planner.request_actor"
 PLAN_TICKET_ID_SCOPE_KEY: Final = "planner.request_ticket_id"
 PLAN_MANAGER_ID_SCOPE_KEY: Final = "planner.request_manager_id"
+# Set by trusted ingress when Tailscale Serve vouches for the allowed login.
+AUTHENTICATED_OWNER_SCOPE_KEY: Final = "planner.authenticated_owner"
 
 
 @dataclass(frozen=True)
@@ -57,7 +64,7 @@ def _classify(
     normalized_ticket_id = _normalize(ticket_id)
     normalized_manager_id = _normalize(manager_id)
     if actor is None:
-        return RequestContext(OWNER_PRINCIPAL)
+        return RequestContext(UNIDENTIFIED_PRINCIPAL)
     if actor == "chief":
         return RequestContext(CHIEF_PRINCIPAL)
     if actor == "worker" and normalized_ticket_id is not None:
@@ -71,8 +78,13 @@ def _classify(
     )
 
 
+def _behind_trusted_ingress(request: Request) -> bool:
+    config = getattr(getattr(request.scope.get("app"), "state", None), "config", None)
+    return getattr(config, "trusted_ingress_provider", None) is not None
+
+
 def request_context(request: Request) -> RequestContext:
-    """Normalize the actor and its optional truthful local Ticket claim."""
+    """The named agent, else the owner or an unidentified caller (see the module doc)."""
     actor = (
         request.scope[PLAN_ACTOR_SCOPE_KEY]
         if PLAN_ACTOR_SCOPE_KEY in request.scope
@@ -88,13 +100,18 @@ def request_context(request: Request) -> RequestContext:
         if PLAN_MANAGER_ID_SCOPE_KEY in request.scope
         else request.headers.get(X_PLAN_MANAGER_ID)
     )
-    classified = _classify(
-        _normalize(actor), _normalize(ticket_id), manager_id
+    origin = _normalize(
+        request.scope.get(
+            PLAN_CONVERSATION_ID_SCOPE_KEY, request.headers.get(X_PLAN_CONVERSATION_ID)
+        )
     )
-    origin = request.scope.get(
-        PLAN_CONVERSATION_ID_SCOPE_KEY, request.headers.get(X_PLAN_CONVERSATION_ID)
-    )
-    return RequestContext(classified.principal, _normalize(origin))
+    if _normalize(actor) is None and (
+        request.scope.get(AUTHENTICATED_OWNER_SCOPE_KEY) is True
+        or not _behind_trusted_ingress(request)
+    ):
+        return RequestContext(OWNER_PRINCIPAL, origin)
+    classified = _classify(_normalize(actor), _normalize(ticket_id), manager_id)
+    return RequestContext(classified.principal, origin)
 
 
 def require_owner_or_chief(ctx: RequestContext) -> None:
@@ -127,9 +144,6 @@ def require_owner(ctx: RequestContext) -> None:
         "this operation is available only to the owner",
         {"actor": principal_legacy_actor(ctx.principal)},
     )
-
-
-AUTHENTICATED_OWNER_SCOPE_KEY: Final = "planner.authenticated_owner"
 
 
 def require_authenticated_owner(request: Request) -> None:

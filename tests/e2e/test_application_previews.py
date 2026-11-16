@@ -119,10 +119,18 @@ def test_real_vite_applications_share_only_their_generation(
         capture_output=True,
         env=environment,
     )
-    with ExitStack() as stack, httpx.Client(base_url=server.base, timeout=10) as owner:
+    owner_login = {"Tailscale-User-Login": "owner@example.test"}
+    with (
+        ExitStack() as stack,
+        # Khushal's calls carry the login Tailscale Serve adds; a Worker's carry none.
+        httpx.Client(base_url=server.base, timeout=10, headers=owner_login) as owner,
+        httpx.Client(base_url=server.base, timeout=10) as agent,
+    ):
 
-        def api(method: str, path: str, **kwargs: Any) -> dict[str, Any]:
-            response = owner.request(method, path, **kwargs)
+        def api(
+            method: str, path: str, client: httpx.Client | None = None, **kwargs: Any
+        ) -> dict[str, Any]:
+            response = (client or owner).request(method, path, **kwargs)
             assert response.is_success, response.text
             return dict(response.json())
 
@@ -261,6 +269,7 @@ def test_real_vite_applications_share_only_their_generation(
                 "POST",
                 f"/api/tickets/{apps[0][0]['id']}/propose",
                 headers=worker,
+                client=agent,
                 json={"body": "Synthetic browser proof."},
             )
             api(
@@ -388,6 +397,7 @@ def test_real_vite_applications_share_only_their_generation(
             "POST",
             f"/api/tickets/{apps[0][0]['id']}/propose",
             headers=worker,
+            client=agent,
             json={"body": "Synthetic browser proof complete."},
         )
         api("DELETE", f"/api/tickets/{apps[1][0]['id']}")

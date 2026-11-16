@@ -14,18 +14,24 @@ UnixTime = int  # unix seconds
 
 
 class PrincipalKind(StrEnum):
-    """The complete set of people and work objects that can act in Panels."""
+    """The complete set of callers that can reach Panels.
+
+    ``unidentified`` is a request that names no Panels identity and carries no owner
+    credential. It is nobody: it stands above nothing, it is never the owner, and no
+    request may name it as a holder, manager, or recipient.
+    """
 
     owner = "owner"
     chief = "chief"
     manager = "manager"
     goal = "goal"
     ticket = "ticket"
-
+    unidentified = "unidentified"
 
 
 OWNER_PRINCIPAL_ID: Final = "owner"
 CHIEF_PRINCIPAL_ID: Final = "chief"
+UNIDENTIFIED_PRINCIPAL_ID: Final = "unidentified"
 
 
 @dataclass(frozen=True, slots=True)
@@ -43,6 +49,7 @@ class Principal:
         singleton_id = {
             PrincipalKind.owner: OWNER_PRINCIPAL_ID,
             PrincipalKind.chief: CHIEF_PRINCIPAL_ID,
+            PrincipalKind.unidentified: UNIDENTIFIED_PRINCIPAL_ID,
         }.get(self.kind)
         if singleton_id is not None and self.id != singleton_id:
             raise ValueError(f"{self.kind.value} principal id must be {singleton_id}")
@@ -50,6 +57,7 @@ class Principal:
 
 OWNER_PRINCIPAL: Final = Principal(PrincipalKind.owner, OWNER_PRINCIPAL_ID)
 CHIEF_PRINCIPAL: Final = Principal(PrincipalKind.chief, CHIEF_PRINCIPAL_ID)
+UNIDENTIFIED_PRINCIPAL: Final = Principal(PrincipalKind.unidentified, UNIDENTIFIED_PRINCIPAL_ID)
 
 
 def principal_legacy_actor(principal: Principal) -> str:
@@ -60,6 +68,7 @@ def principal_legacy_actor(principal: Principal) -> str:
         PrincipalKind.manager: "manager",
         PrincipalKind.goal: "goal",
         PrincipalKind.ticket: "worker",
+        PrincipalKind.unidentified: "unidentified",
     }[principal.kind]
 
 

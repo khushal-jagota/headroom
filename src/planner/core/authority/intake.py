@@ -214,6 +214,25 @@ def admit_command(
         check_rank(conn, principal, target)
 
 
+_UNIDENTIFIED_WRITE_REFUSAL = (
+    "this request has no Panels identity, so it can only read and send a message to the "
+    "Chief. An agent restores PLAN_ACTOR and its Ticket or Manager id. Khushal uses the "
+    "Panels web app or the iOS app."
+)
+
+
+_MESSAGE_SEND_ROUTE = '/api/messages/send'
+
+
+def _message_to_the_chief(body: object) -> bool:
+    target = body.get('target') if isinstance(body, dict) else None
+    return isinstance(target, dict) and target.get('kind') == PrincipalKind.chief.value
+
+
+def _unidentified_write_refusal() -> PlannerError:
+    return PlannerError(ErrorCode.agent_forbidden, _UNIDENTIFIED_WRITE_REFUSAL, {})
+
+
 async def request_admission(connection: HTTPConnection) -> None:
     """Admit HTTP commands after route matching. WebSockets retain their own authentication."""
     if not isinstance(connection, Request):
@@ -222,7 +241,8 @@ async def request_admission(connection: HTTPConnection) -> None:
     # Included FastAPI routes expose the unprefixed template. Admission needs
     # the served path, including /api, for resource and command families.
     route = request.url.path
-    if request.method in ('GET', 'HEAD', 'OPTIONS'):
+    writing = request.method not in ('GET', 'HEAD', 'OPTIONS')
+    if not writing:
         protected = (
             route in ('/api/resource-body', '/api/resource-versions')
             or ('/managers/' in route or '/goals/' in route)
@@ -237,7 +257,13 @@ async def request_admission(connection: HTTPConnection) -> None:
         if not protected:
             return
     if route in ('/api/measures/read', '/api/datasets/read'):
-        return
+        return  # Reads sent as POST: open to every caller, like any other read.
+    # An unidentified caller writes nothing, except a message to the Chief.
+    unidentified = (
+        writing and request_context(request).principal.kind is PrincipalKind.unidentified
+    )
+    if unidentified and route != _MESSAGE_SEND_ROUTE:
+        raise _unidentified_write_refusal()
     content_type = request.headers.get('content-type')
     media = Message()
     media['content-type'] = content_type or ''
@@ -245,13 +271,16 @@ async def request_admission(connection: HTTPConnection) -> None:
         media.get_content_maintype() == 'application'
         and (media.get_content_subtype() == 'json' or media.get_content_subtype().endswith('+json'))
     )
-    body = {}
+    body: object = {}
     if accepts_json and not route.startswith('/files/') and await request.body():
         try:
             body = await request.json()
         except json.JSONDecodeError:
-            return  # FastAPI retains its declared-body validation response.
-
+            body = None
+    if unidentified and not _message_to_the_chief(body):
+        raise _unidentified_write_refusal()
+    if body is None:
+        return  # FastAPI retains its declared-body validation response.
     if not isinstance(body, dict):
         body = {}
     # The authority reads block on SQLite, so they run on a worker thread like the route.
