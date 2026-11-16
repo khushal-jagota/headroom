@@ -22,6 +22,7 @@ struct SettingsView: View {
     }
     private var loading: Bool { !hasData && error == nil }
     @State private var showingServer = false
+    @State private var swipeLogExport: ChiefSwipeLogExport?
 
     var body: some View {
         List {
@@ -56,12 +57,15 @@ struct SettingsView: View {
         .sheet(isPresented: $showingServer) {
             ServerAddressSheet(initialAddress: store.baseURL.absoluteString) { store.configure(baseURL: $0) }
         }
+        .sheet(item: $swipeLogExport) { ChiefSwipeShareSheet(url: $0.url) }
+        .onAppear { ChiefSwipeLog.shared.refresh() }
     }
     private var hasData: Bool {
         switch section { case "Config": workers != nil; case "Scheduled": schedules != nil; default: notifications != nil }
     }
     private var configuration: some View {
         Group {
+            ChiefSwipeSettingsSection(export: $swipeLogExport)
             Section {
                 Toggle("Show goals in sidebar rows", isOn: $showGoalsInSidebarRows)
                     .accessibilityIdentifier("settings-goals-sidebar-rows")

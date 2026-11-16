@@ -1378,9 +1378,13 @@ def main() -> int:
                 }
             elif path == "/api/workers":
                 value = {
+                    "workers": [],
                     "chief_of_staff": {
+                        "employee_id": "chief",
                         "label": "Chief of Staff",
                         "recap": "Saved workspace",
+                        "skill": {"name": "chief", "description": "", "markdown_body": ""},
+                        "launch_defaults": {"employee_backend": "codex"},
                         "conversation_signal": {"working": False, "message_for_owner": False},
                     }
                 }
