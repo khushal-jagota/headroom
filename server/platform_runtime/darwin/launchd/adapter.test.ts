@@ -15,6 +15,31 @@ const outcome = (exit_code: number, standard_output = '', standard_error = '') =
   standard_error,
 });
 describe('Mac Worker launchd custody', () => {
+  test('XML-invalid environment values are omitted with names-only notices', () => {
+    const notice = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const plist = job_plist(
+        job.label,
+        ['/test'],
+        {
+          LESS_TERMCAP_mb: '\u001b[01mprivate-value',
+          'INVALID\u0001NAME': 'another-private-value',
+          GOOD: 'allowed\t\n\r<&',
+        },
+        '/',
+      );
+      expect(plist).not.toContain('LESS_TERMCAP_mb');
+      expect(plist).not.toContain('INVALID');
+      expect(plist).toContain('<key>GOOD</key><string>allowed\t\n\r&lt;&amp;</string>');
+      expect(notice.mock.calls.map((call) => call[1])).toEqual([
+        '"LESS_TERMCAP_mb"',
+        JSON.stringify('INVALID\u0001NAME'),
+      ]);
+      expect(JSON.stringify(notice.mock.calls)).not.toContain('private-value');
+    } finally {
+      notice.mockRestore();
+    }
+  });
   test('ambiguous failures never prove absence, and missing service requires a reachable domain', async () => {
     const run = vi.fn().mockResolvedValueOnce(outcome(1, '', 'Operation not permitted'));
     const jobs = new DarwinWorkerJobs({ commands: { run }, clock: () => 0 });

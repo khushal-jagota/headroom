@@ -11,12 +11,15 @@ import {
   darwin_worker_process_info,
   darwin_worker_process_snapshot,
   darwin_worker_process_exists,
+  darwin_worker_process_birth,
   darwin_prepare_worker_session,
 } from '../../executor/mac/platform.ts';
 import type { DarwinWorkerProcessInfo } from '../../executor/mac/platform.ts';
 
 export interface DarwinWorkerKernel {
   info(pid: number): DarwinWorkerProcessInfo | null;
+  /** A missing PID returns null. Unreadable sysctl evidence throws. */
+  birth(pid: number): string | null;
   snapshot(deadline: number): ReadonlyMap<number, WorkerProcess>;
   exists(pid: number): boolean;
   signal(pid: number, signum: number): void;
@@ -49,6 +52,7 @@ export class DarwinWorkerProcesses implements WorkerProcessPrimitives {
       info: darwin_worker_process_info,
       snapshot: (deadline) => darwin_worker_process_snapshot(deadline, this.#clock),
       exists: darwin_worker_process_exists,
+      birth: darwin_worker_process_birth,
       signal: (pid, signum) => {
         process.kill(pid, signum);
       },
@@ -111,13 +115,23 @@ export class DarwinWorkerProcesses implements WorkerProcessPrimitives {
     try {
       if (!this.#native.exists(recorded.pid)) return true;
     } catch (error) {
-      // A reused PID can belong to another user. Inspect its birth before
-      // retaining a legacy fence merely because kill(pid, 0) was refused.
       if ((error as NodeJS.ErrnoException).code !== 'EPERM') throw error;
+      // libproc can refuse a cross-user PID too. KERN_PROC_PID exposes its
+      // actual start time without granting signal authority over that process.
+      return this.#birth_absent(recorded);
     }
     try {
       const current = this.#native.info(recorded.pid);
       return current === null || current.birth !== recorded.birth || current.zombie;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'EPERM') return this.#birth_absent(recorded);
+      return false;
+    }
+  }
+  #birth_absent(recorded: WorkerProcess): boolean {
+    try {
+      const birth = this.#native.birth(recorded.pid);
+      return birth === null || birth !== recorded.birth;
     } catch {
       return false;
     }

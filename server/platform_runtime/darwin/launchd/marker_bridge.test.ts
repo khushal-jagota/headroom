@@ -47,6 +47,15 @@ test('each signal requires current matching UID, birth, and an exact environment
   });
   const signal = vi.spyOn(process, 'kill').mockReturnValue(true);
   const target = { pid: 42, birth: '10:20' };
+  const previous_loads = fake.load.mock.calls.length;
+  expect(
+    darwin_signal_marked_worker_process({ ...target, pid: process.pid }, label, 9, 2, () => 0),
+  ).toBe(false);
+  expect(
+    darwin_signal_marked_worker_process({ ...target, pid: process.ppid }, label, 9, 2, () => 0),
+  ).toBe(false);
+  expect(fake.load).toHaveBeenCalledTimes(previous_loads);
+  expect(signal).not.toHaveBeenCalled();
   expect(darwin_signal_marked_worker_process(target, label, 15, 2, () => 0)).toBe(true);
   expect(signal).toHaveBeenCalledWith(42, 15);
   signal.mockClear();

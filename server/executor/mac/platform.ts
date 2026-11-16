@@ -844,6 +844,36 @@ export function darwin_worker_process_info(pid: number): DarwinWorkerProcessInfo
     zombie: info.readUInt32LE(4) === 5,
   };
 }
+/** Read-only cross-user birth evidence. No signal authority comes from this probe. */
+export function darwin_worker_process_birth(pid: number): string | null {
+  if (process.platform !== 'darwin' || !['x64', 'arm64'].includes(process.arch))
+    throw new Error('Worker birth inspection requires the Darwin LP64 ABI');
+  const sysctl = native(
+    'int sysctl(const int *name, unsigned int namelen, void *oldp, size_t *oldlenp, const void *newp, size_t newlen)',
+  );
+  const mib = new Int32Array([1, 14, 1, pid]); // CTL_KERN, KERN_PROC, KERN_PROC_PID.
+  const length = new BigUint64Array([0n]);
+  try {
+    checked('sysctl KERN_PROC_PID size', () => sysctl(mib, mib.length, null, length, null, 0));
+    // A successful empty PID-specific response is the kernel's missing-PID result.
+    if (length[0] === 0n) return null;
+    const bytes = Buffer.alloc(Number(length[0]));
+    checked('sysctl KERN_PROC_PID', () => sysctl(mib, mib.length, bytes, length, null, 0));
+    if (length[0] === 0n) return null;
+    if (length[0]! > BigInt(bytes.length) || length[0]! < 44n || bytes.readInt32LE(40) !== pid)
+      throw new Error('Mac process birth response is incomplete');
+    // Apple sysctl.h places extern_proc first in kinfo_proc. Its first union is
+    // p_starttime: Darwin LP64 timeval (signed 64-bit seconds, 32-bit microseconds).
+    const seconds = bytes.readBigInt64LE(0);
+    const microseconds = bytes.readInt32LE(8);
+    if (seconds < 0n || microseconds < 0 || microseconds >= 1_000_000)
+      throw new Error('Mac process birth response is invalid');
+    return `${seconds}:${microseconds}`;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ESRCH') return null;
+    throw error;
+  }
+}
 /** Environment bytes never leave this native bridge. Only exact marker matches do. */
 function worker_argument_bytes(pid: number): Buffer {
   const sysctl = native(
@@ -901,6 +931,7 @@ export function darwin_signal_marked_worker_process(
   deadline: number,
   clock: () => number = monotonic_seconds,
 ): boolean {
+  if (process_identity.pid === process.pid || process_identity.pid === process.ppid) return false;
   if (clock() >= deadline) return false;
   const current = marked_worker_process(process_identity.pid, label);
   if (current === null || current.birth !== process_identity.birth || clock() >= deadline)

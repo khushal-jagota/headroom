@@ -15,7 +15,11 @@ import { create_worker_supervision_runtime } from '../worker_supervision/composi
 import { WorkerSupervisor, reconcile } from '../worker_supervision/index.ts';
 import { RECORD_ROOT_ENV } from '../worker_supervision/config.ts';
 import { observe_promise } from '../core/promise_observer.ts';
-import { copy_environment } from '../core/environment.ts';
+import { BackendCommands } from '../conversation/snapshot/commands.ts';
+import {
+  darwin_worker_process_birth,
+  darwin_worker_process_info,
+} from '../executor/mac/platform.ts';
 import { DarwinWorkerProcesses } from './darwin/worker_processes.ts';
 import { WORKER_SWEEP_LIMIT_NOTICE } from './darwin/launchd/configuration.ts';
 import type { WorkerProcess } from '../worker_supervision/contracts.ts';
@@ -349,49 +353,89 @@ setInterval(()=>{},1000);
 );
 
 test.skipIf(!admitted)(
-  'legacy EPERM with a changed birth retires only the historical incarnation',
+  'real cross-user EPERM retires a changed legacy birth without signaling the current process',
   async () => {
+    const began = performance.now();
     const processes = new ChildProcesses();
     const probes = new OneShotChildren(processes);
+    const commands = new BackendCommands(probes);
     const native = new DarwinWorkerProcesses({ children: probes });
-    const child = processes.spawn(process.execPath, ['-e', 'setTimeout(()=>{},600000)'], {
-      env: copy_environment(process.env),
-      stdio: ['pipe', 'pipe', 'pipe'],
-      detached: true,
-    });
-    const signal = vi.fn();
+    const evidence: Record<string, unknown> = {
+      platform: process.platform,
+      architecture: process.arch,
+      caller_uid: process.getuid!(),
+      foreign_pid: 1,
+      signal_policy:
+        'Only kill(pid, 0) existence probes. No signal or cleanup targets this system process.',
+    };
     try {
-      await expect.poll(() => child.pid, { timeout: 5_000 }).toBeTypeOf('number');
-      const current = (await native.snapshot(performance.now() / 1000 + 5)).get(child.pid!);
-      if (!current) throw new Error('Native inventory omitted the unrelated fixture process');
-      const primitive = new DarwinWorkerProcesses({
-        children: probes,
-        native: {
-          info: () => ({ ...current, birth: current.birth }),
-          snapshot: () => new Map([[current.pid, current]]),
-          exists: () => {
-            throw Object.assign(new Error('synthetic other-user probe'), { code: 'EPERM' });
-          },
-          signal,
-          prepare_session: () => {},
-        },
+      expect(process.getuid!(), 'the foreign-process proof requires a nonroot caller').not.toBe(0);
+      const own_birth = darwin_worker_process_birth(process.pid);
+      const own_libproc = darwin_worker_process_info(process.pid);
+      expect(own_birth).toMatch(/^\d+:\d+$/);
+      expect(own_birth).toBe(own_libproc?.birth);
+      const own_microseconds = Number(own_birth!.split(':')[1]);
+      expect(own_microseconds).toBeGreaterThanOrEqual(0);
+      expect(own_microseconds).toBeLessThan(1_000_000);
+      evidence.own_sysctl_birth = own_birth;
+      evidence.own_libproc_birth = own_libproc?.birth;
+
+      // PID 1 is the stable root-owned launchd process. All observations below are read-only.
+      const owner = await commands.run(['/bin/ps', '-p', '1', '-o', 'uid=', '-o', 'comm='], {
+        timeout_seconds: 5,
       });
-      expect(
-        await primitive.is_absent(
-          { ...current, birth: current.birth + '-old' },
-          performance.now() / 1000 + 5,
-        ),
-      ).toBe(true);
-      expect(signal).not.toHaveBeenCalled();
-      expect(await native.is_absent(current, performance.now() / 1000 + 5)).toBe(false);
-      expect(child.exitCode).toBeNull();
+      expect(owner.exit_code, owner.standard_error).toBe(0);
+      const identity = /^\s*(\d+)\s+(.+?)\s*$/.exec(owner.standard_output);
+      expect(identity, owner.standard_output).not.toBeNull();
+      evidence.foreign_uid = Number(identity![1]);
+      evidence.foreign_command = identity![2];
+      expect(evidence.foreign_uid).toBe(0);
+      expect(identity![2]).toMatch(/(?:^|\/)launchd$/);
+      let probe_error: string | undefined;
+      try {
+        process.kill(1, 0);
+      } catch (error) {
+        probe_error = (error as NodeJS.ErrnoException).code;
+      }
+      evidence.existence_probe_error = probe_error;
+      expect(probe_error, 'the actual foreign process must refuse the existence probe').toBe(
+        'EPERM',
+      );
+      const birth = darwin_worker_process_birth(1);
+      expect(birth).toMatch(/^\d+:\d+$/);
+      evidence.current_birth = birth;
+      const [seconds, microseconds] = birth!.split(':');
+      const current: WorkerProcess = {
+        pid: 1,
+        birth: birth!,
+        parent: 0,
+        group: 1,
+        session: 1,
+        zombie: false,
+      };
+      const historical = { ...current, birth: `${BigInt(seconds!) - 1n}:${microseconds}` };
+      evidence.historical_birth = historical.birth;
+      const deadline = performance.now() / 1000 + 5;
+      evidence.historical_absent = await native.is_absent(historical, deadline);
+      evidence.current_absent = await native.is_absent(current, deadline);
+      expect(evidence.historical_absent).toBe(true);
+      expect(evidence.current_absent).toBe(false);
+      const after = darwin_worker_process_birth(1);
+      evidence.birth_after = after;
+      expect(after).toBe(birth);
     } finally {
-      signal_child(child, 'SIGKILL', false);
       probes.seal();
       processes.seal();
       await probes.settled();
       expect((await observe_promise(processes.settled(), 5_000)).completed).toBe(true);
+      evidence.milliseconds = Math.round(performance.now() - began);
+      console.info('Worker cross-user legacy birth proof', JSON.stringify(evidence));
+      if (process.env.NATIVE_EVIDENCE)
+        await writeFile(
+          join(process.env.NATIVE_EVIDENCE, 'worker-legacy-foreign-process.json'),
+          JSON.stringify(evidence, null, 2) + '\n',
+        );
     }
   },
-  20_000,
+  25_000,
 );

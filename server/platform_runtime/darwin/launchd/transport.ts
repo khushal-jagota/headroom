@@ -74,6 +74,7 @@ const escape_xml = (value: string): string =>
     (character) =>
       ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;', "'": '&apos;' })[character]!,
   );
+const invalid_xml_control = /[\u0000-\u0008\u000b\u000c\u000e-\u001f]/;
 export function job_plist(
   label: string,
   argv: readonly string[],
@@ -84,6 +85,15 @@ export function job_plist(
   return `<?xml version="1.0" encoding="UTF-8"?>\n<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">\n<plist version="1.0"><dict><key>Label</key>${string(label)}<key>ProgramArguments</key><array>${argv.map(string).join('')}</array><key>WorkingDirectory</key>${string(cwd)}<key>EnvironmentVariables</key><dict>${Object.entries(
     { ...environment, [WORKER_JOB_ENVIRONMENT_KEY]: label },
   )
+    .filter(([key, value]) => {
+      if (!invalid_xml_control.test(key) && !invalid_xml_control.test(value)) return true;
+      // Only the variable's name reaches the notice, never its potentially secret value.
+      console.warn(
+        'Mac Worker omitted an environment variable with XML-invalid characters:',
+        JSON.stringify(key),
+      );
+      return false;
+    })
     .map(([key, value]) => `<key>${escape_xml(key)}</key>${string(value)}`)
     .join(
       '',

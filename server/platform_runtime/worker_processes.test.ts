@@ -161,6 +161,7 @@ test('Darwin signals require an immediate exact birth and unreadable evidence re
   const signals: number[] = [];
   const kernel: DarwinWorkerKernel = {
     info: () => current,
+    birth: () => current.birth,
     exists: () => true,
     snapshot: () => new Map(),
     signal: (_pid, signum) => {
@@ -182,6 +183,22 @@ test('Darwin signals require an immediate exact birth and unreadable evidence re
     throw Object.assign(new Error('unreadable'), { code: 'EPERM' });
   };
   expect(await native.signal(recorded, 9, 1)).toBe(false);
+  expect(await native.is_absent(recorded, 1)).toBe(true);
+  kernel.birth = () => {
+    throw Object.assign(new Error('unreadable sysctl'), { code: 'EPERM' });
+  };
+  expect(await native.is_absent(recorded, 1)).toBe(false);
+  kernel.exists = () => {
+    throw Object.assign(new Error('foreign UID'), { code: 'EPERM' });
+  };
+  kernel.birth = () => current.birth;
+  // A second denied libproc read must not hide a changed sysctl birth.
+  expect(await native.is_absent(recorded, 1)).toBe(true);
+  kernel.birth = () => recorded.birth;
+  expect(await native.is_absent(recorded, 1)).toBe(false);
+  kernel.birth = () => {
+    throw Object.assign(new Error('unreadable sysctl'), { code: 'EPERM' });
+  };
   expect(await native.is_absent(recorded, 1)).toBe(false);
   expect(signals).toEqual([15]);
 });
