@@ -12,7 +12,7 @@ import json
 import logging
 import sqlite3
 import threading
-from collections.abc import Callable, Iterator
+from collections.abc import Awaitable, Callable, Iterator
 from contextlib import closing
 from dataclasses import replace
 from datetime import datetime
@@ -239,6 +239,13 @@ class _MutateOnKillConversationSystem:
         self.mutate()
         await self.base.kill(conversation_id)
 
+    async def kill_for_restart(
+        self, conversation_id: str, ticket_id: str,
+        finish: Callable[[Callable[[sqlite3.Connection], None] | None], Awaitable[None]],
+    ) -> None:
+        self.mutate()
+        await self.base.kill_for_restart(conversation_id, ticket_id, finish)
+
 
 class _PauseKillConversationSystem:
     def __init__(self, base: InMemoryConversationSystem) -> None:
@@ -253,6 +260,14 @@ class _PauseKillConversationSystem:
         self.kill_started.set()
         await self.release_kill.wait()
         await self.base.kill(conversation_id)
+
+    async def kill_for_restart(
+        self, conversation_id: str, ticket_id: str,
+        finish: Callable[[Callable[[sqlite3.Connection], None] | None], Awaitable[None]],
+    ) -> None:
+        self.kill_started.set()
+        await self.release_kill.wait()
+        await self.base.kill_for_restart(conversation_id, ticket_id, finish)
 
 
 @pytest.fixture

@@ -104,9 +104,8 @@ def test_approval_membership_and_each_workers_durable_message_dot(
     )
     _bind(server, "feedback", feedback["id"])
     ticket = tickets[0]
-    # A row waiting on the owner's approval shows the Review mark, which outranks an unread
-    # dot (redesign, owner). The Manager-held approval's row shows its dot, so the durable
-    # dot is proved on that Worker.
+    # An unread dot outranks the Review mark (owner). The first row has no message, so it shows
+    # the Review mark. The Manager-held approval's row shows its dot.
     dot_ticket = tickets[1]
     for name in ("dot-ticket", "dot-manager", "dot-chief"):
         _conversation(server, name)

@@ -736,6 +736,13 @@ class ConversationSystem(Protocol):
         """Inspect a Ticket's retained source without a new Worker start."""
         ...
 
+    async def kill_for_restart(
+        self, conversation_id: str, ticket_id: str,
+        finish: Callable[[Callable[[sqlite3.Connection], None] | None], Awaitable[None]],
+    ) -> None:
+        """Retire the old Worker and run its unlink while new deliveries are fenced."""
+        ...
+
     async def start_conversation(self, request: ConversationStartRequest) -> None:
         """Create the conversation named by the request's conversation id.
 
