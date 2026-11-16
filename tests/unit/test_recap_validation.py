@@ -35,7 +35,8 @@ def test_ordinary_text_passes(text: str) -> None:
     validate_recap(text)
 
 
-@pytest.mark.parametrize("text", REFUSED_IDS)
+# Fresh ids differ per process, so a stable case name keeps xdist workers agreeing.
+@pytest.mark.parametrize("text", REFUSED_IDS, ids=lambda text: text.split()[0])
 def test_ids_are_refused_with_one_line_fix(text: str) -> None:
     with pytest.raises(
         PlannerError, match=r"^Recap names an ID \(.+\)\. Say what .* rewrite it\.$"
