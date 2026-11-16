@@ -17,7 +17,7 @@ jobs:
     runs-on: ubuntu-24.04
     strategy:
       # Pull requests, pushes and manual acceptance run only Node 22. The scheduled
-      # run (against feature/typescript-backend) keeps both versions.
+      # run (against staging) keeps both versions.
       # The matrix itself shrinks, so no skipped entries
       # are left pending.
       matrix:
@@ -25,7 +25,7 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
-          ref: ${{ github.event_name == 'schedule' && 'feature/typescript-backend' || github.sha }}
+          ref: ${{ github.event_name == 'schedule' && 'staging' || github.sha }}
           fetch-depth: 0
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
@@ -41,11 +41,10 @@ jobs:
       - name: Check new native-style violations
         if: matrix.node == '22'
         env:
-          STYLE_BASE: ${{ github.event.pull_request.base.sha }}
+          STYLE_BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
         run: |
-          if [ -z "$STYLE_BASE" ]; then
-            git fetch origin feature/typescript-backend:refs/remotes/origin/feature/typescript-backend
-            STYLE_BASE=$(git merge-base HEAD origin/feature/typescript-backend)
+          if [ -z "$STYLE_BASE" ] || ! git cat-file -e "$STYLE_BASE^{commit}" 2>/dev/null; then
+            STYLE_BASE=$(git rev-parse HEAD~1)
           fi
           node server/tools/native_style.ts "$STYLE_BASE"
       - name: Check formatting

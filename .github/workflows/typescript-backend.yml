@@ -26,7 +26,7 @@ jobs:
       fail-fast: false
       # Pull requests and pushes to the branch run only Node 22 and the direct
       # part, which includes the static checks. The full matrix runs on the
-      # four-hourly schedule (against feature/typescript-backend) and on manual runs.
+      # four-hourly schedule (against staging) and on manual runs.
       # The matrix itself shrinks, so no skipped entries are left pending.
       matrix:
         node: ${{ fromJSON((github.event_name == 'pull_request' || github.event_name == 'push') && '["22"]' || '["22", "24"]') }}
@@ -34,7 +34,7 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
-          ref: ${{ github.event_name == 'schedule' && 'feature/typescript-backend' || github.sha }}
+          ref: ${{ github.event_name == 'schedule' && 'staging' || github.sha }}
           fetch-depth: 0
           persist-credentials: false
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
@@ -249,7 +249,7 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
-          ref: ${{ github.event_name == 'schedule' && 'feature/typescript-backend' || github.sha }}
+          ref: ${{ github.event_name == 'schedule' && 'staging' || github.sha }}
           persist-credentials: false
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
         with:
