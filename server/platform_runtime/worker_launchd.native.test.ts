@@ -405,7 +405,9 @@ test.skipIf(!admitted)(
       expect(birth).toMatch(/^\d+:\d+$/);
       evidence.current_birth = birth;
       const [seconds, microseconds] = birth!.split(':');
-      expect(BigInt(seconds!) > 0n, 'the foreign birth must be real, not a zeroed field').toBe(true);
+      expect(BigInt(seconds!) > 0n, 'the foreign birth must be real, not a zeroed field').toBe(
+        true,
+      );
       const current: WorkerProcess = {
         pid: 1,
         birth: birth!,
