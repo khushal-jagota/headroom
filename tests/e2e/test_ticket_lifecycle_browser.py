@@ -135,16 +135,19 @@ def test_ticket_backlog_resume_and_settled_discovery(
     expect(final_card).to_be_visible()
     approve = final_card.get_by_role("button", name="Approve", exact=True)
     expect(approve).to_be_visible()
+    approve.click()
+    picker = page.locator("[data-ceiling-picker-panel]:visible")
+    picker.locator('[data-ceiling-picker-choice="needs_consequences"]').click()
     with page.expect_response(
         lambda response: response.request.method == "POST"
         and "/decision-operations/" in response.url
     ) as decision_response:
-        approve.click()
+        picker.locator('[data-scope-holder="owner"]').click()
     assert decision_response.value.ok, decision_response.value.text()
     submitted = decision_response.value.request.post_data_json
     assert isinstance(submitted, dict)
-    assert "next_ceiling" not in submitted
-    assert "next_holder" not in submitted
+    assert submitted["next_ceiling"] == "needs_consequences"
+    assert submitted["next_holder"] == {"kind": "owner", "id": "owner"}
     after_approval = api.get(server, path)
     assert after_approval["stage"] == "needs_consequences"
     assert after_approval["pending_proposal"] is None
@@ -152,9 +155,25 @@ def test_ticket_backlog_resume_and_settled_discovery(
     expect(final_card).to_have_count(0)
     expect(worker.locator("[data-stage-fold-open]")).to_contain_text("3 of 4 done")
     expect(worker).to_contain_text("At Consequences")
-    expect(worker.locator("[data-leash]")).to_have_count(0)
+    expect(worker.locator("[data-leash]")).to_contain_text("Approved until Consequences")
     capture_success(page, "consequences-follow-through.png")
     _propose(server, ticket_id, "The approved integration is complete and verified.")
+    reported = api.get(server, path)
+    assert reported["stage"] == "needs_consequences"
+    assert reported["pending_proposal"]["field"] == "consequences"
+    report_card = worker.locator('[data-approval-block][data-field="consequences"]')
+    expect(report_card).to_be_visible()
+    with page.expect_response(
+        lambda response: response.request.method == "POST"
+        and "/decision-operations/" in response.url
+    ) as report_response:
+        report_card.get_by_role("button", name="Approve", exact=True).click()
+    assert report_response.value.ok, report_response.value.text()
+    final_submitted = report_response.value.request.post_data_json
+    assert isinstance(final_submitted, dict)
+    assert final_submitted["field"] == "consequences"
+    assert "next_ceiling" not in final_submitted
+    assert "next_holder" not in final_submitted
     completed = api.get(server, path)
     assert completed["stage"] == "done"
     assert completed["pending_proposal"] is None

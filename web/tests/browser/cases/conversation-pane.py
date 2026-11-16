@@ -263,10 +263,23 @@ def _preview_lifecycle(browser, url):
         page.wait_for_function("!document.querySelector('[data-preview-index=\"0\"] [data-visible-content-restoring]')")
         assert not page.evaluate("window.__firstPreview.isConnected")
         assert sum('preview0.html' in href for href in reads) == 2, reads
-        expect(restored_slot.locator('[data-html-fetch-notice]')).to_have_text('file fetch failed: 503')
-        # Failure completes restoration and is retryable when this preview returns.
-        page.locator('[data-preview-fixture]').evaluate("element=>element.scrollTop=element.scrollHeight")
-        page.wait_for_function("document.querySelector('[data-preview-index=\"0\"] [data-visible-content-state]')?.dataset.visibleContentState !== 'active'")
+        # HTML loads as a native document. Its HTTP error body completes restoration,
+        # without a separate fetched-text error surface in the parent component.
+        expect(restored_slot.frame_locator('iframe').locator('body')).to_have_text('Temporary restore failure')
+        failed_frame = restored_slot.locator('iframe').element_handle()
+        # Returning inside the retention budget keeps native state. Traverse enough
+        # distinct previews to evict this document before proving a fresh request.
+        for index in (4, 8, 12, 16, 23):
+            page.locator(f'[data-preview-index="{index}"]').evaluate(
+                "element=>element.closest('[data-preview-fixture]').scrollTop=element.offsetTop"
+            )
+            page.wait_for_function(
+                "index=>Array.from(document.querySelectorAll('[data-file-preview-html]')).some(frame=>frame.title.includes('preview'+index+'.html'))",
+                arg=index,
+            )
+            page.wait_for_function("window.__retainedRoots().length <= window.__inactiveLimit")
+        assert failed_frame is not None
+        page.wait_for_function("frame=>!frame.isConnected", arg=failed_frame)
         page.locator('[data-preview-fixture]').evaluate("element=>element.scrollTop=0")
         restored_slot.frame_locator('iframe').get_by_role('button', name='Increment').wait_for()
         assert sum('preview0.html' in href for href in reads) == 3, reads
