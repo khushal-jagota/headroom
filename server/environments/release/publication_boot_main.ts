@@ -225,10 +225,15 @@ try {
         child_stopped.signal,
         AbortSignal.timeout(Math.max(1, Math.ceil(remaining * 1000))),
       ]);
-      const url = `http://127.0.0.1:${port}/api/health`;
-      if (!(await healthy(url, sha, remaining, signal, environment)))
+      const url = `http://127.0.0.1:${port}/api/health`,
+        identity = process.platform === 'darwin' ? 'unattributed' : undefined;
+      if (!(await healthy(url, sha, remaining, signal, environment, false, identity)))
         throw new Error('Sealed application did not become healthy');
-      const response = await fetch(`${url}?expected_sha=${sha}`, { signal, redirect: 'error' });
+      const response = await fetch(`${url}?expected_sha=${sha}`, {
+        signal,
+        redirect: 'error',
+        ...(identity === undefined ? {} : { headers: { 'x-plan-actor': identity } }),
+      });
       const health: unknown = await response.json();
       if (
         response.status !== 200 ||
