@@ -227,6 +227,20 @@ def compare_cli_sequence(
                 )
                 assert answer.status_code == step["status"], (resolved, answer.text)
                 capture_values(answer.json(), step, captures)
+        # Issue agent fixtures before the replay snapshot. Both CLIs must read
+        # the same canonical links, including the Ticket source digest.
+        identity_root = tmp_path / "seed-cli-identities"
+        identity_root.mkdir()
+        identities = {
+            json.dumps(substitute(step["identity"], captures), sort_keys=True)
+            for step in spec["requests"]
+            if step.get("kind") == "cli"
+            and step["identity"]["actor"] in {"chief", "worker", "manager"}
+        }
+        for identity in sorted(identities):
+            driver.environment(
+                driver.CliHost(handle, tmp_path), json.loads(identity), identity_root
+            )
     finally:
         _stop_server(handle)
     port = handle.port
