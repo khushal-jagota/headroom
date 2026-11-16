@@ -27,7 +27,20 @@ import { git } from './filesystem/shared.ts';
 import { RETENTION_SECONDS } from './contracts.ts';
 import type { WorkspaceOptions } from './contracts.ts';
 
-const swap = vi.hoisted(() => ({ before_open: undefined as ((path: string) => void) | undefined }));
+const swap = vi.hoisted(() => ({
+  before_open: undefined as ((path: string) => void) | undefined,
+  before_native_open: undefined as ((name: string) => void) | undefined,
+}));
+vi.mock('../executor/mac/platform.ts', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../executor/mac/platform.ts')>();
+  return {
+    ...actual,
+    open_relative: (...args: Parameters<typeof actual.open_relative>) => {
+      swap.before_native_open?.(args[1]);
+      return actual.open_relative(...args);
+    },
+  };
+});
 vi.mock('node:fs/promises', async (importOriginal) => {
   const actual = await importOriginal<typeof import('node:fs/promises')>();
   return {
@@ -100,7 +113,7 @@ test('identity rejects replacement during retirement and preparation resumes the
   expect(read_workspace_identity(admit(path))).toEqual(replacement);
 });
 
-test.skipIf(process.platform !== 'linux')(
+test.skipIf(!['linux', 'darwin'].includes(process.platform))(
   'inventory precedes detach and scratch deletion uses only the recorded snapshot',
   async () => {
     const path = folder();
@@ -139,7 +152,7 @@ test.skipIf(process.platform !== 'linux')(
   },
 );
 
-test.skipIf(process.platform !== 'linux')(
+test.skipIf(!['linux', 'darwin'].includes(process.platform))(
   'remote advertisements, rather than stale tracking refs, prove the last remote copy',
   async () => {
     const remote = admit(join(root, 'remote.git'));
@@ -214,7 +227,7 @@ test.skipIf(process.platform !== 'linux')(
   },
 );
 
-test('unsupported Mac removal stays in the inventory without detachment or scratch pruning', async () => {
+test('unsupported platform removal stays in the inventory without detachment or scratch pruning', async () => {
   const path = folder();
   workspace_identity(admit(path));
   writeFileSync(join(path, 'artifact.txt'), 'preserved');
@@ -222,7 +235,7 @@ test('unsupported Mac removal stays in the inventory without detachment or scrat
   const snapshot = vi.fn(() => []),
     prune = vi.fn(() => true);
   try {
-    Object.defineProperty(process, 'platform', { value: 'darwin', configurable: true });
+    Object.defineProperty(process, 'platform', { value: 'freebsd', configurable: true });
     const result = await cleanup_local_workspaces(
       dirname(path),
       new Map([[ticket, { ticket_id: ticket, ended_at: 0, deleted: false }]]),
@@ -247,7 +260,7 @@ test('unsupported Mac removal stays in the inventory without detachment or scrat
   }
 });
 
-test('a Mac retry preserves an already detached workspace and its scratch snapshot', async () => {
+test('an unsupported platform retry preserves an already detached workspace and its scratch snapshot', async () => {
   const path = folder();
   workspace_identity(admit(path));
   const target = await prepare_workspace_retirement(
@@ -260,7 +273,7 @@ test('a Mac retry preserves an already detached workspace and its scratch snapsh
   const descriptor = Object.getOwnPropertyDescriptor(process, 'platform')!;
   const prune = vi.fn(() => true);
   try {
-    Object.defineProperty(process, 'platform', { value: 'darwin', configurable: true });
+    Object.defineProperty(process, 'platform', { value: 'freebsd', configurable: true });
     expect(
       await retry_retired_workspaces(dirname(target.path), {
         ...options,
@@ -279,7 +292,7 @@ test('a Mac retry preserves an already detached workspace and its scratch snapsh
   }
 });
 
-test.skipIf(process.platform !== 'linux')(
+test.skipIf(!['linux', 'darwin'].includes(process.platform))(
   'a real directory replacement after safety proof is preserved',
   async () => {
     const path = folder();
@@ -296,5 +309,78 @@ test.skipIf(process.platform !== 'linux')(
     expect(reason).toBe('Workspace directory changed before removal');
     expect(readFileSync(join(path, 'replacement.txt'), 'utf8')).toBe('replacement');
     expect(readFileSync(join(root, 'original-root', 'original.txt'), 'utf8')).toBe('original');
+  },
+);
+
+
+test.skipIf(process.platform !== 'darwin')(
+  'native Mac retirement retry removes the recorded workspace and scratch snapshot',
+  async () => {
+    const path = folder();
+    workspace_identity(admit(path));
+    writeFileSync(join(path, 'artifact.txt'), 'saved');
+    const target = await prepare_workspace_retirement(
+      path,
+      { ticket_id: ticket, ended_at: 0, deleted: false },
+      { ...options, snapshot_ticket_scratch: () => [`${ticket}-saved`] },
+    );
+    if ('reason' in target) throw new Error(target.reason);
+    renameSync(path, target.path);
+    const prune = vi.fn(() => true);
+    expect(await retry_retired_workspaces(dirname(target.path), {
+      ...options, prune_ticket_scratch: prune,
+    })).toEqual({ removed: [target.path], skipped: [] });
+    expect(prune).toHaveBeenCalledWith(ticket, [`${ticket}-saved`]);
+    expect(existsSync(target.path)).toBe(false);
+  },
+);
+
+test.skipIf(process.platform !== 'darwin')(
+  'native Mac no-follow removal preserves a replaced descendant and its symlink target',
+  async () => {
+    const path = folder(), nested = join(path, 'nested'), outside = join(root, 'preserved');
+    mkdirSync(nested);
+    mkdirSync(outside);
+    writeFileSync(join(nested, 'original.txt'), 'original');
+    writeFileSync(join(outside, 'sentinel.txt'), 'must survive');
+    let injected = false;
+    swap.before_native_open = (name) => {
+      if (injected || name !== 'nested') return;
+      injected = true;
+      renameSync(nested, join(root, 'detached-original'));
+      symlinkSync(outside, nested, 'dir');
+    };
+    try {
+      expect(await cleanup_ticket_folder(path, options)).toBeNull();
+      expect(injected).toBe(true);
+      expect(readFileSync(join(outside, 'sentinel.txt'), 'utf8')).toBe('must survive');
+      expect(readFileSync(join(root, 'detached-original', 'original.txt'), 'utf8')).toBe('original');
+    } finally {
+      swap.before_native_open = undefined;
+    }
+  },
+);
+
+test.skipIf(process.platform !== 'darwin')(
+  'native Mac removal refuses a replacement directory before unlinking its parent entry',
+  async () => {
+    const path = folder();
+    writeFileSync(join(path, 'original.txt'), 'original');
+    let opens = 0;
+    swap.before_native_open = (name) => {
+      if (name !== ticket || ++opens !== 2) return;
+      renameSync(path, join(root, 'detached-original'));
+      mkdirSync(path);
+    };
+    try {
+      await expect(cleanup_ticket_folder(path, options)).rejects.toThrow(
+        'Workspace directory changed before removal',
+      );
+      expect(opens).toBe(2);
+      expect(existsSync(path)).toBe(true);
+      expect(existsSync(join(root, 'detached-original'))).toBe(true);
+    } finally {
+      swap.before_native_open = undefined;
+    }
   },
 );

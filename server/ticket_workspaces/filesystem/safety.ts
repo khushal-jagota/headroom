@@ -4,6 +4,7 @@ import type { FileHandle } from 'node:fs/promises';
 import { basename, dirname, join, resolve, sep } from 'node:path';
 import { path_is_within } from '../../core/path_containment.ts';
 import type { WorkspaceOptions, WorkspaceState } from '../contracts.ts';
+import { remove_darwin_workspace } from './darwin_removal.ts';
 import { admit, checkouts, entry_stat, git, ticket_match, ticket_mentions } from './shared.ts';
 export async function workspace_ticket_owners(
   root: string,
@@ -28,7 +29,8 @@ export async function reason_to_keep(
   options: WorkspaceOptions = {},
 ): Promise<string | null> {
   root = admit(root, options);
-  if (process.platform !== 'linux') return 'safe removal is not supported on this platform yet';
+  if (process.platform !== 'linux' && process.platform !== 'darwin')
+    return 'safe removal is not supported on this platform yet';
   if (
     (await entry_stat(root))?.isSymbolicLink() ||
     (await entry_stat(dirname(root)))?.isSymbolicLink()
@@ -123,6 +125,10 @@ async function remove_anchored(
   parent_identity?: { dev: number; ino: number },
   ancestors?: ReadonlyMap<string, { dev: number; ino: number }>,
 ): Promise<void> {
+  if (process.platform === 'darwin') {
+    remove_darwin_workspace(root, signal, identity, parent_identity, ancestors);
+    return;
+  }
   const flags = constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW;
   const fd_path = (handle: FileHandle) => `/proc/self/fd/${handle.fd}`;
   let parent = await open('/', flags);

@@ -820,19 +820,6 @@ on the workspace retirement retry. The populated command proof asserts both coun
 explicitly: two Python native calls and one TypeScript native call. It compares the
 retained custody, retirement grant, final output bytes, and physical removal exactly.
 
-## Known gap: Mac workspace removal
-
-Linux removes eligible workspaces through open directory descriptors with no-follow
-checks. This also removes only the validated Git registration for each linked checkout.
-Node 22 recursive `fs.rm` and Git `worktree remove` both delete through pathnames, so
-neither command proves protection from directory replacement during removal.
-
-Mac and other platforms without the Linux descriptor path preserve eligible folders with
-`safe removal is not supported on this platform yet` in the inventory. Retirement retries
-also preserve their folders and scratch snapshots. This is a known parity gap, not an
-accepted parity result. The Manager explicitly requires preservation until a safe platform
-adapter exists. No native binding is added by this port.
-
 ## Native first-home installation
 
 The standalone first-home installer accepts sealed Node version-2 home releases.

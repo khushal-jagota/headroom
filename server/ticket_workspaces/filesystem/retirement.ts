@@ -78,7 +78,8 @@ export async function retire_workspace(
   return target;
 }
 async function remove_retired(path: string, options: WorkspaceOptions): Promise<string | null> {
-  if (process.platform !== 'linux') return 'safe removal is not supported on this platform yet';
+  if (process.platform !== 'linux' && process.platform !== 'darwin')
+    return 'safe removal is not supported on this platform yet';
   for (const checkout of await checkouts(path))
     if ((await entry_stat(join(checkout, '.git')))?.isFile()) {
       const result = await git(checkout, ['worktree', 'repair', checkout], options);

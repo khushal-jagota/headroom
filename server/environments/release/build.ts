@@ -1,6 +1,7 @@
 /** Exact-SHA source export and transactional Node application construction. */
 import {
   chmod,
+  lstat,
   mkdir,
   mkdtemp,
   readFile,
@@ -21,6 +22,7 @@ import { AppValidationError } from './contracts.ts';
 import { APP_FORMAT } from './configuration.ts';
 import {
   digest_app_artifact,
+  app_tree_paths,
   digest_app_source,
   validate_app_manifest,
   validate_app_sha,
@@ -138,8 +140,21 @@ async function install_app_dependencies(
       '@anthropic-ai/claude-code@latest',
       '@openai/codex@latest',
     ]);
-  if (await exists(join(root, 'web/package.json')))
+  if (await exists(join(root, 'web/package.json'))) {
     await run('web', ['npm', 'run', 'build', '--prefix', join(root, 'web')]);
+    // The server serves web/dist. Browser build tools are not runtime dependencies.
+    const build_dependencies = join(root, 'web/node_modules');
+    if (await exists(build_dependencies)) {
+      let removed_bytes = 0;
+      for (const path of await app_tree_paths(build_dependencies)) {
+        assert_release_execution(execution);
+        const info = await lstat(path);
+        if (info.isFile()) removed_bytes += info.size;
+      }
+      await remove_owned_tree(build_dependencies);
+      console.error(`Browser build dependencies removed before sealing: ${removed_bytes} bytes`);
+    }
+  }
 }
 export async function build_exported_app(
   source_root: string,
