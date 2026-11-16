@@ -1,7 +1,7 @@
 name: TypeScript server foundation
 on:
   pull_request:
-    branches: [feature/typescript-backend]
+    branches: [feature/typescript-backend, staging]
   push:
     branches: [feature/typescript-backend]
   schedule:
