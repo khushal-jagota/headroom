@@ -530,12 +530,19 @@ def run(browser, urls):
     # A real frame checks the browser navigation boundary. Authored links and scripts
     # run directly from the managed address without the former document rewrite.
     page.set_viewport_size({"width": 1100, "height": 900})
+    held_images = []
     def serve_html(route):
-        child = route.request.url.split("?", 1)[0].endswith("child.html")
-        route.fulfill(status=200, content_type="text/html", body=(
-            "<!doctype html><h1>Child</h1>" if child else
-            "<!doctype html><h1>Index</h1><a href='child.html'>Child</a>"
-        ))
+        path = route.request.url.split("?", 1)[0]
+        if path.endswith("held.png"):
+            held_images.append(route)
+            return
+        child = path.endswith("child.html")
+        held = path.endswith("held.html")
+        body = ("<!doctype html><h1>Child</h1>" if child else
+                "<!doctype html><h1>Index</h1><a href='child.html'>Child</a>")
+        if held:
+            body += "<img src='held.png'>"
+        route.fulfill(status=200, content_type="text/html", body=body)
     page.route("**/files/tickets/t_owner/**", serve_html)
     page.evaluate("window.__html('link')")
     html = page.locator('[data-html-fixture]')
@@ -550,7 +557,28 @@ def run(browser, urls):
         assert iframe.get_attribute('sandbox') is None
         frame.locator('a').click()
         expect(frame.locator('h1')).to_have_text('Child')
+        if mode == "full":
+            with page.expect_response(lambda response: response.url.endswith('/child.html')):
+                page.evaluate("window.__htmlRefresh()")
+            expect(frame.locator('h1')).to_have_text('Child')
         page.evaluate("window.__html('')")
+    # A stalled iframe must reserve the same box before and after its load.
+    initial = page.evaluate("""() => {
+      window.__html('embedded', 'site/held.html');
+      document.querySelector('[data-html-fixture]').style.height = 'auto';
+      const region = document.querySelector('[data-html-fixture] [data-shape="frame"]');
+      return Math.round(region.getBoundingClientRect().height);
+    }""")
+    assert initial == 288
+    page.wait_for_timeout(100)
+    assert held_images, "the image request must be held while the frame loads"
+    region = html.locator('[data-shape="frame"]')
+    expect(region).to_have_attribute('aria-busy', 'true')
+    assert round(region.bounding_box()['height']) == initial
+    held_images[0].fulfill(status=200, content_type="image/png", body=b"")
+    expect(region).to_have_attribute('aria-busy', 'false')
+    assert round(region.bounding_box()['height']) == initial
+    page.evaluate("window.__html('')")
     _preview_cards(page)
     assert not errors, errors
     page.close()

@@ -27,6 +27,7 @@ struct ArtifactViewerView: View {
     @State private var linkedArtifact: ArtifactTarget?
     @State private var loadVersion = 0
     @State private var renderVersion = 0
+    @State private var htmlReloadSignal = 0
     @State private var webReady = false
     @State private var desktopPreview = false
     private var target: ArtifactTarget { .init(owner: owner, path: path, title: title) }
@@ -57,7 +58,7 @@ struct ArtifactViewerView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .safeAreaInset(edge: .bottom, spacing: 0) {
             if let error, document != nil || htmlURL != nil {
-                LoadErrorView(message: "Couldn’t refresh. Showing the last loaded artifact. \(error)") { await load() }
+                LoadErrorView(message: "Couldn’t refresh. Showing the last loaded artifact. \(error)") { reloadPreview() }
                     .padding(.horizontal, PanelsTheme.Space.lg).background(PanelsTheme.surface)
             }
         }
@@ -73,7 +74,7 @@ struct ArtifactViewerView: View {
                 Button { Task { await share() } } label: { Image(systemName: "square.and.arrow.up") }
                     .accessibilityLabel("Share artifact").disabled((document == nil && htmlURL == nil) || isPreparingShare)
                 Menu {
-                    Button("Reload", systemImage: "arrow.clockwise") { loadVersion += 1 }.disabled(isLoading)
+                    Button("Reload", systemImage: "arrow.clockwise") { reloadPreview() }.disabled(isLoading)
                     Button("Copy link", systemImage: "link") {
                         UIPasteboard.general.url = currentHTMLURL ?? target.previewURL(baseURL: store.baseURL); Haptics.success()
                     }
@@ -110,7 +111,7 @@ struct ArtifactViewerView: View {
                 conversationID = nil
             }
         }
-        .task(id: loadVersion) { await load() }
+        .task(id: "\(target.id)|\(loadVersion)") { await load() }
         .task(id: waitingForPreview) {
             showLoading = false
             if waitingForPreview {
@@ -127,7 +128,7 @@ struct ArtifactViewerView: View {
                 Text("Fit desktop").tag(true)
             }.pickerStyle(.segmented).padding(PanelsTheme.Space.md)
                 .accessibilityIdentifier("artifact-preview-width")
-            ArtifactWebView(url: url, desktopPreview: desktopPreview, failed: { error = $0 }, ready: { webReady = true }, reload: { Task { await load() } }, navigated: { currentHTMLURL = $0 }, openExternal: { openURL($0) })
+            ArtifactWebView(url: url, desktopPreview: desktopPreview, reloadSignal: htmlReloadSignal, failed: { error = $0 }, ready: { webReady = true }, reload: { reloadPreview() }, navigated: { currentHTMLURL = $0 }, openExternal: { openURL($0) })
                 .id(renderVersion)
                 .overlay { if !webReady && showLoading { RingSpinner("Opening preview…").padding().background(PanelsTheme.surface, in: RoundedRectangle(cornerRadius: PanelsTheme.Radius.md)) } }
         }
@@ -185,16 +186,23 @@ struct ArtifactViewerView: View {
             Haptics.error()
         }
     }
+    private func reloadPreview() {
+        if htmlURL != nil {
+            error = nil; webReady = false; htmlReloadSignal += 1
+        } else { loadVersion += 1 }
+    }
     private func load() async {
         isLoading = true
         defer { isLoading = false }
         do {
             if target.kind == .html {
+                document = nil
                 htmlURL = try store.client.artifactURL(target)
                 currentHTMLURL = htmlURL
                 error = nil; webReady = false; renderVersion += 1
                 return
             }
+            htmlURL = nil; currentHTMLURL = nil
             let result = try await store.client.artifactDocument(target)
             let image = target.kind == .image ? await Task.detached(priority: .userInitiated) {
                 UIImage(contentsOfFile: result.localURL.path)

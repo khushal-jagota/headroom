@@ -5,6 +5,7 @@ import WebKit
 struct ArtifactWebView: UIViewRepresentable {
     let url: URL
     var desktopPreview = false
+    var reloadSignal = 0
     let failed: (String) -> Void
     let ready: () -> Void
     let reload: () -> Void
@@ -32,12 +33,17 @@ struct ArtifactWebView: UIViewRepresentable {
         container.desktopPreview = desktopPreview
         if context.coordinator.url != url {
             context.coordinator.url = url
+            context.coordinator.reloadSignal = reloadSignal
             container.webView.load(URLRequest(url: url))
+        } else if context.coordinator.reloadSignal != reloadSignal {
+            context.coordinator.reloadSignal = reloadSignal
+            container.webView.reload()
         }
     }
 
     final class Coordinator: NSObject, WKNavigationDelegate, WKUIDelegate, WKDownloadDelegate {
         var url: URL?
+        var reloadSignal = 0
         weak var mainView: WKWebView?
         private var urlObservation: NSKeyValueObservation?
         func observeNavigation(in view: WKWebView) {

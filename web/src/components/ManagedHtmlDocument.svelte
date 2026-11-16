@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { untrack } from "svelte";
   import type { RegisterManagedArtifactFrame } from "../lib/managedArtifactPress";
   import SkeletonRegion from "./SkeletonRegion.svelte";
 
@@ -6,7 +7,21 @@
     href: string; label: string; active?: boolean; reloadSignal?: number; full?: boolean; registerArtifactFrame?: RegisterManagedArtifactFrame;
   } = $props();
   let loaded = $state(false);
-  $effect(() => { href; reloadSignal; active; loaded = false; });
+  let frame = $state<HTMLIFrameElement>();
+  let previousReload = untrack(() => reloadSignal);
+  $effect(() => { href; active; loaded = false; });
+  $effect(() => {
+    const next = reloadSignal;
+    if (next === previousReload) return;
+    previousReload = next;
+    untrack(() => {
+      if (!frame) return;
+      loaded = false;
+      // A linked page can be cross-origin, where browsers prohibit reading its location.
+      try { frame.contentWindow?.location.reload(); }
+      catch { frame.src = href; }
+    });
+  });
   function artifactFrame(element: HTMLIFrameElement) {
     return { destroy: registerArtifactFrame?.(element) };
   }
@@ -16,8 +31,8 @@
   <SkeletonRegion shape={full ? "document" : "frame"} layout={full ? "fill" : "flow"}
     loading={active && !full && !loaded} loadingText="Loading preview...">
     {#if active}
-      {#key `${href}:${reloadSignal}`}
-        <iframe use:artifactFrame class={full ? "file-preview-document-frame" : "file-preview-frame"}
+      {#key href}
+        <iframe use:artifactFrame bind:this={frame} class={full ? "file-preview-document-frame" : "file-preview-frame"}
           data-file-preview-html src={href} title={label} onload={() => { loaded = true; }}></iframe>
       {/key}
     {/if}
