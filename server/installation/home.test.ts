@@ -29,6 +29,10 @@ import { create_darwin_home_service } from './darwin.ts';
 import { initialize_candidate_home_database } from './database.ts';
 import { require_application_schema } from '../core/database/admission.ts';
 import { createReadAccess } from '../core/database/index.ts';
+import {
+  admit_unidentified_call,
+  http_refusal,
+} from '../core/unidentified_agent_calls/admission.ts';
 
 async function unused_port(): Promise<number> {
   const server = createServer();
@@ -314,27 +318,46 @@ test('replacement root and changed service files retain their trees before any u
   }
   const darwin = await fixture(),
     controls: string[][] = [];
-  let loaded: string | undefined;
+  let loaded: string | undefined,
+    plan: HomeServicePlan | undefined,
+    foreign = true,
+    stopping = false,
+    persistent = false,
+    expired = false,
+    polls = 0;
   try {
     await assert.rejects(
       install_home(darwin.request, {
         ...darwin.deps,
         system: 'darwin',
         architecture: 'arm64',
-        service: create_darwin_home_service,
+        service: async (request, host) => (plan = await create_darwin_home_service(request, host)),
         async command(argv) {
           if (argv[0] === '/usr/bin/plutil')
             return { code: 0, stdout: readFileSync(argv.at(-1)!, 'utf8'), stderr: '' };
-          if (argv[1] === 'print')
-            return loaded
-              ? {
-                  code: 0,
-                  stdout: `path = ${loaded}\nprogram = /foreign/idle-program\n`,
-                  stderr: '',
-                }
-              : { code: 1, stdout: '', stderr: 'Could not find service' };
+          if (argv[1] === 'print') {
+            if (loaded && stopping) {
+              polls++;
+              if (persistent) expired = true;
+              else if (polls > 1) loaded = undefined;
+            }
+            if (!loaded) return { code: 1, stdout: '', stderr: 'Could not find service' };
+            const job = JSON.parse(readFileSync(loaded, 'utf8'));
+            return {
+              code: 0,
+              stdout: foreign
+                ? `path = ${loaded}\nprogram = /foreign/idle-program\n`
+                : `path = ${loaded}\nprogram = ${job.ProgramArguments[0]}\nworking directory = ${job.WorkingDirectory}\narguments = {\n${job.ProgramArguments.join('\n')}\n}\nenvironment = {\n${Object.entries(
+                    job.EnvironmentVariables,
+                  )
+                    .map(([key, value]) => `${key} => ${value}`)
+                    .join('\n')}\n}\n`,
+              stderr: '',
+            };
+          }
           controls.push([...argv]);
           if (argv[1] === 'bootstrap') loaded = argv.at(-1)!;
+          if (argv[1] === 'bootout') stopping = true;
           return { code: 0, stdout: '', stderr: '' };
         },
       }),
@@ -344,6 +367,36 @@ test('replacement root and changed service files retain their trees before any u
     assert(!controls.some((argv) => argv[1] === 'bootout'));
     assert(existsSync(join(darwin.request.root, 'app/sealed')));
     assert(existsSync(loaded));
+    const path = loaded,
+      bytes = readFileSync(path);
+    const assert_owned = async (current: string) => {
+      assert.equal(current, path);
+      assert.deepEqual(readFileSync(current), bytes);
+    };
+    foreign = false;
+    controls.length = 0;
+    await plan!.stop(darwin.deps.execution, assert_owned);
+    assert.equal(polls, 2);
+    assert.equal(controls.filter((argv) => argv[1] === 'bootout').length, 1);
+    assert(existsSync(path));
+    loaded = path;
+    stopping = false;
+    persistent = true;
+    controls.length = 0;
+    const actual_now = performance.now.bind(performance);
+    const clock = vi
+      .spyOn(performance, 'now')
+      .mockImplementation(() => actual_now() + (expired ? 1000 : 0));
+    try {
+      await assert.rejects(
+        plan!.stop({ ...darwin.deps.execution, deadline: actual_now() / 1000 + 0.5 }, assert_owned),
+        /time budget/,
+      );
+      assert.equal(controls.filter((argv) => argv[1] === 'bootout').length, 1);
+      assert(existsSync(path));
+    } finally {
+      clock.mockRestore();
+    }
   } finally {
     await darwin.close();
   }
@@ -397,8 +450,35 @@ test('shared health requires exact ready identity for homes while retaining the 
   // The real HTTP boundary proves ready is read from decoded health, not merely a mock return.
   const started = performance.now();
   let body: unknown = { app_sha: 'c'.repeat(40), ready: true };
-  const server = http_server((_request, response) => {
+  let guard = false,
+    lookups = 0;
+  const actors: (string | string[] | undefined)[] = [];
+  const server = http_server(async (request, response) => {
+    actors.push(request.headers['x-plan-actor']);
+    const headers: [string, string][] = [];
+    for (let index = 0; index < request.rawHeaders.length; index += 2)
+      headers.push([request.rawHeaders[index]!, request.rawHeaders[index + 1]!]);
+    const admission = await admit_unidentified_call(
+      guard,
+      {
+        kind: 'http',
+        authenticated_owner: false,
+        headers,
+        client: [request.socket.remoteAddress!, request.socket.remotePort!],
+        server: [request.socket.localAddress!, request.socket.localPort!],
+      },
+      async () => {
+        lookups++;
+        return { is_owner: false, skipped_unreadable_processes: 0 };
+      },
+    );
     response.setHeader('content-type', 'application/json');
+    if (!admission.admitted) {
+      const refusal = http_refusal(0);
+      response.statusCode = refusal.status;
+      response.end(JSON.stringify(refusal.body));
+      return;
+    }
     response.end(JSON.stringify(body));
   });
   await new Promise<void>((done) => server.listen(0, '127.0.0.1', done));
@@ -415,12 +495,19 @@ test('shared health requires exact ready identity for homes while retaining the 
     assert.equal(await healthy(url, sha, 0, signal), true);
     body = { app_sha: sha, ready: true };
     assert.equal(await healthy(url, sha, 0, signal, {}, true), true);
+    guard = true;
+    assert.equal(await healthy(url, sha, 0, signal, {}, true), false);
+    assert.equal(lookups, 1);
+    assert.equal(await healthy(url, sha, 0, signal, {}, true, 'unattributed'), true);
+    assert.equal(actors.at(-1), 'unattributed');
+    assert(actors.slice(0, -1).every((actor) => actor === undefined));
+    assert.equal(lookups, 1);
   } finally {
     await new Promise<void>((done, fail) =>
       server.close((error) => (error ? fail(error) : done())),
     );
     console.log(
-      `home-health-boundary seconds=${((performance.now() - started) / 1000).toFixed(3)}`,
+      `home-health-boundary seconds=${((performance.now() - started) / 1000).toFixed(3)} peer-lookups=${lookups}`,
     );
   }
 });

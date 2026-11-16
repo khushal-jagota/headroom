@@ -3,6 +3,7 @@ import { test, expect } from 'vitest';
 import { randomUUID } from 'node:crypto';
 import { realpathSync } from 'node:fs';
 import {
+  chmod,
   cp,
   lstat,
   mkdir,
@@ -95,6 +96,7 @@ test.skipIf(!admitted)(
     const cases = report.cases as Record<string, unknown>[];
     const build_processes = new ChildProcesses();
     let mini_builds: Awaited<ReturnType<typeof build_native_mini_homes>> | undefined;
+    let case_children_settled = true;
     try {
       if (system === 'darwin') {
         mini_builds = await build_native_mini_homes(base, {
@@ -118,6 +120,7 @@ test.skipIf(!admitted)(
         await writeFile(sentinel, 'unrelated sentinel', { mode: 0o600 });
         const processes = new ChildProcesses(),
           commands = new OneShotChildren(processes);
+        case_children_settled = false;
         const primitives =
           system === 'darwin'
             ? new DarwinWorkerProcesses({ children: commands })
@@ -461,14 +464,12 @@ test.skipIf(!admitted)(
           } finally {
             commands.seal();
             processes.seal();
-            expect(
-              (
-                await observe_promise(
-                  Promise.all([commands.settled(), processes.settled()]),
-                  AbortSignal.timeout(5000),
-                )
-              ).completed,
-            ).toBe(true);
+            const settlement = await observe_promise(
+              Promise.all([commands.settled(), processes.settled()]),
+              AbortSignal.timeout(5000),
+            );
+            case_children_settled = settlement.completed;
+            expect(case_children_settled).toBe(true);
             record.seconds = (performance.now() - started) / 1000;
             record.resource_paths = [...retained.keys()];
             if (system === 'darwin')
@@ -514,6 +515,17 @@ test.skipIf(!admitted)(
           join(evidence, `first-home-${system}.json`),
           JSON.stringify(report, null, 2) + '\n',
         );
+        // Failed proofs also leave their retired inputs accessible after children settle.
+        if (system === 'darwin' && case_children_settled && !report.build_cleanup_error)
+          for (const name of [
+            'retired-build-A',
+            'retired-build-B',
+            'retired-mini-source',
+            'retired-installed-source',
+          ])
+            await chmod(join(base, name), 0o700).catch((error: NodeJS.ErrnoException) => {
+              if (error.code !== 'ENOENT') throw error;
+            });
         // Failed cleanup retains fixture paths. The report records their exact root.
         await rmdir(base).catch((error: NodeJS.ErrnoException) => {
           if (error.code !== 'ENOTEMPTY') throw error;

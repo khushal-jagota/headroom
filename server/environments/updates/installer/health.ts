@@ -21,6 +21,7 @@ const REDIRECT_STATUSES = [301, 302, 303, 307, 308];
 async function request_observation(
   url: string,
   signal: AbortSignal,
+  identity: string | undefined,
 ): Promise<HealthResponse | null> {
   signal.throwIfAborted();
   const target = new URL(url);
@@ -38,7 +39,13 @@ async function request_observation(
     const result = new Promise<HealthResponse | null>((resolve) => {
       request = (target.protocol === 'https:' ? https : http).get(
         target,
-        { agent: false, headers: { Connection: 'close' } },
+        {
+          agent: false,
+          headers: {
+            Connection: 'close',
+            ...(identity === undefined ? {} : { 'x-plan-actor': identity }),
+          },
+        },
         (response) => {
           const chunks: Buffer[] = [];
           response.on('data', (chunk: Buffer) => chunks.push(chunk));
@@ -96,11 +103,12 @@ async function observation(
   url: string,
   signal: AbortSignal,
   environment: NodeJS.ProcessEnv,
+  identity: string | undefined,
 ): Promise<HealthResponse | null> {
   const visited = new Map<string, number>();
   for (;;) {
     assert_installer_health_url(url, environment);
-    const result = await request_observation(url, signal);
+    const result = await request_observation(url, signal, identity);
     if (
       result === null ||
       !REDIRECT_STATUSES.includes(result.status) ||
@@ -123,13 +131,19 @@ export async function healthy(
   signal: AbortSignal,
   environment: NodeJS.ProcessEnv = process.env,
   require_ready = false,
+  identity?: string,
 ): Promise<boolean> {
   const deadline = performance.now() / 1000 + timeout_seconds;
   for (;;) {
     signal.throwIfAborted();
     let result: Awaited<ReturnType<typeof observation>> = null;
     try {
-      result = await observation(`${health_url}?expected_sha=${sha}`, signal, environment);
+      result = await observation(
+        `${health_url}?expected_sha=${sha}`,
+        signal,
+        environment,
+        identity,
+      );
     } catch {
       signal.throwIfAborted();
     }
