@@ -4,7 +4,7 @@ import { OWNER } from '../contracts.ts';
 import {
   requestContext,
   TRUSTED_INGRESS_CONFIGURED,
-  with_in_process_request_context,
+  IN_PROCESS_REQUEST_CONTEXT,
 } from './identity.ts';
 
 // Credential failures must never inherit owner ingress or the identity-free local default.
@@ -34,12 +34,9 @@ test('failed and duplicate credentials stay unidentified before owner ingress', 
     principal: { kind: 'ticket' as const, id: 'verified' },
     conversationId: 'conversation',
   };
-  const verified = await with_in_process_request_context(context, async () => {
-    await Promise.resolve();
-    return requestContext(
-      request(['Authorization', 'Bearer bad'], { authorization: 'Bearer bad' }),
-    );
-  });
+  const internalRequest = request(['Authorization', 'Bearer bad'], { authorization: 'Bearer bad' });
+  Object.assign(internalRequest.raw, { [IN_PROCESS_REQUEST_CONTEXT]: context });
+  const verified = requestContext(internalRequest);
   expect(verified).toEqual(context);
   expect(requestContext(request([], {})).principal).toEqual(OWNER);
 });

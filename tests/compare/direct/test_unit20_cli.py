@@ -21,6 +21,7 @@ import pytest
 from tests.compare.direct import unit20_cli as driver
 from tests.compare.direct.unit20_wire import wire_view
 from tests.compare.runner import Normalizer, backup_database, capture_values, substitute
+from tests.support.launch_identity import agent_headers
 from tests.support.server import ServerHandle
 from tests.support.server_fixtures import _start_server, _stop_server
 
@@ -135,6 +136,17 @@ def test_unit20_parser_smoke_and_startup(tmp_path: Path, request: pytest.Fixture
         _stop_server(handle)
 
 
+def _fixture_headers(handle: ServerHandle, headers: dict[str, str] | None) -> dict[str, str] | None:
+    if not headers or "X-Plan-Actor" not in headers:
+        return headers
+    actor = headers["X-Plan-Actor"]
+    return agent_headers(
+        handle, actor,
+        headers.get("X-Plan-Ticket-ID") if actor == "worker" else headers.get("X-Plan-Manager-ID"),
+        conversation_id=headers.get("X-Plan-Conversation-ID"),
+    )
+
+
 def _replay(
     handle: ServerHandle,
     root: Path,
@@ -175,7 +187,7 @@ def _replay(
                     resolved["method"],
                     handle.base + resolved["path"],
                     json=resolved.get("json"),
-                    headers=resolved.get("headers"),
+                    headers=_fixture_headers(handle, resolved.get("headers")),
                 )
                 assert response.status_code == resolved["status"], (
                     resolved,
@@ -211,7 +223,7 @@ def compare_cli_sequence(
                     resolved["method"],
                     handle.base + resolved["path"],
                     json=resolved.get("json"),
-                    headers=resolved.get("headers"),
+                    headers=_fixture_headers(handle, resolved.get("headers")),
                 )
                 assert answer.status_code == step["status"], (resolved, answer.text)
                 capture_values(answer.json(), step, captures)

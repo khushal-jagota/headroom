@@ -926,11 +926,13 @@ def test_unit20_real_preview_cli(tmp_path: Path, request: pytest.FixtureRequest)
             ],
         ):
             subprocess.run(command, env=env, check=True, capture_output=True)
+        owner_headers = {"Tailscale-User-Login": "owner@comparison.invalid"}
         project = fixtures.api(
             reference,
             "POST",
             "/api/projects",
             {"name": "CLI preview project", "folder_path": str(git_root)},
+            owner_headers=owner_headers,
         )
         ticket = fixtures.api(
             reference,
@@ -942,7 +944,9 @@ def test_unit20_real_preview_cli(tmp_path: Path, request: pytest.FixtureRequest)
                 "project_id": project["id"],
                 "manager": {"kind": "chief", "id": "chief"},
             },
+            owner_headers=owner_headers,
         )
+        agent_headers(reference, "worker", ticket["id"], owner_headers=owner_headers)
         tree = git_root / "worktrees" / (ticket["id"] + "-preview")
         subprocess.run(
             ["git", "-C", str(git_root), "worktree", "add", "--detach", str(tree)],

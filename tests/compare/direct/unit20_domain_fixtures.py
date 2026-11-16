@@ -70,8 +70,13 @@ def api(
     path: str,
     body: Any = None,
     identity: dict[str, str] | None = None,
+    owner_headers: dict[str, str] | None = None,
 ) -> dict[str, Any]:
-    headers = {} if identity is None else agent_headers(handle, "worker", identity["ticket_id"])
+    headers = (
+        owner_headers or {} if identity is None else agent_headers(
+            handle, "worker", identity["ticket_id"], owner_headers=owner_headers
+        )
+    )
     with httpx.Client(trust_env=False, follow_redirects=False, timeout=30) as client:
         response = client.request(method, handle.base + path, json=body, headers=headers)
     assert response.status_code == 200, (method, path, response.status_code, response.text)

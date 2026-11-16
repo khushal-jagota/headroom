@@ -5,7 +5,8 @@ import type { Clock } from '../core/clock.ts';
 import type { Database, ReadSql } from '../core/database/contracts.ts';
 import type { ChangeSignal } from '../core/changes/index.ts';
 import { PlannerError } from '../core/contracts.ts';
-import { with_in_process_request_context } from '../core/authority/identity.ts';
+import { IN_PROCESS_REQUEST_CONTEXT } from '../core/authority/identity.ts';
+import { IncomingMessage } from 'node:http';
 import { ORIGINAL_MAC_MACHINE_ID, type ExecutorIdentity } from '../execution_identity.ts';
 import { ConversationMessageFiles } from '../conversation/record/message_files.ts';
 import type { SqliteProcessConversationSystem } from '../conversation/system.ts';
@@ -419,15 +420,16 @@ export class VpsExecutor {
     target.search = params.toString();
     const controller = new AbortController();
     const answer = await observe_promise(
-      with_in_process_request_context(
-        { principal, conversationId: read.child.conversation_id },
-        () =>
-          this.app.inject({
-            method: 'GET',
-            url: target.pathname + target.search,
-            signal: controller.signal,
-          }),
-      ),
+      this.app.inject({
+        method: 'GET',
+        url: target.pathname + target.search,
+        signal: controller.signal,
+        Request: class extends IncomingMessage {
+          get [IN_PROCESS_REQUEST_CONTEXT]() {
+            return { principal, conversationId: read.child.conversation_id };
+          }
+        },
+      }),
       LIVE_READ_SERVER_LIMIT_SECONDS * 1000,
     );
     if (!answer.completed) {

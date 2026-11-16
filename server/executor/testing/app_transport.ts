@@ -1,3 +1,5 @@
+import { requestContext } from '../../core/authority/identity.ts';
+import { legacyActor } from '../../core/contracts.ts';
 /** One owned HTTP host under the existing synthetic TLS proxy; no native backend. */
 import { existsSync, readFileSync, writeFileSync, readdirSync, readlinkSync } from 'node:fs';
 import crypto from 'node:crypto';
@@ -189,11 +191,16 @@ if (spec.auth_mode) {
   });
 }
 // The source raw-transport fixture uses this same recording allowlisted read.
-app.get('/api/tickets', async (request) => ({
-  actor: request.headers['x-plan-actor'] ?? null,
-  ticket: request.headers['x-plan-ticket-id'] ?? null,
-  status: (request.query as { status?: string }).status ?? null,
-}));
+app.get('/api/tickets', async (request) => {
+  const context = requestContext(request);
+  if (request.headers['x-plan-actor'] !== undefined)
+    throw new Error('Executor reads must use verified in-process identity, not role headers');
+  return {
+    actor: legacyActor(context.principal),
+    ticket: context.principal.id,
+    status: (request.query as { status?: string }).status ?? null,
+  };
+});
 endpoint.app = app;
 await app.ready();
 await new Promise<void>((resolve, reject) => {
