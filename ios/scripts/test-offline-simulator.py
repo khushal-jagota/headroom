@@ -1180,7 +1180,10 @@ def main() -> int:
                 ))
                 return
             if TABLE_SCROLL_SMOKE and path == "/api/chief/page/readings":
-                self.respond(dict(values=[], sources=[]))
+                self.respond(dict(
+                    goal_id="chief", revision=1, status="good", status_date="2026-11-04",
+                    next_refresh_at=time.time() + 3600, values=[], sources=[], charts={},
+                ))
                 return
             if TABLE_SCROLL_SMOKE and path in (
                 "/files/tickets/offline-1/table-proof.md",

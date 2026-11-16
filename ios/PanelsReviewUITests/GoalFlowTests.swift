@@ -56,6 +56,10 @@ final class GoalFlowTests: XCTestCase {
             let header = element("table-column-scroll-proof-1")
             let cell = element("table-cell-scroll-proof-0-1")
             XCTAssertTrue(header.exists); XCTAssertTrue(cell.exists)
+            let missingDataError = app.staticTexts.matching(NSPredicate(
+                format: "label CONTAINS[c] %@ AND label CONTAINS[c] %@", "data", "missing"
+            )).firstMatch
+            XCTAssertFalse(missingDataError.exists, "The fixture must supply a complete Chief readings response")
             let pageX = caption.frame.minX
             capture(scrolled ? "table-before-shared-pan" : "table-initial")
             if scrolled {
