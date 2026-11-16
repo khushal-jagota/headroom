@@ -71,6 +71,11 @@ def test_authenticated_manager_owns_the_exact_decision_note_and_retry(
     assert accepted.json()["stage"] == "needs_implementation"
     repeated = client.post(path, json=body, headers=headers)
     assert repeated.status_code == 200, repeated.text
+    # The legacy API already treats a field alias as the same ceiling request.
+    alias_retry = client.post(
+        path, json={**body, "next_ceiling": "implementation"}, headers=headers
+    )
+    assert alias_retry.status_code == 200, alias_retry.text
     with connect(str(db_path)) as conn:
         rows = conn.execute("SELECT * FROM ticket_decision_messages").fetchall()
     assert len(rows) == 1
@@ -83,3 +88,36 @@ def test_authenticated_manager_owns_the_exact_decision_note_and_retry(
     assert row["model_text"] == (
         f"Manager Evidence Review approved the What Changes proposal with this note:\n{note}"
     )
+    # Historical final commands named the completion stop. Its field alias must
+    # still recover that exact decision after the report moves the Ticket to Done.
+    worker = {"X-Plan-Actor": "worker", "X-Plan-Ticket-ID": ticket.id}
+    proposed = client.post(
+        f"/api/tickets/{ticket.id}/propose",
+        json={"body": "Verified implementation"}, headers=worker,
+    )
+    final_body = {
+        "decision_id": "historical-final-stop",
+        "expected_proposal_revision": proposed.json()["pending_proposal"]["revision"],
+        "next_ceiling": "needs_consequences",
+        "next_holder": {"kind": "manager", "id": manager.id},
+    }
+    final_path = f"/api/tickets/{ticket.id}/accept/implementation"
+    final = client.post(final_path, json=final_body, headers=headers)
+    assert final.status_code == 200, final.text
+    assert final.json()["stage"] == "needs_consequences"
+    done = client.post(
+        f"/api/tickets/{ticket.id}/propose",
+        json={"body": "Verified follow-through"}, headers=worker,
+    )
+    assert done.status_code == 200, done.text
+    assert done.json()["stage"] == "done"
+    final_retry = client.post(
+        final_path, json={**final_body, "next_ceiling": "consequences"}, headers=headers
+    )
+    assert final_retry.status_code == 200, final_retry.text
+    assert final_retry.json()["stage"] == "done"
+    with connect(str(db_path)) as conn:
+        assert conn.execute(
+            "SELECT count(*) FROM ticket_decision_messages "
+            "WHERE decision_id='historical-final-stop'"
+        ).fetchone()[0] == 1
