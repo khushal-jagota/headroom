@@ -282,13 +282,6 @@ def test_real_vite_applications_share_only_their_generation(
                     "next_holder": {"kind": "owner", "id": "owner"},
                 },
             )
-        api(
-            "POST",
-            f"/api/tickets/{apps[0][0]['id']}/propose",
-            headers=worker,
-            client=agent,
-            json={"body": "Synthetic browser proof complete."},
-        )
         for port, address, ready_status in (
             (main_edge_port, main_origin, 200),
             # The preview address answers preview paths only.
@@ -416,13 +409,13 @@ def test_real_vite_applications_share_only_their_generation(
         for peer in active_sockets:
             peer.on("close", record_close)
         expired_at = time.monotonic()
+        # A Consequences report settles itself, so filing it ends the Ticket.
         api(
             "POST",
-            f"/api/tickets/{apps[0][0]['id']}/accept/consequences",
-            json={
-                "next_ceiling": "done",
-                "next_holder": {"kind": "owner", "id": "owner"},
-            },
+            f"/api/tickets/{apps[0][0]['id']}/propose",
+            headers={"X-Plan-Actor": "worker", "X-Plan-Ticket-ID": apps[0][0]["id"]},
+            client=agent,
+            json={"body": "Synthetic browser proof complete."},
         )
         api("DELETE", f"/api/tickets/{apps[1][0]['id']}")
         deadline = expired_at + 2
