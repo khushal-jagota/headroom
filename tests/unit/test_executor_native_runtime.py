@@ -1857,7 +1857,7 @@ def test_stop_during_claude_start_retry_prevents_replacement(
             raise ClaudeInitializeTimeout("Control request timeout: initialize")
 
         monkeypatch.setattr(native, "start", fail)
-        monkeypatch.setattr(mac_runner.asyncio, "sleep", delay)
+        monkeypatch.setattr(asyncio, "sleep", delay)
         starting = asyncio.create_task(registry.run(start))
         await asyncio.wait_for(entered.wait(), 5)
         stop = ChildCommand("stop", start.child, ChildOperation.stop, None, StopRun())
