@@ -111,6 +111,11 @@ final class ChiefSwipeDiagnosticsTests: XCTestCase {
 
         settings()
         let enabled = app.switches["chief-swipe-enabled"]
+        func toggleCapture() {
+            // XCUI exposes the whole Toggle row as a switch. Tap its native
+            // trailing control rather than the center of the label region.
+            enabled.coordinate(withNormalizedOffset: CGVector(dx: 0.9, dy: 0.5)).tap()
+        }
         XCTAssertEqual(enabled.value as? String, "0", "The logger must default off on a fresh install")
         app.buttons["chief-swipe-clear"].tap()
         XCTAssertEqual(try count(), 0)
@@ -120,7 +125,7 @@ final class ChiefSwipeDiagnosticsTests: XCTestCase {
         settings()
         XCTAssertEqual(try count(), 0, "Disabled capture must write nothing")
 
-        enabled.tap()
+        toggleCapture()
         XCTAssertEqual(enabled.value as? String, "1")
         leaveSettings()
         exerciseChief("on")
@@ -129,7 +134,7 @@ final class ChiefSwipeDiagnosticsTests: XCTestCase {
         capture("swipe-logger-settings-recorded")
         app.buttons["chief-swipe-clear"].tap()
         XCTAssertEqual(try count(), 0, "Clear must remove the saved diagnostic records")
-        enabled.tap()
+        toggleCapture()
         XCTAssertEqual(enabled.value as? String, "0")
         capture("swipe-logger-settings-cleared-off")
         leaveSettings()
@@ -139,12 +144,12 @@ final class ChiefSwipeDiagnosticsTests: XCTestCase {
 
         // Leave a final exported snapshot for the owning runner to inspect in the
         // app container before it erases the lane. No share destination is selected.
-        enabled.tap()
+        toggleCapture()
         leaveSettings()
         exerciseChief("export")
         settings()
         XCTAssertGreaterThan(try count(), 0)
-        enabled.tap()
+        toggleCapture()
         XCTAssertEqual(enabled.value as? String, "0")
         app.buttons["chief-swipe-share"].tap()
         XCTAssertTrue(app.buttons["Copy"].waitForExistence(timeout: 8), "Share must present the native activity sheet")
