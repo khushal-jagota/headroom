@@ -23,7 +23,7 @@ from tests.support.ticket_workspace_git import _git, _layout
 
 from planner.environments import ticket_scratch as scratch_source
 from planner.ticket_workspaces import filesystem as workspaces
-from planner.ticket_workspaces.contracts import RETENTION_SECONDS, WorkspaceState
+from planner.ticket_workspaces.contracts import OWNERSHIP_FILE, RETENTION_SECONDS, WorkspaceState
 
 NOW = RETENTION_SECONDS + 100
 
@@ -231,19 +231,25 @@ def _git_fixture(root: Path) -> dict[str, Any]:
     ):
         ticket = "t_" + letter * 8
         folder = _guard(root, tickets / ticket)
-        checkout = workspaces.prepare_workspace(folder, layout.repository, ticket)
+        if kind == "off-head":
+            # Legacy linked worktrees still exist. Their recorded Ticket branch
+            # must be preserved even when HEAD is detached at a published commit.
+            branch = f"ticket/{ticket}"
+            checkout = _worktree(layout, folder / "worktree", branch)
+            workspaces.workspace_identity(folder)
+            marker_path = folder / OWNERSHIP_FILE
+            marker = json.loads(marker_path.read_text())
+            marker.update(repository=str(layout.repository), worktree=str(checkout), branch=branch)
+            marker_path.write_text(json.dumps(marker))
+            assert (checkout / ".git").is_file()
+        else:
+            checkout = workspaces.prepare_workspace(folder, layout.repository, ticket)
+            assert (checkout / ".git").is_dir()
         paths[kind] = str(folder)
         if kind != "unknown":
             states[ticket] = WorkspaceState(
                 ticket, None if kind == "active" else NOW - 1 if kind == "recent" else 0, False
             )
-        if kind == "off-head":
-            _git(layout.repository, "worktree", "remove", "--force", str(checkout))
-            subprocess.run(
-                ["git", "clone", "-q", str(layout.repository), str(checkout)], check=True
-            )
-            _git(checkout, "config", "user.name", "Test")
-            _git(checkout, "config", "user.email", "test@example.com")
         if kind == "mixed":
             _worktree(layout, checkout / "nested/t_dddddddd", "ticket/t_dddddddd-nested")
         if kind == "submodule":
@@ -269,19 +275,16 @@ def _git_fixture(root: Path) -> dict[str, Any]:
             if kind == "published":
                 _git(checkout, "push", "-q", "origin", "HEAD:published-unmerged")
             if kind == "off-head":
-                _git(checkout, "branch", "retained-off-head")
-                _git(checkout, "reset", "--hard", "HEAD~1")
+                _git(checkout, "checkout", "--detach", "HEAD~1")
         if kind == "invalid":
             if (checkout / ".git").is_dir():
                 (checkout / ".git").rename(checkout / ".invalid-git-metadata")
             (checkout / ".git").write_text("gitdir: missing")
         if kind == "no-remote":
-            # A separate clone isolates removal of its remote from the shared worktrees.
-            _git(layout.repository, "worktree", "remove", "--force", str(checkout))
-            subprocess.run(
-                ["git", "clone", "-q", str(layout.repository), str(checkout)], check=True
-            )
+            # Independent clone configuration cannot mutate the Project's origin.
             _git(checkout, "remote", "remove", "origin")
+        if kind == "recent":
+            (folder / "artifacts/report.txt").write_text("retain for seven days")
     database = _database(root, states)
     return {**_value(root, states, database), "tickets": str(tickets), "paths": paths}
 
@@ -337,7 +340,11 @@ def test_scratch_git_work_and_fresh_apply_checks_match_python(
         "submodule": True,
         "mixed": True,
     }
-    assert len(actual["result"]["removed"]) == 2
+    # Two old folders and the recent checkout retire; the recent artifact stays.
+    assert len(actual["result"]["removed"]) == 3
+    recent = node_root / "files/tickets/t_eeeeeeee"
+    assert not (recent / "worktree").exists()
+    assert (recent / "artifacts/report.txt").read_text() == "retain for seven days"
     retained_late_work = list((node_root / "files/.ticket-retired").glob("*/worktree/late.txt"))
     assert len(retained_late_work) == 1
     assert retained_late_work[0].read_text() == "fresh change"

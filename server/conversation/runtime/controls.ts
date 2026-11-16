@@ -24,6 +24,7 @@ import { MessageText } from '../message_content.ts';
 import type { LifecycleFact } from '../record/lifecycle.ts';
 import { ConversationRecord } from '../record/contracts.ts';
 import { LifecycleOperation as O, LifecycleStatus as S } from '../record/lifecycle.ts';
+import { PlannerError } from '../../core/contracts.ts';
 import type { SqliteProcessConversationSystem } from '../system.ts';
 import type { Message, ReservedTurn } from './contracts.ts';
 import { discarded_row, prompt_row, refused_row, uncertain_row } from './messages.ts';
@@ -148,16 +149,24 @@ export async function discard_all(
 export async function kill(
   host: SqliteProcessConversationSystem,
   state: ConversationState,
+  restart?: Parameters<SqliteProcessConversationSystem['confirm_killed_source']>[1],
 ): Promise<void> {
   state.being_killed = true;
   let succeeded = false;
+  let background_settled = false;
   try {
     await kill_owned(host, state);
-    await host.confirm_killed_source(state);
+    if (restart && !host.shutting_down) {
+      await host.persist(state, () =>
+        host.options.store.take_background_tasks(state.record.conversation_id),
+      );
+      background_settled = true;
+    }
+    await host.confirm_killed_source(state, restart);
     succeeded = true;
   } finally {
     try {
-      if (!host.shutting_down)
+      if (!host.shutting_down && !background_settled)
         await host.persist(state, () =>
           host.options.store.take_background_tasks(state.record.conversation_id),
         );
@@ -168,13 +177,14 @@ export async function kill(
       state.being_killed = false;
       if (
         !succeeded &&
+        !state.restart_retired &&
         !state.child_is_quarantined &&
         !host.options.store.blocked_local_conversations.has(state.record.conversation_id)
       )
         host.schedule_drain(state);
     }
   }
-  await host.drain_held_prompts(state);
+  if (!restart) await host.drain_held_prompts(state);
 }
 async function kill_owned(
   host: SqliteProcessConversationSystem,
@@ -215,6 +225,8 @@ export async function send_now(
   let automatic = false;
   try {
     try {
+      if (state.restart_retired)
+        throw new PlannerError('retry_later', 'This Worker conversation was restarted');
       if (
         state.being_killed ||
         state.child_is_quarantined ||
@@ -455,6 +467,8 @@ export async function steer(
   let barrier: Deferred<void> | null = null;
   let held_before: readonly string[] = [];
   try {
+    if (state.restart_retired)
+      throw new PlannerError('retry_later', 'This Worker conversation was restarted');
     if (state.being_killed) queued = host.hold_prompt(state, message);
     else if (
       !state.child_is_quarantined &&

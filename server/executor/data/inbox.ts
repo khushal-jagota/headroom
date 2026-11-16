@@ -171,6 +171,7 @@ export class InboxStore {
         return writer(domain, envelope);
       });
     } catch (error) {
+      if (error instanceof PlannerError && error.code === 'retry_later') throw error;
       if (!(
         error instanceof PlannerError ||
         error instanceof ExecutorValidationError ||

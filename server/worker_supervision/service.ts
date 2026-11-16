@@ -54,6 +54,8 @@ export class WorkerSupervisor {
     runtime: WorkerSupervisionRuntime,
   ) {
     this.environment = { ...environment, [RECORD_ROOT_ENV]: root };
+    delete this.environment.TMUX;
+    delete this.environment.STY;
     this.working_directory = working_directory;
     this.root = root;
     this.path = path;

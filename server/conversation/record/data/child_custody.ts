@@ -4,6 +4,15 @@ import type { ReadSql, TransactionSql } from '../../../core/database/contracts.t
 import type { LocalChildIdentity, LocalHostBootIdentity } from '../../local_child_contracts.ts';
 import type { LocalChildCustodyRow } from '../../local_child_custody_contracts.ts';
 
+export function is_ticket_conversation(sql: ReadSql, conversation_id: string): boolean {
+  return (
+    sql.get(
+      'SELECT 1 FROM ticket_conversations WHERE conversation_id=? UNION ALL SELECT 1 FROM tickets WHERE conversation_id=? UNION ALL SELECT 1 FROM ticket_workspace_conversations WHERE conversation_id=? LIMIT 1',
+      [conversation_id, conversation_id, conversation_id],
+    ) !== undefined
+  );
+}
+
 export function read(sql: ReadSql, conversation_id: string): LocalChildCustodyRow | undefined {
   return sql.get<LocalChildCustodyRow>(
     'SELECT * FROM conversation_child_custody WHERE conversation_id=?',

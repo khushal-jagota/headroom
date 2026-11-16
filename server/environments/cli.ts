@@ -89,6 +89,7 @@ export async function environment_cleanup(
       ...resources.scratch_options,
       extra_roots: layout?.folders ?? [],
       apply: args.apply,
+      measure_size: true,
       snapshot_ticket_scratch: (ticket) => snapshot_ticket_scratch(ticket, deps.home),
       prune_ticket_scratch: (ticket, names) => prune_ticket_scratch(ticket, names, deps.home),
     });

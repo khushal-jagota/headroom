@@ -70,7 +70,9 @@ export function admit(path: string, options: WorkspaceOptions): string {
 }
 export async function git(path: string, args: readonly string[], options: WorkspaceOptions = {}) {
   const timeout = AbortSignal.timeout(
-    args[0] === 'worktree' && args[1] === 'add' ? 30 * 60 * 1000 : 60 * 1000,
+    (args[0] === 'worktree' && args[1] === 'add') || args[0] === 'clone'
+      ? 30 * 60 * 1000
+      : 60 * 1000,
   );
   const signal = options.signal ? AbortSignal.any([options.signal, timeout]) : timeout;
   const environment = {

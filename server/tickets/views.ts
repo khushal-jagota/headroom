@@ -354,7 +354,6 @@ export function list_ticket_summaries(
     }
     matches.push({
       is_backlogged: Boolean(v.is_backlogged),
-      waiting_to_closeout: v.gating_field === 'consequences' && status === 'empty',
       id: row.id,
       title: v.title,
       locale: v.locale,

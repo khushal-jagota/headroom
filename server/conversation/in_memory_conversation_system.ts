@@ -525,6 +525,14 @@ export class InMemoryConversationSystem implements ConversationSystem {
       this._observe_message(state, 'prompt_discarded', held);
     if (state.running_turn !== null) this._end_running_turn(state, 'interrupted');
   }
+  async kill_for_restart(
+    conversation_id: string,
+    _ticket_id: string,
+    finish: Parameters<ConversationSystem['kill_for_restart']>[2],
+  ): Promise<void> {
+    await this.kill(conversation_id);
+    await finish(null);
+  }
   async is_running(conversation_id: string): Promise<boolean> {
     return this._conversations.get(conversation_id)?.running_turn != null;
   }

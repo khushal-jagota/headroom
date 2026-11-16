@@ -28,6 +28,7 @@ export function sender_label(ctx: RequestContext): string {
   if (ctx.principal.kind === 'owner') return 'owner';
   if (ctx.principal.kind === 'chief') return 'Chief';
   if (ctx.principal.kind === 'ticket') return `Ticket ${ctx.principal.id}`;
+  if (ctx.principal.kind === 'unidentified') return 'Unidentified caller';
   return `Manager ${ctx.principal.id}`;
 }
 function sender_conversation_id(database: Database, sender: Principal): string | null {
@@ -73,7 +74,9 @@ export async function send_message(
 ): Promise<MessageDeliveryResult> {
   const caller = ctx.principal;
   const kinds = new Set(['owner', 'chief', 'manager', 'ticket']);
-  if (!kinds.has(caller.kind) || !kinds.has(recipient.kind)) {
+  const caller_may_send =
+    kinds.has(caller.kind) || (caller.kind === 'unidentified' && recipient.kind === 'chief');
+  if (!caller_may_send || !kinds.has(recipient.kind)) {
     throw new PlannerError('validation', 'unsupported message principal kind');
   }
   const system_message = options.system_message ?? false;

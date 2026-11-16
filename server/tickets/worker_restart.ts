@@ -1,5 +1,6 @@
 /** Kill a Ticket's conversation, unlink it, and start a fresh worker step. */
 import { PlannerError, type Principal } from '../core/contracts.ts';
+import { requireAbove } from '../core/authority/service.ts';
 import type { Database, ReadSql, TransactionSql } from '../core/database/contracts.ts';
 import type { ConversationSystem } from '../conversation/contracts.ts';
 import { now_ms } from '../executor/clock.ts';
@@ -13,14 +14,15 @@ import * as decision_messages from './decision_messages.ts';
 import * as locale_configuration from './locale_configuration.ts';
 import { stage_ownership_mode } from './logic/machine.ts';
 import type { Ticket } from './contracts.ts';
-export function require_restartable(
-  sql: ReadSql,
-  _principal: Principal,
-  ticket_id: string,
-): Ticket {
+export function require_restartable(sql: ReadSql, principal: Principal, ticket_id: string): Ticket {
+  requireAbove(sql, principal, { kind: 'ticket', id: ticket_id });
   const ticket = tickets_data.read_ticket(sql, ticket_id);
   if (
-    stage_ownership_mode(ticket.stage, { worker_type_definition: ticket.workflow }) !== 'worker'
+    stage_ownership_mode(ticket.stage, { worker_type_definition: ticket.workflow }) !== 'worker' &&
+    !sql.get(
+      "SELECT 1 FROM ticket_decision_messages WHERE ticket_id=? AND delivery_status IN ('uncertain','refused','discarded') LIMIT 1",
+      [ticket_id],
+    )
   ) {
     throw new PlannerError('validation', 'only a Worker-owned Stage has a worker step to restart', {
       ticket_id,
@@ -69,21 +71,48 @@ export async function restart_worker(
       return current;
     });
     killed_conversation_id = ticket.conversation_id;
+    const finish: Parameters<ConversationSystem['kill_for_restart']>[2] = async (check_cleanup) => {
+      let cleanup_checked = check_cleanup === null;
+      try {
+        database.write((sql) => {
+          check_cleanup?.(sql);
+          cleanup_checked = true;
+          _unlink_give_back_the_claim_and_write_configuration(sql, ticket_id, {
+            killed_conversation_id,
+            write_employee_configuration: options.write_employee_configuration,
+            now: options.now(),
+          });
+        });
+      } catch (error) {
+        if (killed_conversation_id !== null && cleanup_checked) {
+          try {
+            database.write((sql) => {
+              check_cleanup?.(sql);
+              _unlink_give_back_the_claim_and_write_configuration(sql, ticket_id, {
+                killed_conversation_id,
+                now: options.now(),
+                recover_after_failure: false,
+              });
+            });
+          } catch (cleanup) {
+            console.error(
+              'Could not release retired Worker ownership after restart failure',
+              cleanup,
+            );
+          }
+        }
+        throw error;
+      }
+    };
     if (killed_conversation_id !== null) {
       revision_restarted_in_fresh_conversation = database.read((sql) =>
         decision_messages.has_undelivered(sql, ticket_id),
       );
       killed_conversation_looked_running = await conversations.is_running(killed_conversation_id);
-      await conversations.kill(killed_conversation_id);
+      await conversations.kill_for_restart(killed_conversation_id, ticket_id, finish);
+    } else {
+      await finish(null);
     }
-    const now = options.now();
-    database.write((sql) =>
-      _unlink_give_back_the_claim_and_write_configuration(sql, ticket_id, {
-        killed_conversation_id,
-        write_employee_configuration: options.write_employee_configuration,
-        now,
-      }),
-    );
   });
   // Starting obtains fresh ownership after the link mutation is complete.
   const start_result = await options.start_worker_step();
@@ -105,10 +134,24 @@ export function _unlink_give_back_the_claim_and_write_configuration(
     killed_conversation_id: string | null;
     write_employee_configuration?: ((sql: TransactionSql, now: number) => void) | null;
     now: number;
+    recover_after_failure?: boolean;
   },
 ): void {
   const ticket = tickets_data.read_ticket(sql, ticket_id);
-  if (ticket.worker_step_claim === 'out' || ticket.worker_step_claim === 'errored') {
+  if (
+    options.recover_after_failure === false &&
+    ticket.conversation_id !== options.killed_conversation_id
+  )
+    return;
+  if (options.recover_after_failure === false) {
+    tickets_data.mark_worker_step_claim_errored(sql, ticket_id, {
+      expected_claim: ticket.worker_step_claim,
+      expected_claim_revision: ticket.worker_step_claim_revision,
+      now: options.now,
+      error_reason:
+        'Restart failed after the old Worker stopped. Retry restart before this Ticket can start again.',
+    });
+  } else if (ticket.worker_step_claim === 'out' || ticket.worker_step_claim === 'errored') {
     tickets_data.release_worker_step_claim(sql, ticket_id, {
       expected_claim: ticket.worker_step_claim,
       expected_claim_revision: ticket.worker_step_claim_revision,
@@ -121,7 +164,8 @@ export function _unlink_give_back_the_claim_and_write_configuration(
       now: options.now,
     });
   }
-  decision_messages.rearm_after_restart(sql, ticket_id);
+  if (options.recover_after_failure !== false)
+    decision_messages.rearm_after_restart(sql, ticket_id);
   options.write_employee_configuration?.(sql, options.now);
 }
 export function _restart_result(

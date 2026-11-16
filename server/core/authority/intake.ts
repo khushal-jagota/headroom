@@ -249,6 +249,37 @@ function protectedSuffix(route: string): boolean {
     '/page/readings',
   ].some((suffix) => route.endsWith(suffix));
 }
+export function unidentifiedWriteRefusal(request: FastifyRequest): PlannerError | null {
+  const route = request.url.split('?')[0]!;
+  if (
+    ['GET', 'HEAD', 'OPTIONS'].includes(request.method) ||
+    route === '/api/measures/read' ||
+    route === '/api/datasets/read'
+  )
+    return null;
+  let caller: Principal;
+  try {
+    caller = requestContext(request).principal;
+  } catch (error) {
+    if (error instanceof PlannerError) return error;
+    throw error;
+  }
+  if (caller.kind !== 'unidentified') return null;
+  const media = (request.headers['content-type'] ?? '').split(';')[0]!.toLowerCase();
+  const json = media === 'application/json' || /^application\/.+\+json$/.test(media);
+  if (
+    route === '/api/messages/send' &&
+    json &&
+    object(object(request.body).target).kind === 'chief'
+  )
+    return null;
+  return new PlannerError(
+    'agent_forbidden',
+    'this request has no Panels identity, so it can only read and send a message to the ' +
+      'Chief. An agent restores PLAN_ACTOR and its Ticket or Manager id. Khushal uses the ' +
+      'Panels web app or the iOS app.',
+  );
+}
 export function requestAdmission(
   sql: AuthoritySql,
   request: FastifyRequest,
@@ -265,6 +296,8 @@ export function requestAdmission(
     if (!protectedRead) return;
   }
   if (route === '/api/measures/read' || route === '/api/datasets/read') return;
+  const unidentified = unidentifiedWriteRefusal(request);
+  if (unidentified) throw unidentified;
   const caller = requestContext(request).principal;
   if (route === '/api/resource-body' || route === '/api/resource-versions') {
     const query = object(request.query);

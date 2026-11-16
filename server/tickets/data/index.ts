@@ -1,3 +1,4 @@
+import { validate_recap } from '../logic/recap.ts';
 import { require_usable_model } from '../../conversation/backend_state.ts';
 import { worker_step_message_id_for_claim } from '../../runtime/worker_memory.ts';
 /** Ticket transitions receive the caller's transaction and never open a second writer. */
@@ -9,7 +10,7 @@ import type { Principal } from '../../core/contracts.ts';
 import { newId } from '../../core/ids.ts';
 import { require_conversation_backend_key } from '../../conversation/contracts.ts';
 import { configured_worker_type_registry } from '../../worker_types/configuration.ts';
-import { validate_workflow } from '../../worker_types/registry.ts';
+import { validate_workflow, validate_completion_stage } from '../../worker_types/registry.ts';
 import {
   workflow_from_preset,
   workflow_from_row,
@@ -164,16 +165,15 @@ export function read_ticket(sql: ReadSql, id: string): Ticket {
     workflow.fields.map((f) => f.id),
   );
   const pending = codec.proposal_from_json(r.pending_proposal);
-  const status =
-    r.worker_step_claim === 'errored'
+  const status = pending
+    ? 'awaiting_approval'
+    : r.worker_step_claim === 'errored'
       ? 'errored'
-      : pending
-        ? 'awaiting_approval'
-        : r.worker_step_claim === 'out'
-          ? 'agent'
-          : r.has_live_blocker
-            ? 'blocked'
-            : 'empty';
+      : r.worker_step_claim === 'out'
+        ? 'agent'
+        : r.has_live_blocker
+          ? 'blocked'
+          : 'empty';
   return {
     id: r.id,
     title: r.title,
@@ -390,6 +390,8 @@ export function create_ticket(tx: TransactionSql, o: CreationOptions): Ticket {
     if (workflow.specialist_skill !== null)
       throw new PlannerError('validation', 'a custom workflow cannot select a specialist skill');
   }
+  validate_completion_stage(workflow);
+  if (o.stated_ceiling != null) admission.validate_creation_ceiling(o.stated_ceiling);
   const id = newId('t'),
     context = resolve_ticket_creation_context(tx, o),
     initial = workflow.stages[0]!.id;
@@ -598,7 +600,7 @@ export interface AcceptOptions {
   now: number;
   edited_body?: string | null;
   next_ceiling?: string | null;
-  next_holder: Principal;
+  next_holder?: Principal | null;
   expected_proposal_revision?: number | bigint | null;
   message?: string | null;
   decision_id?: string | null;
@@ -617,6 +619,19 @@ export function accept_proposal(
     o.expected_proposal_revision ?? null,
     o.decision_id ?? null,
   );
+  let request_ceiling = o.next_ceiling ?? null;
+  if (
+    request_ceiling !== null &&
+    request_ceiling !== 'none' &&
+    !t.workflow.stages.some((s) => s.id === request_ceiling)
+  ) {
+    const alias = t.workflow.stages.find((s) => s.gating_field === request_ceiling);
+    if (!alias)
+      throw new PlannerError('scope_invalid', 'unknown next_ceiling', {
+        next_ceiling: request_ceiling,
+      });
+    request_ceiling = alias.id;
+  }
   const request = decision_messages.request_json(o.principal, {
     ticket_id: id,
     action: 'approved',
@@ -624,8 +639,8 @@ export function accept_proposal(
     message: o.message ?? null,
     expected_proposal_revision: o.expected_proposal_revision ?? null,
     edited_body: o.edited_body ?? null,
-    next_ceiling: o.next_ceiling ?? null,
-    next_holder: o.next_holder,
+    next_ceiling: request_ceiling,
+    next_holder: o.next_holder ?? null,
   });
   if (decision_messages.is_replay(tx, o.decision_id ?? null, request)) return t;
   if (
@@ -640,12 +655,12 @@ export function accept_proposal(
   const d = resolution.decide_accept(t, {
     field,
     edited_body: o.edited_body ?? null,
-    next_ceiling: o.next_ceiling ?? null,
-    next_holder: o.next_holder,
+    next_ceiling: admission.parse_next_ceiling(request_ceiling, t.workflow, t.stage),
+    next_holder: o.next_holder ?? null,
     worker_type_definition: t.workflow,
     approval: explicit_approval(tx, o.principal),
   });
-  review_holder(tx, o.next_holder, id, t.manager_kind, t.manager_id);
+  review_holder(tx, d.ceiling_holder, id, t.manager_kind, t.manager_id);
   decision_messages.save(tx, t, {
     action: 'approved',
     field,
@@ -879,6 +894,7 @@ export function edit_ticket(
   ] as const)
     if (before !== after) changes[key] = after;
   if ('recap' in e) {
+    validate_recap(e.recap!);
     changes.recap = e.recap!;
     changes.recap_updated_at = e.recap!.trim() ? o.now : null;
     changes.recap_stage_changed = 0;
@@ -1152,12 +1168,21 @@ export function mark_worker_step_claim_errored(
     now: number;
     error_reason: string;
     notify_supervisor?: boolean;
+    decision_delivery?: boolean;
+    decision_proposal_revision?: number | null;
   },
 ): boolean {
   const t = load_ticket_for_write(tx, id);
   if (
     t.worker_step_claim !== o.expected_claim ||
     t.worker_step_claim_revision !== o.expected_claim_revision
+  )
+    return false;
+  if (
+    o.decision_delivery &&
+    ((o.decision_proposal_revision == null && t.pending_proposal !== null) ||
+      (o.decision_proposal_revision != null &&
+        t.pending_proposal_revision > o.decision_proposal_revision))
   )
     return false;
   _write_worker_step_claim(tx, id, 'errored', o.now, o);

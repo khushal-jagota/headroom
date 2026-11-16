@@ -20,11 +20,16 @@ export type { RecordedSourceSettlement } from './local_child_contracts.ts';
 
 export interface LocalChildCustodyInspection {
   host_boot_identity(): Promise<LocalHostBootIdentity | null>;
-  retirement_row_proven(row: LocalChildCustodyRow, options?: StopOptions): Promise<boolean>;
+  retirement_row_proven(
+    row: LocalChildCustodyRow,
+    options?: StopOptions,
+    ticket_worker?: boolean,
+  ): Promise<boolean>;
   stop_recorded_child(
     identity: LocalChildIdentity,
     host: string | null,
     options?: StopOptions,
+    ticket_worker?: boolean,
   ): Promise<boolean>;
   inspect_supervision(
     path: string,

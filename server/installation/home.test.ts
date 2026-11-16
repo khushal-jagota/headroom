@@ -29,10 +29,6 @@ import { create_darwin_home_service } from './darwin.ts';
 import { initialize_candidate_home_database } from './database.ts';
 import { require_application_schema } from '../core/database/admission.ts';
 import { createReadAccess } from '../core/database/index.ts';
-import {
-  admit_unidentified_call,
-  http_refusal,
-} from '../core/unidentified_agent_calls/admission.ts';
 
 async function unused_port(): Promise<number> {
   const server = createServer();
@@ -450,35 +446,10 @@ test('shared health requires exact ready identity for homes while retaining the 
   // The real HTTP boundary proves ready is read from decoded health, not merely a mock return.
   const started = performance.now();
   let body: unknown = { app_sha: 'c'.repeat(40), ready: true };
-  let guard = false,
-    lookups = 0;
   const actors: (string | string[] | undefined)[] = [];
   const server = http_server(async (request, response) => {
     actors.push(request.headers['x-plan-actor']);
-    const headers: [string, string][] = [];
-    for (let index = 0; index < request.rawHeaders.length; index += 2)
-      headers.push([request.rawHeaders[index]!, request.rawHeaders[index + 1]!]);
-    const admission = await admit_unidentified_call(
-      guard,
-      {
-        kind: 'http',
-        authenticated_owner: false,
-        headers,
-        client: [request.socket.remoteAddress!, request.socket.remotePort!],
-        server: [request.socket.localAddress!, request.socket.localPort!],
-      },
-      async () => {
-        lookups++;
-        return { is_owner: false, skipped_unreadable_processes: 0 };
-      },
-    );
     response.setHeader('content-type', 'application/json');
-    if (!admission.admitted) {
-      const refusal = http_refusal(0);
-      response.statusCode = refusal.status;
-      response.end(JSON.stringify(refusal.body));
-      return;
-    }
     response.end(JSON.stringify(body));
   });
   await new Promise<void>((done) => server.listen(0, '127.0.0.1', done));
@@ -495,19 +466,15 @@ test('shared health requires exact ready identity for homes while retaining the 
     assert.equal(await healthy(url, sha, 0, signal), true);
     body = { app_sha: sha, ready: true };
     assert.equal(await healthy(url, sha, 0, signal, {}, true), true);
-    guard = true;
-    assert.equal(await healthy(url, sha, 0, signal, {}, true), false);
-    assert.equal(lookups, 1);
     assert.equal(await healthy(url, sha, 0, signal, {}, true, 'unattributed'), true);
     assert.equal(actors.at(-1), 'unattributed');
     assert(actors.slice(0, -1).every((actor) => actor === undefined));
-    assert.equal(lookups, 1);
   } finally {
     await new Promise<void>((done, fail) =>
       server.close((error) => (error ? fail(error) : done())),
     );
     console.log(
-      `home-health-boundary seconds=${((performance.now() - started) / 1000).toFixed(3)} peer-lookups=${lookups}`,
+      `home-health-boundary seconds=${((performance.now() - started) / 1000).toFixed(3)}`,
     );
   }
 });

@@ -458,7 +458,7 @@ test.skipIf(process.platform !== 'linux')(
         fixtures.push({ ticket, folder, identity, conversation_id });
       }
       // Invoke the exact cleanup closure supplied by production composition to its
-      // scheduled runtime. Existing timer proofs own the initial ten-minute delay.
+      // scheduled runtime. The scheduler proof below owns initial and periodic wake timing.
       const cleanup_options = { signal: new AbortController().signal, admit_path: admit };
       const result = await cleanup(path, RETENTION_SECONDS, cleanup_options);
       const [eligible, uncertain] = fixtures;
@@ -507,3 +507,47 @@ test.skipIf(process.platform !== 'linux')(
     }
   },
 );
+
+// Existing composition proofs invoke cleanup directly. This scheduler proof uses
+// their database fixture and fake time, with no new server or browser host.
+test('scratch cleanup wakes for lifecycle changes without postponing its periodic retry', async () => {
+  const database = fixture();
+  const ticket = create(database);
+  const path = fixture_path(database);
+  const { ChangeSignal } = await import('../core/changes/index.ts');
+  const { CLEANUP_INTERVAL_SECONDS } =
+    await import('../environments/ticket_scratch/configuration.ts');
+  const changes = new ChangeSignal();
+  const clean = vi.fn(async () => ({ removed: [], skipped: [] }));
+  vi.useFakeTimers();
+  const runtime = scratchRuntime.create_ticket_scratch_runtime({
+    db_path: path,
+    layout: null,
+    test_mode: false,
+    changes,
+    now_unix: () => 100,
+    assert_database_owned: () => {},
+    clean_workspaces: clean,
+  });
+  try {
+    runtime.start();
+    await runtime.settled();
+    expect(clean).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(CLEANUP_INTERVAL_SECONDS * 1000 - 1);
+    changes.emit();
+    await runtime.settled();
+    expect(clean).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(1);
+    await runtime.settled();
+    expect(clean).toHaveBeenCalledTimes(2);
+    database.write((sql) =>
+      sql.run('UPDATE ticket_workspace_lifecycle SET ended_at=100 WHERE ticket_id=?', [ticket.id]),
+    );
+    changes.emit();
+    await runtime.settled();
+    expect(clean).toHaveBeenCalledTimes(3);
+  } finally {
+    await runtime.close({ deadline: performance.now() / 1000 + 5 });
+    vi.useRealTimers();
+  }
+});

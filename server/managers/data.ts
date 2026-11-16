@@ -1,3 +1,4 @@
+import { validate_recap } from '../tickets/logic/recap.ts';
 /** Manager readers and launch writer used by Ticket message delivery. */
 import { parse_numeric_json } from '../core/http/numeric_json.ts';
 import { newId } from '../core/ids.ts';
@@ -186,6 +187,7 @@ export function update_manager(
   const now = options.clock.nowUnix();
   const values: (string | number | null)[] = fields.map((field) => options.edits[field]!);
   if ('recap' in options.edits) {
+    validate_recap(options.edits.recap ?? '');
     fields.push('recap_updated_at');
     values.push(options.edits.recap != null && options.edits.recap.trim() ? now : null);
   }

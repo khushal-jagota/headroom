@@ -11,17 +11,10 @@
   "tests/compare/direct/test_unit20_domain_cli.py::test_unit20_domain_same_python_host[python]": "launch tokens: generic conversation starts can no longer assign agent identity",
   "tests/compare/direct/test_unit20_domain_cli.py::test_unit20_domain_same_python_host[typescript]": "launch tokens: generic conversation starts can no longer assign agent identity",
   "tests/compare/direct/test_unit20_domain_cli.py::test_unit20_real_preview_cli": "launch tokens: seed request uses role claims without a credential",
-  "tests/compare/direct/test_unit20_domain_cli.py::test_unit20_retained_dataset_cli": "catch-up Consequences: Ticket list still emits removed waiting_to_closeout; observed at line377 in hosted run43910025587; second PR removes this projection",
-  "tests/compare/direct/test_unit20_domain_cli.py::test_unit20_worker_cleanup_cli": "catch-up restart cleanup: fresh executor evidence and distinct local/remote proof refusals differ",
-  "tests/compare/direct/test_unit21_backups.py::test_unit21_backup_v2_cross_language_wal_roots_and_retention": "catch-up Consequences: restored workflow ceiling_range still includes Done on TypeScript",
-  "tests/compare/direct/test_unit21_interruption_capture.py::test_unit21_fixed_restore_entry_preserves_populated_snapshot": "catch-up Consequences: restored workflow ceiling_range still includes Done on TypeScript",
-  "tests/compare/direct/test_unit21_ticket_scratch.py::test_scratch_git_work_and_fresh_apply_checks_match_python": "catch-up workspace: linked-worktree fixture and TypeScript preparation do not yet match independent clone retirement",
   "tests/compare/direct/test_unit21_updates.py::test_owner_routes_populated_mac_reads_and_deployment_snapshot_match_python": "launch tokens: legacy named actor headers become unidentified in Python owner-route refusals",
-  "tests/compare/direct/test_unit22_inbox_consumers.py::test_unit22_inbox_canonical_consumers": "catch-up Consequences: canonical write and replay workflow ceiling_range still includes Done",
   "tests/compare/direct/test_unit22_retained.py::test_retained_core_matches_fresh_python": "launch tokens: recovery prompt now includes credential-aware panels api guidance",
   "tests/compare/direct/test_unit22_runs.py::test_machine_run_custody_and_retained_recovery": "launch tokens: canonical principal routing ignores fixture-only role environment",
   "tests/compare/direct/test_unit22_runs.py::test_retained_runs_rebuild_drain_and_rewrite": "launch tokens: canonical principal routing ignores fixture-only role environment",
   "tests/compare/direct/test_unit_19_backend_routes.py::test_unit19_backend_route_answers_and_rows": "launch tokens: legacy role headers become unidentified instead of named actors",
-  "tests/compare/direct/test_unit_19_recovery.py::test_unit19_startup_manifest_and_lost_task_prompts": "launch tokens: recovery prompt includes credential-aware panels api guidance",
-  "tests/compare/direct/test_worker_runtime_parity.py::test_worker_runtime_parity": "catch-up workspace: persisted identity_environment_variables lack PLAN_TICKET_PROJECT_ID"
+  "tests/compare/direct/test_unit_19_recovery.py::test_unit19_startup_manifest_and_lost_task_prompts": "launch tokens: recovery prompt includes credential-aware panels api guidance"
 }

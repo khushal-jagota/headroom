@@ -363,6 +363,11 @@ export interface ConversationSystem {
   ): Promise<HeldPromptPromotionFate | null>;
   discard_held_prompt(conversation_id: string, held_prompt_id: string): Promise<boolean>;
   kill(conversation_id: string): Promise<void>;
+  kill_for_restart(
+    conversation_id: string,
+    ticket_id: string,
+    finish: (check_cleanup: ((sql: TransactionSql) => void) | null) => Promise<void>,
+  ): Promise<void>;
   is_running(conversation_id: string): Promise<boolean>;
   has_pending_permission_ask(conversation_id: string): Promise<boolean>;
   has_pending_user_input(conversation_id: string): Promise<boolean>;

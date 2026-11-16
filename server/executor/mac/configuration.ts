@@ -238,3 +238,4 @@ export function validate_executor_launch(
     refuse_configuration('invalid explicit executor HTTPS launch configuration');
   validate_server_url(server_url);
 }
+export const CLAUDE_START_RETRY_DELAY_SECONDS = 5;

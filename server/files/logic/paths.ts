@@ -1,4 +1,4 @@
-import { dirname, join, extname, relative, isAbsolute } from 'node:path';
+import { dirname, join, relative, isAbsolute } from 'node:path';
 import { path_is_within } from '../../core/path_containment.ts';
 import { lstatSync, realpathSync, readlinkSync, statSync } from 'node:fs';
 import type { OwnerKind } from '../contracts.ts';
@@ -99,35 +99,5 @@ export function resolveFile(db: string, kind: OwnerKind, owner: string, path: st
   inside(root, ownerRoot);
   inside(ownerRoot, target);
   if (!statSync(target).isFile()) throw new Error('managed file is not a regular file');
-  return target;
-}
-function htmlOwner(href: string): { kind: OwnerKind; owner: string; path: string } {
-  if (/[\x00-\x1f\\?#]/.test(href) || !href.startsWith('/files/') || unsafeEncoded.test(href))
-    throw new Error('unsafe managed URL');
-  const parts = /^\/files\/(tickets|managers|sprint-items|goals)\/([^/]+)\/(.+)$/.exec(
-    decodeURIComponent(href),
-  );
-  if (!parts) throw new Error('unsafe managed URL');
-  const kind: OwnerKind =
-    parts[1] === 'tickets' ? 'ticket' : parts[1] === 'goals' ? 'goal' : 'manager';
-  const owner = parts[2]!,
-    path = parts[3]!;
-  safeId(owner);
-  safeRelative(path);
-  if (path.includes('\0') || !['.html', '.htm'].includes(extname(path).toLowerCase()))
-    throw new Error('not an HTML artifact');
-  return { kind, owner, path };
-}
-export function resolveHtml(db: string, rootHref: string, candidateHref: string): string {
-  const root = htmlOwner(rootHref),
-    candidate = htmlOwner(candidateHref);
-  if (root.kind !== candidate.kind || root.owner !== candidate.owner)
-    throw new Error('different managed owner');
-  const logicalRoot = dirname(root.path);
-  inside(logicalRoot, candidate.path);
-  const artifactRoot = realpathSync(join(filesRoot(db, root.kind), root.owner, logicalRoot));
-  inside(artifactRoot, resolveFile(db, root.kind, root.owner, root.path));
-  const target = resolveFile(db, candidate.kind, candidate.owner, candidate.path);
-  inside(artifactRoot, target);
   return target;
 }

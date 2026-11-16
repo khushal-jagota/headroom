@@ -1,3 +1,4 @@
+import { validate_recap } from '../tickets/logic/recap.ts';
 import { require_usable_model } from '../conversation/backend_state.ts';
 import { require_conversation_backend_key } from '../conversation/contracts.ts';
 import { PlannerError } from '../core/contracts.ts';
@@ -159,6 +160,7 @@ export function update_chief_recap_in_transaction(
     typeof (payload as Record<string, unknown>).recap !== 'string'
   )
     fail('Chief recap requires exactly one string recap');
+  validate_recap((payload as { recap: string }).recap);
   tx.run('UPDATE chief_settings SET recap = ? WHERE employee_id = ?', [
     (payload as { recap: string }).recap,
     CHIEF_SETTINGS_KEY,

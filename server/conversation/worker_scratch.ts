@@ -148,11 +148,16 @@ export class WorkerScratch {
     }
     const scratch = new WorkerScratch(directory, {
       ...environment,
+      TMUX_TMPDIR: directory,
+      SCREENDIR: join(directory, 'screen'),
       TMPDIR: directory,
       TMP: directory,
       TEMP: directory,
     });
     try {
+      await mkdir(join(directory, 'screen'), { mode: 0o700 });
+      delete scratch.environment.TMUX;
+      delete scratch.environment.STY;
       await prune(root, pattern, await readdir(root), directory);
       options.signal?.throwIfAborted();
       return scratch;

@@ -60,6 +60,7 @@ export async function deliver_ticket_decision_messages(
     const rows = database.read((sql) =>
       sql.all<{
         decision_id: string;
+        proposal_revision: number | null;
         sender_message_id: string;
         conversation_id: string | null;
         delivery_status: string;
@@ -76,13 +77,15 @@ export async function deliver_ticket_decision_messages(
           [status, conversation_id, identity],
         );
       });
-    const mark_error = (status: string) =>
+    const mark_error = (status: string, proposal_revision: number | null) =>
       database.write((sql) =>
         tickets.mark_worker_step_claim_errored(sql, ticket_id, {
           expected_claim: ticket.worker_step_claim,
           expected_claim_revision: ticket.worker_step_claim_revision,
           now: options.now(),
           error_reason: `decision delivery ${status}`,
+          decision_delivery: true,
+          decision_proposal_revision: proposal_revision,
         }),
       );
     for (const row of rows) {
@@ -91,26 +94,31 @@ export async function deliver_ticket_decision_messages(
       let status = database.read((sql) =>
         decisions.recorded_outcome(sql, target, row.sender_message_id),
       );
+      if (status === null && ['sending', 'queued'].includes(row.delivery_status)) {
+        if (target !== null) {
+          const awaiting = await observe_conversation_operation(
+            () => options.conversation_system.sender_message_ids_awaiting_outcome(target),
+            options.signal,
+          );
+          if (awaiting.has(row.sender_message_id)) continue;
+        }
+        status = database.read((sql) =>
+          decisions.recorded_outcome(sql, target, row.sender_message_id),
+        );
+      }
       if (status !== null) {
         if (status === row.delivery_status && status !== 'delivered') break;
         set_status(identity, status, target);
         if (status !== 'delivered') {
-          mark_error(status);
+          mark_error(status, row.proposal_revision);
           break;
         }
         continue;
       }
       if (['uncertain', 'refused', 'discarded'].includes(row.delivery_status)) break;
       if (row.delivery_status !== 'pending') {
-        if (target !== null) {
-          const held = await observe_conversation_operation(
-            () => options.conversation_system.held_prompts(target),
-            options.signal,
-          );
-          if (held.some((item) => item.sender_message_id === row.sender_message_id)) continue;
-        }
         set_status(identity, 'uncertain', target);
-        mark_error('uncertain');
+        mark_error('uncertain', row.proposal_revision);
         console.error(`decision delivery receipt is uncertain (ticket=${ticket_id})`);
         break;
       }
@@ -148,7 +156,7 @@ export async function deliver_ticket_decision_messages(
         );
         if (attempt?.delivery_status === 'sending') {
           set_status(identity, 'uncertain', attempt.conversation_id);
-          mark_error('uncertain');
+          mark_error('uncertain', row.proposal_revision);
         }
         break;
       }
@@ -166,7 +174,7 @@ export async function deliver_ticket_decision_messages(
                 : 'uncertain';
       set_status(identity, status, delivered.conversation_id);
       if (!['delivered', 'queued'].includes(status)) {
-        mark_error(status);
+        mark_error(status, row.proposal_revision);
         break;
       }
     }

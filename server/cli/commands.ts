@@ -1327,6 +1327,10 @@ export function create_commands(environment: NodeJS.ProcessEnv = {}): CliCommand
   ]);
   command('ticket proposal', 'Submit, accept, or revise the current Ticket proposal.', [
     argument('proposal_args', '[PROPOSAL_ARGS...]', text, {}),
+    option('message', '--message <TEXT>', text, { description: 'Revision guidance for revise.' }),
+    option('body_file', '--body-file <TEXT>', text, {
+      description: 'Revision guidance file for revise, or - for stdin.',
+    }),
     option('ceiling', '--ceiling <TEXT>', text, {
       description: 'Next ceiling for an accepted proposal.',
     }),

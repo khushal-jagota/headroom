@@ -2,7 +2,12 @@
 import { same_reference } from '../../child_reference.ts';
 import { randomBytes, timingSafeEqual } from 'node:crypto';
 import { join } from 'node:path';
-import { BackendSpawnFailed } from '../../../conversation/backends/contracts.ts';
+import {
+  BackendSpawnFailed,
+  ClaudeInitializationTimeout,
+} from '../../../conversation/backends/contracts.ts';
+import { setTimeout as pause } from 'node:timers/promises';
+import { CLAUDE_START_RETRY_DELAY_SECONDS } from '../configuration.ts';
 import { FifoLock } from '../../../conversation/runtime/state.ts';
 import { observe_shutdown } from '../../../conversation/shutdown.ts';
 import { ServerLifecycleError, ShutdownDeadlineExceeded } from '../../../lifecycle/contracts.ts';
@@ -100,7 +105,14 @@ export class MacNativeChildren implements MacNativeChildrenContract {
     const task = acquired.lock
       .run(async () => {
         await this.options.worker_cleanup.refresh(ticket_id);
-        return this.start_admitted(reference, input, invoking, ticket_id);
+        for (let attempt = 0; ; attempt++) {
+          try {
+            return await this.start_admitted(reference, input, invoking, ticket_id);
+          } catch (error) {
+            if (!(error instanceof ClaudeInitializationTimeout) || attempt === 2) throw error;
+            await pause(CLAUDE_START_RETRY_DELAY_SECONDS * 1000);
+          }
+        }
       })
       .finally(() => {
         if (--acquired.users === 0 && this.ticket_start_locks.get(ticket_id) === acquired)

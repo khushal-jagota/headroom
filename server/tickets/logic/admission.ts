@@ -1,11 +1,27 @@
 import { PlannerError, type Principal } from '../../core/contracts.ts';
 import { RETIRED_WORKER_TYPES, type WorkflowDefinition } from '../../worker_types/contracts.ts';
-import { stage_definition, resolve_ceiling } from './machine.ts';
+import {
+  stage_definition,
+  resolve_ceiling,
+  advance_target,
+  completion_follows,
+  consequences_follows,
+} from './machine.ts';
 export const REVISION_GUIDANCE_MAX_CHARACTERS = 10000;
 export function parse_next_ceiling(
   raw: string | null,
   workflow: WorkflowDefinition,
+  current_stage: string | null = null,
 ): string | null {
+  if (
+    current_stage !== null &&
+    (consequences_follows(current_stage, workflow) || completion_follows(current_stage, workflow))
+  ) {
+    const target = advance_target(workflow, current_stage)!;
+    if (raw === null || raw === 'none' || raw === target || raw === 'done') return target;
+    if (completion_follows(current_stage, workflow))
+      throw new PlannerError('scope_invalid', 'final approval authorizes completion through Done');
+  }
   if (raw === null || raw === 'none') return raw;
   try {
     return resolve_ceiling(workflow, raw);

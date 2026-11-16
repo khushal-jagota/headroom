@@ -125,6 +125,7 @@ export class MacLeaseLoop {
   private lease: Promise<boolean> | undefined;
   private workspace_cleanup: Promise<void> | undefined;
   private next_workspace_cleanup = 0;
+  private workspace_lifecycle: string | undefined;
   private closed = false;
   constructor(options: MacLeaseOptions) {
     this.options = options;
@@ -209,10 +210,7 @@ export class MacLeaseLoop {
     return true;
   }
   private schedule_workspace_cleanup(): void {
-    const now = performance.now() / 1000;
-    if (this.closed || this.workspace_cleanup !== undefined || now < this.next_workspace_cleanup)
-      return;
-    this.next_workspace_cleanup = now + WORKSPACE_CLEANUP_INTERVAL_SECONDS;
+    if (this.closed || this.workspace_cleanup !== undefined) return;
     const { promise, resolve, reject } = Promise.withResolvers<void>();
     this.workspace_cleanup = promise;
     void promise.then(
@@ -233,8 +231,6 @@ export class MacLeaseLoop {
     const { runner, client, workspace_root, warn } = this.options;
     const signal = this.cancellation.signal;
     try {
-      await runner.refresh_worker_cleanup();
-      signal.throwIfAborted();
       const ids = await local_workspace_ticket_ids(workspace_root);
       signal.throwIfAborted();
       const states: WorkspaceState[] = [];
@@ -248,7 +244,20 @@ export class MacLeaseLoop {
         states.push(...reply.states);
         at_vps_ms = Math.min(at_vps_ms, reply.at_vps_ms);
       }
+      const lifecycle = JSON.stringify([
+        ids,
+        [...states].sort((a, b) => a.ticket_id.localeCompare(b.ticket_id)),
+      ]);
+      if (
+        lifecycle === this.workspace_lifecycle &&
+        performance.now() / 1000 < this.next_workspace_cleanup
+      )
+        return;
+      await runner.refresh_worker_cleanup();
+      signal.throwIfAborted();
       await runner.cleanup_workspaces(states, Math.floor(at_vps_ms / 1000));
+      this.workspace_lifecycle = lifecycle;
+      this.next_workspace_cleanup = performance.now() / 1000 + WORKSPACE_CLEANUP_INTERVAL_SECONDS;
     } catch (error) {
       if (!(signal.aborted && is_shutdown_business_cancellation(error)))
         warn(`Ticket workspace cleanup failed: ${failure_name(error)}`);

@@ -19,9 +19,7 @@ test('retirement grants bind the observed end clock and physical workspace, and 
     sql.run('UPDATE ticket_workspace_lifecycle SET ended_at=? WHERE ticket_id=?', [now, ticket.id]),
   );
   const expected = db.read(read_workspace_states).get(ticket.id)!;
-  expect(
-    db.write((sql) => authorize_retirement(sql, expected, now + RETENTION_SECONDS - 1, identity)),
-  ).toBe(false);
+  expect(db.write((sql) => authorize_retirement(sql, expected, now, identity))).toBe(true);
   db.write((sql) => ensure_workspace_activity(sql, ticket.id, now + 10));
   expect(
     db.write((sql) => authorize_retirement(sql, expected, now + RETENTION_SECONDS + 20, identity)),

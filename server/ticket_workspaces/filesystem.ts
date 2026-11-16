@@ -10,5 +10,6 @@ export {
   cleanup_local_workspaces,
   prepare_workspace_retirement,
   retire_workspace,
+  detach_workspace,
   retry_retired_workspaces,
 } from './filesystem/retirement.ts';

@@ -63,6 +63,7 @@ export interface CliArgumentPayloads {
   'ticket.create': { body: Wire.JsonObject };
   'ticket.edit': { ticket_id: string; body: TicketEdit };
   'ticket.propose': { ticket_id: string; body: { body: string } };
+  'ticket.send_back': { ticket_id: string; body: Wire.JsonObject };
   'ticket.block': { ticket_id: string; blocker_id: string; body: Wire.JsonObject };
   'ticket.unblock': { ticket_id: string; blocker_id: string; body: Wire.JsonObject };
   'message.send': { body: { target: Principal; message: string; mode?: Wire.PromptDeliveryMode } };

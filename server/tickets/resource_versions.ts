@@ -44,6 +44,13 @@ export class TicketWorkspaceResources implements ResourceProvider {
           )?.revision ?? 0,
         ),
       ]),
+      sql
+        .all<{ decision_id: string; delivery_status: string }>(
+          'SELECT decision_id,delivery_status FROM ticket_decision_messages WHERE ticket_id=? ' +
+            "AND delivery_status IN ('uncertain','refused','discarded') ORDER BY created_at,rowid",
+          [ticket_id],
+        )
+        .map((row) => [row.decision_id, row.delivery_status]),
     ]);
     return { revision, read: () => workspace_ticket(sql, ticket_id) };
   }

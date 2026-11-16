@@ -8,7 +8,7 @@ import type {
   WorkerTypeDefinition,
   TicketWorkflowDefinition,
 } from './contracts.ts';
-import { validate_definition, validate_workflow } from './registry.ts';
+import { validate_definition, validate_workflow, validate_completion_stage } from './registry.ts';
 
 const fail = (message: string, detail: Record<string, unknown> = {}): never => {
   throw new PlannerError('validation', message, detail);
@@ -167,6 +167,7 @@ export function write_definition(
         .map((r) => r.skill_name),
     ),
   );
+  validate_completion_stage(definition);
   const position = tx.get<{ next: number }>(
     'SELECT COALESCE(MAX(position), -1) + 1 AS next FROM worker_types',
   )!.next;
@@ -229,6 +230,7 @@ function workflow_from_dict(raw: unknown, saved: boolean): TicketWorkflowDefinit
     specialist_skill,
   };
   validate_workflow(result);
+  if (!saved) validate_completion_stage(result);
   return result;
 }
 export function custom_workflow_from_dict(raw: unknown): TicketWorkflowDefinition {

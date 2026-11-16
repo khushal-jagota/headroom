@@ -18,11 +18,8 @@ import type {
   Ticket,
 } from './contracts.ts';
 import * as data from './data/index.ts';
-import {
-  parse_next_ceiling,
-  validate_revision_guidance,
-  REVISION_GUIDANCE_MAX_CHARACTERS,
-} from './logic/admission.ts';
+import { completion_follows, consequences_follows } from './logic/machine.ts';
+import { validate_revision_guidance, REVISION_GUIDANCE_MAX_CHARACTERS } from './logic/admission.ts';
 
 const business_refusals = new Set([
   'validation',
@@ -126,10 +123,20 @@ function transition(
   actor: Principal,
   now: number,
 ): DecisionTransition {
+  if (BigInt(command.expected_proposal_revision) !== BigInt(ticket.pending_proposal_revision))
+    throw new PlannerError(
+      'validation',
+      'the visible proposal changed; read it again before deciding',
+      { ticket_id: ticket.id },
+    );
   let result: Ticket;
   if (command.decision === 'approve') {
     const next_holder = holder(command.next_holder);
-    if (next_holder === null)
+    if (
+      next_holder === null &&
+      !completion_follows(ticket.stage, ticket.workflow) &&
+      !consequences_follows(ticket.stage, ticket.workflow)
+    )
       throw new PlannerError('scope_missing', 'approval requires next_holder', {
         missing: ['next_holder'],
       });
@@ -137,7 +144,7 @@ function transition(
       principal: actor,
       now,
       edited_body: command.edited_body ?? null,
-      next_ceiling: parse_next_ceiling(command.next_ceiling ?? null, ticket.workflow),
+      next_ceiling: command.next_ceiling ?? null,
       next_holder,
       expected_proposal_revision: command.expected_proposal_revision,
       message: command.message ?? null,
