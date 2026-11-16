@@ -242,21 +242,24 @@ final class ReviewFinalPageTests: XCTestCase {
         defer { app.terminate() }
         let workspace = app.tabBars.buttons["Workspace"]
         XCTAssertTrue(workspace.waitForExistence(timeout: 10)); workspace.tap()
-        let wren = app.buttons.matching(identifier: "workspace-orchestrator")
+        let wren = app.descendants(matching: .any).matching(identifier: "workspace-orchestrator")
             .matching(NSPredicate(format: "label CONTAINS %@", "Wren release")).firstMatch
-        let science = app.buttons.matching(identifier: "workspace-orchestrator")
+        let science = app.descendants(matching: .any).matching(identifier: "workspace-orchestrator")
             .matching(NSPredicate(format: "label CONTAINS %@", "Science site")).firstMatch
-        let tag = app.buttons["workspace-goal-status-release"]
-        let notes = app.buttons["workspace-ticket-notes"]
+        let tag = app.descendants(matching: .any).matching(identifier: "workspace-goal-status-release").firstMatch
+        let notes = app.descendants(matching: .any).matching(identifier: "workspace-ticket-notes").firstMatch
         XCTAssertTrue(tag.waitForExistence(timeout: 10))
+        let workspaceTree = XCTAttachment(string: app.debugDescription)
+        workspaceTree.name = "workspace-parity-initial-accessibility-tree"
+        workspaceTree.lifetime = .keepAlways; add(workspaceTree)
         XCTAssertTrue(wren.exists); XCTAssertTrue(science.exists)
-        XCTAssertTrue(app.buttons["workspace-ticket-weekly"].exists)
-        XCTAssertTrue(app.buttons["workspace-ticket-onboarding"].exists)
+        XCTAssertTrue(app.descendants(matching: .any).matching(identifier: "workspace-ticket-weekly").firstMatch.exists)
+        XCTAssertTrue(app.descendants(matching: .any).matching(identifier: "workspace-ticket-onboarding").firstMatch.exists)
         XCTAssertTrue(notes.exists)
-        XCTAssertTrue(app.buttons["workspace-ticket-testers"].exists, "Focus must retain unread Agent work")
-        XCTAssertFalse(app.buttons["workspace-ticket-build"].exists)
-        XCTAssertFalse(app.buttons["workspace-ticket-article"].exists)
-        XCTAssertFalse(app.buttons["workspace-goal-release"].exists, "Ordinary goal rows start off")
+        XCTAssertTrue(app.descendants(matching: .any).matching(identifier: "workspace-ticket-testers").firstMatch.exists, "Focus must retain unread Agent work")
+        XCTAssertFalse(app.descendants(matching: .any).matching(identifier: "workspace-ticket-build").firstMatch.exists)
+        XCTAssertFalse(app.descendants(matching: .any).matching(identifier: "workspace-ticket-article").firstMatch.exists)
+        XCTAssertFalse(app.descendants(matching: .any).matching(identifier: "workspace-goal-release").firstMatch.exists, "Ordinary goal rows start off")
         XCTAssertFalse(app.buttons["Focus"].exists); XCTAssertFalse(app.switches["Focus"].exists)
         XCTAssertTrue(app.tabBars.buttons["Review"].exists)
         XCTAssertTrue(app.tabBars.buttons["More"].exists)
@@ -277,8 +280,18 @@ final class ReviewFinalPageTests: XCTestCase {
         XCTAssertTrue(done.waitForExistence(timeout: 8))
         let firstCheck = app.buttons["goal-check-first"]
         XCTAssertTrue(firstCheck.waitForExistence(timeout: 8))
+        let previewTree = XCTAttachment(string: app.debugDescription)
+        previewTree.name = "workspace-parity-preview-accessibility-tree"
+        previewTree.lifetime = .keepAlways; add(previewTree)
+        XCTAssertEqual(app.buttons.matching(identifier: "goal-check-first").count, 1,
+                       "The preview must expose one checkbox, with no retained detail duplicate")
         if !firstCheck.isHittable { app.swipeUp() }
-        XCTAssertTrue(firstCheck.isHittable); firstCheck.tap()
+        let checkboxReady = NSPredicate { _, _ in
+            MainActor.assumeIsolated { firstCheck.exists && firstCheck.isHittable }
+        }
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: checkboxReady, object: nil)], timeout: 5), .completed,
+                       "Wait for the sheet's expansion/scroll gesture to finish before tapping")
+        firstCheck.tap()
         XCTAssertTrue(app.staticTexts["Explain the change."].waitForExistence(timeout: 8))
         capture(app, "workspace-parity-interactive-checklist")
         let goalWrites = try await recordedWrites(base)
@@ -319,7 +332,7 @@ final class ReviewFinalPageTests: XCTestCase {
         XCTAssertTrue(next.waitForExistence(timeout: 8))
         if !next.isHittable { app.swipeUp() }
         XCTAssertTrue(next.isHittable); next.tap()
-        XCTAssertTrue(app.buttons["workspace-ticket-page-two"].waitForExistence(timeout: 8))
+        XCTAssertTrue(app.descendants(matching: .any).matching(identifier: "workspace-ticket-page-two").firstMatch.waitForExistence(timeout: 8))
         let (requestsData, _) = try await URLSession.shared.data(from: URL(string: base + "/proof/workspace-requests")!)
         let requests = try XCTUnwrap(try JSONSerialization.jsonObject(with: requestsData) as? [[String: Any]])
         XCTAssertTrue(requests.contains { request in
@@ -327,8 +340,8 @@ final class ReviewFinalPageTests: XCTestCase {
             return request["section"] as? String == "rail_tickets" && owner?["kind"] as? String == "manager"
                 && owner?["id"] as? String == "wren" && request["anchor"] as? String == "workspace-next"
         })
-        app.buttons["workspace-settled"].tap()
-        let settled = app.buttons.matching(NSPredicate(format: "label == %@", "Previous release")).firstMatch
+        app.descendants(matching: .any).matching(identifier: "workspace-settled").firstMatch.tap()
+        let settled = app.descendants(matching: .any).matching(NSPredicate(format: "label == %@", "Previous release")).firstMatch
         XCTAssertTrue(settled.waitForExistence(timeout: 8)); settled.tap()
         XCTAssertTrue(app.descendants(matching: .any)["orchestrator-screen"].waitForExistence(timeout: 8))
         app.buttons["detail-back"].tap()

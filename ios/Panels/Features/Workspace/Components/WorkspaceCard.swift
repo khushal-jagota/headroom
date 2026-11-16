@@ -104,7 +104,7 @@ struct WorkspaceCard: View {
             }.panelsScaledFont(size: PanelsTheme.Web.smallSize, relativeTo: .caption, weight: .medium)
                 .frame(minHeight: 16)
             }
-            NavigationLink(value: route) {
+            Button { open(route) } label: {
                 HStack(alignment: .top, spacing: 0) {
                     Text(title).panelsScaledFont(size: PanelsTheme.Web.Rail.titleSize, relativeTo: .title3, weight: .semibold)
                         .tracking(-0.014 * PanelsTheme.Web.Rail.titleSize)
@@ -113,20 +113,20 @@ struct WorkspaceCard: View {
                     WorkspaceSignalMark(signal: signal).frame(height: PanelsTheme.Web.Rail.titleLine)
                 }.offset(y: chief && rowsEnabled ? 0 : 2).contentShape(Rectangle())
             }
-            .buttonStyle(WorkspaceRailButtonStyle(resting: signal?.messageForOwner == true ? PanelsTheme.Web.strong : PanelsTheme.Web.railTitle, header: true))
             .conversationAccessibility(label: [project, title].compactMap { $0 }.joined(separator: ", "), signal: signal)
             .accessibilityIdentifier(chief ? "workspace-chief" : "workspace-orchestrator")
-        }.padding(.horizontal, PanelsTheme.Web.Rail.textInset)
-            .padding(.top, chief && rowsEnabled ? 4 : 7).padding(.bottom, 4).contentShape(Rectangle())
             .modifier(WorkspaceContextMenu(route: route, title: title, parent: project, ticket: nil,
                 signal: signal, goals: heldGoals, machines: machines, machineHealth: machineHealth,
+                resting: signal?.messageForOwner == true ? PanelsTheme.Web.strong : PanelsTheme.Web.railTitle, header: true,
                 previewChanged: previewChanged, open: open))
+        }.padding(.horizontal, PanelsTheme.Web.Rail.textInset)
+            .padding(.top, chief && rowsEnabled ? 4 : 7).padding(.bottom, 4).contentShape(Rectangle())
     }
 
     private func ticketRow(_ ticket: TicketSummary, section: WorkspaceSection) -> some View {
         let machine = WorkspaceMachinePresentation.machine(for: ticket, in: machines)
         let signal = WorkspaceMachineHealth.signal(for: ticket, health: ticket.machineId.flatMap { machineHealth[$0] })
-        return NavigationLink(value: AppRoute.ticket(ticket.id)) {
+        return Button { open(.ticket(ticket.id)) } label: {
             HStack(alignment: .top, spacing: 0) {
                 HStack(spacing: 8) {
                     if machine?.isHome != true && (machine != nil || ticket.machineId != nil || ticket.locale == "macos") {
@@ -143,7 +143,6 @@ struct WorkspaceCard: View {
             }.padding(.horizontal, PanelsTheme.Web.Rail.textInset).padding(.vertical, 2)
                 .frame(minHeight: PanelsTheme.Web.Rail.rowHeight).contentShape(Rectangle())
         }
-        .buttonStyle(WorkspaceRailButtonStyle())
         .accessibilityIdentifier("workspace-ticket-\(ticket.id)")
         .conversationAccessibility(label: ticket.title + (ticket.awaitingApproval ? ", Needs your approval" : ticket.awaitingAgentApproval && signal?.messageForOwner != true && signal?.working != true ? ", Awaiting an agent's approval" : "") + WorkspaceMachinePresentation.accessibilitySuffix(ticket: ticket, machine: machine, health: ticket.machineId.flatMap { machineHealth[$0] }), signal: signal)
         .modifier(WorkspaceContextMenu(route: .ticket(ticket.id), title: ticket.title, parent: title,

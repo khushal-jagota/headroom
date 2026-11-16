@@ -441,7 +441,8 @@ conversation status marks stay current. Movement uses the web rail's timing and 
 Reduce Motion removes layout animation. Standard text sizes keep one-line Ticket rows;
 accessibility text sizes wrap them.
 
-Long press opens a native sheet in place of web hover. It shows the full title,
+A long press on a title or row opens a native sheet without page navigation.
+It replaces web hover and shows the full title,
 recap, stage, current conversation activity and goal display. Checklist and manual
 chart controls remain interactive. Preview reads do not acknowledge messages.
 The existing page, recap, backlog, resume, settle and reopen actions use their existing

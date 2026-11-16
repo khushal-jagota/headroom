@@ -498,11 +498,11 @@ def main() -> int:
             ),
             ("project", "wren"): dict(kind="project", id="wren", value=dict(name="Wren")),
         }
-        for identity, title, settled in [
-            ("wren", "Wren release", False),
-            ("science", "Science site", False),
-            ("settled-one", "Previous release", True),
-            ("settled-two", "Earlier research", True),
+        for identity, title, settled, created_at in [
+            ("wren", "Wren release", False, 1),
+            ("science", "Science site", False, 2),
+            ("settled-one", "Previous release", True, 3),
+            ("settled-two", "Earlier research", True, 4),
         ]:
             records[("manager", identity)] = dict(
                 kind="manager",
@@ -512,7 +512,7 @@ def main() -> int:
                     recap="",
                     recap_preview="",
                     recap_reference=None,
-                    created_at=1,
+                    created_at=created_at,
                     updated_at=1,
                     project_id="wren",
                     settled=settled and identity not in state["workspace_reopened"],

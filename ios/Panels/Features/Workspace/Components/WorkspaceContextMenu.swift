@@ -10,6 +10,8 @@ struct WorkspaceContextMenu: ViewModifier {
     var goals: [GoalRecord] = []
     var machines: [WorkspaceMachine] = []
     var machineHealth: [String: WorkspaceMachineHealth] = [:]
+    var resting = PanelsTheme.Web.railRow
+    var header = false
     let previewChanged: (Bool) -> Void
     let open: (AppRoute) -> Void
     @Environment(AppStore.self) private var store
@@ -20,7 +22,7 @@ struct WorkspaceContextMenu: ViewModifier {
 
     func body(content: Content) -> some View {
         content
-            .simultaneousGesture(LongPressGesture().onEnded { _ in showingPreview = true })
+            .buttonStyle(WorkspacePreviewButtonStyle(resting: resting, header: header, preview: { showingPreview = true }))
             .accessibilityActions {
                 Button("Preview") { showingPreview = true }
                 Button("Ask for a recap") { perform(.recap) }.disabled(sending || ticket?.integrityError != nil)
@@ -74,6 +76,34 @@ struct WorkspaceContextMenu: ViewModifier {
                 self.error = error.localizedDescription
             }
         }
+    }
+}
+
+/// One exclusive gesture decides whether this native Button previews or activates.
+/// Keeping its action in the Button also preserves keyboard and accessibility activation.
+struct WorkspacePreviewButtonStyle: PrimitiveButtonStyle {
+    var resting = PanelsTheme.Web.railRow
+    var header = false
+    let preview: () -> Void
+    @Environment(\.isEnabled) private var isEnabled
+    @GestureState private var pressed = false
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .foregroundStyle(pressed ? PanelsTheme.Web.strong : resting)
+            .background(pressed ? (header ? PanelsTheme.Web.hover : PanelsTheme.Web.selected) : .clear,
+                        in: RoundedRectangle(cornerRadius: PanelsTheme.Radius.md))
+            .contentShape(Rectangle())
+            .gesture(LongPressGesture().exclusively(before: TapGesture())
+                .updating($pressed) { _, pressed, _ in pressed = true }
+                .onEnded { result in
+                    guard isEnabled else { return }
+                    switch result {
+                    case .first: preview()
+                    case .second: configuration.trigger()
+                    }
+                })
+            .accessibilityAction { if isEnabled { configuration.trigger() } }
     }
 }
 

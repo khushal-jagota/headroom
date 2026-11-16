@@ -44,7 +44,7 @@ private struct GoalWorkspaceRow: View {
     @State private var destination: AppRoute?
     private var accepted: GoalRecord { session.goal ?? goal }
     var body: some View {
-        NavigationLink(value: AppRoute.goal(goal.id)) {
+        Button { open(.goal(goal.id)) } label: {
             HStack(spacing: 12) {
                 Text(accepted.title).panelsScaledFont(size: PanelsTheme.Web.Rail.goalSize)
                     .lineLimit(typeSize.isAccessibilitySize ? nil : 1).truncationMode(.tail)
@@ -54,8 +54,8 @@ private struct GoalWorkspaceRow: View {
             }.foregroundStyle(PanelsTheme.Web.railRow)
                 .frame(maxWidth: .infinity, minHeight: PanelsTheme.Web.Rail.goalRowHeight, alignment: .leading)
                 .padding(.horizontal, PanelsTheme.Web.Rail.textInset).contentShape(Rectangle())
-        }.buttonStyle(WorkspaceRailButtonStyle()).accessibilityIdentifier("workspace-goal-\(goal.id)")
-            .simultaneousGesture(LongPressGesture().onEnded { _ in showingPreview = true })
+        }.buttonStyle(WorkspacePreviewButtonStyle(preview: { showingPreview = true }))
+            .accessibilityIdentifier("workspace-goal-\(goal.id)")
             .accessibilityAction(named: "Preview") { showingPreview = true }
             .sheet(isPresented: $showingPreview, onDismiss: {
                 previewChanged(false)
