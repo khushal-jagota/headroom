@@ -352,6 +352,7 @@ struct ConversationThread: View {
                                 } else if !row.text.isEmpty {
                                     Text((try? AttributedString(markdown: row.text, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace), baseURL: store.baseURL)) ?? AttributedString(row.text))
                                         .textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
+                                    ArtifactInlineMediaPreviews(source: row.text, baseURL: store.baseURL)
                                 }
                                 if !row.attachments.isEmpty { ConversationAttachmentTray(pieces: row.attachments) }
                                 if let note = row.note, note != "Sent" {

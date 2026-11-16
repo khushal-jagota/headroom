@@ -35,4 +35,36 @@ final class ArtifactLogicTests: XCTestCase {
         XCTAssertEqual(blocks[2].text, "# not a heading\nlet x = 1")
         XCTAssertEqual(blocks.last?.text, "unfinished")
     }
+
+    func testProseLoadsOnlyLinkedPhotosAndVideos() throws {
+        let fileExtensions = ["txt", "md", "json", "html", "log", "csv", "pdf", "svg", "mp3", "m4a", "zip", "unknown"]
+        let files = fileExtensions.map { "[Read \($0)](/files/tickets/t_other/artifacts/file.\($0))" }.joined(separator: " ")
+        let source = "Read [Migration verification](/files/tickets/t_8rmd1ebk/artifacts/migration-verification.txt) before approval. " + files + " [Review **photo**](/files/tickets/t_other/artifacts/photo.PNG) [Video](/files/managers/si_other/artifacts/clip.mp4)"
+        let targets = ArtifactInlineMedia.targets(in: source, baseURL: base)
+        XCTAssertEqual(targets.map(\.path), ["artifacts/photo.PNG", "artifacts/clip.mp4"])
+        XCTAssertEqual(targets.map(\.title), ["Review photo", "Video"])
+        XCTAssertEqual(targets.map(\.owner), [.init(kind: .ticket, id: "t_other"), .init(kind: .manager, id: "si_other")])
+        let rich = try AttributedString(markdown: source, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace), baseURL: base)
+        XCTAssertTrue(String(rich.characters).contains("Read Migration verification before approval."))
+    }
+
+    func testInlineMediaIgnoresCodeExternalLinksAndDuplicateTargets() {
+        let source = """
+        `[Literal](/files/tickets/t_a/literal.png)`
+
+        ```markdown
+        [Fenced](/files/tickets/t_a/fenced.mov)
+        ```
+
+        [External](https://elsewhere.example/files/tickets/t_a/external.jpg)
+        ![Photo](/files/tickets/t_a/photo.jpg)
+        [Again](/files/tickets/t_a/photo.jpg)
+        [Video](/files/tickets/t_a/clip.MOV)
+        [Other video](/files/tickets/t_a/other.m4v)
+        """
+        let targets = ArtifactInlineMedia.targets(in: source, baseURL: base)
+        XCTAssertEqual(targets.map(\.path), ["photo.jpg", "clip.MOV", "other.m4v"])
+        XCTAssertEqual(targets.first?.title, "Photo")
+    }
+
 }

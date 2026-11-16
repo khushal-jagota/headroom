@@ -45,3 +45,36 @@ struct ArtifactMarkdownBlock: Identifiable, Equatable {
         return blocks
     }
 }
+
+/// Only photos and videos earn an automatic read while prose is on screen.
+/// All other managed links remain ordinary text until the reader follows them.
+enum ArtifactInlineMedia {
+    static func isVideo(_ target: ArtifactTarget) -> Bool {
+        ["mp4", "mov", "m4v"].contains((target.path as NSString).pathExtension.lowercased())
+    }
+
+    static func targets(in source: String, baseURL: URL) -> [ArtifactTarget] {
+        var result: [ArtifactTarget] = []
+        var seen = Set<String>()
+        for block in ArtifactMarkdownBlock.parse(source) where block.kind != .code {
+            guard let rich = try? AttributedString(markdown: block.text, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace), baseURL: baseURL) else { continue }
+            var link: URL?
+            var label = ""
+            func appendLink() {
+                guard let link,
+                      let target = ArtifactTarget.from(link, baseURL: baseURL, title: label),
+                      target.kind == .image || isVideo(target), seen.insert(target.id).inserted else { return }
+                result.append(target)
+            }
+            for run in rich.runs {
+                let url = run.link ?? run.imageURL
+                if url != link {
+                    appendLink(); link = url; label = ""
+                }
+                if url != nil { label += String(rich[run.range].characters) }
+            }
+            appendLink()
+        }
+        return result
+    }
+}
