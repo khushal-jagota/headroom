@@ -13,6 +13,12 @@ struct ArtifactViewerView: View {
     @Environment(AppStore.self) private var store
     @Environment(\.openURL) private var openURL
     @State private var document: ArtifactDocument?
+    @State private var htmlURL: URL?
+    @State private var currentHTMLURL: URL?
+    @State private var shareURL: URL?
+    @State private var shareDocument: ArtifactDocument?
+    @State private var isPreparingShare = false
+    @State private var shareError: String?
     @State private var image: UIImage?
     @State private var error: String?
     @State private var isLoading = true
@@ -21,6 +27,7 @@ struct ArtifactViewerView: View {
     @State private var linkedArtifact: ArtifactTarget?
     @State private var loadVersion = 0
     @State private var renderVersion = 0
+    @State private var htmlReloadSignal = 0
     @State private var webReady = false
     @State private var desktopPreview = false
     private var target: ArtifactTarget { .init(owner: owner, path: path, title: title) }
@@ -29,7 +36,7 @@ struct ArtifactViewerView: View {
         conversationOwner ?? owner.conversationOwner
     }
 
-    private var waitingForPreview: Bool { isLoading || (target.kind == .html && document != nil && !webReady && error == nil) }
+    private var waitingForPreview: Bool { isLoading || (target.kind == .html && htmlURL != nil && !webReady && error == nil) }
 
     var body: some View {
         ScreenTextEntryScope { textEntry in artifactContent(textEntry: textEntry) }
@@ -38,8 +45,10 @@ struct ArtifactViewerView: View {
 
     private func artifactContent(textEntry: ScreenTextEntryContext) -> some View {
         VStack(spacing: 0) {
-            if let document {
-                content(document, textEntry: textEntry)
+            if let htmlURL {
+                htmlContent(htmlURL)
+            } else if let document {
+                content(document)
                     .environment(\.openURL, OpenURLAction { url in follow(url, textEntry: textEntry); return .handled })
             } else if let error {
                 ContentUnavailableView {
@@ -53,8 +62,8 @@ struct ArtifactViewerView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .safeAreaInset(edge: .bottom, spacing: 0) {
-            if let error, document != nil {
-                LoadErrorView(message: "Couldn’t refresh. Showing the last loaded artifact. \(error)") { await load() }
+            if let error, document != nil || htmlURL != nil {
+                LoadErrorView(message: "Couldn’t refresh. Showing the last loaded artifact. \(error)") { reloadPreview() }
                     .padding(.horizontal, PanelsTheme.Space.lg).background(PanelsTheme.surface)
             }
         }
@@ -67,17 +76,25 @@ struct ArtifactViewerView: View {
                 Text((path as NSString).lastPathComponent).font(PanelsTheme.TypeScale.artifactTitle).lineLimit(1).truncationMode(.middle)
             }
             ToolbarItemGroup(placement: .topBarTrailing) {
-                Button { sharePresented = true } label: { Image(systemName: "square.and.arrow.up") }
-                    .accessibilityLabel("Share artifact").disabled(document == nil)
+                Button { Task { await share() } } label: { Image(systemName: "square.and.arrow.up") }
+                    .accessibilityLabel("Share artifact").disabled((document == nil && htmlURL == nil) || isPreparingShare)
                 Menu {
-                    Button("Reload", systemImage: "arrow.clockwise") { loadVersion += 1 }.disabled(isLoading)
+                    Button("Reload", systemImage: "arrow.clockwise") { reloadPreview() }.disabled(isLoading)
                     Button("Copy link", systemImage: "link") {
-                        UIPasteboard.general.url = target.previewURL(baseURL: store.baseURL); Haptics.success()
+                        UIPasteboard.general.url = currentHTMLURL ?? target.previewURL(baseURL: store.baseURL); Haptics.success()
                     }
                 } label: { Image(systemName: "ellipsis") }.accessibilityLabel("Artifact actions")
             }
         }
-        .sheet(isPresented: $sharePresented) { if let document { ArtifactShareSheet(document: document).presentationDetents([.medium, .large]) } }
+        .alert("Couldn’t share artifact", isPresented: Binding(
+            get: { shareError != nil }, set: { if !$0 { shareError = nil } }
+        )) {
+            Button("OK", role: .cancel) { shareError = nil }
+        } message: { Text(shareError ?? "") }
+        .sheet(isPresented: $sharePresented) {
+            if let shareDocument { ArtifactShareSheet(document: shareDocument).presentationDetents([.medium, .large]) }
+            else if let shareURL { ArtifactURLShareSheet(url: shareURL).presentationDetents([.medium, .large]) }
+        }
         .navigationDestination(item: $linkedArtifact) { target in
             ArtifactViewerView(owner: target.owner, path: target.path, title: target.title, showsConversation: showsConversation, conversationOwner: activeConversationOwner)
         }
@@ -99,7 +116,7 @@ struct ArtifactViewerView: View {
                 conversationID = nil
             }
         }
-        .task(id: loadVersion) { await load() }
+        .task(id: "\(target.id)|\(loadVersion)") { await load() }
         .task(id: waitingForPreview) {
             showLoading = false
             if waitingForPreview {
@@ -109,19 +126,21 @@ struct ArtifactViewerView: View {
         }
     }
 
-    @ViewBuilder private func content(_ document: ArtifactDocument, textEntry: ScreenTextEntryContext) -> some View {
+    private func htmlContent(_ url: URL) -> some View {
+        VStack(spacing: 0) {
+            Picker("Preview width", selection: $desktopPreview) {
+                Text("Phone width").tag(false)
+                Text("Fit desktop").tag(true)
+            }.pickerStyle(.segmented).padding(PanelsTheme.Space.md)
+                .accessibilityIdentifier("artifact-preview-width")
+            ArtifactWebView(url: url, desktopPreview: desktopPreview, reloadSignal: htmlReloadSignal, failed: { error = $0 }, ready: { webReady = true }, reload: { reloadPreview() }, navigated: { currentHTMLURL = $0 }, openExternal: { openURL($0) })
+                .id(renderVersion)
+                .overlay { if !webReady && showLoading { RingSpinner("Opening preview…").padding().background(PanelsTheme.surface, in: RoundedRectangle(cornerRadius: PanelsTheme.Radius.md)) } }
+        }
+    }
+
+    @ViewBuilder private func content(_ document: ArtifactDocument) -> some View {
         switch target.kind {
-        case .html where document.text != nil:
-            VStack(spacing: 0) {
-                Picker("Preview width", selection: $desktopPreview) {
-                    Text("Phone width").tag(false)
-                    Text("Fit desktop").tag(true)
-                }.pickerStyle(.segmented).padding(PanelsTheme.Space.md)
-                    .accessibilityIdentifier("artifact-preview-width")
-                ArtifactWebView(source: document.text!, url: document.remoteURL, desktopPreview: desktopPreview, openLink: { follow($0, textEntry: textEntry) }, failed: { error = $0 }, ready: { webReady = true }, reload: { Task { await load() } })
-                    .id(renderVersion)
-                    .overlay { if !webReady && showLoading { RingSpinner("Opening preview…").padding().background(PanelsTheme.surface, in: RoundedRectangle(cornerRadius: PanelsTheme.Radius.md)) } }
-            }
         case .markdown where document.text != nil:
             ArtifactMarkdownView(source: document.text!, baseURL: document.remoteURL).panelsRefreshable { await load() }
         case .text where document.text != nil:
@@ -144,7 +163,7 @@ struct ArtifactViewerView: View {
             ContentUnavailableView {
                 Label(document.localURL.lastPathComponent, systemImage: "doc")
             } description: { Text("Share this file to open it in another app.") } actions: {
-                Button("Share file") { sharePresented = true }.buttonStyle(.bordered)
+                Button("Share file") { Task { await share() } }.buttonStyle(.bordered)
             }
         }
     }
@@ -154,10 +173,41 @@ struct ArtifactViewerView: View {
             if target.id != self.target.id { textEntry.endEditingBeforeNavigation { linkedArtifact = target } }
         } else if ["https", "http", "mailto"].contains(url.scheme?.lowercased() ?? "") { openURL(url) }
     }
+    private func share() async {
+        isPreparingShare = true
+        defer { isPreparingShare = false }
+        do {
+            shareDocument = nil; shareURL = nil
+            if let currentHTMLURL, currentHTMLURL != htmlURL {
+                if currentHTMLURL.query == nil, currentHTMLURL.fragment == nil,
+                   let currentTarget = ArtifactTarget.from(currentHTMLURL, baseURL: store.baseURL) {
+                    shareDocument = try await store.client.artifactDocument(currentTarget)
+                } else { shareURL = currentHTMLURL }
+            } else if let document { shareDocument = document }
+            else { shareDocument = try await store.client.artifactDocument(target) }
+            sharePresented = true
+        } catch {
+            shareError = error.localizedDescription
+            Haptics.error()
+        }
+    }
+    private func reloadPreview() {
+        if htmlURL != nil {
+            error = nil; webReady = false; htmlReloadSignal += 1
+        } else { loadVersion += 1 }
+    }
     private func load() async {
         isLoading = true
         defer { isLoading = false }
         do {
+            if target.kind == .html {
+                document = nil
+                htmlURL = try store.client.artifactURL(target)
+                currentHTMLURL = htmlURL
+                error = nil; webReady = false; renderVersion += 1
+                return
+            }
+            htmlURL = nil; currentHTMLURL = nil
             let result = try await store.client.artifactDocument(target)
             let image = target.kind == .image ? await Task.detached(priority: .userInitiated) {
                 UIImage(contentsOfFile: result.localURL.path)

@@ -2,14 +2,11 @@
 
 from __future__ import annotations
 
-import re
-import shlex
-from uuid import UUID
-
 import click
 
 from planner.cli import http
 from planner.executor.configuration import validate_server_url
+from planner.installation.join_command import join_command, require_released_revision
 
 
 @click.command("join-command")
@@ -27,32 +24,23 @@ def machine_join_command(
     except ValueError as error:
         raise click.ClickException(str(error)) from error
     metadata = http.send("GET", "/api/meta", as_json=False)
-    revision = metadata.get("app_sha")
-    if not isinstance(revision, str) or re.fullmatch(r"[0-9a-f]{40}", revision) is None:
-        raise click.ClickException("Install a released home before you issue a join command")
+    try:
+        revision = require_released_revision(metadata.get("app_sha"))
+    except ValueError as error:
+        raise click.ClickException(str(error)) from error
     body = {"name": name}
     data = http.send("POST", "/api/machines", as_json=False, json_body=body)
     # Registration remains the only issuer. This command never copies owner authority.
-    machine_id = str(UUID(data["machine_id"]))
     credential = data["credential"]
-    if not isinstance(credential, str) or re.fullmatch(r"[A-Za-z0-9_-]{43}", credential) is None:
-        raise click.ClickException("The home returned an invalid machine credential")
-    arguments = [
-        "join",
-        "--home",
-        home_url,
-        "--machine-id",
-        machine_id,
-    ]
-    arguments += ["--revision", revision]
-    route = f"repos/khushal-jagota/headroom/contents/scripts/panels_install.py?ref={revision}"
-    command = (
-        "panels_join_script=$(mktemp) && gh api "
-        "-H 'Accept: application/vnd.github.raw+json' "
-        + shlex.quote(route)
-        + ' > "$panels_join_script" && python3 "$panels_join_script" '
-        + shlex.join(arguments)
-    )
+    try:
+        command = join_command(
+            home_url=home_url,
+            revision=revision,
+            machine_id=data["machine_id"],
+            credential=credential,
+        )
+    except ValueError as error:
+        raise click.ClickException(str(error)) from error
     click.echo(
         "Use this same home's trusted HTTPS origin. "
         "Check the address before you share the credential."

@@ -12,10 +12,11 @@ import asyncio
 from collections.abc import AsyncIterator, Coroutine
 from typing import Any, cast
 
-from starlette.types import ASGIApp
+from starlette.types import ASGIApp, Receive, Scope, Send
 
 from planner.conversation.message_files import ConversationMessageFiles
 from planner.conversation.system import SqliteProcessConversationSystem
+from planner.core.authctx import IN_PROCESS_REQUEST_CONTEXT_SCOPE_KEY, RequestContext
 from planner.core.clock import Clock
 from planner.core.contracts import ErrorCode, PlannerError, PrincipalKind
 from planner.core.db import connect
@@ -461,20 +462,23 @@ class VpsExecutor:
             raise PlannerError(ErrorCode.validation, "unsupported executor read")
         import httpx
 
-        from planner.core.contracts import principal_legacy_actor
-
         principal = await run_on_worker_thread(self.runs.authority, read.child)
-        headers = {"X-Plan-Actor": principal_legacy_actor(principal)}
-        if principal.kind is PrincipalKind.ticket:
-            headers["X-Plan-Ticket-ID"] = principal.id
+
+        async def as_verified_child(scope: Scope, receive: Receive, send: Send) -> None:
+            child_scope = dict(scope)
+            child_scope[IN_PROCESS_REQUEST_CONTEXT_SCOPE_KEY] = RequestContext(
+                principal, read.child.conversation_id
+            )
+            await self.app(child_scope, receive, send)
+
         try:
             async with asyncio.timeout(LIVE_READ_SERVER_LIMIT_SECONDS):
                 async with httpx.AsyncClient(
-                    transport=httpx.ASGITransport(app=self.app),
+                    transport=httpx.ASGITransport(app=as_verified_child),
                     base_url="http://executor",
                 ) as client:
                     request = client.build_request(
-                        "GET", read.path, params=cast(Any, read.params), headers=headers
+                        "GET", read.path, params=cast(Any, read.params)
                     )
                     path = request.url.path
                     if any(part in (".", "..") for part in path.split("/")) or not any(

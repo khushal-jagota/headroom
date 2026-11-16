@@ -1,0 +1,92 @@
+import type { CommandDefinition, CommandResult } from './contracts.ts';
+import { CliArgument, CliOption } from './declarations.ts';
+
+export class MissingResponseValue extends Error {
+  constructor() {
+    super('response is missing a required value');
+  }
+}
+
+export class CliFailure extends Error {
+  readonly result: CommandResult;
+  constructor(result: CommandResult) {
+    super(result.stderr);
+    this.result = result;
+  }
+}
+const recovery: Record<string, string> = {
+  'send-message': 'panels send-message --owner --message TEXT',
+  'worker-type save': 'panels worker-type save < RECORD_FILE',
+  'worker-type skill': 'panels worker-type skill WORKER_TYPE --description TEXT < SKILL_FILE',
+  'skill edit': 'panels skill edit NAME --description TEXT < SKILL_FILE',
+  'project set': 'panels project set PROJECT_ID FIELD --value VALUE',
+  'ticket delete': 'panels ticket delete TICKET_ID',
+  'ticket create': 'panels ticket create --input-json FILE',
+  'ticket assign': 'panels ticket assign TICKET_ID --chief',
+  'manager settle': 'panels manager settle ITEM_ID',
+  'ticket edit': 'panels ticket edit TICKET_ID --input-json FILE',
+  'ticket proposal': 'panels ticket proposal TICKET_ID ACTION',
+  'ticket complete': 'panels ticket complete TICKET_ID FIELD --value VALUE',
+  'manager create': 'panels manager create --title TEXT --project-id PROJECT_ID',
+  'manager delete': 'panels manager delete ITEM_ID --yes',
+  'page edit': 'panels page schema',
+  'page show': 'panels page show --manager ID',
+  'manager set': 'panels manager set ITEM_ID FIELD --value VALUE',
+  'manager conversation send': 'panels manager conversation send ITEM_ID --message TEXT',
+  'worker propose': 'panels worker propose TICKET_ID < PROPOSAL_FILE',
+  'worker recap': 'panels worker recap TICKET_ID < RECAP_FILE',
+};
+export function command_path(command: CommandDefinition): string {
+  return ['panels', ...command.path].join(' ');
+}
+export function command_shape(command: CommandDefinition): string {
+  const override = recovery[command.path.join(' ')];
+  if (override) return override;
+  const options = command.inputs.filter(
+    (input): input is CliOption => input instanceof CliOption && !input.hidden,
+  );
+  const parts = [command_path(command)];
+  for (const input of options.filter((option) => option.mandatory)) {
+    const value = /<([^>]+)>|\[([^\]]+)\]/.exec(input.flags);
+    parts.push([input.long ?? input.short, ...(value ? [value[1] ?? value[2]] : [])].join(' '));
+  }
+  if (options.some((option) => !option.mandatory)) parts.push('[OPTIONS]');
+  for (const input of command.inputs) {
+    if (input instanceof CliArgument)
+      parts.push(
+        (input.required ? input.name() : `[${input.name()}]`) + (input.variadic ? '...' : ''),
+      );
+  }
+  return parts.join(' ');
+}
+export function human_error(
+  command: CommandDefinition,
+  message: string,
+  exit_code = 1,
+  options: { recovery?: string | null; no_route?: string } = {},
+): CommandResult {
+  const line = message
+    .replace(/^error:\s*/, '')
+    .split(/\r?\n/)
+    .map((p) => p.trim())
+    .filter(Boolean)
+    .join(' ');
+  let stderr = 'error: ' + line + '\n';
+  if (options.no_route !== undefined) stderr += options.no_route + '\n';
+  else {
+    const shape =
+      options.recovery === null
+        ? undefined
+        : (options.recovery ??
+          (/(?:^|[`'" ])panels(?:[ `]|$)/.test(line) ? undefined : command_shape(command)));
+    if (shape !== undefined) stderr += 'Use: ' + shape + '\n';
+  }
+  return { exit_code, stdout: '', stderr };
+}
+export function usage_error(
+  command: CommandDefinition,
+  message: string,
+  options: { recovery?: string | null; no_route?: string } = {},
+): never {
+  throw new CliFailure(human_error(command, message, 2, options));
+}

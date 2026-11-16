@@ -1,0 +1,450 @@
+/** Adapted from T3 Code 75e4ceb96489a2fe92c710c79dbea59778cccfd1.
+ * Copyright (c) 2026 T3 Tools Inc. MIT permission notice: ./T3-LICENSE.
+ */
+/**
+ * Durable per-file scan cache.
+ *
+ * Transcripts are append-only and a file that has not changed can never yield
+ * different usage, so parsed records are keyed by `(size, mtime)` and reused.
+ * Without this every server restart re-parses the whole window: roughly 3.5s
+ * for a 30-day scan here, against ~11ms to reload this cache.
+ *
+ * Caching *per file* rather than per day is deliberate. It is timezone
+ * independent, so changing the reporting zone does not invalidate anything, and
+ * it keeps cross-file de-duplication exact: cached entries are de-duplicated
+ * within their own file only, and the aggregator still applies the global
+ * dedupe pass over the small surviving key set.
+ *
+ * @module usageScanCache
+ */
+// @effect-diagnostics nodeBuiltinImport:off
+import { path_is_within } from '../../core/path_containment.ts';
+import { is_record } from '../../core/records.ts';
+
+import type { UsageProviderKind } from './contracts.ts';
+
+import { GUARD_LENGTH, type TranscriptParsePosition } from './usageTranscriptReader.ts';
+import type { CodexScanState, UsageRecord } from './usageTranscripts.ts';
+
+// v2: Codex fork-copy suppression changed what a file parses to, so v1
+// entries would keep serving double-counted records forever.
+// v3: entries carry the parse position and reducer state so a grown file
+// re-parses only its appended bytes instead of starting over.
+// v5: one-hour cache writes and resumable compaction identities.
+const USAGE_SCAN_CACHE_VERSION = 5 as const;
+
+export interface CachedFile {
+  readonly size: number;
+  readonly mtimeMs: number;
+  readonly provider: UsageProviderKind;
+  /** Records from newline-terminated lines, up to `position.resumeOffset`. */
+  readonly records: readonly UsageRecord[];
+  /**
+   * Records from a trailing segment the writer had not newline-terminated at
+   * parse time. Kept apart from `records` because an incremental parse
+   * re-reads that segment and would otherwise double count it.
+   */
+  readonly tailRecords: readonly UsageRecord[];
+  readonly position: TranscriptParsePosition;
+}
+
+export type ScanCache = Map<string, CachedFile>;
+
+/**
+ * Row layout for the serialised form. Positional and interned rather than
+ * object-per-record: on a 30-day window that is the difference between a file
+ * measured in tens of megabytes and one under six.
+ */
+type SerializedRecord = readonly [
+  timestampMs: number,
+  modelIndex: number,
+  sessionIndex: number,
+  uncachedInputTokens: number,
+  cachedInputTokens: number,
+  cacheCreationTokens: number,
+  outputTokens: number,
+  reasoningTokens: number,
+  dedupeKey: string | null,
+  reportedCostUsd: number | null,
+  cacheCreation1hTokens: number,
+  metadata?: { serviceTier?: string | null; compactionCovered?: boolean },
+];
+
+interface SerializedFile {
+  readonly s: number;
+  readonly m: number;
+  readonly p: UsageProviderKind;
+  readonly r: readonly SerializedRecord[];
+  /** Tail records; see `CachedFile.tailRecords`. */
+  readonly t: readonly SerializedRecord[];
+  /** Parse position: resume offset, guard length, guard hash. */
+  readonly o: number;
+  readonly gl: number;
+  readonly gh: number;
+  /** Codex reducer state at `o`; `null` for stateless providers. */
+  readonly cs: CodexScanState | null;
+}
+
+interface SerializedCache {
+  readonly version: number;
+  readonly models: readonly string[];
+  readonly sessions: readonly string[];
+  readonly files: Readonly<Record<string, SerializedFile>>;
+}
+
+/** Serialises the cache, interning the repeated model and session strings. */
+export function encodeScanCache(cache: ScanCache): SerializedCache {
+  const models: string[] = [];
+  const sessions: string[] = [];
+  const modelIndex = new Map<string, number>();
+  const sessionIndex = new Map<string, number>();
+
+  const intern = (table: string[], index: Map<string, number>, value: string): number => {
+    const existing = index.get(value);
+    if (existing !== undefined) return existing;
+    const next = table.length;
+    table.push(value);
+    index.set(value, next);
+    return next;
+  };
+
+  const serializeRecord = (record: UsageRecord): SerializedRecord => [
+    record.timestampMs,
+    intern(models, modelIndex, record.model),
+    intern(sessions, sessionIndex, record.sessionId),
+    record.totals.uncachedInputTokens,
+    record.totals.cachedInputTokens,
+    record.totals.cacheCreationTokens,
+    record.totals.outputTokens,
+    record.totals.reasoningTokens,
+    record.dedupeKey,
+    record.reportedCostUsd,
+    record.cacheCreation1hTokens ?? 0,
+    {
+      ...('serviceTier' in record ? { serviceTier: record.serviceTier } : {}),
+      ...('compactionCovered' in record ? { compactionCovered: record.compactionCovered } : {}),
+    },
+  ];
+
+  const files: Record<string, SerializedFile> = {};
+  for (const [path, entry] of cache) {
+    files[path] = {
+      s: entry.size,
+      m: entry.mtimeMs,
+      p: entry.provider,
+      r: entry.records.map(serializeRecord),
+      t: entry.tailRecords.map(serializeRecord),
+      o: entry.position.resumeOffset,
+      gl: entry.position.guardLength,
+      gh: entry.position.guardHash,
+      cs: entry.position.codexState,
+    };
+  }
+
+  return { version: USAGE_SCAN_CACHE_VERSION, models, sessions, files };
+}
+
+function isRecordArray(value: unknown): value is readonly unknown[] {
+  return Array.isArray(value);
+}
+
+/**
+ * Rebuilds the cache from a parsed document.
+ *
+ * Anything malformed yields an empty cache rather than an error: a corrupt
+ * cache should cost one cold scan, never a broken page.
+ */
+export function decodeScanCache(document: unknown): ScanCache {
+  const cache: ScanCache = new Map();
+  if (!is_record(document)) return cache;
+
+  const root = document as Partial<SerializedCache>;
+  if (root.version !== USAGE_SCAN_CACHE_VERSION) return cache;
+  if (!isRecordArray(root.models) || !isRecordArray(root.sessions)) return cache;
+  if (!is_record(root.files)) return cache;
+
+  // The intern tables must be all strings: a numeric entry would pass the
+  // undefined guard below, land in a record's model, and crash the aggregate
+  // at lookupRate. A corrupt table rejects the whole cache.
+  if (!root.models.every((value) => typeof value === 'string')) return cache;
+  if (!root.sessions.every((value) => typeof value === 'string')) return cache;
+  const models = root.models as readonly string[];
+  const sessions = root.sessions as readonly string[];
+
+  // Any corrupt row disqualifies the whole entry. Keeping the survivors
+  // under the original (size, mtime) would read as a valid warm hit and the
+  // file would never be re-parsed, silently losing the dropped rows' usage.
+  const decodeRecords = (
+    rows: readonly unknown[],
+    provider: UsageProviderKind,
+  ): UsageRecord[] | null => {
+    const records: UsageRecord[] = [];
+    for (const row of rows) {
+      if (!isRecordArray(row) || row.length < 11) return null;
+      const [
+        timestampMs,
+        modelIndex,
+        sessionIndex,
+        uncached,
+        cached,
+        cacheCreation,
+        output,
+        reasoning,
+        dedupeKey,
+        reportedCostUsd,
+        cacheCreation1hTokens,
+        metadata = {},
+      ] = row as SerializedRecord;
+
+      const model = typeof modelIndex === 'number' ? models[modelIndex] : undefined;
+      if (
+        !Number.isSafeInteger(cacheCreation1hTokens) ||
+        cacheCreation1hTokens < 0 ||
+        cacheCreation1hTokens > cacheCreation ||
+        typeof timestampMs !== 'number' ||
+        !Number.isFinite(timestampMs) ||
+        model === undefined ||
+        !Number.isFinite(uncached) ||
+        !Number.isFinite(cached) ||
+        !Number.isFinite(cacheCreation) ||
+        !Number.isFinite(output) ||
+        !Number.isFinite(reasoning)
+      ) {
+        return null;
+      }
+
+      if (
+        !is_record(metadata) ||
+        Object.keys(metadata).some((key) => !['serviceTier', 'compactionCovered'].includes(key)) ||
+        ('serviceTier' in metadata &&
+          metadata.serviceTier !== null &&
+          typeof metadata.serviceTier !== 'string') ||
+        ('compactionCovered' in metadata && typeof metadata.compactionCovered !== 'boolean')
+      )
+        return null;
+      records.push({
+        ...(cacheCreation1hTokens ? { cacheCreation1hTokens } : {}),
+        ...metadata,
+        provider,
+        timestampMs,
+        model,
+        sessionId: (typeof sessionIndex === 'number' ? sessions[sessionIndex] : undefined) ?? '',
+        totals: {
+          uncachedInputTokens: uncached,
+          cachedInputTokens: cached,
+          cacheCreationTokens: cacheCreation,
+          outputTokens: output,
+          reasoningTokens: reasoning,
+        },
+        reportedCostUsd: typeof reportedCostUsd === 'number' ? reportedCostUsd : null,
+        dedupeKey: typeof dedupeKey === 'string' ? dedupeKey : null,
+      });
+    }
+    return records;
+  };
+
+  for (const [path, raw] of Object.entries(root.files)) {
+    if (!is_record(raw)) continue;
+    const entry = raw as Partial<SerializedFile>;
+    if (typeof entry.s !== 'number' || typeof entry.m !== 'number') continue;
+    if (entry.p !== 'claude' && entry.p !== 'codex' && entry.p !== 'grok') continue;
+    if (!isRecordArray(entry.r) || !isRecordArray(entry.t)) continue;
+    // Position fields feed byte offsets and a Buffer allocation in the reader,
+    // so anything outside their real ranges must reject the entry: a bogus
+    // guard length would otherwise fail every parse of the file, silently
+    // dropping its usage instead of costing the documented cold re-parse.
+    if (
+      typeof entry.o !== 'number' ||
+      !Number.isSafeInteger(entry.o) ||
+      entry.o < 0 ||
+      typeof entry.gl !== 'number' ||
+      !Number.isSafeInteger(entry.gl) ||
+      entry.gl < 0 ||
+      entry.gl > GUARD_LENGTH ||
+      entry.gl > entry.o ||
+      typeof entry.gh !== 'number' ||
+      !Number.isFinite(entry.gh)
+    ) {
+      continue;
+    }
+    const codexState = decodeCodexState(entry.cs);
+    if (codexState === undefined) continue;
+
+    const provider: UsageProviderKind = entry.p;
+    const records = decodeRecords(entry.r, provider);
+    const tailRecords = decodeRecords(entry.t, provider);
+    if (records === null || tailRecords === null) continue;
+
+    cache.set(path, {
+      size: entry.s,
+      mtimeMs: entry.m,
+      provider,
+      records,
+      tailRecords,
+      position: {
+        resumeOffset: entry.o,
+        guardLength: entry.gl,
+        guardHash: entry.gh,
+        codexState,
+      },
+    });
+  }
+
+  return cache;
+}
+
+/**
+ * Validates a persisted Codex reducer state. Returns `undefined` for a corrupt
+ * value, which disqualifies the entry: resuming with a bad state would attach
+ * appended usage to the wrong model or replay fork-copied history.
+ */
+function decodeCodexState(value: unknown): CodexScanState | null | undefined {
+  if (value === null) return null;
+  if (!is_record(value)) return undefined;
+  const state = value as Partial<CodexScanState>;
+  if (
+    typeof state.model !== 'string' ||
+    typeof state.sessionId !== 'string' ||
+    (state.lastUsageSignature !== null && typeof state.lastUsageSignature !== 'string') ||
+    typeof state.sawSessionMeta !== 'boolean' ||
+    typeof state.suppressingForkCopies !== 'boolean' ||
+    typeof state.forkCopyAnchorMs !== 'number' ||
+    !Number.isFinite(state.forkCopyAnchorMs)
+  ) {
+    return undefined;
+  }
+  const counters = (item: unknown): item is Record<string, number> =>
+    is_record(item) &&
+    Object.values(item).every(
+      (value) => typeof value === 'number' && Number.isSafeInteger(value) && value >= 0,
+    );
+  if (
+    !('serviceTier' in state) ||
+    (state.serviceTier !== null && typeof state.serviceTier !== 'string') ||
+    !('cumulativeUsage' in state) ||
+    (state.cumulativeUsage !== null && !counters(state.cumulativeUsage)) ||
+    !is_record(state.compactions) ||
+    !is_record(state.compactionMarkers) ||
+    !Array.isArray(state.completedCompactions) ||
+    !state.completedCompactions.every((item) => typeof item === 'string')
+  )
+    return undefined;
+  for (const snapshots of Object.values(state.compactionMarkers)) {
+    if (
+      !Array.isArray(snapshots) ||
+      !snapshots.every(
+        (snapshot: unknown) =>
+          is_record(snapshot) &&
+          counters(snapshot.current) &&
+          counters(snapshot.last) &&
+          'previous' in snapshot &&
+          (snapshot.previous === null || counters(snapshot.previous)),
+      )
+    )
+      return undefined;
+  }
+  for (const candidate of Object.values(state.compactions)) {
+    if (
+      !is_record(candidate) ||
+      !counters(candidate.usage) ||
+      !counters(candidate.cumulative) ||
+      typeof candidate.covered !== 'boolean' ||
+      !is_record(candidate.record)
+    )
+      return undefined;
+    const record = candidate.record;
+    if (
+      record.provider !== 'codex' ||
+      typeof record.model !== 'string' ||
+      typeof record.sessionId !== 'string' ||
+      typeof record.timestampMs !== 'number' ||
+      !Number.isFinite(record.timestampMs) ||
+      typeof record.dedupeKey !== 'string' ||
+      !('reportedCostUsd' in record) ||
+      !counters(record.totals) ||
+      ![
+        'uncachedInputTokens',
+        'cachedInputTokens',
+        'cacheCreationTokens',
+        'outputTokens',
+        'reasoningTokens',
+      ].every((key) => Object.hasOwn(record.totals as object, key))
+    )
+      return undefined;
+  }
+  return {
+    model: state.model,
+    sessionId: state.sessionId,
+    lastUsageSignature: state.lastUsageSignature ?? null,
+    sawSessionMeta: state.sawSessionMeta,
+    suppressingForkCopies: state.suppressingForkCopies,
+    forkCopyAnchorMs: state.forkCopyAnchorMs,
+    serviceTier: state.serviceTier,
+    compactions: state.compactions,
+    compactionMarkers: state.compactionMarkers,
+    completedCompactions: state.completedCompactions,
+    cumulativeUsage: state.cumulativeUsage,
+  };
+}
+
+export interface PruneOptions {
+  /** Files the walk just saw. Only meaningful inside the walked window. */
+  readonly livePaths: ReadonlySet<string>;
+  /**
+   * Roots the walk actually completed. Absence from `livePaths` only proves a
+   * file is gone when its root was walked: a provider whose directory failed to
+   * resolve this pass must not have its warm entries purged.
+   */
+  readonly walkedRoots: readonly string[];
+  /** Start of the walked window; entries older than this were not looked for. */
+  readonly windowStartMs: number;
+  /** Entries older than this are dropped regardless. */
+  readonly retentionCutoffMs: number;
+}
+
+/**
+ * Drops aged-out entries, and entries for files that have disappeared.
+ *
+ * The walk only covers the requested window, so absence from `livePaths` only
+ * proves deletion for entries *inside* that window. Pruning everything the walk
+ * missed would evict the 30-day entries every time someone looked at 7 days.
+ *
+ * Replaces an earlier record cap that cleared the whole cache once exceeded,
+ * which meant a large enough window never warmed up at all.
+ */
+export function pruneScanCache(cache: ScanCache, options: PruneOptions): number {
+  let removed = 0;
+  for (const [path, entry] of cache) {
+    const agedOut = entry.mtimeMs < options.retentionCutoffMs;
+    const underWalkedRoot = options.walkedRoots.some((root) => path_is_within(root, path));
+    const deleted =
+      underWalkedRoot && entry.mtimeMs >= options.windowStartMs && !options.livePaths.has(path);
+    if (agedOut || deleted) {
+      cache.delete(path);
+      removed += 1;
+    }
+  }
+  return removed;
+}
+
+/**
+ * Within-file de-duplication, applied before an entry is cached.
+ *
+ * Callers stitching an incremental parse together pass one `seen` set across
+ * the line and tail record batches so the whole file stays deduplicated as a
+ * unit; the set is mutated in place.
+ */
+export function dedupeWithinFile(
+  records: readonly UsageRecord[],
+  seen: Set<string> = new Set(),
+): readonly UsageRecord[] {
+  const kept: UsageRecord[] = [];
+  for (const record of records) {
+    if (record.dedupeKey !== null) {
+      if (seen.has(record.dedupeKey)) continue;
+      seen.add(record.dedupeKey);
+    }
+    kept.push(record);
+  }
+  return kept;
+}

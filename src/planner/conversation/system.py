@@ -581,6 +581,7 @@ class _ConversationState:
     # Set for the whole of a kill. Nothing runs in a killed conversation until someone
     # sends again, so a background task lost while it is killed goes without a prompt.
     being_killed: bool = False
+    restart_retired: bool = False
     # Background tasks that ended some way other than completing or failing, kept until
     # the agent next does anything: description by task id. A backend being terminated
     # stops its tasks on the way out, so if its stream ends first they were lost with it.
@@ -1136,6 +1137,8 @@ class SqliteProcessConversationSystem:
                 )
             if self._workspace_is_retiring(state):
                 raise RuntimeError("Ticket workspace admission is closed for retirement.")
+            if state.restart_retired:
+                raise PlannerError(ErrorCode.retry_later, "This Worker conversation was restarted")
             return await self._own_settlement(
                 state,
                 self._send(
@@ -1538,8 +1541,8 @@ class SqliteProcessConversationSystem:
                 from planner.executor.protocol import LeaseRequest, type_adapter
 
                 presence = conn.execute(
-                    "SELECT lease_json,last_lease_at_ms FROM mac_executor_presence "
-                    "WHERE machine_id=?", (str(row[0]),),
+                    "SELECT lease_json,last_lease_at_ms,executor_incarnation "
+                    "FROM mac_executor_presence WHERE machine_id=?", (str(row[0]),),
                 ).fetchone()
                 lease = None
                 fresh = False
@@ -1548,6 +1551,7 @@ class SqliteProcessConversationSystem:
                         lease = type_adapter(LeaseRequest).validate_json(presence[0])
                         fresh = (
                             lease.identity.protocol_version == PROTOCOL_VERSION
+                            and lease.identity.executor_incarnation == presence[2]
                             and presence[1] is not None
                             and int(self._unix_time_now() * 1000) - int(presence[1])
                             <= LEASE_CONTINUITY_SECONDS * 1000
@@ -1579,6 +1583,18 @@ class SqliteProcessConversationSystem:
             )
             sources = tuple(dict.fromkeys((*historical, *((source,) if source else ()))))
             if not sources:
+                current = await run_on_worker_thread(read)
+                retained_now = None if state is None else self._retained_run(state)
+                source_now = (
+                    retained_now.reference if retained_now is not None
+                    else None if state is None else state.retained_child_reference
+                )
+                if (current is None or current[0] != machine_id
+                        or current[1] != conversation_id or current[3] or source_now is not None):
+                    return CleanupResult(
+                        False, "The Worker source changed during cleanup inspection"
+                    )
+                fresh = fresh and current[4]
                 return CleanupResult(
                     fresh,
                     "No retained Worker source needs cleanup" if fresh
@@ -1590,6 +1606,20 @@ class SqliteProcessConversationSystem:
                 result = await self._worker_cleanup_recheck(recorded, ticket_id)
                 if not result.complete:
                     return result
+            # Inspection can yield to executor updates or a new delivery.  A receipt
+            # for the captured source does not prove the source that replaced it.
+            current = await run_on_worker_thread(read)
+            current_retained = None if state is None else self._retained_run(state)
+            current_source = (
+                current_retained.reference if current_retained is not None
+                else None if state is None else state.retained_child_reference
+            )
+            if (current is None or current[0] != machine_id
+                    or current[1] != conversation_id or current_source != source
+                    or not set(current[3]).issubset(historical)):
+                return CleanupResult(False, "The Worker source changed during cleanup inspection")
+            if not current[4]:
+                return CleanupResult(False, "Fresh executor cleanup evidence is unavailable")
             return CleanupResult(True, "Recorded Worker cleanup is complete")
         if conversation_id is not None and conversation_id not in local_ids:
             local_ids += (conversation_id,)
@@ -1640,7 +1670,21 @@ class SqliteProcessConversationSystem:
             return
         await self._own_settlement(state, self._kill(conversation_id))
 
-    async def _kill(self, conversation_id: str) -> None:
+    async def kill_for_restart(
+        self, conversation_id: str, ticket_id: str,
+        finish: Callable[[Callable[[sqlite3.Connection], None] | None], Awaitable[None]],
+    ) -> None:
+        state = await self._conversation_state(conversation_id)
+        if state is None:
+            await finish(None)
+            return
+        await self._own_settlement(state, self._kill(conversation_id, ticket_id, finish))
+
+    async def _kill(
+        self, conversation_id: str, restart_ticket_id: str | None = None,
+        finish: Callable[[Callable[[sqlite3.Connection], None] | None], Awaitable[None]]
+        | None = None,
+    ) -> None:
         """Stop the running turn and throw away everything that was waiting behind it.
 
         Unlike an interrupt, this is the end of the conversation's traffic: the queue is
@@ -1664,6 +1708,7 @@ class SqliteProcessConversationSystem:
         state.being_killed = True
         self._deferred_start_conversations.pop(conversation_id, None)
         kill_succeeded = False
+        background_settled = False
         try:
             await self._kill_owned(state)
             if conversation_id in self._store.blocked_local_conversations:
@@ -1685,20 +1730,143 @@ class SqliteProcessConversationSystem:
             if (state.child is None and not state.local_preparation_cancelled
                     and not state.local_child_retirement_proven
                     and await self._store.has_recorded_source(conversation_id)):
-                if not await self._store.retire_idle_recorded_source(conversation_id):
+                # The durable retired row is already proof of this local source.  A
+                # later remote turn can leave unrelated unknown delivery facts, which
+                # must not force the local source through retirement again.
+                if not (await self._store.recorded_source_retirement_proven(conversation_id)
+                        or await self._store.retire_idle_recorded_source(conversation_id)):
                     raise PlannerError(
                         ErrorCode.retry_later,
                         "The recorded Worker cleanup is not proven. Recheck Worker cleanup.",
                     )
                 state.local_child_retirement_proven = True
-            retained = self._retained_run(state)
-            remote_receipt = retained is not None and retained.retirement_confirmed
+            inspected_remote = None
+            remote_inspected = False
+            check_cleanup: Callable[[sqlite3.Connection], None] | None = None
+            if restart_ticket_id is not None:
+                def remote_ticket() -> bool:
+                    with contextlib.closing(connect(self._store._db_path)) as conn:
+                        row = conn.execute(
+                            "SELECT machine_id FROM tickets WHERE id=? AND conversation_id=?",
+                            (restart_ticket_id, conversation_id),
+                        ).fetchone()
+                        if row is None:
+                            raise PlannerError(ErrorCode.retry_later, "The Worker source changed")
+                        return str(row[0]) != HOME_MACHINE_ID
+                if await run_on_worker_thread(remote_ticket):
+                    inspected_remote = self._retained_run(state)
+                    def capture_source() -> tuple[object, ...]:
+                        with contextlib.closing(connect(self._store._db_path)) as conn:
+                            ticket = conn.execute(
+                                "SELECT machine_id FROM tickets WHERE id=? AND conversation_id=?",
+                                (restart_ticket_id, conversation_id),
+                            ).fetchone()
+                            if ticket is None:
+                                raise PlannerError(
+                                    ErrorCode.retry_later, "The Worker source changed"
+                                )
+                            presence = conn.execute(
+                                "SELECT executor_incarnation FROM mac_executor_presence "
+                                "WHERE machine_id=?", (ticket[0],),
+                            ).fetchone()
+                            assignments = tuple(tuple(row) for row in conn.execute(
+                                "SELECT executor_incarnation,child_id,conversation_id,closed_at_ms "
+                                "FROM executor_child_assignments WHERE principal_kind='ticket' "
+                                "AND principal_id=? ORDER BY executor_incarnation,child_id",
+                                (restart_ticket_id,),
+                            ))
+                            run = conn.execute(
+                                "SELECT executor_incarnation,child_id,stop_state FROM mac_runs "
+                                "WHERE conversation_id=?", (conversation_id,),
+                            ).fetchone()
+                            return (
+                                ticket[0], None if presence is None else presence[0], assignments,
+                                None if run is None else tuple(run),
+                            )
+
+                    source_before = await run_on_worker_thread(capture_source)
+                    cleanup = await self.recheck_worker_cleanup(restart_ticket_id)
+                    if not cleanup.complete:
+                        raise PlannerError(ErrorCode.retry_later, cleanup.reason)
+                    remote_inspected = True
+
+                    def cleanup_snapshot(conn: sqlite3.Connection) -> tuple[object, ...]:
+                        from planner.execution_configuration import PROTOCOL_VERSION
+                        from planner.executor.configuration import LEASE_CONTINUITY_SECONDS
+                        from planner.executor.protocol import LeaseRequest, type_adapter
+
+                        ticket = conn.execute(
+                            "SELECT machine_id,conversation_id FROM tickets WHERE id=?",
+                            (restart_ticket_id,),
+                        ).fetchone()
+                        if ticket is None or ticket[1] != conversation_id:
+                            raise PlannerError(ErrorCode.retry_later, "The Worker source changed")
+                        presence = conn.execute(
+                            "SELECT executor_incarnation,lease_json,last_lease_at_ms "
+                            "FROM mac_executor_presence WHERE machine_id=?", (ticket[0],),
+                        ).fetchone()
+                        try:
+                            if presence is None or presence[1] is None or presence[2] is None:
+                                raise ValueError
+                            lease = type_adapter(LeaseRequest).validate_json(presence[1])
+                            if (lease.identity.protocol_version != PROTOCOL_VERSION
+                                    or lease.identity.executor_incarnation != presence[0]
+                                    or int(self._unix_time_now() * 1000) - int(presence[2])
+                                    > LEASE_CONTINUITY_SECONDS * 1000
+                                    or any(item.ticket_id == restart_ticket_id
+                                           for item in lease.cleanup_uncertainties)):
+                                raise ValueError
+                        except ValueError as error:
+                            raise PlannerError(
+                                ErrorCode.retry_later,
+                                "Fresh executor cleanup evidence is unavailable",
+                            ) from error
+                        assignments = tuple(tuple(row) for row in conn.execute(
+                            "SELECT executor_incarnation,child_id,conversation_id,closed_at_ms "
+                            "FROM executor_child_assignments WHERE principal_kind='ticket' "
+                            "AND principal_id=? ORDER BY executor_incarnation,child_id",
+                            (restart_ticket_id,),
+                        ))
+                        run = conn.execute(
+                            "SELECT executor_incarnation,child_id,stop_state FROM mac_runs "
+                            "WHERE conversation_id=?", (conversation_id,),
+                        ).fetchone()
+                        return (ticket[0], lease.identity.executor_incarnation, assignments,
+                                None if run is None else tuple(run))
+
+                    def capture_cleanup() -> tuple[object, ...]:
+                        with contextlib.closing(connect(self._store._db_path)) as conn:
+                            return cleanup_snapshot(conn)
+
+                    inspected_cleanup = await run_on_worker_thread(capture_cleanup)
+                    if inspected_cleanup != source_before:
+                        raise PlannerError(
+                            ErrorCode.retry_later,
+                            "The Worker source changed during cleanup inspection",
+                        )
+
+                    def check_cleanup(conn: sqlite3.Connection) -> None:
+                        if cleanup_snapshot(conn) != inspected_cleanup:
+                            raise PlannerError(
+                                ErrorCode.retry_later,
+                                "The Worker source changed during cleanup inspection",
+                            )
+            if finish is not None and not self._shutting_down:
+                await self._persist(
+                    state, partial(self._store.take_background_tasks, conversation_id)
+                )
+                background_settled = True
             async with state.lock:
+                retained = self._retained_run(state)
+                remote_receipt = retained is not None and retained.retirement_confirmed
                 if (
                     state.child is not None
                     or state.retained_child_reference is not None
                     or state.child_is_quarantined
                     or (state.retirement_task is not None and not state.retirement_task.done())
+                    or (retained is not None and not remote_receipt)
+                    or (remote_inspected and retained != inspected_remote)
+                    or (finish is not None and bool(state.held_prompts))
                     or not (
                         remote_receipt
                         or state.local_child_retirement_proven
@@ -1709,12 +1877,29 @@ class SqliteProcessConversationSystem:
                         ErrorCode.retry_later,
                         "The old Worker is not proven ended. Recheck Worker cleanup.",
                     )
+                if finish is not None:
+                    try:
+                        await finish(check_cleanup)
+                    except BaseException:
+                        # The unlink transaction can recover from a configuration
+                        # failure by unlinking and leaving the claim errored.
+                        def still_linked() -> bool:
+                            with contextlib.closing(connect(self._store._db_path)) as conn:
+                                return conn.execute(
+                                    "SELECT 1 FROM tickets WHERE id=? AND conversation_id=?",
+                                    (restart_ticket_id, conversation_id),
+                                ).fetchone() is not None
+
+                        if not await run_on_worker_thread(still_linked):
+                            state.restart_retired = True
+                        raise
+                    state.restart_retired = True
             kill_succeeded = True
         finally:
             try:
                 # A task the killed child reported on its way out is dropped too. Shutdown
                 # keeps every row for the next start.
-                if not self._shutting_down:
+                if not self._shutting_down and not background_settled:
                     await self._persist(
                         state, partial(self._store.take_background_tasks, conversation_id)
                     )
@@ -1727,13 +1912,15 @@ class SqliteProcessConversationSystem:
                 # clear. Do not leave a task that wakes after an explicit recheck.
                 if (
                     not kill_succeeded
+                    and not state.restart_retired
                     and not state.child_is_quarantined
                     and conversation_id not in self._store.blocked_local_conversations
                 ):
                     self._settle_in_background(state, self._drain_held_prompts(state))
         # A new message can arrive while the old child stops. Only its proven
         # retirement permits that message to start a successor child.
-        await self._drain_held_prompts(state)
+        if finish is None:
+            await self._drain_held_prompts(state)
 
     async def _kill_owned(self, state: _ConversationState) -> None:
         state.last_touched_monotonic = self._monotonic_now()
@@ -2721,6 +2908,8 @@ class SqliteProcessConversationSystem:
     ) -> PromptDeliveryFate:
         automatic_reservation: _ReservedTurn | None = None
         async with state.lock:
+            if state.restart_retired:
+                raise PlannerError(ErrorCode.retry_later, "This Worker conversation was restarted")
             if message.sender_message_id is not None:
                 for position, held in enumerate(state.held_prompts, start=1):
                     if held.sender_message_id != message.sender_message_id:
@@ -2868,6 +3057,8 @@ class SqliteProcessConversationSystem:
         held_fate: PromptDeliveryQueued | None = None
         await self._acquire_settled(state)
         try:
+            if state.restart_retired:
+                raise PlannerError(ErrorCode.retry_later, "This Worker conversation was restarted")
             try:
                 running = state.running_turn
                 if state.being_killed or state.child_is_quarantined or any(
@@ -2978,6 +3169,8 @@ class SqliteProcessConversationSystem:
         running: RunningTurn | None = None
         await self._acquire_settled(state)
         try:
+            if state.restart_retired:
+                raise PlannerError(ErrorCode.retry_later, "This Worker conversation was restarted")
             running = state.running_turn
             child = state.child
             if state.being_killed:
@@ -5054,9 +5247,9 @@ class SqliteProcessConversationSystem:
         # up — the session cursor it mints — has somewhere to go.
         self._ensure_backend_event_pump(state)
         start_reservation = state.reserved_turn
-        state.local_child_retirement_proven = False
-        state.local_preparation_cancelled = False
         if not child_stops_outside_lock(child):
+            state.local_child_retirement_proven = False
+            state.local_preparation_cancelled = False
             await self._store.record_child_custody(state.record.conversation_id, sink.generation)
         try:
             await child.start(

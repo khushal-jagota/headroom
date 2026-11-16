@@ -6,6 +6,7 @@
   import { cachedImport } from "./lib/lazyViews";
   import ErrorLine from "./components/ErrorLine.svelte";
   import { onMount, tick } from "svelte";
+  import { recoverSavedReviewDecisions } from "./lib/review/decision";
   import { provideNavigationApplication } from "./lib/navigation/application.svelte";
   import { connectionStatus, startChangeStream, stopChangeStream } from "./lib/changeStream";
   import { releaseState, observeRunningAppSha, startReleaseMonitor, stopReleaseMonitor } from "./lib/releaseMonitor";
@@ -13,7 +14,6 @@
   import type { UsageTab } from "./lib/usageAddress";
   import BoardRoute from "./routes/BoardRoute.svelte";
   import ShellStatus from "./components/ShellStatus.svelte";
-  import DecisionRecovery from "./components/DecisionRecovery.svelte";
   import { atUpdateDeadline } from "./lib/updates/deadline";
   import { UPDATE_RECOVERY_POLL_MS } from "./lib/updates/config";
   import { updatePresentation } from "./lib/updates/logic/presentation";
@@ -123,6 +123,7 @@
   }
 
   onMount(() => {
+    void recoverSavedReviewDecisions();
     const media = window.matchMedia(COMPACT_LAYOUT_MEDIA_QUERY);
     const syncCompact = () => {
       const activeElement = document.activeElement as HTMLElement | null;
@@ -167,7 +168,6 @@
 <svelte:window onpointerdown={onWindowPointerDown} onkeydown={onWindowKeydown} onfocusin={onWindowFocusIn} />
 
 <div class="shell">
-  <DecisionRecovery />
   <main class="shell-content" class:update-dimmed={update.dimmed} class:update-in-progress={update.state === "updating"}>
     <BoardRoute address={workspaceRouteAddress} externalPane={route.name === "workspace" ? undefined : destinationPane} railFoot={foot} {railStatus} />
   </main>

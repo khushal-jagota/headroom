@@ -26,6 +26,7 @@ from planner.conversation.backends.contracts import (
     BackendStreamEnded,
     BackgroundTaskEnded,
     BackgroundTaskStarted,
+    ClaudeInitializeTimeout,
     NeedsRebind,
     PermissionAskRaised,
     PromptWriteRefused,
@@ -133,6 +134,7 @@ class _CommandAdmissionRefused(Exception):
 # A write_prompt for a child whose start failed is refused with this reason. Its R1
 # turn failure is then followed by R2, a stop proof, so the VPS retires the child.
 CHILD_START_FAILED = "child_start_failed"
+CLAUDE_START_RETRY_DELAY_SECONDS = 5
 
 
 def _digest(value: str) -> str:
@@ -324,6 +326,7 @@ class MacRunner:
         self.message_files = message_files
         self._children: dict[str, RunningChild] = {}
         self._workspace_lock = asyncio.Lock()
+        self._cleanup_refresh_lock = asyncio.Lock()
         self._ticket_start_locks: WeakValueDictionary[str, asyncio.Lock] = WeakValueDictionary()
         self._withdrawn_commands: set[str] = set()
         self._commands: dict[str, _CommandRecord] = {}
@@ -357,38 +360,39 @@ class MacRunner:
     ) -> None:
         from planner.executor.cleanup_reconciliation import snapshot_cleanup
 
-        snapshot = await asyncio.to_thread(
-            snapshot_cleanup,
-            self.paths,
-            current_incarnation=self.incarnation,
-            ticket_id=ticket_id,
-            revoke_pending=revoke_pending,
-            healthy_sources=frozenset(
-                child.reference
-                for child in self._children.values()
-                if child.reference.child_id in self._started_children
-                and child.reference.child_id not in self._retiring_children
-            ),
-            preparing_sources=frozenset(
-                record.command.child
-                for record in self._commands.values()
-                if record.command.operation is ChildOperation.start
-                and record.outcome is None
-                and record.task is not None
-                and not record.task.done()
-                and record.command.child.child_id not in self._retiring_children
-            ),
-        )
-        self.cleanup_uncertainties = (
-            snapshot.uncertainties
-            if ticket_id is None
-            else (
-                *(item for item in self.cleanup_uncertainties if item.ticket_id != ticket_id),
-                *snapshot.uncertainties,
+        async with self._cleanup_refresh_lock:
+            snapshot = await asyncio.to_thread(
+                snapshot_cleanup,
+                self.paths,
+                current_incarnation=self.incarnation,
+                ticket_id=ticket_id,
+                revoke_pending=revoke_pending,
+                healthy_sources=frozenset(
+                    child.reference
+                    for child in self._children.values()
+                    if child.reference.child_id in self._started_children
+                    and child.reference.child_id not in self._retiring_children
+                ),
+                preparing_sources=frozenset(
+                    record.command.child
+                    for record in self._commands.values()
+                    if record.command.operation is ChildOperation.start
+                    and record.outcome is None
+                    and record.task is not None
+                    and not record.task.done()
+                    and record.command.child.child_id not in self._retiring_children
+                ),
             )
-        )
-        if ticket_id is None:
-            self.legacy_cleanup_notice = snapshot.notice
+            self.cleanup_uncertainties = (
+                snapshot.uncertainties
+                if ticket_id is None
+                else (
+                    *(item for item in self.cleanup_uncertainties if item.ticket_id != ticket_id),
+                    *snapshot.uncertainties,
+                )
+            )
+            if ticket_id is None:
+                self.legacy_cleanup_notice = snapshot.notice
 
     def authenticate(self, child_id: str | None, capability: str | None) -> RunningChild:
         child = self._children.get(child_id or "")
@@ -695,7 +699,14 @@ class MacRunner:
             # Serialize only this Ticket before any slow native inspection. The
             # physical workspace mutex stays available to every other Ticket.
             await self.refresh_worker_cleanup(ticket_id=ticket_id)
-            return await self._start_run_admitted(command, args)
+            for attempt in range(3):
+                try:
+                    return await self._start_run_admitted(command, args)
+                except ClaudeInitializeTimeout:
+                    if attempt == 2:
+                        raise
+                    await asyncio.sleep(CLAUDE_START_RETRY_DELAY_SECONDS)
+            raise AssertionError("unreachable")
 
     async def _start_run_admitted(self, command: ChildCommand, args: StartRun) -> JsonObject:
         if command.child.child_id in self._children:

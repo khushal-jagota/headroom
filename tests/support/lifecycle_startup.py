@@ -7,6 +7,7 @@ import os
 import socket
 import subprocess
 import sys
+import tempfile
 import time
 from pathlib import Path
 from typing import Any
@@ -45,6 +46,7 @@ def assert_lifecycle_startup(root: Path, scratch: Path, *, packaged: bool) -> No
     assert not pth.exists()
     # Execute a file directly. This adds no path to sys.path and removes no caller path.
     pth.write_text(f"import runpy; runpy.run_path({str(hook)!r})\n")
+    socket_directory = tempfile.TemporaryDirectory(prefix="pl-", dir=Path("/tmp").resolve())
     try:
         for case in ("default", "relative", "explicit"):
             observation.unlink(missing_ok=True)
@@ -74,7 +76,7 @@ def assert_lifecycle_startup(root: Path, scratch: Path, *, packaged: bool) -> No
                 socket_path = Path(f"/tmp/panels-{os.getuid()}/server-{port}.sock")
                 if case == "relative":
                     # The relative path is short enough for AF_UNIX even in pytest roots.
-                    relative = f".lifecycle-{port}.sock"
+                    relative = os.path.relpath(Path(socket_directory.name) / "relative.sock", root)
                     env["PLAN_SERVER_CONTROL_SOCKET"] = relative
                     socket_path = root / relative
                 elif case == "explicit":
@@ -82,7 +84,7 @@ def assert_lifecycle_startup(root: Path, scratch: Path, *, packaged: bool) -> No
                     expected_tick += 17
                     expected_config.write_text(f"tick_seconds: {expected_tick}\n")
                     env["PLAN_CONFIG_PATH"] = str(expected_config)
-                    socket_path = Path(f"/tmp/panels-lifecycle-{port}.sock")
+                    socket_path = Path(socket_directory.name) / "explicit.sock"
                     env["PLAN_SERVER_CONTROL_SOCKET"] = str(socket_path)
                 supplied_listener = not packaged and case == "explicit"
                 if supplied_listener:
@@ -157,6 +159,7 @@ def assert_lifecycle_startup(root: Path, scratch: Path, *, packaged: bool) -> No
                     assert not socket_path.exists()
     finally:
         pth.unlink()
+        socket_directory.cleanup()
 
 
 def _purelib(python: Path) -> Path:

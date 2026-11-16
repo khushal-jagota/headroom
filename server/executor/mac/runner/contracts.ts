@@ -1,0 +1,81 @@
+/** Retained native custody. Command outcomes and event retirement stay with the runner. */
+import type {
+  BackendChild,
+  BackendChildFactory,
+  BackendEventSink,
+} from '../../../conversation/backends/contracts.ts';
+import type { ResolvedConversationStart } from '../../../conversation/contracts.ts';
+import type { ConversationMessageFiles } from '../../../conversation/message_files.ts';
+import type { StopOptions } from '../../../lifecycle/contracts.ts';
+import type { ChildReference, StartRun, TurnToken } from '../../wire.generated.ts';
+import type { ExecutorPaths } from '../configuration.ts';
+import type { FilesService } from '../files.ts';
+import type { MacSkillsPublisher } from '../skills/index.ts';
+import type { FifoLock } from '../../../conversation/runtime/state.ts';
+import type { WorkspaceIdentity, WorkspaceOptions } from '../../../ticket_workspaces/contracts.ts';
+export interface MacRunningChild {
+  readonly reference: ChildReference;
+  readonly capability: string;
+  readonly native: BackendChild;
+  readonly ticket_id: string;
+  readonly launch_input: StartRun;
+  readonly localized_start: ResolvedConversationStart;
+  readonly workspace: WorkspaceIdentity | null;
+  readonly lock: FifoLock;
+  active_turn: TurnToken | null;
+  readonly open_tool_calls: Set<string>;
+  readonly background_task_ids: Set<string>;
+  model: string | null;
+  reasoning_effort: string | null;
+}
+export class MacChildAdmissionRefused extends Error {}
+export class MacPermissionDenied extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'MacPermissionDenied';
+  }
+}
+export interface MacNativeChildrenOptions {
+  readonly paths: ExecutorPaths;
+  readonly workspace_home: string;
+  readonly workspace_lock: FifoLock;
+  readonly workspace_git: NonNullable<WorkspaceOptions['git_execution']>;
+  readonly register_workspace: (
+    child: ChildReference,
+    workspace: WorkspaceIdentity,
+  ) => Promise<void>;
+  readonly factory: (start: ResolvedConversationStart) => BackendChildFactory;
+  readonly native_skill_home: (backend: ResolvedConversationStart['backend_key']) => string;
+  readonly event_sink: (reference: ChildReference) => BackendEventSink;
+  readonly message_files: ConversationMessageFiles;
+  readonly files: Pick<FilesService, 'open_directory' | 'close_directory'>;
+  /** This owner closes publication before it joins native starts during shutdown. */
+  readonly skills: Pick<MacSkillsPublisher, 'install_native_skill_snapshot' | 'stop' | 'settled'>;
+  readonly worker_cleanup: {
+    refresh(ticket_id: string): Promise<void>;
+    uncertain(ticket_id: string): boolean;
+  };
+  readonly on_failure: (error: Error) => void;
+}
+export interface MacNativeChildrenContract {
+  readonly admission_stopped: boolean;
+  /** Under the child lock, invoking runs immediately before native.start.
+   * Throw MacChildAdmissionRefused to withdraw before native invocation. */
+  start(reference: ChildReference, input: StartRun, invoking: () => void): Promise<MacRunningChild>;
+  authenticate(child_id: string | null, capability: string | null): MacRunningChild;
+  get(child_id: string): MacRunningChild | null;
+  retained_children(): readonly MacRunningChild[];
+  healthy_sources(): readonly ChildReference[];
+  is_retiring(child_id: string): boolean;
+  /** Fence new native work first. The command owner joins its commands/source work separately. */
+  begin_retirement(reference: ChildReference): void;
+  /** Each command invokes its withdrawal callback before native.stop or a retained stop join. */
+  stop_child(reference: ChildReference, invoking: () => void): Promise<void>;
+  /** Maintenance stops before command locks. Failure propagates without sealing this owner. */
+  stop_native(reference: ChildReference): Promise<void>;
+  /** Called only after the runner's required source work and stop proof settle. */
+  retire(reference: ChildReference): void;
+  stop(options: StopOptions): Promise<void>;
+  /** Current actual close attempt. A failed attempt retains native capabilities for a later stop. */
+  settled(): Promise<void>;
+}

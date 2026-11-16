@@ -1,0 +1,97 @@
+{
+  "boundary": "Actual bounded pipe/deadline/kill/reap helpers on one synthetic Node program. No systemctl executes. No unrelated PID is signaled.",
+  "clock_origin": {
+    "new": 2159757.355464282,
+    "old_after": 2159757.366134055,
+    "old_before": 2159757.263598706,
+    "python_after": 2159757.366308698,
+    "python_before": 2159757.263101285,
+    "seconds": 0.21770432917401195
+  },
+  "complete": true,
+  "python_retained_query_ms": 251.55590428039432,
+  "result": {
+    "results": [
+      {
+        "argv": [
+          "--user",
+          "show",
+          "*.service",
+          "--no-pager",
+          "--property=Id,ActiveState,SubState,NRestarts,ControlGroup"
+        ],
+        "closed": true,
+        "error": null,
+        "mode": "success",
+        "value": "Id=unit.service\n\ufffd"
+      },
+      {
+        "argv": [
+          "--user",
+          "show",
+          "*.service",
+          "--no-pager",
+          "--property=Id,ActiveState,SubState,NRestarts,ControlGroup"
+        ],
+        "closed": true,
+        "error": {
+          "message": "service query exceeded output limit",
+          "name": "ValueError"
+        },
+        "mode": "large",
+        "value": null
+      },
+      {
+        "argv": [
+          "--user",
+          "show",
+          "*.service",
+          "--no-pager",
+          "--property=Id,ActiveState,SubState,NRestarts,ControlGroup"
+        ],
+        "closed": true,
+        "error": {
+          "message": "service query timed out",
+          "name": "TimeoutError"
+        },
+        "mode": "timeout",
+        "value": null
+      },
+      {
+        "argv": [
+          "--user",
+          "show",
+          "*.service",
+          "--no-pager",
+          "--property=Id,ActiveState,SubState,NRestarts,ControlGroup"
+        ],
+        "closed": true,
+        "error": {
+          "message": "service manager unavailable",
+          "name": "OSError"
+        },
+        "mode": "exit",
+        "value": null
+      },
+      {
+        "argv": [
+          "--user",
+          "show",
+          "*.service",
+          "--no-pager",
+          "--property=Id,ActiveState,SubState,NRestarts,ControlGroup"
+        ],
+        "closed": true,
+        "error": {
+          "message": "service query timed out",
+          "name": "TimeoutError"
+        },
+        "mode": "retained",
+        "returned_before_descendant_expiry": true,
+        "value": null
+      }
+    ],
+    "retained_query_ms": 255.65544999999997
+  },
+  "seconds": 2.3263535471633077
+}

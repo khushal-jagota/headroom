@@ -9,6 +9,7 @@ import pytest
 from fastapi.testclient import TestClient
 from starlette.requests import Request
 from tests.support.api_app import _app
+from tests.support.launch_identity import agent_headers
 from tests.unit.test_goal_pages import create, page
 from tests.unit.test_manual_measures import manual_measure, replacement
 
@@ -136,15 +137,13 @@ def test_manager_page_reads_use_central_rank_admission(
     with TestClient(_app(tmp_db)) as client:
         for suffix in ("page", "page/readings"):
             route = f"/api/managers/{manager.id}/{suffix}"
-            denied = client.get(
-                route, headers={"X-Plan-Actor": "worker", "X-Plan-Ticket-ID": worker.id}
-            )
+            denied = client.get(route, headers=agent_headers(tmp_db, "worker", worker.id))
             assert denied.status_code == 400, denied.text
             assert denied.json()["error"]["code"] == "agent_forbidden"
             for headers in (
                 {},
-                {"X-Plan-Actor": "chief"},
-                {"X-Plan-Actor": "manager", "X-Plan-Manager-ID": manager.id},
+                agent_headers(tmp_db, "chief"),
+                agent_headers(tmp_db, "manager", manager.id),
             ):
                 allowed = client.get(route, headers=headers)
                 assert allowed.status_code == 200, allowed.text

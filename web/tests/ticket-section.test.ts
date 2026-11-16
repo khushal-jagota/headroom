@@ -4,7 +4,7 @@ import type { WorkerTypeManifest } from '../src/lib/lifecycle';
 import type { TicketRecord } from '../src/lib/navigation/contracts';
 import { createNavigationCollection } from './support/navigation/collection';
 import { createNavigationKnowledge } from '../src/lib/navigation/knowledge';
-import { ticketSection, ticketSectionFacts, ticketSectionHeading, ticketSectionFieldState } from '../src/lib/ticketSection';
+import { ticketSection, ticketSectionFacts, ticketSectionHeading, ticketSectionFieldState, ticketSectionRunLabel } from '../src/lib/ticketSection';
 import { currentSnapshot, continuity, conversation } from './support/navigation/fixtures';
 
 const record:(TicketRecord & {value:import('../src/lib/navigation/contracts').TicketValue})={kind:'ticket',id:'ticket',value:{title:'Ticket',recap:'',recap_preview:'',recap_updated_at:null,recap_stage_changed:false,worker_type:'coding',stage_label:'Plan',workflow_label:'Coding',stage:'needs_plan',
@@ -37,8 +37,8 @@ describe('Ticket section presentation',()=>{
     try {
       adapter.publishSnapshot(currentSnapshot({...continuity,records:[record,conversation('conversation',0,true,false)]}),'section');
       const view=knowledge.accept(adapter.getPublication()!),section=ticketSection(detail,configuration)!;
-      expect(ticketSectionHeading(section,view)).toBe('Currently working on');
-      expect(ticketSectionFieldState(section,view,'plan')).toBe('current-running');
+      expect(ticketSectionHeading(section,view)).toBe('Waiting at');
+      expect(ticketSectionFieldState(section,view,'plan')).toBe('current-awaiting-approval');
       const lost=knowledge.loseRuntime()!;
       expect(lost.publication).toBe(view.publication);
       // Runtime loss does not remove the loaded section.
@@ -49,5 +49,14 @@ describe('Ticket section presentation',()=>{
         conversation_signal:{message_for_owner:true}});
       expect(ticketSectionFacts(section,{...lost,conversations:new Map()}).conversation_signal).toEqual({});
     } finally {adapter.destroy();}
+  });
+  it('keeps a parked proposal actionable while another Ticket blocks subsequent work',()=>{
+    for (const ceiling_holder of [{kind:'owner',id:'owner'}, {kind:'chief',id:'chief'}] as const) {
+      const userConfiguration={...configuration,stages:configuration.stages.map(stage=>stage.id==='needs_plan' ? {...stage,ownership_mode:'user' as const} : stage)};
+      const section=ticketSection({...detail, blocked:true, ceiling_holder},userConfiguration)!;
+      expect(ticketSectionHeading(section,null)).toBe('Waiting at');
+      expect(ticketSectionFieldState(section,null,'plan')).toBe('current-awaiting-approval');
+      expect(ticketSectionRunLabel(section,null)).toBe(ceiling_holder.kind==='owner' ? 'Awaiting approval' : null);
+    }
   });
 });

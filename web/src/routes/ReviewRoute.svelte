@@ -48,7 +48,7 @@
     event.preventDefault();
     const artifactHref = previewHashHref(file);
     rememberReviewVisit(navigation, {
-      artifactHref, anchor: reviewAnchor, skipped: { ...skipped },
+      artifactHref, proposal: currentItem?.review_item_type === 'ticket' ? currentItem.proposal ?? null : null, anchor: reviewAnchor, skipped: { ...skipped },
       skippedHistory: [...skippedHistory], returnCohort: [...returnCohort],
       currentKey: currentItem ? itemKey(currentItem) : null, finalLatched,
       proposalDraft: proposalDraft ? { ...proposalDraft } : null

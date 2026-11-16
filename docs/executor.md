@@ -31,7 +31,7 @@ Settings → Machines shows availability, current Worker activity, and Tickets t
 
 ## Credentials and the original Mac
 
-The owner registers an extra destination and obtains one join command and its private credential. The command installs a new executor and checks an accepted lease. The owner supplies the trusted HTTPS origin of the same home that issues the credential. A credential permits executor requests for one destination. Replacing it invalidates the old credential. The home normally stores only a verifier. During the original Mac handover, it also keeps the pending credential until the handover closes.
+The owner registers an extra destination from Settings → Machines (Add a machine) and obtains one join command and its private credential, both shown once. The page takes the home's trusted HTTPS origin from the home's own configuration and refuses to issue a command when none is set. The `panels machine join-command` command does the same for a terminal that has owner authority. The command installs a new executor and checks an accepted lease. The command always names the trusted HTTPS origin of the same home that issues the credential. A credential permits executor requests for one destination. Replacing it invalidates the old credential. The home normally stores only a verifier. During the original Mac handover, it also keeps the pending credential until the handover closes.
 
 The original Mac has a one-time transition from its existing authority. The first upgraded runtime requests its credential automatically and saves it privately before its work loops start. That runtime is an update trial, and the Mac supervisor keeps it only if it confirms in time. So the old authority stays open until the supervisor's decision to keep it is final: the supervisor's saved selection names this trial, and no attempt is pending. The runtime then sends a credentialed close request, and retries with backoff until the home accepts. That request closes the handover: the old authority closes permanently, and the pending secret is removed. That closure survives home restarts and migration replay.
 
@@ -53,11 +53,15 @@ Presence comes from leases, judged by the home clock. A silent machine becomes a
 
 A lease reads pending work and the current cleanup evidence. The slower workspace maintenance pass refreshes retained history. Startup and explicit Worker actions still refresh their cleanup evidence directly.
 
+On the Mac, background and start-time cleanup refreshes run in order. A start checks its Ticket after any older refresh has finished, so an older scan cannot replace its newer evidence. Native child starts and mailbox polling remain independent of that reconciliation.
+
 Each machine has one current process incarnation. A restart replaces only that machine's old incarnation. The home refuses stale process requests. The new process can replay its own machine's retained output under the existing assignments. It cannot replay another machine's output.
 
 ## Commands and output
 
 Commands wait in the home's durable mailbox until their destination fetches them. The executor journals a command before it runs it. A duplicate returns its saved result instead of another execution. Journal tombstones prevent repetition after a home database restore. Commands for one conversation retain their order. Different conversations can progress independently.
+
+When Claude initialization times out on the Mac, the executor keeps the waiting prompt in order and makes a bounded attempt to start a fresh child. It first proves the failed child has stopped. If startup still fails, or cleanup is uncertain, it reports the failure instead of risking a second child. It never retries a prompt that may have reached an agent.
 
 The outbox saves each durable event before delivery. Each conversation sends its numbered items in order. The home commits each item and its receipt together. A duplicate receives the stored receipt. The home checks each sender against its own machine, including message delivery and duplicate receipts.
 
@@ -119,6 +123,8 @@ Leases carry one machine's bounded state and update offer. Command polls carry a
 - `src/planner/stalls/`: wait checks and watchdog.
 - `src/planner/environments/mac_executor.py` and `environments/mac_app/`: Mac installation and signed launcher.
 - `src/planner/environments/linux_executor.py`: Linux installation and systemd user service.
-- `scripts/build_linux_executor.py`: Linux executor archive and native startup proof.
+- `scripts/build_linux_executor.py`: Python executor archive and native startup proof.
+- `server/environments/linux_executor/`: native TypeScript executor archive, installation, and private enrollment entry.
+- `server/environments/updates/mac/`: shared destination-specific executor offers and archive cache.
 
 _Last verified: 2026-11-14._

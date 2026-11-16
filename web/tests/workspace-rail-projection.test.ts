@@ -64,14 +64,14 @@ describe("manager rail projection", () => {
     expect(rail.settledItems[0].tickets).toEqual(rows);
     const resumed = rows.map((row) => ({...row, is_backlogged:false}));
     expect(buildWorkspaceRail(resumed).chiefGroups.map((group) => group.key))
-      .toEqual(["awaiting_approval", "agent"]);
+      .toEqual(["awaiting_approval", "agent", "status_awaiting_approval"]);
     expect(rows[0].awaiting_approval).toBe(true);
   });
 
   it("filters ineligible overlap before grouping and keeps quiet work in the sidebar", () => {
     const rows = [card("working", { conversation_signal:{working:true,message_for_owner:false} }),
       card("closeout", { ticket_status:"empty", gating_field:"consequences" }),
-      card("agent-review", { ticket_status:"empty", awaiting_agent_approval:true }),
+      card("agent-review", { ticket_status:"awaiting_approval", awaiting_agent_approval:true, agent_state:"working" }),
       card("idle", { ticket_status:"empty" }),
       card("blocked-status", {ticket_status:"blocked", agent_state:"working", awaiting_approval:true}),
       ...["done", "backlog", "blocked"].map((id) => card(id, {
@@ -98,6 +98,16 @@ describe("manager rail projection", () => {
       expect(groups.find((group) => group.key === "agent")?.cards[2]).toBe(released.find((row) => row.id === "dependent-working"));
       expect(groups.find((group) => group.key === "agent")?.cards[2].awaiting_reply).toBe(true);
     }
+  });
+
+  it("keeps parked proposals visible despite a live blocker", () => {
+    const owner=card("owner", {blocked:true, ticket_status:"awaiting_approval", awaiting_approval:true});
+    const chief=card("chief", {blocked:true, ticket_status:"awaiting_approval", awaiting_agent_approval:true, assigned:true, agent_state:"working"});
+    const groups=buildWorkspaceRail([owner,chief]).chiefGroups;
+    expect(groups.map(group=>[group.key,group.cards.map(row=>row.id)])).toEqual([
+      ["awaiting_approval",["owner"]], ["status_awaiting_approval",["chief"]]
+    ]);
+    expect(workspaceWorkerStageSentence({...chief, stage_label:"Plan"})).toBe("Awaiting an agent's approval at Plan.");
   });
 
   it("keeps unread independent of rail categories while preserving global classification and original records", () => {
@@ -431,6 +441,7 @@ describe("manager rail projection", () => {
     expect(workspaceWorkerStageSentence(reviewing)).toBe("At Review.");
     expect(workspaceWorkerStageSentence({...reviewing, conversation_signal:{working:true,message_for_owner:false}})).toBe("Currently doing Review.");
     expect(workspaceWorkerStageSentence({...reviewing, awaiting_approval:true, conversation_signal:{working:true,message_for_owner:false}})).toBe("Awaiting your approval at Review.");
+    expect(workspaceWorkerStageSentence({...reviewing, awaiting_agent_approval:true, agent_state:"errored"})).toBe("Awaiting an agent's approval at Review.");
     expect(workspaceWorkerStageSentence({...reviewing, agent_state:"errored"})).toBe("The last turn failed at Review.");
     expect(workspaceWorkerStageSentence({...reviewing, blocked:true, conversation_signal:{working:true,message_for_owner:false}})).toBe("Blocked at Review.");
     expect(workspaceWorkerStageSentence({...reviewing, stage_label:undefined})).toBe("");
@@ -488,7 +499,7 @@ describe('canonical navigation workspace presentation',()=>{
       expect(first.managers[0].updated_at).toBe(11);
       expect(first.tickets[0]).toMatchObject({blocked:true,assigned:true,awaiting_approval:true,awaiting_agent_approval:false,
         agent_state:'working',awaiting_reply:true,conversation_signal:{working:true,message_for_owner:true}});
-      expect(buildWorkspaceRail(first.tickets,first.managers).items[0].groups).toEqual([]);
+      expect(buildWorkspaceRail(first.tickets,first.managers).items[0].groups.map(group=>group.key)).toEqual(['awaiting_approval']);
       const retained=navigationWorkspacePresentation(knowledge.loseRuntime()!);
       expect(retained.tickets[0]).toMatchObject({agent_state:'errored',awaiting_reply:true,awaiting_answer:null,
         conversation_signal:{message_for_owner:true}});

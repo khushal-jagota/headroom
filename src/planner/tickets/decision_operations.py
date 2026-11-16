@@ -142,13 +142,20 @@ def _apply(
 ) -> DecisionTransition:
     field = command["field"]
     if command["expected_proposal_revision"] != current_ticket.pending_proposal_revision:
-        raise _validation("the visible proposal changed; read it again before deciding")
+        raise PlannerError(
+            ErrorCode.validation,
+            "the visible proposal changed; read it again before deciding",
+            {"ticket_id": ticket_id},
+        )
     if command["decision"] == "approve":
         holder = _holder(command.get("next_holder"))
         completing = machine.completion_follows(
             current_ticket.stage, worker_type_definition=definition
         )
-        if holder is None and not completing:
+        before_consequences = machine.consequences_follows(
+            current_ticket.stage, worker_type_definition=definition
+        )
+        if holder is None and not (completing or before_consequences):
             raise PlannerError(
                 ErrorCode.scope_missing, "approval requires next_holder",
                 {"missing": ["next_holder"]},
@@ -156,9 +163,7 @@ def _apply(
         ticket = data.accept_proposal(
             conn, ticket_id, field=field, principal=actor, now=now,
             edited_body=command.get("edited_body"),
-            next_ceiling=admission.parse_next_ceiling(
-                command.get("next_ceiling"), definition, current_stage=current_ticket.stage
-            ),
+            next_ceiling=command.get("next_ceiling"),
             next_holder=holder, expected_proposal_revision=command["expected_proposal_revision"],
             message=command.get("message"), decision_id=operation_id,
         )

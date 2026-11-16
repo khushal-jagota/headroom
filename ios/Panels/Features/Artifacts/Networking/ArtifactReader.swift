@@ -35,7 +35,7 @@ extension APIClient {
         do {
             try FileManager.default.moveItem(at: download, to: localURL)
             var text: String?
-            if [.html, .markdown, .text].contains(target.kind) {
+            if [.markdown, .text].contains(target.kind) {
                 let size = try localURL.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0
                 // Large source files remain shareable without allocating an unbounded text view.
                 if target.kind == .text {

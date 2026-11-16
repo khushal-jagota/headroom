@@ -1,0 +1,211 @@
+{
+  "conversation_system": "in_memory",
+  "source_roots": [
+    "src/planner/measure_sources/",
+    "src/planner/goals/scheduling.py"
+  ],
+  "requests": [
+    {
+      "area": "source-schedule",
+      "method": "POST",
+      "path": "/api/test/set-now",
+      "status": 200,
+      "json": {
+        "now": "2027-01-01T08:29:00+14:00"
+      }
+    },
+    {
+      "area": "source-schedule",
+      "method": "POST",
+      "path": "/api/measure-sources",
+      "status": 200,
+      "json": {
+        "name": "Local minute source",
+        "project_id": "project_other",
+        "account": "unit13-schedule",
+        "responsible": {
+          "kind": "chief",
+          "id": "chief"
+        }
+      },
+      "capture": {
+        "source": "id",
+        "revision": "source_revision"
+      }
+    },
+    {
+      "area": "source-schedule",
+      "method": "PUT",
+      "path": "/api/measure-sources/${source}/script",
+      "status": 200,
+      "json": {
+        "expected_revision": "${revision}",
+        "text": "// Schedule admission only; never executed.\n"
+      },
+      "capture": {
+        "revision": "source_revision"
+      }
+    },
+    {
+      "area": "source-schedule",
+      "method": "PUT",
+      "path": "/api/measure-sources/${source}/schedule",
+      "status": 200,
+      "json": {
+        "expected_revision": "${revision}",
+        "enabled": true,
+        "local_time": "08:30"
+      },
+      "capture": {
+        "revision": "source_revision"
+      }
+    },
+    {
+      "area": "source-schedule",
+      "method": "POST",
+      "path": "/api/test/poll/sources",
+      "status": 200,
+      "note": "Before due minute: no occurrence."
+    },
+    {
+      "area": "source-schedule",
+      "method": "GET",
+      "path": "/api/measure-sources/${source}/runs",
+      "status": 200
+    },
+    {
+      "area": "source-schedule",
+      "method": "POST",
+      "path": "/api/test/set-now",
+      "status": 200,
+      "json": {
+        "now": "2027-01-01T08:30:00+14:00"
+      }
+    },
+    {
+      "area": "source-schedule",
+      "method": "POST",
+      "path": "/api/test/poll/sources",
+      "status": 200,
+      "note": "One pending occurrence uses January 1 and 08:30, while UTC is December 31."
+    },
+    {
+      "area": "source-schedule",
+      "method": "GET",
+      "path": "/api/measure-sources/${source}/runs",
+      "status": 200,
+      "capture": {
+        "first_run": "runs.0.id"
+      }
+    },
+    {
+      "area": "source-schedule",
+      "method": "POST",
+      "path": "/api/test/poll/sources",
+      "status": 200,
+      "note": "Repeated same local slot reuses the occurrence."
+    },
+    {
+      "area": "source-schedule",
+      "method": "GET",
+      "path": "/api/measure-sources/${source}/runs",
+      "status": 200
+    },
+    {
+      "area": "source-schedule",
+      "method": "POST",
+      "path": "/api/test/set-now",
+      "status": 200,
+      "json": {
+        "now": "2027-01-02T08:31:00+14:00"
+      }
+    },
+    {
+      "area": "source-schedule",
+      "method": "POST",
+      "path": "/api/test/poll/sources",
+      "status": 200,
+      "note": "Missed January 2 minute does not create catch-up."
+    },
+    {
+      "area": "source-schedule",
+      "method": "GET",
+      "path": "/api/measure-sources/${source}/runs",
+      "status": 200
+    },
+    {
+      "area": "source-schedule",
+      "method": "POST",
+      "path": "/api/test/set-now",
+      "status": 200,
+      "json": {
+        "now": "2027-01-03T08:30:00+14:00"
+      }
+    },
+    {
+      "area": "source-schedule",
+      "method": "POST",
+      "path": "/api/test/poll/sources",
+      "status": 200,
+      "note": "A later due day creates exactly one new occurrence."
+    },
+    {
+      "area": "source-schedule",
+      "method": "GET",
+      "path": "/api/measure-sources/${source}/runs",
+      "status": 200
+    },
+    {
+      "area": "source-schedule",
+      "method": "PUT",
+      "path": "/api/measure-sources/${source}/schedule",
+      "status": 200,
+      "json": {
+        "expected_revision": "${revision}",
+        "enabled": false,
+        "local_time": "08:30"
+      },
+      "capture": {
+        "revision": "source_revision"
+      }
+    },
+    {
+      "area": "source-schedule",
+      "method": "POST",
+      "path": "/api/test/set-now",
+      "status": 200,
+      "json": {
+        "now": "2027-01-04T08:30:00+14:00"
+      }
+    },
+    {
+      "area": "source-schedule",
+      "method": "POST",
+      "path": "/api/test/poll/sources",
+      "status": 200,
+      "note": "Disabled source creates no occurrence in its configured minute."
+    },
+    {
+      "area": "source-schedule",
+      "method": "GET",
+      "path": "/api/measure-sources/${source}/runs",
+      "status": 200
+    },
+    {
+      "area": "source-schedule",
+      "method": "GET",
+      "path": "/api/measure-source-runs/${first_run}",
+      "status": 200
+    },
+    {
+      "area": "source-schedule",
+      "method": "GET",
+      "path": "/api/measure-sources/${source}/status",
+      "status": 200
+    }
+  ],
+  "probes": [
+    "/api/measure-sources"
+  ],
+  "candidate": "typescript"
+}

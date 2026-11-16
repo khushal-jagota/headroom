@@ -61,23 +61,20 @@ Use the [join command](ops/mac-executor/installation.md) to add an extra machine
 
 For a source checkout, follow the commands below.
 
-Requires **Python 3.12+**, **Node.js 22+**, and npm. Run these commands from a source checkout:
+Requires **Python 3.12+**, **Node.js 22.18+ or 24+**, and npm. Run these commands from a source checkout:
 
 ```sh
 git clone https://github.com/khushal-jagota/headroom.git
 cd headroom
 
-python3 -m venv .venv
+scripts/dev setup
 source .venv/bin/activate
-python -m pip install -r requirements.txt
-python -m pip install --editable .
-
-npm ci --prefix web
-scripts/dev npm --prefix agent_backends install
-npm run build --prefix web
+scripts/dev npm --prefix web run build
 
 panels serve
 ```
+
+Setup reuses built dependencies from the account’s `~/.cache/headroom/dependencies` directory. Changed dependency inputs or runtimes build a new entry. Each checkout keeps its own Python source installation and writable Node tool caches. Set `PANELS_DEPENDENCY_CACHE` to select a separate development cache.
 
 Open [localhost:8767](http://127.0.0.1:8767). The server binds to loopback. Configuration lives in [`config.yaml`](config.yaml), with `PLAN_*` environment overrides; for example, `PLAN_PORT=8768 panels serve` selects another port. SQLite data and runtime files live under the gitignored `data/` directory by default.
 

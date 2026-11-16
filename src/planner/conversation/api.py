@@ -954,12 +954,12 @@ def _sign_in_service(
 
 
 def _start_request(body: StartConversationBody) -> ConversationStartRequest:
-    identity_environment_variables = tuple((body.identity_environment_variables or {}).items())
-    if body.role_text is None and identity_environment_variables:
+    if body.identity_environment_variables:
         raise HTTPException(
             status_code=422,
-            detail="identity environment variables belong to a role, so role_text is required",
+            detail="generic conversation starts cannot assign an agent identity",
         )
+    identity_environment_variables: tuple[tuple[str, str], ...] = ()
     role_materials = (
         None
         if body.role_text is None

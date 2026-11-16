@@ -1,4 +1,5 @@
 import type { ConversationSignal } from "./conversationSignal";
+import type { UnresolvedDecisionFeedback } from "./ticketWorkspace/contracts";
 export type AnyRecord = Record<string, any>;
 
 // The served Worker-type manifest response (GET /api/worker-types).
@@ -97,7 +98,8 @@ export type PendingTicketProposal = {
 };
 
 export type Principal = {
-  kind: "owner" | "chief" | "manager" | "ticket" | "goal";
+  // The server's full caller set. It never stores or returns "unidentified".
+  kind: "owner" | "chief" | "manager" | "ticket" | "goal" | "unidentified";
   id: string;
 };
 
@@ -239,6 +241,7 @@ export type TicketDetail = {
   field_values: TicketFieldValues;
   field_approvals?: Record<string, TicketFieldApproval>;
   pending_proposal: PendingTicketProposal | null;
+  unresolved_decision_feedback?: UnresolvedDecisionFeedback[];
   awaiting_reply?: boolean;
   awaiting_answer?: boolean;
   awaiting_approval?: boolean;

@@ -608,7 +608,9 @@ def test_a_mac_restart_recovers_one_drained_conversation_once(
                 for event in await harness.events("mac-a")
                 if isinstance(event.payload, PromptEventPayload)
             ]
-            assert prompts == ["work", RECOVERY_TEXT]
+            assert len(prompts) == 2 and prompts[0] == "work"
+            assert prompts[1].startswith(RECOVERY_TEXT)
+            assert "panels api METHOD PATH --input-json - --json" in prompts[1]
             assert ConversationEventKind.prompt_delivery_refused not in (
                 await harness.recorded_kinds("mac-a")
             )

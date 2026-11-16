@@ -12,8 +12,9 @@ treated as one.
 
 from __future__ import annotations
 
+import sqlite3
 from collections import deque
-from collections.abc import Callable, Sequence
+from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Literal
@@ -695,6 +696,13 @@ class InMemoryConversationSystem:
             )
         if state.running_turn is not None:
             self._end_running_turn(state, InMemoryConversationTurnEnding.interrupted)
+
+    async def kill_for_restart(
+        self, conversation_id: str, ticket_id: str,
+        finish: Callable[[Callable[[sqlite3.Connection], None] | None], Awaitable[None]],
+    ) -> None:
+        await self.kill(conversation_id)
+        await finish(None)
 
     async def is_running(self, conversation_id: str) -> bool:
         state = self._conversations.get(conversation_id)

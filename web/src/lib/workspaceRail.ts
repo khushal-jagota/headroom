@@ -75,7 +75,7 @@ export function workspaceGroups(cards: readonly WorkspaceTicket[]): WorkspaceTic
 
 export function railTicketEligible(card: WorkItemTicketFacts): boolean {
   if(card.integrity_error) return true;
-  return !card.is_backlogged && !card.blocked && card.ticket_status !== "blocked"
+  return !card.is_backlogged && (card.ticket_status === "awaiting_approval" || (!card.blocked && card.ticket_status !== "blocked"))
     && card.stage !== "done";
 }
 
@@ -122,12 +122,12 @@ export function refreshWorkspaceRailSignals(current: WorkspaceRail, next: Worksp
 export function workspaceWorkerStageSentence(ticket: WorkItemTicketFacts): string {
   const stage = ticket.stage_label;
   if (!stage) return "";
-  if (ticket.blocked || ticket.ticket_status === "blocked") return `Blocked at ${stage}.`;
   if (ticket.awaiting_approval) return `Awaiting your approval at ${stage}.`;
+  if (ticket.awaiting_agent_approval) return `Awaiting an agent's approval at ${stage}.`;
+  if (ticket.blocked || ticket.ticket_status === "blocked") return `Blocked at ${stage}.`;
   if (ticket.awaiting_answer) return `Awaiting your answer at ${stage}.`;
   if (ticket.assigned) return `Awaiting you at ${stage}.`;
   if (ticket.agent_state === "errored") return `The last turn failed at ${stage}.`;
-  if (ticket.awaiting_agent_approval) return `Awaiting an agent's approval at ${stage}.`;
   if (ticket.conversation_signal?.working) return `Currently doing ${stage}.`;
   return `At ${stage}.`;
 }

@@ -26,6 +26,7 @@ from tests.support.connected_rows import _bind
 from tests.support.connected_rows import _conversation as _conversation
 from tests.support.connected_rows import _message as _message
 from tests.support.connected_rows import _post as _post
+from tests.support.launch_identity import agent_headers
 from tests.support.server_fixtures import (
     owner_read_traced_rail_server as owner_read_traced_rail_server,
 )
@@ -84,7 +85,7 @@ def test_approval_membership_and_each_workers_durable_message_dot(
         )
         response = httpx.post(
             server.base + f"/api/tickets/{ticket['id']}/propose",
-            headers={"X-Plan-Actor": "worker", "X-Plan-Ticket-ID": ticket["id"]},
+            headers=agent_headers(server, "worker", ticket["id"]),
             json={"body": "Consistent group membership.", "recap": "Ready."},
             timeout=10,
         )
@@ -104,9 +105,8 @@ def test_approval_membership_and_each_workers_durable_message_dot(
     )
     _bind(server, "feedback", feedback["id"])
     ticket = tickets[0]
-    # A row waiting on the owner's approval shows the Review mark, which outranks an unread
-    # dot (redesign, owner). The Manager-held approval's row shows its dot, so the durable
-    # dot is proved on that Worker.
+    # An unread dot outranks the Review mark (owner). The first row has no message, so it shows
+    # the Review mark. The Manager-held approval's row shows its dot.
     dot_ticket = tickets[1]
     for name in ("dot-ticket", "dot-manager", "dot-chief"):
         _conversation(server, name)

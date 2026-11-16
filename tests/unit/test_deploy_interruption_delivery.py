@@ -564,6 +564,9 @@ def test_automatic_recovery_resumes_current_conversation_once(
             assert len(writes) == 1
             assert "[Panels deployment interruption context]" in writes[0]
             assert "Do not replay unknown prompts or permission answers" in writes[0]
+            assert "panels api METHOD PATH --input-json - --json" in writes[0]
+            assert "Do not use X-Plan-* identity headers" in writes[0]
+            assert "panels api PUT /api/workers/chief-of-staff/recap --input-json -" in writes[0]
             await run_automatic_recovery(restarted.system, restarted.store)
             assert len(restarted.backend("c").writes) == 1
             if owner == "ticket":

@@ -29,7 +29,7 @@ from fastapi import FastAPI
 def short_transport_root() -> Iterator[Path]:
     """Keep Unix sockets below macOS's path limit, regardless of test name."""
     with tempfile.TemporaryDirectory(
-        prefix="ex-", dir=Path(tempfile.gettempdir()).resolve()
+        prefix="ex-", dir=Path("/tmp").resolve()
     ) as root:
         yield Path(root)
 
@@ -39,6 +39,7 @@ class HttpsProxy:
     origin: str
     ca_path: Path
     control: str | None = None
+    upstream: str | None = None
 
     def cut_connections(self) -> None:
         """Abort every open connection through the proxy, as a dropped link does.
@@ -136,7 +137,7 @@ def isolated_https_proxy(
                 raise RuntimeError((root / "proxy.log").read_text())
             time.sleep(0.01)
         published = json.loads(ready.read_text())
-        yield HttpsProxy(published["origin"], cert, published["control"])
+        yield HttpsProxy(published["origin"], cert, published["control"], upstream)
     finally:
         process.terminate()
         try:

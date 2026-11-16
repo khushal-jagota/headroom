@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import errno
 import json
 import os
 import socket
 import subprocess
 import sys
+import tempfile
 import time
 from collections.abc import Callable, Iterator, Mapping
 from contextlib import closing
@@ -15,6 +17,7 @@ from pathlib import Path
 import httpx
 import pytest
 from test_runtime import environment_for, validate_environment
+from tests.support.launch_identity import agent_environment
 from tests.support.server import (
     FAKE_NOW,
     PLAN_BIN,
@@ -31,19 +34,34 @@ def _bind_loopback_listener(port: int = 0) -> socket.socket:
 
     The server is handed this socket through ``PLAN_SERVER_LISTENER_FD`` and never binds
     the port itself, so nothing else can take the port between choosing it and the server
-    starting. A connection made before the server is ready waits in the kernel's queue
+    starting. A shard range also keeps a released restart port outside other shards.
+    A connection made before the server is ready waits in the kernel's queue
     instead of being refused.
     """
-    listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    try:
-        # A stopped server on this exact port can leave its connections in TIME_WAIT.
-        listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        listener.bind(("127.0.0.1", port))
-        listener.listen()
-    except BaseException:
-        listener.close()
-        raise
-    return listener
+    port_range = os.environ.get("PANELS_TEST_PORT_RANGE") if port == 0 else None
+    ports = range(port, port + 1)
+    if port_range:
+        start, end = map(int, port_range.split(":"))
+        if not 0 < start < end <= 65536:
+            raise ValueError(f"Invalid PANELS_TEST_PORT_RANGE: {port_range}")
+        ports = range(start, end)
+    for candidate in ports:
+        listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        try:
+            # A stopped server on this exact port can leave its connections in TIME_WAIT.
+            listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            listener.bind(("127.0.0.1", candidate))
+            listener.listen()
+        except OSError as error:
+            listener.close()
+            if port_range and error.errno == errno.EADDRINUSE:
+                continue
+            raise
+        except BaseException:
+            listener.close()
+            raise
+        return listener
+    raise OSError(errno.EADDRINUSE, f"No loopback ports available in {port_range}")
 
 
 def _first_meta_answer(base: str, log_path: Path, describe_server: Callable[[], str]) -> None:
@@ -83,14 +101,17 @@ def _log_tail(log_path: Path, n: int = 40) -> str:
 
 
 def _stop_server(handle: ServerHandle) -> None:
-    if handle.proc.poll() is not None:
-        return
-    handle.proc.terminate()
     try:
-        handle.proc.wait(timeout=5)
-    except subprocess.TimeoutExpired:
-        handle.proc.kill()
-        handle.proc.wait()
+        if handle.proc.poll() is None:
+            handle.proc.terminate()
+            try:
+                handle.proc.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                handle.proc.kill()
+                handle.proc.wait()
+    finally:
+        if handle.socket_directory is not None:
+            handle.socket_directory.cleanup()
 
 
 def _adopt_the_worker_types_the_server_runs_on(db_path: Path) -> None:
@@ -137,11 +158,13 @@ def _start_server(
         if seed_db is not None:
             seed_db(db_path)
 
+    socket_directory = tempfile.TemporaryDirectory(prefix="ps-", dir=Path("/tmp").resolve())
     listener = _bind_loopback_listener(0 if port is None else port)
     try:
         port = int(listener.getsockname()[1])
         base = f"http://127.0.0.1:{port}"
         env = _scrubbed_env(srvdir)
+        env["PLAN_SERVER_CONTROL_SOCKET"] = str(Path(socket_directory.name) / "control.sock")
         env.update(
             {
                 "PLAN_TEST_MODE": "1",
@@ -151,6 +174,7 @@ def _start_server(
                 "PLAN_SERVER_LISTENER_FD": str(listener.fileno()),
                 "PLAN_FAKE_NOW": fake_now if fake_now is not None else FAKE_NOW,
                 "PLAN_LOGS_DIR": str(srvdir / "logs"),
+                "PLAN_BACKUP_DIR": str(srvdir / "backups"),
                 "PLAN_DISPATCHER_LOCK_PATH": str(srvdir / "dispatcher.lock"),
             }
         )
@@ -182,9 +206,24 @@ def _start_server(
         try:
             proc = subprocess.Popen(
                 (
-                    [sys.executable, "-m", server_module]
-                    if server_module
-                    else [str(PLAN_BIN), "serve"]
+                    ["node", str(REPO_ROOT / "server/test_host.ts")]
+                    if (
+                        os.environ.get("PANELS_TEST_SERVER_BACKEND") == "typescript"
+                        and server_module
+                        in {
+                            "tests.e2e.rail_server",
+                            "tests.e2e.conversation_signals_server",
+                        }
+                    )
+                    else (
+                        [sys.executable, "-m", server_module]
+                        if server_module
+                        else (
+                            ["node", str(REPO_ROOT / "server/main.ts")]
+                            if os.environ.get("PANELS_TEST_SERVER_BACKEND") == "typescript"
+                            else [str(PLAN_BIN), "serve"]
+                        )
+                    )
                 ),
                 cwd=str(REPO_ROOT),  # load-bearing: assets mount + config.yaml
                 env=env,
@@ -207,6 +246,7 @@ def _start_server(
         log_path=log_path,
         port=port,
         control_socket_path=control_socket_path,
+        socket_directory=socket_directory,
     )
 
     try:
@@ -353,6 +393,8 @@ def cli(tmp_path: Path) -> Callable[..., JsonObject]:
             env["PLAN_ACTOR"] = "worker"
         if actor is not None:
             env["PLAN_ACTOR"] = actor
+        if actor is not None or ticket_id is not None:
+            env.update(agent_environment(server, actor or "worker", ticket_id))
         validate_environment(env)
         proc = subprocess.run(
             [str(PLAN_BIN), *args, "--json"],

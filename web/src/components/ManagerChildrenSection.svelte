@@ -15,6 +15,7 @@
   import { navigationWindow } from "../lib/navigation/presentation";
   import ResourceState from "./ResourceState.svelte";
   import WorkerRow from "./WorkerRow.svelte";
+  import MachineIdentity from "./machines/MachineIdentity.svelte";
 
   let { principal, publication, filter, onHover, onLeave }: {
     principal: ManagerPrincipal;
@@ -97,7 +98,9 @@
             quiet={ticket.stage === "done"}
             href={workspaceAddress(principal.kind === "manager"
               ? { kind: "ticket", id: ticket.id, openedFromManagerId: principal.id } : { kind: "ticket", id: ticket.id })}
-            data-worker-ticket-id={ticket.id} data-unread={ticket.conversation_signal?.message_for_owner === true} />
+            data-worker-ticket-id={ticket.id} data-unread={ticket.conversation_signal?.message_for_owner === true} >
+            {#snippet titleMark()}<MachineIdentity locale={ticket.locale} machineId={ticket.machine_id} showName />{/snippet}
+          </WorkerRow>
         </div>
       {/each}
     </div>

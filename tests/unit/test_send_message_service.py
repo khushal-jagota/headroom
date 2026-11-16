@@ -245,7 +245,9 @@ def test_a_recap_request_clears_the_line_it_replaces_and_queues_behind_a_refused
         "File a short, top-level recap with your recap tool. "
         "Do not send the user a message. "
         "Workers: `panels worker recap`. Managers: `panels manager set <manager-id> recap`. "
-        "Chief: `PUT /api/workers/chief-of-staff/recap`.\nRequested by Chief."
+        'Chief: pipe one JSON object `{"recap":"your short recap"}` into '
+        "`panels api PUT /api/workers/chief-of-staff/recap --input-json -`. "
+        "The command sends your conversation credential automatically.\nRequested by Chief."
     )
     owner = Principal(PrincipalKind.owner, "owner")
     worker = Principal(PrincipalKind.ticket, "t_worker")
@@ -394,12 +396,14 @@ def test_removed_goal_conversation_boundaries_reject_before_resolution() -> None
     from fastapi import Request
 
     from planner.conversation.history.api import history_page
-    from planner.core.authctx import _classify
+    from planner.core.authctx import request_context
     from planner.message_delivery.api import _principal
 
     with pytest.raises(PlannerError, match="unknown message recipient"):
         _principal({"kind": "goal", "id": "goal_old"})
-    with pytest.raises(PlannerError, match="does not name a Panels principal"):
-        _classify("goal")
+    context = request_context(Request({
+        "type": "http", "headers": [(b"x-plan-actor", b"goal")],
+    }))
+    assert context.principal.kind is PrincipalKind.unidentified
     with pytest.raises(PlannerError, match="unknown conversation history owner"):
         asyncio.run(history_page(Request({"type": "http"}), "goal", "goal_old"))

@@ -48,7 +48,7 @@ describe("complete manager page groups", () => {
         conversation_signal:{working:true,message_for_owner:true}}),
       ticket("idle", {blocked:true, agent_state:"idle", conversation_signal:{working:false,message_for_owner:false}}),
       ticket("failed", {blocked:true, agent_state:"errored"}),
-      ticket("closeout", {ticket_status:"blocked", gating_field:"consequences", awaiting_agent_approval:true})
+      ticket("closeout", {ticket_status:"blocked", gating_field:"consequences"})
     ];
     const groups = managerPageGroups(rows);
     expect(groups.map((group) => [group.key, group.label, group.quiet]))

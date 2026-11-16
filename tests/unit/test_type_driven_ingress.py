@@ -27,6 +27,7 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from tests.support.in_memory_conversation_system import InMemoryConversationSystem
+from tests.support.launch_identity import agent_headers
 from tests.support.probe import (
     install_probe_registry,
     seed_probe_worker_type,
@@ -155,7 +156,7 @@ def _propose(client: TestClient, ticket_id: str, body: str) -> None:
     filed = client.post(
         f"/api/tickets/{ticket_id}/propose",
         json={"body": body},
-        headers={"X-Plan-Actor": "worker", "X-Plan-Ticket-ID": ticket_id},
+        headers=agent_headers(client, "worker", ticket_id),
     )
     assert filed.status_code == 200, filed.json()
 
@@ -163,13 +164,7 @@ def _propose(client: TestClient, ticket_id: str, body: str) -> None:
 # --- coding ingress stays byte-identical ---------------------------------------
 
 
-
-
-
-
 # --- probe ingress: per-type field / ceiling / stage ---------------------------
-
-
 
 
 def test_proposal_route_accepts_only_the_ticket_own_worker(
@@ -207,12 +202,9 @@ def test_proposal_route_accepts_only_the_ticket_own_worker(
         )
         assert scoped.status_code == 200, scoped.text
         attempts = (
-            {
-                "X-Plan-Actor": "manager",
-                "X-Plan-Sprint-Item-ID": str(item["id"]),
-            },
-            {"X-Plan-Actor": "worker", "X-Plan-Ticket-ID": parent},
-            {"X-Plan-Actor": "worker", "X-Plan-Ticket-ID": unrelated},
+            agent_headers(client, "manager", str(item["id"])),
+            agent_headers(client, "worker", parent),
+            agent_headers(client, "worker", unrelated),
         )
         for headers in attempts:
             refused = client.post(
@@ -226,17 +218,13 @@ def test_proposal_route_accepts_only_the_ticket_own_worker(
         own = client.post(
             f"/api/tickets/{target}/propose",
             json={"body": "Own Worker", "recap": "Own"},
-            headers={"X-Plan-Actor": "worker", "X-Plan-Ticket-ID": target},
+            headers=agent_headers(client, "worker", target),
         )
         assert own.status_code == 200, own.text
         assert own.json()["pending_proposal"]["body"] == "Own Worker"
 
 
 # --- the ?stage= filter decision -----------------------------------------------
-
-
-
-
 
 
 def test_retired_guidance_is_preserved_but_has_no_api_surface(app_db: AppDb) -> None:

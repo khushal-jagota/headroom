@@ -1,0 +1,174 @@
+# TypeScript Mac executor
+
+`host/service.ts` composes the standalone Mac invocation, including its shared child owners,
+runner, mailbox, gateway, HTTP, lease, live sender, durable sender, skills, catalog, and storage.
+It reads a planned handoff before the journal and HTTP identity, then fences commands until replay completes.
+Each producer receives the original absolute stop deadline. Actual joins precede file workers, journal, and the spool lock.
+`inputs.ts` downloads verified prompt files and removes temporary entries through a retained directory capability.
+`host/entry.ts` supplies the production update, provider, catalog, and Darwin process bindings plus signal ownership.
+The packaged `entrypoint.ts` reuses the ordinary CLI. `run.ts` binds parent mode to the fixed runtime supervisor and child mode to the host.
+
+Worker supervision records exact process custody in `run/worker-processes`.
+Startup runs the one-time legacy cleanup pass before modern reconciliation and a cleanup snapshot.
+Starts serialize per Ticket before inspection, and unresolved cleanup fences only the affected Ticket.
+Explicit cleanup commands check the exact historical source. Leases copy the cached evidence.
+The slow lease maintenance task refreshes that evidence without delaying a lease request.
+It reads local Ticket states in pages of 64 and uses the earliest returned home clock for cleanup.
+Shutdown retains this task until its filesystem work settles.
+
+Managed starts use the shared Ticket workspace preparation and repository selector.
+An unmapped executor-default start creates a plain work folder.
+The runner registers the physical identity before provider creation and checks that identity again under the workspace lock.
+Registration waits release that lock so another Ticket can prepare its own folder.
+Cleanup uses the same lock and the shared `stop_and_publish` owner before physical retirement.
+Unsettled commands, source work, or unpublished outputs retain the folder.
+The existing safe-removal platform limits still apply.
+
+## Unix CLI client
+
+`ipc/gateway.ts` owns the private Unix listener and admitted CLI publications.
+`ipc/outbox.ts` captures files through the real spool and retains receipt waiters.
+The sender calls `notify_confirmed` after its durable acknowledgement callback.
+`storage/envelopes.ts` supplies the shared row-to-envelope and receipt projections.
+The host supplies runner admission, catalog settlement, presence, reads, and exit.
+It joins gateway and runner cleanup before storage. A response timeout never cancels publication.
+The runner facade seals admission before reversible catalog settlement and quiescence.
+
+`ipc_client.ts` connects only to the configured root's Unix socket. It validates
+and frames each request through the shared wire codec before emission. It sends
+the OS monotonic deadline, so a service in another process can compare that clock.
+One absolute timeout covers connect, write, and response, including the transport reserve.
+The client joins socket closure before it returns. It never retries a write.
+After possible emission, a transport or response-validation failure means unknown
+acceptance for write/retry. A valid reply retains its original submission identity.
+The existing CLI owns output and exit codes. `run` retains the parent interrupt exit code and joins its child and file owners.
+`permissions` previews lexical workspace/output scopes and touches them only with `--check`.
+Its explicit check reads one directory entry and writes, reads, closes, and removes one temporary output file.
+The retained checks compare message meaning, exit codes, and cleanup. Actual macOS consent remains a later Mac check.
+
+The Mac executor uses `FilesService` for byte copies, hashes, directory creation, and durable flushes.
+Each caller owns its service instance and must pass the shared absolute shutdown deadline to `stop()`.
+The host retains separate file services for conversation transfers and runtime updates.
+
+`MacHttpClient.ensure_credential(path)` asks the home for its pending credential before it uses a saved credential.
+The private credential file uses exclusive mode-0600 creation, atomic rename, and file and directory flushes.
+The client saves a changed grant before it sends authenticated requests. Expected bootstrap failures retain a valid saved credential.
+Session shutdown joins credential file work, and a replaced session refuses further bootstrap requests.
+Update reports and archive downloads obtain current authentication headers for each request.
+The host startup does not call this API yet. Server credential routing and runtime protocol activation remain separate port slices.
+
+The public methods return promises:
+
+- `file_digest(path)` and `verified_version(path, sha256, byte_count)` read regular files.
+- `copy_verified(source, target, sha256, byte_count)` creates an exclusive destination inode.
+- `install_verified(source, target, sha256, byte_count)` publishes a verified temporary inode through atomic rename.
+- `fsync_directory(path)` flushes a retained directory.
+- `open_directory(path, {create})` returns an opaque capability owned by that service.
+- `copy_verified_at` and `install_verified_at` take that capability as their second argument.
+- `close_directory(capability)` releases it. Shutdown also releases every retained capability.
+
+No caller receives a raw file descriptor. A capability from another service is refused.
+Streaming transfers use `open_transfer`, bounded `read_transfer` or `write_transfer`,
+`finish_transfer`, and `close_transfer`. The worker retains the opened inode and parent,
+computes the digest, and performs the full flush. Upload reads accept the remaining byte limit.
+An ordinary transfer/directory close failure seals admission and faults the host.
+The worker retains failed close capabilities and stays alive for a later `stop()` retry.
+Its actual join retains the first failure after successful cleanup.
+The private synchronous implementation refuses import on the main thread.
+The lightweight `safe_component`, `contained_path`, and `file_version` helpers perform validation or metadata observations only.
+They do not hash or copy bytes.
+
+One lazy worker processes admitted file operations in order.
+An ordinary filesystem error rejects only its operation. Later operations remain usable.
+Stop closes admission before its first wait and queues cleanup after previously admitted work.
+It does not interrupt an active copy. A shutdown deadline failure does not imply that the worker stopped.
+`settled()` waits for the actual worker exit. A stopped service cannot create another worker.
+After exit, a retained fatal transport or worker cleanup failure rejects that actual join. Ordinary file-operation refusals do not.
+Fatal JavaScript errors release retained directory capabilities through the worker's exit hooks.
+A failed message send seals the service and requests the same cleanup. A failed stop send remains retryable.
+
+The worker uses no inherited command-line flags. Supported Node 22.18+ and Node 24 execute its `.ts` entry directly.
+This prevents a parent's eval, `--input-type`, or test-loader arguments from changing the file-backed worker entry.
+It does not change the existing usage worker or its runtime policy.
+
+## Native operations and containment
+
+The Manager permits the branch's existing Koffi bridge only to OS libc or libSystem.
+Native filesystem calls reside in `platform.ts`. The shared flock binding resides in `core/locks/flock.ts`.
+An absent library or symbol refuses the operation.
+There is no path-based fallback.
+The module refuses startup if `O_NOFOLLOW`, `O_DIRECTORY`, `O_CREAT`, `O_EXCL`, or `O_NONBLOCK` is absent or nonpositive.
+`O_RDONLY` legitimately equals zero.
+
+Directory walks retain each opened inode and use `openat` with `O_DIRECTORY`, `O_NOFOLLOW`, and close-on-exec.
+Libc opens and closes own these descriptors. Node retains its normal tracking for descriptors that its own APIs open.
+Files use no-follow and nonblocking opens, followed by a regular-file check.
+A FIFO therefore cannot block the worker before the file-type refusal.
+Destination creation, removal, and rename use retained parents. Swapped ancestor symlinks cannot redirect those operations.
+An ordinary hardlink source is allowed, as Python allows it. This code does not determine whether another hardlink exists outside the root.
+Replacement of an ancestor with another real directory is not detected as an identity violation.
+A retained capability continues to name its original inode if that directory moves.
+This preserves Python's symlink defense. It is not a sandbox against arbitrary same-user changes.
+
+`contained_path` is a preflight check. Later byte operations do not trust its result without descriptor-relative opens.
+`file_version` keeps Python's metadata-only, path-based `lstat` observation.
+Nanosecond file versions use BigInt rather than rounded JavaScript numbers.
+
+The spool lock uses `core/locks/flock.ts` on its retained-parent, no-follow descriptor.
+The executor retains responsibility for lock-file creation and contention handling.
+The exposed executor lock modes are nonblocking exclusive acquisition and unlock. No blocking acquisition mode exists.
+
+A regular-file flush calls plain libc `fsync`, then strict Darwin `fcntl(F_FULLFSYNC)` with an explicit variadic `int` zero.
+Failure of the second call propagates. The code does not substitute libuv's full-flush fallback policy.
+Post-rename publication calls plain directory `fsync`, as Python does.
+Directory creation retains Python's stricter parent-flush sequence.
+
+Normal failure cleanup removes each private `.tmp-` entry through its retained directory.
+This file helper does not perform a startup sweep after process death.
+Python's outbox startup calls `_sweep_blobs` at `mac_outbox.py:183-191` and defines it at `mac_outbox.py:542-560`.
+`OutboxStore` sweeps its spool blobs at startup and after durable acknowledgements.
+That sweep does not cover temporary files under other artifact or update directories.
+No blanket crash-cleanup claim applies to those directories.
+
+## Native checks still required
+
+Linux checks do not prove Darwin argument layout, filesystem behavior, signing, or the installed arm64 addon.
+The separate native session must check each native boundary below with synthetic state and the new installation only.
+
+| Call or boundary                                 | Required Mac check                                                                                                                                                        |
+| ------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `openat(int, const char *, int, ...)`            | Koffi variadic declaration passes the create mode as promoted `int`. Create a new file and verify mode 0600. Check no-follow and close-on-exec.                           |
+| `mkdirat(int, const char *, mode_t)`             | Check fixed `mode_t` width: `uint16_t` on Darwin and 32-bit `unsigned int` on Linux. Create mode-0700 directories through retained parents and refuse symlink components. |
+| `renameat(int, const char *, int, const char *)` | Swap a parent symlink before publication. Confirm that only the retained destination changes.                                                                             |
+| `unlinkat(int, const char *, int)`               | Confirm failed-copy and temporary-file cleanup through a retained parent.                                                                                                 |
+| `flock(int, int)`                                | A second descriptor refuses nonblocking acquisition while the first holds it, then succeeds after unlock.                                                                 |
+| `fsync(int)`                                     | Confirm plain directory flush after rename and the parent flush after directory creation.                                                                                 |
+| `fcntl(int, int, ...)` with `F_FULLFSYNC = 51`   | Confirm the variadic ABI, success on a regular file, and propagation of an injected failure without fallback.                                                             |
+| `getpwnam(const char *)` and Darwin `passwd`     | Check named-user expansion with the native field layout, including `pw_change`, `pw_class`, `pw_expire`, and `pw_fields`.                                                 |
+| Native flags                                     | Check Darwin values, including `O_NONBLOCK`, `O_DIRECTORY`, `O_NOFOLLOW`, and `O_CLOEXEC`.                                                                                |
+| Packaged Koffi                                   | Verify that the package contains and loads its arm64 Darwin addon, with no external native library beyond the OS library.                                                 |
+
+The shared `server/skills/sources.ts` publisher remains outside this platform module.
+Its `openat` declaration is variadic and passes an explicit promoted `int` mode argument.
+
+The TypeScript default state directory is `~/Library/Application Support/Panels/executor-typescript`.
+The Python directory remains `~/Library/Application Support/Panels/executor`.
+The Manager requested this default-root difference. Explicit configuration refuses the Python root and its descendants, including symlink aliases.
+`packaging/build.ts` produces the runtime archive and unsigned app and LaunchAgent assets.
+The [installation document](../../../ops/mac-executor/typescript-installation.md) records the exact paths and later owner procedure.
+Real-Mac installation, consent, and provider checks remain unproved.
+
+## Hosted end-to-end checks
+
+The five `tests/compare/direct/test_unit22_mac_end_to_end*.py` modules retain all 24 original names and 29 expanded cases against the Python VPS.
+They reuse its TLS proxy, core, database, and scripted providers with one Node Mac host.
+The companion refuses any peer outside the fixture's allocated loopback port before it opens the host.
+The hosted direct comparison job collects these cases automatically. Run them only on a hosted runner:
+
+```sh
+scripts/dev pytest tests/compare/direct/test_unit22_mac_end_to_end*.py
+```
+
+The Manager dropped `test_three_sleep_cycles_lose_and_duplicate_nothing` on Linux.
+Sleep and wake require the later real-Mac session with the owner, as described in the installation document.
+The TS/TS run needs the same VPS fixtures bound to the TypeScript VPS API and core after both halves merge.

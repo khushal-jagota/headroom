@@ -384,12 +384,13 @@ def main() -> int:
         tickets["offline-1"]["pending_proposal"]["created_at"] = 2
     if ARTIFACT_LINKS_PROOF:
         state["slow"] = False
-        state["artifact_reads"] = {"text": 0, "photo": 0}
+        state["artifact_reads"] = {"text": 0, "photo": 0, "html": 0}
         tickets = {"offline-1": tickets["offline-1"]}
         tickets["offline-1"]["title"] = "Artifact links stay inline"
         tickets["offline-1"]["pending_proposal"]["body"] = (
             "Read [Migration verification]"
             "(/files/tickets/t_8rmd1ebk/artifacts/migration-verification.txt) before approval."
+            "\n\n[HTML preview](/files/tickets/t_8rmd1ebk/artifacts/merge-preview.html)"
             "\n\n[Review photo](/files/tickets/t_8rmd1ebk/artifacts/review-photo.png)"
         )
     lock = threading.RLock()
@@ -1368,6 +1369,24 @@ def main() -> int:
                     manager["manager"]["conversation_id"] = "stub"
                     self.respond(manager)
                     return
+            if ARTIFACT_LINKS_PROOF and path == (
+                "/files/tickets/t_8rmd1ebk/artifacts/merge-preview.html"
+            ):
+                with lock:
+                    state["artifact_reads"]["html"] += 1
+                    read = state["artifact_reads"]["html"]
+                content = (
+                    "<!doctype html><html><head><meta name='viewport' "
+                    "content='width=device-width, initial-scale=1'>"
+                    "</head><body><h1>Merged HTML preview " + str(read) + "</h1></body></html>"
+                ).encode()
+                self.send_response(200)
+                self.send_header("Content-Type", "text/html")
+                self.send_header("Cache-Control", "no-store")
+                self.send_header("Content-Length", str(len(content)))
+                self.end_headers()
+                self.wfile.write(content)
+                return
             if ARTIFACT_LINKS_PROOF and path in {
                 "/files/tickets/t_8rmd1ebk/artifacts/migration-verification.txt",
                 "/files/tickets/t_8rmd1ebk/artifacts/review-photo.png",

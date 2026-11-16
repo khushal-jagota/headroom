@@ -10,6 +10,7 @@ from threading import Barrier
 import pytest
 from fastapi.testclient import TestClient
 from tests.support.api_app import _app
+from tests.support.launch_identity import agent_headers
 from tests.unit.test_measure_persistence import NOW, source, taken
 
 from planner.core import db
@@ -280,8 +281,8 @@ def test_manual_authority_validation_and_http_state_contract(tmp_db: Connection)
     app.state.clock = FakeClock(datetime.fromtimestamp(now, UTC))
     with TestClient(app) as client:
         for headers in (
-            {"X-Plan-Actor": "goal", "X-Plan-Goal-ID": unbound_goal.id},
-            {"X-Plan-Actor": "worker", "X-Plan-Ticket-ID": unassigned_ticket},
+            agent_headers(tmp_db, "goal", unbound_goal.id),
+            agent_headers(tmp_db, "worker", unassigned_ticket),
         ):
             denied = client.post(
                 f"/api/measures/{measure.id}/manual-writes", json=request, headers=headers

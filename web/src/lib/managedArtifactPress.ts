@@ -2,8 +2,6 @@ import { managedFileTargetFromLinkHref } from "./artifactStrip";
 import { resolvePreview, targetFromPreviewHref, type ManagedFileTarget } from "./filePreview";
 import { isPlainLinkClick, type ClickedLink, type LinkClick } from "./linkClick";
 
-/** The sandbox can only announce a primary press, never request a state or action. */
-export const MANAGED_ARTIFACT_PRIMARY_PRESS = "panels:managed-artifact-primary-press";
 export type RegisterManagedArtifactFrame = (frame: HTMLIFrameElement) => () => void;
 
 /** The parts of a pressed link the decision needs, beyond the ones a plain click needs. */

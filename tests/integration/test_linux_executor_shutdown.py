@@ -20,6 +20,7 @@ from tests.support.executor_sleep_cycles import (
     SleepCycles,
     _eventually,
     _make_core,
+    _work_folder,
     read_records,
 )
 
@@ -32,9 +33,9 @@ def test_linux_executor_term_stops_active_supervised_worker(tmp_path: Path) -> N
         conversations = cast(tuple[str, str, str], ("ca",))
         roles = cast(tuple[str, str, str], ("stream",))
 
-    async def exercise() -> None:
+    async def exercise(work: Path) -> None:
         harness = OneWorker(
-            tmp_path / "work", tmp_path / "out", CycleSchedule(), 1, keep_going=False
+            work, tmp_path / "out", CycleSchedule(), 1, keep_going=False
         )
         for folder in (
             harness.work / "vps",
@@ -89,4 +90,5 @@ def test_linux_executor_term_stops_active_supervised_worker(tmp_path: Path) -> N
         finally:
             harness._keep_evidence()
 
-    asyncio.run(exercise())
+    with _work_folder() as work:
+        asyncio.run(exercise(work))

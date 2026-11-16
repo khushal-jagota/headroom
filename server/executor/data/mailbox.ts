@@ -1,0 +1,1234 @@
+/**
+ * Scoped mailbox SQL assumes an authorized caller and a caller-owned SQL capability.
+ * Poll/result callers require transport ingress, protocol and current-identity admission.
+ * Row fences do not authenticate an executor. These helpers never own a connection.
+ */
+import { randomUUID } from 'node:crypto';
+import { ORIGINAL_MAC_MACHINE_ID } from '../../execution_identity.ts';
+import type { ReadSql, TransactionSql } from '../../core/database/contracts.ts';
+import { isDeepStrictEqual } from 'node:util';
+import type { ChildReference } from '../../conversation/backends/contracts.ts';
+import type { AutomaticStartAdmission } from '../../conversation/start_admission/index.ts';
+import { read_facts } from '../../conversation/record/data/lifecycle.ts';
+import { conversation_event_payload_from_canonical_json } from '../../conversation/record/codec.ts';
+import { message_content_text } from '../../conversation/message_content.ts';
+import type { PromptDeliveryUncertainEventPayload } from '../../conversation/events.ts';
+import type { StallSource, TrackedWait } from '../../stalls/contracts.ts';
+import type {
+  CommandSettlementReason,
+  MailboxFetchResult,
+  MailboxRecordResult,
+  MailboxRow,
+  MailboxSettlement,
+  MailboxSettlements,
+  PromptWrittenAgain,
+  LateSteerAfterRestart,
+  WireValue,
+} from '../contracts.ts';
+import {
+  HELD_POLL_EVIDENCE_MS,
+  MAX_MAILBOX_POLL_BYTES,
+  MAX_MAILBOX_POLL_COMMANDS,
+  STEER_DELIVERY_LIMIT_SECONDS,
+} from '../configuration.ts';
+import {
+  as_object,
+  decode_json,
+  decode_value,
+  encode_bounded,
+  ExecutorValidationError,
+} from '../protocol.ts';
+import { expiry_reason } from '../logic/command_expiry.ts';
+import { counter } from '../logic/counters.ts';
+import {
+  current_incarnation,
+  require_current_incarnation_in_transaction,
+  require_incarnation_owner,
+} from '../vps_presence_store.ts';
+import {
+  open_child_assignment,
+  prepare_command_in_transaction,
+  record_prompt_outcome_in_transaction,
+} from './child_custody.ts';
+
+const settled_states = new Set(['finished', 'withdrawn', 'expired']);
+export function is_settled(row: MailboxRow): boolean {
+  return settled_states.has(row.state);
+}
+export function operation(command: WireValue<'MailboxCommand'>): string {
+  return command.child_command?.operation ?? 'read_model_list';
+}
+function outcome_json(value: WireValue<'CommandResult'>): string {
+  return JSON.stringify(as_object(value, 'CommandResult'));
+}
+function result(text: string | null): WireValue<'CommandResult'> | null {
+  return text === null ? null : decode_json(text, 'CommandResult');
+}
+const equivalent = isDeepStrictEqual;
+function read_command_row(sql: ReadSql, command_id: string): MailboxRow | null {
+  const row = sql.get<{
+    command_json: string;
+    executor_incarnation: string;
+    state: MailboxRow['state'];
+    outcome_json: string | null;
+  }>(
+    'SELECT command_json,executor_incarnation,state,outcome_json FROM executor_commands WHERE command_id=?',
+    [command_id],
+  );
+  return row
+    ? {
+        command: decode_json(row.command_json, 'MailboxCommand'),
+        executor_incarnation: row.executor_incarnation,
+        state: row.state,
+        result: result(row.outcome_json),
+      }
+    : null;
+}
+export function command_row(
+  sql: ReadSql,
+  command_id: string,
+  machine_id = ORIGINAL_MAC_MACHINE_ID,
+): MailboxRow | null {
+  const row = read_command_row(sql, command_id);
+  if (row !== null) require_incarnation_owner(sql, row.executor_incarnation, machine_id);
+  return row;
+}
+export function settled_row(sql: ReadSql, command_id: string): MailboxRow | null {
+  const row = read_command_row(sql, command_id);
+  return row !== null && is_settled(row) ? row : null;
+}
+export function settlement_result(
+  command: WireValue<'MailboxCommand'>,
+  disposition: 'refused' | 'uncertain',
+  reason: CommandSettlementReason,
+): WireValue<'CommandResult'> {
+  const child = command.child_command;
+  return {
+    command_id: command.command_id,
+    model_list: null,
+    child_outcome:
+      child == null
+        ? null
+        : {
+            command_id: command.command_id,
+            child: child.child,
+            disposition,
+            result: { reason },
+          },
+  };
+}
+export function steer_never_arrived(outcome: WireValue<'CommandOutcome'> | null): boolean {
+  return (
+    outcome !== null &&
+    (outcome.disposition === 'refused' ||
+      (outcome.disposition === 'succeeded' && outcome.result.kind === 'steer_refused'))
+  );
+}
+function insert(
+  tx: TransactionSql,
+  command: WireValue<'MailboxCommand'>,
+  incarnation: string,
+  machine_id: string,
+  turn_number: number | null = command.child_command?.turn?.turn_number ?? null,
+): WireValue<'MailboxCommand'> {
+  const child = command.child_command;
+  tx.run(
+    'INSERT INTO executor_commands(command_id,executor_incarnation,operation,conversation_id,child_id,turn_number,command_json,state,created_at_ms,machine_id) ' +
+      "VALUES (?,?,?,?,?,?,'{}','waiting',?,?)",
+    [
+      command.command_id,
+      incarnation,
+      operation(command),
+      child?.child.conversation_id ?? null,
+      child?.child.child_id ?? null,
+      turn_number,
+      command.created_at_vps_ms,
+      machine_id,
+    ],
+  );
+  // lastInsertRowid can already be rounded by the driver. Read text before leaving this writer.
+  const sequence = tx.get<{ value: string }>(
+    'SELECT CAST(last_insert_rowid() AS TEXT) AS value',
+  )!.value;
+  const numbered = { ...command, command_sequence: counter(sequence) };
+  const body = encode_bounded(numbered, 'MailboxCommand');
+  tx.run('UPDATE executor_commands SET command_json=? WHERE command_sequence=?', [
+    Buffer.from(body).toString('utf8'),
+    counter(sequence),
+  ]);
+  return decode_json(body, 'MailboxCommand');
+}
+export function insert_child_command(
+  tx: TransactionSql,
+  command: WireValue<'ChildCommand'>,
+  now: number,
+  machine_id = ORIGINAL_MAC_MACHINE_ID,
+): WireValue<'MailboxCommand'> | WireValue<'CommandOutcome'> {
+  command = decode_value(command, 'ChildCommand');
+  require_incarnation_owner(tx, command.child.executor_incarnation, machine_id);
+  if (command.arguments.kind === 'recheck_cleanup')
+    require_incarnation_owner(tx, command.arguments.source.executor_incarnation, machine_id);
+  const existing = read_command_row(tx, command.command_id);
+  if (existing !== null) {
+    if (!equivalent(existing.command.child_command, command))
+      throw new ExecutorValidationError('command identity reused with different content');
+    return existing.command;
+  }
+  const child = command.child;
+  if (command.arguments.kind === 'recheck_cleanup') {
+    const { source, ticket_id } = command.arguments;
+    const ticket = tx.get('SELECT conversation_id FROM tickets WHERE id=?', [ticket_id]);
+    const assignment = tx.get<{ principal_kind: string; principal_id: string }>(
+      'SELECT principal_kind,principal_id FROM executor_child_assignments WHERE executor_incarnation=? AND child_id=? AND conversation_id=?',
+      [source.executor_incarnation, source.child_id, source.conversation_id],
+    );
+    if (
+      current_incarnation(tx, machine_id) !== child.executor_incarnation ||
+      assignment?.principal_kind !== 'ticket' ||
+      assignment.principal_id !== ticket_id ||
+      !ticket ||
+      child.child_id !== source.child_id ||
+      child.conversation_id !== source.conversation_id
+    )
+      return {
+        command_id: command.command_id,
+        child,
+        disposition: 'refused',
+        result: { reason: 'cleanup_source_not_owned' },
+      };
+  } else if (
+    current_incarnation(tx, machine_id) !== child.executor_incarnation ||
+    open_child_assignment(tx, child) === null
+  )
+    return {
+      command_id: command.command_id,
+      child,
+      disposition: 'refused',
+      result: { reason: 'executor_process_replaced' },
+    };
+  if (['start', 'write_prompt', 'stop'].includes(command.operation))
+    prepare_command_in_transaction(tx, command);
+  let turn_number = command.turn?.turn_number ?? null;
+  if (command.operation === 'cancel_running_turn' && turn_number === null) {
+    const parameters = [child.conversation_id, child.executor_incarnation, child.child_id];
+    const bound = tx.get<{ turn_number: string }>(
+      'SELECT CAST(turn_number AS TEXT) AS turn_number FROM automatic_start_bindings ' +
+        'WHERE conversation_id=? AND executor_incarnation=? AND child_id=? ' +
+        'ORDER BY turn_number DESC LIMIT 1',
+      parameters,
+    );
+    if (bound !== undefined) turn_number = counter(bound.turn_number);
+    else {
+      const retained = tx.get<{ turn_number: string }>(
+        'SELECT CAST(turn_number AS TEXT) AS turn_number FROM mac_runs ' +
+          'WHERE conversation_id=? AND executor_incarnation=? AND child_id=?',
+        parameters,
+      );
+      if (retained !== undefined && counter(retained.turn_number) !== 0)
+        turn_number = counter(retained.turn_number);
+    }
+  }
+  return insert(
+    tx,
+    {
+      command_sequence: 0,
+      command_id: command.command_id,
+      created_at_vps_ms: now,
+      child_command: command,
+      model_list_request: null,
+    },
+    child.executor_incarnation,
+    machine_id,
+    turn_number,
+  );
+}
+export function insert_model_list_request(
+  tx: TransactionSql,
+  request: WireValue<'ModelListRequest'>,
+  now: number,
+  machine_id = ORIGINAL_MAC_MACHINE_ID,
+): WireValue<'MailboxCommand'> {
+  const incarnation = current_incarnation(tx, machine_id);
+  if (incarnation === null) throw new ExecutorValidationError('no Mac executor process is known');
+  return insert(
+    tx,
+    {
+      command_sequence: 0,
+      command_id: randomUUID(),
+      created_at_vps_ms: now,
+      child_command: null,
+      model_list_request: request,
+    },
+    incarnation,
+    machine_id,
+  );
+}
+/** Raw rows only. Protocol parsing and serialization run after the SQL scope ends. */
+interface FetchRow {
+  sequence: string;
+  command_json: string;
+  state: string;
+  conversation_id: string | null;
+  outcome_present: number;
+}
+interface FetchPresence {
+  executor_incarnation: string | null;
+  last_lease_at_ms: number | null;
+  identity_json: string | null;
+  refusal_json: string | null;
+}
+export interface FetchRows {
+  replaced: readonly FetchRow[];
+  candidates: readonly FetchRow[];
+  presence: FetchPresence | null;
+}
+type Preparation<T> = { ok: true; value: T } | { ok: false; error: unknown };
+interface PreparedOutcome {
+  result: WireValue<'CommandResult'>;
+  text: string;
+}
+interface PreparedCommand {
+  json: string;
+  bytes: number;
+  command: Preparation<WireValue<'MailboxCommand'>>;
+  outcomes: ReadonlyMap<string, Preparation<PreparedOutcome>>;
+}
+export interface PreparedFetch {
+  commands: ReadonlyMap<string, PreparedCommand>;
+  presence: FetchPresence | null;
+  presence_parse: Preparation<void>;
+  held: Map<string, PreparedHeld>;
+}
+interface HeldRow {
+  sequence: string;
+  command_json: string;
+  state: string;
+  turn_number: string | null;
+}
+interface HeldBinding {
+  conversation_id: string;
+  turn_number: string;
+  executor_incarnation: string | null;
+  child_id: string | null;
+  work_class: string;
+}
+interface HeldSnapshot {
+  scope: 'controls' | 'later' | 'move';
+  controls: HeldRow[];
+  waiting: HeldRow[];
+  later?: HeldRow[];
+  suffix?: HeldRow[];
+  bindings?: HeldBinding[];
+  high?: string;
+}
+interface VisitedRows {
+  rows: HeldRow[];
+  complete: boolean;
+}
+interface HeldDependencies {
+  controls: VisitedRows;
+  waiting?: VisitedRows;
+  later?: VisitedRows;
+  bindings: { source: WireValue<'ChildCommand'>; classes: string[] }[];
+  suffix?: HeldRow[];
+  high?: string;
+}
+interface HeldWork {
+  needs: 'later' | 'move' | null;
+  stops: boolean;
+  control: boolean;
+  withdrawals: { command: WireValue<'MailboxCommand'>; outcome: PreparedOutcome }[];
+  moved: { old_sequence: number; sequence: number; text: string }[] | null;
+  high?: number;
+}
+interface PreparedHeld {
+  dependencies: HeldDependencies;
+  turn: WireValue<'TurnToken'>;
+  work: Preparation<HeldWork>;
+}
+/** Throw through the writer so discovery never commits earlier staged effects. */
+export class MailboxPreparationRequired extends Error {
+  readonly delivery: WireValue<'MailboxCommand'>;
+  readonly turn: WireValue<'TurnToken'>;
+  readonly snapshot: HeldSnapshot;
+  constructor(
+    delivery: WireValue<'MailboxCommand'>,
+    turn: WireValue<'TurnToken'>,
+    snapshot: HeldSnapshot,
+  ) {
+    super('Held mailbox delivery needs asynchronous preparation.');
+    this.delivery = delivery;
+    this.turn = turn;
+    this.snapshot = snapshot;
+  }
+}
+function held_rows(
+  sql: ReadSql,
+  delivery: WireValue<'MailboxCommand'>,
+  machine_id: string,
+  kind: 'controls' | 'waiting' | 'later' | 'suffix',
+  visited?: VisitedRows,
+): HeldRow[] {
+  if (visited !== undefined && !visited.complete && !visited.rows.length) return [];
+  const child = delivery.child_command!.child;
+  const columns =
+    'CAST(command_sequence AS TEXT) AS sequence,command_json,state,' +
+    'CAST(turn_number AS TEXT) AS turn_number ';
+  let where: string;
+  const params: (string | number)[] = [];
+  switch (kind) {
+    case 'controls':
+      where =
+        "conversation_id=? AND command_sequence>? AND state='waiting' AND operation IN ('stop','cancel_running_turn')";
+      params.push(child.conversation_id, delivery.command_sequence);
+      break;
+    case 'waiting':
+      where =
+        "conversation_id=? AND executor_incarnation=? AND child_id=? AND state='waiting' AND operation IN ('start','write_prompt')";
+      params.push(child.conversation_id, child.executor_incarnation, child.child_id);
+      break;
+    case 'later':
+      where =
+        "machine_id=? AND command_sequence>? AND conversation_id IS NOT ? AND state IN ('waiting','delivered')";
+      params.push(machine_id, delivery.command_sequence, child.conversation_id);
+      break;
+    case 'suffix':
+      where = "conversation_id=? AND command_sequence>=? AND state IN ('waiting','delivered')";
+      params.push(child.conversation_id, delivery.command_sequence);
+      break;
+  }
+  if (visited !== undefined && !visited.complete) {
+    where += ' AND command_sequence<=?';
+    params.push(counter(visited.rows.at(-1)!.sequence));
+  }
+  return sql.all<HeldRow>(
+    'SELECT ' + columns + 'FROM executor_commands WHERE ' + where + ' ORDER BY command_sequence',
+    params,
+  );
+}
+function held_snapshot(
+  sql: ReadSql,
+  delivery: WireValue<'MailboxCommand'>,
+  machine_id: string,
+  scope: HeldSnapshot['scope'] = 'controls',
+): HeldSnapshot {
+  const child = delivery.child_command!.child;
+  const snapshot: HeldSnapshot = {
+    scope,
+    controls: held_rows(sql, delivery, machine_id, 'controls'),
+    waiting: held_rows(sql, delivery, machine_id, 'waiting'),
+  };
+  if (scope !== 'controls') {
+    snapshot.later = held_rows(sql, delivery, machine_id, 'later');
+    snapshot.bindings = sql.all<HeldBinding>(
+      'SELECT conversation_id,CAST(turn_number AS TEXT) AS turn_number,executor_incarnation,child_id,work_class ' +
+        'FROM automatic_start_bindings WHERE conversation_id IN (' +
+        'SELECT conversation_id FROM executor_commands WHERE machine_id=? AND command_sequence>? ' +
+        "AND conversation_id IS NOT ? AND state IN ('waiting','delivered')) ORDER BY identity",
+      [machine_id, delivery.command_sequence, child.conversation_id],
+    );
+  }
+  if (scope === 'move') {
+    snapshot.suffix = held_rows(sql, delivery, machine_id, 'suffix');
+    if (snapshot.suffix.every((row) => row.state === 'waiting'))
+      snapshot.high = sql.get<{ value: string }>(
+        'SELECT CAST(COALESCE(MAX(command_sequence),0) AS TEXT) AS value FROM executor_commands',
+      )!.value;
+  }
+  return snapshot;
+}
+function held_dependencies_match(
+  sql: ReadSql,
+  delivery: WireValue<'MailboxCommand'>,
+  machine_id: string,
+  dependencies: HeldDependencies,
+): boolean {
+  if (
+    !equivalent(
+      held_rows(sql, delivery, machine_id, 'controls', dependencies.controls),
+      dependencies.controls.rows,
+    )
+  )
+    return false;
+  if (
+    dependencies.waiting !== undefined &&
+    !equivalent(
+      held_rows(sql, delivery, machine_id, 'waiting', dependencies.waiting),
+      dependencies.waiting.rows,
+    )
+  )
+    return false;
+  if (
+    dependencies.later !== undefined &&
+    !equivalent(
+      held_rows(sql, delivery, machine_id, 'later', dependencies.later),
+      dependencies.later.rows,
+    )
+  )
+    return false;
+  for (const { source, classes } of dependencies.bindings) {
+    const current =
+      source.operation === 'start'
+        ? sql.all<{ work_class: string }>(
+            'SELECT work_class FROM automatic_start_bindings WHERE conversation_id=? AND executor_incarnation=? AND child_id=?',
+            [
+              source.child.conversation_id,
+              source.child.executor_incarnation,
+              source.child.child_id,
+            ],
+          )
+        : sql.all<{ work_class: string }>(
+            'SELECT work_class FROM automatic_start_bindings WHERE conversation_id=? AND turn_number=?',
+            [source.turn!.conversation_id, source.turn!.turn_number],
+          );
+    if (!equivalent(current.map((binding) => binding.work_class).sort(), classes)) return false;
+  }
+  if (
+    dependencies.suffix !== undefined &&
+    !equivalent(held_rows(sql, delivery, machine_id, 'suffix'), dependencies.suffix)
+  )
+    return false;
+  return (
+    dependencies.high === undefined ||
+    dependencies.high ===
+      sql.get<{ value: string }>(
+        'SELECT CAST(COALESCE(MAX(command_sequence),0) AS TEXT) AS value FROM executor_commands',
+      )!.value
+  );
+}
+/** Decode only the prefixes that Python visits after a real admission refusal. */
+export async function prepare_held_fetch(
+  prepared: PreparedFetch,
+  needed: MailboxPreparationRequired,
+): Promise<void> {
+  const { delivery, turn, snapshot } = needed;
+  const parse = async (row: HeldRow) => {
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    return decode_json(row.command_json, 'MailboxCommand');
+  };
+  const dependencies: HeldDependencies = {
+    controls: { rows: [], complete: false },
+    bindings: [],
+  };
+  let work: Preparation<HeldWork>;
+  try {
+    const child = delivery.child_command!;
+    const result: HeldWork = {
+      needs: null,
+      stops: false,
+      control: false,
+      withdrawals: [],
+      moved: null,
+    };
+    for (const row of snapshot.controls) {
+      dependencies.controls.rows.push(row);
+      const control = (await parse(row)).child_command;
+      const control_turn =
+        control?.turn ??
+        (row.turn_number === null
+          ? null
+          : {
+              conversation_id: child.child.conversation_id,
+              turn_number: counter(row.turn_number),
+            });
+      if (
+        control != null &&
+        equivalent(control.child, child.child) &&
+        (control.operation === 'stop' || equivalent(control_turn, turn))
+      ) {
+        result.stops = true;
+        break;
+      }
+    }
+    dependencies.controls.complete = !result.stops;
+    if (result.stops) {
+      dependencies.waiting = { rows: [], complete: false };
+      for (const row of snapshot.waiting) {
+        dependencies.waiting.rows.push(row);
+        const command = await parse(row);
+        const candidate = command.child_command;
+        if (candidate == null)
+          throw new ExecutorValidationError('Held delivery has no child command.');
+        if (
+          !equivalent(candidate.turn, turn) &&
+          !(child.arguments.kind === 'start' && candidate.arguments.kind === 'start')
+        )
+          continue;
+        const value = settlement_result(command, 'refused', 'delivery_withdrawn');
+        result.withdrawals.push({ command, outcome: { result: value, text: outcome_json(value) } });
+      }
+      dependencies.waiting.complete = true;
+    } else if (snapshot.later === undefined) {
+      result.needs = 'later';
+    } else {
+      dependencies.later = { rows: [], complete: false };
+      for (const row of snapshot.later) {
+        dependencies.later.rows.push(row);
+        const command = (await parse(row)).child_command;
+        if (command == null || !['start', 'write_prompt'].includes(command.operation)) {
+          result.control = true;
+          break;
+        }
+        const bound = snapshot.bindings!.filter((binding) =>
+          command.operation === 'start'
+            ? binding.conversation_id === command.child.conversation_id &&
+              binding.executor_incarnation === command.child.executor_incarnation &&
+              binding.child_id === command.child.child_id
+            : command.turn !== null &&
+              binding.conversation_id === command.turn.conversation_id &&
+              counter(binding.turn_number) === command.turn.turn_number,
+        );
+        if (command.operation === 'start' || command.turn !== null)
+          dependencies.bindings.push({
+            source: command,
+            classes: bound.map((binding) => binding.work_class).sort(),
+          });
+        if (
+          (command.operation === 'start' || command.turn !== null) &&
+          (!bound.length || bound.some((binding) => binding.work_class === 'supervisor'))
+        ) {
+          result.control = true;
+          break;
+        }
+      }
+      dependencies.later.complete = !result.control;
+      if (result.control) {
+        if (snapshot.suffix === undefined) result.needs = 'move';
+        else {
+          dependencies.suffix = snapshot.suffix;
+          if (snapshot.suffix.every((row) => row.state === 'waiting')) {
+            dependencies.high = snapshot.high!;
+            result.high = counter(snapshot.high!);
+            result.moved = [];
+            for (const row of snapshot.suffix) {
+              const command = await parse(row);
+              const sequence = counter(++result.high);
+              result.moved.push({
+                old_sequence: counter(row.sequence),
+                sequence,
+                text: JSON.stringify(
+                  as_object({ ...command, command_sequence: sequence }, 'MailboxCommand'),
+                ),
+              });
+            }
+          }
+        }
+      }
+    }
+    work = { ok: true, value: result };
+  } catch (error) {
+    work = { ok: false, error };
+  }
+  // A supplement can describe staged prior moves. The retry replays those moves
+  // before it checks this exact snapshot again; nothing escaped the rolled-back writer.
+  prepared.held.set(delivery.command_id, { dependencies, turn, work });
+}
+function attempt<T>(work: () => T): Preparation<T> {
+  try {
+    return { ok: true, value: work() };
+  } catch (error) {
+    return { ok: false, error };
+  }
+}
+function prepared_value<T>(value: Preparation<T>): T {
+  if (!value.ok) throw value.error;
+  return value.value;
+}
+/** Caller supplies an admitted poll. This takes no new authority or owned SQL scope. */
+export function read_fetch_rows(
+  sql: ReadSql,
+  incarnation: string,
+  after: number,
+  machine_id = ORIGINAL_MAC_MACHINE_ID,
+): FetchRows {
+  require_current_incarnation_in_transaction(sql, incarnation, machine_id);
+  const presence =
+    sql.get<FetchPresence>(
+      'SELECT executor_incarnation,last_lease_at_ms,identity_json,refusal_json FROM mac_executor_presence WHERE machine_id=?',
+      [machine_id],
+    ) ?? null;
+  const replaced =
+    presence?.executor_incarnation === incarnation
+      ? sql.all<FetchRow>(
+          'SELECT CAST(c.command_sequence AS TEXT) AS sequence,c.command_json,c.state,c.conversation_id,c.outcome_json IS NOT NULL AS outcome_present ' +
+            'FROM executor_commands AS c INDEXED BY executor_commands_open ' +
+            'JOIN executor_incarnations AS i ON i.executor_incarnation=c.executor_incarnation ' +
+            "WHERE c.machine_id=? AND c.state IN ('waiting','delivered') AND c.state='delivered' AND c.executor_incarnation<>? " +
+            'AND i.replaced_at_ms IS NOT NULL ORDER BY c.command_sequence',
+          [machine_id, incarnation],
+        )
+      : [];
+  const candidates = sql.all<FetchRow>(
+    'SELECT CAST(command_sequence AS TEXT) AS sequence,command_json,state,conversation_id,0 AS outcome_present ' +
+      'FROM executor_commands INDEXED BY executor_commands_open ' +
+      "WHERE machine_id=? AND executor_incarnation=? AND command_sequence>? AND state IN ('waiting','delivered') ORDER BY command_sequence LIMIT ?",
+    [machine_id, incarnation, after, MAX_MAILBOX_POLL_COMMANDS],
+  );
+  return { replaced, candidates, presence };
+}
+/** Never call this while a transaction is open. Errors stay deferred until source visitation. */
+export async function prepare_fetch(
+  rows: FetchRows,
+  held: PreparedFetch['held'] = new Map(),
+): Promise<PreparedFetch> {
+  const commands = new Map<string, PreparedCommand>();
+  for (const [replacing, selection] of [
+    [true, rows.replaced],
+    [false, rows.candidates],
+  ] as const) {
+    for (const row of selection) {
+      const command = attempt(() => decode_json(row.command_json, 'MailboxCommand'));
+      const outcomes = new Map<string, Preparation<PreparedOutcome>>();
+      if (command.ok) {
+        const make = (
+          key: string,
+          disposition: 'refused' | 'uncertain',
+          reason: CommandSettlementReason,
+        ) => {
+          outcomes.set(
+            key,
+            attempt(() => {
+              const result = settlement_result(command.value, disposition, reason);
+              return { result, text: outcome_json(result) };
+            }),
+          );
+        };
+        if (replacing) {
+          make('replacement_refused', 'refused', 'executor_process_replaced');
+          make('replacement_uncertain', 'uncertain', 'executor_process_replaced');
+        } else {
+          switch (operation(command.value)) {
+            case 'steer':
+              make('steer_turn_not_running', 'refused', 'steer_turn_not_running');
+              make('steer_delivery_limit_passed', 'refused', 'steer_delivery_limit_passed');
+              break;
+            case 'answer_permission_ask':
+            case 'answer_user_input':
+              make('answered_request_not_open', 'refused', 'answered_request_not_open');
+              break;
+            case 'read_model_list':
+              make('model_list_limit_passed', 'refused', 'model_list_limit_passed');
+              break;
+          }
+        }
+      }
+      commands.set(row.sequence, {
+        json: row.command_json,
+        bytes: Buffer.byteLength(row.command_json) + 1,
+        command,
+        outcomes,
+      });
+      // A command is at most one envelope. Yield between commands without a worker or queue.
+      await new Promise<void>((resolve) => setImmediate(resolve));
+    }
+  }
+  const presence_parse = attempt(() => {
+    // Stored identities/refusals retain Python's shape errors, outside the writer.
+    if (rows.presence?.identity_json != null)
+      decode_json(rows.presence.identity_json, 'ExecutorIdentity');
+    if (rows.presence?.refusal_json != null)
+      decode_json(rows.presence.refusal_json, 'ExecutorRefusal');
+  });
+  return { commands, presence: rows.presence, presence_parse, held };
+}
+/**
+ * Caller owns the writer and the poll's ingress/protocol/current-identity admission.
+ * Null requests a fresh preparation and guarantees that this call made no effects.
+ */
+export function fetch(
+  tx: TransactionSql,
+  incarnation: string,
+  after: number,
+  now: number,
+  arrived_at: number,
+  prepared: PreparedFetch,
+  machine_id = ORIGINAL_MAC_MACHINE_ID,
+  start_admission: AutomaticStartAdmission | null = null,
+): MailboxFetchResult | null {
+  const rows = read_fetch_rows(tx, incarnation, after, machine_id);
+  const stale = now - arrived_at > HELD_POLL_EVIDENCE_MS;
+  // Validate every freshly selected row before the first effect, including rows beyond budget.
+  if (
+    [...rows.replaced, ...rows.candidates].some(
+      (row) => prepared.commands.get(row.sequence)?.json !== row.command_json,
+    )
+  )
+    return null;
+  if (
+    stale &&
+    (rows.presence?.identity_json !== prepared.presence?.identity_json ||
+      rows.presence?.refusal_json !== prepared.presence?.refusal_json)
+  )
+    return null;
+  const settled: MailboxSettlement[] = [];
+  for (const row of rows.replaced) {
+    const entry = prepared.commands.get(row.sequence)!;
+    const command = prepared_value(entry.command);
+    const never_ran = counter(row.sequence) > after && row.outcome_present === 0;
+    const outcome = prepared_value(
+      entry.outcomes.get(never_ran ? 'replacement_refused' : 'replacement_uncertain')!,
+    );
+    tx.run(
+      'UPDATE executor_commands SET state=?,outcome_json=?,finished_at_ms=? WHERE command_sequence=?',
+      [never_ran ? 'withdrawn' : 'finished', outcome.text, now, counter(row.sequence)],
+    );
+    settled.push([command, outcome.result]);
+  }
+  if (stale) {
+    prepared_value(prepared.presence_parse);
+    const last = rows.presence?.last_lease_at_ms;
+    if (last == null || now - last > HELD_POLL_EVIDENCE_MS) return { reply: null, settled };
+  }
+  const facts = new Map<string, ReturnType<typeof read_facts>>();
+  const answered: WireValue<'MailboxCommand'>[] = [];
+  const moved_conversations = new Set<string | null>();
+  const withdrawn_ids = new Set<string>();
+  const withdrawn_turns: WireValue<'TurnToken'>[] = [];
+  let moved_high: number | undefined;
+  let budget = MAX_MAILBOX_POLL_BYTES - 16;
+  for (const row of rows.candidates) {
+    const entry = prepared.commands.get(row.sequence)!;
+    const command = prepared_value(entry.command);
+    if (withdrawn_ids.has(command.command_id) || moved_conversations.has(row.conversation_id))
+      continue;
+    if (row.state === 'waiting') {
+      if (row.conversation_id !== null && !facts.has(row.conversation_id))
+        facts.set(row.conversation_id, read_facts(tx, row.conversation_id));
+      const reason = expiry_reason(command, facts.get(row.conversation_id ?? '') ?? [], now);
+      if (reason !== null) {
+        const outcome = prepared_value(entry.outcomes.get(reason)!);
+        tx.run(
+          "UPDATE executor_commands SET state='expired',outcome_json=?,finished_at_ms=? WHERE command_sequence=?",
+          [outcome.text, now, counter(row.sequence)],
+        );
+        settled.push([command, outcome.result]);
+        continue;
+      }
+    }
+    const child = command.child_command;
+    let start_turn = child?.turn ?? null;
+    if (child?.arguments.kind === 'start') {
+      const bound = tx.get<{ turn_number: string }>(
+        'SELECT CAST(turn_number AS TEXT) AS turn_number FROM automatic_start_bindings ' +
+          'WHERE conversation_id=? AND executor_incarnation=? AND child_id=?',
+        [child.child.conversation_id, child.child.executor_incarnation, child.child.child_id],
+      );
+      if (bound !== undefined)
+        start_turn = {
+          conversation_id: child.child.conversation_id,
+          turn_number: counter(bound.turn_number),
+        };
+    }
+    if (
+      row.state === 'waiting' &&
+      start_admission !== null &&
+      child != null &&
+      (child.arguments.kind === 'start' || child.arguments.kind === 'write_prompt') &&
+      start_turn !== null
+    ) {
+      start_admission.restore_bindings(tx, start_turn);
+      if (!start_admission.allow_dispatch(start_turn)) {
+        const held = prepared.held.get(command.command_id);
+        if (
+          held === undefined ||
+          !equivalent(held.turn, start_turn) ||
+          !held_dependencies_match(tx, command, machine_id, held.dependencies)
+        )
+          throw new MailboxPreparationRequired(
+            command,
+            start_turn,
+            held_snapshot(tx, command, machine_id),
+          );
+        const work = prepared_value(held.work);
+        if (work.needs !== null)
+          throw new MailboxPreparationRequired(
+            command,
+            start_turn,
+            held_snapshot(tx, command, machine_id, work.needs),
+          );
+        if (work.stops) {
+          for (const { command: pending, outcome } of work.withdrawals) {
+            tx.run(
+              "UPDATE executor_commands SET state='withdrawn',outcome_json=?,finished_at_ms=? WHERE command_id=? AND state='waiting'",
+              [outcome.text, now, pending.command_id],
+            );
+            withdrawn_ids.add(pending.command_id);
+            settled.push([pending, outcome.result]);
+          }
+          tx.run(
+            'DELETE FROM automatic_start_bindings WHERE conversation_id=? AND turn_number=? AND executor_incarnation=? AND child_id=?',
+            [
+              start_turn.conversation_id,
+              start_turn.turn_number,
+              child.child.executor_incarnation,
+              child.child.child_id,
+            ],
+          );
+          if (!withdrawn_turns.some((turn) => equivalent(turn, start_turn)))
+            withdrawn_turns.push(start_turn);
+          continue;
+        }
+        if (!work.control || work.moved === null) break;
+        for (const moved of work.moved)
+          tx.run(
+            'UPDATE executor_commands SET command_sequence=?,command_json=? WHERE command_sequence=?',
+            [moved.sequence, moved.text, moved.old_sequence],
+          );
+        tx.run("UPDATE sqlite_sequence SET seq=MAX(seq,?) WHERE name='executor_commands'", [
+          work.high!,
+        ]);
+        moved_high = Math.max(moved_high ?? 0, work.high!);
+        moved_conversations.add(row.conversation_id);
+        continue;
+      }
+    }
+    // The source decodes even the first over-budget candidate before it stops here.
+    if (answered.length && entry.bytes > budget) break;
+    budget -= entry.bytes;
+    if (row.state === 'waiting')
+      tx.run(
+        "UPDATE executor_commands SET state='delivered',delivered_at_ms=? WHERE command_sequence=?",
+        [now, counter(row.sequence)],
+      );
+    answered.push(command);
+  }
+  return { reply: { commands: answered }, settled, withdrawn_turns, high_sequence: moved_high };
+}
+function result_refusal(
+  row: MailboxRow | null,
+  value: WireValue<'CommandResult'>,
+  incarnation: string,
+): string | null {
+  if (row === null) return 'unknown_command';
+  if (row.executor_incarnation !== incarnation) return 'command_of_another_executor_process';
+  if (row.state === 'withdrawn' || row.state === 'expired') return `command_${row.state}`;
+  const child = row.command.child_command;
+  if (child == null)
+    return value.model_list == null || value.child_outcome != null ? 'malformed_result' : null;
+  const outcome = value.child_outcome;
+  return outcome == null ||
+    value.model_list != null ||
+    outcome.command_id !== value.command_id ||
+    !equivalent(outcome.child, child.child)
+    ? 'malformed_result'
+    : null;
+}
+/** Caller already admitted the reporting identity. Row checks do not replace ingress authority. */
+export function record(
+  tx: TransactionSql,
+  incarnation: string,
+  values: readonly WireValue<'CommandResult'>[],
+  now: number,
+  machine_id = ORIGINAL_MAC_MACHINE_ID,
+): MailboxRecordResult {
+  require_current_incarnation_in_transaction(tx, incarnation, machine_id);
+  const recorded: string[] = [],
+    rejected: WireValue<'RejectedCommandResult'>[] = [];
+  const settled: MailboxSettlement[] = [];
+  for (const incoming of values) {
+    const value = decode_value(incoming, 'CommandResult');
+    const row = read_command_row(tx, value.command_id);
+    const reason = result_refusal(row, value, incarnation);
+    if (reason !== null) {
+      rejected.push({ command_id: value.command_id, reason });
+      continue;
+    }
+    recorded.push(value.command_id);
+    if (row!.state === 'finished') continue;
+    const command = row!.command.child_command;
+    const outcome = value.child_outcome;
+    if (command?.operation === 'stop' && outcome?.disposition === 'succeeded') {
+      tx.run(
+        "UPDATE executor_commands SET outcome_json=COALESCE(outcome_json,?),state='delivered',delivered_at_ms=COALESCE(delivered_at_ms,?) WHERE command_id=?",
+        [outcome_json(value), now, value.command_id],
+      );
+      continue;
+    }
+    tx.run(
+      "UPDATE executor_commands SET state='finished',outcome_json=?,finished_at_ms=? WHERE command_id=?",
+      [outcome_json(value), now, value.command_id],
+    );
+    if (command != null && outcome != null)
+      record_prompt_outcome_in_transaction(tx, command, outcome);
+    settled.push([row!.command, value]);
+  }
+  return { reply: { recorded, rejected }, settled };
+}
+export function withdraw(
+  tx: TransactionSql,
+  command_id: string,
+  reason: CommandSettlementReason,
+  now: number,
+): MailboxSettlements {
+  const row = read_command_row(tx, command_id);
+  if (row === null || row.state !== 'waiting') return [];
+  const outcome = settlement_result(row.command, 'refused', reason);
+  tx.run(
+    "UPDATE executor_commands SET state='withdrawn',outcome_json=?,finished_at_ms=? WHERE command_id=? AND state='waiting'",
+    [outcome_json(outcome), now, command_id],
+  );
+  return [[row.command, outcome]];
+}
+/** The inbox already authorized this child_stopped proof before this participant runs. */
+export function finish_by_proof(
+  tx: TransactionSql,
+  command_id: string,
+  outcome: WireValue<'CommandOutcome'>,
+  now: number,
+): MailboxSettlements {
+  const row = read_command_row(tx, command_id);
+  if (row === null || is_settled(row)) return [];
+  const value =
+    row.result ??
+    decode_value({ command_id, child_outcome: outcome, model_list: null }, 'CommandResult');
+  tx.run(
+    "UPDATE executor_commands SET state='finished',outcome_json=?,finished_at_ms=? WHERE command_id=?",
+    [outcome_json(value), now, command_id],
+  );
+  return [[row.command, value]];
+}
+/** Stateless participant in an admitted lease transaction. Publish returned pairs after commit. */
+export function replace_incarnation_in_transaction(
+  tx: TransactionSql,
+  replaced: string,
+  _current: string,
+  now: number,
+  machine_id = ORIGINAL_MAC_MACHINE_ID,
+): MailboxSettlements {
+  const settled: MailboxSettlement[] = [];
+  for (const row of tx.all<{ command_json: string }>(
+    "SELECT command_json FROM executor_commands WHERE machine_id=? AND executor_incarnation=? AND state='waiting' ORDER BY command_sequence",
+    [machine_id, replaced],
+  )) {
+    const command = decode_json(row.command_json, 'MailboxCommand');
+    const outcome = settlement_result(command, 'refused', 'executor_process_replaced');
+    tx.run(
+      "UPDATE executor_commands SET state='withdrawn',outcome_json=?,finished_at_ms=? WHERE command_id=?",
+      [outcome_json(outcome), now, command.command_id],
+    );
+    settled.push([command, outcome]);
+  }
+  return settled;
+}
+export function high_sequence(sql: ReadSql, machine_id = ORIGINAL_MAC_MACHINE_ID): number {
+  return counter(
+    sql.get<{ value: string }>(
+      'SELECT CAST(COALESCE(MAX(command_sequence),0) AS TEXT) AS value FROM executor_commands WHERE machine_id=?',
+      [machine_id],
+    )!.value,
+  );
+}
+export function open_command_ids_of(sql: ReadSql, child: ChildReference): readonly string[] {
+  return sql
+    .all<{ command_id: string }>(
+      "SELECT command_id FROM executor_commands WHERE executor_incarnation=? AND child_id=? AND state IN ('waiting','delivered') ORDER BY command_sequence",
+      [child.executor_incarnation, child.child_id],
+    )
+    .map((row) => row.command_id);
+}
+export function command_for_input(
+  sql: ReadSql,
+  command_id: string,
+  machine_id = ORIGINAL_MAC_MACHINE_ID,
+): WireValue<'ChildCommand'> | null {
+  const row = command_row(sql, command_id, machine_id);
+  return row === null || is_settled(row) ? null : (row.command.child_command ?? null);
+}
+export function start_of(
+  sql: ReadSql,
+  child: ChildReference,
+): WireValue<'ResolvedConversationStart'> | null {
+  const row = sql.get<{ command_json: string }>(
+    "SELECT command_json FROM executor_commands WHERE child_id=? AND operation='start' ORDER BY command_sequence DESC LIMIT 1",
+    [child.child_id],
+  );
+  const command = row ? decode_json(row.command_json, 'MailboxCommand').child_command : null;
+  return command != null && equivalent(command.child, child) && command.arguments.kind === 'start'
+    ? command.arguments.resolved_start
+    : null;
+}
+export function prompt_withdrawn_at_replacement(
+  sql: ReadSql,
+  child: ChildReference,
+  turn: number,
+): WireValue<'WritePrompt'> | null {
+  const row = sql.get<{ command_json: string }>(
+    'SELECT command_json FROM executor_commands WHERE executor_incarnation=? AND child_id=? ' +
+      "AND operation='write_prompt' AND turn_number=? AND state='withdrawn' AND json_extract(outcome_json,'$.child_outcome.result.reason')=? " +
+      "AND NOT EXISTS (SELECT 1 FROM executor_commands WHERE executor_incarnation=? AND child_id=? AND operation='cancel_running_turn')",
+    [
+      child.executor_incarnation,
+      child.child_id,
+      turn,
+      'executor_process_replaced',
+      child.executor_incarnation,
+      child.child_id,
+    ],
+  );
+  const command = row ? decode_json(row.command_json, 'MailboxCommand').child_command : null;
+  return command?.arguments.kind === 'write_prompt' ? command.arguments : null;
+}
+export function prompts_written_again(
+  sql: ReadSql,
+  machine_id = ORIGINAL_MAC_MACHINE_ID,
+): readonly PromptWrittenAgain[] {
+  const rows = sql.all<{
+    executor_incarnation: string;
+    child_id: string;
+    conversation_id: string;
+    turn_number: string;
+    command_json: string;
+  }>(
+    'SELECT r.executor_incarnation,r.child_id,r.conversation_id,CAST(r.turn_number AS TEXT) AS turn_number,c.command_json FROM mac_runs AS r ' +
+      'JOIN mac_executor_presence AS p ON p.machine_id=? AND p.executor_incarnation=r.executor_incarnation ' +
+      "JOIN executor_commands AS c ON c.conversation_id=r.conversation_id AND c.turn_number=r.turn_number AND c.operation='write_prompt' " +
+      "AND c.child_id<>r.child_id AND c.state='withdrawn' AND json_extract(c.outcome_json,'$.child_outcome.result.reason')=? WHERE r.machine_id=? AND r.stop_state='open'",
+    [machine_id, 'executor_process_replaced', machine_id],
+  );
+  const found: PromptWrittenAgain[] = [];
+  for (const row of rows) {
+    const command = decode_json(row.command_json, 'MailboxCommand').child_command;
+    if (command?.arguments.kind !== 'write_prompt') continue;
+    const written = sql.get(
+      "SELECT 1 FROM executor_commands WHERE executor_incarnation=? AND child_id=? AND operation='write_prompt' AND turn_number=?",
+      [row.executor_incarnation, row.child_id, counter(row.turn_number)],
+    );
+    const started = sql.get(
+      "SELECT 1 FROM executor_commands WHERE executor_incarnation=? AND child_id=? AND operation='start'",
+      [row.executor_incarnation, row.child_id],
+    );
+    found.push([
+      {
+        executor_incarnation: row.executor_incarnation,
+        child_id: row.child_id,
+        conversation_id: row.conversation_id,
+      },
+      counter(row.turn_number),
+      command.arguments,
+      written !== undefined,
+      started !== undefined,
+    ]);
+  }
+  return found;
+}
+export function late_steers_left_by_a_restart(
+  sql: ReadSql,
+  machine_id = ORIGINAL_MAC_MACHINE_ID,
+): readonly LateSteerAfterRestart[] {
+  const uncertain = sql.all<{ conversation_id: string; sequence: string; payload: string }>(
+    "SELECT e.conversation_id,CAST(e.sequence AS TEXT) AS sequence,e.payload FROM conversation_events AS e WHERE e.kind='prompt_delivery_uncertain' " +
+      'AND EXISTS(SELECT 1 FROM executor_commands own WHERE own.conversation_id=e.conversation_id AND own.machine_id=?) ' +
+      "AND json_extract(e.payload,'$.mode')='steer' AND NOT EXISTS (SELECT 1 FROM conversation_events AS later WHERE later.conversation_id=e.conversation_id " +
+      "AND later.sequence>e.sequence AND later.kind IN ('prompt','prompt_delivery_refused','prompt_delivery_uncertain','prompt_discarded') " +
+      "AND json_extract(later.payload,'$.sender_message_id')=json_extract(e.payload,'$.sender_message_id')) ORDER BY e.conversation_id,e.sequence",
+    [machine_id],
+  );
+  const found: LateSteerAfterRestart[] = [];
+  const used = new Set<string>();
+  for (const row of uncertain) {
+    const payload = conversation_event_payload_from_canonical_json(
+      'prompt_delivery_uncertain',
+      row.payload,
+    ) as PromptDeliveryUncertainEventPayload;
+    const text = message_content_text(payload.content),
+      label = payload.sender_label;
+    for (const candidate of sql.all<{
+      command_id: string;
+      command_json: string;
+      state: string;
+      outcome_json: string | null;
+      created: string;
+      finished: string | null;
+    }>(
+      'SELECT command_id,command_json,state,outcome_json,CAST(created_at_ms AS TEXT) AS created,CAST(finished_at_ms AS TEXT) AS finished ' +
+        "FROM executor_commands WHERE conversation_id=? AND operation='steer' AND state<>'waiting' ORDER BY command_sequence",
+      [row.conversation_id],
+    )) {
+      if (used.has(candidate.command_id)) continue;
+      const late =
+        candidate.state === 'delivered' ||
+        (candidate.finished !== null &&
+          counter(candidate.finished) - counter(candidate.created) >=
+            STEER_DELIVERY_LIMIT_SECONDS * 1000);
+      const child = decode_json(candidate.command_json, 'MailboxCommand').child_command;
+      const args = child?.arguments;
+      if (!late || args?.kind !== 'steer' || args.sender_label !== label) continue;
+      const command_text = args.content
+        .filter((piece) => 'text' in piece)
+        .map((piece) => piece.text)
+        .join('\n\n');
+      if (command_text !== text) continue;
+      used.add(candidate.command_id);
+      const outcome = result(candidate.outcome_json)?.child_outcome ?? null;
+      found.push([
+        row.conversation_id,
+        counter(row.sequence),
+        candidate.command_id,
+        candidate.state === 'delivered' ? null : steer_never_arrived(outcome),
+      ]);
+      break;
+    }
+  }
+  return found;
+}
+export function tracked_waits(
+  sql: ReadSql,
+  _now: number,
+  machine_id = ORIGINAL_MAC_MACHINE_ID,
+): readonly TrackedWait[] {
+  const waits: TrackedWait[] = [];
+  for (const row of sql.all<{
+    command_id: string;
+    operation: string;
+    conversation_id: string | null;
+    state: string;
+    created_at_ms: number;
+  }>(
+    "SELECT command_id,operation,conversation_id,state,created_at_ms FROM executor_commands WHERE machine_id=? AND state IN ('waiting','delivered') ORDER BY command_sequence",
+    [machine_id],
+  )) {
+    if (row.state === 'waiting')
+      waits.push({
+        kind: 'mac_command_unfetched',
+        wait_key: row.command_id,
+        conversation_id: row.conversation_id,
+        machine_id: null,
+        detail: `The Mac has not fetched a ${row.operation} command`,
+        started_at_ms: row.created_at_ms,
+      });
+    if (row.operation === 'stop')
+      waits.push({
+        kind: 'mac_stop_unproven',
+        wait_key: row.command_id,
+        conversation_id: row.conversation_id,
+        machine_id: null,
+        detail: 'A stop has no proof that the agent stopped',
+        started_at_ms: row.created_at_ms,
+      });
+  }
+  for (const row of sql.all<{ command_id: string; conversation_id: string; created_at_ms: number }>(
+    'SELECT c.command_id,c.conversation_id,c.created_at_ms FROM executor_commands AS c JOIN mac_runs AS r ON r.conversation_id=c.conversation_id ' +
+      'AND r.child_id=c.child_id AND r.executor_incarnation=c.executor_incarnation JOIN mac_executor_presence AS p ON p.machine_id=? ' +
+      "AND p.executor_incarnation=r.executor_incarnation WHERE r.machine_id=? AND c.operation='stop' AND c.state='finished' AND r.stop_state='stopping'",
+    [machine_id, machine_id],
+  ))
+    waits.push({
+      kind: 'mac_stop_unproven',
+      wait_key: row.command_id,
+      conversation_id: row.conversation_id,
+      machine_id: null,
+      detail: 'A stop failed, and the agent may still be running',
+      started_at_ms: row.created_at_ms,
+    });
+  return waits;
+}
+/** Stateless reads use the caller's SQL scope and are independent of mailbox admission. */
+export class MailboxStallSource implements StallSource {
+  readonly machine_id: string;
+  constructor(machine_id = ORIGINAL_MAC_MACHINE_ID) {
+    this.machine_id = machine_id;
+  }
+  tracked_waits(sql: ReadSql, now: number): readonly TrackedWait[] {
+    return tracked_waits(sql, now, this.machine_id);
+  }
+}

@@ -174,7 +174,8 @@ final class ReviewFinalPageTests: XCTestCase {
         }
     }
 
-    /// One-off proof of the Markdown-to-view boundary that parser tests cannot establish.
+    /// One-off proof of real Markdown links, URL-based HTML, native Share and navigation.
+    /// Reuses the existing loopback host; model tests cannot prove WebKit loads or tab visibility.
     @MainActor func testArtifactLinksOpenOnlyAfterTap() async throws {
         continueAfterFailure = false
         let base = try XCTUnwrap(ProcessInfo.processInfo.environment["PANELS_OFFLINE_STUB_URL"])
@@ -203,7 +204,30 @@ final class ReviewFinalPageTests: XCTestCase {
         XCTAssertTrue(content.waitForExistence(timeout: 8), "A tap must open the existing artifact viewer")
         let openedReads = try await artifactReads(base)
         XCTAssertEqual(openedReads["text"], 1)
+        XCTAssertFalse(app.tabBars.firstMatch.isHittable)
         capture(app, "review-text-artifact-after-tap")
+        app.navigationBars.buttons.firstMatch.tap()
+        XCTAssertTrue(review.waitForExistence(timeout: 5))
+        XCTAssertTrue(review.isHittable)
+
+        let html = app.links["HTML preview"]
+        XCTAssertTrue(html.waitForExistence(timeout: 5)); html.tap()
+        let firstPreview = app.webViews.staticTexts["Merged HTML preview 1"]
+        XCTAssertTrue(firstPreview.waitForExistence(timeout: 8), "HTML must load from its managed URL")
+        XCTAssertFalse(app.tabBars.firstMatch.isHittable)
+        let htmlReads = try await artifactReads(base)
+        XCTAssertEqual(htmlReads["html"], 1)
+        capture(app, "merged-html-url-preview-tabs-hidden")
+        app.buttons["Artifact actions"].tap()
+        app.buttons["Reload"].tap()
+        XCTAssertTrue(app.webViews.staticTexts["Merged HTML preview 2"].waitForExistence(timeout: 8))
+        let reloadedReads = try await artifactReads(base)
+        XCTAssertEqual(reloadedReads["html"], 2, "Reload must request the managed HTML URL again")
+        capture(app, "merged-html-url-preview-reloaded")
+        app.buttons["Share artifact"].tap()
+        let shareSheet = app.descendants(matching: .any).matching(identifier: "ShareSheet.RemoteContainerView").firstMatch
+        XCTAssertTrue(shareSheet.waitForExistence(timeout: 8), "Share must present the native activity sheet")
+        capture(app, "merged-html-native-share-sheet")
     }
 
     @MainActor private func artifactReads(_ base: String) async throws -> [String: Int] {

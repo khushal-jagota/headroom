@@ -36,13 +36,17 @@ def at_or_beyond_ceiling(
 def completion_follows(stage: str, *, worker_type_definition: WorkflowDefinition) -> bool:
     """Whether approval of this Stage authorizes only follow-through to Done."""
     target = worker_type_definition.advance_target(stage)
-    return target is not None and (
-        worker_type_definition.is_terminal(target)
-        or (
-            worker_type_definition.gating_field(target) == CONSEQUENCES_FIELD_ID
-            and worker_type_definition.advance_target(target)
-            == worker_type_definition.completed_stage()
-        )
+    return target is not None and worker_type_definition.is_terminal(target)
+
+
+def consequences_follows(stage: str, *, worker_type_definition: WorkflowDefinition) -> bool:
+    """Whether the next stage is the final Consequences report."""
+    target = worker_type_definition.advance_target(stage)
+    return (
+        target is not None
+        and worker_type_definition.gating_field(target) == CONSEQUENCES_FIELD_ID
+        and worker_type_definition.advance_target(target)
+        == worker_type_definition.completed_stage()
     )
 
 
@@ -53,14 +57,7 @@ def resolve_next_ceiling(
     worker_type_definition: WorkflowDefinition,
 ) -> str:
     """The onward ceiling an approval grants, with the "none" sentinel concretized."""
-    if (
-        worker_type_definition.gating_field(new_stage) == CONSEQUENCES_FIELD_ID
-        and (
-            worker_type_definition.advance_target(new_stage)
-            == worker_type_definition.completed_stage()
-        )
-        or worker_type_definition.is_terminal(new_stage)
-    ):
+    if worker_type_definition.is_terminal(new_stage):
         return worker_type_definition.completed_stage()
     if next_ceiling is None:
         raise PlannerError(
@@ -69,11 +66,12 @@ def resolve_next_ceiling(
             {"missing": ["next_ceiling"]},
         )
     if next_ceiling == NO_FURTHER:
-        if worker_type_definition.gating_field(new_stage) == CONSEQUENCES_FIELD_ID:
-            return worker_type_definition.advance_target(new_stage) or new_stage
         return new_stage
     ceiling_id = str(next_ceiling)
-    if ceiling_id not in worker_type_definition.ceiling_range():
+    if (
+        ceiling_id not in worker_type_definition.ceiling_range()
+        or worker_type_definition.is_terminal(ceiling_id)
+    ):
         raise PlannerError(
             ErrorCode.scope_invalid,
             "unknown next_ceiling",

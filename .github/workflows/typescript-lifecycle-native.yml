@@ -1,0 +1,494 @@
+name: TypeScript lifecycle native ABI
+
+# Runs on the four-hourly schedule (against feature/typescript-backend) and on
+# manual runs only; macOS runners are scarce, so neither pull requests nor
+# pushes run this workflow.
+on:
+  schedule:
+    - cron: '17 */4 * * *'
+  workflow_dispatch:
+    inputs:
+      build_mac_package:
+        description: Build a test TypeScript Mac package with synthetic installation values
+        type: boolean
+        default: false
+      target_home:
+        description: Synthetic target HOME for the test package
+        required: false
+        type: string
+        default: /Users/panels-test
+      executor_id:
+        description: Synthetic executor identity for the test package
+        required: false
+        type: string
+        default: test-executor
+      server_url:
+        description: Synthetic HTTPS peer URL, never contacted
+        required: false
+        type: string
+        default: https://panels.invalid
+      backend_path:
+        description: Synthetic command PATH for the test package
+        required: false
+        type: string
+        default: /usr/bin:/bin
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  linux-executor:
+    name: Linux executor sealed archive and relocation (Node 22)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ github.event_name == 'schedule' && 'feature/typescript-backend' || github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '22'
+      - name: Build and admit one executor archive without a service or peer
+        shell: bash
+        run: |
+          set -euo pipefail
+          umask 077
+          sudo apt-get update
+          sudo apt-get install -y patchelf binutils libicu-dev pkg-config
+          executor_node=$(env -i PATH="$PATH" node -p 'require("node:fs").realpathSync(process.execPath)')
+          if [ "$executor_node" != /usr/local/bin/node ]; then sudo ln -sfn "$executor_node" /usr/local/bin/node; fi
+          executor_revision=$(git rev-parse HEAD)
+          executor_root=$(mktemp -d "$RUNNER_TEMP/linux-executor.XXXXXX")
+          executor_evidence="$RUNNER_TEMP/linux-executor-evidence"
+          mkdir -p "$executor_evidence" "$executor_root"/{home/.codex,home/.claude,home/.hermes,config,cache,data,state,run,tmp,logs,backups,workspace,files,scratch}
+          executor_cleanup() {
+            local status=$?
+            trap - EXIT
+            set +e
+            if [ -f "$executor_root/tmp/build/linux-executor-publication.json" ]; then
+              cp "$executor_root/tmp/build/linux-executor-publication.json" "$executor_evidence/publication.json" || status=1
+            fi
+            local retained=true
+            # Failed entries can still own native work at their original deadline.
+            if [ "$status" -eq 0 ]; then
+              if rm -rf -- "$executor_root"; then retained=false; else status=1; fi
+            fi
+            printf 'seconds=%s\nexit_code=%s\nretained=%s\nroot=%s\n' "$SECONDS" "$status" "$retained" "$executor_root" > "$executor_evidence/job-time.txt"
+            exit "$status"
+          }
+          trap executor_cleanup EXIT
+          env -i PATH="$PATH" LANG=C.UTF-8 LC_ALL=C.UTF-8 \
+            GITHUB_ACTIONS=true GITHUB_WORKSPACE="$GITHUB_WORKSPACE" \
+            EXECUTOR_ROOT="$executor_root" EXECUTOR_EVIDENCE="$executor_evidence" EXECUTOR_REVISION="$executor_revision" \
+            HOME="$executor_root/home" CODEX_HOME="$executor_root/home/.codex" \
+            CLAUDE_CONFIG_DIR="$executor_root/home/.claude" HERMES_HOME="$executor_root/home/.hermes" PLAN_HERMES_HOME="$executor_root/home/.hermes" \
+            XDG_CONFIG_HOME="$executor_root/config" XDG_CACHE_HOME="$executor_root/cache" XDG_DATA_HOME="$executor_root/data" \
+            XDG_STATE_HOME="$executor_root/state" XDG_RUNTIME_DIR="$executor_root/run" TMPDIR="$executor_root/tmp" TMP="$executor_root/tmp" TEMP="$executor_root/tmp" \
+            npm_config_cache="$executor_root/cache/npm" PIP_CONFIG_FILE=/dev/null \
+            PLAN_CONFIG_PATH="$executor_root/config.yaml" PLAN_DB_PATH="$executor_root/data/planner.sqlite" PLAN_DATA_DIR="$executor_root/data" PLAN_APP_ROOT="$executor_root/app" \
+            PLAN_LOGS_DIR="$executor_root/logs" PLAN_BACKUP_DIR="$executor_root/backups" PLAN_WORKSPACE_ROOT="$executor_root/workspace" \
+            PLAN_TICKET_FILES_DIR="$executor_root/files" PLAN_TICKET_SCRATCH_ROOT="$executor_root/scratch" PLAN_TICKET_SCRATCH_DATABASE="$executor_root/data/planner.sqlite" \
+            PLAN_CREDENTIAL_KEY_PATH="$executor_root/data/key" PLAN_DISPATCHER_LOCK_PATH="$executor_root/run/dispatcher.lock" \
+            PLAN_SERVER_CONTROL_SOCKET="$executor_root/run/control.sock" PLAN_SERVER_LIFECYCLE_LEASE_PATH="$executor_root/run/lifecycle.lock" \
+            PLAN_SERVER_URL=http://127.0.0.1:0 PLAN_PORT=0 PLAN_TEST_MODE=1 PLAN_DISPATCH_ENABLED=false \
+            bash --noprofile --norc -euo pipefail <<'LINUX_EXECUTOR' 2>&1 | tee "$executor_evidence/job.log"
+          printf '{}\n' > "$PLAN_CONFIG_PATH"
+          node --input-type=module <<'EXECUTOR_REQUEST'
+          import { realpathSync, writeFileSync } from 'node:fs';
+          import { join } from 'node:path';
+          if (process.platform !== 'linux' || process.arch !== 'x64' || !/^22\.(?:1[89]|[2-9][0-9])\./.test(process.versions.node))
+            throw new Error('Linux x64 Node 22 >=22.18 is required');
+          const root = process.env.EXECUTOR_ROOT;
+          writeFileSync(join(root, 'request.json'), JSON.stringify({
+            source_root: process.env.GITHUB_WORKSPACE,
+            requested_sha: process.env.EXECUTOR_REVISION,
+            output_directory: join(root, 'tmp', 'build'),
+          }));
+          writeFileSync(join(process.env.EXECUTOR_EVIDENCE, 'platform.json'), JSON.stringify({
+            revision: process.env.EXECUTOR_REVISION, platform: process.platform, architecture: process.arch,
+            node: process.version, executable: realpathSync(process.execPath),
+            boundary: 'Sealed executor archive relocation, native admission and CLI help. No install, service, peer or provider.',
+          }));
+          EXECUTOR_REQUEST
+          python3 -I -S -B scripts/dev_launcher.py npm --prefix server ci
+          node server/environments/linux_executor/build_main.ts "$EXECUTOR_ROOT/request.json"
+          executor_runtime="$EXECUTOR_ROOT/tmp/build/runtime"
+          test -s "$executor_runtime/web/dist/index.html"
+          test ! -e "$executor_runtime/web/node_modules"
+          test ! -e "$executor_runtime/server/node_modules/@anthropic-ai/claude-agent-sdk-linux-x64-musl"
+          test -x "$executor_runtime/server/node_modules/@anthropic-ai/claude-agent-sdk-linux-x64/claude"
+          # Compare retained contributors with the removed-byte count in job.log.
+          du --apparent-size -sb "$executor_runtime"/* \
+            "$executor_runtime/server/node_modules" \
+            "$executor_runtime/agent_backends/node_modules" \
+            "$executor_runtime/web/dist" \
+            "$EXECUTOR_ROOT/tmp/build/panels-linux-executor.tar.gz" \
+            | sort -nr | tee "$EXECUTOR_EVIDENCE/payload-bytes.txt"
+          du --apparent-size -ab "$executor_runtime/server/node_modules" \
+            "$executor_runtime/agent_backends/node_modules" \
+            | sort -nr | awk 'NR<=60' | tee "$EXECUTOR_EVIDENCE/largest-paths.txt"
+          LINUX_EXECUTOR
+      - name: Preserve Linux executor admission evidence only
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: linux-executor-native-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/linux-executor-evidence
+          if-no-files-found: warn
+
+  darwin-locks:
+    name: Darwin arm64 lifecycle, archive, and Worker process ABI (Node 22)
+    runs-on: macos-15
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ github.event_name == 'schedule' && 'feature/typescript-backend' || github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '22'
+      - name: Prove existing registry and archive sequences on the Darwin ABI
+        shell: bash
+        run: |
+          set -euo pipefail
+          umask 077
+          native_root="$RUNNER_TEMP/lifecycle-native"
+          native_evidence="$RUNNER_TEMP/lifecycle-native-evidence"
+          native_tmp=$(mktemp -d "/tmp/p21-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.XXXXXX")
+          native_tmp=$(cd "$native_tmp" && pwd -P)
+          trap 'native_exit=$?; if [ "$native_exit" -eq 0 ]; then rm -rf -- "$native_tmp"; fi' EXIT
+          mkdir -p "$native_root"/{home/.codex,home/.claude,home/.hermes,config,cache,data,state,runtime,logs,backups,workspace,files,tickets,app} "$native_evidence"
+          printf '{}\n' > "$native_root/config.yaml"
+          native_revision=$(git rev-parse HEAD)
+          # Scrub before pip's editable build, npm lifecycle scripts, or any repository launcher.
+          env -i PATH="$PATH" LANG=en_US.UTF-8 LC_ALL=en_US.UTF-8 \
+            GITHUB_ACTIONS=true GITHUB_WORKSPACE="$GITHUB_WORKSPACE" \
+            GITHUB_RUN_ID="$GITHUB_RUN_ID" GITHUB_RUN_ATTEMPT="$GITHUB_RUN_ATTEMPT" MAC_SOURCE_REVISION="$native_revision" \
+            HOME="$native_root/home" \
+            CODEX_HOME="$native_root/home/.codex" CLAUDE_CONFIG_DIR="$native_root/home/.claude" \
+            HERMES_HOME="$native_root/home/.hermes" PLAN_HERMES_HOME="$native_root/home/.hermes" \
+            XDG_CONFIG_HOME="$native_root/config" XDG_CACHE_HOME="$native_root/cache" \
+            XDG_DATA_HOME="$native_root/data" XDG_STATE_HOME="$native_root/state" \
+            XDG_RUNTIME_DIR="$native_root/runtime" \
+            TMPDIR="$native_tmp" TMP="$native_tmp" TEMP="$native_tmp" \
+            PIP_CONFIG_FILE=/dev/null PIP_CACHE_DIR="$native_root/cache/pip" \
+            npm_config_cache="$native_root/cache/npm" HOMEBREW_CACHE="$native_root/cache/brew" \
+            HOMEBREW_NO_AUTO_UPDATE=1 \
+            PLAN_CONFIG_PATH="$native_root/config.yaml" PLAN_DB_PATH="$native_root/data/planner.db" \
+            PLAN_LOGS_DIR="$native_root/logs" PLAN_BACKUP_DIR="$native_root/backups" \
+            PLAN_DATA_DIR="$native_root/data" PLAN_WORKSPACE_ROOT="$native_root/workspace" \
+            PLAN_APP_ROOT="$native_root/app" PLAN_CREDENTIAL_KEY_PATH="$native_root/data/key" \
+            PLAN_KEY_PATH="$native_root/data/key" PLAN_TICKET_FILES_DIR="$native_root/files" \
+            PLAN_TICKET_SCRATCH_ROOT="$native_root/tickets" \
+            PLAN_TICKET_SCRATCH_DATABASE="$native_root/data/planner.db" \
+            PLAN_DISPATCHER_LOCK_PATH="$native_tmp/dispatcher.lock" \
+            PLAN_SERVER_CONTROL_SOCKET="$native_tmp/control.sock" \
+            PLAN_SERVER_LIFECYCLE_LEASE_PATH="$native_tmp/lifecycle.lock" \
+            PLAN_SERVER_URL=http://127.0.0.1:0 PLAN_PORT=0 \
+            PLAN_DISPATCH_ENABLED=false PLAN_TEST_MODE=1 \
+            NATIVE_EVIDENCE="$native_evidence" PANELS_NATIVE_HOME_TEST=1 \
+            bash --noprofile --norc -euo pipefail <<'NATIVE' 2>&1 | tee "$native_evidence/job.log"
+          native_finish() {
+            local native_status=$?
+            trap - EXIT
+            set +e
+            if [[ -n "${home_output:-}" && -n "${home_evidence:-}" ]]; then
+              for proof in admission.json mac-home-build.json boot-proof.json; do
+                if [[ -f "$home_output/$proof" ]]; then
+                  cp "$home_output/$proof" "$home_evidence/$proof"
+                fi
+              done
+              for log in boot.stdout.log boot.stderr.log; do
+                if [[ -f "$home_output/proof-work/$log" ]]; then
+                  cp "$home_output/proof-work/$log" "$home_evidence/$log"
+                fi
+              done
+              for log in boot.phase.log boot.supervisor.stdout.log boot.supervisor.stderr.log; do
+                if [[ -f "$home_output/proof-work/$log" ]]; then
+                  cp "$home_output/proof-work/$log" "$home_evidence/$log"
+                fi
+              done
+            fi
+            printf 'seconds=%s\nexit_code=%s\n' "$SECONDS" "$native_status" > "$NATIVE_EVIDENCE/job-time.txt"
+            exit "$native_status"
+          }
+          trap native_finish EXIT
+          node -e '
+            const fs = require("node:fs"), os = require("node:os");
+            fs.writeFileSync(process.env.NATIVE_EVIDENCE + "/platform.json", JSON.stringify({
+              platform: process.platform, architecture: process.arch, node: process.version,
+              executable: process.execPath, os_release: os.release(),
+              boundary: "Existing registry/archive sequences, Worker identity, home APP custody, preview/metrics ABI, and first-home installation against owned synthetic LaunchAgents. No browser, provider, executor or live installation.",
+              hosted_cost: "OPEN until this job completes; each existing case and job elapsed time are preserved separately."
+            }, null, 2) + "\n");
+            if (process.platform !== "darwin" || process.arch !== "arm64")
+              throw new Error("The native proof requires a real Darwin arm64 Node runtime");
+          '
+          brew install icu4c pkg-config
+          export PKG_CONFIG_PATH="$(brew --prefix icu4c)/lib/pkgconfig"
+          python -m venv .venv
+          .venv/bin/python -m pip install -r requirements.txt
+          .venv/bin/python -m pip install --editable . --config-settings editable_mode=compat
+          python -I -S -B scripts/dev_launcher.py npm --prefix server ci
+          # Reuse this host for native process/socket and provider directory/lock evidence.
+          python -I -S -B scripts/dev_launcher.py npm --prefix server run test -- \
+            platform_runtime/worker_processes.native.test.ts lifecycle/paths.native.test.ts \
+            previews/darwin.native.test.ts skills/account.test.ts \
+            ticket_workspaces/filesystem.test.ts --reporter=junit \
+            --outputFile "$NATIVE_EVIDENCE/process-home-preview-abi.xml"
+          # No web build: this registry fixture uses synthetic app roots and no UI assets.
+          python -I -S -B scripts/dev_launcher.py pytest \
+            tests/compare/direct/test_unit21_registry.py::test_unit21_registry_fixture_and_lifecycle_parity \
+            tests/compare/direct/test_unit21_release.py::test_unit21_release_identity_archive_and_frontier \
+            --compare-report-dir "$NATIVE_EVIDENCE/comparison" \
+            --basetemp "$TMPDIR/pytest" --junitxml "$NATIVE_EVIDENCE/results.xml"
+          # The first native run measured 268.48s build + 7.59s inspection. Run on every job.
+          echo 'Mac producer compatibility fixture: unchanged native producer and production inspector'
+          node --input-type=module <<'MAC_COMPATIBILITY'
+          import assert from 'node:assert/strict';
+          import * as fs from 'node:fs/promises';
+          import { join } from 'node:path';
+          import { pathToFileURL } from 'node:url';
+          const source = process.env.GITHUB_WORKSPACE;
+          const load = path => import(pathToFileURL(join(source, path)).href);
+          const { ChildProcesses } = await load('server/lifecycle/owned_processes.ts');
+          const { run_release_command } = await load('server/environments/release/process.ts');
+          const { hash_archive, inspect_mac_archive } = await load('server/environments/release/archive.ts');
+          const { MacArchiveInspectionUnsettled } = await load('server/environments/release/contracts.ts');
+          assert.equal(process.platform, 'darwin');
+          assert.equal(process.arch, 'arm64');
+          const revision = process.env.MAC_SOURCE_REVISION;
+          const runId = Number(process.env.GITHUB_RUN_ID);
+          assert.match(revision, /^[a-f0-9]{40}$/);
+          assert(Number.isSafeInteger(runId) && runId > 0);
+          const evidence = join(process.env.NATIVE_EVIDENCE, 'mac-producer-compatibility');
+          const output = join(process.env.TMPDIR, 'mac-producer-output');
+          await fs.mkdir(evidence, { recursive: true });
+          const owner = new ChildProcesses();
+          const controller = new AbortController();
+          const children = { spawned: 0, closed: 0 };
+          const spawn = owner.spawn.bind(owner);
+          owner.spawn = (command, args, options) => {
+            const child = spawn(command, args, options);
+            children.spawned++;
+            child.once('close', () => { children.closed++; });
+            return child;
+          };
+          let inspectionTimer;
+          let cleanupFailure;
+          const cancel = reason => {
+            owner.seal();
+            controller.abort(reason);
+            try { owner.force_kill(performance.now() / 1000 + 5); }
+            catch (error) { cleanupFailure = error; }
+          };
+          const stop = () => cancel(new Error('Mac producer compatibility fixture interrupted'));
+          process.on('SIGTERM', stop);
+          process.on('SIGINT', stop);
+          const started = performance.now();
+          try {
+            const build = await run_release_command([
+              'python3', join(source, 'scripts/build_mac_runtime.py'),
+              '--source', source, '--output', output, '--revision', revision, '--run-id', String(runId),
+            ], { timeout_seconds: null, cwd: source, environment: { ...process.env } }, {
+              child_processes: owner, signal: controller.signal, deadline: performance.now() / 1000 + 1500,
+            });
+            await fs.writeFile(join(evidence, 'producer.log'), build.stdout + build.stderr);
+            const built = performance.now();
+            const inspectionDeadline = performance.now() / 1000 + 120;
+            inspectionTimer = setTimeout(() => cancel(new Error('Mac inspection exceeded its original 120-second budget')), 120_000);
+            const archive = join(output, 'panels-mac-runtime.tar.gz');
+            const receiptPath = join(output, 'mac-runtime-publication.json');
+            const receipt = JSON.parse(await fs.readFile(receiptPath, 'utf8'));
+            assert.equal(receipt.application_revision, revision);
+            assert.equal(receipt.publication_run_id, runId);
+            assert.equal(receipt.proof.passed, true);
+            const before = { sha256: await hash_archive(archive), size: (await fs.stat(archive)).size };
+            controller.signal.throwIfAborted();
+            assert.equal(before.sha256, receipt.archive_sha256);
+            assert.equal(before.size, receipt.archive_size);
+            const result = await inspect_mac_archive(archive, before.sha256, before.size, {
+              child_processes: owner, signal: controller.signal, deadline: inspectionDeadline,
+            });
+            controller.signal.throwIfAborted();
+            assert.deepEqual(result.manifest, {
+              schema_version: 1, application_revision: revision, platform: 'darwin', architecture: 'arm64',
+            });
+            assert.equal(result.python, true);
+            const after = { sha256: await hash_archive(archive), size: (await fs.stat(archive)).size };
+            controller.signal.throwIfAborted();
+            assert.deepEqual(after, before);
+            await owner.settled();
+            assert.deepEqual(children, { spawned: 2, closed: 2 });
+            await fs.copyFile(receiptPath, join(evidence, 'producer-receipt.json'));
+            await fs.writeFile(join(evidence, 'result.json'), JSON.stringify({
+              source_revision: revision, workflow_run_id: runId, node: process.version,
+              archive: before, unchanged_after_inspection: true, python_marker: result.python,
+              platform: 'darwin', architecture: 'arm64', children,
+              build_seconds: (built - started) / 1000,
+              inspection_seconds: (performance.now() - built) / 1000,
+              boundary: 'Unchanged native producer, production readonly inspector. No executor or service starts.',
+            }, null, 2) + '\n');
+            controller.signal.throwIfAborted();
+          } catch (error) {
+            let failure = error;
+            if (error instanceof MacArchiveInspectionUnsettled) {
+              try { await error.settled; }
+              catch (cleanup) {
+                if (cleanup !== error.cause)
+                  failure = new AggregateError([error.cause, cleanup], 'Mac inspection cleanup failed');
+              }
+            }
+            await fs.writeFile(join(evidence, 'failure.txt'), String(failure.stack ?? failure) + '\n');
+            throw failure;
+          } finally {
+            clearTimeout(inspectionTimer);
+            owner.seal();
+            controller.abort();
+            try {
+              try { owner.force_kill(performance.now() / 1000 + 5); }
+              finally { await owner.settled(); }
+            } finally {
+              process.off('SIGTERM', stop);
+              process.off('SIGINT', stop);
+              await fs.writeFile(join(evidence, 'children.json'), JSON.stringify(children) + '\n');
+            }
+            if (cleanupFailure) throw cleanupFailure;
+          }
+          MAC_COMPATIBILITY
+          for mac_evidence in producer.log producer-receipt.json result.json children.json; do
+            if [[ ! -s "$NATIVE_EVIDENCE/mac-producer-compatibility/$mac_evidence" ]]; then
+              printf 'Mac compatibility evidence is missing or empty: %s\n' "$mac_evidence" >&2
+              exit 1
+            fi
+          done
+          # Build the home from separate production inputs, then prove the sealed archive after relocation.
+          home_inputs="$TMPDIR/mac-home-inputs"
+          home_output="$TMPDIR/mac-home-output"
+          home_evidence="$NATIVE_EVIDENCE/mac-home"
+          mkdir -p "$home_inputs" "$home_evidence"
+          git archive --format=tar "$MAC_SOURCE_REVISION" | tar -xf - -C "$home_inputs"
+          NODE_ENV=production python -I -S -B "$home_inputs/scripts/dev_launcher.py" npm --prefix server ci
+          NODE_ENV=production python -I -S -B "$home_inputs/scripts/dev_launcher.py" npm --prefix agent_backends install
+          python -I -S -B "$home_inputs/scripts/dev_launcher.py" npm --prefix web ci
+          python -I -S -B "$home_inputs/scripts/dev_launcher.py" npm --prefix web run build
+          node server/environments/release/mac_home_main.ts \
+            --source "$GITHUB_WORKSPACE" --revision "$MAC_SOURCE_REVISION" --output "$home_output" \
+            --node-modules "$home_inputs/server/node_modules" \
+            --agent-backends "$home_inputs/agent_backends" --web-dist "$home_inputs/web/dist" \
+            --public-cli-entrypoint server/cli/main.ts \
+            > "$home_evidence/build.json" 2> "$home_evidence/build.stderr.log"
+          # The canonical producer CLI retires its app path, admits the archive, and proves clean foreground boot.
+          cp "$home_output"/*.json "$home_evidence/"
+          cp "$home_output/panels-app.tar.gz" "$home_evidence/panels-app.tar.gz"
+          export MAC_HOME_BUILD_METADATA="$home_output/mac-home-build.json"
+          export MAC_HOME_PRODUCTION_INPUTS="$home_inputs"
+          python -I -S -B scripts/dev_launcher.py npm --prefix server run test -- \
+            installation/home.native.test.ts --reporter=junit \
+            --outputFile "$NATIVE_EVIDENCE/first-home-darwin.xml"
+          NATIVE
+      - name: Preserve native ABI evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: lifecycle-native-darwin-arm64-node-22
+          path: ${{ runner.temp }}/lifecycle-native-evidence
+          if-no-files-found: warn
+
+  mac-package:
+    name: Build a test Mac package with synthetic installation values
+    if: github.event_name == 'workflow_dispatch' && inputs.build_mac_package
+    # macos-14 retired on 2026-11-02. The Manager approved standard macos-15 arm64.
+    # https://github.blog/changelog/2026-10-01-github-actions-macos-14-runner-image-retirement/
+    runs-on: macos-15
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Require the test package target
+        env:
+          TARGET_MAC_HOME: ${{ inputs.target_home }}
+          TARGET_EXECUTOR_ID: ${{ inputs.executor_id }}
+          TARGET_SERVER_URL: ${{ inputs.server_url }}
+          TARGET_BACKEND_PATH: ${{ inputs.backend_path }}
+        run: |
+          set -euo pipefail
+          : "${TARGET_MAC_HOME:?Package target HOME is required}"
+          : "${TARGET_EXECUTOR_ID:?Package executor ID is required}"
+          : "${TARGET_SERVER_URL:?Package HTTPS peer is required}"
+          : "${TARGET_BACKEND_PATH:?Package backend PATH is required}"
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '22'
+          architecture: arm64
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: '3.12'
+      - name: Assemble the native Node package
+        env:
+          TARGET_MAC_HOME: ${{ inputs.target_home }}
+          TARGET_EXECUTOR_ID: ${{ inputs.executor_id }}
+          TARGET_SERVER_URL: ${{ inputs.server_url }}
+          TARGET_BACKEND_PATH: ${{ inputs.backend_path }}
+        run: |
+          set -euo pipefail
+          umask 077
+          package_root="$RUNNER_TEMP/typescript-mac-package"
+          mkdir "$package_root"
+          mkdir "$package_root/source" "$package_root/home" "$package_root/tmp" "$package_root/npm-cache"
+          git archive --format=tar "$GITHUB_SHA" | tar -xf - -C "$package_root/source"
+          env -i PATH="$PATH" LANG=en_US.UTF-8 LC_ALL=en_US.UTF-8 \
+            GITHUB_ACTIONS=true GITHUB_WORKSPACE="$GITHUB_WORKSPACE" GITHUB_SHA="$GITHUB_SHA" \
+            HOME="$package_root/home" TMPDIR="$package_root/tmp" npm_config_cache="$package_root/npm-cache" \
+            PLAN_SERVER_URL=https://127.0.0.1:9 PLAN_TEST_MODE=0 \
+            PACKAGE_ROOT="$package_root" TARGET_MAC_HOME="$TARGET_MAC_HOME" \
+            TARGET_EXECUTOR_ID="$TARGET_EXECUTOR_ID" TARGET_SERVER_URL="$TARGET_SERVER_URL" \
+            TARGET_BACKEND_PATH="$TARGET_BACKEND_PATH" \
+            bash --noprofile --norc -euo pipefail <<'BUILD'
+          node --input-type=module -e 'if(process.platform!=="darwin"||process.arch!=="arm64"||Number(process.versions.node.split(".")[0])!==22||Number(process.versions.node.split(".")[1])<18)throw Error("Darwin arm64 Node22 >=22.18 required");console.log({node:process.versions.node,platform:process.platform,architecture:process.arch});'
+          node_distribution=$(node --input-type=module -e 'import{realpathSync}from"node:fs";import{dirname}from"node:path";console.log(dirname(dirname(realpathSync(process.execPath))));')
+          # NODE_ENV=production selects npm ci's production omission mode.
+          # The exported source gets its own production dependency tree.
+          NODE_ENV=production python3 -I -S -B "$PACKAGE_ROOT/source/scripts/dev_launcher.py" npm --prefix server ci
+          node "$PACKAGE_ROOT/source/server/executor/mac/packaging/main.ts" \
+            --source "$PACKAGE_ROOT/source" \
+            --node-distribution "$node_distribution" \
+            --node-modules "$PACKAGE_ROOT/source/server/node_modules" \
+            --output "$PACKAGE_ROOT/output" \
+            --revision "$GITHUB_SHA" \
+            --home "$TARGET_MAC_HOME" \
+            --executor-id "$TARGET_EXECUTOR_ID" \
+            --server-url "$TARGET_SERVER_URL" \
+            --backend-path "$TARGET_BACKEND_PATH"
+          printf '%s\n' 'TEST BUILD: synthetic installation values. Real installation values require the owner Mac session.' > "$PACKAGE_ROOT/output/TEST-BUILD.txt"
+          BUILD
+      - name: Upload runtime archive and installation assets
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: panels-typescript-mac-test-build-${{ github.sha }}
+          path: |
+            ${{ runner.temp }}/typescript-mac-package/output/panels-mac-runtime.tar.gz
+            ${{ runner.temp }}/typescript-mac-package/output/build.json
+            ${{ runner.temp }}/typescript-mac-package/output/TEST-BUILD.txt
+            ${{ runner.temp }}/typescript-mac-package/output/INSTALLATION.md
+            ${{ runner.temp }}/typescript-mac-package/output/assets/
+          if-no-files-found: error
+          retention-days: 30
+          compression-level: 0

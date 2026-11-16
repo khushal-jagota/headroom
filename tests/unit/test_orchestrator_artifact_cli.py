@@ -13,6 +13,7 @@ import pytest
 from click.testing import CliRunner, Result
 from fastapi.testclient import TestClient
 from tests.support.in_memory_conversation_system import InMemoryConversationSystem
+from tests.support.launch_identity import agent_environment
 
 from planner.cli.main import main
 from planner.core.clock import build_clock
@@ -77,6 +78,7 @@ def _create_item(client: TestClient, goal: str = "") -> str:
 
 
 def _invoke(
+    client: TestClient,
     runner: CliRunner,
     actor_item_id: str,
     *args: str,
@@ -90,6 +92,7 @@ def _invoke(
             "PLAN_SERVER_URL": "http://testserver",
             "PLAN_ACTOR": "manager",
             "PLAN_MANAGER_ID": actor_item_id,
+            **agent_environment(client, "manager", actor_item_id),
         },
     )
 
@@ -107,6 +110,7 @@ def test_own_artifact_round_trip_preserves_exact_text(
     body_file = tmp_path / "original.md"
     body_file.write_bytes(content.encode("utf-8"))
     written = _invoke(
+        client,
         runner,
         item_id,
         "artifact",
@@ -122,11 +126,11 @@ def test_own_artifact_round_trip_preserves_exact_text(
     url = json.loads(written.stdout)["url"]
     assert client.get(url).content == content.encode("utf-8")
 
-    human = _invoke(runner, item_id, "artifact", "read", item_id, "notes/original.md")
+    human = _invoke(client, runner, item_id, "artifact", "read", item_id, "notes/original.md")
     assert human.exit_code == 0, human.output
     assert human.stdout_bytes == content.encode("utf-8")
     structured = _invoke(
-        runner, item_id, "artifact", "read", item_id, "notes/original.md", "--json"
+        client, runner, item_id, "artifact", "read", item_id, "notes/original.md", "--json"
     )
     assert structured.exit_code == 0, structured.output
     assert json.loads(structured.stdout) == {
@@ -147,6 +151,7 @@ def test_foreign_manager_artifacts_remain_refused(
     body_file = tmp_path / "note.md"
     body_file.write_text("private", encoding="utf-8")
     written = _invoke(
+        client,
         runner,
         foreign,
         "artifact",
@@ -163,7 +168,7 @@ def test_foreign_manager_artifacts_remain_refused(
         args.append("context.md")
     if operation == "write":
         args.extend(["--body-file", str(body_file)])
-    result = _invoke(runner, own, *args, "--json")
+    result = _invoke(client, runner, own, *args, "--json")
     assert result.exit_code == 1, result.output
     assert result.stdout == ""
     assert json.loads(result.stderr)["error"]["code"] == "agent_forbidden"
@@ -186,6 +191,7 @@ def test_reserved_url_characters_keep_artifact_targets_distinct(
     for path, content in ((truncated_sibling, "sibling"), (artifact_path, "requested artifact")):
         source.write_text(content, encoding="utf-8")
         written = _invoke(
+            client,
             runner,
             item_id,
             "artifact",
@@ -200,18 +206,20 @@ def test_reserved_url_characters_keep_artifact_targets_distinct(
         assert json.loads(written.stdout)["path"] == f"artifacts/{path}"
 
     for path, content in ((truncated_sibling, "sibling"), (artifact_path, "requested artifact")):
-        read = _invoke(runner, item_id, "artifact", "read", item_id, path, "--json")
+        read = _invoke(client, runner, item_id, "artifact", "read", item_id, path, "--json")
         assert read.exit_code == 0, read.output
         assert json.loads(read.stdout)["path"] == path
         assert json.loads(read.stdout)["content"] == content
 
-    deleted = _invoke(runner, item_id, "artifact", "delete", item_id, artifact_path, "--json")
+    deleted = _invoke(
+        client, runner, item_id, "artifact", "delete", item_id, artifact_path, "--json"
+    )
     assert deleted.exit_code == 0, deleted.output
     assert json.loads(deleted.stdout)["path"] == f"artifacts/{artifact_path}"
-    missing = _invoke(runner, item_id, "artifact", "read", item_id, artifact_path, "--json")
+    missing = _invoke(client, runner, item_id, "artifact", "read", item_id, artifact_path, "--json")
     assert missing.exit_code == 1, missing.output
     assert json.loads(missing.stderr)["error"]["code"] == "not_found"
-    sibling = _invoke(runner, item_id, "artifact", "read", item_id, truncated_sibling)
+    sibling = _invoke(client, runner, item_id, "artifact", "read", item_id, truncated_sibling)
     assert sibling.exit_code == 0, sibling.output
     assert sibling.stdout_bytes == b"sibling"
 
@@ -227,7 +235,7 @@ def _create_goal(client: TestClient, holder_id: str) -> str:
 
 
 def _goal_invoke(
-    runner: CliRunner, holder_id: str, *args: str, stdin: bytes | None = None
+    client: TestClient, runner: CliRunner, holder_id: str, *args: str, stdin: bytes | None = None
 ) -> Result:
     return runner.invoke(
         main,
@@ -237,6 +245,7 @@ def _goal_invoke(
             "PLAN_SERVER_URL": "http://testserver",
             "PLAN_ACTOR": "manager",
             "PLAN_MANAGER_ID": holder_id,
+            **agent_environment(client, "manager", holder_id),
         },
     )
 
@@ -252,26 +261,34 @@ def test_goal_artifact_commands_preserve_targets_text_and_lifecycle(
     source = tmp_path / "note.md"
     source.write_bytes(content.encode())
     written = _goal_invoke(
-        runner, holder_id, "write", goal_id, path, "--body-file", str(source), "--json"
+        client, runner, holder_id, "write", goal_id, path, "--body-file", str(source), "--json"
     )
     assert written.exit_code == 0, written.output
     url = json.loads(written.stdout)["url"]
     assert url.endswith("notes/why%3Fnow%231.md")
     assert client.get(url).content == source.read_bytes()
-    read = _goal_invoke(runner, holder_id, "read", goal_id, path)
+    read = _goal_invoke(client, runner, holder_id, "read", goal_id, path)
     assert read.exit_code == 0, read.output
     assert read.stdout_bytes == source.read_bytes()
     updated = _goal_invoke(
-        runner, holder_id, "write", goal_id, path, "--body-file", "-", "--json",
-        stdin=b"updated\r\n"
+        client,
+        runner,
+        holder_id,
+        "write",
+        goal_id,
+        path,
+        "--body-file",
+        "-",
+        "--json",
+        stdin=b"updated\r\n",
     )
     assert updated.exit_code == 0, updated.output
-    structured = _goal_invoke(runner, holder_id, "read", goal_id, path, "--json")
+    structured = _goal_invoke(client, runner, holder_id, "read", goal_id, path, "--json")
     assert structured.exit_code == 0, structured.output
     assert json.loads(structured.stdout) == {
         "goal_id": goal_id, "path": path, "content": "updated\r\n"
     }
-    listed = _goal_invoke(runner, holder_id, "list", goal_id, "--json")
+    listed = _goal_invoke(client, runner, holder_id, "list", goal_id, "--json")
     assert listed.exit_code == 0, listed.output
     assert json.loads(listed.stdout) == {"goal_id": goal_id, "artifacts": [path]}
     for changes in ({"completed": True}, {"active": False}):
@@ -280,7 +297,7 @@ def test_goal_artifact_commands_preserve_targets_text_and_lifecycle(
         )
         assert changed.status_code == 200, changed.text
         assert client.get(url).content == b"updated\r\n"
-    deleted = _goal_invoke(runner, holder_id, "delete", goal_id, path, "--json")
+    deleted = _goal_invoke(client, runner, holder_id, "delete", goal_id, path, "--json")
     assert deleted.exit_code == 0, deleted.output
     assert json.loads(deleted.stdout) == {
         "goal_id": goal_id, "path": "artifacts/" + path, "ok": True
@@ -306,15 +323,15 @@ def test_goal_artifact_list_consumes_root_and_nested_pages_and_folded_index(
     # Newer unrelated root files put the artifacts folder beyond the first page.
     for index in range(PAGE_SIZE + 1):
         (root / f"{index:03}.md").write_text("outside artifacts")
-    listed = _goal_invoke(runner, holder_id, "list", goal_id, "--json")
+    listed = _goal_invoke(client, runner, holder_id, "list", goal_id, "--json")
     assert listed.exit_code == 0, listed.output
     assert json.loads(listed.stdout)["artifacts"] == paths
     (root / "artifacts" / "index.html").write_text("<p>site</p>")
     _cache.clear()
-    folded = _goal_invoke(runner, holder_id, "list", goal_id, "--json")
+    folded = _goal_invoke(client, runner, holder_id, "list", goal_id, "--json")
     assert folded.exit_code == 0, folded.output
     assert json.loads(folded.stdout)["artifacts"] == ["index.html"]
-    asset = _goal_invoke(runner, holder_id, "read", goal_id, paths[0])
+    asset = _goal_invoke(client, runner, holder_id, "read", goal_id, paths[0])
     assert asset.exit_code == 0 and asset.stdout == "note"
 
 
@@ -366,13 +383,22 @@ def test_goal_record_commands_emit_saved_pages_in_human_and_json_modes(
 
 
 def _page_invoke(
-    runner: CliRunner, actor: str, manager_id: str | None, *args: str, stdin: str | None = None
+    client: TestClient,
+    runner: CliRunner,
+    actor: str,
+    manager_id: str | None,
+    *args: str,
+    stdin: str | None = None,
 ) -> Result:
     return runner.invoke(
-        main, list(args), input=stdin,
+        main,
+        list(args),
+        input=stdin,
         env={
-            "PLAN_SERVER_URL": "http://testserver", "PLAN_ACTOR": actor,
+            "PLAN_SERVER_URL": "http://testserver",
+            "PLAN_ACTOR": actor,
             "PLAN_MANAGER_ID": manager_id or "",
+            **(agent_environment(client, actor, manager_id) if actor else {}),
         },
     )
 
@@ -383,55 +409,92 @@ def test_page_cli_targets_preserve_authority_and_documents(
     """New selectors must address each holder without changing the caller identity."""
     client, runner = artifact_cli
     manager_id = _create_item(client, "Keep this purpose.")
-    schema = _page_invoke(runner, "manager", manager_id, "page", "schema", "--json")
+    schema = _page_invoke(client, runner, "manager", manager_id, "page", "schema", "--json")
     document = json.loads(schema.stdout)["examples"]["checklist_and_workers"]["page"]
     for actor, selector in (("manager", ["--manager", manager_id]), ("chief", ["--chief"])):
         edited = _page_invoke(
-            runner, actor, manager_id, "page", "edit", *selector, "--json",
+            client,
+            runner,
+            actor,
+            manager_id,
+            "page",
+            "edit",
+            *selector,
+            "--json",
             stdin=json.dumps({"page": document}),
         )
         assert edited.exit_code == 0, edited.output
         accepted = json.loads(edited.stdout)
         assert accepted["page"] == document and accepted["page_revision"] == 1
-        shown = _page_invoke(runner, actor, manager_id, "page", "show", *selector)
+        shown = _page_invoke(client, runner, actor, manager_id, "page", "show", *selector)
         assert shown.exit_code == 0, shown.output
         assert json.loads(shown.stdout) == accepted
     denied = _page_invoke(
-        runner, "manager", manager_id, "page", "edit", "--chief", "--json",
+        client,
+        runner,
+        "manager",
+        manager_id,
+        "page",
+        "edit",
+        "--chief",
+        "--json",
         stdin=json.dumps({"page": document}),
     )
     assert denied.exit_code == 1
     assert json.loads(denied.stderr)["error"]["code"] == "agent_forbidden"
-    manifest = _invoke(runner, manager_id, "show", manager_id, "--json")
+    manifest = _invoke(client, runner, manager_id, "show", manager_id, "--json")
     assert manifest.exit_code == 0, manifest.output
     assert json.loads(manifest.stdout)["manifest"]["page"]["character_count"] == len(
         json.dumps(document, ensure_ascii=False)
     )
-    expanded = _invoke(runner, manager_id, "show", manager_id, "page", "--json")
+    expanded = _invoke(client, runner, manager_id, "show", manager_id, "page", "--json")
     assert expanded.exit_code == 0, expanded.output
     assert json.loads(expanded.stdout)["parts"]["page"]["value"] == document
     foreign_id = _create_item(client)
     foreign = _page_invoke(
-        runner, "manager", manager_id, "page", "edit", "--manager", foreign_id, "--json",
+        client,
+        runner,
+        "manager",
+        manager_id,
+        "page",
+        "edit",
+        "--manager",
+        foreign_id,
+        "--json",
         stdin=json.dumps({"page": document}),
     )
     assert foreign.exit_code == 1
     assert json.loads(foreign.stderr)["error"]["code"] == "agent_forbidden"
     assert client.get(f"/api/managers/{foreign_id}/page").json()["page"] is None
     invalid = _page_invoke(
-        runner, "manager", manager_id, "page", "edit", "--manager", manager_id, stdin="{}"
+        client, runner, "manager", manager_id, "page", "edit", "--manager", manager_id, stdin="{}"
     )
     assert invalid.exit_code == 1 and "panels page schema" in invalid.stderr
     for invalid_input in ("{", "[]", '{"page":{"kind":"wrong"}}'):
         malformed = _page_invoke(
-            runner, "manager", manager_id, "page", "edit", "--manager", manager_id,
+            client,
+            runner,
+            "manager",
+            manager_id,
+            "page",
+            "edit",
+            "--manager",
+            manager_id,
             stdin=invalid_input,
         )
         assert malformed.exit_code == 1 and "panels page schema" in malformed.stderr
     unchanged = client.get(f"/api/managers/{manager_id}/page").json()
     assert unchanged["page_revision"] == 1 and unchanged["page"] == document
     cleared = _page_invoke(
-        runner, "manager", manager_id, "page", "edit", "--manager", manager_id, "--json",
+        client,
+        runner,
+        "manager",
+        manager_id,
+        "page",
+        "edit",
+        "--manager",
+        manager_id,
+        "--json",
         stdin='{"page":null}',
     )
     assert cleared.exit_code == 0, cleared.output
@@ -446,7 +509,7 @@ def test_workspace_commands_follow_all_held_goal_cardinalities(
     """An inactive held goal still supplies the sole-goal view used by the browser."""
     client, runner = artifact_cli
     manager_id = _create_item(client)
-    empty = _invoke(runner, manager_id, "workspace", manager_id)
+    empty = _invoke(client, runner, manager_id, "workspace", manager_id)
     assert empty.exit_code == 0, empty.output
     assert f"Edit: panels page edit --manager {manager_id}" in empty.stdout
     created = client.post("/api/goals", json={
@@ -456,7 +519,7 @@ def test_workspace_commands_follow_all_held_goal_cardinalities(
     })
     assert created.status_code == 200, created.text
     goal_id = created.json()["id"]
-    sole = _invoke(runner, manager_id, "workspace", manager_id)
+    sole = _invoke(client, runner, manager_id, "workspace", manager_id)
     assert sole.exit_code == 0, sole.output
     assert f"Edit: panels goal edit {goal_id}" in sole.stdout
     assert "own document is hidden" in sole.stdout
@@ -466,10 +529,10 @@ def test_workspace_commands_follow_all_held_goal_cardinalities(
         "primary_checklist_block_id": None,
     })
     assert second.status_code == 200, second.text
-    multiple = _invoke(runner, manager_id, "workspace", manager_id)
+    multiple = _invoke(client, runner, manager_id, "workspace", manager_id)
     assert multiple.exit_code == 0, multiple.output
     assert f"Edit: panels page edit --manager {manager_id}" in multiple.stdout
     assert "Held outcome" in multiple.stdout and "Second outcome" in multiple.stdout
-    manifest = _invoke(runner, manager_id, "show", manager_id, "--json")
+    manifest = _invoke(client, runner, manager_id, "show", manager_id, "--json")
     assert manifest.exit_code == 0, manifest.output
     assert json.loads(manifest.stdout)["manifest"]["page"]["character_count"] == 0

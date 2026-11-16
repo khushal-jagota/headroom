@@ -11,7 +11,7 @@ import sqlite3
 
 from planner.executor.clock import now_ms
 from planner.machines.contracts import HOME_MACHINE_ID
-from planner.tickets import locale_configuration
+from planner.tickets import decision_messages, locale_configuration
 from planner.tickets.contracts import StageOwnershipMode, Ticket, TicketStatus
 from planner.tickets.logic import machine
 from planner.worker_types.contracts import WorkflowDefinition
@@ -50,6 +50,8 @@ def worker_step_blocker(
     # `empty` is the only startable control state.
     if ticket.ticket_status is not TicketStatus.empty:
         return f"the Ticket is at {ticket.ticket_status.value}, so no worker step is due"
+    if decision_messages.has_undelivered(conn, ticket.id):
+        return "decision feedback delivery is unresolved"
     if ownership_mode is StageOwnershipMode.user:
         opened = conn.execute(
             "SELECT 1 FROM ticket_paired_stage_openers WHERE ticket_id = ? AND stage = ?",
