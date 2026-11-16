@@ -227,10 +227,10 @@ jobs:
           .venv/bin/python -m pip install -r requirements.txt
           .venv/bin/python -m pip install --editable . --config-settings editable_mode=compat
           python -I -S -B scripts/development_safety/bootstrap.py npm --prefix server ci
-          # Reuse this hosted Darwin job for the real libproc boundary; synthetic tests cannot prove its ABI.
+          # Reuse this host for native process/socket and provider directory/lock evidence.
           python -I -S -B scripts/development_safety/bootstrap.py npm --prefix server run test -- \
             platform_runtime/worker_processes.native.test.ts lifecycle/paths.native.test.ts \
-            previews/darwin.native.test.ts --reporter=junit \
+            previews/darwin.native.test.ts skills/account.test.ts --reporter=junit \
             --outputFile "$NATIVE_EVIDENCE/process-home-preview-abi.xml"
           # No web build: this registry fixture uses synthetic app roots and no UI assets.
           python -I -S -B scripts/development_safety/bootstrap.py pytest \
