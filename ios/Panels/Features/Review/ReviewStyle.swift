@@ -111,6 +111,7 @@ struct DecisionMarkdown: View {
                     }
                 }
             }
+            ArtifactInlineMediaPreviews(source: source, baseURL: baseURL)
         }.lineSpacing(bodyLineSpacing).frame(maxWidth: .infinity, alignment: .leading)
     }
     private func inline(_ text: String) -> some View {
