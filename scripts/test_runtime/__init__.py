@@ -98,7 +98,9 @@ def validate_environment(
                 raise RuntimeRefusal(f"Test runtime refused deployment path: {name}={value}")
 
 
-def environment_for(root: Path, original: Mapping[str, str]) -> dict[str, str]:
+def environment_for(
+    root: Path, original: Mapping[str, str], *, socket_directory: Path | None = None
+) -> dict[str, str]:
     """Prepare defaults in caller-owned storage before fixture-specific overrides."""
     root = root.resolve()
     validate_environment({"PLAN_TEST_RUNTIME_ROOT": str(root)})
@@ -117,7 +119,7 @@ def environment_for(root: Path, original: Mapping[str, str]) -> dict[str, str]:
         "PLAN_DB_PATH": root / "planning.db",
         "PLAN_CREDENTIAL_KEY_PATH": root / "credential-key",
         "PLAN_DISPATCHER_LOCK_PATH": root / "dispatcher.lock",
-        "PLAN_SERVER_CONTROL_SOCKET": root / "control.sock",
+        "PLAN_SERVER_CONTROL_SOCKET": (socket_directory or root) / "control.sock",
         "PLAN_SERVER_LIFECYCLE_LEASE_PATH": root / "lifecycle-lease.json",
         "PLAN_TICKET_SCRATCH_DATABASE": root / "planning.db",
     }
@@ -155,14 +157,18 @@ class RuntimeIsolation:
         validate_environment({"PLAN_TEST_RUNTIME_ROOT": str(parent)})
         self._storage = tempfile.TemporaryDirectory(prefix="panels-test-", dir=parent)
         self.root = Path(self._storage.name)
+        self._socket_storage = tempfile.TemporaryDirectory(prefix="ps-", dir=Path("/tmp").resolve())
         try:
-            self.environment = environment_for(self.root, original)
+            self.environment = environment_for(
+                self.root, original, socket_directory=Path(self._socket_storage.name)
+            )
         except BaseException:
             self.close()
             raise
 
     def close(self) -> None:
         self._storage.cleanup()
+        self._socket_storage.cleanup()
 
     def __enter__(self) -> RuntimeIsolation:
         return self

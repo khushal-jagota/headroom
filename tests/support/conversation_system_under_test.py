@@ -685,7 +685,7 @@ async def open_conversation_system_under_test(
     against the same agent.
     """
     working_directory = Path(tempfile.mkdtemp(prefix="panels-conv2-"))
-    socket_directory = Path(tempfile.mkdtemp(prefix="pc2-"))
+    socket_directory = Path(tempfile.mkdtemp(prefix="pc2-", dir=Path("/tmp").resolve()))
     database_path = database_path or working_directory / "conversations.db"
     connection = connect(str(database_path), 5000)
     try:
