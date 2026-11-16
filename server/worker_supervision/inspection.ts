@@ -18,12 +18,12 @@ import { discover, validate_pending_shape } from './logic/ownership.ts';
 import { capture_observation } from './observation.ts';
 import { WorkerSupervisionRuntime } from './runtime.ts';
 import * as records from './records.ts';
-import { remove_transport } from '../platform_runtime/darwin/launchd/transport.ts';
+import { cleanup_transport } from '../platform_runtime/darwin/launchd/transport.ts';
 
 export const failure_message = (error: unknown): string =>
   error instanceof Error ? error.message : String(error);
 export const CLEANUP_SCOPE =
-  'Linux cleanup requires empty delegated cgroup custody for all inherited descendants. Legacy or unsupported Linux custody retains a cleanup fence. Processes launched through external brokers are outside descendant custody. Mac job cleanup requires removal of the exact launchd service. launchd owns its process group; detached descendants require native verification. Legacy Mac records use exact process birth checks.';
+  'Linux cleanup requires empty delegated cgroup custody for all inherited descendants. Legacy or unsupported Linux custody retains a cleanup fence. Processes launched through external brokers are outside descendant custody. Mac Worker liveness depends only on the exact launchd job. After job absence, same-user processes with the exact PANELS_WORKER_JOB marker receive a best-effort sweep. Processes without that marker can survive and never fence restart. Legacy Mac records use exact process birth checks.';
 export function cleanup_result(complete: boolean, reason: string): CleanupResult {
   return { complete, reason, scope: CLEANUP_SCOPE };
 }
@@ -50,7 +50,7 @@ export async function observe_unlocked(
   if (context.host.host !== record.host)
     throw new Error('Worker process record belongs to another machine');
   if (context.host.boot !== record.boot) {
-    if (record.launchd_socket_directory) await remove_transport(record.launchd_socket_directory);
+    if (record.launchd_socket_directory) await cleanup_transport(record.launchd_socket_directory);
     Object.assign(record, {
       state: 'complete',
       boot_ended: true,
@@ -149,7 +149,8 @@ export async function inspect_unlocked(
         false,
         status === 'running' ? 'Worker job is running' : 'Worker job remains loaded',
       );
-    if (record.launchd_socket_directory) await remove_transport(record.launchd_socket_directory);
+    await runtime.jobs.sweep(record.launchd, deadline);
+    if (record.launchd_socket_directory) await cleanup_transport(record.launchd_socket_directory);
     Object.assign(record, {
       state: 'complete',
       launch_revoked: true,
@@ -240,7 +241,7 @@ export function stop_record(path: string, options: InspectionOptions): Promise<C
           if (record.state === 'complete') {
             runtime.active_jobs.delete(path);
             if (record.launchd_socket_directory)
-              await remove_transport(record.launchd_socket_directory);
+              await cleanup_transport(record.launchd_socket_directory);
             return cleanup_result(true, record.reason ?? 'Recorded processes ended');
           }
           if (record.launchd) {
@@ -250,7 +251,13 @@ export function stop_record(path: string, options: InspectionOptions): Promise<C
             record.launch_revoked = true;
             await records.write(path, record);
             await runtime.jobs.stop(record.launchd, deadline);
-            return inspect_unlocked(path, settings);
+            if (record.launchd_socket_directory)
+              await cleanup_transport(record.launchd_socket_directory);
+            record.state = 'complete';
+            record.reason = 'Worker launchd job is absent';
+            await records.write(path, record);
+            runtime.active_jobs.delete(path);
+            return cleanup_result(true, record.reason);
           }
           if (record.root == null) return revoke(path, record);
           const term_deadline = Math.min(deadline, runtime.clock() + TERM_SECONDS);

@@ -17,6 +17,7 @@ import { RECORD_ROOT_ENV } from '../worker_supervision/config.ts';
 import { observe_promise } from '../core/promise_observer.ts';
 import { copy_environment } from '../core/environment.ts';
 import { DarwinWorkerProcesses } from './darwin/worker_processes.ts';
+import { WORKER_SWEEP_LIMIT_NOTICE } from './darwin/launchd/configuration.ts';
 import type { WorkerProcess } from '../worker_supervision/contracts.ts';
 
 const admitted = process.env.GITHUB_ACTIONS === 'true' && process.platform === 'darwin';
@@ -37,10 +38,15 @@ const children = new ChildProcesses();
 const command = 'setTimeout(() => process.exit(0), 600000)';
 const ordinary = children.spawn(process.execPath, ['-e', command], {stdio:'ignore', detached:false});
 const detached = children.spawn(process.execPath, ['-e', command], {stdio:'ignore', detached:true});
-await Promise.all([ordinary,detached].map(child => new Promise((resolve,reject) => {
+const cleared_environment = {...process.env};
+delete cleared_environment.PANELS_WORKER_JOB;
+const unmarked = process.env.PLAN_NATIVE_UNMARKED === '1'
+  ? children.spawn(process.execPath, ['-e', command], {env:cleared_environment,stdio:'ignore',detached:true})
+  : null;
+await Promise.all([ordinary,detached,...(unmarked ? [unmarked] : [])].map(child => new Promise((resolve,reject) => {
   child.once('spawn',resolve); child.once('error',reject);
 })));
-process.stdout.write(JSON.stringify({ordinary:ordinary.pid, detached:detached.pid})+'\\n');
+process.stdout.write(JSON.stringify({ordinary:ordinary.pid, detached:detached.pid, ...(unmarked ? {unmarked:unmarked.pid} : {}), marker:process.env.PANELS_WORKER_JOB})+'\\n');
 process.stderr.write('separate-stderr\\n');
 process.stdin.setEncoding('utf8');
 process.stdin.on('data', value => {
@@ -57,7 +63,7 @@ setTimeout(()=>process.exit(0),600000);
 `;
 
 test.skipIf(!admitted)(
-  'launchd owns protocol, crash, detached descendants, and recovery after executor death',
+  'launchd controls liveness and the marker sweep cleans detached tools across stop and recovery',
   async () => {
     const began = performance.now();
     const root = await mkdtemp(join(tmpdir(), 'worker-launchd-native-'));
@@ -67,6 +73,8 @@ test.skipIf(!admitted)(
     const supervisors: WorkerSupervisor[] = [];
     const proxies: ChildProcessWithoutNullStreams[] = [];
     const observed_descendants: WorkerProcess[] = [];
+    let unmarked_descendant: WorkerProcess | undefined;
+    const warning = vi.spyOn(console, 'warn');
     const runs: Record<string, unknown>[] = [];
     const failed_descendants: { phase: string; pids: number[] }[] = [];
     const record_end = async (phase: string, pids: number[]) => {
@@ -97,9 +105,9 @@ test.skipIf(!admitted)(
       PLAN_CONVERSATION_ID: 'native-launchd-conversation',
       [RECORD_ROOT_ENV]: records_root,
     };
-    const start = async (ticket_id = environment.PLAN_TICKET_ID) => {
+    const start = async (ticket_id = environment.PLAN_TICKET_ID, unmarked = false) => {
       const supervisor = await WorkerSupervisor.create(
-        { ...environment, PLAN_TICKET_ID: ticket_id },
+        { ...environment, PLAN_TICKET_ID: ticket_id, PLAN_NATIVE_UNMARKED: unmarked ? '1' : '0' },
         root,
         { runtime },
       );
@@ -121,6 +129,8 @@ test.skipIf(!admitted)(
       const descendants = JSON.parse(output.stdout.split('\n')[0]!) as {
         ordinary: number;
         detached: number;
+        unmarked?: number;
+        marker: string;
       };
       const table = await runtime.primitives.snapshot(runtime.clock() + 5);
       for (const pid of [descendants.ordinary, descendants.detached]) {
@@ -128,16 +138,22 @@ test.skipIf(!admitted)(
         if (!identity) throw new Error(`Native inventory omitted owned descendant ${pid}`);
         observed_descendants.push(identity);
       }
+      if (descendants.unmarked !== undefined) {
+        const observed = table.get(descendants.unmarked);
+        if (!observed) throw new Error('Native inventory omitted the unmarked fixture tool');
+        unmarked_descendant = observed;
+      }
       const identity = await supervisor.identity();
+      expect(identity?.unit?.endsWith('/' + descendants.marker)).toBe(true);
       expect(identity?.unit).toMatch(
         new RegExp(`^gui/${process.getuid!()}/com\\.panels\\.worker\\.`),
       );
       runs.push({ path: supervisor.path, identity, descendants });
-      return { supervisor, proxy, output, descendants };
+      return { supervisor, proxy, output, descendants, identity };
     };
     try {
       // Real pipes must preserve separate stderr, input, and EOF across launchd's bridge.
-      const first = await start();
+      const first = await start(environment.PLAN_TICKET_ID, true);
       first.proxy.stdin.write('ping\n');
       await expect.poll(() => first.output.stdout, { timeout: 5_000 }).toContain('echo:ping\n');
       await expect
@@ -163,23 +179,50 @@ test.skipIf(!admitted)(
           .digest('hex'),
       );
       expect(first.output.stderr).toContain('bulk-done');
-      expect((await first.supervisor.stop()).complete).toBe(true);
-      await record_end('stdin EOF', Object.values(first.descendants));
+      const first_stop = await first.supervisor.stop();
+      expect(first_stop.complete).toBe(true);
+      await record_end('stdin EOF', [first.descendants.ordinary, first.descendants.detached]);
+      expect(
+        [...warning.mock.calls.flatMap((args) => args.map(String)), first.output.stderr].some(
+          (text) => text.includes(WORKER_SWEEP_LIMIT_NOTICE),
+        ),
+        'cleanup must log its marker-clearing limitation',
+      ).toBe(true);
+      expect(unmarked_descendant).toBeDefined();
+      expect(await runtime.primitives.is_absent(unmarked_descendant!, runtime.clock() + 5)).toBe(
+        false,
+      );
+      runs.push({ unmarked_descendant, limitation_notice: WORKER_SWEEP_LIMIT_NOTICE, first_stop });
 
       const second = await start();
+      expect(second.identity?.unit).not.toBe(first.identity?.unit);
+      expect(await runtime.primitives.is_absent(unmarked_descendant!, runtime.clock() + 5)).toBe(
+        false,
+      );
+      runs.push({
+        restart_with_unmarked_tool_alive: true,
+        previous_job: first.identity?.unit,
+        next_job: second.identity?.unit,
+      });
+      expect(JSON.parse(await readFile(first.supervisor.path, 'utf8')).state).toBe('complete');
       second.proxy.stdin.write('crash\n');
       expect((await observe_promise(child_lifetime(second.proxy).closed, 10_000)).completed).toBe(
         true,
       );
       expect(second.proxy.exitCode === 0 && second.proxy.signalCode === null).toBe(false);
       expect((await second.supervisor.stop()).complete).toBe(true);
-      await record_end('Worker crash', Object.values(second.descendants));
+      await record_end('Worker crash', [second.descendants.ordinary, second.descendants.detached]);
 
       const stopped = await start();
       expect((await stopped.supervisor.stop()).complete).toBe(true);
       expect((await observe_promise(child_lifetime(stopped.proxy).closed, 10_000)).completed).toBe(
         true,
       );
+
+      await record_end('explicit stop', [
+        stopped.descendants.ordinary,
+        stopped.descendants.detached,
+      ]);
 
       // A separate process is the executor owner. SIGKILL bypasses all its finally blocks.
       const executor_source = `
@@ -236,13 +279,22 @@ setInterval(()=>{},1000);
       expect(reconciliation.complete, reconciliation.reason).toBe(true);
       expect(JSON.parse(await readFile(recovered.path, 'utf8')).state).toBe('complete');
       runs.push({ recovered, reconciliation });
-      await record_end('executor SIGKILL and recovery', Object.values(recovered.descendants));
+      await record_end('executor SIGKILL and recovery', [
+        recovered.descendants.ordinary,
+        recovered.descendants.detached,
+      ]);
       const restarted = await start('native-recovery-worker');
       expect((await restarted.supervisor.identity())?.unit).not.toBe(recovered.identity.unit);
       expect((await restarted.supervisor.stop()).complete).toBe(true);
-      await record_end('restart stop', Object.values(restarted.descendants));
+      await record_end('restart stop', [
+        restarted.descendants.ordinary,
+        restarted.descendants.detached,
+      ]);
 
-      // A job's absence must also mean its descendants ended. Detached tools are material here.
+      // All five marked detached tools must end. The marker-cleared fixture demonstrates the declared limit.
+      expect(await runtime.primitives.is_absent(unmarked_descendant!, runtime.clock() + 5)).toBe(
+        false,
+      );
       const survivors: WorkerProcess[] = [];
       for (const descendant of observed_descendants)
         if (!(await runtime.primitives.is_absent(descendant, runtime.clock() + 5)))
@@ -250,9 +302,9 @@ setInterval(()=>{},1000);
       runs.push({ survivors, failed_descendants });
       expect(
         failed_descendants,
-        'launchd removal left owned descendants alive past its cleanup boundary',
+        'the sweep left marked descendants alive past its cleanup boundary',
       ).toEqual([]);
-      expect(survivors, 'launchd removal left an owned detached descendant alive').toEqual([]);
+      expect(survivors, 'the sweep left an owned marked detached descendant alive').toEqual([]);
     } finally {
       const cleanup_errors: unknown[] = [];
       for (const supervisor of supervisors)
@@ -265,6 +317,8 @@ setInterval(()=>{},1000);
       // Native test cleanup uses only exact births observed for this fixture's own children.
       for (const descendant of observed_descendants)
         await runtime.primitives.signal(descendant, 9, runtime.clock() + 5);
+      if (unmarked_descendant)
+        await runtime.primitives.signal(unmarked_descendant, 9, runtime.clock() + 5);
       for (const proxy of proxies) signal_child(proxy, 'SIGKILL', false);
       await reconcile(records_root, { runtime }).catch((error) => cleanup_errors.push(error));
       await runtime.close();
@@ -272,6 +326,7 @@ setInterval(()=>{},1000);
       processes.seal();
       await probes.settled();
       expect((await observe_promise(processes.settled(), 10_000)).completed).toBe(true);
+      warning.mockRestore();
       const evidence = {
         platform: process.platform,
         architecture: process.arch,

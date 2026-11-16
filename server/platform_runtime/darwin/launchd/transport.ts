@@ -3,6 +3,7 @@ import { createConnection, type Socket } from 'node:net';
 import { lstat, readdir, rmdir, unlink } from 'node:fs/promises';
 import { join } from 'node:path';
 import { NICE, TERM_SECONDS } from '../../../worker_supervision/config.ts';
+import { WORKER_JOB_ENVIRONMENT_KEY } from './configuration.ts';
 
 export const channels = ['stdin', 'stdout', 'stderr', 'control'] as const;
 export type Channel = (typeof channels)[number];
@@ -53,6 +54,20 @@ export async function remove_transport(directory: string): Promise<void> {
     if (error.code !== 'ENOENT') throw error;
   });
 }
+/** Private file residue cannot override the service manager's liveness decision. */
+export async function cleanup_transport(directory: string): Promise<void> {
+  try {
+    await remove_transport(directory);
+  } catch {
+    try {
+      console.warn(
+        'Mac Worker transport cleanup did not finish. Job absence still permits restart.',
+      );
+    } catch {
+      /* A failed notice cannot revoke proven job absence. */
+    }
+  }
+}
 const escape_xml = (value: string): string =>
   value.replace(
     /[<>&"']/g,
@@ -67,7 +82,7 @@ export function job_plist(
 ): string {
   const string = (value: string) => `<string>${escape_xml(value)}</string>`;
   return `<?xml version="1.0" encoding="UTF-8"?>\n<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">\n<plist version="1.0"><dict><key>Label</key>${string(label)}<key>ProgramArguments</key><array>${argv.map(string).join('')}</array><key>WorkingDirectory</key>${string(cwd)}<key>EnvironmentVariables</key><dict>${Object.entries(
-    environment,
+    { ...environment, [WORKER_JOB_ENVIRONMENT_KEY]: label },
   )
     .map(([key, value]) => `<key>${escape_xml(key)}</key>${string(value)}`)
     .join(

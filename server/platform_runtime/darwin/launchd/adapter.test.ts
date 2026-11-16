@@ -3,6 +3,7 @@ import { DarwinWorkerJobs, service_target } from './adapter.ts';
 import { job_plist } from './transport.ts';
 import { NICE } from '../../../worker_supervision/config.ts';
 import type { WorkerJobIdentity } from '../../../worker_supervision/contracts.ts';
+import { WORKER_SWEEP_LIMIT_NOTICE } from './configuration.ts';
 
 const job: WorkerJobIdentity = {
   domain: `gui/${process.getuid!()}`,
@@ -56,5 +57,47 @@ describe('Mac Worker launchd custody', () => {
     expect(job_plist(first.label, ['/test'], {}, '/')).toContain(
       `<key>Nice</key><integer>${NICE}</integer>`,
     );
+    const plist = job_plist(first.label, ['/test'], { PANELS_WORKER_JOB: 'inherited-spoof' }, '/');
+    expect(plist).toContain(`<key>PANELS_WORKER_JOB</key><string>${first.label}</string>`);
+    expect(plist).not.toContain('inherited-spoof');
+  });
+  test('already absent jobs sweep current marked processes with TERM then a fresh KILL scan', async () => {
+    const process = { pid: 42, birth: '10:20' };
+    const scan = vi.fn().mockReturnValue({ processes: [process], unreadable: 0 });
+    const signal = vi.fn().mockReturnValue(true);
+    const notice = vi.fn();
+    const jobs = new DarwinWorkerJobs({
+      commands: { run: vi.fn() },
+      kernel: { scan, signal },
+      notice,
+    });
+    vi.spyOn(jobs, 'status').mockResolvedValue('absent');
+    await expect(jobs.stop(job, performance.now() / 1000 + 2)).resolves.toBeUndefined();
+    expect(scan).toHaveBeenCalledTimes(2);
+    expect(signal.mock.calls.map((call) => call.slice(0, 3))).toEqual([
+      [process, job.label, 15],
+      [process, job.label, 9],
+    ]);
+    expect(notice).toHaveBeenCalledWith(WORKER_SWEEP_LIMIT_NOTICE);
+  });
+  test('process inspection failures after job absence remain notices and cannot fence restart', async () => {
+    const notice = vi.fn();
+    const signal = vi.fn();
+    const jobs = new DarwinWorkerJobs({
+      commands: { run: vi.fn() },
+      clock: () => 0,
+      kernel: {
+        scan: () => {
+          throw new Error('sysctl denied');
+        },
+        signal,
+      },
+      notice,
+    });
+    vi.spyOn(jobs, 'status').mockResolvedValue('absent');
+    await expect(jobs.stop(job, 2)).resolves.toBeUndefined();
+    expect(signal).not.toHaveBeenCalled();
+    expect(notice).toHaveBeenCalledWith(WORKER_SWEEP_LIMIT_NOTICE);
+    expect(notice).toHaveBeenCalledWith(expect.stringContaining('did not finish'));
   });
 });

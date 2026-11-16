@@ -15,6 +15,11 @@ import { monotonic_seconds } from '../../lifecycle/configuration.ts';
 import { MAC_AGENT_PROCESS_PROBE_TIMEOUT_SECONDS } from '../configuration.ts';
 import { shell_quote } from '../../conversation/worker_unit/logic.ts';
 import { flock } from '../../core/locks/flock.ts';
+import { has_worker_job_marker } from '../../platform_runtime/darwin/launchd/logic/process_arguments.ts';
+import type {
+  MarkedWorkerProcess,
+  MarkedWorkerProcessScan,
+} from '../../platform_runtime/darwin/launchd/contracts.ts';
 import {
   absolute_executor_path,
   default_linux_executor_root,
@@ -812,7 +817,7 @@ function worker_process_native(signature: string) {
   }
   return callable;
 }
-export function darwin_worker_process_info(pid: number): DarwinWorkerProcessInfo | null {
+function worker_bsdinfo(pid: number): Buffer | null {
   // XNU proc_bsdinfo LP64 layout. Birth fields are uint64 and must never pass through Number.
   const info = Buffer.alloc(136);
   koffi.errno(0);
@@ -826,6 +831,11 @@ export function darwin_worker_process_info(pid: number): DarwinWorkerProcessInfo
       code: errno > 0 ? getSystemErrorName(-errno) : 'EIO',
     });
   }
+  return info;
+}
+export function darwin_worker_process_info(pid: number): DarwinWorkerProcessInfo | null {
+  const info = worker_bsdinfo(pid);
+  if (info === null) return null;
   return {
     pid,
     birth: `${info.readBigUInt64LE(120)}:${info.readBigUInt64LE(128)}`,
@@ -833,6 +843,79 @@ export function darwin_worker_process_info(pid: number): DarwinWorkerProcessInfo
     group: info.readUInt32LE(100),
     zombie: info.readUInt32LE(4) === 5,
   };
+}
+/** Environment bytes never leave this native bridge. Only exact marker matches do. */
+function worker_argument_bytes(pid: number): Buffer {
+  const sysctl = native(
+    'int sysctl(const int *name, unsigned int namelen, void *oldp, size_t *oldlenp, const void *newp, size_t newlen)',
+  );
+  const capacity = Buffer.alloc(4);
+  const capacity_length = new BigUint64Array([4n]);
+  checked('sysctl kern.argmax', () =>
+    sysctl(new Int32Array([1, 8]), 2, capacity, capacity_length, null, 0),
+  );
+  const maximum = capacity.readInt32LE(0);
+  if (maximum <= 0) throw new Error('Mac argument capacity is unavailable');
+  const bytes = Buffer.alloc(maximum);
+  const length = new BigUint64Array([BigInt(maximum)]);
+  checked('sysctl KERN_PROCARGS2', () =>
+    sysctl(new Int32Array([1, 49, pid]), 3, bytes, length, null, 0),
+  );
+  if (length[0]! > BigInt(bytes.length)) throw new Error('Mac argument response is incomplete');
+  return bytes.subarray(0, Number(length[0]));
+}
+function marked_worker_process(pid: number, label: string): MarkedWorkerProcess | null {
+  const info = worker_bsdinfo(pid);
+  if (info === null || info.readUInt32LE(20) !== process.getuid!() || info.readUInt32LE(4) === 5)
+    return null;
+  if (!has_worker_job_marker(worker_argument_bytes(pid), label)) return null;
+  return { pid, birth: `${info.readBigUInt64LE(120)}:${info.readBigUInt64LE(128)}` };
+}
+export function darwin_marked_worker_processes(
+  label: string,
+  deadline: number,
+  clock: () => number = monotonic_seconds,
+): MarkedWorkerProcessScan {
+  const list = worker_process_native(
+    'int proc_listpids(uint32_t type, uint32_t typeinfo, void *buffer, int buffersize)',
+  );
+  const count = list(4, process.getuid!(), null, 0);
+  if (count <= 0) throw new Error('Mac process inventory is unavailable');
+  const processes: MarkedWorkerProcess[] = [];
+  let unreadable = 0;
+  for (const pid of darwin_process_ids(Math.floor(count / 4) + 1024, true)) {
+    if (clock() >= deadline) throw new Error('Mac process sweep deadline expired');
+    try {
+      const current = marked_worker_process(pid, label);
+      if (current) processes.push(current);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ESRCH') unreadable++;
+    }
+  }
+  return { processes, unreadable };
+}
+export function darwin_signal_marked_worker_process(
+  process_identity: MarkedWorkerProcess,
+  label: string,
+  signum: number,
+  deadline: number,
+  clock: () => number = monotonic_seconds,
+): boolean {
+  if (clock() >= deadline) return false;
+  const current = marked_worker_process(process_identity.pid, label);
+  if (current === null || current.birth !== process_identity.birth || clock() >= deadline)
+    return false;
+  // Recheck same-user birth after the environment read. No asynchronous boundary
+  // separates the final exact-marker observation from this exact-incarnation signal.
+  const final = worker_bsdinfo(process_identity.pid);
+  if (
+    final === null ||
+    final.readUInt32LE(20) !== process.getuid!() ||
+    `${final.readBigUInt64LE(120)}:${final.readBigUInt64LE(128)}` !== current.birth
+  )
+    return false;
+  process.kill(process_identity.pid, signum);
+  return true;
 }
 export function darwin_worker_process_snapshot(
   deadline: number,

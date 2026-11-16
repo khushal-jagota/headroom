@@ -41,6 +41,8 @@ export interface WorkerJobPrimitives {
   identity(root: string, token: string): WorkerJobIdentity;
   status(job: WorkerJobIdentity, deadline: number): Promise<'absent' | 'loaded' | 'running'>;
   stop(job: WorkerJobIdentity, deadline: number): Promise<void>;
+  /** Best effort only, after the caller proves that the job is absent. */
+  sweep(job: WorkerJobIdentity, deadline: number): Promise<void>;
 }
 export interface CleanupResult {
   readonly complete: boolean;

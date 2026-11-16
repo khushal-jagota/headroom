@@ -11,7 +11,7 @@ import { observe_promise } from '../../../core/promise_observer.ts';
 import { START_SECONDS, STOP_SECONDS } from '../../../worker_supervision/config.ts';
 import * as records from '../../../worker_supervision/records.ts';
 import { DarwinWorkerJobs } from './adapter.ts';
-import { channels, type Channel, job_plist, remove_transport } from './transport.ts';
+import { channels, type Channel, job_plist, cleanup_transport } from './transport.ts';
 
 export async function run_proxy(record_path: string, command: readonly string[]): Promise<number> {
   const children = new ChildProcesses();
@@ -149,7 +149,7 @@ export async function run_proxy(record_path: string, command: readonly string[])
       current.launch_revoked = true;
       await records.write(record_path, current);
       await jobs.stop(job, monotonic_seconds() + STOP_SECONDS);
-      await remove_transport(directory);
+      await cleanup_transport(directory);
       current.state = 'complete';
       current.reason = 'Mac Worker job ended and was removed';
       await records.write(record_path, current);
@@ -180,7 +180,7 @@ export async function run_proxy(record_path: string, command: readonly string[])
       await probes.settled();
       children.seal();
       await children.settled();
-      if (!admitted || removed) await remove_transport(directory);
+      if (!admitted || removed) await cleanup_transport(directory);
     }
   }
 }

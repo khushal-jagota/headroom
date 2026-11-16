@@ -1,6 +1,7 @@
 /** The recorded launchd service target is the authority for a Mac Worker. */
 import { createHash } from 'node:crypto';
 import { realpathSync } from 'node:fs';
+import { setTimeout as pause } from 'node:timers/promises';
 import type { OwnedOneShotChildren } from '../../../lifecycle/contracts.ts';
 import { BackendCommands } from '../../../conversation/snapshot/commands.ts';
 import { monotonic_seconds } from '../../../lifecycle/configuration.ts';
@@ -8,6 +9,16 @@ import type {
   WorkerJobIdentity,
   WorkerJobPrimitives,
 } from '../../../worker_supervision/contracts.ts';
+import {
+  darwin_marked_worker_processes,
+  darwin_signal_marked_worker_process,
+} from '../../../executor/mac/platform.ts';
+import type { MarkedWorkerProcessKernel } from './contracts.ts';
+import {
+  WORKER_SWEEP_LIMIT_NOTICE,
+  WORKER_SWEEP_SECONDS,
+  WORKER_SWEEP_TERM_SECONDS,
+} from './configuration.ts';
 
 export function service_target(job: WorkerJobIdentity): string {
   if (
@@ -22,15 +33,25 @@ export function service_target(job: WorkerJobIdentity): string {
 export class DarwinWorkerJobs implements WorkerJobPrimitives {
   readonly #commands: Pick<BackendCommands, 'run'>;
   readonly #clock: () => number;
+  readonly #kernel: MarkedWorkerProcessKernel;
+  readonly #notice: (message: string) => void;
   constructor(options: {
     children?: OwnedOneShotChildren;
     commands?: Pick<BackendCommands, 'run'>;
     clock?: () => number;
+    kernel?: MarkedWorkerProcessKernel;
+    notice?: (message: string) => void;
   }) {
     if (!options.children && !options.commands)
       throw new Error('Mac Worker jobs require an owned command scope');
     this.#commands = options.commands ?? new BackendCommands(options.children!);
     this.#clock = options.clock ?? monotonic_seconds;
+    this.#kernel = options.kernel ?? {
+      scan: (label, deadline) => darwin_marked_worker_processes(label, deadline, this.#clock),
+      signal: (process, label, signum, deadline) =>
+        darwin_signal_marked_worker_process(process, label, signum, deadline, this.#clock),
+    };
+    this.#notice = options.notice ?? ((message) => console.warn(message));
   }
   identity(root: string, token: string): WorkerJobIdentity {
     if (!/^[0-9a-f]{32}$/.test(token)) throw new Error('Invalid Mac Worker launch token');
@@ -68,11 +89,50 @@ export class DarwinWorkerJobs implements WorkerJobPrimitives {
   }
   async stop(job: WorkerJobIdentity, deadline: number): Promise<void> {
     const target = service_target(job);
-    if ((await this.status(job, deadline)) === 'absent') return;
-    const result = await this.command(['bootout', target], deadline);
-    if ((await this.status(job, deadline)) !== 'absent')
-      throw new Error(
-        `Mac Worker job removal is not proven: ${result.standard_error || result.standard_output}`,
-      );
+    if ((await this.status(job, deadline)) !== 'absent') {
+      const result = await this.command(['bootout', target], deadline);
+      if ((await this.status(job, deadline)) !== 'absent')
+        throw new Error(
+          `Mac Worker job removal is not proven: ${result.standard_error || result.standard_output}`,
+        );
+    }
+    await this.sweep(job, deadline);
+  }
+  sweep(job: WorkerJobIdentity, deadline: number): Promise<void> {
+    service_target(job);
+    return this.#sweep(job.label, Math.min(deadline, this.#clock() + WORKER_SWEEP_SECONDS));
+  }
+  async #sweep(label: string, deadline: number): Promise<void> {
+    // This notice states a detection limit, not an observation of a survivor.
+    // A failed or incomplete sweep never changes the proven job absence.
+    const notice = (message: string) => {
+      try {
+        this.#notice(message);
+      } catch {
+        /* Logging cannot revoke job absence. */
+      }
+    };
+    notice(WORKER_SWEEP_LIMIT_NOTICE);
+    try {
+      for (const signum of [15, 9]) {
+        if (this.#clock() >= deadline) throw new Error('deadline expired');
+        const snapshot = this.#kernel.scan(label, deadline);
+        if (snapshot.unreadable)
+          notice(`Mac Worker process sweep skipped ${snapshot.unreadable} unreadable processes.`);
+        for (const process of snapshot.processes) {
+          try {
+            this.#kernel.signal(process, label, signum, deadline);
+          } catch {
+            notice('Mac Worker process sweep could not signal a marked process.');
+          }
+        }
+        if (signum === 15 && snapshot.processes.length)
+          await pause(
+            Math.max(0, Math.min(WORKER_SWEEP_TERM_SECONDS, deadline - this.#clock())) * 1000,
+          );
+      }
+    } catch {
+      notice('Mac Worker process sweep did not finish. Job absence still permits restart.');
+    }
   }
 }

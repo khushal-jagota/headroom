@@ -2,7 +2,7 @@
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, expect, test } from 'vitest';
+import { afterEach, expect, test, vi } from 'vitest';
 import { WorkerSupervisor } from './service.ts';
 import { WorkerSupervisionRuntime } from './runtime.ts';
 import { inspect_record, reconcile, stop_record } from './inspection.ts';
@@ -17,6 +17,7 @@ import type {
 const roots: string[] = [];
 const runtimes: WorkerSupervisionRuntime[] = [];
 afterEach(async () => {
+  vi.restoreAllMocks();
   await Promise.all(runtimes.splice(0).map((runtime) => runtime.close()));
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
 });
@@ -42,6 +43,7 @@ const no_process_evidence: WorkerProcessPrimitives = {
 class Jobs implements WorkerJobPrimitives {
   state: 'absent' | 'loaded' | 'running' = 'absent';
   stopped = 0;
+  swept = 0;
   fail_stop = false;
   identity(_root: string, token: string): WorkerJobIdentity {
     return {
@@ -51,6 +53,9 @@ class Jobs implements WorkerJobPrimitives {
   }
   async status() {
     return this.state;
+  }
+  async sweep() {
+    this.swept++;
   }
   async stop() {
     this.stopped++;
@@ -92,6 +97,13 @@ test('new Mac custody rejects a duplicate and retires by job label despite unava
   expect(jobs.stopped).toBe(1);
   expect((await records.read(supervisor.path)).launch_revoked).toBe(true);
   expect(owner.active_jobs.size).toBe(0);
+  const natural = (await WorkerSupervisor.create(environment, root, { runtime: owner }))!;
+  const natural_record = await records.read(natural.path);
+  natural_record.state = 'running';
+  await records.write(natural.path, natural_record);
+  expect((await inspect_record(natural.path, { runtime: owner })).complete).toBe(true);
+  expect(jobs.swept).toBe(1);
+  expect((await records.read(natural.path)).state).toBe('complete');
 });
 
 test('a fresh executor removes loaded crash residue before a new launch and retains refusal evidence', async () => {
@@ -102,12 +114,14 @@ test('a fresh executor removes loaded crash residue before a new launch and reta
   expect((await reconcile(root, { runtime: recovered })).complete).toBe(false);
   expect((await records.read(supervisor.path)).launch_revoked).toBe(true);
   jobs.fail_stop = false;
+  const notice = vi.spyOn(console, 'warn').mockImplementation(() => {});
   const residue = await records.read(supervisor.path);
   residue.launchd_socket_directory = '/outside-the-private-transport-root';
   await records.write(supervisor.path, residue);
-  expect((await reconcile(root, { runtime: recovered })).complete).toBe(false);
+  expect((await reconcile(root, { runtime: recovered })).complete).toBe(true);
   const retained = await records.read(supervisor.path);
-  expect(retained.state).not.toBe('complete');
+  expect(retained.state).toBe('complete');
+  expect(notice).toHaveBeenCalledWith(expect.stringContaining('transport cleanup did not finish'));
   delete retained.launchd_socket_directory;
   await records.write(supervisor.path, retained);
   expect((await reconcile(root, { runtime: recovered })).complete).toBe(true);

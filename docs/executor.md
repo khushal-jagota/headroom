@@ -6,7 +6,7 @@ Several extra machines can pull work from one home. Each Ticket names its destin
 
 Mac arm64 and Linux x86_64 executors use the same pull link and Worker supervisor. Enrollment screens remain outside this system.
 
-The TypeScript Mac executor gives each new Worker its own launchd job. A saved job label identifies that launch through stop, crash cleanup, and executor recovery. A restart waits for the old job to disappear. Historical records still use exact process birth evidence until their old launches retire. Linux retains its cgroup custody.
+The TypeScript Mac executor gives each new Worker its own launchd job. A saved job label identifies that launch through stop, crash cleanup, and executor recovery. A restart waits for the old job to disappear. After job removal, a best-effort sweep stops same-user tools that retain that job's environment marker. Tools can clear the marker, so the sweep logs this limit and never blocks restart. Historical records still use exact process birth evidence until their old launches retire. Linux retains its cgroup custody.
 
 ## The pieces
 
