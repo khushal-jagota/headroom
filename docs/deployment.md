@@ -27,6 +27,8 @@ The TypeScript Linux builder rebuilds browser assets from source, then removes b
 - **The installer.** One small program that uses only Python's standard library. It runs outside every app, so the app it replaces cannot break it.
 - **The attempt record.** One small file beside the live data, outside the database and its backups. It says what one press of Update is doing and how it ended, with the time of each step. The update card and the deployment status that the iOS app shows read it. It is the one file that crosses versions, so every version ignores what it does not know and keeps it when it writes.
 
+The separate hosted cutover rehearsal uses a synthetic database and a real Linux user service. It exercises the Python migration bridge, the TypeScript replacement, and both rollback paths. Its fixture supplies the staged release and attempt, so it does not prove GitHub publication discovery or the owner's Update action. No live host or Mac participates.
+
 ## What a release needs from the host
 
 A release brings its own Python, so installation never runs a package installer. The Mac builder compiles pinned ICU source for macOS 15. Host Homebrew bottles do not set the release minimum. Before publication, a separate proof runs the archive on a minimal Debian root with no Python 3.12 and no network.
