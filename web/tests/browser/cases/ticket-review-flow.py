@@ -1057,7 +1057,7 @@ def run(browser, urls):
     expect(page.locator("[data-approval-block] .error-line")).to_contain_text(
         "Server refused this action"
     )
-    expect(page.locator("[data-approval-block] .error-code")).to_have_text("validation")
+    expect(page.locator("[data-approval-block] .error-line")).to_have_attribute("data-error-code", "validation")
     assert len(ceiling_writes) == 1 and approvals == []
     ceiling_writes.clear()
     refuse_scope_save = False
