@@ -27,6 +27,17 @@ working endpoint rather than inventing a new backend route. Its saved `workflow`
 supplies Ticket and Review controls, stage names and approval gates. The nullable
 `worker_type` identifies the creation preset and never supplies those controls.
 
+## Chief swipe diagnostics
+
+Settings → Config includes a local Chief swipe diagnostics switch, off by default.
+It enables passive observation of horizontal attempts on the Chief page, including
+failed edge swipes. The log contains view geometry, recognizer states, navigation
+transitions, and app/OS versions. It excludes page text and conversation content.
+The local log retains at most 1 MiB from the last 24 hours. Settings can share a
+local file through the iOS share sheet or clear the log. Nothing uploads automatically.
+The logger does not change scroll or back-swipe behavior and does not diagnose the
+phone fault by itself.
+
 ## Refresh work
 
 While the app is in the foreground it follows one navigation view stream for

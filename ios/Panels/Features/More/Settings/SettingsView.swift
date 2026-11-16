@@ -62,6 +62,7 @@ struct SettingsView: View {
     }
     private var configuration: some View {
         Group {
+            ChiefSwipeSettingsSection()
             Section {
                 Toggle("Show goals in sidebar rows", isOn: $showGoalsInSidebarRows)
                     .accessibilityIdentifier("settings-goals-sidebar-rows")

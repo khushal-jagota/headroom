@@ -8,6 +8,9 @@ struct ChiefView: View {
     private var chief: ChiefRosterEntry? { resource.value?.chiefOfStaff }
     private var error: String? { resource.error }
     @State private var actions = AgentPageActions()
+    @State private var swipeLog = ChiefSwipeLog.shared
+    @State private var isVisible = false
+    @Environment(\.scenePhase) private var scenePhase
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: PanelsTheme.Space.xl) {
@@ -20,6 +23,7 @@ struct ChiefView: View {
                 }
                 if chief != nil { HolderContent(holder: .chief, editOwner: editOwner) }
             }.padding(.horizontal, AgentPageLayout.gutter).padding(.bottom, PanelsTheme.Space.xl)
+                .background(ChiefSwipeObservation(enabled: swipeLog.isEnabled && isVisible && scenePhase == .active))
         }
         .toolbar(.hidden, for: .navigationBar)
         .panelsScreen()
@@ -30,6 +34,8 @@ struct ChiefView: View {
         .panelsRefreshable { await load() }
         .screenLoadState("Chief of Staff", hasContent: chief != nil, error: error, showsRefreshError: false) { await load() }
         .accessibilityIdentifier("chief-screen")
+        .onAppear { isVisible = true }
+        .onDisappear { isVisible = false }
     }
 
     private func load() async { await resource.refresh() }
