@@ -4,6 +4,99 @@ import UIKit
 /// One-off review tools. These methods stay outside the permanent release suite.
 /// The existing loopback host proves real SwiftUI placement, keyboard and live updates.
 final class ReviewFinalPageTests: XCTestCase {
+    /// One-off assembled Consequences boundary review on the existing loopback host.
+    /// Foundation coverage cannot prove the real Ticket controls and Review sheet choices.
+    @MainActor func testConsequencesReviewBoundary() async throws {
+        continueAfterFailure = false
+        let base = try XCTUnwrap(ProcessInfo.processInfo.environment["PANELS_OFFLINE_STUB_URL"])
+        XCTAssertEqual(URL(string: base)?.host, "127.0.0.1")
+        try await proof(base, "consequences-review/implementation")
+        let app = XCUIApplication()
+        app.launchArguments = ["--conversation-stub", base]
+        defer { app.terminate() }
+        @MainActor func launchReview() {
+            app.launch()
+            let review = app.tabBars.buttons["Review"]
+            XCTAssertTrue(review.waitForExistence(timeout: 10)); review.tap()
+            XCTAssertTrue(app.buttons["review.approve"].waitForExistence(timeout: 8))
+        }
+        @MainActor func oracle(_ stage: String, pending: Bool, count: Int) async throws -> [[String: Any]] {
+            let url = URL(string: base + "/proof/consequences-review/state")!
+            // Queue exit is optimistic. Wait for the existing outbox's actual host write.
+            let applied = NSPredicate { _, _ in
+                guard let data = try? Data(contentsOf: url),
+                      let value = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                      let decisions = value["decisions"] as? [[String: Any]] else { return false }
+                return decisions.count == count
+            }
+            let result = await XCTWaiter.fulfillment(of: [XCTNSPredicateExpectation(predicate: applied, object: nil)], timeout: 5)
+            XCTAssertEqual(result, .completed, "The decision must reach the host, not only leave the visible queue")
+            let (data, _) = try await URLSession.shared.data(from: url)
+            let value = try XCTUnwrap(try JSONSerialization.jsonObject(with: data) as? [String: Any])
+            let ticket = try XCTUnwrap(value["ticket"] as? [String: Any])
+            XCTAssertEqual(ticket["stage"] as? String, stage, "Check canonical fixture state, not only an optimistic receipt")
+            XCTAssertEqual(ticket["pending_proposal"] is [String: Any], pending)
+            if stage != "needs_implementation" { XCTAssertEqual(ticket["ceiling"] as? String, "needs_consequences") }
+            let decisions = try XCTUnwrap(value["decisions"] as? [[String: Any]])
+            XCTAssertEqual(decisions.count, count)
+            return decisions
+        }
+        launchReview()
+        app.buttons["review.approve"].tap()
+        let consequences = app.buttons["decision.stage.needs_consequences"]
+        XCTAssertTrue(waitForDecisionStage(consequences))
+        XCTAssertFalse(app.buttons["decision.stage.done"].exists)
+        capture(app, "consequences-implementation-approval-choices")
+        consequences.tap()
+        let owner = app.buttons["decision.reviewer.owner"]
+        XCTAssertTrue(owner.waitForExistence(timeout: 5)); owner.tap()
+        XCTAssertTrue(app.buttons["review.approve"].waitForNonExistence(timeout: 8))
+        let first = try await oracle("needs_consequences", pending: false, count: 1)
+        XCTAssertEqual(first.first?["next_ceiling"] as? String, "needs_consequences")
+        app.terminate()
+
+        // Model the worker's next proposal explicitly; approval never manufactures it.
+        try await proof(base, "consequences-review/proposal")
+        launchReview()
+        app.buttons["review.openTicket"].tap()
+        let limit = app.buttons["ticket-approval-limit"]
+        XCTAssertTrue(limit.waitForExistence(timeout: 8)); limit.tap()
+        let picker = app.descendants(matching: .any).matching(identifier: "ticket-ceiling-picker").firstMatch
+        XCTAssertTrue(picker.waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["Consequences"].exists)
+        XCTAssertFalse(picker.descendants(matching: .any).matching(NSPredicate(format: "label == %@", "Done")).firstMatch.exists)
+        capture(app, "consequences-ticket-approval-limit")
+        app.buttons["Cancel"].tap()
+        XCTAssertTrue(limit.waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["review.sendBack"].exists)
+        XCTAssertTrue(app.buttons["review.approve"].exists)
+        capture(app, "consequences-ticket-decision-controls")
+        app.buttons["detail-back"].tap()
+        app.tabBars.buttons["Review"].tap()
+        let note = app.descendants(matching: .any).matching(identifier: "review.revision").firstMatch
+        let sendBack = app.buttons["review.sendBack"]
+        XCTAssertTrue(sendBack.waitForExistence(timeout: 8)); sendBack.tap()
+        XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5))
+        note.typeText("Clarify the integration evidence")
+        capture(app, "consequences-review-send-back")
+        sendBack.tap()
+        XCTAssertTrue(sendBack.waitForNonExistence(timeout: 8))
+        let returned = try await oracle("needs_consequences", pending: false, count: 2)
+        XCTAssertEqual(returned.last?["decision"] as? String, "send_back")
+        app.terminate()
+
+        try await proof(base, "consequences-review/revision")
+        launchReview()
+        capture(app, "consequences-final-approval")
+        app.buttons["review.approve"].tap()
+        XCTAssertTrue(app.buttons["review.approve"].waitForNonExistence(timeout: 8))
+        XCTAssertFalse(app.buttons["decision.stage.done"].exists)
+        let final = try await oracle("done", pending: false, count: 3)
+        XCTAssertEqual(final.last?["decision"] as? String, "approve")
+        XCTAssertTrue(final.last?["next_ceiling"] == nil || final.last?["next_ceiling"] is NSNull)
+        capture(app, "consequences-approved-done")
+    }
+
     /// One-off repeat of the first Chief Back tap and the reported Workspace composer.
     /// The existing loopback host exercises real navigation and focus; model tests cannot.
     @MainActor func testChiefFirstBackAndWorkspaceComposer() async throws {
@@ -57,7 +150,7 @@ final class ReviewFinalPageTests: XCTestCase {
                     workspace.exists && workspace.isHittable && !chiefScreen.exists && !input.exists
                 }
             }
-            let result = XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: returned, object: nil)], timeout: 5)
+            let result = await XCTWaiter.fulfillment(of: [XCTNSPredicateExpectation(predicate: returned, object: nil)], timeout: 5)
             capture(app, "chief-first-back-" + mode + "-after")
             if result != .completed {
                 let tree = XCTAttachment(string: app.debugDescription)
