@@ -15,6 +15,7 @@ from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
+from tests.support.launch_identity import agent_headers
 from tests.unit.test_ticket_create_api import create_api as create_api
 from tests.unit.test_ticket_workflow_contract import _custom_workflow
 
@@ -62,7 +63,7 @@ def test_final_decision_needs_no_onward_scope_and_report_finishes(
     assert created.status_code == 200, created.text
     ticket_id = created.json()["id"]
     assert "land_the_result" not in created.json()["workflow"]["ceiling_range"]
-    worker = {"X-Plan-Actor": "worker", "X-Plan-Ticket-ID": ticket_id}
+    worker = agent_headers(client, "worker", ticket_id)
     proposal = client.post(
         f"/api/tickets/{ticket_id}/propose",
         json={"body": "The records agree."},

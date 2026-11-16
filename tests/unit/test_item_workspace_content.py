@@ -11,6 +11,7 @@ from pathlib import Path
 import httpx
 import pytest
 from fastapi import FastAPI
+from tests.support.launch_identity import agent_headers
 
 from planner.core.clock import build_clock
 from planner.core.config import load_config
@@ -43,6 +44,15 @@ def content_app(tmp_path: Path) -> tuple[FastAPI, Path, list[str]]:
             "CREATE TABLE conversations(conversation_id TEXT PRIMARY KEY,"
             "identity_environment_variables TEXT,created_at INTEGER)"
         )
+        conn.execute("CREATE TABLE tickets(id TEXT PRIMARY KEY,conversation_id TEXT)")
+        conn.execute("CREATE TABLE agents(agent_key TEXT PRIMARY KEY,conversation_id TEXT)")
+        conn.execute(
+            "CREATE TABLE agent_launch_tokens("
+            "token_hash TEXT PRIMARY KEY,conversation_id TEXT UNIQUE)"
+        )
+        conn.execute("INSERT INTO agents VALUES('manager_item','new')")
+        conn.execute("INSERT INTO agents VALUES('manager_foreign','foreign')")
+        conn.execute("INSERT INTO managers VALUES('foreign','Foreign goal','Other recap')")
         identity = json.dumps([["PLAN_ACTOR", "manager"], ["PLAN_MANAGER_ID", "item"]])
         conn.executemany(
             "INSERT INTO conversations VALUES(?,?,?)",
@@ -50,8 +60,12 @@ def content_app(tmp_path: Path) -> tuple[FastAPI, Path, list[str]]:
                 ("new", identity, 20),
                 ("old", identity, 10),
                 ("unrelated", "[]", 0),
+                ("foreign", "[]", 0),
             ],
         )
+    from planner.core.db import connect as token_connection
+
+    token_connection(str(path)).close()
     root = manager_files_root(str(path)) / "item" / "artifacts"
     (root / "site").mkdir(parents=True)
     (root / "site" / "index.html").write_text("<p>Site</p>")
@@ -91,6 +105,7 @@ def test_content_keeps_exact_document_without_unopened_catalog_or_summary_work(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     app, path, reads = content_app(tmp_path)
+    own_headers = agent_headers(path, "manager", "item", conversation_id="new")
     before = path.read_bytes()
     monkeypatch.setattr(views, "manager_detail", no_summary)
     monkeypatch.setattr(views, "manager_tickets", no_summary)
@@ -109,7 +124,7 @@ def test_content_keeps_exact_document_without_unopened_catalog_or_summary_work(
             owner = await client.get("/api/managers/item/workspace-content")
             supervisor = await client.get(
                 "/api/managers/item/workspace-content",
-                headers={"X-Plan-Actor": "manager", "X-Plan-Manager-ID": "item"},
+                headers=own_headers,
             )
             versioned = await client.get(
                 "/api/resource-body", params={"key": "/api/managers/item/workspace-content"}
@@ -135,6 +150,7 @@ def test_content_checks_authority_before_read_and_preserves_missing_identity(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     app, path, reads = content_app(tmp_path)
+    foreign_headers = agent_headers(path, "manager", "foreign", conversation_id="foreign")
     before = path.read_bytes()
 
     async def run() -> None:
@@ -146,18 +162,12 @@ def test_content_checks_authority_before_read_and_preserves_missing_identity(
                 refused.setattr(manager_files, "list_artifact_entries", no_summary)
                 foreign = await client.get(
                     "/api/managers/item/workspace-content",
-                    headers={
-                        "X-Plan-Actor": "manager",
-                        "X-Plan-Manager-ID": "foreign",
-                    },
+                    headers=foreign_headers,
                 )
                 foreign_versioned = await client.get(
                     "/api/resource-body",
                     params={"key": "/api/managers/item/workspace-content"},
-                    headers={
-                        "X-Plan-Actor": "manager",
-                        "X-Plan-Manager-ID": "foreign",
-                    },
+                    headers=foreign_headers,
                 )
             assert foreign.status_code == 400  # Existing agent_forbidden HTTP mapping.
             assert foreign.json()["error"]["code"] == "agent_forbidden"

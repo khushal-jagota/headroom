@@ -50,6 +50,10 @@ from tests.support.conversation_claude_agent_sdk_bench import (
     _write,
 )
 
+from planner.agent_identity.contracts import (
+    LAUNCH_TOKEN_ENVIRONMENT_NAME,
+    UNIDENTIFIED_LAUNCH_TOKEN,
+)
 from planner.conversation.backends.claude_agent_sdk import (
     _ClaudeCleanupTransport,
     _ClaudeProtocolTransport,
@@ -128,7 +132,10 @@ def test_a_resume_that_answers_under_another_session_is_refused(tmp_path: Path) 
         assert options.cli_path == Path("/usr/bin/claude")
         assert options.model == start.model
         assert options.effort == "medium"
-        assert options.env == {"PLAN_ACTOR": "worker"}
+        assert options.env == {
+            "PLAN_ACTOR": "worker",
+            LAUNCH_TOKEN_ENVIRONMENT_NAME: UNIDENTIFIED_LAUNCH_TOKEN,
+        }
         assert options.permission_mode == "bypassPermissions"
         assert options.can_use_tool is not None
         assert options.resume == SESSION_ID
@@ -169,7 +176,10 @@ def test_a_manager_wake_crosses_the_claude_adapter_with_its_sender_label(
         assert options.cli_path == Path("/usr/bin/claude")
         assert options.model == start.model
         assert options.effort == "medium"
-        assert options.env == {"PLAN_ACTOR": "worker"}
+        assert options.env == {
+            "PLAN_ACTOR": "worker",
+            LAUNCH_TOKEN_ENVIRONMENT_NAME: UNIDENTIFIED_LAUNCH_TOKEN,
+        }
         assert options.permission_mode == "bypassPermissions"
         assert options.can_use_tool is not None
         assert options.resume is None

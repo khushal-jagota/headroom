@@ -483,6 +483,8 @@ def test_upgrade_rebuilds_conflicting_proposal_navigation(tmp_path: Path) -> Non
         conn.commit()
         assert values(conn)["ticket", "t"]["ticket_status"] == "awaiting_approval"
     with sqlite3.connect(path) as conn:
+        # Reconstruct the older schema, including the absence of launch credentials.
+        conn.execute("DROP TABLE agent_launch_tokens")
         conn.execute("UPDATE alembic_version SET version_num='consequences_without_approval'")
         conn.execute(
             "UPDATE navigation_records SET value=json_set(value,'$.ticket_status','errored') "

@@ -66,6 +66,7 @@ def test_owner_endpoint_returns_the_cli_command_and_refuses_without_origin(
 
     import httpx
     from fastapi import FastAPI
+    from tests.support.launch_identity import agent_headers
 
     from planner.core.db import connect, create_schema
     from planner.core.errors import PlannerError
@@ -78,13 +79,14 @@ def test_owner_endpoint_returns_the_cli_command_and_refuses_without_origin(
         app = FastAPI()
         app.state.conn_factory = lambda: connect(database)
         app.state.config = SimpleNamespace(
-            trusted_ingress_canonical_origin="https://home.example", app_sha=REVISION
+            trusted_ingress_canonical_origin="https://home.example",
+            app_sha=REVISION, db_path=database
         )
         app.include_router(router, prefix="/api")
         async with httpx.AsyncClient(
             transport=httpx.ASGITransport(app=app), base_url="http://test"
         ) as http:
-            worker = {"X-Plan-Actor": "worker", "X-Plan-Ticket-ID": "t_01234567"}
+            worker = agent_headers(database, "worker", "t_01234567")
             with pytest.raises(PlannerError):
                 await http.post("/api/machines/join-command", headers=worker, json={"name": "X"})
             reply = await http.post("/api/machines/join-command", json={"name": "Studio"})

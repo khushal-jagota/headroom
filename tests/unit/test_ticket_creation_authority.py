@@ -5,6 +5,7 @@ from sqlite3 import Connection
 import pytest
 from fastapi.testclient import TestClient
 from tests.support.api_app import _app
+from tests.support.launch_identity import agent_headers
 from tests.support.principals import OWNER_PRINCIPAL
 
 from planner.core.clock import Clock
@@ -37,8 +38,8 @@ def test_direct_creation_checks_holder(tmp_db: Connection, chain: tuple[str, str
     own, unrelated, worker = chain
     with TestClient(_app(tmp_db)) as client:
         headers_by_actor = (
-            {"X-Plan-Actor": "manager", "X-Plan-Manager-ID": own},
-            {"X-Plan-Actor": "worker", "X-Plan-Ticket-ID": worker},
+            agent_headers(tmp_db, "manager", own),
+            agent_headers(tmp_db, "worker", worker),
         )
         for headers in headers_by_actor:
             direct = {"title": "Direct work", "worker_type": "coding"}
@@ -50,7 +51,7 @@ def test_direct_creation_checks_holder(tmp_db: Connection, chain: tuple[str, str
                 json={**direct, "manager": {"kind": "manager", "id": own}},
                 headers=headers,
             )
-            if headers["X-Plan-Actor"] == "manager":
+            if headers is headers_by_actor[0]:
                 assert direct_response.status_code == 200, direct_response.text
                 assert direct_response.json()["ceiling_holder"] == {"kind": "manager", "id": own}
             else:

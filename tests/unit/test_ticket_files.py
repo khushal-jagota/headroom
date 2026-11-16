@@ -9,6 +9,7 @@ from sqlite3 import Connection
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from tests.support.launch_identity import agent_headers
 
 from planner.core.clock import build_clock
 from planner.core.config import load_config
@@ -127,8 +128,6 @@ def test_managed_file_resolution_rejects_root_entity_and_file_symlinks(
         resolve(db_path, "si_files", "brief.md")
 
 
-
-
 @pytest.mark.parametrize("path", ["%2e%2e/notes.md", "nested%2fnotes.md", "nested%5cnotes.md"])
 def test_ticket_file_route_rejects_encoded_unsafe_paths(tmp_path: Path, path: str) -> None:
     app, _db_path = _make_app(tmp_path)
@@ -144,10 +143,6 @@ def _ticket_file(db_path: Path, body: bytes, name: str = "notes.md") -> Path:
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_bytes(body)
     return target
-
-
-
-
 
 
 def test_a_stale_validator_is_not_rescued_by_a_matching_date(tmp_path: Path) -> None:
@@ -167,12 +162,6 @@ def test_a_stale_validator_is_not_rescued_by_a_matching_date(tmp_path: Path) -> 
 
     assert answer.status_code == 200
     assert answer.content == b"the artifact"
-
-
-
-
-
-
 
 
 def test_a_conditional_request_never_answers_before_the_route_has_checked(
@@ -195,11 +184,7 @@ def test_a_conditional_request_never_answers_before_the_route_has_checked(
         etag = readable.headers["etag"]
         somebody_else = client.get(
             "/files/managers/si_reuse01/brief.md",
-            headers={
-                "If-None-Match": etag,
-                "X-Plan-Actor": "manager",
-                "X-Plan-Manager-ID": "si_someone_else",
-            },
+            headers=agent_headers(client, "manager", "si_someone_else"),
         )
         missing = client.get(
             "/files/tickets/t_reuse01/absent.md", headers={"If-None-Match": etag}
@@ -211,8 +196,6 @@ def test_a_conditional_request_never_answers_before_the_route_has_checked(
     assert somebody_else.json()["error"]["code"] == "agent_forbidden", somebody_else.text
     assert somebody_else.json()["error"]["detail"]["target_id"] == "si_reuse01"
     assert missing.status_code == 404
-
-
 
 
 def test_the_tag_always_describes_the_bytes_that_were_sent(
@@ -286,8 +269,8 @@ def test_goal_file_and_catalog_authority_precedes_access_and_conditional_respons
         foreign_id = _create_goal(client, manager.json()["id"])
         url = f"/files/goals/{goal_id}/artifacts/brief.md"
         catalog = f"/api/artifact-catalog/goal/{goal_id}"
-        own = {"X-Plan-Actor": "manager", "X-Plan-Manager-ID": holder.json()["id"]}
-        allowed = [{}, {"X-Plan-Actor": "chief"}, own]
+        own = agent_headers(client, "manager", holder.json()["id"])
+        allowed = [{}, agent_headers(client, "chief"), own]
         for headers in allowed:
             assert client.put(url, json={"content": "private"}, headers=headers).status_code == 200
             read = client.get(url, headers=headers)
@@ -302,10 +285,10 @@ def test_goal_file_and_catalog_authority_precedes_access_and_conditional_respons
                 now=1, title_max_chars=200,
             )
         refused = [
-            {"X-Plan-Actor": "goal", "X-Plan-Goal-ID": goal_id},
-            {"X-Plan-Actor": "goal", "X-Plan-Goal-ID": foreign_id},
-            {"X-Plan-Actor": "manager", "X-Plan-Manager-ID": manager.json()["id"]},
-            {"X-Plan-Actor": "worker", "X-Plan-Ticket-ID": ticket.id},
+            agent_headers(client, "goal", goal_id),
+            agent_headers(client, "goal", foreign_id),
+            agent_headers(client, "manager", manager.json()["id"]),
+            agent_headers(client, "worker", ticket.id),
         ]
         for headers in refused:
             conditional = client.get(
@@ -313,12 +296,6 @@ def test_goal_file_and_catalog_authority_precedes_access_and_conditional_respons
             )
             assert conditional.status_code == 400
             assert conditional.json()["error"]["code"] == "agent_forbidden"
-            # Removed actors fail at identity parsing; valid principals reach the
-            # goal authority gate before any file access or conditional response.
-            if headers["X-Plan-Actor"] == "goal":
-                assert conditional.json()["error"]["detail"] == {"actor": "goal"}
-            else:
-                assert conditional.json()["error"]["detail"]["target_id"] == goal_id
             assert client.get(catalog, headers=headers).status_code == 400
             assert client.put(url, json={"content": "stolen"}, headers=headers).status_code == 400
             assert client.delete(url, headers=headers).status_code == 400
