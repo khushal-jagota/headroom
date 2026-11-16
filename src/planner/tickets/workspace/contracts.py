@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import TypedDict
+from typing import Literal, TypedDict
 
 from planner.core.contracts import Principal
 from planner.tickets.contracts import (
@@ -36,6 +36,12 @@ class WorkspaceBlockers(TypedDict):
 class WorkspaceFieldSummary(TypedDict):
     byte_count: int
     revision: str
+
+
+class UnresolvedDecisionFeedback(TypedDict):
+    decision_id: str
+    status: Literal["uncertain", "refused", "discarded"]
+    message: str
 
 
 class WorkflowControlStage(TypedDict):
@@ -88,6 +94,7 @@ class ValidWorkspaceTicket(TypedDict):
     field_values: dict[str, str]
     field_summaries: dict[str, WorkspaceFieldSummary]
     field_approvals: dict[str, TicketFieldApproval]
+    unresolved_decision_feedback: list[UnresolvedDecisionFeedback]
     pending_proposal: WorkspaceProposal | None
     created_at: int
     updated_at: int

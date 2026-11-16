@@ -158,7 +158,7 @@ extension NavigationReviewMessage {
 extension NavigationTicket {
     var summary: TicketSummary {
         TicketSummary(locale: locale, id: id, title: title, workerType: workerType, stage: stage, ticketStatus: ticketStatus, isBacklogged: isBacklogged,
-                      blocked: blocked, recapPreview: recapPreview, waitingToCloseout: waitingToCloseout, activityAt: activityAt,
+                      blocked: blocked, recapPreview: recapPreview, activityAt: activityAt,
                       projectId: projectId, project: project, manager: manager, managerId: managerId, managerTitle: managerTitle,
                       awaitingReply: awaitingReply ?? false, awaitingAnswer: awaitingAnswer ?? false, awaitingApproval: awaitingApproval,
                       awaitingAgentApproval: awaitingAgentApproval, assigned: assigned, agentState: agentState ?? "idle",

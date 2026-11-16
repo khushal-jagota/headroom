@@ -25,7 +25,7 @@
   import { restLineFrom } from "../../lib/conversation/restLine";
   import { taskProgressFrom } from "../../lib/conversation/taskProgress";
   import type { TranscriptRow } from "../../lib/conversation/transcript";
-  import { backgroundTasksAfterTheTurn, backgroundWorkSentence } from "../../lib/conversation/transcript";
+  import { hasBackgroundTaskAfterTheTurn } from "../../lib/conversation/transcript";
   import type {
     ComposerCatalogEntry,
     BackendModel,
@@ -226,14 +226,13 @@
     if (readOnly) return { text: "past · read only", accent: false };
     if (activityUncertain) return {text:"activity unknown on this machine",accent:false};
     if (ask || userInput) return { text: "waiting for you", accent: true };
-    if (running) return { text: "working", accent: false };
-    if (backgroundTasks.length > 0) return { text: "background work", accent: false };
+    if (running || backgroundWorking) return { text: "working", accent: false };
     return null;
   });
 
-  // Work the agent started that outlived its turn. Stop and the composer still follow
-  // the turn alone; this only keeps the conversation saying what the sidebar says.
-  let backgroundTasks = $derived(activityUncertain ? [] : backgroundTasksAfterTheTurn(reader?.status));
+  // Work the agent started that outlived its turn counts as working, as the sidebar does.
+  // Stop and the composer still follow the turn alone.
+  let backgroundWorking = $derived(!activityUncertain && hasBackgroundTaskAfterTheTurn(reader?.status));
   // The dock has an activity header. Full conversation has the turn head.
   let rowsForLens = $derived(visibleRows ?? rows);
   let planEntries = $state<import('../../lib/conversation/wire').PlanEntry[]>([]);
@@ -563,7 +562,7 @@
     <ConversationRestBar preview={unreadPreview} {roleLabel} {activityKnown}
       {connectionTrouble} running={running && !activityUncertain}
       startedAtUnixMilliseconds={turnStartedAt}
-      backgroundWork={backgroundTasks.length > 0 ? backgroundWorkSentence(backgroundTasks.map(task => task.task_description)) : null}
+      {backgroundWorking}
       feedback={activityUncertain ? "Current activity on this machine is unknown." : dockFeedback} onOpen={moveThroughTheStates} />
   {/if}
 

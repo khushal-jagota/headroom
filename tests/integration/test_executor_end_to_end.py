@@ -2265,7 +2265,19 @@ def test_old_websocket_is_refused_needs_update_while_update_route_serves_it(
 
     async def run() -> None:
         harness = await boot(tmp_path, monkeypatch)
+        lease_waiting, release_lease = asyncio.Event(), asyncio.Event()
+        lease = harness.mac.client.lease
+
+        async def held_lease(request: Any) -> Any:
+            lease_waiting.set()
+            await release_lease.wait()
+            return await lease(request)
+
+        monkeypatch.setattr(harness.mac.client, "lease", held_lease)
         try:
+            # Wait until any earlier lease has finished and the next is held before
+            # it reaches the VPS. No accepted lease can erase the refusal meanwhile.
+            await asyncio.wait_for(lease_waiting.wait(), 5)
             harness.transport_app.state.mac_updates = MacUpdateService(
                 tmp_path / "mac-updates",
                 FileUpdateAttemptStore(tmp_path / "update-attempt.json"),
@@ -2328,6 +2340,7 @@ def test_old_websocket_is_refused_needs_update_while_update_route_serves_it(
                 assert check.target is None
             assert positions() == before
             # The current Mac's next accepted lease clears the refusal.
+            release_lease.set()
             await eventually(
                 lambda: harness.endpoint.health().presence == "present",
                 "The current Mac's lease did not clear the old Mac's refusal",
@@ -2342,6 +2355,7 @@ def test_old_websocket_is_refused_needs_update_while_update_route_serves_it(
             assert harness.native.start_count == 1
             await harness.wait_settled("The current Mac's work did not settle")
         finally:
+            release_lease.set()
             await harness.close()
 
     asyncio.run(run())

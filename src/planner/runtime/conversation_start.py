@@ -200,7 +200,10 @@ def worker_resolve(
         role_materials=replace(
             values.role_materials,
             identity_environment_variables=values.role_materials.identity_environment_variables
-            + (("PLAN_TICKET_WORKSPACE_MANAGED", "1"),),
+            + (
+                ("PLAN_TICKET_WORKSPACE_MANAGED", "1"),
+                ("PLAN_TICKET_PROJECT_ID", ticket.project_id or ""),
+            ),
             role_text=values.role_materials.role_text
             + "\n\n[Ticket workflow guidance]\n"
             + render_workflow_guide(ticket.workflow)
@@ -391,6 +394,7 @@ async def start_ticket_conversation(
                 ticket_folder,
                 project_folder,
                 ticket.id,
+                panels_project=ticket.project_id == "project_panels",
             )
         except (OSError, RuntimeError, ValueError, subprocess.TimeoutExpired) as exc:
             raise PlannerError(
@@ -567,6 +571,7 @@ async def send_to_ticket_conversation(
         return ticket
 
     ticket = await run_on_worker_thread(read_deliverable_ticket)
+
     async def record_activity() -> None:
         if not workspace_activity_recorded:
             from planner.ticket_workspaces.data import ensure_workspace_activity

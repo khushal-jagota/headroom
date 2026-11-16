@@ -104,6 +104,7 @@ from planner.ticket_workspaces.filesystem import (
 from planner.ticket_workspaces.filesystem import (
     retire_workspace as detach_workspace,
 )
+from planner.ticket_workspaces.reporting import RetainedWorkspaceReporter
 from planner.worker_supervision.config import RECORD_ROOT_ENV
 from planner.workspace_localization import localize_workspace, require_safe_relative_workspace
 
@@ -318,10 +319,12 @@ class MacRunner:
         self._retire_workspace = retire_workspace
         self._retirement_is_committed = retirement_is_committed
         self._register_workspace = register_workspace
+        self._retained_workspace_reporter = RetainedWorkspaceReporter()
         self.factory = factory or self._factory(panels_server_url)
         self.message_files = message_files
         self._children: dict[str, RunningChild] = {}
         self._workspace_lock = asyncio.Lock()
+        self._cleanup_refresh_lock = asyncio.Lock()
         self._ticket_start_locks: WeakValueDictionary[str, asyncio.Lock] = WeakValueDictionary()
         self._withdrawn_commands: set[str] = set()
         self._commands: dict[str, _CommandRecord] = {}
@@ -348,34 +351,46 @@ class MacRunner:
         self._admission_stopped = stopped
 
     async def refresh_worker_cleanup(
-        self, *, ticket_id: str | None = None, revoke_pending: bool = False,
+        self,
+        *,
+        ticket_id: str | None = None,
+        revoke_pending: bool = False,
     ) -> None:
         from planner.executor.cleanup_reconciliation import snapshot_cleanup
 
-        snapshot = await asyncio.to_thread(
-            snapshot_cleanup, self.paths, current_incarnation=self.incarnation,
-            ticket_id=ticket_id, revoke_pending=revoke_pending,
-            healthy_sources=frozenset(
-                child.reference for child in self._children.values()
-                if child.reference.child_id in self._started_children
-                and child.reference.child_id not in self._retiring_children
-            ),
-            preparing_sources=frozenset(
-                record.command.child for record in self._commands.values()
-                if record.command.operation is ChildOperation.start
-                and record.outcome is None
-                and record.task is not None and not record.task.done()
-                and record.command.child.child_id not in self._retiring_children
-            ),
-        )
-        self.cleanup_uncertainties = (
-            snapshot.uncertainties if ticket_id is None else (
-                *(item for item in self.cleanup_uncertainties if item.ticket_id != ticket_id),
-                *snapshot.uncertainties,
+        async with self._cleanup_refresh_lock:
+            snapshot = await asyncio.to_thread(
+                snapshot_cleanup,
+                self.paths,
+                current_incarnation=self.incarnation,
+                ticket_id=ticket_id,
+                revoke_pending=revoke_pending,
+                healthy_sources=frozenset(
+                    child.reference
+                    for child in self._children.values()
+                    if child.reference.child_id in self._started_children
+                    and child.reference.child_id not in self._retiring_children
+                ),
+                preparing_sources=frozenset(
+                    record.command.child
+                    for record in self._commands.values()
+                    if record.command.operation is ChildOperation.start
+                    and record.outcome is None
+                    and record.task is not None
+                    and not record.task.done()
+                    and record.command.child.child_id not in self._retiring_children
+                ),
             )
-        )
-        if ticket_id is None:
-            self.legacy_cleanup_notice = snapshot.notice
+            self.cleanup_uncertainties = (
+                snapshot.uncertainties
+                if ticket_id is None
+                else (
+                    *(item for item in self.cleanup_uncertainties if item.ticket_id != ticket_id),
+                    *snapshot.uncertainties,
+                )
+            )
+            if ticket_id is None:
+                self.legacy_cleanup_notice = snapshot.notice
 
     def authenticate(self, child_id: str | None, capability: str | None) -> RunningChild:
         child = self._children.get(child_id or "")
@@ -538,7 +553,12 @@ class MacRunner:
                     and not workspace_home_relative
                     else workspace
                 )
-                workspace = prepare_workspace(artifact_root, repository, ticket_id)
+                workspace = prepare_workspace(
+                    artifact_root,
+                    repository,
+                    ticket_id,
+                    panels_project=identity.get("PLAN_TICKET_PROJECT_ID") == "project_panels",
+                )
         except (OSError, ValueError, RuntimeError, subprocess.TimeoutExpired) as error:
             raise BackendSpawnFailed(f"Mac Ticket worktree unavailable: {error}") from error
         original = resolved.role_materials
@@ -662,9 +682,11 @@ class MacRunner:
 
     async def _start_run(self, command: ChildCommand, args: StartRun) -> JsonObject:
         materials = args.resolved_start.role_materials
-        ticket_id = None if materials is None else dict(
-            materials.identity_environment_variables
-        ).get("PLAN_TICKET_ID")
+        ticket_id = (
+            None
+            if materials is None
+            else dict(materials.identity_environment_variables).get("PLAN_TICKET_ID")
+        )
         if not ticket_id:
             raise BackendSpawnFailed("Mac runs require a Ticket identity")
         lock = self._ticket_start_locks.get(ticket_id)
@@ -801,6 +823,10 @@ class MacRunner:
         async def authorize_locked(
             state: WorkspaceState, workspace: WorkspaceIdentity, *, replay: bool = False
         ) -> bool:
+            if self.legacy_cleanup_notice or any(
+                item.ticket_id == state.ticket_id for item in self.cleanup_uncertainties
+            ):
+                return False
             children = [
                 child
                 for child in self._children.values()
@@ -809,7 +835,14 @@ class MacRunner:
             if any(self._workspace_child_busy(child) for child in children):
                 return False
             authorize = self._retirement_is_committed if replay else retire_workspace
-            if authorize is None or not await authorize(state, workspace):
+            if authorize is None:
+                return False
+            granted = await authorize(state, workspace)
+            if replay and not granted:
+                # A crash may follow the local detach but precede its durable grant.
+                # Re-authorize only if the server still sees the same ended Ticket.
+                granted = await retire_workspace(state, workspace)
+            if not granted:
                 return False
             if any(self._workspace_child_busy(child) for child in children):
                 return False
@@ -823,7 +856,7 @@ class MacRunner:
                 return await authorize_locked(state, workspace, replay=True)
 
         async def retire_current(
-            path: Path, state: WorkspaceState, workspace: WorkspaceIdentity
+            path: Path, state: WorkspaceState, workspace: WorkspaceIdentity, checkout_only: bool
         ) -> Path | str:
             async with self._workspace_lock:
                 if workspace_identity(path) != workspace:
@@ -838,6 +871,7 @@ class MacRunner:
                     state,
                     identity=workspace,
                     retired_root=self.paths.artifacts.parent / ".ticket-retired",
+                    checkout_only=checkout_only,
                 )
 
         def committed(state: WorkspaceState, workspace: WorkspaceIdentity) -> bool:
@@ -848,8 +882,12 @@ class MacRunner:
                 future.cancel()
                 raise
 
-        def retire(path: Path, state: WorkspaceState, workspace: WorkspaceIdentity) -> Path | str:
-            future = asyncio.run_coroutine_threadsafe(retire_current(path, state, workspace), loop)
+        def retire(
+            path: Path, state: WorkspaceState, workspace: WorkspaceIdentity, checkout_only: bool
+        ) -> Path | str:
+            future = asyncio.run_coroutine_threadsafe(
+                retire_current(path, state, workspace, checkout_only), loop
+            )
             try:
                 return future.result(timeout=30)
             except TimeoutError:
@@ -870,10 +908,7 @@ class MacRunner:
                 if self._workspace_child_busy(child)
             ),
         )
-        for entry in result.skipped:
-            logging.getLogger(__name__).warning(
-                "Ticket workspace retained path=%s reason=%s", entry["path"], entry["reason"]
-            )
+        self._retained_workspace_reporter.report(logging.getLogger(__name__), result.skipped)
 
     def _workspace_child_busy(self, child: RunningChild) -> bool:
         return bool(
@@ -1092,27 +1127,49 @@ class MacRunner:
 
             recheck_args = command.arguments
             snapshot = await asyncio.to_thread(
-                snapshot_cleanup, self.paths, current_incarnation=self.incarnation,
+                snapshot_cleanup,
+                self.paths,
+                current_incarnation=self.incarnation,
                 ticket_id=recheck_args.ticket_id,
             )
             self.cleanup_uncertainties = (
-                *(item for item in self.cleanup_uncertainties
-                  if item.ticket_id != recheck_args.ticket_id),
+                *(
+                    item
+                    for item in self.cleanup_uncertainties
+                    if item.ticket_id != recheck_args.ticket_id
+                ),
                 *snapshot.uncertainties,
             )
             if snapshot.sources.get(recheck_args.source) != recheck_args.ticket_id:
-                return _outcome(command, CommandDisposition.uncertain, {
-                    "complete": False, "reason": "Exact Worker cleanup source is unavailable",
-                })
-            remaining = next((item for item in snapshot.uncertainties
-                if item.ticket_id == recheck_args.ticket_id
-                and item.conversation_id == recheck_args.source.conversation_id), None)
-            return _outcome(command, CommandDisposition.succeeded, {
-                "complete": remaining is None,
-                "reason": (
-                    "Recorded Worker cleanup is complete" if remaining is None else remaining.reason
+                return _outcome(
+                    command,
+                    CommandDisposition.uncertain,
+                    {
+                        "complete": False,
+                        "reason": "Exact Worker cleanup source is unavailable",
+                    },
+                )
+            remaining = next(
+                (
+                    item
+                    for item in snapshot.uncertainties
+                    if item.ticket_id == recheck_args.ticket_id
+                    and item.conversation_id == recheck_args.source.conversation_id
                 ),
-            })
+                None,
+            )
+            return _outcome(
+                command,
+                CommandDisposition.succeeded,
+                {
+                    "complete": remaining is None,
+                    "reason": (
+                        "Recorded Worker cleanup is complete"
+                        if remaining is None
+                        else remaining.reason
+                    ),
+                },
+            )
         if command.operation is ChildOperation.stop:
             return await self._stop_exact_child(command)
         if command.child.child_id in self._retiring_children:

@@ -1,4 +1,5 @@
 import type { ConversationSignal } from "./conversationSignal";
+import type { UnresolvedDecisionFeedback } from "./ticketWorkspace/contracts";
 export type AnyRecord = Record<string, any>;
 
 // The served Worker-type manifest response (GET /api/worker-types).
@@ -34,7 +35,6 @@ export type TicketSummary = WorkAttention & {
   machine_id?: string;
   locale?: import("./ticketMachines").TicketLocale;
   is_backlogged: boolean;
-  waiting_to_closeout: boolean;
   manager?: Principal;
   id: string;
   title: string;
@@ -240,6 +240,7 @@ export type TicketDetail = {
   field_values: TicketFieldValues;
   field_approvals?: Record<string, TicketFieldApproval>;
   pending_proposal: PendingTicketProposal | null;
+  unresolved_decision_feedback?: UnresolvedDecisionFeedback[];
   awaiting_reply?: boolean;
   awaiting_answer?: boolean;
   awaiting_approval?: boolean;
@@ -275,7 +276,6 @@ export type ManagerWorkspaceTicket = WorkAttention & {
   stage: string;
   activity_at: number;
   ticket_status: string;
-  waiting_to_closeout: boolean;
   has_pending_proposal: boolean;
   gating_field: string | null;
   blocked: boolean;
@@ -370,7 +370,6 @@ export type BoardCard = WorkAttention & {
   is_done: boolean;
   blocked: boolean;
   conversation_id: string | null;
-  waiting_to_closeout: boolean;
   manager_id: string | null;
   manager_title: string | null;
 };

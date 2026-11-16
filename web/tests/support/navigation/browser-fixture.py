@@ -137,9 +137,7 @@ def navigation_response(board: FixtureObject, workers: FixtureObject) -> Fixture
                     "stage_ownership": "user" if row.get("assigned") else "worker",
                     "terminal": row["stage"] == "done",
                     "locale": "en",
-                    "gating_field": "consequences"
-                    if row.get("waiting_to_closeout")
-                    else row.get("gating_field", "implementation"),
+                    "gating_field": row.get("gating_field", "implementation"),
                 },
             }
         )
@@ -228,9 +226,7 @@ def navigation_response(board: FixtureObject, workers: FixtureObject) -> Fixture
 def scoped_navigation_response(response: FixtureObject, view: FixtureObject) -> FixtureObject:
     """Reuse production membership/index logic over this host's synthetic source rows."""
     import sqlite3
-    from typing import cast
 
-    from planner.navigation.views.contracts import ViewRequest
     from planner.navigation.views.logic import digest
     from planner.navigation.views.ordering import ORDERING_GENERATION
     from planner.navigation.views.projection import rebuild
@@ -258,7 +254,7 @@ def scoped_navigation_response(response: FixtureObject, view: FixtureObject) -> 
         "event": "snapshot",
         "wire_version": VIEW_WIRE_VERSION,
         "projection_version": VIEW_PROJECTION_VERSION,
-        "view_id": identity(cast(ViewRequest, descriptor)),
+        "view_id": identity(descriptor),
         "scope_generation": descriptor["scope_generation"],
         "ordering_generation": ORDERING_GENERATION,
         "coverage": coverage,

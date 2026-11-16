@@ -27,6 +27,7 @@ from planner.worker_types.contracts import (
 )
 from planner.worker_types.registry import (
     KNOWN_TOOLSET_PROFILES,
+    validate_completion_stage,
     validate_definition,
     validate_workflow,
 )
@@ -242,6 +243,7 @@ def write_definition(
             known_skills=skill_names(conn),
             known_toolset_profiles=KNOWN_TOOLSET_PROFILES,
         )
+        validate_completion_stage(definition)
         next_position = conn.execute(
             "SELECT COALESCE(MAX(position), -1) + 1 AS next FROM worker_types"
         ).fetchone()["next"]
@@ -325,6 +327,8 @@ def _workflow_from_dict(raw: object, *, saved: bool) -> TicketWorkflowDefinition
         specialist_skill=specialist_skill,
     )
     validate_workflow(workflow)
+    if not saved:
+        validate_completion_stage(workflow)
     return workflow
 
 

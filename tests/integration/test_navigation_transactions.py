@@ -463,3 +463,36 @@ def test_rebuild_ticket_ownership_reads_are_constant_as_conversations_grow(tmp_p
             assert sum(key[0] == "address" for key in actual) == 1
             assert actual["totals", "workspace"]["distinct_conversation_count"] == 1
             conn.commit()
+
+
+def test_upgrade_rebuilds_conflicting_proposal_navigation(tmp_path: Path) -> None:
+    """Old cached status must not hide an actionable proposal after upgrade."""
+    from planner.core.db import schema_migration_transaction, upgrade_schema_connection
+
+    path = tmp_path / "historical-navigation.db"
+    with current_navigation_database(path) as conn:
+        conn.execute("BEGIN")
+        add_ticket(conn, "t")
+        proposal = {
+            "field": "implementation", "body": "Ready", "proposed_by": "worker", "created_at": 1
+        }
+        conn.execute(
+            "UPDATE tickets SET pending_proposal=?,worker_step_claim='errored' WHERE id='t'",
+            (json.dumps(proposal),),
+        )
+        conn.commit()
+        assert values(conn)["ticket", "t"]["ticket_status"] == "awaiting_approval"
+    with sqlite3.connect(path) as conn:
+        conn.execute("UPDATE alembic_version SET version_num='consequences_without_approval'")
+        conn.execute(
+            "UPDATE navigation_records SET value=json_set(value,'$.ticket_status','errored') "
+            "WHERE kind='ticket' AND id='t'"
+        )
+    with schema_migration_transaction(str(path)) as migration:
+        upgrade_schema_connection(migration, "head")
+    with sqlite3.connect(path) as conn:
+        status = conn.execute(
+            "SELECT json_extract(value,'$.ticket_status') FROM navigation_records "
+            "WHERE kind='ticket' AND id='t'"
+        ).fetchone()
+        assert status is not None and status[0] == "awaiting_approval"

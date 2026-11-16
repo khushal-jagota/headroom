@@ -112,6 +112,7 @@ class MacLeaseLoop:
         self._replaced = replaced
         self._next_workspace_cleanup = 0.0
         self._workspace_cleanup_task: asyncio.Task[None] | None = None
+        self._workspace_lifecycle: tuple[tuple[str, ...], tuple[WorkspaceState, ...]] | None = None
 
     async def _request(self) -> LeaseRequest:
         backlog = await asyncio.to_thread(self.outbox.lease_backlog)
@@ -164,13 +165,9 @@ class MacLeaseLoop:
             return True
         self.presence.accepted()
         self.updates.offer(result.update)
-        # Workspace reads and slow cleanup have their own task and cadence.
-        # Neither local inventory nor lifecycle history enters a presence lease.
-        loop = asyncio.get_running_loop()
-        if loop.time() >= self._next_workspace_cleanup and (
-            self._workspace_cleanup_task is None or self._workspace_cleanup_task.done()
-        ):
-            self._next_workspace_cleanup = loop.time() + 600
+        # Poll only the locally owned IDs off the lease path. Expensive cleanup runs
+        # when their lifecycle changes or the periodic retry comes due.
+        if self._workspace_cleanup_task is None or self._workspace_cleanup_task.done():
             self._workspace_cleanup_task = asyncio.create_task(self._cleanup_workspaces())
 
         try:
@@ -191,9 +188,6 @@ class MacLeaseLoop:
 
     async def _cleanup_workspaces(self) -> None:
         try:
-            # Startup and explicit Ticket actions refresh their own cleanup proof.
-            # Retained history belongs to this slow task, never the lease request.
-            await self.runner.refresh_worker_cleanup()
             ticket_ids = await asyncio.to_thread(
                 _local_workspace_ticket_ids, self.runner.paths.artifacts
             )
@@ -208,7 +202,15 @@ class MacLeaseLoop:
                     reply.at_vps_ms if at_vps_ms is None else min(at_vps_ms, reply.at_vps_ms)
                 )
             assert at_vps_ms is not None
+            snapshot = (ticket_ids, tuple(sorted(states, key=lambda state: state.ticket_id)))
+            now = asyncio.get_running_loop().time()
+            if snapshot == self._workspace_lifecycle and now < self._next_workspace_cleanup:
+                return
+            # A failed cleanup remains eligible for the next lease.
+            await self.runner.refresh_worker_cleanup()
             await self.runner.cleanup_workspaces(tuple(states), at_vps_ms // 1000)
+            self._workspace_lifecycle = snapshot
+            self._next_workspace_cleanup = asyncio.get_running_loop().time() + 600
         except Exception as error:
             _LOG.warning("Ticket workspace cleanup failed error=%s", failure_name(error))
 

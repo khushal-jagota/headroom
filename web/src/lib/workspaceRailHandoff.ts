@@ -54,7 +54,7 @@ export function railHandoff(state: RailHandoffState, incoming: WorkspaceRail, pr
       else result.push({...destination.group, cards:destination.cards});
     }
     // Follow the shared category order, including a category absent from the incoming answer.
-    const order = ['awaiting_approval','awaiting_answer','assigned','errored','agent','waiting_to_closeout','status_awaiting_approval','empty'];
+    const order = ['awaiting_approval','awaiting_answer','assigned','errored','agent','status_awaiting_approval','empty'];
     return stabilizeRailGroups(result.filter(group => group.cards.length).sort((a,b) => order.indexOf(a.key)-order.indexOf(b.key)), oldGroups);
   };
   const rail = {...incoming, chiefGroups:groupsFor('chief',incoming.chiefGroups),

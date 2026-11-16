@@ -3040,14 +3040,20 @@ def verify_ticket_preview_details(page, url, fixture, evidence):
     expect(panels.locator('[data-preview-activity]')).to_have_text('Waiting for you')
     expect(line).to_contain_text('Working · 4m')
     page.evaluate("window.__previewActivity('background')")
-    expect(panels.locator('[data-preview-activity]')).to_have_text('Background work running: Run checks')
-    expect(line).to_have_text('Background work running: Run checks')
+    expect(panels.locator('[data-preview-activity]')).to_have_text('Working')
+    mark_animation = "() => { const m = document.querySelector('[data-conversation-rest-bar] .c2-mark--running'); return m && getComputedStyle(m).animationName; }"
+    expect(line).to_have_text('Working')
+    # The same spinning mark a running turn has, not a separate shape.
+    assert page.evaluate(mark_animation).endswith('spin'), page.evaluate(mark_animation)
+    page.screenshot(path=str(evidence / 'ticket-preview-background-work.png'), animations='disabled')
     page.evaluate("window.__previewActivity('idle')")
     expect(panels.locator('[data-preview-activity]')).to_have_text('Idle')
     page.evaluate("window.__previewActivity('unknown')")
     expect(panels.locator('[data-preview-activity]')).to_have_text('Activity unknown')
     page.evaluate("window.__previewActivity('working')")
     expect(panels.locator('[data-preview-activity]')).to_contain_text('Working · 4m')
+    assert page.evaluate(mark_animation).endswith('spin'), page.evaluate(mark_animation)
+    page.screenshot(path=str(evidence / 'ticket-preview-running-turn.png'), animations='disabled')
     (evidence / 'ticket-preview-proof.json').write_text(json.dumps({
         'seconds': round(time.perf_counter() - started, 3), 'newHosts': 0,
         'boundary': 'Existing App host, navigation and compact live conversation transport; real pointer and recap request',

@@ -87,6 +87,18 @@ async def deliver_ticket_decision_messages(
                 status = await run_on_worker_thread(
                     decision_messages.recorded_outcome, conn, target, sender_message_id
                 )
+                if status is None and row["delivery_status"] in ("sending", "queued"):
+                    if target is not None:
+                        awaiting = await conversation_system.sender_message_ids_awaiting_outcome(
+                            str(target)
+                        )
+                        if sender_message_id in awaiting:
+                            continue
+                    # An outcome may have been recorded after the first read and before
+                    # the conversation released ownership of the message.
+                    status = await run_on_worker_thread(
+                        decision_messages.recorded_outcome, conn, target, sender_message_id
+                    )
                 if status is not None:
                     if status == row["delivery_status"] and status != "delivered":
                         break
@@ -98,6 +110,8 @@ async def deliver_ticket_decision_messages(
                             ticket_id,
                             expected_claim=ticket.worker_step_claim,
                             expected_claim_revision=ticket.worker_step_claim_revision,
+                            decision_delivery=True,
+                            decision_proposal_revision=row["proposal_revision"],
                             now=now(),
                             error_reason=f"decision delivery {status}",
                         )
@@ -106,12 +120,8 @@ async def deliver_ticket_decision_messages(
                 if row["delivery_status"] in ("uncertain", "refused", "discarded"):
                     break
                 if row["delivery_status"] != "pending":
-                    if target is not None:
-                        held = await conversation_system.held_prompts(str(target))
-                        if any(item.sender_message_id == sender_message_id for item in held):
-                            continue
                     # Sending was durably marked before the wire. Without an outcome or
-                    # an owned queue item, restart cannot know whether it crossed.
+                    # conversation ownership, restart cannot know whether it crossed.
                     await run_on_worker_thread(_set_status, conn, identity, "uncertain", target)
                     await run_on_worker_thread(
                         tickets_data.mark_worker_step_claim_errored,
@@ -119,6 +129,8 @@ async def deliver_ticket_decision_messages(
                         ticket_id,
                         expected_claim=ticket.worker_step_claim,
                         expected_claim_revision=ticket.worker_step_claim_revision,
+                        decision_delivery=True,
+                        decision_proposal_revision=row["proposal_revision"],
                         now=now(),
                         error_reason="decision delivery uncertain",
                     )
@@ -175,6 +187,8 @@ async def deliver_ticket_decision_messages(
                             ticket_id,
                             expected_claim=ticket.worker_step_claim,
                             expected_claim_revision=ticket.worker_step_claim_revision,
+                            decision_delivery=True,
+                            decision_proposal_revision=row["proposal_revision"],
                             now=now(),
                             error_reason="decision delivery uncertain",
                         )
@@ -200,6 +214,8 @@ async def deliver_ticket_decision_messages(
                         ticket_id,
                         expected_claim=ticket.worker_step_claim,
                         expected_claim_revision=ticket.worker_step_claim_revision,
+                        decision_delivery=True,
+                        decision_proposal_revision=row["proposal_revision"],
                         now=now(),
                         error_reason=f"decision delivery {status}",
                     )

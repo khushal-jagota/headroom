@@ -41,6 +41,7 @@
   import RequestRecapAction from "../components/RequestRecapAction.svelte";
   import RecapSlot from "../components/RecapSlot.svelte";
   import TicketLifecycleControls from "../components/TicketLifecycleControls.svelte";
+  import DecisionFeedbackDelivery from "../components/DecisionFeedbackDelivery.svelte";
   import type { InlineEditDraft } from "../lib/inlineEditDraft";
   import TicketStageSection from "../components/TicketStageSection.svelte";
   import ArtifactPreview from "../components/ArtifactPreview.svelte";
@@ -391,6 +392,7 @@
               {/each}
             </div>
           {/if}
+          <DecisionFeedbackDelivery ticket={detail} />
           {#if headerError}<ErrorLine error={headerError} />{/if}
         </header>
 
@@ -426,7 +428,7 @@
                   {/key}
                 {:else}
                   <h2>{ticketSectionHeading(section,currentView)} {fieldLabelFor(lc, currentField)}</h2>
-                  {#if detail.stage !== "needs_brief"}
+                  {#if detail.stage !== "needs_brief" && currentField !== "consequences"}
                     <div class="worker-ceiling-line" data-leash>
                       <CeilingPicker document newStage={detail.stage} lifecycle={lc} ceiling={detail.ceiling} holder={detail.ceiling_holder}
                         triggerLabel={`Approved until ${detail.ceiling === "none" ? "No further" : stageLabelFor(lc, detail.ceiling)}, then ${pageHolderLabel(detail.ceiling_holder)} reviews`}

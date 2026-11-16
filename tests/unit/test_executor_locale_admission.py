@@ -102,6 +102,11 @@ def test_both_runtime_guards_use_current_presence(
     blocker: str | None,
 ) -> None:
     ticket = mac_ticket(tmp_db)
+    # This case exercises Mac presence after the preceding decision was delivered.
+    tmp_db.execute(
+        "UPDATE ticket_decision_messages SET delivery_status='delivered' WHERE ticket_id=?",
+        (ticket.id,),
+    )
     tmp_db.commit()
     db_path = database_path(tmp_db)
     if state == "away":

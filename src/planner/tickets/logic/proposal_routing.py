@@ -7,7 +7,7 @@ from enum import StrEnum
 
 from planner.core.contracts import CHIEF_PRINCIPAL, OWNER_PRINCIPAL, Principal, PrincipalKind
 from planner.tickets.logic import machine
-from planner.worker_types.contracts import WorkflowDefinition
+from planner.worker_types.contracts import CONSEQUENCES_FIELD_ID, WorkflowDefinition
 
 
 class ProposalRouteKind(StrEnum):
@@ -34,7 +34,7 @@ def route_proposal(
     below_the_ceiling = not machine.at_or_beyond_ceiling(
         stage, ceiling, worker_type_definition=worker_type_definition
     )
-    if below_the_ceiling:
+    if below_the_ceiling or worker_type_definition.gating_field(stage) == CONSEQUENCES_FIELD_ID:
         return ProposalRoute(ProposalRouteKind.auto_accept)
     return route_to_holder(holder)
 

@@ -142,15 +142,6 @@ def test_probe_drive_uses_one_current_proposal_and_sparse_values(
     ticket = data.file_current_proposal(
         tmp_db, tid, body="landed", principal=ticket_principal(tid), now=now
     )
-    ticket = data.accept_proposal(
-        tmp_db,
-        tid,
-        field="consequences",
-        principal=OWNER_PRINCIPAL,
-        now=now,
-        next_ceiling=NO_FURTHER,
-        next_holder=OWNER_PRINCIPAL,
-    )
     assert (
         ticket.stage == "done"
         and ticket.field_values["consequences"] == "landed"
