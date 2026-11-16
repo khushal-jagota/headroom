@@ -41,6 +41,7 @@
   import RequestRecapAction from "../components/RequestRecapAction.svelte";
   import RecapSlot from "../components/RecapSlot.svelte";
   import TicketLifecycleControls from "../components/TicketLifecycleControls.svelte";
+  import DecisionFeedbackDelivery from "../components/DecisionFeedbackDelivery.svelte";
   import type { InlineEditDraft } from "../lib/inlineEditDraft";
   import TicketStageSection from "../components/TicketStageSection.svelte";
   import ArtifactPreview from "../components/ArtifactPreview.svelte";
@@ -321,6 +322,7 @@
       <div class="ticket-page" use:conversationDock use:dismissOutsideConversation>
       <div class="ticket-reading">
       <main class="ticket-doc">
+        <DecisionFeedbackDelivery ticket={detail} />
         <header bind:this={mastheadElement} class="ticket-head" data-ticket-masthead-id={masthead.id} data-ticket-locale={masthead.locale}>
           <!-- Every page has one line above its title: where it lives, then its own facts.
                Under the title there is only the recap. -->

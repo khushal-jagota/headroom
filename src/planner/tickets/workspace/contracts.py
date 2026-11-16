@@ -88,6 +88,7 @@ class ValidWorkspaceTicket(TypedDict):
     field_values: dict[str, str]
     field_summaries: dict[str, WorkspaceFieldSummary]
     field_approvals: dict[str, TicketFieldApproval]
+    unresolved_decision_feedback: list[dict[str, str]]
     pending_proposal: WorkspaceProposal | None
     created_at: int
     updated_at: int

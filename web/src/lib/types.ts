@@ -239,6 +239,7 @@ export type TicketDetail = {
   field_values: TicketFieldValues;
   field_approvals?: Record<string, TicketFieldApproval>;
   pending_proposal: PendingTicketProposal | null;
+  unresolved_decision_feedback?: { decision_id: string; status: string; message: string }[];
   awaiting_reply?: boolean;
   awaiting_answer?: boolean;
   awaiting_approval?: boolean;

@@ -47,6 +47,15 @@ def workspace_ticket(conn: sqlite3.Connection, ticket_id: str) -> WorkspaceTicke
             blocked=blockers.blocked,
             blocker_summary=blocker_summary_json(blockers),
             employee_configuration_editable=data.employee_configuration_editable(ticket),
+            unresolved_decision_feedback=[
+                {"decision_id": str(row["decision_id"]), "status": str(row["delivery_status"]),
+                 "message": str(row["model_text"])}
+                for row in conn.execute(
+                    "SELECT decision_id,delivery_status,model_text FROM ticket_decision_messages "
+                    "WHERE ticket_id=? AND delivery_status IN ('uncertain','refused','discarded') "
+                    "ORDER BY created_at,rowid", (ticket_id,),
+                )
+            ],
         )
         return cast(WorkspaceTicket, detail)
 
