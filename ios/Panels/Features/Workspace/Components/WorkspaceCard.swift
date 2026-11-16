@@ -165,7 +165,7 @@ private struct WorkspaceSignalMark: View {
     var agentApproval = false
     var body: some View {
         Group {
-            if approval {
+            if approval && signal?.messageForOwner != true {
                 Image(systemName: "tray").font(.system(size: 14)).foregroundStyle(PanelsTheme.Web.accent)
                     .accessibilityLabel("Needs your approval")
             } else if agentApproval && signal?.messageForOwner != true && signal?.working != true {
