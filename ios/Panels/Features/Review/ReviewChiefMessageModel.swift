@@ -78,15 +78,17 @@ import Observation
     func send() async -> Bool {
         guard let api else { return false }
         refreshAttempt()
-        guard !blocked else { return false }
-        let text = composer.draft.trimmingCharacters(in: .whitespacesAndNewlines)
-        let content: [ConversationSend.Piece] = (text.isEmpty ? [] : [.init(text: text)]) + composer.attachments
-        guard !content.isEmpty else { return false }
-        let created = Date.now
-        let server = LocalStore.server(api.baseURL)
+        guard !blocked, !composer.preparingPhoto else { return false }
         let generation = self.generation
         busy = true; error = nil
         defer { if generation == self.generation { busy = false } }
+        let content: [ConversationSend.Piece]
+        do { content = try await composer.preparedContent() }
+        catch is CancellationError { return false }
+        catch { self.error = error.localizedDescription; return false }
+        guard generation == self.generation, !content.isEmpty else { return false }
+        let created = Date.now
+        let server = LocalStore.server(api.baseURL)
         do {
             // Resolve once before dispatch. Later pointer changes cannot move this attempt.
             let destination = try await api.chiefConversation().conversationId
@@ -108,6 +110,7 @@ import Observation
             await Outbox.shared.drain(api: api)
             guard generation == self.generation else { return false }
             refreshAttempt()
+            if attempt?.state == .failed { error = attempt?.note }
             return attempt.map { [.sent, .serverQueued].contains($0.state) } ?? false
         } catch { if generation == self.generation { self.error = error.localizedDescription }; return false }
     }

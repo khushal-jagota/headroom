@@ -10,7 +10,6 @@ from collections.abc import Mapping, Sequence
 from pathlib import Path
 
 TREE = Path(__file__).resolve().parent.parent
-PACKAGES = ("web", "agent_backends")
 
 
 def npm_command(tree: Path, args: Sequence[str], env: Mapping[str, str]) -> list[str]:
@@ -42,43 +41,21 @@ def python_command(tree: Path, args: Sequence[str]) -> list[str]:
 
 
 def setup(tree: Path, env: Mapping[str, str]) -> int:
-    """Install fresh dependencies in this checkout."""
-    destinations = [tree / ".venv", *(tree / item / "node_modules" for item in PACKAGES)]
-    for destination in destinations:
-        if destination.exists() or destination.is_symlink():
-            raise ValueError(f"Setup requires fresh dependencies: {destination}")
-    registry_keys = {
-        "PIP_INDEX_URL", "PIP_EXTRA_INDEX_URL", "PIP_TRUSTED_HOST", "PIP_CERT",
-        "PIP_CLIENT_CERT", "PIP_TIMEOUT", "PIP_RETRIES", "PIP_PROXY",
-    }
-    install_environment = {
-        key: value for key, value in env.items()
-        if not key.upper().startswith("PIP_") or key in registry_keys
-    }
-    install_environment["PIP_CONFIG_FILE"] = os.devnull
-    bootstrap = shutil.which("python3", path=env.get("PATH", os.defpath))
-    if not bootstrap:
-        raise ValueError("python3 is absent from PATH.")
-    subprocess.run(
-        [bootstrap, "-I", "-S", "-B", "-m", "venv", str(tree / ".venv")],
-        cwd=tree, env=install_environment, check=True,
-    )
-    python = str(tree / ".venv/bin/python")
-    for arguments in (
-        ["-I", "-m", "pip", "--no-cache-dir", "install", "-r", str(tree / "requirements.txt")],
-        ["-I", "-m", "pip", "--no-cache-dir", "install", "--editable", str(tree),
-         "--config-settings", "editable_mode=compat"],
-    ):
-        subprocess.run([python, *arguments], cwd=tree, env=install_environment, check=True)
-    for package in PACKAGES:
+    """Reuse built dependencies with checkout-local source wiring."""
+    return subprocess.run(
+        ["node", str(tree / "scripts/dev_setup.mts")], cwd=tree, env=env,
+    ).returncode
+
+
+def detach_npm_dependencies(tree: Path, arguments: Sequence[str], env: Mapping[str, str]) -> None:
+    if len(arguments) < 3 or arguments[0] != "--prefix" or arguments[2] not in {"ci", "install"}:
+        return
+    destination = tree / arguments[1] / "node_modules"
+    if (destination / ".panels-cache.json").exists():
         subprocess.run(
-            npm_command(
-                tree, ["--prefix", package, "install" if package == "agent_backends" else "ci"],
-                env,
-            ),
-            cwd=tree, env=install_environment, check=True,
+            ["node", str(tree / "scripts/dev_setup.mts"), "--detach", str(destination)],
+            cwd=tree, env=env, check=True,
         )
-    return 0
 
 
 def main(args: Sequence[str] | None = None) -> int:
@@ -94,6 +71,8 @@ def main(args: Sequence[str] | None = None) -> int:
             if arguments[0] == "npm"
             else python_command(TREE, arguments)
         )
+        if arguments[0] == "npm":
+            detach_npm_dependencies(TREE, arguments[1:], environment)
         is_pytest = arguments[0] != "npm" and (
             Path(arguments[0]).name == "pytest"
             or (len(arguments) > 2 and arguments[1:3] == ["-m", "pytest"])

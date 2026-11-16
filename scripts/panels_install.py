@@ -94,6 +94,8 @@ def preflight(args: argparse.Namespace, target: str) -> None:
     node_version = re.fullmatch(r"v(\d+)\.\d+\.\d+", version)
     if node_version is None or int(node_version.group(1)) < 22:
         raise ValueError(f"Install Node.js 22 or newer. The selected Node reports {version}.")
+    if args.command == "join" and target == "linux":
+        require_linux_join_node(version)
     if target == "darwin":
         if int(platform.mac_ver()[0].split(".")[0]) < 15:
             raise ValueError("Update this Mac to macOS 15 or newer.")
@@ -224,14 +226,19 @@ def select_publication(
         return args.archive, select_receipt(receipt, target, args.command)
     if args.receipt is not None:
         raise ValueError("Supply --archive with --receipt.")
+    workflow = (
+        "publish-typescript-release.yml"
+        if args.command == "join" and target == "linux"
+        else "deploy.yml"
+    )
     runs = _api(
-        "actions/workflows/deploy.yml/runs?branch=main&event=push&status=success&per_page=20"
+        f"actions/workflows/{workflow}/runs?branch=main&event=push&status=success&per_page=20"
     )["workflow_runs"]
     for run in runs:
         if args.revision is not None and run.get("head_sha") != args.revision:
             continue
         if (
-            run.get("path") != ".github/workflows/deploy.yml"
+            run.get("path") != f".github/workflows/{workflow}"
             or run.get("head_branch") != "main"
             or run.get("event") != "push"
             or run.get("conclusion") != "success"
@@ -301,8 +308,10 @@ def select_receipt(receipt: dict[str, Any], target: str, command: str) -> dict[s
             "arm64" if target == "darwin" else "x86_64",
         ):
             raise ValueError("The release target differs from this machine.")
-        if contract.get("version") != 1:
-            raise ValueError("This bootstrap needs a sealed Python release from deploy.yml.")
+        if contract.get("version") not in (1, 2):
+            raise ValueError("This bootstrap needs a sealed Python or Node home release.")
+        if contract.get("version") == 2 and target == "darwin" and contract.get("role") != "home":
+            raise ValueError("The release must be a Darwin home artifact.")
     if not isinstance(selected, dict) or not re.fullmatch(r"[0-9a-f]{40}", revision or ""):
         raise ValueError("The publication receipt has no exact application revision.")
     digest = selected.get("archive_sha256")
@@ -343,7 +352,7 @@ def extract_bootstrap(archive: Path, destination: Path, digest: str) -> None:
 
 
 def check_linux_contract(payload: Path) -> None:
-    """Check loader prerequisites before the sealed Python interpreter can start."""
+    """Check loader prerequisites before the sealed runtime can start."""
     contract = json.loads((payload / "manifest.json").read_text())["runtime_contract"]
     release = platform.freedesktop_os_release()
     supported = next(
@@ -384,6 +393,52 @@ def check_linux_contract(payload: Path) -> None:
             raise ValueError("Install the host executable " + executable + ".")
 
 
+def require_linux_join_node(version: str) -> None:
+    match = re.fullmatch(r"v(\d+)\.(\d+)\.(\d+)", version.strip())
+    if (
+        match is None
+        or int(match.group(1)) != 22
+        or (int(match.group(2)), int(match.group(3))) < (18, 0)
+    ):
+        raise ValueError("Linux executor join requires host Node 22 >=22.18.0.")
+
+
+def linux_executor_node(payload: Path, revision: str) -> Path:
+    """Bind the native executor target before any downloaded helper executes."""
+    manifest = json.loads((payload / "manifest.json").read_text())
+    contract = manifest.get("runtime_contract") if isinstance(manifest, dict) else None
+    if (
+        not isinstance(contract, dict)
+        or type(contract.get("version")) is not int
+        or contract["version"] != 2
+        or (contract.get("system"), contract.get("architecture")) != ("linux", "x86_64")
+        or contract.get("node_major") != 22
+        or contract.get("minimum_node_version") != "22.18.0"
+        or manifest.get("app_sha") != revision
+    ):
+        raise ValueError("Linux join requires a native version 2 Linux executor release.")
+    marker = json.loads((payload / "mac-runtime.json").read_text())
+    if (
+        not isinstance(marker, dict)
+        or type(marker.get("schema_version")) is not int
+        or marker["schema_version"] != 1
+        or (
+            marker.get("platform"),
+            marker.get("architecture"),
+            marker.get("role"),
+            marker.get("application_revision"),
+        )
+        != ("linux", "x86_64", "executor", revision)
+    ):
+        raise ValueError("Linux executor target or revision differs from the approved release.")
+    found = shutil.which("node")
+    if found is None:
+        raise ValueError("Linux executor join requires host Node 22 >=22.18.0.")
+    node = Path(found).resolve(strict=True)
+    require_linux_join_node(_run(str(node), "--version").stdout)
+    return node
+
+
 def parser() -> argparse.ArgumentParser:
     result = argparse.ArgumentParser(description=__doc__)
     result.add_argument("command", choices=("home", "join"))
@@ -392,7 +447,8 @@ def parser() -> argparse.ArgumentParser:
     result.add_argument("--receipt", type=Path)
     result.add_argument("--root", type=Path)
     result.add_argument(
-        "--service", help="Home or Mac join label. Linux joins use panels-executor.service."
+        "--service",
+        help="Home or Mac join label. Linux joins use panels-executor-typescript.service.",
     )
     result.add_argument("--port", type=int, default=8767)
     result.add_argument("--isolated-providers", action="store_true")
@@ -401,23 +457,31 @@ def parser() -> argparse.ArgumentParser:
     return result
 
 
-def run_installer(command: list[str], payload: str, environment: dict[str, str]) -> None:
-    """Wait through installer rollback after one forwarded interrupt, including repeated Ctrl-C."""
+def run_installer(
+    command: list[str],
+    payload: str,
+    environment: dict[str, str],
+    *,
+    forward_termination: bool = False,
+) -> None:
+    """Wait through rollback after the first forwarded interrupt; Linux join also forwards TERM."""
     process: subprocess.Popen[str] | None = None
-    interrupted = False
+    interrupted: int | None = None
     forwarded = False
 
     def interrupt(signum: int, frame: FrameType | None) -> None:
         nonlocal interrupted, forwarded
-        interrupted = True
+        if interrupted is None:
+            interrupted = signum
         if process is not None and not forwarded:
             forwarded = True
             try:
-                process.send_signal(signal.SIGINT)
+                process.send_signal(interrupted)
             except ProcessLookupError:
                 pass
 
-    previous = signal.signal(signal.SIGINT, interrupt)
+    handled = (signal.SIGINT, signal.SIGTERM) if forward_termination else (signal.SIGINT,)
+    previous = {signum: signal.signal(signum, interrupt) for signum in handled}
     try:
         # A separate session prevents repeated terminal interrupts from reaching cleanup.
         process = subprocess.Popen(
@@ -427,13 +491,14 @@ def run_installer(command: list[str], payload: str, environment: dict[str, str])
             env=environment,
             start_new_session=True,
         )
-        if interrupted:
-            interrupt(signal.SIGINT, None)
+        if interrupted is not None:
+            interrupt(interrupted, None)
         process.communicate(payload)
     finally:
-        signal.signal(signal.SIGINT, previous)
-    if interrupted:
-        raise SystemExit(130)
+        for signum, handler in previous.items():
+            signal.signal(signum, handler)
+    if interrupted is not None:
+        raise SystemExit(128 + interrupted)
     if process.returncode:
         raise subprocess.CalledProcessError(process.returncode, command)
 
@@ -443,7 +508,7 @@ def main() -> None:
     try:
         target = host_target()
         if args.command == "join" and target == "linux" and args.service is not None:
-            raise ValueError("Linux joins use panels-executor.service. Omit --service.")
+            raise ValueError("Linux joins use panels-executor-typescript.service. Omit --service.")
         args.service = args.service or (
             "com.panels.home" if args.command == "home" else "com.panels.executor"
         )
@@ -459,7 +524,11 @@ def main() -> None:
                     "Join needs --home URL and --machine-id from the owner's join command."
                 )
             if target == "linux":
-                args.service = "panels-executor.service"
+                xdg_data = Path(os.environ.get("XDG_DATA_HOME") or Path.home() / ".local/share")
+                if args.root is None and not xdg_data.is_absolute():
+                    raise ValueError("Linux executor XDG_DATA_HOME must be absolute.")
+                default_root = xdg_data / "panels/executor-typescript"
+                args.service = "panels-executor-typescript.service"
         args.root = (args.root or default_root).expanduser().absolute()
         preflight(args, target)
         print("Host prerequisites passed. Select and check the release.", flush=True)
@@ -471,12 +540,32 @@ def main() -> None:
             archive = archive.resolve()
             payload = work / "payload"
             extract_bootstrap(archive, payload, receipt["archive_sha256"])
+            linux_node: Path | None = None
             if target == "linux":
+                if args.command == "join":
+                    linux_node = linux_executor_node(payload, receipt["revision"])
                 check_linux_contract(payload)
             environment = {
                 key: value for key, value in os.environ.items() if not key.startswith("PLAN_")
             }
-            if args.command == "home":
+            if (
+                args.command == "home"
+                and receipt.get("manifest", {}).get("runtime_contract", {}).get("version") == 2
+            ):
+                node = "/opt/homebrew/bin/node" if target == "darwin" else shutil.which("node")
+                if node is None:
+                    raise ValueError("Install Node.js 22 or newer before installation.")
+                command = [node, str(payload / "server/installation/home_main.ts")]
+                value = {
+                    "root": str(args.root),
+                    "service": args.service,
+                    "port": args.port,
+                    "isolated_providers": args.isolated_providers,
+                    "archive": str(archive),
+                    "archive_sha256": receipt["archive_sha256"],
+                    "revision": receipt["revision"],
+                }
+            elif args.command == "home":
                 command = [
                     str(payload / ".venv/bin/python"),
                     "-I",
@@ -495,30 +584,55 @@ def main() -> None:
                     "revision": receipt["revision"],
                 }
             else:
-                command = [
-                    str(
-                        payload
-                        / ("python/bin/python3" if target == "darwin" else ".venv/bin/python")
-                    ),
-                    "-I",
-                    "-B",
-                    "-c",
-                    "from planner.installation.join import main; main()",
-                ]
-                value = {
-                    "archive": str(archive),
-                    "archive_sha256": receipt["archive_sha256"],
-                    "archive_size": receipt.get("archive_size", archive.stat().st_size),
-                    "revision": receipt["revision"],
-                    "home_url": args.home,
-                    "machine_id": args.machine_id,
-                    "isolated_providers": args.isolated_providers,
-                    "credential": getpass.getpass("Private machine credential: "),
-                    "root": str(args.root),
-                    "label": args.service,
-                }
+                if target == "linux":
+                    assert linux_node is not None
+                    command = [
+                        str(linux_node),
+                        str(payload / "server/environments/linux_executor/join_main.ts"),
+                    ]
+                    value = {
+                        "archive": str(archive),
+                        "archive_sha256": receipt["archive_sha256"],
+                        "archive_size": receipt.get("archive_size", archive.stat().st_size),
+                        "revision": receipt["revision"],
+                        "home_url": args.home,
+                        "machine_id": args.machine_id,
+                        "isolated_providers": args.isolated_providers,
+                        "credential": getpass.getpass("Private machine credential: "),
+                        "root": str(args.root),
+                        "home": str(Path.home()),
+                        "node_executable": str(linux_node),
+                    }
+                    for variable in ("NODE_OPTIONS", "NODE_PATH", "LD_PRELOAD", "LD_LIBRARY_PATH"):
+                        environment.pop(variable, None)
+                else:
+                    command = [
+                        str(
+                            payload
+                            / ("python/bin/python3" if target == "darwin" else ".venv/bin/python")
+                        ),
+                        "-I",
+                        "-B",
+                        "-c",
+                        "from planner.installation.join import main; main()",
+                    ]
+                    value = {
+                        "archive": str(archive),
+                        "archive_sha256": receipt["archive_sha256"],
+                        "archive_size": receipt.get("archive_size", archive.stat().st_size),
+                        "revision": receipt["revision"],
+                        "home_url": args.home,
+                        "machine_id": args.machine_id,
+                        "isolated_providers": args.isolated_providers,
+                        "credential": getpass.getpass("Private machine credential: "),
+                        "root": str(args.root),
+                        "label": args.service,
+                    }
             print("Release checksum passed. Install the new service.", flush=True)
-            run_installer(command, json.dumps(value), environment)
+            if args.command == "join" and target == "linux":
+                run_installer(command, json.dumps(value), environment, forward_termination=True)
+            else:
+                run_installer(command, json.dumps(value), environment)
     except (
         OSError,
         ValueError,

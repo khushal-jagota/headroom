@@ -1,4 +1,8 @@
 import XCTest
+#if os(iOS)
+import SwiftUI
+import UIKit
+#endif
 @testable import Panels
 
 @MainActor final class GoalTests: XCTestCase {
@@ -459,6 +463,40 @@ import XCTest
                        [URLQueryItem(name: "detail", value: "full")])
         XCTAssertEqual(response["projects"].array.first?["id"].text, "project_personal")
     }
+
+    #if os(iOS)
+    /// The prior header-only scroller excluded body width and height. One native
+    /// host proves row containment without a server or another screen journey.
+    func testTableScrollContainsWideRowsAndEveryRowHeight() async throws {
+        let row: GoalJSON = .array([.string("A long body value that exceeds the short column header"), .string("Another long body value for the second column")])
+        func measure(_ rows: [GoalJSON]) async throws -> (viewport: CGSize, content: CGSize) {
+            let block: GoalJSON = .object(["id": .string("table"), "type": .string("table"), "columns": .array([.string("A"), .string("B")]), "rows": .array(rows)])
+            let session = PageSession(id: "g", api: client())
+            let host = UIHostingController(rootView: ScrollView { GoalPageBlocks(blocks: [block], session: session) })
+            let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
+            window.rootViewController = host
+            window.makeKeyAndVisible()
+            defer { window.isHidden = true }
+            host.view.layoutIfNeeded()
+            await Task.yield()
+            host.view.layoutIfNeeded()
+            func scrolls(in view: UIView) -> [UIScrollView] {
+                ((view as? UIScrollView).map { [$0] } ?? []) + view.subviews.flatMap { scrolls(in: $0) }
+            }
+            let views = scrolls(in: host.view)
+            let page = try XCTUnwrap(views.first)
+            let table = try XCTUnwrap(views.dropFirst().first)
+            XCTAssertLessThanOrEqual(page.contentSize.width, page.bounds.width + 1, "The page itself cannot scroll sideways")
+            return (table.bounds.size, table.contentSize)
+        }
+        let single = try await measure([row])
+        let multiple = try await measure([row, row, row])
+        XCTAssertGreaterThan(single.viewport.width, 0)
+        XCTAssertLessThanOrEqual(single.viewport.width, 390, "The table viewport stays within the phone")
+        XCTAssertGreaterThan(single.content.width, single.viewport.width, "Body cells determine the horizontal scroll extent")
+        XCTAssertGreaterThan(multiple.content.height, single.content.height + 20, "Every body row stays inside the same scroll content")
+    }
+    #endif
 
     private func client() -> APIClient {
         let config = URLSessionConfiguration.ephemeral; config.protocolClasses = [GoalProtocol.self]

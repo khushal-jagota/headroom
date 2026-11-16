@@ -1,5 +1,5 @@
 .venv/
-data/
+/data/
 __pycache__/
 *.pyc
 .pytest_cache/
@@ -22,3 +22,4 @@ diagnostics/before/
 diagnostics/gates/
 diagnostics/dogfood/
 diagnostics/run-before-main/
+server/node_modules

@@ -1,0 +1,390 @@
+# Backend comparison
+
+The runner sends one request list to Python and a candidate server on separate copies of one database. It compares responses, read probes, and source rows. Python is the reference.
+
+Source-row sort keys retain known normalized identities and use generic placeholders for unknown IDs, so independent rows remain aligned across insertion orders.
+
+## Expected-open staging ports
+
+Retained proofs, staging reasons, and package counts: [P2](expected_open/P2.md), [P3](expected_open/P3.md), [P4](expected_open/P4.md), [P5](expected_open/P5.md), [P6](expected_open/P6.md), [P7](expected_open/P7.md).
+
+The catch-up and private launch-token ports close the frozen-staging checkpoint gaps.
+The retained cases now run without expected-failure marks.
+
+The connected executor update cases use Python only as the existing HTTPS publication
+and receipt host. Their native Linux archive comes from the shared TypeScript
+`runtime_archive` fixture and passes the real retained `FilesService` extractor and
+revision validator. The fixture-only Python publication adapter accepts only those
+exact admitted bytes, digest, size, and revision. It does not claim Python archive
+parity or production deployment admission. The failed-attempt case offers the same
+release as a ready prefetch, waits for the consumer's separate `updates/releases`
+cache, and validates that runtime through the real Node revision admission before
+it fails the preparing attempt. The restart case executes the producer-admitted
+entrypoint, which imports the existing connected MacService host and its scripted
+provider. That archived-launch check does not claim a second publication download.
+This reuses the host's existing files worker and NodePeer process owner, with no
+additional worker or listener. These cases run only in hosted CI. Their execution
+cost remains recorded by the hosted test duration, not a local VPS run. P5's hosted
+release acceptance owns the complete production archive and host closure.
+
+## Add an area
+
+Add two files with the same name:
+
+- `tests/compare/lists/unit-NN.json`
+- `tests/compare/rules/unit-NN.json`
+
+The runner and CI discover these files without a registry or runner change. Use the `unit-*.json` naming convention. Put the area's Python source directories in `source_roots` for CI selection. Branch updates run every list.
+
+Start the rule file from `rules/unit-01.json` to retain the shared metadata rules. Add only necessary area exceptions. Each exception must state its reason.
+
+A list contains requests, captures, and read probes:
+
+```json
+{
+  "source_roots": ["src/planner/example/"],
+  "requests": [
+    {
+      "area": "example",
+      "method": "POST",
+      "path": "/api/example",
+      "status": 200,
+      "json": {"name": "Example"},
+      "capture": {"example_id": "id"}
+    },
+    {
+      "area": "example",
+      "method": "GET",
+      "path": "/api/example/${example_id}",
+      "status": 200
+    }
+  ],
+  "probes": ["/api/example"]
+}
+```
+
+Replace the example routes with real area routes. Every request requires `status`. Both servers must return that status before their answers compare. Read probes require HTTP 200. Equal failures must not pass as successful calls.
+
+Use `headers` for caller identity and other request headers. For refused calls, the caller must exist. Create or select the caller first, then use its id. A nonexistent caller proves rejection of a nonexistent caller, not the intended authority rule. Do not copy the placeholder caller ids from Unit 1 into new authority proofs.
+
+Captures use dotted object paths and numeric array indices. An empty path captures the complete body. `${capture}` substitutes separately on each server. A complete-string substitution preserves the captured JSON type. Arrays retain order.
+
+A request can supply `body_base64` instead of `json` to transfer raw bytes. The two
+fields are mutually exclusive. The runner validates base64 and decodes the same
+fixture bytes for each host. Supply the appropriate `content-type` in `headers`.
+Status checks, headers, response captures, and response comparison stay unchanged.
+Seed requests and writes after stream frames use the same request-body rule.
+Keep fixtures small. A short real video can prove upload transfer and probing
+without a large binary in the repository.
+
+The rule file contains reason maps:
+
+- `ignore`: exact `table.column` exceptions for source rows.
+- `tokens`: exact `table.column` counters or digests compared by change.
+- `process_identity_tokens`: exact `table.column` native identities in one typed namespace for the entire run.
+- `response_ignore`: exact response paths, such as `body.events.*.created_at`.
+- `response_tokens`: exact response paths for counters or digests compared by change.
+- `derived_tables`: tables excluded from SQL comparison. Add probes for their public output.
+
+Process identity tokens retain every field, null, value kind, and repeated reference across all declared tables, rows, and columns. Distinct typed values get distinct tokens. These opaque values do not set source-row sort order. Unit 15 queue declares only custody PID and birth evidence because each comparison host owns different native children. The [production reporter checks](../../server/conversation/backends/codex_app_server/client.test.ts), [custody guards](../../server/conversation/child_custody.test.ts), and [native process ABI checks](../../server/platform_runtime/worker_processes.native.test.ts) establish the raw identity. A per-row or per-column namespace cannot establish those reference relationships and is not permitted.
+
+The [startup recovery proof](direct/test_unit_19_recovery.py) maps only the random
+suffix in `lost-background:<same conversation>:<32 lowercase hex>` sender IDs through
+a per-run bijection. The [maintenance proof](direct/test_unit15b_maintenance.py) uses
+the same bounded rule only for exact `worker_step_memory_notice_<32 lowercase hex>`
+IDs in sender fields, awaiting-outcome membership, and their projection lookup
+references. A lookup must name an already recorded notice.
+The prefix, equality, cardinality, and cross-field references remain intact. Worker
+wake IDs and text remain exact. Both proofs retain raw and canonical observations.
+The maintenance proof also retains its explicit mapping. No other fields or strings
+receive this rule.
+
+The `*` response path segment denotes an array item. It is not an arbitrary wildcard. Do not hide content digests as random ids. Give each wall-time field an explicit rule and reason.
+
+## Retired duplicate domain lists
+
+The following originals retire in favor of their existing real-core copies. For
+each original filename, its copy adds the prefix `unit-15.real-core-reruns.` in
+the same `lists/` directory. For example, `unit-09.json` maps to
+`unit-15.real-core-reruns.unit-09.json`.
+The copy retains the original product requests, seeds, probes, and source roots.
+Its rules add no exception keys beyond the original rules. Fixture conversions
+use canonical adoption, real inspectors, and actual completion through the core.
+They do not claim equality with the in-memory conversation protocol.
+
+| Original unit | Retired originals |
+| --- | --- |
+| 07 | `unit-07.complete.json`, `unit-07.lifecycle.json`, `unit-07.links-accepted.json`, `unit-07.links-edited.json`, `unit-07.links-pending.json`, `unit-07.links-rejected.json` |
+| 08 | `unit-08.delivery.json`, `unit-08.managers.json`, `unit-08.wakes.json` |
+| 09 | `unit-09.disabled.json`, `unit-09.json` |
+| 10 | `unit-10.notifications.json` |
+| 11 | `unit-11.credential-metadata.json`, `unit-11.credentials.json`, `unit-11.files.json`, `unit-11.foundation.json`, `unit-11.manager-lifecycle.json`, `unit-11.origin.json`, `unit-11.preview-ingress.json`, `unit-11.previews.json`, `unit-11.ranges.json` |
+| 12 | `unit-12.goals.json` |
+
+These 22 originals and matching rule files retire together. Every other list stays.
+`unit-12.measures-datasets.json` and its rule stay because the existing direct
+check in `direct/test_unit12_populated_pages.py` reads that rule file.
+In particular, `unit-08.starts.json` retains its fake-only error cases, and
+`unit-06.json` retains the in-memory conversation contract. The in-memory system
+and its test routes remain available to these and other retained lists.
+
+## CI list assignments
+
+The comparison workflow assigns every `unit-*.json` list to one of two fixed
+shards. When you add or remove a list, update the explicit filename tuples in
+`.github/workflows/typescript-backend.yml`. CI rejects missing, duplicate, or
+unknown assignments before it applies pull request selection. Each selected list
+runs once. Empty shards run no lists. Direct checks and shared oracle checks run
+once per Node version, and both shards keep the existing report artifact layout.
+Shard 1 binds new host listeners in ports 10000–19999 and shard 2 in 20000–29999.
+The fixture binds each listener before the child starts and passes its file descriptor.
+A restart keeps its explicit port. The disjoint ranges prevent the other shard
+from taking that port while the stopped host restarts.
+
+## Run a list
+
+A list can set `"compare_skill_files": true` to compare the files beneath each
+server database parent's `skills/` tree after its requests. The runner compares
+relative filenames and exact bytes, including supporting files. Missing, extra,
+or changed files appear in `differences` with the filename and each side's hex
+bytes (`null` means absent). No normalization or rule applies to these bytes.
+The report also lists the reference filenames in `skill_files`.
+
+From the repository root:
+
+```sh
+scripts/dev pytest tests/compare --compare-list tests/compare/lists/unit-NN.json --compare-report-dir /tmp/panels-comparison
+```
+
+Repeat `--compare-list` to select several lists. Without that option, pytest discovers every list. Four cheap oracle tests also run. Each report contains differences, route reach, source table counts, loop results, and the applied rules.
+
+The source sort-key tokens are `navigation_view_memberships.title_key` and `navigation_view_memberships.id_key`.
+A list can carry the two sort-key tokens only if it also compares the ordered members of the same windows in both locales.
+
+For the Unit15 route, closure, session and notice lists, the full en-US/de-DE windows compare exact member IDs, order, totals, records, window IDs and content hashes. Only the two source operand representations and the public comparator-generation label differ; no table, hash, content or continuation exception applies.
+
+## Candidate selection in branch CI
+
+After a list passes against TypeScript, add `"candidate": "typescript"` at its
+root. CI and local pytest runs then compare that list against
+`tests.compare.ts_launcher`. Lists without the marker retain Python against
+Python calibration. An explicit `--compare-right-module` overrides the marker.
+
+Pull requests select affected lists through `source_roots`. Shared harness,
+core, or `server/` changes select every list. Branch pushes run every list.
+The workflow installs `server/` dependencies and runs on Node 22 and 24, as the
+server workflow does. A difference fails the job. Reports upload even after
+failure, with one artifact for each Node version.
+
+## Synthetic host configuration
+
+A request list can supply `host_environment`. The runner accepts only these names:
+
+| Name | Accepted synthetic values |
+| --- | --- |
+| `PLAN_TRUSTED_INGRESS_PROVIDER` | `tailscale` |
+| `PLAN_TRUSTED_INGRESS_ALLOWED_LOGIN` | A login at a domain that ends in `.invalid` |
+| `PLAN_TRUSTED_INGRESS_CANONICAL_ORIGIN` | An HTTPS origin at a domain that ends in `.invalid`, without credentials, port, path, query, or fragment |
+| `PLAN_APNS_KEY_ID` | Uppercase letters or digits with the prefix `TEST` |
+| `PLAN_APNS_TEAM_ID` | Uppercase letters or digits with the prefix `TEST` |
+| `PLAN_APNS_BUNDLE_IDS` | A comma-separated list of reverse-domain identifiers that start with `invalid.` |
+
+For example:
+
+```json
+{
+  "host_environment": {
+    "PLAN_TRUSTED_INGRESS_PROVIDER": "tailscale",
+    "PLAN_TRUSTED_INGRESS_ALLOWED_LOGIN": "owner@comparison.invalid",
+    "PLAN_TRUSTED_INGRESS_CANONICAL_ORIGIN": "https://panels.comparison.invalid",
+    "PLAN_APNS_KEY_ID": "TESTKEY10",
+    "PLAN_APNS_TEAM_ID": "TESTTEAM10",
+    "PLAN_APNS_BUNDLE_IDS": "invalid.panels.ios"
+  }
+}
+```
+
+Unsupported names and nonsynthetic values fail before any server starts. The allowlist is explicit in `runner.py`. An extension requires a code change and review. A list cannot set `HOME`, provider homes, database paths, server URLs, credential paths, key paths, or adapter/mode selection.
+
+If a list supplies APNs metadata, it must supply all three APNs names. The runner generates a fresh P-256 PKCS8 PEM key inside the test directory with mode `0600`. Only the runner supplies `PLAN_APNS_KEY_PATH`. The same synthetic configuration and generated key reach the Python seed host, both comparison hosts, and their restarts through the existing fixture hook. The seed still uses the real scripted Python core. The separate `conversation_system` selection applies only to the comparison hosts.
+
+This configuration permits successful authenticated device registration and durable native queue comparison. It does not select a real transport. Both comparison hosts keep mandatory recording adapters for notification passes and disable production loops in test mode. Synthetic push targets use reserved invalid domains and device tokens. No comparison path constructs a real push adapter or sends a push. Existing source-row inspection still opens host databases read-only.
+
+## TypeScript host contract
+
+Select the TS launcher with:
+
+```sh
+scripts/dev pytest tests/compare --compare-list tests/compare/lists/unit-NN.json --compare-right-module tests.compare.ts_launcher
+```
+
+The launcher replaces itself with Node. Its default entry is `server/test_host.ts`. Set `PANELS_COMPARE_TS_ENTRY` to select another entry.
+
+That host must:
+
+- Accept the inherited listener from `PLAN_SERVER_LISTENER_FD`. Do not bind another port.
+- Use the fixture's database, fake clock, synthetic homes, logs, and other `PLAN_*` settings.
+- Serve `GET /api/meta` with HTTP 200 and `test_mode: true`.
+- Serve `/` with HTTP 200 and the `data-svelte-app` marker, as the shared fixture requires.
+- Expose the production routes and response shapes that the selected list calls.
+- Expose `/api/test/set-now` for clock changes and any existing test routes that the selected list uses.
+- Expose `POST /api/test/poll/readiness`, `/notifications`, `/manager-wakes`, and `/sources` under `/api/test/poll/`.
+- Return the Python host's loop response shapes: `ticket_ids`, `delivered` and `intents`, `batch_ids`, and `complete`, respectively.
+- Wait for each requested loop pass to finish. Use scripted agents and recording notification adapters. Do not start real providers or external sends.
+
+The TS host grows with the ported areas. A missing route is not a passing comparison. Unit 1 calibrates Python against Python and does not prove the TS host.
+
+## Streams, restarts, and shared seed requests
+
+An SSE step reads the same route on both servers concurrently:
+
+```json
+{"kind":"stream","method":"GET","path":"/api/navigation/view/events?view=...","status":200,"frames":1,"deadline_seconds":5}
+```
+
+`frames` counts complete frames with a `data` field. Comments and heartbeat lines do not count. The runner compares HTTP status, selected headers, event names, parsed JSON data, and recognized `id` and `retry` values. Reconnection values persist across frames, as SSE specifies. Non-JSON data remains text. Each side has one total deadline, including headers and body reads. Both connections close after the frame count or deadline. A short stream, incomplete frame, or deadline before the required count fails even if both sides produce the same silence. Captures use the frame list as their body.
+
+A restart step stops and starts both hosts on their existing databases, ports, and host modules:
+
+```json
+{"kind":"restart"}
+```
+
+Captures survive the restart. The fixture bootstraps a database before launch, so the runner restores a SQLite backup after that bootstrap. This preserves the pre-restart rows for the server under comparison. The fake clock starts again at the fixture's configured time.
+
+A list can supply `seed_requests` before its ordinary `requests`. Each seed request has the same method, path, status, JSON, headers, and capture fields as an ordinary request. The runner replays them once against the default Python host and stops it. SQLite backups of that database then supply both sides. Seed captures are available on both sides. This can create real caller records without a partial TS server's unsupported creation routes. Seed requests do not count as compared route coverage. No direct seed row writes occur.
+
+### Writes on an open stream
+
+A stream step can include `after_open`. Each request runs after the preceding complete frame on that same side. The first request follows the initial frame. The next request waits for the next frame. Use `frames` equal to one plus the number of requests, so every write has a following frame. The total deadline covers the writes too.
+
+```json
+{
+  "kind": "stream", "method": "GET",
+  "path": "/api/navigation/view/events?view=...", "status": 200,
+  "frames": 3, "deadline_seconds": 10,
+  "after_open": [
+    {"method": "PATCH", "path": "/api/projects/${project}", "status": 200, "json": {"name": "Renamed"}},
+    {"method": "POST", "path": "/api/projects", "status": 200, "json": {"name": "New project"}, "capture": {"new_project": "id"}}
+  ]
+}
+```
+
+Nested requests use the same captures and substitutions as ordinary requests. New captures remain available after the stream closes. The comparison includes their status, selected headers, and bodies under `after_open`. A failed write cannot pass through equal failures. Stream frame captures still refer to the frame list. This extension proves live delivery on one open connection, without a new host or another test server.
+
+After each `after_open` write, the runner also executes the list's read probes. Each probe requires HTTP 200. These reads do not consume a stream frame or advance the next action. Their compared answers live under `after_open.*.probes.*`, with response bodies under `after_open.*.probes.*.body`. A normalization rule for those bodies needs that full path. The ordinary stream frames remain under `body.*.data`.
+
+For review evidence, `report_captures` can name existing captures to include in the report. It changes no comparison or substitution behavior. Navigation uses this to retain ordered overview windows and the actual stream frames.
+
+The shared `navigation_view_ordered` index is a TypeScript-only representation. The runner classifies that single table explicitly as derived storage for every list and includes the reason in each report. This prevents unrelated domain comparisons from treating the index as a canonical source table. Navigation's populated list compares its member IDs, order, paging, counts, and closures.
+
+For later domain lists, a navigation snapshot probe after each write is enough. No source registration is required. Existing source triggers and the shared navigation commit step update the records and views.
+
+## Conversation record comparison (Unit 14)
+
+`unit-14.json` uses a Python-only seed and compares the six selected-view routes
+beneath `/api/conversation/conversations/{conversation_id}/view`. The seed host
+keeps the existing `ScriptedChild` handles. Its finish, questions, rejection, and
+owner-message controls reuse the existing browser host's child methods and core
+operations. Each completed control awaits the real core's `wait_until_quiescent`.
+No timer guess decides that a seed is ready.
+
+The additional `backend-news` control reports typed tool, plan, usage, compaction,
+command, failed-input, permission, and turn-ending facts through the child's real
+`BackendEventSink`. The core owns their event rows and projections. These facts
+have no existing `ScriptedChild` method. This control is absent from the TS host.
+It never injects stored event payloads or performs comparison-time stream writes.
+
+When seed requests keep attachments, the runner copies the seed's synthetic
+`files/conversations/` tree into each server database directory. The database and
+attachments therefore name the same durable bytes and media sidecars. Existing
+restart steps retain those files in the same isolated directory. The runner does
+not copy live files or provider homes.
+
+The TS comparison host replays each seeded conversation through its real TS
+projection writer before area initialization. The Python host retains the Python
+projection. The request list therefore checks both the projection rows and the
+public reads, rather than merely reading copied Python projections on both sides.
+All five `conversation_view_*` tables remain in the source-row comparison.
+
+The 42 seed requests create these visible facts:
+
+| Seed conversation | Facts exposed by compared reads |
+| --- | --- |
+| Rich completed history | A durable CSV attachment, owner prompts and steer, two explicit owner messages, orphan and settled tools, plans, token usage, compaction, command output, answered asks, expired unanswered asks, discarded and refused prompts, sender-ID deduplication, and a run-setting change |
+| Small completed turn | A short snapshot and bounded replay from cursor zero |
+| Open turn | Simultaneous permission and input requests plus an owner message, left open for startup reconciliation |
+| Interrupted turn | The real interrupt path and its durable ending |
+| Failed turn | A scripted backend failure and its durable error text |
+
+The rich history includes 125 settled tools in one work group. Compared pages
+exercise the 100-item boundary, older and newer cursors, and turn/group expansion.
+Its command output exceeds 128 KiB. Body reads compare consecutive bounded UTF-8
+chunks, complete content, and stale references. The existing first chunk request
+uses `offset=0_0`, an accepted Pydantic integer spelling. Receipt reads include a
+repeated sender ID and an absent ID.
+
+Tail requests compare SSE headers, snapshots, replay from zero, and gap resets for
+an old or future cursor. Version and malformed-cursor refusals compare their
+explicit product error text. Restart reads compare the stopped view again. A new
+event on an already open HTTP stream remains a named Unit 15 proof. Local tail
+handoff and overflow use the admitted in-process proof instead.
+
+### What the HTTP list proves from the view oracle
+
+The oracle fixture is a fixed historical vocabulary. The current core cannot
+produce every historical row. The following map preserves that distinction:
+
+| Existing oracle fixture | HTTP comparison coverage and explicit limit |
+| --- | --- |
+| `owner-visible-turn-work-and-final-answer` | Owner prompt, tools, two addressed owner messages, closed turn, and collapsed/expanded work. Historical `agent_message` rows cannot be created by the current core, which keeps backend prose in the live tail |
+| `hidden-prompt-turn-and-owner-steer` | Owner steer, addressed owner messages, and multiple turn boundaries. A hidden non-owner prompt is not produced by the owner-only unassociated send path in this list |
+| `legacy-owner-and-forged-label` | Modern owner provenance is compared. Missing legacy provenance and deliberately forged non-owner labels cannot be minted through current intake |
+| `settlement-and-reconciliation` | Refusal, discard, exact sender-ID retry, and receipt lookup. Uncertain prompt reconciliation needs native delivery evidence and remains outside this HTTP seed |
+| `asks-answer-and-turn-expiry` | Permission and input answers, plus unanswered asks that expire with a completed turn |
+| `failed-input-without-request-and-retired-missing-reply` | A failed input with no request is produced. The retired `explicit_reply_missing` kind is no longer written by the current core |
+| `stopped-without-ending` | The open seeded turn and both pending request kinds lose their process on restart, with no synthetic ending event |
+| `tool-orphans-plan-and-work-run-boundaries` | Orphan tool settlement, work groups, newest plan, token usage, compaction, model metadata, and owner messages. A tool event before the first prompt and historical durable backend prose cannot be produced by the active-token backend control |
+| `simultaneous-pending-permission-and-input` | Both asks coexist in seed rows. Their post-restart dead state is compared; their active callbacks and live ask status require Unit 15 |
+| `running-multiple-owner-messages-and-time-skew` | Two owner messages, owner steer, a valid minted timestamp, and an out-of-window timestamp clamp. The copied database does not preserve a running process |
+
+The list's real core produces `command_reply` and `user_input_failed`, two of the
+four kinds absent from the backup audit. It does not produce `answer_applied` or
+`credential_request`. The separate 13 Python-generated examples cover all four
+codecs. Credential writer/delivery integration belongs to Unit 19. Saved-answer
+callback application and native uncertainty remain their owning core/executor
+integration proofs.
+
+The fixed oracle still proves its full ten-case vocabulary locally. Its committed
+generator and the record README describe regeneration after a staging merge. The
+unreachable rows above do not receive a false claim of new HTTP coverage.
+
+## Managed files and exact response bytes (Unit 11)
+
+A list can set `"compare_managed_files": true` to compare the synthetic `files/`
+subtree after all requests. This extends the skills-tree mechanism. Both compare
+relative paths and exact bytes, including missing and extra files. Random record
+IDs in paths use the same identity map as the response and row comparison. File
+contents receive no normalization. The report lists `managed_files`; differences
+name `managed_file`. No live file or credential key enters either tree.
+
+Seed requests now copy the complete synthetic `files/` tree beside the seeded
+database, rather than only its `conversations/` subfolder. This preserves existing
+conversation attachment seeds and also supports files for Managers and goals.
+Restarts retain these same isolated files.
+
+For a non-JSON request, set `"response_bytes": true` on the request to compare
+`response.content` as a hex byte string under `body.bytes`. This avoids lossy text
+decoding for ranges and media. JSON responses still compare parsed. Existing lists
+keep text behavior unless they opt in. Raw request bodies use `body_base64` as described above.
+The report retains these comparisons under `byte_answers`, with both statuses,
+selected headers (also Content-Length), and exact body bytes. ETag headers remain
+literal digests, rather than random IDs. Change-token rules support SQLite BLOBs
+through the existing hex encoding. Skills filenames remain exact; only managed
+record IDs in managed filenames use the identity map.
+
+## Direct checks
+
+Add a `test_*.py` driver under `tests/compare/direct/` that compares current Python with an export-only TS companion under `server/`.
+Build synthetic state, copy it before each side writes, compare answers and rows, and save evidence through `--compare-report-dir`.
+The comparison workflow runs this directory once on both Node versions, before list selection, so every staging merge regenerates Python answers.

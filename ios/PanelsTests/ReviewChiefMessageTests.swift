@@ -54,7 +54,7 @@ import XCTest
         let page = ReviewChiefMessageModel()
         page.restore(api: api)
         page.composer.draft = "First message"
-        page.composer.attachments = [.init(piece: "image", data: "YWJj", mediaType: "image/png", fileName: "image.png")]
+        page.composer.attachments = [.init(piece: "image", data: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==", mediaType: "image/png", fileName: "image.png")]
         _ = await page.send()
         let identity = try XCTUnwrap(page.attempt?.id)
         XCTAssertNil(page.attempt?.message?.conversationId)
@@ -78,25 +78,46 @@ import XCTest
         await again.checkDelivery()
         XCTAssertEqual(ReviewChiefProtocol.state.posts.count, 1)
     }
-    func testConfirmedRefusalAllowsExplicitNewAttemptWithCurrentDestination() async throws {
+    func testRejectedPhotoKeepsRestoredDraftAndAllowsExplicitNewAttemptWithCurrentDestination() async throws {
         let api = makeAPI()
         ReviewChiefProtocol.state.reset(pointer: "old")
-        ReviewChiefProtocol.state.fate = "refused"
+        ReviewChiefProtocol.state.postStatus = 422
         defer { clean(api) }
         let page = ReviewChiefMessageModel()
         page.restore(api: api)
         page.composer.draft = "Keep refused words"
+        // Saved drafts can predate preparation and do not enter through attach again.
+        #if SWIFT_PACKAGE
+        let fixture = Bundle.module.url(forResource: "photo", withExtension: "heic", subdirectory: "Fixtures")
+        #else
+        let fixture = Bundle(for: Self.self).url(forResource: "photo", withExtension: "heic")
+        #endif
+        let heic = try Data(contentsOf: XCTUnwrap(fixture))
+        page.composer.attachments = [.init(piece: "image", data: heic.base64EncodedString(), mediaType: "image/heic", fileName: "Saved.heic")]
         _ = await page.send()
         let first = try XCTUnwrap(page.attempt?.id)
         XCTAssertEqual(page.attempt?.state, .failed)
         XCTAssertEqual(page.composer.draft, "Keep refused words")
+        XCTAssertEqual(page.composer.attachments.count, 1)
+        XCTAssertTrue(page.error?.lowercased().contains("photo") == true)
+        let submitted = try XCTUnwrap(ReviewChiefProtocol.state.posts.first?["content"] as? [[String: Any]])
+        XCTAssertEqual(submitted.last?["media_type"] as? String, "image/jpeg")
+        XCTAssertEqual(submitted.last?["file_name"] as? String, "Saved.jpg")
+        XCTAssertNotEqual(submitted.last?["data"] as? String, heic.base64EncodedString())
+        let restored = ReviewChiefMessageModel()
+        restored.restore(api: api)
+        XCTAssertEqual(restored.attempt?.id, first)
+        XCTAssertEqual(restored.composer.draft, "Keep refused words")
+        XCTAssertEqual(restored.composer.attachments.count, 1)
         ReviewChiefProtocol.state.pointer = "current"
+        ReviewChiefProtocol.state.postStatus = 200
         ReviewChiefProtocol.state.fate = "queued"
-        _ = await page.send()
-        XCTAssertNotEqual(page.attempt?.id, first)
-        XCTAssertEqual(page.attempt?.message?.conversationId, "current")
-        XCTAssertEqual(page.attempt?.state, .serverQueued)
-        XCTAssertTrue(page.composer.draft.isEmpty)
+        _ = await restored.send()
+        XCTAssertNotEqual(restored.attempt?.id, first)
+        XCTAssertEqual(restored.attempt?.message?.conversationId, "current")
+        XCTAssertEqual(restored.attempt?.state, .serverQueued)
+        XCTAssertTrue(restored.composer.draft.isEmpty)
+        XCTAssertTrue(restored.composer.attachments.isEmpty)
         XCTAssertEqual(ReviewChiefProtocol.state.posts.count, 2)
     }
     func testUnreadableAttemptBlocksAnotherSend() async throws {
@@ -166,6 +187,7 @@ private final class ReviewChiefState: @unchecked Sendable {
     private var delay = false
     private var pointers = 0
     private var pointerDelivery: (@Sendable () -> Void)?
+    private var status = 200
     var pointerSuspended: Bool { lock.withLock { pointerDelivery != nil } }
     func holdPointer(_ delivery: @escaping @Sendable () -> Void) { lock.withLock { pointerDelivery = delivery } }
     func releasePointer() {
@@ -180,7 +202,8 @@ private final class ReviewChiefState: @unchecked Sendable {
     var held: Bool { get { lock.withLock { queued } } set { lock.withLock { queued = newValue } } }
     var posts: [[String: Any]] { lock.withLock { sent } }
     var receiptPaths: [String] { lock.withLock { reads } }
-    func reset(pointer: String?) { lock.withLock { current = pointer; outcome = "uncertain"; received = nil; queued = false; sent = []; reads = []; delay = false; pointers = 0; pointerDelivery = nil } }
+    var postStatus: Int { get { lock.withLock { status } } set { lock.withLock { status = newValue } } }
+    func reset(pointer: String?) { lock.withLock { current = pointer; outcome = "uncertain"; received = nil; queued = false; sent = []; reads = []; delay = false; pointers = 0; pointerDelivery = nil; status = 200 } }
     func response(_ request: URLRequest) throws -> Data {
         try lock.withLock {
             let path = request.url!.path
@@ -199,7 +222,8 @@ private final class ReviewChiefState: @unchecked Sendable {
                 let body = try JSONSerialization.jsonObject(with: data) as! [String: Any]
                 sent.append(body)
                 // An uncertain first send deliberately supplies no destination.
-                value = ["fate": outcome, "conversation_id": body["conversation_id"] ?? NSNull()]
+                value = status == 422 ? ["detail": "unsupported or invalid conversation image"]
+                    : ["fate": outcome, "conversation_id": body["conversation_id"] ?? NSNull()]
             } else if path == "/api/chief/conversation" {
                 pointers += 1
                 value = ["conversation_id": current as Any? ?? NSNull()]
@@ -227,7 +251,8 @@ private final class ReviewChiefProtocol: URLProtocol, @unchecked Sendable {
         } catch { client?.urlProtocol(self, didFailWithError: error) }
     }
     private func deliver(_ data: Data) {
-        client?.urlProtocol(self, didReceive: HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: ["Content-Type": "application/json"])!, cacheStoragePolicy: .notAllowed)
+        let status = request.httpMethod == "POST" ? Self.state.postStatus : 200
+        client?.urlProtocol(self, didReceive: HTTPURLResponse(url: request.url!, statusCode: status, httpVersion: nil, headerFields: ["Content-Type": "application/json"])!, cacheStoragePolicy: .notAllowed)
         client?.urlProtocol(self, didLoad: data)
         client?.urlProtocolDidFinishLoading(self)
     }

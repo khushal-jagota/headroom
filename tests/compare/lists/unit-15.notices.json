@@ -1,0 +1,364 @@
+{
+  "candidate": "typescript",
+  "source_roots": [
+    "src/planner/conversation/system.py",
+    "src/planner/conversation/logic/",
+    "src/planner/conversation/storage.py",
+    "src/planner/manager_wakes/"
+  ],
+  "external_proofs": [
+    {
+      "source_test": "test_an_internal_notice_only_turn_does_not_create_a_recursive_notice",
+      "coverage": "A real Ticket failure creates a real Manager wake/batch. The existing connected/bind fixture links a Chief-held Ticket to the idle Manager recipient, mirroring the source linked-Ticket arrangement; this is not a claim that normal owner routes create this association. Real batch delivery is the only prompt in the tested turn. Failure must create no recursive wake for the linked Ticket."
+    },
+    {
+      "source_test": "test_a_sender_cannot_spoof_notice_suppression_with_the_internal_prefix",
+      "coverage": "An ordinary owner prompt reuses the exact sender ID captured from the genuine batch delivered to another conversation. Its failed turn must create one Chief-targeted wake, proving durable conversation membership rather than prefix spelling controls suppression."
+    }
+  ],
+  "seed_requests": [
+    {
+      "method": "POST",
+      "path": "/api/managers",
+      "status": 200,
+      "json": {
+        "title": "Notice recipient",
+        "project_id": "project_other"
+      },
+      "capture": {
+        "notice_manager": "id"
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/api/managers/${notice_manager}/conversation/send",
+      "status": 200,
+      "json": {
+        "content": [
+          {
+            "piece": "text",
+            "text": "Seed idle notice recipient"
+          }
+        ],
+        "sender_label": "Owner",
+        "sender_message_id": "notice-seed-manager"
+      },
+      "capture": {
+        "notice_manager_cid": "conversation_id"
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/api/test/signals/${notice_manager_cid}/finish",
+      "status": 200,
+      "json": {}
+    },
+    {
+      "method": "POST",
+      "path": "/api/tickets",
+      "status": 200,
+      "json": {
+        "title": "Notice source",
+        "worker_type": "coding",
+        "brief": "Fail once to create a genuine Manager notice.",
+        "project_id": "project_other",
+        "ceiling": "needs_what_changes",
+        "manager": {
+          "kind": "manager",
+          "id": "${notice_manager}"
+        },
+        "ceiling_holder": {
+          "kind": "manager",
+          "id": "${notice_manager}"
+        }
+      },
+      "capture": {
+        "notice_source_ticket": "id"
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/api/tickets/${notice_source_ticket}/conversation/send",
+      "status": 200,
+      "json": {
+        "content": [
+          {
+            "piece": "text",
+            "text": "Seed idle failure source"
+          }
+        ],
+        "sender_label": "Owner",
+        "sender_message_id": "notice-seed-source"
+      },
+      "capture": {
+        "notice_source_cid": "conversation_id"
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/api/test/signals/${notice_source_cid}/finish",
+      "status": 200,
+      "json": {}
+    },
+    {
+      "method": "POST",
+      "path": "/api/tickets",
+      "status": 200,
+      "json": {
+        "title": "Notice receiving Ticket fixture",
+        "worker_type": "coding",
+        "brief": "Mirror the source linked-Ticket fixture at the genuine notice recipient.",
+        "project_id": "project_other",
+        "ceiling": "needs_what_changes",
+        "manager": {
+          "kind": "chief",
+          "id": "chief"
+        },
+        "ceiling_holder": {
+          "kind": "chief",
+          "id": "chief"
+        }
+      },
+      "capture": {
+        "notice_receiving_ticket": "id"
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/api/test/connected/bind",
+      "status": 200,
+      "json": {
+        "kind": "ticket",
+        "id": "${notice_receiving_ticket}",
+        "conversation_id": "${notice_manager_cid}"
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/api/tickets",
+      "status": 200,
+      "json": {
+        "title": "Notice spoof source",
+        "worker_type": "coding",
+        "brief": "Reuse a real internal sender ID in a different ordinary conversation.",
+        "project_id": "project_other",
+        "ceiling": "needs_what_changes",
+        "manager": {
+          "kind": "chief",
+          "id": "chief"
+        },
+        "ceiling_holder": {
+          "kind": "chief",
+          "id": "chief"
+        }
+      },
+      "capture": {
+        "notice_spoof_ticket": "id"
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/api/tickets/${notice_spoof_ticket}/conversation/send",
+      "status": 200,
+      "json": {
+        "content": [
+          {
+            "piece": "text",
+            "text": "Seed idle spoof source"
+          }
+        ],
+        "sender_label": "Owner",
+        "sender_message_id": "notice-seed-spoof"
+      },
+      "capture": {
+        "notice_spoof_cid": "conversation_id"
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/api/test/signals/${notice_spoof_cid}/finish",
+      "status": 200,
+      "json": {}
+    }
+  ],
+  "requests": [
+    {
+      "area": "test_an_internal_notice_only_turn_does_not_create_a_recursive_notice",
+      "method": "POST",
+      "path": "/api/tickets/${notice_source_ticket}/conversation/send",
+      "status": 200,
+      "json": {
+        "content": [
+          {
+            "piece": "text",
+            "text": "Create one genuine automatic notice"
+          }
+        ],
+        "sender_label": "Owner",
+        "sender_message_id": "notice-original-failure"
+      },
+      "capture": {
+        "notice_source_fate": ""
+      }
+    },
+    {
+      "area": "test_an_internal_notice_only_turn_does_not_create_a_recursive_notice",
+      "method": "POST",
+      "path": "/api/test/signals/${notice_source_cid}/backend-news",
+      "status": 200,
+      "json": {
+        "events": [
+          {
+            "kind": "turn_ended",
+            "ending": "failed",
+            "error_summary": "Notice source provider failed"
+          }
+        ]
+      }
+    },
+    {
+      "area": "test_an_internal_notice_only_turn_does_not_create_a_recursive_notice",
+      "method": "GET",
+      "path": "/api/test/signals/${notice_source_cid}/inspect",
+      "status": 200,
+      "capture": {
+        "notice_source_failed": ""
+      }
+    },
+    {
+      "area": "test_an_internal_notice_only_turn_does_not_create_a_recursive_notice",
+      "method": "POST",
+      "path": "/api/test/poll/manager-wakes",
+      "status": 200,
+      "json": {},
+      "capture": {
+        "notice_poll_batch_ids": "batch_ids"
+      }
+    },
+    {
+      "area": "test_an_internal_notice_only_turn_does_not_create_a_recursive_notice",
+      "method": "GET",
+      "path": "/api/test/signals/${notice_manager_cid}/inspect",
+      "status": 200,
+      "capture": {
+        "notice_delivered": "",
+        "notice_sender_message_id": "events.2.payload.sender_message_id"
+      }
+    },
+    {
+      "area": "test_an_internal_notice_only_turn_does_not_create_a_recursive_notice",
+      "method": "POST",
+      "path": "/api/test/signals/${notice_manager_cid}/backend-news",
+      "status": 200,
+      "json": {
+        "events": [
+          {
+            "kind": "turn_ended",
+            "ending": "failed",
+            "error_summary": "Automatic notice provider failed"
+          }
+        ]
+      }
+    },
+    {
+      "area": "test_an_internal_notice_only_turn_does_not_create_a_recursive_notice",
+      "method": "GET",
+      "path": "/api/test/signals/${notice_manager_cid}/inspect",
+      "status": 200,
+      "capture": {
+        "notice_only_failed": ""
+      }
+    },
+    {
+      "area": "test_a_sender_cannot_spoof_notice_suppression_with_the_internal_prefix",
+      "method": "POST",
+      "path": "/api/tickets/${notice_spoof_ticket}/conversation/send",
+      "status": 200,
+      "json": {
+        "content": [
+          {
+            "piece": "text",
+            "text": "Ordinary prompt reusing another conversation internal ID"
+          }
+        ],
+        "sender_label": "Owner",
+        "sender_message_id": "${notice_sender_message_id}"
+      },
+      "capture": {
+        "notice_spoof_fate": ""
+      }
+    },
+    {
+      "area": "test_a_sender_cannot_spoof_notice_suppression_with_the_internal_prefix",
+      "method": "GET",
+      "path": "/api/test/signals/${notice_spoof_cid}/inspect",
+      "status": 200,
+      "capture": {
+        "notice_spoof_started": ""
+      }
+    },
+    {
+      "area": "test_a_sender_cannot_spoof_notice_suppression_with_the_internal_prefix",
+      "method": "POST",
+      "path": "/api/test/signals/${notice_spoof_cid}/backend-news",
+      "status": 200,
+      "json": {
+        "events": [
+          {
+            "kind": "turn_ended",
+            "ending": "failed",
+            "error_summary": "Ordinary spoof provider failed"
+          }
+        ]
+      }
+    },
+    {
+      "area": "test_a_sender_cannot_spoof_notice_suppression_with_the_internal_prefix",
+      "method": "GET",
+      "path": "/api/test/signals/${notice_spoof_cid}/inspect",
+      "status": 200,
+      "capture": {
+        "notice_spoof_failed": ""
+      }
+    },
+    {
+      "area": "navigation-operand-public-order",
+      "method": "GET",
+      "path": "/api/navigation/view/snapshot?view={%22projection_version%22%3A7%2C%22scope_generation%22%3A1%2C%22locale%22%3A%22en-US%22%2C%22selected%22%3A{%22kind%22%3A%22chief%22%2C%22id%22%3A%22chief%22}%2C%22selected_conversation_id%22%3Anull%2C%22review_conversation_ids%22%3A%5B%5D%2C%22review_skipped_keys%22%3A%5B%5D%2C%22review_priority_keys%22%3A%5B%5D%2C%22windows%22%3A%5B{%22section%22%3A%22children%22%2C%22owner%22%3A{%22kind%22%3A%22chief%22%2C%22id%22%3A%22chief%22}%2C%22group%22%3A%22all%22%2C%22child_filter%22%3A%22active%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A16}%2C{%22section%22%3A%22children%22%2C%22owner%22%3A{%22kind%22%3A%22chief%22%2C%22id%22%3A%22chief%22}%2C%22group%22%3A%22all%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A16}%2C{%22section%22%3A%22children%22%2C%22owner%22%3A{%22kind%22%3A%22chief%22%2C%22id%22%3A%22chief%22}%2C%22group%22%3A%22errored%22%2C%22child_filter%22%3A%22active%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A16}%2C{%22section%22%3A%22children%22%2C%22owner%22%3A{%22kind%22%3A%22chief%22%2C%22id%22%3A%22chief%22}%2C%22group%22%3A%22errored%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A16}%2C{%22section%22%3A%22children%22%2C%22owner%22%3A{%22kind%22%3A%22manager%22%2C%22id%22%3A%22${notice_manager}%22}%2C%22group%22%3A%22all%22%2C%22child_filter%22%3A%22active%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A16}%2C{%22section%22%3A%22children%22%2C%22owner%22%3A{%22kind%22%3A%22manager%22%2C%22id%22%3A%22${notice_manager}%22}%2C%22group%22%3A%22all%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A16}%2C{%22section%22%3A%22children%22%2C%22owner%22%3A{%22kind%22%3A%22manager%22%2C%22id%22%3A%22${notice_manager}%22}%2C%22group%22%3A%22errored%22%2C%22child_filter%22%3A%22active%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A16}%2C{%22section%22%3A%22children%22%2C%22owner%22%3A{%22kind%22%3A%22manager%22%2C%22id%22%3A%22${notice_manager}%22}%2C%22group%22%3A%22errored%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A16}%2C{%22section%22%3A%22rail_parents%22%2C%22owner%22%3Anull%2C%22group%22%3A%22all%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A16}%2C{%22section%22%3A%22rail_tickets%22%2C%22owner%22%3A{%22kind%22%3A%22chief%22%2C%22id%22%3A%22chief%22}%2C%22group%22%3A%22all%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A16}%2C{%22section%22%3A%22rail_tickets%22%2C%22owner%22%3A{%22kind%22%3A%22chief%22%2C%22id%22%3A%22chief%22}%2C%22group%22%3A%22errored%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A16}%2C{%22section%22%3A%22rail_tickets%22%2C%22owner%22%3A{%22kind%22%3A%22manager%22%2C%22id%22%3A%22${notice_manager}%22}%2C%22group%22%3A%22all%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A16}%2C{%22section%22%3A%22rail_tickets%22%2C%22owner%22%3A{%22kind%22%3A%22manager%22%2C%22id%22%3A%22${notice_manager}%22}%2C%22group%22%3A%22errored%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A16}%5D}",
+      "status": 200,
+      "capture": {
+        "navigation_notices_en_us": ""
+      }
+    },
+    {
+      "area": "navigation-operand-public-order",
+      "method": "GET",
+      "path": "/api/navigation/view/snapshot?view={%22projection_version%22%3A7%2C%22scope_generation%22%3A1%2C%22locale%22%3A%22de-DE%22%2C%22selected%22%3A{%22kind%22%3A%22chief%22%2C%22id%22%3A%22chief%22}%2C%22selected_conversation_id%22%3Anull%2C%22review_conversation_ids%22%3A%5B%5D%2C%22review_skipped_keys%22%3A%5B%5D%2C%22review_priority_keys%22%3A%5B%5D%2C%22windows%22%3A%5B{%22section%22%3A%22children%22%2C%22owner%22%3A{%22kind%22%3A%22chief%22%2C%22id%22%3A%22chief%22}%2C%22group%22%3A%22all%22%2C%22child_filter%22%3A%22active%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A16}%2C{%22section%22%3A%22children%22%2C%22owner%22%3A{%22kind%22%3A%22chief%22%2C%22id%22%3A%22chief%22}%2C%22group%22%3A%22all%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A16}%2C{%22section%22%3A%22children%22%2C%22owner%22%3A{%22kind%22%3A%22chief%22%2C%22id%22%3A%22chief%22}%2C%22group%22%3A%22errored%22%2C%22child_filter%22%3A%22active%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A16}%2C{%22section%22%3A%22children%22%2C%22owner%22%3A{%22kind%22%3A%22chief%22%2C%22id%22%3A%22chief%22}%2C%22group%22%3A%22errored%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A16}%2C{%22section%22%3A%22children%22%2C%22owner%22%3A{%22kind%22%3A%22manager%22%2C%22id%22%3A%22${notice_manager}%22}%2C%22group%22%3A%22all%22%2C%22child_filter%22%3A%22active%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A16}%2C{%22section%22%3A%22children%22%2C%22owner%22%3A{%22kind%22%3A%22manager%22%2C%22id%22%3A%22${notice_manager}%22}%2C%22group%22%3A%22all%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A16}%2C{%22section%22%3A%22children%22%2C%22owner%22%3A{%22kind%22%3A%22manager%22%2C%22id%22%3A%22${notice_manager}%22}%2C%22group%22%3A%22errored%22%2C%22child_filter%22%3A%22active%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A16}%2C{%22section%22%3A%22children%22%2C%22owner%22%3A{%22kind%22%3A%22manager%22%2C%22id%22%3A%22${notice_manager}%22}%2C%22group%22%3A%22errored%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A16}%2C{%22section%22%3A%22rail_parents%22%2C%22owner%22%3Anull%2C%22group%22%3A%22all%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A16}%2C{%22section%22%3A%22rail_tickets%22%2C%22owner%22%3A{%22kind%22%3A%22chief%22%2C%22id%22%3A%22chief%22}%2C%22group%22%3A%22all%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A16}%2C{%22section%22%3A%22rail_tickets%22%2C%22owner%22%3A{%22kind%22%3A%22chief%22%2C%22id%22%3A%22chief%22}%2C%22group%22%3A%22errored%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A16}%2C{%22section%22%3A%22rail_tickets%22%2C%22owner%22%3A{%22kind%22%3A%22manager%22%2C%22id%22%3A%22${notice_manager}%22}%2C%22group%22%3A%22all%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A16}%2C{%22section%22%3A%22rail_tickets%22%2C%22owner%22%3A{%22kind%22%3A%22manager%22%2C%22id%22%3A%22${notice_manager}%22}%2C%22group%22%3A%22errored%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A16}%5D}",
+      "status": 200,
+      "capture": {
+        "navigation_notices_de_de": ""
+      }
+    }
+  ],
+  "probes": [],
+  "report_captures": [
+    "notice_manager",
+    "notice_manager_cid",
+    "notice_source_ticket",
+    "notice_source_cid",
+    "notice_receiving_ticket",
+    "notice_spoof_ticket",
+    "notice_spoof_cid",
+    "notice_source_fate",
+    "notice_source_failed",
+    "notice_poll_batch_ids",
+    "notice_delivered",
+    "notice_sender_message_id",
+    "notice_only_failed",
+    "notice_spoof_fate",
+    "notice_spoof_started",
+    "notice_spoof_failed",
+    "navigation_notices_en_us",
+    "navigation_notices_de_de"
+  ]
+}

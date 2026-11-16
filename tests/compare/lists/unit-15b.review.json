@@ -1,0 +1,1005 @@
+{
+  "candidate": "typescript",
+  "source_roots": [
+    "src/planner/conversation/",
+    "src/planner/manager_wakes/"
+  ],
+  "requests": [
+    {
+      "area": "fixture",
+      "method": "POST",
+      "path": "/api/test/set-now",
+      "status": 200,
+      "json": {
+        "now": "2026-07-04T12:00:01"
+      }
+    },
+    {
+      "area": "test_queue_admission_removes_stale_envelope",
+      "method": "POST",
+      "path": "/api/conversation/conversations",
+      "status": 201,
+      "json": {
+        "conversation_id": "u15b-queue",
+        "backend_key": "codex",
+        "model": "model",
+        "workspace_folder": "/tmp"
+      }
+    },
+    {
+      "area": "test_queue_admission_removes_stale_envelope",
+      "method": "POST",
+      "path": "/api/conversation/conversations/u15b-queue/send",
+      "status": 200,
+      "json": {
+        "content": [
+          {
+            "piece": "text",
+            "text": "Start"
+          }
+        ],
+        "sender_label": "Owner"
+      }
+    },
+    {
+      "area": "test_queue_admission_removes_stale_envelope",
+      "method": "POST",
+      "path": "/api/tickets/${queue_ticket}/propose",
+      "status": 200,
+      "json": {
+        "body": "Success"
+      },
+      "capture": {
+        "queue_revision": "pending_proposal.revision"
+      },
+      "headers": {
+        "X-Plan-Actor": "worker",
+        "X-Plan-Ticket-ID": "${queue_ticket}"
+      }
+    },
+    {
+      "area": "test_queue_admission_removes_stale_envelope",
+      "method": "POST",
+      "path": "/api/test/signals/u15b-queue/review-batch",
+      "status": 200,
+      "json": {},
+      "capture": {
+        "queue_sender": "sender_message_id",
+        "queue_message": "message"
+      }
+    },
+    {
+      "area": "test_queue_admission_removes_stale_envelope",
+      "method": "POST",
+      "path": "/api/conversation/conversations/u15b-queue/send",
+      "status": 200,
+      "json": {
+        "content": [
+          {
+            "piece": "text",
+            "text": "${queue_message}"
+          }
+        ],
+        "sender_label": "Chief",
+        "sender_message_id": "${queue_sender}"
+      },
+      "capture": {
+        "queue_queued": ""
+      }
+    },
+    {
+      "area": "test_queue_admission_removes_stale_envelope",
+      "method": "GET",
+      "path": "/api/test/signals/u15b-queue/inspect",
+      "status": 200,
+      "capture": {
+        "queue_before": "",
+        "queue_held": "runtime.held_prompts.0.held_prompt_id"
+      }
+    },
+    {
+      "area": "test_queue_admission_removes_stale_envelope",
+      "method": "GET",
+      "path": "/api/test/signals/u15b-queue/review-batch",
+      "status": 200,
+      "capture": {
+        "queue_before_departure": ""
+      }
+    },
+    {
+      "area": "test_queue_admission_removes_stale_envelope",
+      "method": "POST",
+      "path": "/api/conversation/conversations/u15b-queue/send",
+      "status": 200,
+      "json": {
+        "content": [
+          {
+            "piece": "text",
+            "text": "Current owner work"
+          }
+        ],
+        "sender_label": "Owner"
+      }
+    },
+    {
+      "area": "test_queue_admission_removes_stale_envelope",
+      "method": "POST",
+      "path": "/api/tickets/${queue_ticket}/accept/what_changes",
+      "status": 200,
+      "json": {
+        "expected_proposal_revision": "${queue_revision}",
+        "next_ceiling": "needs_implementation",
+        "next_holder": {
+          "kind": "chief",
+          "id": "chief"
+        }
+      }
+    },
+    {
+      "area": "test_queue_admission_removes_stale_envelope",
+      "method": "POST",
+      "path": "/api/test/signals/u15b-queue/finish",
+      "status": 200,
+      "json": {}
+    },
+    {
+      "area": "test_queue_admission_removes_stale_envelope",
+      "method": "GET",
+      "path": "/api/test/signals/u15b-queue/inspect",
+      "status": 200,
+      "capture": {
+        "queue_after": ""
+      }
+    },
+    {
+      "area": "test_queue_admission_removes_stale_envelope",
+      "method": "GET",
+      "path": "/api/test/signals/u15b-queue/review-batch",
+      "status": 200,
+      "capture": {
+        "queue_after_departure": ""
+      }
+    },
+    {
+      "area": "test_queue_admission_removes_stale_envelope",
+      "method": "POST",
+      "path": "/api/test/signals/u15b-queue/finish",
+      "status": 200,
+      "json": {}
+    },
+    {
+      "area": "fixture",
+      "method": "POST",
+      "path": "/api/test/set-now",
+      "status": 200,
+      "json": {
+        "now": "2026-07-04T12:00:02"
+      }
+    },
+    {
+      "area": "test_obsolete_review_never_reaches_direct_or_promoted_steer",
+      "method": "POST",
+      "path": "/api/conversation/conversations",
+      "status": 201,
+      "json": {
+        "conversation_id": "u15b-direct",
+        "backend_key": "codex",
+        "model": "model",
+        "workspace_folder": "/tmp"
+      }
+    },
+    {
+      "area": "test_obsolete_review_never_reaches_direct_or_promoted_steer",
+      "method": "POST",
+      "path": "/api/conversation/conversations/u15b-direct/send",
+      "status": 200,
+      "json": {
+        "content": [
+          {
+            "piece": "text",
+            "text": "Start"
+          }
+        ],
+        "sender_label": "Owner"
+      }
+    },
+    {
+      "area": "test_obsolete_review_never_reaches_direct_or_promoted_steer",
+      "method": "POST",
+      "path": "/api/tickets/${direct_ticket}/propose",
+      "status": 200,
+      "json": {
+        "body": "Success"
+      },
+      "capture": {
+        "direct_revision": "pending_proposal.revision"
+      },
+      "headers": {
+        "X-Plan-Actor": "worker",
+        "X-Plan-Ticket-ID": "${direct_ticket}"
+      }
+    },
+    {
+      "area": "test_obsolete_review_never_reaches_direct_or_promoted_steer",
+      "method": "POST",
+      "path": "/api/test/signals/u15b-direct/review-batch",
+      "status": 200,
+      "json": {},
+      "capture": {
+        "direct_sender": "sender_message_id",
+        "direct_message": "message"
+      }
+    },
+    {
+      "area": "test_obsolete_review_never_reaches_direct_or_promoted_steer",
+      "method": "POST",
+      "path": "/api/tickets/${direct_ticket}/accept/what_changes",
+      "status": 200,
+      "json": {
+        "expected_proposal_revision": "${direct_revision}",
+        "next_ceiling": "needs_implementation",
+        "next_holder": {
+          "kind": "chief",
+          "id": "chief"
+        }
+      }
+    },
+    {
+      "area": "test_obsolete_review_never_reaches_direct_or_promoted_steer",
+      "method": "POST",
+      "path": "/api/conversation/conversations/u15b-direct/send",
+      "status": 200,
+      "json": {
+        "content": [
+          {
+            "piece": "text",
+            "text": "${direct_message}"
+          }
+        ],
+        "sender_label": "Chief",
+        "sender_message_id": "${direct_sender}",
+        "mode": "steer"
+      },
+      "capture": {
+        "direct_fate": ""
+      }
+    },
+    {
+      "area": "test_obsolete_review_never_reaches_direct_or_promoted_steer",
+      "method": "GET",
+      "path": "/api/test/signals/u15b-direct/inspect",
+      "status": 200,
+      "capture": {
+        "direct_after": ""
+      }
+    },
+    {
+      "area": "test_obsolete_review_never_reaches_direct_or_promoted_steer",
+      "method": "GET",
+      "path": "/api/test/signals/u15b-direct/review-batch",
+      "status": 200,
+      "capture": {
+        "direct_after_departure": ""
+      }
+    },
+    {
+      "area": "test_obsolete_review_never_reaches_direct_or_promoted_steer",
+      "method": "POST",
+      "path": "/api/test/signals/u15b-direct/finish",
+      "status": 200,
+      "json": {}
+    },
+    {
+      "area": "fixture",
+      "method": "POST",
+      "path": "/api/test/set-now",
+      "status": 200,
+      "json": {
+        "now": "2026-07-04T12:00:03"
+      }
+    },
+    {
+      "area": "test_obsolete_review_never_reaches_direct_or_promoted_steer",
+      "method": "POST",
+      "path": "/api/conversation/conversations",
+      "status": 201,
+      "json": {
+        "conversation_id": "u15b-promote-now",
+        "backend_key": "codex",
+        "model": "model",
+        "workspace_folder": "/tmp"
+      }
+    },
+    {
+      "area": "test_obsolete_review_never_reaches_direct_or_promoted_steer",
+      "method": "POST",
+      "path": "/api/conversation/conversations/u15b-promote-now/send",
+      "status": 200,
+      "json": {
+        "content": [
+          {
+            "piece": "text",
+            "text": "Start"
+          }
+        ],
+        "sender_label": "Owner"
+      }
+    },
+    {
+      "area": "test_obsolete_review_never_reaches_direct_or_promoted_steer",
+      "method": "POST",
+      "path": "/api/tickets/${promote-now_ticket}/propose",
+      "status": 200,
+      "json": {
+        "body": "Success"
+      },
+      "capture": {
+        "promote-now_revision": "pending_proposal.revision"
+      },
+      "headers": {
+        "X-Plan-Actor": "worker",
+        "X-Plan-Ticket-ID": "${promote-now_ticket}"
+      }
+    },
+    {
+      "area": "test_obsolete_review_never_reaches_direct_or_promoted_steer",
+      "method": "POST",
+      "path": "/api/test/signals/u15b-promote-now/review-batch",
+      "status": 200,
+      "json": {},
+      "capture": {
+        "promote-now_sender": "sender_message_id",
+        "promote-now_message": "message"
+      }
+    },
+    {
+      "area": "test_obsolete_review_never_reaches_direct_or_promoted_steer",
+      "method": "POST",
+      "path": "/api/conversation/conversations/u15b-promote-now/send",
+      "status": 200,
+      "json": {
+        "content": [
+          {
+            "piece": "text",
+            "text": "${promote-now_message}"
+          }
+        ],
+        "sender_label": "Chief",
+        "sender_message_id": "${promote-now_sender}"
+      },
+      "capture": {
+        "promote-now_queued": ""
+      }
+    },
+    {
+      "area": "test_obsolete_review_never_reaches_direct_or_promoted_steer",
+      "method": "GET",
+      "path": "/api/test/signals/u15b-promote-now/inspect",
+      "status": 200,
+      "capture": {
+        "promote-now_before": "",
+        "promote-now_held": "runtime.held_prompts.0.held_prompt_id"
+      }
+    },
+    {
+      "area": "test_obsolete_review_never_reaches_direct_or_promoted_steer",
+      "method": "GET",
+      "path": "/api/test/signals/u15b-promote-now/review-batch",
+      "status": 200,
+      "capture": {
+        "promote-now_before_departure": ""
+      }
+    },
+    {
+      "area": "test_obsolete_review_never_reaches_direct_or_promoted_steer",
+      "method": "POST",
+      "path": "/api/tickets/${promote-now_ticket}/accept/what_changes",
+      "status": 200,
+      "json": {
+        "expected_proposal_revision": "${promote-now_revision}",
+        "next_ceiling": "needs_implementation",
+        "next_holder": {
+          "kind": "chief",
+          "id": "chief"
+        }
+      }
+    },
+    {
+      "area": "test_obsolete_review_never_reaches_direct_or_promoted_steer",
+      "method": "POST",
+      "path": "/api/conversation/conversations/u15b-promote-now/held-prompts/${promote-now_held}/promote",
+      "status": 200,
+      "json": {
+        "mode": "send_now"
+      },
+      "capture": {
+        "promote-now_fate": ""
+      }
+    },
+    {
+      "area": "test_obsolete_review_never_reaches_direct_or_promoted_steer",
+      "method": "GET",
+      "path": "/api/test/signals/u15b-promote-now/inspect",
+      "status": 200,
+      "capture": {
+        "promote-now_after": ""
+      }
+    },
+    {
+      "area": "test_obsolete_review_never_reaches_direct_or_promoted_steer",
+      "method": "GET",
+      "path": "/api/test/signals/u15b-promote-now/review-batch",
+      "status": 200,
+      "capture": {
+        "promote-now_after_departure": ""
+      }
+    },
+    {
+      "area": "test_obsolete_review_never_reaches_direct_or_promoted_steer",
+      "method": "POST",
+      "path": "/api/test/signals/u15b-promote-now/finish",
+      "status": 200,
+      "json": {
+        "only_if_running": true
+      }
+    },
+    {
+      "area": "fixture",
+      "method": "POST",
+      "path": "/api/test/set-now",
+      "status": 200,
+      "json": {
+        "now": "2026-07-04T12:00:04"
+      }
+    },
+    {
+      "area": "test_obsolete_review_never_reaches_direct_or_promoted_steer",
+      "method": "POST",
+      "path": "/api/conversation/conversations",
+      "status": 201,
+      "json": {
+        "conversation_id": "u15b-promote-steer",
+        "backend_key": "codex",
+        "model": "model",
+        "workspace_folder": "/tmp"
+      }
+    },
+    {
+      "area": "test_obsolete_review_never_reaches_direct_or_promoted_steer",
+      "method": "POST",
+      "path": "/api/conversation/conversations/u15b-promote-steer/send",
+      "status": 200,
+      "json": {
+        "content": [
+          {
+            "piece": "text",
+            "text": "Start"
+          }
+        ],
+        "sender_label": "Owner"
+      }
+    },
+    {
+      "area": "test_obsolete_review_never_reaches_direct_or_promoted_steer",
+      "method": "POST",
+      "path": "/api/tickets/${promote-steer_ticket}/propose",
+      "status": 200,
+      "json": {
+        "body": "Success"
+      },
+      "capture": {
+        "promote-steer_revision": "pending_proposal.revision"
+      },
+      "headers": {
+        "X-Plan-Actor": "worker",
+        "X-Plan-Ticket-ID": "${promote-steer_ticket}"
+      }
+    },
+    {
+      "area": "test_obsolete_review_never_reaches_direct_or_promoted_steer",
+      "method": "POST",
+      "path": "/api/test/signals/u15b-promote-steer/review-batch",
+      "status": 200,
+      "json": {},
+      "capture": {
+        "promote-steer_sender": "sender_message_id",
+        "promote-steer_message": "message"
+      }
+    },
+    {
+      "area": "test_obsolete_review_never_reaches_direct_or_promoted_steer",
+      "method": "POST",
+      "path": "/api/conversation/conversations/u15b-promote-steer/send",
+      "status": 200,
+      "json": {
+        "content": [
+          {
+            "piece": "text",
+            "text": "${promote-steer_message}"
+          }
+        ],
+        "sender_label": "Chief",
+        "sender_message_id": "${promote-steer_sender}"
+      },
+      "capture": {
+        "promote-steer_queued": ""
+      }
+    },
+    {
+      "area": "test_obsolete_review_never_reaches_direct_or_promoted_steer",
+      "method": "GET",
+      "path": "/api/test/signals/u15b-promote-steer/inspect",
+      "status": 200,
+      "capture": {
+        "promote-steer_before": "",
+        "promote-steer_held": "runtime.held_prompts.0.held_prompt_id"
+      }
+    },
+    {
+      "area": "test_obsolete_review_never_reaches_direct_or_promoted_steer",
+      "method": "GET",
+      "path": "/api/test/signals/u15b-promote-steer/review-batch",
+      "status": 200,
+      "capture": {
+        "promote-steer_before_departure": ""
+      }
+    },
+    {
+      "area": "test_obsolete_review_never_reaches_direct_or_promoted_steer",
+      "method": "POST",
+      "path": "/api/tickets/${promote-steer_ticket}/accept/what_changes",
+      "status": 200,
+      "json": {
+        "expected_proposal_revision": "${promote-steer_revision}",
+        "next_ceiling": "needs_implementation",
+        "next_holder": {
+          "kind": "chief",
+          "id": "chief"
+        }
+      }
+    },
+    {
+      "area": "test_obsolete_review_never_reaches_direct_or_promoted_steer",
+      "method": "POST",
+      "path": "/api/conversation/conversations/u15b-promote-steer/held-prompts/${promote-steer_held}/promote",
+      "status": 200,
+      "json": {
+        "mode": "steer"
+      },
+      "capture": {
+        "promote-steer_fate": ""
+      }
+    },
+    {
+      "area": "test_obsolete_review_never_reaches_direct_or_promoted_steer",
+      "method": "GET",
+      "path": "/api/test/signals/u15b-promote-steer/inspect",
+      "status": 200,
+      "capture": {
+        "promote-steer_after": ""
+      }
+    },
+    {
+      "area": "test_obsolete_review_never_reaches_direct_or_promoted_steer",
+      "method": "GET",
+      "path": "/api/test/signals/u15b-promote-steer/review-batch",
+      "status": 200,
+      "capture": {
+        "promote-steer_after_departure": ""
+      }
+    },
+    {
+      "area": "test_obsolete_review_never_reaches_direct_or_promoted_steer",
+      "method": "POST",
+      "path": "/api/test/signals/u15b-promote-steer/finish",
+      "status": 200,
+      "json": {
+        "only_if_running": true
+      }
+    },
+    {
+      "area": "fixture",
+      "method": "POST",
+      "path": "/api/test/set-now",
+      "status": 200,
+      "json": {
+        "now": "2026-07-04T12:00:05"
+      }
+    },
+    {
+      "area": "test_refused_review_command_is_rechecked_when_its_queue_departure_arrives",
+      "method": "POST",
+      "path": "/api/conversation/conversations",
+      "status": 201,
+      "json": {
+        "conversation_id": "u15b-command",
+        "backend_key": "codex",
+        "model": "model",
+        "workspace_folder": "/tmp"
+      }
+    },
+    {
+      "area": "test_refused_review_command_is_rechecked_when_its_queue_departure_arrives",
+      "method": "POST",
+      "path": "/api/conversation/conversations/u15b-command/send",
+      "status": 200,
+      "json": {
+        "content": [
+          {
+            "piece": "text",
+            "text": "Start"
+          }
+        ],
+        "sender_label": "Owner"
+      }
+    },
+    {
+      "area": "test_refused_review_command_is_rechecked_when_its_queue_departure_arrives",
+      "method": "POST",
+      "path": "/api/tickets/${command_ticket}/propose",
+      "status": 200,
+      "json": {
+        "body": "Success"
+      },
+      "capture": {
+        "command_revision": "pending_proposal.revision"
+      },
+      "headers": {
+        "X-Plan-Actor": "worker",
+        "X-Plan-Ticket-ID": "${command_ticket}"
+      }
+    },
+    {
+      "area": "test_refused_review_command_is_rechecked_when_its_queue_departure_arrives",
+      "method": "POST",
+      "path": "/api/test/signals/u15b-command/review-batch",
+      "status": 200,
+      "json": {},
+      "capture": {
+        "command_sender": "sender_message_id",
+        "command_message": "message"
+      }
+    },
+    {
+      "area": "test_refused_review_command_is_rechecked_when_its_queue_departure_arrives",
+      "method": "POST",
+      "path": "/api/test/signals/u15b-command/configure",
+      "status": 200,
+      "json": {
+        "command": "steer",
+        "behavior": {
+          "result": {
+            "fate": "refused",
+            "refusal_reason": "command_cannot_join_running_turn"
+          }
+        }
+      }
+    },
+    {
+      "area": "test_refused_review_command_is_rechecked_when_its_queue_departure_arrives",
+      "method": "POST",
+      "path": "/api/conversation/conversations/u15b-command/send",
+      "status": 200,
+      "json": {
+        "content": [
+          {
+            "piece": "text",
+            "text": "${command_message}"
+          }
+        ],
+        "sender_label": "Chief",
+        "sender_message_id": "${command_sender}",
+        "mode": "steer"
+      },
+      "capture": {
+        "command_queued": ""
+      }
+    },
+    {
+      "area": "test_refused_review_command_is_rechecked_when_its_queue_departure_arrives",
+      "method": "GET",
+      "path": "/api/test/signals/u15b-command/inspect",
+      "status": 200,
+      "capture": {
+        "command_before": "",
+        "command_held": "runtime.held_prompts.0.held_prompt_id"
+      }
+    },
+    {
+      "area": "test_refused_review_command_is_rechecked_when_its_queue_departure_arrives",
+      "method": "GET",
+      "path": "/api/test/signals/u15b-command/review-batch",
+      "status": 200,
+      "capture": {
+        "command_before_departure": ""
+      }
+    },
+    {
+      "area": "test_refused_review_command_is_rechecked_when_its_queue_departure_arrives",
+      "method": "POST",
+      "path": "/api/tickets/${command_ticket}/accept/what_changes",
+      "status": 200,
+      "json": {
+        "expected_proposal_revision": "${command_revision}",
+        "next_ceiling": "needs_implementation",
+        "next_holder": {
+          "kind": "chief",
+          "id": "chief"
+        }
+      }
+    },
+    {
+      "area": "test_refused_review_command_is_rechecked_when_its_queue_departure_arrives",
+      "method": "POST",
+      "path": "/api/test/signals/u15b-command/finish",
+      "status": 200,
+      "json": {}
+    },
+    {
+      "area": "test_refused_review_command_is_rechecked_when_its_queue_departure_arrives",
+      "method": "GET",
+      "path": "/api/test/signals/u15b-command/inspect",
+      "status": 200,
+      "capture": {
+        "command_after": ""
+      }
+    },
+    {
+      "area": "test_refused_review_command_is_rechecked_when_its_queue_departure_arrives",
+      "method": "GET",
+      "path": "/api/test/signals/u15b-command/review-batch",
+      "status": 200,
+      "capture": {
+        "command_after_departure": ""
+      }
+    },
+    {
+      "area": "navigation-public-order",
+      "method": "GET",
+      "path": "/api/navigation/view/snapshot?view=%7B%22projection_version%22%3A7%2C%22scope_generation%22%3A1%2C%22locale%22%3A%22en-US%22%2C%22selected%22%3A%7B%22kind%22%3A%22chief%22%2C%22id%22%3A%22chief%22%7D%2C%22selected_conversation_id%22%3Anull%2C%22review_conversation_ids%22%3A%5B%5D%2C%22review_skipped_keys%22%3A%5B%5D%2C%22review_priority_keys%22%3A%5B%5D%2C%22windows%22%3A%5B%7B%22section%22%3A%22children%22%2C%22owner%22%3A%7B%22kind%22%3A%22chief%22%2C%22id%22%3A%22chief%22%7D%2C%22group%22%3A%22all%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A16%7D%2C%7B%22section%22%3A%22children%22%2C%22owner%22%3A%7B%22kind%22%3A%22chief%22%2C%22id%22%3A%22chief%22%7D%2C%22group%22%3A%22errored%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A16%7D%2C%7B%22section%22%3A%22rail_tickets%22%2C%22owner%22%3A%7B%22kind%22%3A%22chief%22%2C%22id%22%3A%22chief%22%7D%2C%22group%22%3A%22all%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A16%7D%2C%7B%22section%22%3A%22rail_tickets%22%2C%22owner%22%3A%7B%22kind%22%3A%22chief%22%2C%22id%22%3A%22chief%22%7D%2C%22group%22%3A%22errored%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A16%7D%5D%7D",
+      "status": 200,
+      "capture": {
+        "navigation_en-US": ""
+      }
+    },
+    {
+      "area": "navigation-public-order",
+      "method": "GET",
+      "path": "/api/navigation/view/snapshot?view=%7B%22projection_version%22%3A7%2C%22scope_generation%22%3A1%2C%22locale%22%3A%22de-DE%22%2C%22selected%22%3A%7B%22kind%22%3A%22chief%22%2C%22id%22%3A%22chief%22%7D%2C%22selected_conversation_id%22%3Anull%2C%22review_conversation_ids%22%3A%5B%5D%2C%22review_skipped_keys%22%3A%5B%5D%2C%22review_priority_keys%22%3A%5B%5D%2C%22windows%22%3A%5B%7B%22section%22%3A%22children%22%2C%22owner%22%3A%7B%22kind%22%3A%22chief%22%2C%22id%22%3A%22chief%22%7D%2C%22group%22%3A%22all%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A16%7D%2C%7B%22section%22%3A%22children%22%2C%22owner%22%3A%7B%22kind%22%3A%22chief%22%2C%22id%22%3A%22chief%22%7D%2C%22group%22%3A%22errored%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A16%7D%2C%7B%22section%22%3A%22rail_tickets%22%2C%22owner%22%3A%7B%22kind%22%3A%22chief%22%2C%22id%22%3A%22chief%22%7D%2C%22group%22%3A%22all%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A16%7D%2C%7B%22section%22%3A%22rail_tickets%22%2C%22owner%22%3A%7B%22kind%22%3A%22chief%22%2C%22id%22%3A%22chief%22%7D%2C%22group%22%3A%22errored%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A16%7D%5D%7D",
+      "status": 200,
+      "capture": {
+        "navigation_de-DE": ""
+      }
+    }
+  ],
+  "probes": [],
+  "report_captures": [
+    "queue_ticket",
+    "queue_revision",
+    "queue_sender",
+    "queue_message",
+    "queue_queued",
+    "queue_before",
+    "queue_held",
+    "queue_after",
+    "direct_ticket",
+    "direct_revision",
+    "direct_sender",
+    "direct_message",
+    "direct_fate",
+    "direct_after",
+    "promote-now_ticket",
+    "promote-now_revision",
+    "promote-now_sender",
+    "promote-now_message",
+    "promote-now_queued",
+    "promote-now_before",
+    "promote-now_held",
+    "promote-now_fate",
+    "promote-now_after",
+    "promote-steer_ticket",
+    "promote-steer_revision",
+    "promote-steer_sender",
+    "promote-steer_message",
+    "promote-steer_queued",
+    "promote-steer_before",
+    "promote-steer_held",
+    "promote-steer_fate",
+    "promote-steer_after",
+    "command_ticket",
+    "command_revision",
+    "command_sender",
+    "command_message",
+    "command_queued",
+    "command_before",
+    "command_held",
+    "command_after",
+    "navigation_en-US",
+    "navigation_de-DE",
+    "queue_before_departure",
+    "queue_after_departure",
+    "direct_after_departure",
+    "promote-now_before_departure",
+    "promote-now_after_departure",
+    "promote-steer_before_departure",
+    "promote-steer_after_departure",
+    "command_before_departure",
+    "command_after_departure"
+  ],
+  "external_proofs": [
+    {
+      "source_test": "test_queue_admission_removes_stale_envelope",
+      "coverage": "Queue actual claimed review and current owner work; resolve actual proposal; finish; compare native sender count and content, discard and record/view rows."
+    },
+    {
+      "source_test": "test_obsolete_review_never_reaches_direct_or_promoted_steer",
+      "coverage": "Three actual claimed review batches resolved before direct steer, promoted send-now and promoted steer; compare suppressed fates and no stale native write."
+    },
+    {
+      "source_test": "test_refused_review_command_is_rechecked_when_its_queue_departure_arrives",
+      "coverage": "Actual review notice refused by scripted steer command verdict, held then resolved before queue departure; compare batch status, one proposal_resolved discard and no second native write."
+    }
+  ],
+  "seed_requests": [
+    {
+      "area": "fixture",
+      "method": "POST",
+      "path": "/api/test/set-now",
+      "status": 200,
+      "json": {
+        "now": "2026-07-04T12:00:01"
+      }
+    },
+    {
+      "area": "test_queue_admission_removes_stale_envelope",
+      "method": "POST",
+      "path": "/api/tickets",
+      "status": 200,
+      "json": {
+        "title": "Review queue",
+        "worker_type": "coding",
+        "brief": "Review",
+        "ceiling": "needs_what_changes",
+        "manager": {
+          "kind": "chief",
+          "id": "chief"
+        },
+        "ceiling_holder": {
+          "kind": "chief",
+          "id": "chief"
+        }
+      },
+      "capture": {
+        "queue_ticket": "id"
+      }
+    },
+    {
+      "area": "fixture",
+      "method": "POST",
+      "path": "/api/test/set-now",
+      "status": 200,
+      "json": {
+        "now": "2026-07-04T12:00:02"
+      }
+    },
+    {
+      "area": "test_obsolete_review_never_reaches_direct_or_promoted_steer",
+      "method": "POST",
+      "path": "/api/tickets",
+      "status": 200,
+      "json": {
+        "title": "Review direct",
+        "worker_type": "coding",
+        "brief": "Review",
+        "ceiling": "needs_what_changes",
+        "manager": {
+          "kind": "chief",
+          "id": "chief"
+        },
+        "ceiling_holder": {
+          "kind": "chief",
+          "id": "chief"
+        }
+      },
+      "capture": {
+        "direct_ticket": "id"
+      }
+    },
+    {
+      "area": "fixture",
+      "method": "POST",
+      "path": "/api/test/set-now",
+      "status": 200,
+      "json": {
+        "now": "2026-07-04T12:00:03"
+      }
+    },
+    {
+      "area": "test_obsolete_review_never_reaches_direct_or_promoted_steer",
+      "method": "POST",
+      "path": "/api/tickets",
+      "status": 200,
+      "json": {
+        "title": "Review promote-now",
+        "worker_type": "coding",
+        "brief": "Review",
+        "ceiling": "needs_what_changes",
+        "manager": {
+          "kind": "chief",
+          "id": "chief"
+        },
+        "ceiling_holder": {
+          "kind": "chief",
+          "id": "chief"
+        }
+      },
+      "capture": {
+        "promote-now_ticket": "id"
+      }
+    },
+    {
+      "area": "fixture",
+      "method": "POST",
+      "path": "/api/test/set-now",
+      "status": 200,
+      "json": {
+        "now": "2026-07-04T12:00:04"
+      }
+    },
+    {
+      "area": "test_obsolete_review_never_reaches_direct_or_promoted_steer",
+      "method": "POST",
+      "path": "/api/tickets",
+      "status": 200,
+      "json": {
+        "title": "Review promote-steer",
+        "worker_type": "coding",
+        "brief": "Review",
+        "ceiling": "needs_what_changes",
+        "manager": {
+          "kind": "chief",
+          "id": "chief"
+        },
+        "ceiling_holder": {
+          "kind": "chief",
+          "id": "chief"
+        }
+      },
+      "capture": {
+        "promote-steer_ticket": "id"
+      }
+    },
+    {
+      "area": "fixture",
+      "method": "POST",
+      "path": "/api/test/set-now",
+      "status": 200,
+      "json": {
+        "now": "2026-07-04T12:00:05"
+      }
+    },
+    {
+      "area": "test_refused_review_command_is_rechecked_when_its_queue_departure_arrives",
+      "method": "POST",
+      "path": "/api/tickets",
+      "status": 200,
+      "json": {
+        "title": "Review command",
+        "worker_type": "coding",
+        "brief": "Review",
+        "ceiling": "needs_what_changes",
+        "manager": {
+          "kind": "chief",
+          "id": "chief"
+        },
+        "ceiling_holder": {
+          "kind": "chief",
+          "id": "chief"
+        }
+      },
+      "capture": {
+        "command_ticket": "id"
+      }
+    }
+  ]
+}

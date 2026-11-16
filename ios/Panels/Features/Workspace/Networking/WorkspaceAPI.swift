@@ -1,19 +1,18 @@
 import Foundation
 
 extension APIClient {
-    func workspaceSettledWindow(through lastOffset: Int = 0) async throws -> ManagersResponse {
-        var page = try await managers(settled: true)
-        var rows = page.managers
-        while let offset = page.page.nextOffset, offset <= lastOffset {
-            page = try await managers(offset: offset, settled: true)
-            let existing = Set(rows.map(\.id))
-            rows += page.managers.filter { !existing.contains($0.id) }
-        }
-        return ManagersResponse(managers: rows.sorted { $0.updatedAt == $1.updatedAt ? $0.id < $1.id : $0.updatedAt > $1.updatedAt }, page: page.page)
+    func workspaceMachines() async throws -> WorkspaceMachinesResponse {
+        try await get("/api/machines")
     }
+
+    func workspaceMachineHealth(machineId: String) async throws -> WorkspaceMachineHealth {
+        try await get("/api/executor/health", query: [URLQueryItem(name: "machine_id", value: machineId)])
+    }
+
+
 }
 
-enum WorkspaceAction { case recap, backlog, resume, settle }
+enum WorkspaceAction { case recap, backlog, resume, settle, reopen }
 
 extension APIClient {
     func workspaceAction(_ action: WorkspaceAction, route: AppRoute) async throws {
@@ -35,10 +34,10 @@ extension APIClient {
         case .backlog, .resume:
             guard kind == "ticket" else { throw APIError(status: 0, message: "Only tickets can be backlogged.") }
             path = "/api/tickets/\(id)/\(action == .backlog ? "backlog" : "resume")"
-        case .settle:
+        case .settle, .reopen:
             guard kind == "manager" else { throw APIError(status: 0, message: "Only orchestrators can be settled.") }
             path = "/api/managers/\(id)/settled"
-            method = "PATCH"; body = ["settled": true]
+            method = "PATCH"; body = ["settled": action == .settle]
         }
         var request = try self.request(try url(path))
         request.httpMethod = method
@@ -67,5 +66,18 @@ extension APIClient {
         if ticket.awaitingAgentApproval { return "Awaiting an agent's approval at \(label)." }
         if ticket.conversationSignal?.working == true { return "Currently doing \(label)." }
         return "At \(label)."
+    }
+}
+
+
+enum WorkspaceResources {
+    static let machines = ResourceRegistration<WorkspaceMachinesResponse>(
+        key: "/api/machines", versioned: false, signalRefreshInterval: ResourceLimits.fallbackSeconds)
+
+    static func machineHealth(_ id: String) -> ResourceRegistration<WorkspaceMachineHealth> {
+        var parts = URLComponents()
+        parts.path = "/api/executor/health"
+        parts.queryItems = [URLQueryItem(name: "machine_id", value: id)]
+        return ResourceRegistration(key: parts.string!, versioned: false, signalRefreshInterval: ResourceLimits.fallbackSeconds)
     }
 }

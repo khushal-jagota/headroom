@@ -4,10 +4,17 @@ import UniformTypeIdentifiers
 
 @MainActor @Observable final class ConversationModel {
     @ObservationIgnored private let outgoingStore: LocalStore
-    init(outgoingStore: LocalStore = .shared) { self.outgoingStore = outgoingStore }
+    @ObservationIgnored private let imageWorkStarted: @Sendable () -> Void
+    init(outgoingStore: LocalStore = .shared, imageWorkStarted: @escaping @Sendable () -> Void = {}) {
+        self.outgoingStore = outgoingStore
+        self.imageWorkStarted = imageWorkStarted
+    }
     var machineLocale: String?
     var conversationID: String? { didSet { if oldValue != conversationID { invalidateReader() } } }
-    var draft = "" { didSet { saveDraft() } }
+    private var composerRevision = 0
+    private var composerConfigurationGeneration = 0
+    private var clearedPhotoDrafts: [String: (revision: Int, draftKey: String)] = [:]
+    var draft = "" { didSet { composerRevision += 1; saveDraft() } }
     private var persistenceAPI: APIClient?
     private var persistenceOwner: ConversationOwner?
     private var restoring = false
@@ -21,7 +28,9 @@ import UniformTypeIdentifiers
     func restore(owner: ConversationOwner, api: APIClient, draftID: String? = nil, savedWork: [PendingWork]? = nil, recoverConversationID: Bool = true) {
         recoversConversationIDFromOutbox = recoverConversationID
         guard persistenceAPI?.baseURL != api.baseURL || persistenceOwner != owner || customDraftID != draftID else { syncOutbox(savedWork: savedWork); return }
-        outgoing = []; retryAliases = [:]; supersededIDs = []
+        composerConfigurationGeneration += 1
+        preparingPhotos = [:]; draftPreparationID = nil; preparingOutgoingID = nil; outgoingPreparationID = nil; preparedAttachments = []
+        outgoing = []; retryAliases = [:]; supersededIDs = []; clearedPhotoDrafts = [:]
         persistenceAPI = api; persistenceOwner = owner; customDraftID = draftID; restoring = true
         defer { restoring = false }
         items = []; expandedBodies = [:]; status = nil; older = nil
@@ -206,8 +215,41 @@ import UniformTypeIdentifiers
         }
     }
 
+    private func refreshRejectedPhotoDrafts(api: APIClient) {
+        let server = LocalStore.server(api.baseURL)
+        for (id, cleared) in clearedPhotoDrafts {
+            guard let fact = try? outgoingStore.outgoing.summary(server: server, id: id) else { continue }
+            if fact.state == "failed" {
+                if cleared.draftKey == draftKey {
+                    if composerRevision == cleared.revision { reloadDraft() }
+                    error = fact.note
+                }
+                clearedPhotoDrafts.removeValue(forKey: id)
+            } else if ["sent", "serverQueued", "changed"].contains(fact.state) {
+                clearedPhotoDrafts.removeValue(forKey: id)
+            }
+        }
+    }
+    private func retrySaved(_ id: String, api: APIClient, destination: OutgoingStore.Destination? = nil) async {
+        guard !sending, !preparingPhoto else { return }
+        let revision = composerRevision
+        let generation = composerConfigurationGeneration
+        let identity = UUID()
+        outgoingPreparationID = identity; preparingOutgoingID = id
+        defer {
+            if outgoingPreparationID == identity { outgoingPreparationID = nil; preparingOutgoingID = nil }
+        }
+        guard let next = await Outbox.shared.retry(id, api: api, destination: destination, imageWorkStarted: imageWorkStarted),
+              generation == composerConfigurationGeneration,
+              let work = Outbox.shared.work(LocalStore.server(api.baseURL), id: next),
+              work.rejectedPhotoDraft?.id == draftKey else { return }
+        clearedPhotoDrafts.removeValue(forKey: id)
+        if composerRevision == revision { reloadDraft() }
+        clearedPhotoDrafts[next] = (composerRevision, draftKey)
+    }
     func syncOutbox(savedWork: [PendingWork]? = nil) {
         guard let api = persistenceAPI, let owner = persistenceOwner else { return }
+        refreshRejectedPhotoDrafts(api: api)
         if let savedWork {
             // Review supplies an already-selected snapshot, which can belong to
             // another store. Its membership and outcomes are authoritative here.
@@ -295,7 +337,7 @@ import UniformTypeIdentifiers
     func recoveryLabel(_ id: String) -> String {
         switch recoveries[id] { case .held: "Send this message"; case .resend: "Send again"; default: "Retry" }
     }
-    func recover(_ id: String, using api: APIClient, startNew: Bool = false) {
+    func recover(_ id: String, using api: APIClient, startNew: Bool = false) async {
         let server = LocalStore.server(api.baseURL)
         guard let recovery = recoveries[id] else { return }
         switch recovery {
@@ -304,14 +346,22 @@ import UniformTypeIdentifiers
             else if let target = Outbox.shared.work(server, id: id)?.message?.conversationId { Outbox.shared.sendHeld(id, api: api, destination: .conversation(target)) }
         case .resend(let unknown):
             guard !unknown || startNew else { return }
-            Outbox.shared.retry(id, api: api, destination: unknown ? .newConversation : nil)
-        case .retry: Outbox.shared.retry(id, api: api)
+            await retrySaved(id, api: api, destination: unknown ? .newConversation : nil)
+        case .retry: await retrySaved(id, api: api)
         }
         syncOutbox()
     }
+    private(set) var preparingPhotos: [UUID: String] = [:]
+    private var draftPreparationID: UUID?
+    var preparingDraftPhotos: Bool { draftPreparationID != nil }
+    private(set) var preparingOutgoingID: String?
+    private var outgoingPreparationID: UUID?
+    var preparingPhoto: Bool { !preparingPhotos.isEmpty || preparingDraftPhotos || preparingOutgoingID != nil }
+    private var preparedAttachments: [ConversationSend.Piece] = []
     var deliveryMode = "steer"
     var attachments: [ConversationSend.Piece] = [] {
         didSet {
+            composerRevision += 1
             guard !restoring, let api = persistenceAPI else { return }
             do { try LocalStore.shared.put(server: LocalStore.server(api.baseURL), kind: "attachments", id: draftKey, data: JSONEncoder().encode(attachments)) }
             catch { self.error = "Attachments could not be saved: \(error.localizedDescription)" }
@@ -319,12 +369,75 @@ import UniformTypeIdentifiers
     }
     /// The one way a picked, pasted, dragged or photographed file joins the message.
     /// Images become image pieces; anything else is a file piece.
-    @discardableResult func attach(_ data: Data, type: UTType?, fileName: String) -> Bool {
-        guard data.count <= 20_000_000 else { error = "Choose a file smaller than 20 MB."; return false }
+    /// Camera encoding also runs outside the main actor, before ordinary image intake.
+    @discardableResult func attachPhoto(fileName: String, data: @escaping @Sendable () -> Data?) async -> Bool {
+        let generation = composerConfigurationGeneration
+        let identity = UUID()
+        preparingPhotos[identity] = fileName
+        defer { preparingPhotos.removeValue(forKey: identity) }
+        let bytes = await Task.detached(priority: .userInitiated, operation: data).value
+        guard generation == composerConfigurationGeneration else { return false }
+        guard let bytes else { error = ConversationImagePreparation.Failure.unreadable.localizedDescription; return false }
+        preparingPhotos.removeValue(forKey: identity)
+        return await attach(bytes, type: .jpeg, fileName: fileName)
+    }
+    @discardableResult func attach(_ data: Data, type: UTType?, fileName: String) async -> Bool {
         let image = type?.conforms(to: .image) == true
-        attachments.append(.init(piece: image ? "image" : "file", data: data.base64EncodedString(),
-            mediaType: type?.preferredMIMEType ?? (image ? "image/jpeg" : "application/octet-stream"), fileName: fileName))
-        return true
+        guard image || data.count <= 20_000_000 else { error = "Choose a file smaller than 20 MB."; return false }
+        guard image else {
+            attachments.append(.init(piece: "file", data: data.base64EncodedString(),
+                mediaType: type?.preferredMIMEType ?? "application/octet-stream", fileName: fileName))
+            return true
+        }
+        let identity = UUID()
+        let generation = composerConfigurationGeneration
+        let mediaType = type?.preferredMIMEType ?? "image/jpeg"
+        preparingPhotos[identity] = fileName
+        defer { preparingPhotos.removeValue(forKey: identity) }
+        do {
+            let piece = await Task.detached(priority: .userInitiated) {
+                ConversationSend.Piece(piece: "image", data: data.base64EncodedString(), mediaType: mediaType, fileName: fileName)
+            }.value
+            let prepared = try await ConversationImagePreparation.prepare([piece], imageWorkStarted: imageWorkStarted)
+            // Another attachment can arrive, or be removed, while this photo converts.
+            // Only the combined budget needs another pass; accepted photos skip ImageIO.
+            while true {
+                guard generation == composerConfigurationGeneration else { return false }
+                let previous = attachments
+                let combined = try await ConversationImagePreparation.prepare(previous + prepared,
+                    alreadyPrepared: preparedAttachments + prepared, imageWorkStarted: imageWorkStarted)
+                guard generation == composerConfigurationGeneration else { return false }
+                guard attachments == previous else { continue }
+                attachments = combined
+                preparedAttachments = combined
+                return true
+            }
+        } catch {
+            if generation == composerConfigurationGeneration { self.error = error.localizedDescription }
+            return false
+        }
+    }
+    func preparedContent() async throws -> [ConversationSend.Piece] {
+        guard !preparingPhoto else { throw CancellationError() }
+        let revision = composerRevision
+        let generation = composerConfigurationGeneration
+        let captured = attachments
+        let identity = UUID()
+        draftPreparationID = identity
+        defer { if draftPreparationID == identity { draftPreparationID = nil } }
+        let prepared: [ConversationSend.Piece]
+        do {
+            prepared = try await ConversationImagePreparation.prepare(captured,
+                alreadyPrepared: preparedAttachments, imageWorkStarted: imageWorkStarted)
+        } catch {
+            guard revision == composerRevision, generation == composerConfigurationGeneration else { throw CancellationError() }
+            throw error
+        }
+        guard revision == composerRevision, generation == composerConfigurationGeneration else { throw CancellationError() }
+        if prepared != attachments { attachments = prepared }
+        preparedAttachments = prepared
+        let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
+        return (text.isEmpty ? [] : [.init(text: text)]) + prepared
     }
     private var outgoingText: [String: String] = [:]
     private var outgoingAttachments: [String: [ConversationSend.Piece]] = [:]
@@ -790,10 +903,16 @@ import UniformTypeIdentifiers
     }
     @discardableResult func send(to owner: ConversationOwner, using service: any ConversationServing) async -> Bool {
         let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !sending, !text.isEmpty || !attachments.isEmpty else { return false }
+        guard !sending, !preparingPhoto, !text.isEmpty || !attachments.isEmpty else { return false }
+        let generation = readerGeneration
+        let content: [ConversationSend.Piece]
+        do { content = try await preparedContent() }
+        catch is CancellationError { return false }
+        catch { self.error = error.localizedDescription; return false }
+        guard generation == readerGeneration else { return false }
         if let api = persistenceAPI {
             let id = UUID().uuidString
-            var message = ConversationSend(conversationId: conversationID, content: (text.isEmpty ? [] : [.init(text: text)]) + attachments,
+            var message = ConversationSend(conversationId: conversationID, content: content,
                 senderMessageId: id, sentAtUnixMilliseconds: Int64(Date().timeIntervalSince1970 * 1000))
             configureIntent(&message)
             let work = PendingWork(id: id, created: .now, kind: .message, owner: owner, message: message)
@@ -802,6 +921,7 @@ import UniformTypeIdentifiers
                 let capture = try LocalStore.shared.outgoing.captureDraft(server: server, id: draftKey)
                 try LocalStore.shared.outgoing.enqueue(work, server: server, capturedDraft: capture)
                 restoring = true; draft = ""; attachments = []; restoring = false
+                if content.contains(where: { $0.piece == "image" }) { clearedPhotoDrafts[id] = (composerRevision, draftKey) }
                 syncOutbox()
                 Task { await Outbox.shared.drain(api: api); syncOutbox() }
                 return true
@@ -813,28 +933,34 @@ import UniformTypeIdentifiers
         rememberRows([id])
         outgoingText[id] = text
         outgoingAttachments[id] = attachments
+        let originalDraft = draft
         attachments = []
         draft = ""
-        return await deliver(id: id, text: text, to: owner, using: service)
+        return await deliver(id: id, text: text, to: owner, using: service,
+            rejectedDraft: (originalDraft, composerRevision))
     }
 
     func retry(_ id: String, to owner: ConversationOwner, using service: any ConversationServing) async {
-        if let api = persistenceAPI { Outbox.shared.retry(id, api: api); syncOutbox(); return }
+        if let api = persistenceAPI { await retrySaved(id, api: api); syncOutbox(); return }
         guard !sending, let at = outgoing.firstIndex(where: { $0.id == id && $0.retryable }) else { return }
         let old = outgoing[at]
+        // In-memory attempts already captured prepared bytes at their original send.
+        let prepared = outgoingAttachments[id] ?? old.attachments
         // An explicitly refused attempt has a terminal server identity. A new attempt
         // keeps the same visual identity but gets its own delivery receipt.
         let next = UUID().uuidString
         retryAliases[next] = retryAliases[id] ?? id
         supersededIDs.insert(id)
         outgoingText[next] = outgoingText.removeValue(forKey: id)
-        outgoingAttachments[next] = outgoingAttachments.removeValue(forKey: id)
+        outgoingAttachments.removeValue(forKey: id)
+        outgoingAttachments[next] = prepared
         items.removeAll { $0.senderMessageId == id }
-        outgoing[at] = Outgoing(id: next, text: old.text, note: "Sending…", attachments: old.attachments)
+        outgoing[at] = Outgoing(id: next, text: old.text, note: "Sending…", attachments: prepared)
         _ = await deliver(id: next, text: outgoingText[next] ?? old.text, to: owner, using: service)
     }
 
-    private func deliver(id: String, text: String, to owner: ConversationOwner, using service: any ConversationServing) async -> Bool {
+    private func deliver(id: String, text: String, to owner: ConversationOwner, using service: any ConversationServing,
+                         rejectedDraft: (text: String, revision: Int)? = nil) async -> Bool {
         sending = true
         defer { sending = false }
         var message = ConversationSend(conversationId: conversationID, content: (text.isEmpty ? [] : [.init(text: text)]) + (outgoingAttachments[id] ?? []), senderMessageId: id, sentAtUnixMilliseconds: Int64(Date().timeIntervalSince1970 * 1000))
@@ -845,6 +971,14 @@ import UniformTypeIdentifiers
             guard generation == readerGeneration else { return false }
             if let newID = result.conversationId { conversationID = newID }
             return applyDelivery(result, id: id)
+        } catch let error as APIError where error.status == 422 && message.content.contains(where: { $0.piece == "image" }) {
+            guard generation == readerGeneration else { return false }
+            setNote(id, "Not sent · " + error.message, retryable: true)
+            if let rejectedDraft, composerRevision == rejectedDraft.revision {
+                draft = rejectedDraft.text
+                attachments = message.content.filter { $0.piece != "text" }
+            }
+            self.error = error.message
         } catch let error as URLError where [.notConnectedToInternet, .cannotConnectToHost, .cannotFindHost].contains(error.code) {
             guard generation == readerGeneration else { return false }
             setNote(id, "Offline · waiting to retry", retryable: true)

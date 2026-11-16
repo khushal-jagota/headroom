@@ -1,0 +1,37 @@
+{
+  "ignore": {},
+  "response_ignore": {
+    "body.status.runtime_epoch": "Each selected view has a process-local live spool epoch.",
+    "body.*.data.status.runtime_epoch": "Each tail has a process-local live spool epoch."
+  },
+  "tokens": {
+    "resource_source_versions.revision": "Trigger counters count SQL updates, so compare change rather than magnitude."
+  },
+  "response_tokens": {
+    "body.status.revision": "Live view revisions count process-local notifications.",
+    "body.*.data.status.revision": "Live view revisions count process-local notifications."
+  },
+  "derived_tables": {
+    "navigation_meta": "Derived navigation storage. Unit 4 owns its public navigation proof; this list compares conversation projections only.",
+    "navigation_records": "Derived navigation storage. Unit 4 owns its public navigation proof; this list compares conversation projections only.",
+    "navigation_dependencies": "Derived navigation storage. Unit 4 owns its public navigation proof; this list compares conversation projections only.",
+    "navigation_root_records": "Derived navigation storage. Unit 4 owns its public navigation proof; this list compares conversation projections only.",
+    "navigation_dirty": "Derived navigation storage. Unit 4 owns its public navigation proof; this list compares conversation projections only.",
+    "navigation_journal": "Derived navigation storage. Unit 4 owns its public navigation proof; this list compares conversation projections only.",
+    "navigation_delivery_retention": "Derived navigation storage. Unit 4 owns its public navigation proof; this list compares conversation projections only.",
+    "navigation_signal_installation": "Runtime signal publication stays provisional under the idle source. Unit 15 owns real-core publication parity; Unit 4 owns navigation projection proof.",
+    "navigation_signal_publications": "Runtime signal publication stays provisional under the idle source. Unit 15 owns real-core publication parity; Unit 4 owns navigation projection proof.",
+    "signal_publication_meta": "Runtime signal publication stays provisional under the idle source. Unit 15 owns real-core publication parity; Unit 4 owns navigation projection proof.",
+    "signal_publication_values": "Runtime signal publication stays provisional under the idle source. Unit 15 owns real-core publication parity; Unit 4 owns navigation projection proof.",
+    "signal_publication_dirty": "Runtime signal publication stays provisional under the idle source. Unit 15 owns real-core publication parity; Unit 4 owns navigation projection proof.",
+    "signal_publication_associations": "Runtime signal publication stays provisional under the idle source. Unit 15 owns real-core publication parity; Unit 4 owns navigation projection proof.",
+    "navigation_view_meta": "Derived navigation storage. Unit 4 owns its public navigation proof; this list compares conversation projections only.",
+    "navigation_view_index": "Derived navigation storage. Unit 4 owns its public navigation proof; this list compares conversation projections only.",
+    "navigation_view_memberships": "Derived navigation storage. Unit 4 owns its public navigation proof; this list compares conversation projections only.",
+    "navigation_view_counts": "Derived navigation storage. Unit 4 owns its public navigation proof; this list compares conversation projections only.",
+    "navigation_view_current_conversations": "Derived navigation storage. Unit 4 owns its public navigation proof; this list compares conversation projections only.",
+    "navigation_view_unread_conversations": "Derived navigation storage. Unit 4 owns its public navigation proof; this list compares conversation projections only.",
+    "navigation_view_globals": "Derived navigation storage. Unit 4 owns its public navigation proof; this list compares conversation projections only.",
+    "navigation_view_changes": "Derived navigation storage. Unit 4 owns its public navigation proof; this list compares conversation projections only."
+  }
+}

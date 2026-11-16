@@ -1,0 +1,883 @@
+/** Export-only scripted adapters over the production service and database door. */
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { setTimeout as pause } from 'node:timers/promises';
+import { createDatabase } from '../../../core/database/index.ts';
+import { observe_promise } from '../../../core/promise_observer.ts';
+import { register_test_root } from '../../../core/test_paths.ts';
+import { ChangeSignal } from '../../../core/changes/index.ts';
+import { UpdateBarrier } from '../../update_barrier.ts';
+import { WorkspaceAdmission } from '../../../conversation/workspace_admission.ts';
+import type { ConversationSystem } from '../../../conversation/contracts.ts';
+import { FileUpdateAttemptStore } from '../attempts.ts';
+import { parse_release, attempt_to_dict } from '../codec.ts';
+import { instant } from '../logic/experience.ts';
+import { UpdateService, staged_app_path, installed_update_root } from '../service.ts';
+import { configured_worker_runtime_definitions } from '../../../worker_types/configuration.ts';
+import { createApp } from '../../../app.ts';
+import { ShutdownDeadlineExceeded } from '../../../lifecycle/contracts.ts';
+import { loadConfig } from '../../../core/config.ts';
+import { create_update_routes } from '../routes.ts';
+import { DeploymentResources } from '../resource_versions.ts';
+import { deployment_status } from '../logic/experience.ts';
+import type { FastifyRequest } from 'fastify';
+
+export interface ServiceProbeRequest {
+  root: string;
+  database_path: string;
+  now: string;
+  release: Record<string, unknown>;
+  schema_heads?: readonly string[];
+  actions?: { op: string; [key: string]: unknown }[];
+  installed?: {
+    app_sha: string | null;
+    app_root: string;
+    database: string;
+    service_unit: string | null;
+  }[];
+}
+interface Hooks {
+  stage?: () => Promise<void>;
+  backup?: () => Promise<void>;
+  launch?: () => Promise<void>;
+  migrate?: boolean;
+  schema?: () => Promise<boolean>;
+  commit_fault?: boolean;
+  update_barrier?: UpdateBarrier;
+}
+function deferred() {
+  let release!: () => void;
+  let reject!: (error: Error) => void;
+  const promise = new Promise<void>((resolve, refuse) => {
+    release = resolve;
+    reject = refuse;
+  });
+  return { promise, release, reject };
+}
+function harness(request: ServiceProbeRequest, hooks: Hooks = {}) {
+  mkdirSync(request.root, { recursive: true });
+  const unregister = register_test_root(request.root),
+    changes = new ChangeSignal();
+  const database = createDatabase(request.database_path, {
+    onChange: () => changes.emit(),
+    commitSteps: hooks.commit_fault
+      ? [
+          () => {
+            throw new Error('scripted commit step failure');
+          },
+        ]
+      : [],
+  });
+  const counts = { provider: 0, stage: 0, backup: 0, prepare: 0, launch: 0 };
+  const trace: string[] = [];
+  let activity: 'idle' | 'busy' | 'unknown' = 'idle',
+    launch_error: string | null = null,
+    owned = true,
+    now = Number(instant(request.now).epochMicroseconds) / 1_000_000;
+  const barrier = new WorkspaceAdmission();
+  const system = {
+    workspace_admission: barrier,
+    workspace_activity: () => (barrier.closed ? 'unknown' : activity),
+    prepare_update: async (mode: 'idle' | 'now', _signal?: AbortSignal) => {
+      barrier.close_starts();
+      if (barrier.active || (mode === 'idle' && activity !== 'idle')) return false;
+      return barrier.closed || barrier.claim(() => {}, { idle: () => true, require_idle: true });
+    },
+    cancel_update: () => {
+      barrier.reopen();
+      return true;
+    },
+    update_waiting_work: () => (activity !== 'idle' ? ['Example Worker'] : []),
+    run_with_workspace_admission: async (
+      operation: () => void,
+      options: { require_idle: boolean },
+    ) => barrier.claim(operation, { ...options, idle: () => activity === 'idle' }),
+  } satisfies Pick<
+    ConversationSystem,
+    | 'workspace_admission'
+    | 'workspace_activity'
+    | 'prepare_update'
+    | 'cancel_update'
+    | 'update_waiting_work'
+    | 'run_with_workspace_admission'
+  >;
+  const release = parse_release(request.release),
+    staged = staged_app_path(request.root, release.manifest.app_sha);
+  mkdirSync(staged, { recursive: true });
+  const attempts = new FileUpdateAttemptStore(
+    join(request.root, 'attempt.json'),
+    () => changes.emit(),
+    () => request.now,
+  );
+  const service = new UpdateService({
+    update_barrier: hooks.update_barrier,
+    provider: {
+      available: async () => {
+        counts.provider++;
+        return release;
+      },
+      download_artifact: async () => {
+        throw new Error('unexpected scripted download');
+      },
+    },
+    attempts,
+    runtime: {
+      database,
+      // This scripted host supplies exactly the service-consumed conversation contract.
+      conversation: () => system as unknown as ConversationSystem,
+      assert_database_owned: () => {
+        if (!owned) throw new Error('ownership ended');
+      },
+    },
+    changes,
+    current_root: request.root,
+    database: request.database_path,
+    backup_directory: join(request.root, 'backups'),
+    current_app_sha: 'a'.repeat(40),
+    health_url: 'http://127.0.0.1:9/api/health',
+    service_unit: 'scripted.service',
+    now: () => now,
+    record_now: () => request.now,
+    staging: {
+      stage: async () => {
+        counts.stage++;
+        trace.push('stage');
+        await hooks.stage?.();
+        return staged;
+      },
+    },
+    installer: {
+      require_exact_schema_frontier: (path, candidate) => {
+        trace.push('frontier');
+        if (path !== request.database_path || candidate !== staged)
+          throw new Error('frontier adapter received a different fixture');
+        if (request.schema_heads === undefined)
+          throw new Error('Node frontier facts are unavailable in this fixture');
+        const revisions = database.read(
+          (sql) =>
+            new Set(
+              sql
+                .all<{ version_num: string }>('SELECT version_num FROM alembic_version')
+                .map(({ version_num }) => String(version_num)),
+            ),
+        );
+        const heads = new Set(request.schema_heads);
+        if (
+          !revisions.size ||
+          revisions.size !== heads.size ||
+          [...revisions].some((value) => !heads.has(value))
+        )
+          throw new Error(
+            'This release requires the database to be at exactly its schema revision. ' +
+              'Install the Python release that carries the same migrations first.',
+          );
+      },
+      schema_change_pending: () => hooks.schema?.() ?? hooks.migrate ?? false,
+      create_backup: async () => {
+        counts.backup++;
+        trace.push('backup');
+        await hooks.backup?.();
+        return join(request.root, 'backup');
+      },
+      prepare: () => {
+        counts.prepare++;
+        trace.push('prepare');
+        return ['scripted-installer'];
+      },
+      launch: async () => {
+        trace.push('launch');
+        if (launch_error !== null) throw new Error(launch_error);
+        counts.launch++;
+        await hooks.launch?.();
+      },
+    },
+    mac: {
+      prepare: async () => {
+        trace.push('prepare_mac');
+      },
+      phase: () => null,
+      reported_at: () => null,
+      configured: () => true,
+    },
+  });
+  return {
+    database,
+    changes,
+    counts,
+    trace,
+    barrier,
+    system,
+    release,
+    service,
+    attempts,
+    activity: (value: typeof activity) => {
+      activity = value;
+    },
+    launch_error: (value: string | null) => {
+      launch_error = value;
+    },
+    now: (value: number) => {
+      now = value;
+    },
+    close: async () => {
+      if (!owned) return;
+      await service.stop({ deadline: performance.now() / 1000 + 1 }).catch((error: unknown) => {
+        if (!(error instanceof ShutdownDeadlineExceeded)) throw error;
+      });
+      await service.settled();
+      owned = false;
+      database.close();
+      unregister();
+    },
+  };
+}
+export async function probe_node_frontier(request: ServiceProbeRequest) {
+  const host = harness(request, { migrate: true });
+  try {
+    const original = host.database.read(
+      (sql) =>
+        sql.get<{ version_num: string }>('SELECT version_num FROM alembic_version')!.version_num,
+    );
+    host.service.start();
+    let error: string | null = null;
+    try {
+      await host.service.prefetch();
+    } catch (failure) {
+      if (!(failure instanceof Error)) throw failure;
+      error = failure.message;
+    }
+    const cold = {
+      error,
+      ready: host.service.ready_release() !== null,
+      mac: host.trace.filter((item) => item === 'prepare_mac').length,
+    };
+    const revision = request.schema_heads![0];
+    const frontier = (value: string) =>
+      host.database.write((sql) => {
+        sql.run('DELETE FROM alembic_version');
+        sql.run('INSERT INTO alembic_version(version_num) VALUES (?)', [value]);
+      });
+    frontier(revision);
+    await host.service.prefetch();
+    const ready = host.service.ready_release() !== null;
+    host.service.install(host.release.manifest.app_sha, 'now', { confirm_activity: false });
+    frontier(original);
+    await host.service.advance();
+    const failed = host.attempts.read()!;
+    const denied = {
+      state: failed.state,
+      detail: failed.detail,
+      backup: failed.backup,
+      launches: host.counts.launch,
+      reopened: !host.barrier.closed,
+    };
+    frontier(revision);
+    host.service.retry(failed.attempt_id);
+    await host.service.advance();
+    return {
+      cold,
+      ready,
+      denied,
+      final_state: host.attempts.read()!.state,
+      backups: host.counts.backup,
+      launches: host.counts.launch,
+      trace: host.trace,
+    };
+  } finally {
+    await host.close();
+  }
+}
+export async function probe_service(request: ServiceProbeRequest) {
+  const host = harness(request),
+    answers: unknown[] = [];
+  // Python's synchronous Harness advances only through each explicit action.
+  host.service.schedule_advance = () => {};
+  host.service.start();
+  await host.service.prefetch();
+  try {
+    for (const action of request.actions ?? []) {
+      try {
+        let result: unknown = null;
+        const attempt = host.attempts.read();
+        switch (action.op) {
+          case 'activity':
+            host.activity(action.value as 'idle' | 'busy' | 'unknown');
+            break;
+          case 'launch_error':
+            host.launch_error(action.value as string | null);
+            break;
+          case 'status':
+            result = host.service.status();
+            break;
+          case 'poll':
+            result = host.service.poll();
+            break;
+          case 'install':
+            result = attempt_to_dict(
+              host.service.install(host.release.manifest.app_sha, action.mode as 'now' | 'idle', {
+                confirm_activity: action.confirm_activity === true,
+              }),
+            );
+            break;
+          case 'cancel':
+            host.service.cancel(attempt!.attempt_id);
+            break;
+          case 'now':
+            result = attempt_to_dict(
+              host.service.update_now(attempt!.attempt_id, {
+                confirm_activity: action.confirm_activity === true,
+              }),
+            );
+            break;
+          case 'retry':
+            result = attempt_to_dict(host.service.retry(attempt!.attempt_id));
+            break;
+          case 'retry_mac':
+            result = attempt_to_dict(host.service.retry_mac(attempt!.attempt_id));
+            break;
+          case 'advance':
+            await host.service.advance();
+            break;
+          case 'change':
+            host.attempts.change(attempt!.attempt_id, new Set([attempt!.state]), (current) => ({
+              ...current,
+              ...(action.patch as object),
+            }));
+            break;
+          default:
+            throw new Error('unknown service probe action');
+        }
+        answers.push({ result, error: null });
+      } catch (error) {
+        if (!(error instanceof Error)) throw error;
+        answers.push({
+          result: null,
+          error: { type: error.constructor.name, message: error.message },
+        });
+      }
+    }
+    return {
+      answers,
+      closed: host.barrier.closed,
+      launches: host.counts.launch,
+      attempt: host.attempts.read(),
+    };
+  } finally {
+    await host.close();
+  }
+}
+
+export async function probe_continuations(request: ServiceProbeRequest) {
+  const expires = async (stop: Promise<void>) => {
+    try {
+      await stop;
+    } catch (error) {
+      if (error instanceof ShutdownDeadlineExceeded) return;
+      throw error;
+    }
+    throw new Error('Held update work must reject its stop observer at the deadline');
+  };
+  const result: Record<string, unknown> = {};
+  result.installed_roots = await Promise.all(
+    (request.installed ?? []).map((value) =>
+      installed_update_root(value.app_sha, value.app_root, value.database, value.service_unit),
+    ),
+  );
+  // Each pending adapter outlives the same absolute shutdown deadline.
+  const stage = deferred(),
+    restarted_stage = deferred();
+  const stage_entered = deferred(),
+    restarted_entered = deferred();
+  let stages = 0;
+  const h = harness(request, {
+    stage: () => {
+      if (++stages === 1) {
+        stage_entered.release();
+        return stage.promise;
+      }
+      restarted_entered.release();
+      return restarted_stage.promise;
+    },
+  });
+  try {
+    h.service.start();
+    const first = h.service.prefetch(),
+      second = h.service.prefetch();
+    await stage_entered.promise;
+    const started = performance.now();
+    await expires(h.service.stop({ deadline: started / 1000 + 0.03 }));
+    result.stage_stop_ms = performance.now() - started;
+    let stage_settled = false;
+    const stage_actual = h.service.settled().then(() => {
+      stage_settled = true;
+    });
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    if (stage_settled) throw new Error('Actual update settlement discarded a held stage');
+    result.stage_actual_retained = true;
+    h.service.start();
+    const restarted = h.service.prefetch();
+    await restarted_entered.promise;
+    stage.release();
+    await Promise.all([first, second]);
+    await stage_actual;
+    result.old_finally_preserves_new_flight = h.service.prefetch() === restarted;
+    await expires(h.service.stop({ deadline: performance.now() / 1000 }));
+    restarted_stage.release();
+    await restarted;
+    await h.service.settled();
+    await h.close();
+    result.stage_flight = { ...h.counts, ready: h.service.ready_release(), trace: h.trace };
+  } finally {
+    stage.release();
+    restarted_stage.release();
+    await h.close();
+  }
+  const schema = deferred(),
+    schema_entered = deferred();
+  const s = harness(
+    { ...request, root: join(request.root, 'schema-case') },
+    {
+      schema: async () => {
+        schema_entered.release();
+        await schema.promise;
+        return true;
+      },
+    },
+  );
+  let schema_advance: Promise<void> | undefined;
+  try {
+    s.service.start();
+    await s.service.prefetch();
+    s.service.install(s.release.manifest.app_sha, 'now', { confirm_activity: false });
+    schema_advance = s.service.advance();
+    await Promise.race([
+      schema_entered.promise,
+      schema_advance.then(() => {
+        throw new Error('Schema gate was not reached');
+      }),
+    ]);
+    await expires(s.service.stop({ deadline: performance.now() / 1000 }));
+    let settled = false;
+    const actual = s.service.settled().then(() => {
+      settled = true;
+    });
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    if (settled) throw new Error('Actual settlement discarded held schema work');
+    const before = readFileSync(s.attempts.path, 'utf8');
+    schema.release();
+    await Promise.all([schema_advance, actual]);
+    await s.close();
+    result.schema_fence = {
+      backup: s.counts.backup,
+      prepare: s.counts.prepare,
+      launch: s.counts.launch,
+      unchanged_after_ownership: readFileSync(s.attempts.path, 'utf8') === before,
+    };
+  } finally {
+    schema.release();
+    await Promise.allSettled([schema_advance]);
+    await s.close();
+  }
+  const backup = deferred(),
+    backup_entered = deferred(),
+    b = harness(
+      { ...request, root: join(request.root, 'backup-case') },
+      {
+        migrate: true,
+        backup: () => {
+          backup_entered.release();
+          return backup.promise;
+        },
+      },
+    );
+  try {
+    b.service.start();
+    await b.service.prefetch();
+    b.service.install(b.release.manifest.app_sha, 'now', { confirm_activity: false });
+    const advance = b.service.advance();
+    await backup_entered.promise;
+    const started = performance.now();
+    await expires(b.service.stop({ deadline: started / 1000 + 0.03 }));
+    result.backup_stop_ms = performance.now() - started;
+    const before = readFileSync(b.attempts.path, 'utf8');
+    backup.release();
+    await advance;
+    await b.service.settled();
+    await b.close();
+    result.backup_fence = {
+      ...b.counts,
+      state: b.attempts.read()?.state,
+      closed: b.barrier.closed,
+      poll: b.service.poll(),
+      unchanged_after_ownership: readFileSync(b.attempts.path, 'utf8') === before,
+    };
+  } finally {
+    backup.release();
+    await b.close();
+  }
+  const launch = deferred(),
+    launch_entered = deferred(),
+    l = harness(
+      { ...request, root: join(request.root, 'launch-case') },
+      {
+        launch: () => {
+          launch_entered.release();
+          return launch.promise;
+        },
+      },
+    );
+  try {
+    l.service.start();
+    await l.service.prefetch();
+    l.service.install(l.release.manifest.app_sha, 'now', { confirm_activity: false });
+    const advance = l.service.advance();
+    await launch_entered.promise;
+    const started = performance.now();
+    await expires(l.service.stop({ deadline: started / 1000 + 0.03 }));
+    const elapsed_ms = performance.now() - started;
+    const before = readFileSync(l.attempts.path, 'utf8');
+    launch.reject(new Error('late installer refusal'));
+    await advance;
+    await l.service.settled();
+    await l.close();
+    result.launch_fence = {
+      elapsed_ms,
+      launches: l.counts.launch,
+      closed: l.barrier.closed,
+      state: l.attempts.read()?.state,
+      unchanged_after_ownership: readFileSync(l.attempts.path, 'utf8') === before,
+    };
+  } finally {
+    launch.release();
+    await l.close();
+  }
+  const audit = harness({ ...request, root: join(request.root, 'audit-case') });
+  const definition = audit.database.read((sql) =>
+    sql.get<{ definition_json: string }>(
+      "SELECT definition_json FROM worker_types WHERE worker_type='coding'",
+    ),
+  )!.definition_json;
+  try {
+    const configured = configured_worker_runtime_definitions();
+    audit.database.write((tx) =>
+      tx.run("UPDATE worker_types SET definition_json='{}' WHERE worker_type='coding'"),
+    );
+    audit.service.start();
+    await audit.service.prefetch();
+    audit.service.install(audit.release.manifest.app_sha, 'now', { confirm_activity: false });
+    await audit.service.advance();
+    result.audit_refusal = {
+      state: audit.attempts.read()?.state,
+      detail: audit.attempts.read()?.detail,
+      closed: audit.barrier.closed,
+      launches: audit.counts.launch,
+      global_registry_unchanged: configured === configured_worker_runtime_definitions(),
+    };
+  } finally {
+    audit.database.write((tx) =>
+      tx.run("UPDATE worker_types SET definition_json=? WHERE worker_type='coding'", [definition]),
+    );
+    await audit.close();
+  }
+  const failedCommit = harness(
+    { ...request, root: join(request.root, 'commit-case') },
+    { commit_fault: true },
+  );
+  try {
+    failedCommit.service.start();
+    await failedCommit.service.prefetch();
+    failedCommit.service.install(failedCommit.release.manifest.app_sha, 'now', {
+      confirm_activity: false,
+    });
+    await failedCommit.service.advance();
+    result.commit_refusal = {
+      state: failedCommit.attempts.read()?.state,
+      detail: failedCommit.attempts.read()?.detail,
+      closed: failedCommit.barrier.closed,
+      launches: failedCommit.counts.launch,
+      poll: failedCommit.service.poll(),
+    };
+  } finally {
+    await failedCommit.close();
+  }
+  const timer = harness({ ...request, root: join(request.root, 'observer-case') });
+  try {
+    timer.activity('busy');
+    timer.service.start();
+    await timer.service.prefetch();
+    const waiting = timer.service.install(timer.release.manifest.app_sha, 'idle', {
+      confirm_activity: false,
+    });
+    const raw = JSON.parse(readFileSync(timer.attempts.path, 'utf8')) as Record<string, unknown>;
+    raw.state = 'failed';
+    raw.detail = 'external installer';
+    writeFileSync(timer.attempts.path, JSON.stringify(raw));
+    let external_seen = false;
+    const unsubscribe = timer.changes.subscribe(() => {
+      if (timer.service.status().attempt?.detail === 'external installer') external_seen = true;
+    });
+    await pause(350);
+    unsubscribe();
+    result.external_observation = {
+      seen: external_seen,
+      state: timer.service.status().attempt?.state,
+    };
+    timer.attempts.remove(waiting.attempt_id, new Set(['failed']));
+    timer.service.install(timer.release.manifest.app_sha, 'idle', { confirm_activity: false });
+    await timer.service.advance();
+    timer.activity('idle');
+    timer.changes.emit();
+    await pause(0);
+    const before_poll = { state: timer.attempts.read()?.state, launches: timer.counts.launch };
+    const holds_worker_pass = timer.service.poll();
+    await timer.service.advance();
+    result.readiness_poll = {
+      before_poll,
+      holds_worker_pass,
+      state: timer.attempts.read()?.state,
+      launches: timer.counts.launch,
+    };
+  } finally {
+    await timer.close();
+  }
+  // A timed-out observer owns no retirement or accepted save after its wait ends.
+  const stopped_waits: Record<string, unknown> = {};
+  for (const phase of ['preparation', 'save'] as const) {
+    const root = join(request.root, `timed-out-${phase}`);
+    mkdirSync(root, { recursive: true });
+    const durable = new UpdateBarrier(join(root, 'update-barrier.json'));
+    const host = harness({ ...request, root }, { update_barrier: durable });
+    const retirement = deferred();
+    let original_pending = true;
+    void retirement.promise.then(() => {
+      original_pending = false;
+    });
+    const save = phase === 'save' ? durable.operation() : null;
+    if (phase === 'preparation') {
+      host.system.prepare_update = async (_mode, signal) => {
+        host.barrier.close_starts();
+        const observed = await observe_promise(retirement.promise, signal!);
+        return observed.completed;
+      };
+    }
+    host.service.schedule_advance = () => {};
+    try {
+      host.service.start();
+      await host.service.prefetch();
+      const attempt = host.service.install(host.release.manifest.app_sha, 'now', {
+        confirm_activity: true,
+      });
+      host.attempts.change(attempt.attempt_id, new Set(['waiting']), (current) => ({
+        ...current,
+        deadline_at: new Date(
+          Number(instant(request.now).epochMicroseconds) / 1000 + 20,
+        ).toISOString(),
+      }));
+      await host.service.advance();
+      await host.service.stop({ deadline: performance.now() / 1000 + 0.1 });
+      await host.service.settled();
+      stopped_waits[phase] = {
+        updates_settled: true,
+        original_pending: phase === 'save' ? !durable.drained : original_pending,
+        starts_closed: host.barrier.starts_closed,
+        state: host.attempts.read()?.state,
+        launches: host.counts.launch,
+      };
+    } finally {
+      retirement.release();
+      save?.release();
+      await host.close();
+    }
+  }
+  result.stopped_waits = stopped_waits;
+  return result;
+}
+
+interface RouteRequest extends ServiceProbeRequest {
+  requests: {
+    method: 'GET' | 'POST';
+    path: string;
+    payload?: unknown;
+    headers?: Record<string, string>;
+    seed?: Record<string, unknown>;
+  }[];
+  mac_status: unknown;
+}
+export async function probe_update_routes(request: RouteRequest) {
+  const host = harness(request),
+    responses: unknown[] = [];
+  let health_reads = 0,
+    mac_reads = 0;
+  host.activity('busy');
+  // Python's HTTP/status Harness has no event loop. Both pause background advancement;
+  // the service and continuation proofs exercise it separately.
+  host.service.schedule_advance = () => {};
+  host.service.start();
+  await host.service.prefetch();
+  const config = { ...loadConfig(), app_sha: 'a'.repeat(40) };
+  const app = await createApp(config, {
+    database: host.database,
+    changes: host.changes,
+    workspaceAdmission: host.barrier,
+    areas: [
+      {
+        prefix: '/api',
+        routes: create_update_routes(host.service, {
+          health_payload: () => {
+            health_reads++;
+            return { presence: 'present', platform: 'darwin' };
+          },
+          status: async () => {
+            mac_reads++;
+            return request.mac_status;
+          },
+        }),
+      },
+    ],
+  });
+  try {
+    let nonowner_unchanged = true;
+    for (const operation of request.requests) {
+      let attempt = host.attempts.read();
+      if (operation.seed !== undefined && attempt !== null) {
+        host.attempts.change(attempt.attempt_id, new Set([attempt.state]), (current) => ({
+          ...current,
+          ...operation.seed,
+        }));
+        attempt = host.attempts.read();
+      }
+      const before = operation.headers ? readFileSync(host.attempts.path, 'utf8') : null;
+      const response = await app.inject({
+        method: operation.method,
+        url: operation.path.replace('@attempt', attempt?.attempt_id ?? 'missing'),
+        payload: operation.payload as Record<string, unknown> | undefined,
+        headers: operation.headers,
+      });
+      if (before !== null && readFileSync(host.attempts.path, 'utf8') !== before)
+        nonowner_unchanged = false;
+      responses.push({ status: response.statusCode, body: response.json() });
+    }
+    let captures = 0;
+    const resources = new DeploymentResources(() => {
+      captures++;
+      return deployment_status(host.attempts.read(), 'a'.repeat(40), {
+        success_seconds: 300,
+        now: request.now,
+      });
+    });
+    const snapshot = host.database.read((sql) =>
+      resources.capture(sql, {} as FastifyRequest, '/api/deployment-status'),
+    )!;
+    const captured = snapshot.read();
+    const unchanged = host.database.read((sql) =>
+      resources.capture(sql, {} as FastifyRequest, '/api/deployment-status'),
+    )!;
+    const attempt = host.attempts.read();
+    if (attempt !== null) host.attempts.remove(attempt.attempt_id, new Set([attempt.state]));
+    const changed = host.database.read((sql) =>
+      resources.capture(sql, {} as FastifyRequest, '/api/deployment-status'),
+    )!;
+    return {
+      responses,
+      health_reads,
+      mac_reads,
+      nonowner_unchanged,
+      resource: {
+        captures,
+        revision: snapshot.revision,
+        unchanged_revision: unchanged.revision,
+        changed_revision: changed.revision,
+        body: captured,
+        changed_body: changed.read(),
+        after: snapshot.read(),
+      },
+    };
+  } finally {
+    await app.close();
+    await host.close();
+  }
+}
+
+/** Retained service fixture: save-cut cancellation and stale recovery without native services. */
+export async function probe_preparation(request: ServiceProbeRequest) {
+  const durable = new UpdateBarrier(join(request.root, 'update-barrier.json'));
+  const host = harness(request, { update_barrier: durable });
+  host.service.schedule_advance = () => {};
+  host.service.start();
+  await host.service.prefetch();
+  const answers: unknown[] = [];
+  const snapshot = () => {
+    const status = host.service.status(),
+      attempt = host.attempts.read();
+    answers.push({
+      state: status.state,
+      actions: status.allowed_actions,
+      activity: status.activity,
+      detail: status.detail,
+      deadline: status.deadline_at,
+      attempt:
+        attempt === null
+          ? null
+          : { state: attempt.state, mode: attempt.mode, detail: attempt.detail },
+      closed: host.barrier.closed,
+      starts_closed: host.barrier.starts_closed,
+      frozen: durable.frozen,
+      launches: host.counts.launch,
+    });
+  };
+  try {
+    host.activity('busy');
+    const first = host.service.install(host.release.manifest.app_sha, 'idle', {
+      confirm_activity: false,
+    });
+    await host.service.advance();
+    snapshot();
+    host.now(Number(instant(request.now).epochMicroseconds) / 1_000_000 + 301);
+    await host.service.advance();
+    snapshot();
+    host.service.update_now(first.attempt_id, { confirm_activity: true });
+    snapshot();
+    host.service.cancel(first.attempt_id);
+    snapshot();
+
+    const save = durable.operation();
+    if (!save.admitted) throw new Error('Synthetic save was refused');
+    const second = host.service.install(host.release.manifest.app_sha, 'now', {
+      confirm_activity: true,
+    });
+    const advance = host.service.advance();
+    for (let i = 0; host.attempts.read()?.state !== 'preparing'; i++) {
+      if (i > 5000) throw new Error('Preparation did not reach the save cut');
+      await pause(1);
+    }
+    snapshot();
+    host.service.cancel(second.attempt_id);
+    await advance;
+    snapshot();
+    save.release();
+
+    const third = host.service.install(host.release.manifest.app_sha, 'idle', {
+      confirm_activity: false,
+    });
+    const old_generation = durable.generation;
+    durable.freeze(third.attempt_id);
+    const stale_generation = host.service.recover_orphaned_attempt(
+      third.attempt_id,
+      old_generation,
+    );
+    const stale_attempt = host.service.recover_orphaned_attempt(
+      second.attempt_id,
+      durable.generation,
+    );
+    answers.push({
+      stale_generation,
+      stale_attempt,
+      frozen: durable.frozen,
+      preserved: host.attempts.read()?.attempt_id === third.attempt_id,
+    });
+    host.service.cancel(third.attempt_id);
+    return answers;
+  } finally {
+    await host.close();
+  }
+}

@@ -1,0 +1,351 @@
+/** Local compaction, idle cleanup, and live-session task loss. Restart recovery stays separate. */
+import { randomUUID } from 'node:crypto';
+import { setTimeout as pause } from 'node:timers/promises';
+import { is_shutdown_business_cancellation } from '../shutdown.ts';
+import type { SqliteProcessConversationSystem } from '../system.ts';
+import type { Message, ReservedTurn } from './contracts.ts';
+import type { ConversationState } from './state.ts';
+import { own_settlement } from './state.ts';
+import {
+  PromptDeliveryMode,
+  PromptQueueReason,
+  PromptDeliveryRefused,
+  PromptDeliverySuppressed,
+  PromptDeliveryUncertain,
+} from '../contracts.ts';
+import { ShutdownDeadlineExceeded } from '../../lifecycle/contracts.ts';
+import { text_message_content } from '../message_content.ts';
+import {
+  AUTOMATIC_COMPACTION_AFTER_SECONDS,
+  AUTOMATIC_COMPACTION_BEFORE_SECONDS,
+  AUTOMATIC_COMPACTION_PROMPT,
+  AUTOMATIC_COMPACTION_SENDER_LABEL,
+  IDLE_CHILD_STOP_AFTER_SECONDS,
+  IDLE_CHILD_SWEEP_INTERVAL_SECONDS,
+  LOST_BACKGROUND_TASK_SENDER_LABEL,
+} from './configuration.ts';
+
+export function automatic_compaction_is_due(
+  host: SqliteProcessConversationSystem,
+  state: ConversationState,
+): boolean {
+  const activity_at = state.record.latest_agent_activity_at;
+  if (activity_at === null || state.child_is_quarantined) return false;
+  const age = Math.floor(host.unix_time_now()) - activity_at;
+  return (
+    age >= AUTOMATIC_COMPACTION_AFTER_SECONDS &&
+    age < AUTOMATIC_COMPACTION_BEFORE_SECONDS &&
+    state.record.latest_agent_activity_sequence >
+      state.record.automatic_compaction_attempted_through_sequence
+  );
+}
+
+export async function deliver_automatic_compaction(
+  host: SqliteProcessConversationSystem,
+  state: ConversationState,
+  reservation: ReservedTurn,
+): Promise<void> {
+  const message: Message = {
+    held_prompt_id: '',
+    system_generated: true,
+    snapshot_sent_at_unix_milliseconds: 0,
+    queue_reason: PromptQueueReason.requested,
+    model_change: null,
+    reasoning_effort_change: null,
+    reasoning_effort_is_set: false,
+    sender_message_id: null,
+    sent_at_unix_milliseconds: null,
+    sender: null,
+    recipient: null,
+    recovery_references: [],
+    owner_read_through_sequence: null,
+    content: text_message_content(AUTOMATIC_COMPACTION_PROMPT),
+    sender_label: AUTOMATIC_COMPACTION_SENDER_LABEL,
+    acknowledge_owner_on_failure: true,
+    recording_receipt: null,
+    delivery_uncertain: false,
+  };
+  try {
+    await host.deliver_and_finalize(state, reservation, [message], false, false);
+  } catch (error) {
+    if (host.shutting_down) throw error;
+    console.error(
+      `conversation ${state.record.conversation_id} could not start automatic compaction`,
+      error,
+    );
+    const termination_confirmed = await state.lock.run(async () => {
+      if (state.child === null) return true;
+      return await host.discard_child(state, state.child);
+    });
+    if (termination_confirmed) {
+      await host.drain_held_prompts(state);
+    } else {
+      console.error(
+        `conversation ${state.record.conversation_id} kept held traffic quarantined after automatic compaction child termination failed`,
+      );
+    }
+    return;
+  }
+  // Refusal already releases the line. A running or uncertain turn keeps this a no-op.
+  await host.drain_held_prompts(state);
+}
+
+export async function sweep_idle_children(host: SqliteProcessConversationSystem): Promise<void> {
+  await host.workspace_admission.operation(
+    async (admitted) => {
+      if (!admitted || host.shutting_down) return;
+      const due = host.options.store.conversations_due_for_automatic_compaction({
+        due_at_or_before: Math.floor(host.unix_time_now()) - AUTOMATIC_COMPACTION_AFTER_SECONDS,
+        activity_after: Math.floor(host.unix_time_now()) - AUTOMATIC_COMPACTION_BEFORE_SECONDS,
+      });
+      for (const conversation_id of due) {
+        const state = host.conversation_state(conversation_id);
+        if (state === null || state.lock.locked) continue;
+        const reservation = await state.lock.run(async () => {
+          if (
+            state.phase === 'idle' &&
+            state.held_prompts.length === 0 &&
+            automatic_compaction_is_due(host, state)
+          ) {
+            return await host.reserve_turn(state, true);
+          }
+          return null;
+        });
+        if (reservation !== null) {
+          void own_settlement(state, deliver_automatic_compaction(host, state, reservation)).catch(
+            (error: unknown) => console.error('the idle conversation compaction failed', error),
+          );
+        }
+      }
+      const with_background_tasks =
+        host.options.store.conversation_ids_with_live_background_tasks();
+      const recovered: ConversationState[] = [];
+      for (const state of host.conversations.values()) {
+        if (state.child === null || state.lock.locked) continue;
+        await state.lock.run(async () => {
+          const child = state.child;
+          if (child === null || state.phase !== 'idle') return;
+          const was_quarantined = state.child_is_quarantined;
+          if (!was_quarantined) {
+            if (with_background_tasks.has(state.record.conversation_id)) return;
+            const idle_for = host.monotonic_now() - state.last_touched_monotonic;
+            if (
+              idle_for <
+              (host.options.idle_child_stop_after_seconds ?? IDLE_CHILD_STOP_AFTER_SECONDS)
+            )
+              return;
+          }
+          if (!(await host.discard_child(state, child))) return;
+          if (was_quarantined && state.held_prompts.length > 0) recovered.push(state);
+        });
+      }
+      for (const state of recovered) {
+        await host.drain_held_prompts(state);
+      }
+    },
+    { starts: true },
+  );
+}
+
+/** Own only the timer. The core owns settlement cancellation and shutdown ordering. */
+export class IdleChildJanitor {
+  readonly #host: SqliteProcessConversationSystem;
+  #timer: ReturnType<typeof setTimeout> | null = null;
+  #sweep: Promise<void> | null = null;
+  #stopped = false;
+  constructor(host: SqliteProcessConversationSystem) {
+    this.#host = host;
+  }
+  start(): void {
+    if (this.#timer !== null || this.#sweep !== null) return;
+    this.#stopped = false;
+    this.#schedule();
+  }
+  #schedule(): void {
+    if (this.#stopped || this.#host.shutting_down) return;
+    const delay =
+      this.#host.options.idle_child_sweep_interval_seconds ?? IDLE_CHILD_SWEEP_INTERVAL_SECONDS;
+    this.#timer = setTimeout(() => {
+      this.#timer = null;
+      const sweep = sweep_idle_children(this.#host);
+      this.#sweep = sweep;
+      void sweep
+        .catch((error: unknown) => console.error('the idle conversation child sweep failed', error))
+        .finally(() => {
+          this.#sweep = null;
+          this.#schedule();
+        });
+    }, delay * 1000);
+  }
+  async stop(): Promise<void> {
+    this.#stopped = true;
+    if (this.#timer !== null) {
+      clearTimeout(this.#timer);
+      this.#timer = null;
+    }
+    await this.#sweep?.catch(() => {});
+  }
+}
+
+/** Detach preserves durable task rows for the later restart-recovery owner. */
+export async function detach_children(
+  states: readonly ConversationState[],
+  additional: readonly {
+    child: import('../backends/contracts.ts').BackendChild;
+    state: ConversationState;
+  }[] = [],
+  options?: import('../../lifecycle/contracts.ts').StopOptions,
+  on_detached?: (
+    state: ConversationState,
+    child: import('../backends/contracts.ts').BackendChild,
+  ) => Promise<void>,
+): Promise<void> {
+  const candidates = new Map(additional.map(({ child, state }) => [child, state]));
+  for (const state of states) if (state.child !== null) candidates.set(state.child, state);
+  const detaches = [...candidates].map(async ([child, state]) => {
+    if (state.running_turn !== null) state.running_turn.callbacks_revoked = true;
+    state.child_event_sink = null;
+    try {
+      try {
+        await child.detach(options);
+      } catch (error) {
+        // The core's deadline observer can finish while exact stop proof remains owned.
+        if (!(error instanceof ShutdownDeadlineExceeded) || child.settled === undefined)
+          throw error;
+      }
+      await child.settled?.();
+      await on_detached?.(state, child);
+      if (state.child === child) state.child = null;
+    } catch (error) {
+      if (state.child === null) state.child = child;
+      state.child_is_quarantined = true;
+      console.error(
+        `conversation ${state.record.conversation_id} could not detach its backend child cleanly`,
+        error,
+      );
+      throw error;
+    }
+  });
+  const results = await Promise.allSettled(detaches);
+  const failures = results.filter((result) => result.status === 'rejected');
+  if (failures.length)
+    throw new AggregateError(
+      failures.map((failure) => failure.reason),
+      'Backend children did not detach cleanly',
+    );
+}
+
+/** One scanner retains deferred notices and their admission identities. */
+export class LostBackgroundTaskNotices {
+  readonly #host: SqliteProcessConversationSystem;
+  readonly #pending = new Map<string, { state: ConversationState; description: string }>();
+  #drain_task: Promise<void> | null = null;
+  constructor(host: SqliteProcessConversationSystem) {
+    this.#host = host;
+  }
+  enqueue(state: ConversationState, descriptions: readonly string[]): void {
+    if (this.#host.shutting_down) return;
+    for (const description of descriptions) {
+      const identity = `lost-background:${state.record.conversation_id}:${randomUUID().replaceAll('-', '')}`;
+      this.#pending.set(identity, { state, description });
+    }
+    if (this.#pending.size && this.#drain_task === null) this.#start(state);
+  }
+  #start(state: ConversationState): void {
+    // Publish actual ownership before the scanner can admit its first effect.
+    const task = own_settlement(
+      state,
+      Promise.resolve().then(() => this.#drain()),
+    );
+    this.#drain_task = task;
+    void task.then(
+      () => {
+        if (this.#drain_task !== task) return;
+        this.#drain_task = null;
+        const next = this.#pending.values().next().value;
+        if (next !== undefined && !this.#host.shutting_down) this.#start(next.state);
+      },
+      (error: unknown) => {
+        if (this.#drain_task === task) this.#drain_task = null;
+        if (!this.#host.shutting_down || !is_shutdown_business_cancellation(error))
+          console.error('The lost background task notice scanner failed', error);
+      },
+    );
+  }
+  seal(): void {
+    for (const identity of this.#pending.keys())
+      this.#host.start_admission.finish_unbound(identity);
+    this.#pending.clear();
+  }
+  async #drain(): Promise<void> {
+    const host = this.#host;
+    while (this.#pending.size) {
+      for (const [identity, { state, description }] of [...this.#pending]) {
+        if (state.being_killed || host.shutting_down) {
+          this.#pending.delete(identity);
+          host.start_admission.finish_unbound(identity);
+          continue;
+        }
+        const conversation_id = state.record.conversation_id;
+        const request = await host.automatic_start_request(identity, conversation_id);
+        if (!host.start_admission.try_start(request)) continue;
+        this.#pending.delete(identity);
+        try {
+          const fate = await host.send(
+            conversation_id,
+            text_message_content(
+              `Your background task "${description}" stopped because your session ended. ` +
+                'It did not finish. Read its output, then start it again or report what happened.',
+            ),
+            {
+              sender_label: LOST_BACKGROUND_TASK_SENDER_LABEL,
+              mode: PromptDeliveryMode.queue,
+              sender_message_id: identity,
+            },
+          );
+          if (fate instanceof PromptDeliveryRefused || fate instanceof PromptDeliverySuppressed)
+            host.start_admission.finish(identity);
+          else if (fate instanceof PromptDeliveryUncertain)
+            host.start_admission.uncertain(identity);
+        } catch (error) {
+          if (is_shutdown_business_cancellation(error)) throw error;
+          console.error(`Lost background task notice failed: ${conversation_id}`, error);
+          host.start_admission.finish_unbound(identity);
+        }
+      }
+      if (this.#pending.size) {
+        try {
+          await pause(host.start_admission.poll_delay(1) * 1000, undefined, {
+            signal: host.shutdown_signal,
+          });
+        } catch (error) {
+          host.shutdown_signal.throwIfAborted();
+          throw error;
+        }
+      }
+    }
+  }
+}
+
+export function tell_agent_about_lost_background_tasks(
+  host: SqliteProcessConversationSystem,
+  state: ConversationState,
+  descriptions: readonly string[],
+): void {
+  host.lost_task_notices.enqueue(state, descriptions);
+}
+
+export async function background_tasks_ended_with_child(
+  host: SqliteProcessConversationSystem,
+  state: ConversationState,
+): Promise<void> {
+  if (host.shutting_down) return;
+  const stopped = [...state.background_tasks_stopped_since_the_agent_last_acted.values()];
+  state.background_tasks_stopped_since_the_agent_last_acted.clear();
+  const lost = await host.persist(state, () =>
+    host.options.store.take_background_tasks(state.record.conversation_id),
+  );
+  if (!state.being_killed) {
+    tell_agent_about_lost_background_tasks(host, state, [...stopped, ...lost]);
+  }
+}

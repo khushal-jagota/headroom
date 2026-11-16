@@ -1,0 +1,1203 @@
+/** Gap: individual loop tests do not prove shared ownership, startup order, or
+ * late-transport fencing at lifecycle shutdown. Reuse the Ticket DB and locks.
+ */
+import { afterEach, expect, test, vi } from 'vitest';
+import { EventEmitter } from 'node:events';
+import type { Socket } from 'node:net';
+import type { ServerResponse } from 'node:http';
+import {
+  create as create_ticket,
+  fixture,
+  fixture_path,
+  now,
+  read,
+  propose,
+} from './ticket_fixture.ts';
+import { OWNER } from '../core/contracts.ts';
+import { set_ticket_backlog } from '../tickets/data/index.ts';
+import { capture_gate } from '../attention/history.ts';
+import { SCHEMA_VERSION } from '../navigation/contracts.ts';
+import { createDatabase } from '../core/database/index.ts';
+import { record_attention } from '../notifications/attention.ts';
+import { StandardsWebPushAdapter } from '../notifications/web_push.ts';
+import { ChangeSignal } from '../core/changes/index.ts';
+import { loadConfig } from '../core/config.ts';
+import { TestClock } from '../core/clock.ts';
+import { acquireLock, acquireRuntimeOwnership } from '../core/locks/index.ts';
+import type { OwnedAreaContext } from '../core/authority/register.ts';
+import { PlannerError } from '../core/contracts.ts';
+import { DeliveryCancelled } from '../conversation/backends/contracts.ts';
+import * as message_delivery from '../message_delivery/service.ts';
+import { notify_chief } from '../tickets/integrity_notice.ts';
+import type { BackgroundServiceFactory } from '../lifecycle/contracts.ts';
+import { ShutdownDeadlineExceeded } from '../lifecycle/contracts.ts';
+import {
+  compose_background_services,
+  dispatcher_admitted,
+  production_notification_delivery,
+} from '../lifecycle/background.ts';
+import { InMemoryConversationSystem } from '../conversation/in_memory_conversation_system.ts';
+import { ManagerWakeLoop } from '../manager_wakes/runtime.ts';
+import { NotificationLoop } from '../notifications/runtime.ts';
+import type { APNsResult, WebPushResult } from '../notifications/contracts.ts';
+import * as notificationData from '../notifications/data.ts';
+import * as apnsData from '../notifications/apns_data.ts';
+import { startServer } from '../core/start.ts';
+import { SqliteProcessConversationSystem } from '../conversation/system.ts';
+import { BackendStateStore } from '../conversation/backend_state.ts';
+import {
+  canonical_ticket_execution_refusal,
+  conversation_execution_refusal,
+} from '../tickets/execution_admission.ts';
+import { ConversationMessageFiles } from '../conversation/record/message_files.ts';
+import { PromptDeliveryStarted } from '../conversation/contracts.ts';
+import { WorkerStepReadinessLoop } from '../runtime/worker_step_readiness_loop.ts';
+import { writeFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { configure_conversation_start } from '../runtime/conversation_start.ts';
+import * as wakeData from '../manager_wakes/data.ts';
+import { SourceScheduleLoop } from '../measure_sources/schedule_loop.ts';
+import { PreviewService } from '../previews/service.ts';
+import { ScopedDelivery } from '../navigation/delivery/runtime.ts';
+import { ConversationViewRebuilder } from '../conversation/views/data/rebuild.ts';
+import * as recovery from '../conversation/deploy_interruptions/coordinator.ts';
+import { MetricsRuntime } from '../environments/vps_metrics/runtime.ts';
+import { UpdateService } from '../environments/updates/service.ts';
+import * as scratch from '../environments/ticket_scratch/runtime.ts';
+import { create_test_environment_runtime } from '../environments/testing/composition.ts';
+import { HttpRequestScope } from '../core/http/lifetime.ts';
+
+const next_turn = () => new Promise<void>((resolve) => setImmediate(resolve));
+
+// A combined HTTP host can hide one untracked path behind another held path.
+// Independent gates prove each actual lifetime without another connected host.
+test('HTTP lifetime independently retains a handler and a pending iterator return', async () => {
+  const began = performance.now();
+  const scope = new HttpRequestScope();
+  const handler = done<void>();
+  const handled = scope.run(() => handler.promise);
+  let handler_done = false;
+  const handler_drain = scope.settled().then(() => {
+    handler_done = true;
+  });
+  await next_turn();
+  expect(handler_done).toBe(false);
+  handler.resolve();
+  await Promise.all([handled, handler_drain]);
+  const entered = done<void>(),
+    release = done<void>();
+  const source = (async function* () {
+    try {
+      yield 'owned content';
+    } finally {
+      entered.resolve();
+      await release.promise;
+    }
+  })();
+  const iterator = scope.iterator(source)[Symbol.asyncIterator]();
+  await iterator.next();
+  scope.seal();
+  const returning = iterator.return!();
+  await entered.promise;
+  let iterator_done = false;
+  const iterator_drain = scope.settled().then(() => {
+    iterator_done = true;
+  });
+  try {
+    await next_turn();
+    expect(iterator_done).toBe(false);
+    await expect(scope.run(() => 'new work')).rejects.toMatchObject({ statusCode: 503 });
+  } finally {
+    release.resolve();
+    await Promise.all([returning, iterator_drain]);
+  }
+  // response.end() is not proof of flushed bytes. A second pipelined response can
+  // already be finished=true while its output still waits behind the first.
+  const sockets = new HttpRequestScope();
+  const socket = Object.assign(new EventEmitter(), {
+    destroyed: false,
+    // Rejected preview upgrades can already be half-closed when shutdown starts.
+    writableEnded: true,
+    destroySoon: vi.fn(() => {
+      socket.writableEnded = true;
+    }),
+  });
+  const first = Object.assign(new EventEmitter(), { finished: true, writableFinished: false });
+  const second = Object.assign(new EventEmitter(), { finished: true, writableFinished: false });
+  sockets.own_connection(socket as unknown as Socket);
+  sockets.own_response(socket as unknown as Socket, first as unknown as ServerResponse);
+  sockets.own_response(socket as unknown as Socket, second as unknown as ServerResponse);
+  sockets.seal();
+  sockets.close_idle_connections();
+  expect(socket.destroySoon).not.toHaveBeenCalled();
+  first.writableFinished = true;
+  first.emit('finish');
+  first.emit('close');
+  expect(socket.destroySoon).not.toHaveBeenCalled();
+  second.writableFinished = true;
+  second.emit('finish');
+  expect(socket.destroySoon).toHaveBeenCalledOnce();
+  second.emit('close');
+  expect(socket.destroySoon).toHaveBeenCalledOnce();
+  console.info(`HTTP lifetime unit proof: ${(performance.now() - began).toFixed(3)} ms`);
+});
+afterEach(() => vi.restoreAllMocks());
+// These lifecycle cases start after the setup approval reached the Worker.
+function create(...args: Parameters<typeof create_ticket>): ReturnType<typeof create_ticket> {
+  const ticket = create_ticket(...args);
+  args[0].write((sql) =>
+    sql.run("UPDATE ticket_decision_messages SET delivery_status='delivered' WHERE ticket_id=?", [
+      ticket.id,
+    ]),
+  );
+  return ticket;
+}
+function setup() {
+  const database = fixture();
+  const path = fixture_path(database);
+  const config = loadConfig('/missing-unit21-config', {
+    PLAN_DB_PATH: path,
+    PLAN_TEST_MODE: '0',
+    PLAN_DISPATCH_ENABLED: 'true',
+    PLAN_DISPATCHER_LOCK_PATH: path + '.dispatcher',
+  });
+  const context: OwnedAreaContext = {
+    database,
+    config,
+    clock: new TestClock('2026-07-04T10:00:00+00:00'),
+    changes: new ChangeSignal(),
+    conversationSystem: new InMemoryConversationSystem(),
+    assert_database_owned() {},
+  };
+  configure_conversation_start(database, { db_path: path, workspace_root: dirname(path) });
+  return { context, database, path };
+}
+function done<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((complete) => {
+    resolve = complete;
+  });
+  return { promise, resolve };
+}
+
+test('both delivery channels expire at 300 seconds and reject inactive or superseded attention', () => {
+  const began = performance.now();
+  const { context, database } = setup(),
+    time = context.clock.nowUnix();
+  const tickets = ['current', 'inactive', 'superseded'].map((body) =>
+    propose(database, create(database, { now: time }), body, time),
+  );
+  database.write((sql) => {
+    notificationData.initialize_notifications(sql, time);
+    notificationData.register_subscription(sql, {
+      endpoint: 'https://fresh.invalid',
+      p256dh: 'key',
+      auth: 'auth',
+      now: time,
+    });
+    apnsData.register_device(sql, {
+      device_token: 'aa',
+      bundle_id: 'invalid.panels',
+      environment: 'development',
+      now: time,
+    });
+    notificationData.queue_deliveries(sql, time);
+  });
+  const pending = (at: number) =>
+    database.write((sql) =>
+      [notificationData.pending_deliveries(sql, at), apnsData.pending_deliveries(sql, at)].map(
+        (rows) => rows.map((row) => row.edge.subject_id).sort(),
+      ),
+    );
+  expect(pending(time + 299)).toEqual([
+    tickets.map((t) => t.id).sort(),
+    tickets.map((t) => t.id).sort(),
+  ]);
+  database.write((sql) => {
+    sql.run(
+      "UPDATE notification_attention_state SET active=0 WHERE subject_id=? AND notification_type='awaiting_approval'",
+      [tickets[1]!.id],
+    );
+    sql.run(
+      "UPDATE notification_attention_state SET generation=generation+1 WHERE subject_id=? AND notification_type='awaiting_approval'",
+      [tickets[2]!.id],
+    );
+  });
+  const sources = () =>
+    database.read((sql) => [
+      sql.all(
+        'SELECT * FROM notification_attention_state ORDER BY subject_kind,subject_id,notification_type',
+      ),
+      sql.all(
+        'SELECT * FROM notification_attention_edges ORDER BY subject_kind,subject_id,notification_type,generation',
+      ),
+    ]);
+  const before = sources();
+  expect(pending(time + 299)).toEqual([[tickets[0]!.id], [tickets[0]!.id]]);
+  // Renew the retry itself: the original edge still expires at the inclusive boundary.
+  database.write((sql) => {
+    for (const table of ['notification_deliveries', 'notification_apns_deliveries'])
+      sql.run(`UPDATE ${table} SET created_at=?,status='retry' WHERE subject_id=?`, [
+        time + 299,
+        tickets[0]!.id,
+      ]);
+  });
+  expect(pending(time + 300)).toEqual([[], []]);
+  expect(sources()).toEqual(before);
+  // Conversely a fresh edge cannot revive an old retry.
+  database.write((sql) => {
+    sql.run(
+      "UPDATE notification_attention_edges SET occurred_at=? WHERE subject_id=? AND notification_type='awaiting_approval'",
+      [time + 300, tickets[0]!.id],
+    );
+    for (const table of ['notification_deliveries', 'notification_apns_deliveries'])
+      sql.run(`UPDATE ${table} SET created_at=?,status='retry' WHERE subject_id=?`, [
+        time,
+        tickets[0]!.id,
+      ]);
+  });
+  expect(pending(time + 300)).toEqual([[], []]);
+  for (const table of ['notification_deliveries', 'notification_apns_deliveries'])
+    expect(database.read((sql) => sql.all(`SELECT DISTINCT status FROM ${table}`))).toEqual([
+      { status: 'expired' },
+    ]);
+  console.info(
+    `Notification freshness selector proof: ${(performance.now() - began).toFixed(3)} ms`,
+  );
+});
+
+test.each(['web', 'apns'] as const)(
+  '%s rechecks the clock before each selected send',
+  async (transport) => {
+    const began = performance.now();
+    const { context, database } = setup(),
+      time = context.clock.nowUnix();
+    for (const body of ['First', 'Second'])
+      propose(database, create(database, { now: time }), body, time);
+    database.write((sql) => {
+      notificationData.initialize_notifications(sql, time);
+      if (transport === 'web')
+        notificationData.register_subscription(sql, {
+          endpoint: 'https://fresh.invalid',
+          p256dh: 'key',
+          auth: 'auth',
+          now: time,
+        });
+      else
+        apnsData.register_device(sql, {
+          device_token: 'aa',
+          bundle_id: 'invalid.panels',
+          environment: 'development',
+          now: time,
+        });
+    });
+    const send = vi.fn(async () => {
+      (context.clock as TestClock).set(new Date((time + 300) * 1000).toISOString());
+      return { delivered: true };
+    });
+    const loop = new NotificationLoop({
+      database,
+      clock: context.clock,
+      canonical_origin: 'https://fresh.invalid',
+      adapter: { send },
+      apns_adapter: transport === 'apns' ? { send, close() {} } : null,
+    });
+    expect(await loop.poll_once()).toBe(1);
+    expect(send).toHaveBeenCalledOnce();
+    const table = transport === 'web' ? 'notification_deliveries' : 'notification_apns_deliveries';
+    expect(database.read((sql) => sql.all(`SELECT status FROM ${table} ORDER BY status`))).toEqual([
+      { status: 'delivered' },
+      { status: 'expired' },
+    ]);
+    console.info(
+      `Notification ${transport} pre-send clock proof: ${(performance.now() - began).toFixed(3)} ms`,
+    );
+  },
+);
+
+// Both provider loops must recheck a previously selected obligation after an earlier send defers it.
+test.each(['web', 'apns'] as const)(
+  '%s skips a selected task after deferral and resumes with a new generation',
+  async (transport) => {
+    const { context, database } = setup(),
+      time = context.clock.nowUnix();
+    const first = propose(database, create(database, { now: time }), 'First', time);
+    const second = propose(database, create(database, { now: time }), 'Second', time);
+    const initial_generation = database.read((sql) =>
+      sql.get<{ generation: number }>(
+        "SELECT generation FROM notification_attention_state WHERE subject_id=? AND notification_type='awaiting_approval'",
+        [second.id],
+      ),
+    )!.generation;
+    database.write((sql) => {
+      notificationData.initialize_notifications(sql, time);
+      if (transport === 'web')
+        notificationData.register_subscription(sql, {
+          endpoint: 'https://push.deferral.invalid/one',
+          p256dh: 'synthetic',
+          auth: 'synthetic',
+          now: time,
+        });
+      else
+        apnsData.register_device(sql, {
+          device_token: 'aabb',
+          bundle_id: 'invalid.panels',
+          environment: 'development',
+          now: time,
+        });
+    });
+    const table = transport === 'web' ? 'notification_deliveries' : 'notification_apns_deliveries';
+    database.write((sql) =>
+      set_ticket_backlog(sql, second.id, { principal: OWNER, now: time, is_backlogged: true }),
+    );
+    database.write((sql) => notificationData.queue_deliveries(sql, time));
+    expect(
+      database.read((sql) =>
+        sql.get(
+          "SELECT decided FROM notification_attention_edges WHERE subject_id=? AND notification_type='awaiting_approval' AND generation=?",
+          [second.id, initial_generation],
+        ),
+      ),
+    ).toEqual({ decided: 1 });
+    expect(
+      database.read((sql) =>
+        sql.all(`SELECT * FROM ${table} WHERE subject_id=? AND generation=?`, [
+          second.id,
+          initial_generation,
+        ]),
+      ),
+    ).toEqual([]);
+    database.write((sql) =>
+      set_ticket_backlog(sql, second.id, { principal: OWNER, now: time, is_backlogged: false }),
+    );
+    const attempted: string[] = [];
+    const send = (route: string) => {
+      attempted.push(route);
+      const deferred = route.includes(first.id) ? second : first;
+      database.write((sql) =>
+        set_ticket_backlog(sql, deferred.id, { principal: OWNER, now: time, is_backlogged: true }),
+      );
+      return { delivered: true };
+    };
+    const loop = new NotificationLoop({
+      database,
+      clock: context.clock,
+      canonical_origin: 'https://deferral.invalid',
+      adapter: { send: async (_subscription, intent) => send(intent.route) },
+      apns_adapter:
+        transport === 'apns'
+          ? { send: async (delivery) => send(delivery.intent.route), close() {} }
+          : null,
+    });
+    expect(await loop.poll_once()).toBe(1);
+    expect(attempted).toHaveLength(1);
+    const deferred = attempted[0]!.includes(first.id) ? second : first;
+    const paused_generation = database.read((sql) =>
+      sql.get<{ generation: number }>(
+        "SELECT generation FROM notification_attention_state WHERE subject_id=? AND notification_type='awaiting_approval'",
+        [deferred.id],
+      ),
+    )!.generation;
+    database.write((sql) =>
+      set_ticket_backlog(sql, deferred.id, {
+        principal: OWNER,
+        now: time + 1,
+        is_backlogged: false,
+      }),
+    );
+    database.write((sql) => notificationData.queue_deliveries(sql, time + 1));
+    const pending =
+      transport === 'web'
+        ? database.write((sql) => notificationData.pending_deliveries(sql, time + 1))
+        : database.write((sql) => apnsData.pending_deliveries(sql, time + 1));
+    expect(pending.map((delivery) => delivery.edge)).toEqual([
+      {
+        subject_kind: 'ticket',
+        subject_id: deferred.id,
+        notification_type: 'awaiting_approval',
+        generation: paused_generation + 1,
+      },
+    ]);
+    await loop.stop({ deadline: performance.now() / 1000 + 1 });
+  },
+);
+
+// Imported transitions must use the resume time and never close a gate before observation.
+test('imported deferral closes observed gates and resumes without replaying old edges', () => {
+  const { database } = setup();
+  const ticket = propose(database, create(database), 'Imported proposal');
+  const initial_generation = database.read((sql) =>
+    sql.get<{ generation: number }>(
+      "SELECT generation FROM notification_attention_state WHERE subject_id=? AND notification_type='awaiting_approval'",
+      [ticket.id],
+    ),
+  )!.generation;
+  const intervals = database.read((sql) =>
+    sql.all(
+      'SELECT observed_since,closed_at FROM attention_gate_intervals WHERE ticket_id=? ORDER BY id',
+      [ticket.id],
+    ),
+  );
+  database.write((sql) => {
+    capture_gate(sql, { ticket_id: ticket.id, active: false, now: now - 1 });
+    sql.run('UPDATE tickets SET is_backlogged=1,updated_at=? WHERE id=?', [now + 1, ticket.id]);
+    notificationData.reconcile_attention(sql);
+    sql.run('UPDATE tickets SET is_backlogged=0,updated_at=? WHERE id=?', [now + 2, ticket.id]);
+    notificationData.reconcile_attention(sql);
+  });
+  expect(
+    database.read((sql) =>
+      sql.all(
+        'SELECT observed_since,closed_at FROM attention_gate_intervals WHERE ticket_id=? ORDER BY id',
+        [ticket.id],
+      ),
+    ),
+  ).toEqual([
+    ...intervals.slice(0, -1),
+    { observed_since: now, closed_at: now },
+    { observed_since: now + 2, closed_at: null },
+  ]);
+  expect(
+    database.read((sql) =>
+      sql.get(
+        "SELECT active,generation FROM notification_attention_state WHERE subject_id=? AND notification_type='awaiting_approval'",
+        [ticket.id],
+      ),
+    ),
+  ).toEqual({ active: 1, generation: initial_generation + 1 });
+});
+
+// A successful host notice does not prove Python's cancellation exception boundary.
+test('startup integrity notice preserves cancellation from the ordinary send door', async () => {
+  const { context, database } = setup();
+  const ticket = create(database);
+  const cancelled = new DeliveryCancelled('Shutdown cancelled the notice');
+  vi.spyOn(message_delivery, 'send_message').mockRejectedValueOnce(cancelled);
+  const logged = vi.spyOn(console, 'error').mockImplementation(() => {});
+  await expect(
+    notify_chief(database, context.conversationSystem!, context.clock, [
+      new PlannerError('validation', 'Ticket integrity failure', {
+        ticket_id: ticket.id,
+        reason: 'synthetic saved-record fault',
+      }),
+    ]),
+  ).rejects.toBe(cancelled);
+  expect(logged).not.toHaveBeenCalled();
+});
+
+test('explicit notifications run with automatic work disabled', async () => {
+  const { context } = setup();
+  context.config = loadConfig('/missing-trial-config', {
+    PLAN_DISPATCH_ENABLED: 'false',
+    PLAN_NOTIFICATIONS_ENABLED: 'true',
+  });
+  const start = vi.fn(),
+    workers = vi.spyOn(WorkerStepReadinessLoop.prototype, 'start');
+  const service = compose_background_services(context, {
+    dispatcher_owned: true,
+    enable_worker_readiness: true,
+    notificationDelivery: () => ({ start, close() {}, settled: async () => {} }),
+  });
+  await service.start();
+  expect(start).toHaveBeenCalledOnce();
+  expect(workers).not.toHaveBeenCalled();
+  await service.close({ deadline: performance.now() / 1000 + 1 });
+});
+
+test('one dispatcher owner admits dispatch loops while the explicit checker is independent', async () => {
+  const { context, database, path } = setup();
+  const owner = acquireLock(context.config.dispatcher_lock_path);
+  const contender = acquireLock(context.config.dispatcher_lock_path);
+  const calls: string[] = [];
+  const factory: BackgroundServiceFactory = () => {
+    calls.push('construct');
+    return {
+      start: () => {
+        calls.push('start');
+      },
+      close: () => {
+        calls.push('close');
+      },
+      settled: async () => {},
+    };
+  };
+  const wakes = vi.spyOn(ManagerWakeLoop.prototype, 'start');
+  const sources = vi.spyOn(SourceScheduleLoop.prototype, 'start');
+  const checker = vi.fn(factory);
+  try {
+    expect(owner).not.toBeNull();
+    expect(contender).toBeNull();
+    // Each refusal is a different admission boundary, not a loop behavior matrix.
+    for (const [config, owned] of [
+      [{ ...context.config, test_mode: true }, true],
+      [{ ...context.config, dispatch_enabled: false }, true],
+      [context.config, contender !== null],
+    ] as const) {
+      expect(dispatcher_admitted(config, owned)).toBe(false);
+      const inert = compose_background_services(
+        { ...context, config },
+        {
+          dispatcher_owned: owned,
+          enable_worker_readiness: true,
+          areaLoops: { managerWakes: true, measureSources: true },
+          notificationDelivery: factory,
+          stallChecker: config.test_mode ? undefined : checker,
+        },
+      );
+      await inert.start();
+      await inert.close({ deadline: performance.now() / 1000 + 1 });
+    }
+    expect(checker).toHaveBeenCalledTimes(2);
+    expect(calls).toEqual(['construct', 'start', 'close', 'construct', 'start', 'close']);
+    calls.length = 0;
+    expect(wakes).not.toHaveBeenCalled();
+    expect(sources).not.toHaveBeenCalled();
+    create(database);
+    const admitted = compose_background_services(context, {
+      dispatcher_owned: true,
+      enable_worker_readiness: true,
+      areaLoops: { managerWakes: true, measureSources: true },
+      notificationDelivery: factory,
+      stallChecker: factory,
+    });
+    await admitted.start();
+    await next_turn();
+    await admitted.close({ deadline: performance.now() / 1000 + 1 });
+    expect(calls).toEqual(['construct', 'start', 'construct', 'start', 'close', 'close']);
+    expect(wakes).toHaveBeenCalledTimes(1);
+    expect(sources).toHaveBeenCalledTimes(1);
+    expect(database.read((sql) => sql.get('SELECT worker_step_claim FROM tickets'))).toEqual({
+      worker_step_claim: 'out',
+    });
+  } finally {
+    owner?.close();
+  }
+});
+
+test('notification wakes subscribe to commits and stop before the shared drain waits', async () => {
+  const { context } = setup();
+  const start = vi.spyOn(NotificationLoop.prototype, 'start').mockImplementation(() => {});
+  const wake = vi.spyOn(NotificationLoop.prototype, 'wake').mockImplementation(() => {});
+  const stop = vi.spyOn(NotificationLoop.prototype, 'stop').mockResolvedValue();
+  const first = done<void>();
+  const deadlines: number[] = [];
+  const order: string[] = [];
+  const held: BackgroundServiceFactory = () => ({
+    start() {},
+    close(options) {
+      order.push('held fenced');
+      deadlines.push(options.deadline);
+      return first.promise;
+    },
+    settled: () => first.promise,
+  });
+  const services = compose_background_services(context, {
+    dispatcher_owned: true,
+    notificationDelivery: production_notification_delivery,
+    stallChecker: held,
+  });
+  await services.start();
+  expect(start).toHaveBeenCalledWith(context.config.tick_seconds);
+  context.changes.emit();
+  expect(wake).toHaveBeenCalledTimes(1);
+  const deadline = performance.now() / 1000 + 1;
+  const closing = services.close({ deadline });
+  expect(stop).toHaveBeenCalledWith({ deadline });
+  expect(order).toEqual(['held fenced']);
+  expect(deadlines).toEqual([deadline]);
+  context.changes.emit();
+  expect(wake).toHaveBeenCalledTimes(1);
+  first.resolve();
+  await closing;
+});
+
+test('update suppression and commit wakes share the composed Worker owner', async () => {
+  const { context, database } = setup();
+  const ticket = create(database);
+  let held = true;
+  const before = vi.fn(() => held);
+  const services = compose_background_services(context, {
+    dispatcher_owned: true,
+    enable_worker_readiness: true,
+    before_poll: before,
+  });
+  await services.start();
+  expect(read(database, ticket.id).worker_step_claim).toBe('none');
+  held = false;
+  context.changes.emit();
+  await next_turn();
+  expect(read(database, ticket.id).worker_step_claim).toBe('out');
+  const calls = before.mock.calls.length;
+  await services.close({ deadline: performance.now() / 1000 + 1 });
+  context.changes.emit();
+  await next_turn();
+  expect(before).toHaveBeenCalledTimes(calls);
+});
+
+test('notification deadline fences late web and native results and bounds adapter close', async () => {
+  const { context, database } = setup();
+  const web = done<WebPushResult>();
+  const native = done<APNsResult>();
+  const webEntered = done<void>();
+  const nativeEntered = done<void>();
+  const close = done<void>();
+  vi.spyOn(notificationData, 'queue_deliveries').mockReturnValue(1);
+  vi.spyOn(notificationData, 'read_web_push_identity').mockReturnValue({
+    private_key: '',
+    public_key: '',
+  });
+  const subscription = {
+    subscription_id: 'one',
+    endpoint: 'https://invalid',
+    p256dh: '',
+    auth: '',
+  };
+  const intent = { title: '', body: '', route: '', tag: '', reply: null };
+  const edge = {
+    subject_kind: 'ticket',
+    subject_id: 'one',
+    notification_type: 'errored',
+    generation: 1,
+  };
+  vi.spyOn(notificationData, 'pending_deliveries').mockReturnValue([
+    { edge, subscription, intent, attempts: 0 },
+  ]);
+  // This test owns shutdown settlement, not durable attention eligibility.
+  vi.spyOn(notificationData, 'delivery_is_current').mockReturnValue(true);
+  vi.spyOn(apnsData, 'pending_deliveries').mockReturnValue([
+    {
+      edge,
+      intent,
+      attempts: 0,
+      created_at: now,
+      device: {
+        device_id: 'native',
+        device_token: '',
+        bundle_id: '',
+        environment: 'development',
+        registration_version: 1,
+        updated_at: now,
+      },
+    },
+  ]);
+  const webRecord = vi.spyOn(notificationData, 'record_delivery_result');
+  const nativeRecord = vi.spyOn(apnsData, 'record_result');
+  const nativeSend = vi.fn(() => {
+    nativeEntered.resolve();
+    return native.promise;
+  });
+  const adapterClose = vi.fn(() => close.promise);
+  const loop = new NotificationLoop({
+    database,
+    clock: context.clock,
+    canonical_origin: 'https://unit21.invalid',
+    adapter: {
+      send: () => {
+        webEntered.resolve();
+        return web.promise;
+      },
+    },
+    apns_adapter: { send: nativeSend, close: adapterClose },
+  });
+  const pass = loop.poll_once();
+  try {
+    await webEntered.promise;
+    const stopping = loop.stop({ deadline: performance.now() / 1000 + 0.01 });
+    expect(adapterClose).not.toHaveBeenCalled();
+    await expect(stopping).rejects.toBeInstanceOf(ShutdownDeadlineExceeded);
+    expect(adapterClose).not.toHaveBeenCalled();
+  } finally {
+    web.resolve({ delivered: true });
+    try {
+      await pass;
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      expect(adapterClose).toHaveBeenCalledOnce();
+      let actual_done = false;
+      void loop.settled().then(() => {
+        actual_done = true;
+      });
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      expect(actual_done).toBe(false);
+    } finally {
+      close.resolve();
+      await loop.settled();
+    }
+  }
+  expect(webRecord).not.toHaveBeenCalled();
+  expect(nativeSend).not.toHaveBeenCalled();
+  expect(await loop.poll_once()).toBe(0);
+  // Reach the native await separately. A fence on the web path alone is insufficient.
+  vi.mocked(notificationData.pending_deliveries).mockReturnValue([]);
+  const nativeLoop = new NotificationLoop({
+    database,
+    clock: context.clock,
+    canonical_origin: 'https://unit21.invalid',
+    adapter: { send: async () => ({ delivered: true }) },
+    apns_adapter: { send: nativeSend, close() {} },
+  });
+  const nativePass = nativeLoop.poll_once();
+  try {
+    await nativeEntered.promise;
+    await expect(
+      nativeLoop.stop({ deadline: performance.now() / 1000 + 0.01 }),
+    ).rejects.toBeInstanceOf(ShutdownDeadlineExceeded);
+  } finally {
+    native.resolve({ delivered: true });
+    await nativePass;
+    await nativeLoop.settled();
+  }
+  expect(nativeRecord).not.toHaveBeenCalled();
+});
+
+test('startServer reconciles before core construction and a route collision starts no producers', async () => {
+  const { database, path } = setup();
+  database.write((sql) =>
+    sql.run("INSERT INTO navigation_meta VALUES(1,'unit21',?,'unit21-epoch',0)", [SCHEMA_VERSION]),
+  );
+  // The actual lifecycle must own the database, not the borrowed fixture handle.
+  database.close();
+  const configuration = {
+    PLAN_DB_PATH: path,
+    PLAN_CONFIG_PATH: join(dirname(path), 'absent-config.yaml'),
+    PLAN_DISPATCHER_LOCK_PATH: path + '.server-dispatcher',
+    PLAN_PORT: '0',
+    PLAN_TEST_MODE: '0',
+    PLAN_DISPATCH_ENABLED: 'true',
+    PLAN_CREDENTIAL_KEY_PATH: join(dirname(path), 'key'),
+  };
+  for (const [key, value] of Object.entries(configuration)) vi.stubEnv(key, value);
+  const configPath = join(dirname(path), 'explicit-unit21.yaml');
+  writeFileSync(configPath, 'tick_seconds: 23\n');
+  expect(loadConfig(undefined, { PLAN_CONFIG_PATH: configPath }).tick_seconds).toBe(23);
+  expect(loadConfig(configPath, { PLAN_CONFIG_PATH: '/missing-ignored.yaml' }).tick_seconds).toBe(
+    23,
+  );
+  const trace: string[] = [];
+  const reconcile = vi.spyOn(notificationData, 'reconcile_attention').mockImplementation(() => {
+    trace.push('reconcile');
+  });
+  const scratch_start = vi.fn();
+  vi.spyOn(scratch, 'create_ticket_scratch_runtime').mockReturnValue({
+    start: scratch_start,
+    close() {},
+    settled: async () => {},
+  });
+  const producers = [
+    vi.spyOn(PreviewService.prototype, 'start'),
+    vi.spyOn(ScopedDelivery.prototype, 'start'),
+    vi.spyOn(ConversationViewRebuilder.prototype, 'start'),
+    vi.spyOn(recovery, 'run_automatic_recovery'),
+    vi.spyOn(MetricsRuntime.prototype, 'start'),
+    vi.spyOn(UpdateService.prototype, 'start'),
+    scratch_start,
+    vi.spyOn(SqliteProcessConversationSystem.prototype, 'start_idle_child_janitor'),
+  ];
+  const background = vi.fn<BackgroundServiceFactory>(() => ({
+    start() {
+      throw new Error('A producer started before readiness');
+    },
+    close() {},
+    settled: async () => {},
+  }));
+  try {
+    await expect(
+      startServer({
+        createConversationCore(context) {
+          expect(trace).toEqual(['reconcile']);
+          trace.push('core');
+          const noProvider = () => {
+            throw new Error('this startup proof never starts a provider');
+          };
+          return new SqliteProcessConversationSystem({
+            store: context.record.store,
+            delivery_model_refusal: (backend, model, ticket_id) =>
+              new BackendStateStore(context.database).delivery_model_refusal(
+                backend,
+                model,
+                ticket_id,
+              ),
+            execution_refusal: (id) =>
+              context.database.read((sql) =>
+                conversation_execution_refusal(sql, id, canonical_ticket_execution_refusal),
+              ),
+            message_files: new ConversationMessageFiles(path),
+            backend_child_factories: { codex: noProvider, claude: noProvider, hermes: noProvider },
+          });
+        },
+        createEnvironments: create_test_environment_runtime,
+        notificationDelivery: background,
+        stallChecker: background,
+        testAreas: [
+          {
+            prefix: '',
+            routes: async (app) => {
+              app.get('/api/health', async () => ({ collision: true }));
+            },
+          },
+        ],
+      }),
+    ).rejects.toThrow(/already declared/);
+    for (const producer of producers) expect(producer).not.toHaveBeenCalled();
+    expect(background).not.toHaveBeenCalled();
+    expect(reconcile).toHaveBeenCalledTimes(1);
+    const owner = acquireRuntimeOwnership(path);
+    owner.close();
+    const dispatcher = acquireLock(configuration.PLAN_DISPATCHER_LOCK_PATH);
+    expect(dispatcher).not.toBeNull();
+    dispatcher?.close();
+  } finally {
+    vi.unstubAllEnvs();
+  }
+});
+
+// A route collision does not prove cleanup after one background service starts.
+test('startServer closes both services after a background start failure while retaining its owners', async () => {
+  const { database, path } = setup();
+  database.write((tx) =>
+    tx.run("INSERT INTO navigation_meta VALUES(1,'unit21',?,'failed-start',0)", [SCHEMA_VERSION]),
+  );
+  database.close();
+  const dispatcher_path = path + '.failed-start-dispatcher';
+  try {
+    for (const [key, value] of Object.entries({
+      PLAN_DB_PATH: path,
+      PLAN_CONFIG_PATH: path + '.absent-config',
+      PLAN_PORT: '0',
+      PLAN_TEST_MODE: '0',
+      PLAN_DISPATCH_ENABLED: 'true',
+      PLAN_DISPATCHER_LOCK_PATH: dispatcher_path,
+      PLAN_CREDENTIAL_KEY_PATH: path + '.key',
+    }))
+      vi.stubEnv(key, value);
+    const trace: string[] = [];
+    const reconcile = vi.spyOn(notificationData, 'reconcile_attention');
+    await expect(
+      startServer({
+        createConversationCore(context) {
+          expect(reconcile).toHaveBeenCalledOnce();
+          const no_provider = (): never => {
+            throw new Error('provider outside failed-start proof');
+          };
+          return new SqliteProcessConversationSystem({
+            store: context.record.store,
+            message_files: new ConversationMessageFiles(path),
+            delivery_model_refusal: (backend, model, ticket_id) =>
+              new BackendStateStore(context.database).delivery_model_refusal(
+                backend,
+                model,
+                ticket_id,
+              ),
+            execution_refusal: (id) =>
+              context.database.read((sql) =>
+                conversation_execution_refusal(sql, id, canonical_ticket_execution_refusal),
+              ),
+            backend_child_factories: {
+              codex: no_provider,
+              claude: no_provider,
+              hermes: no_provider,
+            },
+          });
+        },
+        notificationDelivery: (context) => ({
+          start() {
+            trace.push('notification start');
+          },
+          close() {
+            context.assert_database_owned();
+            expect(acquireLock(dispatcher_path)).toBeNull();
+            expect(() => acquireRuntimeOwnership(path)).toThrow('ConversationRuntimeAlreadyOwned');
+            trace.push('notification close');
+          },
+          settled: async () => {},
+        }),
+        stallChecker: (context) => ({
+          start() {
+            trace.push('stall start');
+            throw new Error('synthetic service refusal');
+          },
+          close() {
+            context.assert_database_owned();
+            expect(acquireLock(dispatcher_path)).toBeNull();
+            trace.push('stall close');
+          },
+          settled: async () => {},
+        }),
+      }),
+    ).rejects.toThrow('synthetic service refusal');
+    expect(trace).toEqual([
+      'notification start',
+      'stall start',
+      'notification close',
+      'stall close',
+    ]);
+    acquireRuntimeOwnership(path).close();
+    const successor = acquireLock(dispatcher_path);
+    expect(successor).not.toBeNull();
+    successor?.close();
+  } finally {
+    vi.unstubAllEnvs();
+  }
+});
+
+// Gap: startup failures do not prove custody of a factory result returned after stop.
+// Reuse the existing database fixture. No listener or provider starts in this case.
+test('startup retains a late environment until its actual cleanup settles', async () => {
+  const { database, path } = setup();
+  database.write((sql) =>
+    sql.run("INSERT INTO navigation_meta VALUES(1,'unit21',?,'late-start',0)", [SCHEMA_VERSION]),
+  );
+  database.close();
+  const entered = done<void>(),
+    release_factory = done<void>();
+  const stop_entered = done<void>(),
+    release_cleanup = done<void>();
+  const complete = vi.fn();
+  const close_environment = vi.fn(() => {
+    stop_entered.resolve();
+  });
+  const start_environment = vi.fn();
+  for (const [key, value] of Object.entries({
+    PLAN_DB_PATH: path,
+    PLAN_CONFIG_PATH: path + '.absent-config',
+    PLAN_PORT: '0',
+    PLAN_TEST_MODE: '1',
+    PLAN_DISPATCH_ENABLED: 'false',
+    PLAN_CREDENTIAL_KEY_PATH: path + '.key',
+  }))
+    vi.stubEnv(key, value);
+  const starting = startServer({
+    onShutdownComplete: complete,
+    async createEnvironments(context) {
+      entered.resolve();
+      await release_factory.promise;
+      return {
+        areas: [],
+        resourceProviders: [],
+        before_worker_readiness_poll: () => false,
+        start: start_environment,
+        close() {
+          context.require_runtime_ownership();
+          close_environment();
+        },
+        settled: () => release_cleanup.promise,
+      };
+    },
+  });
+  const rejected = expect(starting).rejects.toThrow('Server closed during startup');
+  try {
+    await entered.promise;
+    process.emit('SIGTERM');
+    release_factory.resolve();
+    await stop_entered.promise;
+    await next_turn();
+    expect(close_environment).toHaveBeenCalledOnce();
+    expect(start_environment).not.toHaveBeenCalled();
+    expect(complete).not.toHaveBeenCalled();
+    expect(() => acquireRuntimeOwnership(path)).toThrow('ConversationRuntimeAlreadyOwned');
+    release_cleanup.resolve();
+    await rejected;
+    expect(complete).toHaveBeenCalledExactlyOnceWith(0);
+    acquireRuntimeOwnership(path).close();
+  } finally {
+    release_factory.resolve();
+    release_cleanup.resolve();
+    await rejected;
+    vi.unstubAllEnvs();
+  }
+});
+
+// Gap: individual observer tests cannot prove cancellation at one shared lifecycle
+// deadline while both automatic producers own active sends.
+test('composed Worker and Manager sends share a deadline and leave no late database access', async () => {
+  const { context, database, path } = setup();
+  const ticket = create(database);
+  database.write((sql) =>
+    wakeData.create_worker_error_wake(sql, {
+      target: { kind: 'chief', id: 'chief' },
+      ticket_id: ticket.id,
+      ticket_title: ticket.title,
+      claim_revision: 1,
+      error_reason: 'held',
+      now,
+    }),
+  );
+  let owned = true;
+  let accesses = 0;
+  context.assert_database_owned = () => {
+    if (!owned) throw new Error('ownership ended');
+  };
+  context.database = {
+    read(work) {
+      context.assert_database_owned();
+      accesses += 1;
+      return database.read(work);
+    },
+    write(work, options) {
+      context.assert_database_owned();
+      accesses += 1;
+      return database.write(work, options);
+    },
+    close() {
+      throw new Error('borrowed database');
+    },
+  };
+  configure_conversation_start(context.database, { db_path: path, workspace_root: dirname(path) });
+  const provider = done<PromptDeliveryStarted>();
+  const entered = done<void>();
+  let sends = 0;
+  const system = context.conversationSystem!;
+  vi.spyOn(system, 'send').mockImplementation(() => {
+    sends += 1;
+    if (sends === 2) entered.resolve();
+    return provider.promise;
+  });
+  const workerStop = vi.spyOn(WorkerStepReadinessLoop.prototype, 'stop');
+  const managerStop = vi.spyOn(ManagerWakeLoop.prototype, 'stop');
+  const dispatcher = acquireLock(path + '.held-dispatcher')!;
+  const services = compose_background_services(context, {
+    dispatcher_owned: true,
+    enable_worker_readiness: true,
+    areaLoops: { managerWakes: true },
+  });
+  try {
+    await services.start();
+    await entered.promise;
+    const departure = read(database, ticket.id);
+    const deadline = performance.now() / 1000 + 0.01;
+    const closing = services.close({ deadline });
+    expect(workerStop).toHaveBeenCalledWith({ deadline });
+    expect(managerStop).toHaveBeenCalledWith({ deadline });
+    expect(acquireLock(path + '.held-dispatcher')).toBeNull();
+    await expect(closing).rejects.toBeInstanceOf(ShutdownDeadlineExceeded);
+    // The parent deadline observer can run before this producer's cancellation callback.
+    await expect(managerStop.mock.results[0]!.value).rejects.toBeInstanceOf(
+      ShutdownDeadlineExceeded,
+    );
+    expect(read(database, ticket.id)).toMatchObject({
+      conversation_id: departure.conversation_id,
+      worker_step_claim: 'out',
+      worker_step_claim_revision: departure.worker_step_claim_revision,
+    });
+    expect(database.read((sql) => sql.get('SELECT status FROM manager_wake_batches'))).toEqual({
+      status: 'uncertain',
+    });
+    const before = accesses;
+    expect(acquireLock(path + '.held-dispatcher')).toBeNull();
+    provider.resolve(new PromptDeliveryStarted());
+    await services.settled();
+    context.changes.emit();
+    await next_turn();
+    expect(accesses).toBe(before);
+    owned = false;
+    dispatcher.close();
+    const successor = acquireLock(path + '.held-dispatcher');
+    expect(successor).not.toBeNull();
+    successor?.close();
+  } finally {
+    provider.resolve(new PromptDeliveryStarted());
+    await Promise.resolve(services.close({ deadline: performance.now() / 1000 })).catch(() => {});
+    await services.settled();
+    dispatcher.close();
+  }
+});
+
+// Gap: a failed start does not prove that shutdown retains ownership while an
+// earlier asynchronous start still has a permitted continuation.
+test('close fences later starts and waits for the active start before ownership release', async () => {
+  const { context, database, path } = setup();
+  const entered = done<void>();
+  const finish = done<void>();
+  const owner = acquireLock(path + '.startup-dispatcher')!;
+  let owned = true;
+  let closed = false;
+  const trace: string[] = [];
+  const services = compose_background_services(context, {
+    dispatcher_owned: true,
+    notificationDelivery: () => ({
+      async start() {
+        trace.push('start entered');
+        entered.resolve();
+        await finish.promise;
+        expect(owned).toBe(true);
+        database.read((sql) => sql.get('SELECT 1'));
+        trace.push('start settled');
+      },
+      close() {
+        trace.push('close entered');
+      },
+      settled: () => finish.promise,
+    }),
+    stallChecker: () => {
+      throw new Error('a later service must never start');
+    },
+  });
+  const starting = services.start();
+  await entered.promise;
+  const closing = Promise.resolve(services.close({ deadline: performance.now() / 1000 }));
+  const expired = expect(closing).rejects.toBeInstanceOf(ShutdownDeadlineExceeded);
+  await next_turn();
+  expect(closed).toBe(false);
+  expect(acquireLock(path + '.startup-dispatcher')).toBeNull();
+  expect(trace).toEqual(['start entered', 'close entered']);
+  finish.resolve();
+  await expired;
+  await Promise.all([starting, services.settled()]);
+  closed = true;
+  owned = false;
+  owner.close();
+  expect(trace).toEqual(['start entered', 'close entered', 'start settled']);
+  const successor = acquireLock(path + '.startup-dispatcher');
+  expect(successor).not.toBeNull();
+  successor?.close();
+});
+
+// Gap: a mocked start cannot expose synchronous commit wake reentrancy while a
+// populated notification pass queues its own delivery.
+test('a notification queue commit cannot reenter its active provider send', async () => {
+  const setupResult = setup();
+  const { context, path } = setupResult;
+  const ticket = create(setupResult.database);
+  setupResult.database.close();
+  const database = createDatabase(path, { onChange: () => context.changes.emit() });
+  context.database = database;
+  database.write((sql) => {
+    notificationData.initialize_notifications(sql, now);
+    notificationData.register_subscription(sql, {
+      endpoint: 'https://push.unit21.invalid/one',
+      p256dh: 'synthetic',
+      auth: 'synthetic',
+      now,
+    });
+    record_attention(sql, 'ticket', ticket.id, 'errored', true, now);
+  });
+  const entered = done<void>();
+  const result = done<WebPushResult>();
+  const send = vi.spyOn(StandardsWebPushAdapter.prototype, 'send').mockImplementation(() => {
+    entered.resolve();
+    return result.promise;
+  });
+  const services = compose_background_services(context, {
+    dispatcher_owned: true,
+    notificationDelivery: production_notification_delivery,
+  });
+  try {
+    await services.start();
+    await entered.promise;
+    await next_turn();
+    expect(send).toHaveBeenCalledTimes(1);
+    result.resolve({ delivered: true });
+    await services.close({ deadline: performance.now() / 1000 + 1 });
+    expect(
+      database.read((sql) => sql.get('SELECT status,attempts FROM notification_deliveries')),
+    ).toEqual({ status: 'delivered', attempts: 1 });
+  } finally {
+    result.resolve({ delivered: true });
+    await Promise.resolve(services.close({ deadline: performance.now() / 1000 + 1 })).catch(
+      (error: unknown) => {
+        if (!(error instanceof ShutdownDeadlineExceeded)) throw error;
+      },
+    );
+    await services.settled();
+    database.close();
+  }
+});

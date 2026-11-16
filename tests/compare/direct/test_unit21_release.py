@@ -1,0 +1,1845 @@
+"""One private-file sequence proves application identity and archive interoperability."""
+
+from __future__ import annotations
+
+import ctypes
+import gzip
+import hashlib
+import json
+import os
+import shutil
+import signal
+import sqlite3
+import stat
+import subprocess
+import sys
+import tarfile
+import time
+from dataclasses import asdict
+from pathlib import Path
+from types import SimpleNamespace
+from typing import Any
+from unittest.mock import patch
+
+import pytest
+from scripts import check_ios_compatibility as ios_checks
+from scripts.update_publication import validate_linux_executor_publication
+from tests.compare.direct import unit21_schema_seed
+from tests.compare.direct.test_unit21_updates import _environment, _report
+from tests.support.synthetic_homes import create_synthetic_homes
+from tests.support.update_apps import build_app, rewrite_artifact_digest
+from tests.unit.test_app import _git_source, _legacy_cached_app
+from tests.unit.test_runtime_admission import DEPENDENCIES as admission_dependencies
+from tests.unit.test_runtime_admission import node_report
+
+from planner.environments import runtime_admission as admission
+from planner.environments.app import (
+    AppValidationError,
+    build_exported_app,
+    digest_app_artifact,
+    digest_app_source,
+    validate_app_manifest,
+)
+from planner.environments.runtime_contracts import (
+    NodeRuntimeContract,
+    RuntimeContract,
+    RuntimeContractError,
+)
+from planner.environments.runtime_elf import (
+    ElfDynamic,
+    ElfObject,
+    read_dynamic,
+    resolve_provider,
+)
+from planner.environments.update_artifacts import (
+    create_app_archive,
+    extract_app_archive,
+    hash_archive,
+)
+from planner.environments.update_install import (
+    require_exact_schema_frontier,
+    schema_change_pending,
+)
+from planner.ios_compatibility.policy import MINIMUM_SUPPORTED_BUILD
+
+ROOT = Path(__file__).resolve().parents[3]
+SHA = "a" * 40
+FIXTURE_TIME_NS = 1_700_000_000_125_000_000
+
+
+def _unit_boundaries(
+    root: Path,
+    observed: dict[str, Any],
+    node: str,
+    environment: dict[str, str],
+    literal: str,
+) -> dict[str, Any]:
+    """Inert layout markers prove routing only, never interpreter/CLI/runtime success."""
+    began = time.perf_counter()
+    layout = root / "unit-layout"
+    for name in (
+        "bin/panels",
+        "bin/panels-launcher",
+        ".venv/bin/python",
+    ):
+        path = layout / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("# inert structural marker, never executed\n")
+        path.chmod(0o700)
+    (layout / "runtime").mkdir()
+    routes = []
+    # Other classifier routes already belong to the prerequisite Vitest case.
+    for contract, payload, missing, expected in (
+        ({"version": 3}, {"version": 3}, False, "unsupported runtime contract version"),
+        ({"version": 1}, {"version": 1}, True, ".venv/bin/python"),
+    ):
+        (layout / "manifest.json").write_text(
+            json.dumps(
+                dict(
+                    format="panels-app-v1",
+                    app_sha=SHA,
+                    source_digest="b" * 64,
+                    artifact_digest="c" * 64,
+                    runtime_contract=contract,
+                )
+            )
+        )
+        (layout / "runtime/contract.json").write_text(json.dumps(payload))
+        if missing:
+            (layout / ".venv/bin/python").unlink()
+        result = subprocess.run(
+            [
+                node,
+                "--input-type=module",
+                "-e",
+                observed["classifier_source"],
+                str(layout),
+                "",
+            ],
+            env=environment,
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=False,
+        )
+        assert result.returncode == 1 and result.stdout == ""
+        assert result.stderr.startswith("Panels runtime classification failed: ")
+        assert expected in result.stderr
+        routes.append(dict(expected=expected, exit_code=result.returncode))
+    assert all(observed["context"].values()), observed["context"]
+    refusal = subprocess.run(
+        [
+            node,
+            str(ROOT / "server/stalls/watchdog_main.ts"),
+            str(root / "unit-empty.sqlite"),
+            str(root / "unit-watchdog"),
+        ],
+        env={
+            **environment,
+            "PLAN_CONFIG_PATH": str(root / "unit-config.yaml"),
+            "PLAN_TEST_MODE": "1",
+        },
+        capture_output=True,
+        text=True,
+        timeout=5,
+        check=False,
+    )
+    assert (refusal.returncode, refusal.stdout, refusal.stderr) == (
+        1,
+        "",
+        "watchdog provider command is unavailable in test mode\n",
+    )
+    managed = observed["managed"]
+    assert "WorkingDirectory=" not in managed and "TimeoutStopSec=90\n" in managed
+    assert "RuntimeDirectory=panels-proof\nRuntimeDirectoryMode=0700\n" in managed
+    assert managed.count("unset NODE_OPTIONS NODE_PATH") == 2
+    assert managed.count("in LD_*)") == 2
+    assert managed.count('"%t/panels-proof"') == 2
+    assert "$$runtime" in managed and "$$1" in managed and "unit $$%% " in managed
+    actions = [
+        line.partition("=")[2]
+        for line in managed.splitlines()
+        if line.startswith(("ExecStart=", "ExecStop="))
+    ]
+    assert len(actions) == 2
+    start, stop = actions
+    assert "classify_installed_runtime" in start and "--input-type=module -e" in start
+    assert "classify_installed_runtime" not in stop
+    assert all(
+        marker in stop
+        for marker in (
+            "stop-capability.json",
+            "MAINPID",
+            "supervisor_pid",
+            "/proc/",
+            "/cwd/server/lifecycle/stop_main.ts",
+        )
+    )
+    assert "unit $$%% " not in stop
+    escaped = (
+        literal.replace("\\", "\\\\")
+        .replace('"', '\\"')
+        .replace("$", "\\$")
+        .replace("`", "\\`")
+    )
+    for output, environment_file in (
+        (managed, observed["managed_environment"]),
+        (observed["watchdog"]["service"], observed["watchdog"]["environment_file"]),
+    ):
+        assert 'EnvironmentFile="' + environment_file["path"] + '"\n' in output
+        assert 'UNIT_LITERAL="' + escaped + '"\n' in environment_file["contents"]
+        assert (
+            'PLAN_REFUSE_UNIDENTIFIED_AGENT_CALLS' not in environment_file["contents"]
+        )
+        assert (
+            f'PLAN_CONFIG_PATH="{root / "unit-config.yaml"}"\n'
+            in environment_file["contents"]
+        )
+    for variable, name in (
+        ("PLAN_SERVER_CONTROL_SOCKET", "control.sock"),
+        ("PLAN_SERVER_LIFECYCLE_LEASE_PATH", "unit.lock"),
+    ):
+        assert (
+            f'{variable}="/nonexistent/panels-unit-proof-{root.name}/{name}"\n'
+            in observed["managed_environment"]["contents"]
+        )
+    watchdog = observed["watchdog"]
+    assert "TimeoutStartSec=300\n" in watchdog["service"]
+    assert "server/stalls/watchdog_main.ts" in watchdog["service"]
+    for directive in (
+        "OnBootSec=60s",
+        "OnUnitActiveSec=30s",
+        "AccuracySec=5s",
+        "Unit=panels-typescript-stall-watchdog.service",
+    ):
+        assert directive + "\n" in watchdog["timer"]
+    return dict(
+        routes=routes,
+        context=observed["context"],
+        watchdog_refusal=refusal.stderr,
+        rendered_sha256={
+            name: hashlib.sha256(text.encode()).hexdigest()
+            for name, text in {
+                "managed": managed,
+                "managed_environment": observed["managed_environment"]["contents"],
+                "service": watchdog["service"],
+                "timer": watchdog["timer"],
+                "watchdog_environment": watchdog["environment_file"]["contents"],
+            }.items()
+        },
+        producer_milliseconds=observed["milliseconds"],
+        seconds=time.perf_counter() - began,
+        scope="structural/local only",
+    )
+
+
+def _admission_group_proof(
+    root: Path, environment: dict[str, str], node: str
+) -> dict[str, Any]:
+    """Hosted only: independent pinned cleanup survives a regressed leader-only kill."""
+    from tests.compare.direct.test_unit21_stop_coherence import (
+        _native_dead,
+        _pin_native,
+        _reap_native,
+    )
+
+    root.mkdir()
+    libc = ctypes.CDLL(None, use_errno=True)
+    previous = ctypes.c_int()
+    assert libc.prctl(37, ctypes.byref(previous), 0, 0, 0) == 0
+    assert libc.prctl(36, 1, 0, 0, 0) == 0
+    handles: dict[int, int] = {}
+    process: subprocess.Popen[str] | None = None
+    started = time.perf_counter()
+    try:
+        entry = root / "group-proof.mjs"
+        entry.write_text(
+            "const{admission_group_parity}=await import(process.argv[2]);"
+            "console.log(JSON.stringify(await admission_group_parity(process.argv[3])));"
+        )
+        process = subprocess.Popen(
+            [
+                node,
+                str(entry),
+                (
+                    ROOT / "server/environments/release/testing/release_parity.ts"
+                ).as_uri(),
+                str(root),
+            ],
+            cwd=ROOT,
+            env=environment,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        marker = root / "group-identities.json"
+        until = time.monotonic() + 15
+        while not marker.exists():
+            assert (
+                process.poll() is None
+            ), "Admission fixture exited before its identity handoff"
+            assert (
+                time.monotonic() < until
+            ), "Admission fixture did not publish its owned identities"
+            time.sleep(0.01)
+        identities = json.loads(marker.read_text())
+        for name, parent in (
+            ("leader", process.pid),
+            ("descendant", identities["leader"]["pid"]),
+        ):
+            identity = identities[name]
+            handles[identity["pid"]] = _pin_native(identity, parent)
+        assert len(handles) == 2
+        # No actual timeout callback can run before both validated pidfds exist.
+        (root / "release-timeout").touch()
+        output, errors = process.communicate(timeout=20)
+        assert process.returncode == 0, errors
+        result: dict[str, Any] = json.loads(output)
+        assert result["timeout_callback_released_after_pin"] is True
+        assert result["message"] == "runtime probe failed: command timed out"
+        assert 0 < result["timer_delay"] <= 45_000
+        _native_dead(handles)
+        _reap_native(handles)
+        return {
+            **result,
+            "seconds": time.perf_counter() - started,
+            "independent_pidfd_cleanup": True,
+            "both_actual_exits_reaped": True,
+            "scope": (
+                "Actual group timeout delivery and reap. Real timer duration is covered separately."
+            ),
+        }
+    finally:
+        try:
+            if process is not None:
+                # Pin a partial handoff before any fixture-parent cleanup or reparenting.
+                try:
+                    marker = root / "group-identities.json"
+                    if marker.exists() and not (root / "release-timeout").exists():
+                        identities = json.loads(marker.read_text())
+                        for name, parent in (
+                            ("leader", process.pid),
+                            ("descendant", identities["leader"]["pid"]),
+                        ):
+                            identity = identities[name]
+                            if identity["pid"] not in handles:
+                                handles[identity["pid"]] = _pin_native(identity, parent)
+                finally:
+                    if len(handles) == 2:
+                        if process.poll() is None:
+                            process.kill()  # Both descendants have independent cleanup handles.
+                        process.communicate(timeout=10)
+                    else:
+                        # Keep its own20s handoff guard, force and actual join alive first.
+                        process.communicate(timeout=30)
+        finally:
+            try:
+                for descriptor in handles.values():
+                    try:
+                        signal.pidfd_send_signal(descriptor, signal.SIGKILL)
+                    except ProcessLookupError:
+                        pass
+                _reap_native(handles)
+            finally:
+                for descriptor in handles.values():
+                    os.close(descriptor)
+                assert libc.prctl(36, previous.value, 0, 0, 0) == 0
+
+
+def _admission_rules(root: Path) -> tuple[dict[str, Any], dict[str, Any]]:
+    v1 = validate_app_manifest(root / "app/manifest.json").runtime_contract
+    v2 = validate_app_manifest(root / "v2/manifest.json").runtime_contract
+    assert isinstance(v1, RuntimeContract) and isinstance(v2, NodeRuntimeContract)
+    facts: dict[str, Any] = dict(
+        system="linux",
+        architecture="x86_64",
+        distribution="ubuntu",
+        version="24.04",
+        glibc="2.39",
+        feature_sets=[list(v1.cpu_features)],
+    )
+    hosts: list[dict[str, Any]] = [
+        dict(version=version, node=node, facts={**facts, "feature_sets": flags})
+        for version, node, flags in [
+            (1, "v22.0.0", facts["feature_sets"]),
+            (2, "v22.0.0", facts["feature_sets"]),
+            (2, "v22.18.0", facts["feature_sets"]),
+            (2, "v22.18.0", [[]]),
+            (2, "v24.0.0", facts["feature_sets"]),
+        ]
+    ]
+    read_text = Path.read_text
+    expected_hosts: list[str | None] = []
+    for item in hosts:
+        flags = tuple(item["facts"]["feature_sets"][0])
+
+        def synthetic_text(
+            path: Path, *args: Any, _flags: tuple[str, ...] = flags, **kwargs: Any
+        ) -> str:
+            if str(path) == "/proc/cpuinfo":
+                return "flags: " + " ".join(_flags)
+            return read_text(path, *args, **kwargs)
+
+        with (
+            patch(
+                "planner.platform_runtime.linux.runtime.platform.system",
+                lambda: "Linux",
+            ),
+            patch(
+                "planner.platform_runtime.linux.runtime.platform.machine",
+                lambda: "x86_64",
+            ),
+            patch(
+                "planner.platform_runtime.linux.runtime.platform.freedesktop_os_release",
+                lambda: {"ID": "ubuntu", "VERSION_ID": "24.04"},
+            ),
+            patch(
+                "planner.platform_runtime.linux.runtime.platform.libc_ver",
+                lambda: ("glibc", "2.39"),
+            ),
+            patch(
+                "planner.platform_runtime.linux.runtime.ctypes.CDLL", lambda name: None
+            ),
+            patch(
+                "planner.platform_runtime.linux.runtime.shutil.which",
+                lambda *args, **kwargs: "/synthetic/tool",
+            ),
+            patch.object(
+                admission,
+                "_run_probe",
+                lambda *args, _node=item["node"], **kwargs: _node,
+            ),
+            patch.object(Path, "read_text", synthetic_text),
+        ):
+            try:
+                admission.verify_runtime_host(
+                    v1 if item["version"] == 1 else v2, state=root
+                )
+                expected_hosts.append(None)
+            except AppValidationError as error:
+                expected_hosts.append(str(error))
+    reports = [
+        node_report(root / "v2"),
+        node_report(root / "v2", extra=True),
+        node_report(root / "v2", loaded_libraries=[str(root / "outside.node")]),
+        node_report(root / "v2", package_paths={}),
+    ]
+    expected_reports: list[str | None] = []
+    for report in reports:
+        with patch.object(
+            admission,
+            "_run_json_probe",
+            lambda *args, _report=report, **kwargs: _report,
+        ):
+            try:
+                admission._run_node_probe(
+                    root / "v2", v2, node="/synthetic/node", state=root, deadline=1
+                )
+                expected_reports.append(None)
+            except AppValidationError as error:
+                expected_reports.append(str(error))
+    from planner.platform_runtime.darwin.runtime import DarwinRuntime
+    from planner.platform_runtime.darwin.runtime_contracts import DarwinRuntimeContract
+
+    darwin = DarwinRuntimeContract("3.12.12", "a" * 64)
+    darwin_contract = darwin.as_dict()
+    darwin_contract.pop("python_version")
+    darwin_contract.update(version=2, minimum_node_version="22.18.0")
+    darwin_hosts = [
+        dict(system=system, architecture=architecture, version=version)
+        for system, architecture, version in (
+            ("darwin", "arm64", "15.0"), ("darwin", "arm64", "16.2.1"),
+            ("darwin", "arm64", "14.9"), ("linux", "arm64", "15.0"),
+            ("darwin", "x86_64", "15.0"), ("darwin", "arm64", "unreadable"),
+        )
+    ]
+    expected_darwin = []
+    for item in darwin_hosts:
+        with (
+            patch("planner.platform_runtime.darwin.runtime.platform.system",
+                  return_value=item["system"]),
+            patch("planner.platform_runtime.darwin.runtime.platform.machine",
+                  return_value=item["architecture"]),
+            patch("planner.platform_runtime.darwin.runtime.platform.mac_ver",
+                  return_value=(item["version"], (), "")),
+            patch("planner.platform_runtime.darwin.runtime.shutil.which",
+                  return_value="/synthetic/node"),
+            patch.object(admission, "_run_probe", return_value="v22.18.0"),
+        ):
+            try:
+                DarwinRuntime().verify_host(darwin, state=root)
+                expected_darwin.append(True)
+            except AppValidationError:
+                expected_darwin.append(False)
+    return dict(host_cases=hosts, reports=reports, darwin_contract=darwin_contract,
+                darwin_hosts=darwin_hosts), dict(
+        hosts=expected_hosts, reports=expected_reports, darwin_hosts=expected_darwin
+    )
+
+
+def _native_loader_fixture(root: Path) -> tuple[dict[str, Any], dict[str, Any]]:
+    library = "libpanels_fixture_leaf.so"
+    for name in ("bin", "extensions", "ancestor", "private"):
+        (root / name).mkdir(parents=True)
+    for name in ("ancestor", "private"):
+        (root / name / library).write_text(name + " ABI")
+    caller = ElfObject(
+        root / "bin/node", ElfDynamic((), ("$ORIGIN/../ancestor",), None, None)
+    )
+    extension = root / "extensions/addon.node"
+    requester = ElfObject(extension, ElfDynamic((), (), None, None))
+    private = ("$ORIGIN/../private",)
+    scenarios = [
+        (library, requester, (caller,)),
+        (
+            library,
+            ElfObject(extension, ElfDynamic((), (), ("$ORIGIN/absent",), None)),
+            (caller,),
+        ),
+        (
+            library,
+            requester,
+            (
+                ElfObject(
+                    caller.path,
+                    ElfDynamic((), caller.dynamic.rpath, caller.dynamic.rpath, None),
+                ),
+            ),
+        ),
+        (library, ElfObject(extension, ElfDynamic((), private, None, None)), (caller,)),
+        (library, ElfObject(extension, ElfDynamic((), (), private, None)), (caller,)),
+        ("../unsafe.so", requester, (caller,)),
+    ]
+    providers, requests = [], []
+
+    def wire(value: ElfObject) -> dict[str, Any]:
+        return dict(path=str(value.path), dynamic=asdict(value.dynamic))
+
+    for name, owner, ancestors in scenarios:
+        requests.append(
+            dict(
+                name=name,
+                requester=wire(owner),
+                ancestors=[wire(value) for value in ancestors],
+            )
+        )
+        try:
+            providers.append(
+                dict(provider=str(resolve_provider(name, owner, ancestors, {})))
+            )
+        except RuntimeContractError as error:
+            providers.append(dict(error=str(error)))
+    dynamic = (
+        "(NEEDED) [libfirst.so]\n(NEEDED) [libsecond.so]\n"
+        "(RPATH) [$ORIGIN/../private:${ORIGIN}/../ancestor]\n(RUNPATH) []\n"
+    )
+    header = "[Requesting program interpreter: /lib64/ld-linux-x86-64.so.2]\n"
+
+    def fake_read(arguments: list[str], **_kwargs: Any) -> SimpleNamespace:
+        return SimpleNamespace(stdout=dynamic if arguments[1] == "-dW" else header)
+
+    with patch("planner.environments.runtime_elf.subprocess.run", fake_read):
+        parsed = asdict(read_dynamic(extension))
+    expected: dict[str, Any] = json.loads(
+        json.dumps(dict(dynamic=parsed, providers=providers))
+    )
+    return dict(dynamic=[dynamic, header], providers=requests), expected
+
+
+def _tree(root: Path) -> list[dict[str, Any]]:
+    """Compare actual bytes/modes/link topology, without following directory aliases."""
+    rows: list[dict[str, Any]] = []
+    inodes: dict[tuple[int, int], str] = {}
+    for path in sorted(
+        root.rglob("*"), key=lambda value: value.relative_to(root).as_posix()
+    ):
+        info = path.lstat()
+        row: dict[str, Any] = dict(
+            path=path.relative_to(root).as_posix(), mode=stat.S_IMODE(info.st_mode)
+        )
+        if path.is_symlink():
+            row.update(kind="symlink", target=os.readlink(path))
+        elif path.is_dir():
+            row.update(kind="directory", mtime_ns=str(info.st_mtime_ns))
+        else:
+            inode = (info.st_dev, info.st_ino)
+            row.update(
+                kind="file",
+                bytes=path.read_bytes().hex(),
+                mtime_ns=str(info.st_mtime_ns),
+                hardlink_to=inodes.get(inode),
+            )
+            inodes.setdefault(inode, row["path"])
+        rows.append(row)
+    return rows
+
+
+def _native_archive_tree(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """node-tar exposes modification times as millisecond Date values."""
+    result = []
+    for row in rows:
+        entry = dict(row)
+        timestamp = entry.pop("mtime_ns", None)
+        if timestamp is not None:
+            entry["mtime_ms"] = int(timestamp) // 1_000_000
+        result.append(entry)
+    return result
+
+
+def _pax(key: str, value: str) -> bytes:
+    body = f"{key}={value}\n".encode()
+    size = len(body) + 2
+    while size != len(str(size)) + 1 + len(body):
+        size = len(str(size)) + 1 + len(body)
+    return str(size).encode() + b" " + body
+
+
+def _record(
+    name: str,
+    kind: bytes = tarfile.REGTYPE,
+    body: bytes = b"",
+    *,
+    target: str = "",
+    mode: int = 0o644,
+    size: int | None = None,
+) -> bytes:
+    member = tarfile.TarInfo(name)
+    member.type, member.mode, member.linkname = kind, mode, target
+    member.mtime = FIXTURE_TIME_NS // 1_000_000_000
+    member.size = len(body) if size is None else size
+    header = member.tobuf(format=tarfile.GNU_FORMAT)
+    return header + body + bytes(-len(body) % 512)
+
+
+def _archive_vectors(root: Path, ordinary: Path) -> list[dict[str, str]]:
+    """Keep explicit policy risks; node-tar owns TAR and PAX grammar."""
+    raw = gzip.decompress(ordinary.read_bytes())
+    with tarfile.open(ordinary, "r:gz") as bundle:
+        end = max(
+            member.offset_data + (member.size + 511) // 512 * 512
+            for member in bundle.getmembers()
+        )
+    prefix, eof = raw[:end], bytes(1024)
+    cases = [
+        (
+            "pax-escape",
+            "Effective PAX member path escapes output",
+            _record("pax", tarfile.XHDTYPE, _pax("path", "../outside"))
+            + _record("raw"),
+        ),
+        (
+            "outside-hardlink",
+            "Hard link escapes archive root",
+            _record("outside-hard", tarfile.LNKTYPE, target="../outside"),
+        ),
+        (
+            "outside-symlink",
+            "Symbolic link escapes its parent",
+            _record("dir/link", tarfile.SYMTYPE, target="../../outside"),
+        ),
+        (
+            "duplicate-slash",
+            "Duplicate effective directory path",
+            _record("a/", tarfile.DIRTYPE, mode=0o755),
+        ),
+        (
+            "fifo",
+            "Special file type is not a payload file",
+            _record("fifo", tarfile.FIFOTYPE),
+        ),
+        (
+            "special",
+            "Special permission bits are forbidden",
+            _record("special", mode=0o4755),
+        ),
+        (
+            "later-link-parent",
+            "A later link replaces a member's parent",
+            _record("late/child") + _record("late", tarfile.SYMTYPE, target="a"),
+        ),
+        (
+            "gnu-sparse",
+            "Ignored GNU sparse type must refuse",
+            _record("sparse", tarfile.GNUTYPE_SPARSE),
+        ),
+        (
+            "pax-sparse",
+            "PAX sparse metadata must refuse",
+            _record("pax", tarfile.XHDTYPE, _pax("GNU.sparse.map", "0,0"))
+            + _record("sparse"),
+        ),
+        (
+            "oversized-metadata",
+            "Metadata allocation limit precedes body consumption",
+            _record("large-pax", tarfile.XHDTYPE, size=1024 * 1024 + 1),
+        ),
+    ]
+    vectors = []
+    for name, risk, records in cases:
+        (root / (name + ".tar.gz")).write_bytes(gzip.compress(prefix + records + eof))
+        vectors.append(dict(name=name, risk=risk, policy="refusal"))
+    for name, risk, content in [
+        (
+            "truncated-body",
+            "Declared member body is incomplete",
+            gzip.compress(prefix + _record("cut", size=513) + b"x"),
+        ),
+        (
+            "nested-compression",
+            "Package decompression cannot bypass the outer expanded-byte limit",
+            gzip.compress(ordinary.read_bytes()),
+        ),
+    ]:
+        (root / (name + ".tar.gz")).write_bytes(content)
+        vectors.append(dict(name=name, risk=risk, policy="refusal"))
+    name = "partial-output-cleanup"
+    (root / (name + ".tar.gz")).write_bytes(
+        gzip.compress(prefix + _record("inaccessible", tarfile.DIRTYPE, mode=0) + eof)
+    )
+    vectors.append(
+        dict(
+            name=name,
+            risk="Identity refusal removes inaccessible owned output",
+            policy="cleanup",
+            expected_sha="b" * 40,
+        )
+    )
+    return vectors
+
+
+def _python_archive_result(
+    archive: Path, destination: Path, expected_sha: str
+) -> dict[str, Any]:
+    failed = False
+    try:
+        extract_app_archive(archive, destination, hash_archive(archive), expected_sha)
+        return dict(status="restored", tree=_tree(destination))
+    except Exception as error:
+        failed = True
+        return dict(
+            status="refused",
+            error_type=type(error).__name__,
+            message=str(error)[:512],
+            destination_exists=destination.exists(),
+        )
+    finally:
+        if failed and destination.is_dir():
+            destination.chmod(0o700)
+            for directory, names, _ in os.walk(destination, followlinks=False):
+                for name in names:
+                    path = Path(directory) / name
+                    if not path.is_symlink():
+                        path.chmod(0o700)
+
+
+def _ios_fixture(root: Path) -> dict[str, Any]:
+    began = time.perf_counter()
+    source = root / "ios-source"
+    included = sorted(
+        Path(name)
+        for name in (
+            "server/package.json",
+            "server/package-lock.json",
+            "server/core/database/application_schema.json",
+            "server/skills/cli_commands.json",
+            "server/environments/release/migration_graph.json",
+            "server/goals/cli/guidance.json",
+            "server/managers/page_cli/guidance.json",
+            "server/executor/wire.schema.json",
+            "src/planner/conversation/backends/hermes_acp_extension.py",
+            "src/planner/conversation/backends/hermes_model_catalog.py",
+            "server/ios_compatibility/check.ts",
+            "server/ios_compatibility/policy.ts",
+            "server/skills/example.ts",
+            "server/executor/wire.generated.ts",
+            "server/a/x.ts",
+            "server/a-z.ts",
+            "server/\ue000.ts",
+            "server/\U00010000.ts",
+        )
+    )
+    excluded = (
+        "server/nested/node_modules/ignored.ts",
+        "server/nested/tests/ignored.ts",
+        "server/nested/testing/ignored.ts",
+        "server/example.test.ts",
+        "server/test_host.ts",
+        "server/vitest.config.ts",
+        "server/executor/tools/ignored.ts",
+    )
+    for name in [*included, *(Path(name) for name in excluded)]:
+        path = source / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(
+            b"{}\n" if path.suffix == ".json" else b"# inert hash fixture\n"
+        )
+    policy = source / "src/planner/ios_compatibility/policy.py"
+    policy.parent.mkdir(parents=True)
+    policy.write_text(f"MINIMUM_SUPPORTED_BUILD = {MINIMUM_SUPPORTED_BUILD}\n")
+    python_contract = source / "src/planner/core/contract.py"
+    python_contract.parent.mkdir(parents=True)
+    wire = source / "server/executor/wire.generated.ts"
+    wire_sources = [
+        "export interface Wire { body: string }\n",
+        "export interface Wire { body: string; kind: string }\n",
+        "export interface Wire { body: string; kind: string }\n// comment only\n",
+    ]
+    digests, python_digests = [], []
+    for index, content in enumerate(wire_sources):
+        wire.write_text(content)
+        python_contract.write_text(
+            "FIELDS = ('body',)\n"
+            if index == 0
+            else "FIELDS = ('body', 'kind')\n"
+            + ("# comment only\n" if index == 2 else "")
+        )
+        digest = hashlib.sha256()
+        for path in included:
+            digest.update(
+                path.as_posix().encode() + b"\0" + (source / path).read_bytes() + b"\0"
+            )
+        digests.append(digest.hexdigest())
+        python_digests.append(ios_checks.contract_digest(source))
+    assert len(set(digests)) == len(set(python_digests)) == 3
+    minimum = ios_checks.minimum_build(source)
+    review = dict(
+        contract_sha256=digests[-1],
+        oldest_supported_build=minimum,
+        decision="compatible",
+        evidence="Synthetic private checker fixture; no device or publication approval.",
+    )
+    (root / "ios-fixture.json").write_text(
+        json.dumps(dict(wire_sources=wire_sources, review=review))
+    )
+    review_file = source / ios_checks.REVIEW
+    review_file.parent.mkdir()
+    outcomes: list[str | None] = []
+    for digest_value, floor in (
+        (python_digests[-1], minimum),
+        ("0" * 64, minimum),
+        (python_digests[-1], minimum + 1),
+    ):
+        review_file.write_text(
+            json.dumps(
+                {
+                    **review,
+                    "contract_sha256": digest_value,
+                    "oldest_supported_build": floor,
+                }
+            )
+        )
+        try:
+            ios_checks.check(source)
+        except ValueError as error:
+            outcomes.append(str(error))
+        else:
+            outcomes.append(None)
+    wire.write_text(wire_sources[0])
+    return dict(
+        paths=[path.as_posix() for path in included],
+        digests=digests,
+        python_digests=python_digests,
+        checks=outcomes,
+        minimum=minimum,
+        seconds=time.perf_counter() - began,
+    )
+
+
+@pytest.mark.parametrize("scope", ["release", "host-admission"])
+def test_unit21_release_identity_archive_and_frontier(
+    tmp_path: Path, request: pytest.FixtureRequest, scope: str
+) -> None:
+    started = time.perf_counter()
+    tmp_path = tmp_path.resolve()
+    damaged = tmp_path / "damaged.tar.gz"
+    damaged.write_bytes(b"not a gzip archive\n")
+    with pytest.raises(ValueError) as hash_first:
+        extract_app_archive(damaged, tmp_path / "python-bad-hash", "0" * 64, SHA)
+    assert str(hash_first.value) == "app archive hash differs from publication receipt"
+    assert not (tmp_path / "python-bad-hash").exists()
+    app = build_app(tmp_path / "app", SHA, "sentinel")
+    (app / "bin/alias").symlink_to("panels")
+    (app / "sentinel").chmod(0o640)
+    os.link(app / "sentinel", app / "hard-alias")
+    for name in (
+        "a/data",
+        "a-z",
+        "\ue000",
+        "\U00010000",
+        ".pytest_cache/state",
+        "__pycache__/ignored.pyc",
+    ):
+        path = app / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(name)
+    (app / "directory-alias").symlink_to("a", target_is_directory=True)
+    # Native equality distinguishes true from 1; keep the version numeric.
+    # Whole-valued 22.0 retains the native integer/float spelling case.
+    payload = json.loads((app / "runtime/contract.json").read_text())
+    payload["node_major"] = 22.0
+    (app / "runtime/contract.json").write_text(json.dumps(payload))
+    rewrite_artifact_digest(app)
+    for path in app.rglob("*"):
+        if not path.is_symlink():
+            os.utime(path, ns=(FIXTURE_TIME_NS, FIXTURE_TIME_NS))
+    manifest = validate_app_manifest(app / "manifest.json", require_runtime=True)
+    legacy, _ = _legacy_cached_app(tmp_path / "legacy")
+    expected_legacy = validate_app_manifest(legacy).as_dict()
+    checksum = create_app_archive(app, tmp_path / "python.tar.gz")
+    vectors = _archive_vectors(tmp_path, tmp_path / "python.tar.gz")
+    python_table = {
+        vector["name"]: _python_archive_result(
+            tmp_path / (vector["name"] + ".tar.gz"),
+            tmp_path / ("python-" + vector["name"]),
+            vector.get("expected_sha", SHA),
+        )
+        for vector in vectors
+    }
+    versions = tmp_path / "graph-app/src/planner/core/migrations/versions"
+    versions.mkdir(parents=True)
+    for revision, parent in (("initial", None), ("data_only", "initial")):
+        (versions / (revision + ".py")).write_text(
+            f"revision = {revision!r}\ndown_revision = {parent!r}\n"
+        )
+    with patch.object(unit21_schema_seed, "ROOT", tmp_path / "graph-app"):
+        expected_graph = unit21_schema_seed.build_migration_graph()
+    graph_path = tmp_path / "graph-app/server/environments/release/migration_graph.json"
+    graph_path.parent.mkdir(parents=True)
+    graph_path.write_text(json.dumps(expected_graph))
+    python_frontier: list[dict[str, Any]] = []
+    for name, database_revision in (
+        ("current", "data_only"),
+        ("ancestor", "initial"),
+        ("missing", None),
+        ("unknown", "future"),
+    ):
+        with sqlite3.connect(tmp_path / (name + ".sqlite")) as connection:
+            connection.execute("CREATE TABLE alembic_version(version_num TEXT)")
+            if database_revision is not None:
+                connection.execute(
+                    "INSERT INTO alembic_version VALUES (?)", (database_revision,)
+                )
+        pending: bool | None = None
+        pending_error: str | None = None
+        node_error: str | None = None
+        try:
+            pending = schema_change_pending(
+                tmp_path / (name + ".sqlite"), tmp_path / "graph-app"
+            )
+        except ValueError as error:
+            pending_error = str(error)
+        try:
+            require_exact_schema_frontier(
+                tmp_path / (name + ".sqlite"), tmp_path / "graph-app"
+            )
+        except ValueError as error:
+            node_error = str(error)
+        python_frontier.append(
+            dict(
+                pending=pending,
+                pending_error=pending_error,
+                node_refused=node_error is not None,
+                node_error=node_error,
+            )
+        )
+    v2 = tmp_path / "v2"
+    shutil.copytree(app, v2, symlinks=True)
+    shutil.rmtree(v2 / ".venv")
+    for name in (
+        "server/lifecycle/foreground_main.ts",
+        "server/lifecycle/managed_main.ts",
+        "server/lifecycle/application.ts",
+        "server/lifecycle/stop_main.ts",
+        "server/stalls/watchdog_main.ts",
+        "server/conversation/usage/usageWorker.ts",
+        "src/planner/conversation/backends/hermes_acp_extension.py",
+        "src/planner/conversation/backends/hermes_model_catalog.py",
+        "server/environments/release/launcher_main.ts",
+        "server/environments/release/archive_unpack_main.ts",
+        "server/environments/updates/interruption_capture_main.ts",
+        "server/environments/updates/restore_main.ts",
+        "runtime/installer-files.json",
+        "server/environments/updates/installer/main.ts",
+        "server/package.json",
+        "server/package-lock.json",
+        "server/node_modules/fastify/package.json",
+        "server/node_modules/koffi/package.json",
+        "server/node_modules/better-sqlite3/package.json",
+        "server/node_modules/@anthropic-ai/claude-agent-sdk/package.json",
+    ):
+        path = v2 / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(
+            json.dumps({"dependencies": admission_dependencies})
+            if name == "server/package.json"
+            else "{}"
+        )
+    document = json.loads((v2 / "manifest.json").read_text())
+    contract = document["runtime_contract"]
+    contract.pop("python_version")
+    contract.update(version=2, minimum_node_version="22.18.0")
+    (v2 / "runtime/contract.json").write_text(json.dumps(contract))
+    (v2 / "manifest.json").write_text(json.dumps(document))
+    rewrite_artifact_digest(v2)
+    admission_spec, expected_admission = _admission_rules(tmp_path)
+    for name in ("v2-missing", "v2-extra"):
+        shutil.copytree(v2, tmp_path / name, symlinks=True)
+    (tmp_path / "v2-missing/server/lifecycle/stop_main.ts").unlink()
+    rewrite_artifact_digest(tmp_path / "v2-missing")
+    extra = tmp_path / "v2-extra/manifest.json"
+    raw = json.loads(extra.read_text())
+    raw["runtime_contract"]["python_version"] = "3.12.12"
+    extra.write_text(json.dumps(raw))
+    invalid_both = tmp_path / "v2-invalid-both"
+    shutil.copytree(tmp_path / "v2-extra", invalid_both, symlinks=True)
+    (invalid_both / "server/lifecycle/stop_main.ts").unlink()
+    rewrite_artifact_digest(invalid_both)
+    try:
+        validate_app_manifest(invalid_both / "manifest.json", require_runtime=True)
+    except ValueError as error:
+        invalid_order = str(error)
+    else:
+        raise AssertionError("the combined invalid contract/tree must refuse")
+    assert invalid_order.startswith("invalid runtime contract:")
+    ios_expected = _ios_fixture(tmp_path)
+    native_sentinel = tmp_path / "native-outside-sentinel"
+    native_sentinel.write_bytes(b"outside native write sentinel\n")
+    native_root = tmp_path / "native-link-provider"
+    native_library = native_root / "runtime/lib/libfixture.so"
+    native_library.parent.mkdir(parents=True)
+    native_library.symlink_to(native_sentinel)
+    native_paths = sorted(
+        str(item.relative_to(native_root)) for item in native_root.rglob("*")
+    )
+    node = shutil.which("node")
+    assert node is not None
+    loader_input, expected_loader = _native_loader_fixture(tmp_path / "loader")
+    launcher = tmp_path / "probe.mjs"
+    launcher.write_text(
+        "const{release_parity,native_loader_parity,admission_rules_parity,builder_parity,"
+        "unit_boundaries_parity,hostile_native_parity}="
+        "await import(process.argv[2]);"
+        "const result=await release_parity(process.argv[3],JSON.parse(process.argv[4]));"
+        "result.native_loader=await native_loader_parity(JSON.parse(process.argv[5]));"
+        "result.admission=await admission_rules_parity("
+        "process.argv[3],JSON.parse(process.argv[6]));"
+        "result.builder=await builder_parity(process.argv[3],JSON.parse(process.argv[7]));"
+        "result.units=await unit_boundaries_parity(process.argv[3],{...process.env},"
+        "JSON.parse(process.argv[8]));"
+        "result.hostile_native=await hostile_native_parity(process.argv[3]);"
+        "console.log(JSON.stringify(result));"
+    )
+    env = {
+        "PATH": str(Path(node).parent) + os.pathsep + os.defpath,
+        "LANG": "C.UTF-8",
+        **create_synthetic_homes(tmp_path),
+        "PLAN_TEST_MODE": "1",
+        "PLAN_SERVER_URL": "http://127.0.0.1:0",
+    }
+    env["TMPDIR"] = str(tmp_path)
+    for key, relative_path in {
+        "PLAN_CONFIG_PATH": "private.yaml",
+        "PLAN_DB_PATH": "private.sqlite",
+        "PLAN_LOGS_DIR": "logs",
+        "PLAN_BACKUP_DIR": "backups",
+        "PLAN_APP_ROOT": "app",
+        "PLAN_WORKSPACE_ROOT": "workspace",
+        "PLAN_TICKET_SCRATCH_ROOT": "scratch",
+        "PLAN_TICKET_SCRATCH_DATABASE": "private.sqlite",
+        "PLAN_CREDENTIAL_KEY_PATH": "key",
+        "PLAN_DISPATCHER_LOCK_PATH": "dispatcher.lock",
+        "PLAN_SERVER_CONTROL_SOCKET": "control.sock",
+        "PLAN_SERVER_LIFECYCLE_LEASE_PATH": "lifecycle.lock",
+    }.items():
+        env[key] = str(tmp_path / relative_path)
+    # loadConfig requires these configured directory roots to exist before resolution.
+    for key in ("PLAN_WORKSPACE_ROOT", "PLAN_TICKET_SCRATCH_ROOT"):
+        Path(env[key]).mkdir()
+    cli_relative = "server/cli/main.ts"
+    # These real bytes prove layout only; this deliberately small source cannot execute the CLI.
+    with patch.dict(os.environ, env, clear=True):
+        source, _ = _git_source(tmp_path)
+        cli = source / cli_relative
+        cli.parent.mkdir(parents=True)
+        cli.write_bytes((ROOT / cli_relative).read_bytes())
+        cli.chmod(0o755)
+        (source / "ignored.txt").write_text("not exported\n")
+        (source / ".gitattributes").write_text("ignored.txt export-ignore\n")
+        (source / "readme-link").symlink_to("README.md")
+        subprocess.run(["git", "-C", str(source), "add", "."], check=True, env=env)
+        subprocess.run(
+            [
+                "git",
+                "-C",
+                str(source),
+                "-c",
+                "user.name=Test",
+                "-c",
+                "user.email=test@example.com",
+                "commit",
+                "-qm",
+                "official CLI bytes, no execution",
+            ],
+            check=True,
+            env=env,
+        )
+        build_sha = subprocess.check_output(
+            ["git", "-C", str(source), "rev-parse", "HEAD"], text=True, env=env
+        ).strip()
+        caller_umask = os.umask(0o027)
+        try:
+            python_build = build_exported_app(
+                source,
+                requested_sha=build_sha,
+                candidate_app=tmp_path / "built-python",
+                install_dependencies=False,
+            )
+        finally:
+            os.umask(caller_umask)
+    source_paths = [
+        ".gitattributes",
+        "README.md",
+        "readme-link",
+        "server",
+        "server/cli",
+        cli_relative,
+    ]
+    expected_source_metadata = [
+        {key: row[key] for key in ("path", "kind", "mode", "target") if key in row}
+        for row in _tree(tmp_path / "built-python")
+        if row["path"] in source_paths
+    ]
+    assert (
+        next(row for row in expected_source_metadata if row["path"] == "server/cli")[
+            "mode"
+        ]
+        == 0o750
+    )
+    builder_spec = dict(sha=build_sha, cli=cli_relative, source_paths=source_paths)
+    unit_literal = "space ' \" \\ $HOME %t\nlast"
+    node_started = time.perf_counter()
+    process = subprocess.Popen(
+        [
+            node,
+            str(launcher),
+            (ROOT / "server/environments/release/testing/release_parity.ts").as_uri(),
+            str(tmp_path),
+            json.dumps(vectors),
+            json.dumps(loader_input),
+            json.dumps(admission_spec),
+            json.dumps(builder_spec),
+            json.dumps(unit_literal),
+        ],
+        cwd=ROOT,
+        env=env,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    try:
+        stdout, stderr = process.communicate(timeout=30)
+    except subprocess.TimeoutExpired as error:
+        process.terminate()
+        try:
+            stdout, stderr = process.communicate(timeout=5)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            stdout, stderr = process.communicate()
+        raise AssertionError(
+            f"archive comparison exceeded 30 seconds; cleanup stderr: {stderr}"
+        ) from error
+    finally:
+        if process.poll() is None:
+            process.kill()
+            process.communicate()
+    node_seconds = time.perf_counter() - node_started
+    assert process.returncode == 0, stderr
+    actual: dict[str, Any] = json.loads(stdout)
+    ios_actual = actual["ios"]
+    assert ios_actual["paths"] == ios_expected["paths"]
+    assert ios_actual["digests"] == ios_expected["digests"]
+    assert ios_actual["minimum"] == ios_expected["minimum"]
+    assert (
+        ios_actual["checks"]
+        == ios_expected["checks"]
+        == [
+            None,
+            "Native-facing contracts changed. Review iOS compatibility "
+            "and refresh the source-bound review.",
+            "Review must name the policy's oldest supported build.",
+        ]
+    )
+    actual["units"] = _unit_boundaries(
+        tmp_path, actual["units"], node, env, unit_literal
+    )
+    assert actual["native_tree_admission"] == "app contains a symlink outside its root"
+    assert native_sentinel.read_bytes() == b"outside native write sentinel\n"
+    assert (
+        sorted(str(item.relative_to(native_root)) for item in native_root.rglob("*"))
+        == native_paths
+    )
+    assert actual["native_loader"] == expected_loader
+    if scope == "host-admission":
+        native_hosts = expected_admission["hosts"].copy()
+        assert native_hosts[1] == "runtime requires Node 22.18.0 or newer"
+        assert native_hosts[4] is None
+        native_hosts[1] = "runtime requires Node 22.18.0 or a later Node 22"
+        native_hosts[4] = "runtime requires Node 22"
+        assert actual["admission"] == {**expected_admission, "hosts": native_hosts}
+    else:
+        assert actual["admission"]["reports"] == expected_admission["reports"]
+    assert actual["admission"]["darwin_hosts"] == expected_admission["darwin_hosts"]
+    built = actual["builder"]
+    assert built["manifest"]["app_sha"] == python_build.app_sha == build_sha
+    assert built["manifest"]["source_digest"] == python_build.source_digest
+    assert built["manifest"]["runtime_contract"] is None and built["reused"]
+    assert built["readme"] == "source\n" and built["ignored_absent"]
+    assert built["cli_bytes"] == cli.read_bytes().hex() and built["cli_executable"]
+    assert built["source_metadata"] == expected_source_metadata
+    assert cli_relative in built["wrappers"][0]
+    assert "server/environments/release/launcher_main.ts" in built["wrappers"][1]
+    assert all(
+        "unset NODE_OPTIONS NODE_PATH LD_PRELOAD LD_LIBRARY_PATH" in wrapper
+        for wrapper in built["wrappers"]
+    )
+    assert built["mismatch"] == "checkout HEAD does not match requested SHA"
+    assert built["failed"] and built["failed_absent"] and built["cleanup"]
+    assert built["graph"] == expected_graph and built["graph_drift_refused"]
+    assert built["source_abort"] == dict(
+        validated=True,
+        actual_child_closed=True,
+        destination_absent=True,
+        unrelated_live=True,
+    )
+    assert built["children"]["spawned"] == built["children"]["closed"] > 0
+    assert built["launch_environment"] == dict(
+        HTTP_PROXY="http://synthetic.invalid",
+        http_proxy="",
+        REQUEST_METHOD="GET",
+        PLAN_APP_ROOT=str(v2),
+        PLAN_APP_SHA=SHA,
+    )
+    assert built["launch_darwin_target_refused"] is True
+    hostile_native = actual["hostile_native"]
+    if hostile_native["executed"]:
+        assert hostile_native["refused"] is True
+        assert hostile_native["outside_library"] == str(
+            tmp_path / "outside-native/libm.so.6"
+        )
+        assert hostile_native["native_operation"] == "cos(0) = 1"
+    else:
+        assert (
+            hostile_native["reason"]
+            == "Native candidate admission requires Linux x64 Node 22"
+        )
+    group_proof = (
+        _admission_group_proof(tmp_path / "hosted-admission-group", env, node)
+        if os.environ.get("GITHUB_ACTIONS") == "true" and sys.platform == "linux"
+        else {"executed": False, "reason": "Hosted Linux only"}
+    )
+    assert actual["identity"] == {
+        "source": digest_app_source(app),
+        "artifact": digest_app_artifact(app),
+        "manifest": manifest.as_dict(),
+    }
+    assert actual["legacy"] == expected_legacy
+    assert actual["producer_trees"]["python"]["status"] == "restored", actual[
+        "producer_trees"
+    ]["python"]
+    assert actual["restored"] == manifest.as_dict()
+    assert actual["exclusive_refused"]
+    bad_hash = actual["hash_refusal"]
+    assert (
+        bad_hash["status"] == "refused"
+        and bad_hash["error_type"] == "AppValidationError"
+    )
+    assert bad_hash["message"] == str(hash_first.value)
+    assert bad_hash["spools_absent"] and not bad_hash["destination_exists"]
+    assert not (tmp_path / "outside").exists()
+    assert actual["node_protocol"] == dict(
+        accepted=True,
+        missing_refused=True,
+        python_field_refused=True,
+        invalid_contract_before_tree=invalid_order,
+    )
+    assert actual["frontier"] == python_frontier
+    restored = tmp_path / "python-from-node"
+    assert (
+        extract_app_archive(
+            tmp_path / "node.tar.gz", restored, actual["node_archive_sha256"], SHA
+        )
+        == manifest
+    )
+    python_from_python = tmp_path / "python-from-python"
+    extract_app_archive(tmp_path / "python.tar.gz", python_from_python, checksum, SHA)
+    for producer, python_tree in (
+        ("python", python_from_python),
+        ("typescript", restored),
+    ):
+        result_tree = actual["producer_trees"][producer]
+        assert result_tree["status"] == "restored"
+        assert _native_archive_tree(result_tree["tree"]) == _native_archive_tree(
+            _tree(python_tree)
+        )
+        assert result_tree["output_private"] and result_tree["spool_private"]
+        assert result_tree["settled_at_return"] and result_tree["descriptor_held"]
+        assert (
+            result_tree["spools_absent"]
+            and result_tree["spawned"] == result_tree["closed"] == 1
+        )
+    for restored_tree in (tmp_path / "work-python-producer/output", restored):
+        assert (restored_tree / "directory-alias").is_symlink()
+        assert os.readlink(restored_tree / "directory-alias") == "a"
+        assert (restored_tree / "directory-alias/data").read_text() == "a/data"
+    table = []
+    for item in actual["archive_table"]:
+        name, policy, observed = item["name"], item["policy"], item["result"]
+        python_result = python_table[name]
+        assert observed["settled_at_return"] and observed["spools_absent"]
+        assert observed["spawned"] == observed["closed"]
+        assert observed["status"] == "refused", (name, observed)
+        assert observed["error_type"] == "AppValidationError", (name, observed)
+        assert not observed["destination_exists"], name
+        table.append(
+            dict(
+                name=name,
+                risk=item["risk"],
+                policy=policy,
+                python=python_result,
+                typescript=observed,
+                comparison="Explicit safety policy; Python outcome recorded separately",
+            )
+        )
+    limits = {item["name"]: item["result"] for item in actual["archive_table"]}
+    assert "metadata" in limits["oversized-metadata"]["message"]
+    assert (
+        limits["partial-output-cleanup"]["message"]
+        == "app manifest SHA does not match expected SHA"
+    )
+    assert limits["partial-output-cleanup"]["validated"]
+    owned = {item["mode"]: item["result"] for item in actual["owned"]}
+    replaced = owned["replace"]
+    assert replaced["status"] == "restored"
+    assert _native_archive_tree(replaced["tree"]) == _native_archive_tree(
+        _tree(python_from_python)
+    )
+    assert replaced["replaced_before_read"] and replaced["replaced_after_hash"]
+    assert (
+        replaced["replacement"] == "replaced after hash" and replaced["descriptor_held"]
+    )
+    assert owned["appeared"]["status"] == "refused"
+    assert owned["appeared"]["competitor"] == "competitor"
+    assert owned["kill"]["status"] == "refused" and owned["kill"]["killed"]
+    assert not owned["kill"]["destination_exists"]
+    channel_loss = owned["channel-loss"]
+    assert (
+        channel_loss["channel_closed"] and not channel_loss["channel_close_timed_out"]
+    )
+    assert (
+        channel_loss["status"] == "refused"
+        and channel_loss["error_type"] == "AppValidationError"
+    )
+    assert not channel_loss["destination_exists"]
+    for result_owned in owned.values():
+        assert result_owned["spools_absent"] and result_owned["settled_at_return"]
+        assert result_owned["spawned"] == result_owned["closed"]
+    messages = {
+        "initial": "app archive has insufficient free space before spooling",
+        "spool": "app archive exhausted free-space reserve while spooling",
+        "output": "app archive has insufficient free space for output",
+    }
+    for phase, message in messages.items():
+        result_owned = owned["low-" + phase]
+        assert (
+            result_owned["error_type"] == "AppValidationError"
+            and result_owned["message"] == message
+        )
+        assert not result_owned["destination_exists"]
+        assert result_owned["capacity"][-1]["phase"] == phase
+        assert result_owned["spawned"] == (0 if phase == "initial" else 1)
+    (restored / "sentinel").write_text("independent proof tree")
+    assert hash_archive(tmp_path / "python.tar.gz") == checksum
+    assert hash_archive(tmp_path / "node.tar.gz") == actual["node_archive_sha256"]
+    report = request.config.getoption("compare_report_dir", default=None)
+    if report:
+        path = Path(report)
+        path.mkdir(parents=True, exist_ok=True)
+        (path / "unit-21-release.json").write_text(
+            json.dumps(
+                {
+                    "seconds": time.perf_counter() - started,
+                    "source_parity": {
+                        "equal": True,
+                        "scope": "Small real Python/TS producer trees and identity/cache rules. "
+                        "Uses node-tar millisecond dates and explicit safety policy. "
+                        "Full release scale remains outside this check.",
+                    },
+                    "archive_table": table,
+                    "owned_archive_operations": actual["owned"],
+                    "node_seconds": node_seconds,
+                    "producer_trees": actual["producer_trees"],
+                    "node_v2_protocol": actual["node_protocol"],
+                    "frontier": actual["frontier"],
+                    "ios_compatibility": {
+                        **ios_actual,
+                        "python_seconds": ios_expected["seconds"],
+                        "python_scoped_digests": ios_expected["python_digests"],
+                        "review_fixture_only": True,
+                    },
+                    "native_static": {
+                        "loader_equal": True,
+                        "outside_target": actual["native_tree_admission"],
+                        "full_native_closure": "OPEN; static synthetic paths only",
+                    },
+                    "admission_rules": actual["admission"],
+                    "accepted_node_major_policy": {
+                        "required_major": 22,
+                        "python": expected_admission["hosts"],
+                        "typescript": actual["admission"]["hosts"],
+                        "verified": scope == "host-admission",
+                    },
+                    "admission_group": group_proof,
+                    "source_only_builder": built,
+                    "unit_boundaries": actual["units"],
+                    "public_cli_executed": False,
+                    "hostile_native": hostile_native,
+                    "archive_package": "tar@7.5.23 owns TAR/PAX parsing and extraction",
+                    "timestamp_policy": "node-tar Date millisecond precision",
+                    "limits": {
+                        "oversized_header": "metadata entry bytes",
+                        "nested_compression": "raw TAR input cannot invoke package decompression",
+                        "expanded_8GiB_bomb": "HOSTED OPEN; not run locally; no cap override",
+                    },
+                    "unproven": [
+                        "Representative full release tree/memory/disk/cost on hosted root",
+                        "Sealed bundled-package license inventory",
+                        "Runtime execution",
+                        "P5 Linux host admission Node version policy",
+                    ],
+                },
+                indent=2,
+            )
+            + "\n"
+        )
+
+
+def test_unit21_release_target_admission(tmp_path: Path, request: pytest.FixtureRequest) -> None:
+    """Gap: home/executor role refusals must survive archive create and owned extraction."""
+    from tests.compare.direct.unit20_cli import write_report
+
+    from planner.platform_runtime.darwin.runtime_contracts import DarwinRuntimeContract
+    from planner.platform_runtime.targets import LINUX_EXECUTOR, MAC_EXECUTOR, MAC_HOME
+
+    began = time.perf_counter()
+    app = build_app(tmp_path / "app", SHA, "sentinel")
+
+    def outcome(operation: Any) -> str:
+        try:
+            operation()
+            return "accepted"
+        except ValueError as error:
+            return str(error)
+
+    def validate(path: Path, target: Any) -> Any:
+        return validate_app_manifest(path / "manifest.json", expected_target=target)
+
+    expected: list[Any] = [outcome(lambda: validate(app, LINUX_EXECUTOR))]
+    shutil.copytree(app, tmp_path / "markerless")
+    (app / "mac-runtime.json").write_text(
+        json.dumps(dict(platform="linux", architecture="x86_64", role="executor"))
+    )
+    rewrite_artifact_digest(app)
+    expected.append(outcome(lambda: validate(app, MAC_EXECUTOR)))
+    archive = tmp_path / "python-target.tar.gz"
+    digest = create_app_archive(app, archive, expected_target=LINUX_EXECUTOR)
+    expected.append(
+        outcome(lambda: extract_app_archive(archive, tmp_path / "python-refused", digest, SHA))
+    )
+    extract_app_archive(
+        archive, tmp_path / "python-restored", digest, SHA, expected_target=LINUX_EXECUTOR
+    )
+    expected.append((tmp_path / "python-restored/sentinel").read_text())
+    shutil.copytree(app, tmp_path / "home")
+    (tmp_path / "home/mac-runtime.json").write_text(
+        json.dumps(dict(platform="darwin", architecture="arm64", role="home"))
+    )
+    home = tmp_path / "home"
+    document = json.loads((home / "manifest.json").read_text())
+    darwin = DarwinRuntimeContract(
+        "3.12.12", hashlib.sha256((home / "runtime/inventory.json").read_bytes()).hexdigest()
+    ).as_dict()
+    document["runtime_contract"] = darwin
+    (home / "runtime/contract.json").write_text(json.dumps(darwin))
+    (home / "manifest.json").write_text(json.dumps(document))
+    rewrite_artifact_digest(home)
+    expected.append(outcome(lambda: validate(home, MAC_HOME)))
+    home_archive = tmp_path / "python-home.tar.gz"
+    home_digest = create_app_archive(home, home_archive, expected_target=MAC_HOME)
+    restored = extract_app_archive(
+        home_archive, tmp_path / "python-home-restored", home_digest, SHA, expected_target=MAC_HOME
+    )
+    # Python's Darwin contract is v1. Native v2 replaces its interpreter identity explicitly.
+    native = {**darwin, "version": 2, "minimum_node_version": "22.18.0"}
+    native.pop("python_version")
+    expected.extend([(tmp_path / "python-home-restored/sentinel").read_text(), native])
+    assert restored.runtime_contract is not None and restored.runtime_contract.as_dict() == darwin
+    patches: list[dict[str, Any]] = [
+        {"architecture": "x86_64"},
+        {"minimum_os": "14.0"},
+        {"external_libraries": ["/opt/homebrew/lib/"]},
+        {"platforms": []},
+    ]
+    expected.extend(
+        outcome(lambda patch=patch: DarwinRuntimeContract.from_dict({**darwin, **patch}))
+        for patch in patches
+    )
+    (tmp_path / "darwin-cases.json").write_text(json.dumps(patches))
+    code = """
+import {cp,mkdir,readFile,writeFile} from 'node:fs/promises';
+import {dirname,join} from 'node:path';
+import {create_app_archive, extract_app_archive} from './server/environments/release/archive.ts';
+import {digest_app_artifact,validate_app_manifest} from './server/environments/release/identity.ts';
+import {LINUX_EXECUTOR, MAC_EXECUTOR, MAC_HOME} from './server/environments/release/contracts.ts';
+import {NODE_RUNTIME_FILES} from './server/environments/release/configuration.ts';
+import {parse_optional_runtime_contract}
+  from './server/environments/updates/logic/runtime_contract.ts';
+import {ChildProcesses} from './server/lifecycle/owned_processes.ts';
+const root=process.argv[1], app=join(root,'app'), owner=new ChildProcesses();
+const outcome=async f=>{try{await f();return 'accepted';}catch(e){return e.message;}};
+const validate=(path,target)=>validate_app_manifest(join(root,path,'manifest.json'),
+  {expected_target:target});
+try {
+  const result=[await outcome(()=>validate('markerless',LINUX_EXECUTOR)),
+                await outcome(()=>validate('app',MAC_EXECUTOR))];
+  const archive=join(root,'node-target.tar.gz');
+  const digest=await create_app_archive(app,archive,LINUX_EXECUTOR);
+  const sha=(await validate('app',LINUX_EXECUTOR)).app_sha;
+  result.push(await outcome(()=>extract_app_archive(
+    archive,join(root,'node-refused'),digest,sha,owner)));
+  await extract_app_archive(archive,join(root,'node-restored'),digest,sha,owner,
+    undefined,undefined,LINUX_EXECUTOR);
+  result.push(await readFile(join(root,'node-restored/sentinel'),'utf8'));
+  const home=join(root,'node-home');
+  await cp(join(root,'home'),home,{recursive:true});
+  const document=JSON.parse(await readFile(join(home,'manifest.json'),'utf8'));
+  const native={...document.runtime_contract,version:2,minimum_node_version:'22.18.0'};
+  delete native.python_version;
+  document.runtime_contract=native;
+  for(const name of NODE_RUNTIME_FILES){
+    const path=join(home,name);await mkdir(dirname(path),{recursive:true});await writeFile(path,'');
+  }
+  await writeFile(join(home,'runtime/contract.json'),JSON.stringify(native));
+  document.artifact_digest=await digest_app_artifact(home);
+  await writeFile(join(home,'manifest.json'),JSON.stringify(document));
+  result.push(await outcome(()=>validate('node-home',MAC_HOME)));
+  const homeArchive=join(root,'node-home.tar.gz');
+  const homeDigest=await create_app_archive(home,homeArchive,MAC_HOME);
+  const restored=await extract_app_archive(homeArchive,join(root,'node-home-restored'),
+    homeDigest,sha,owner,undefined,undefined,MAC_HOME);
+  result.push(await readFile(join(root,'node-home-restored/sentinel'),'utf8'),
+              restored.runtime_contract);
+  for(const patch of JSON.parse(await readFile(join(root,'darwin-cases.json'),'utf8')))
+    result.push(await outcome(()=>parse_optional_runtime_contract({...native,...patch})));
+  console.log(JSON.stringify(result));
+} finally {owner.seal();await owner.settled();}
+"""
+    actual = json.loads(
+        subprocess.check_output(
+            ["node", "--input-type=module", "-e", code, str(tmp_path)], cwd=ROOT, text=True
+        )
+    )
+    report = dict(
+        python=expected,
+        typescript=actual,
+        equal=actual == expected,
+        seconds=time.perf_counter() - began,
+    )
+    write_report(request, "unit21-release-targets", report)
+    assert actual == expected
+
+
+def test_unit21_linux_executor_archive_admission(
+    tmp_path: Path, request: pytest.FixtureRequest
+) -> None:
+    """Gap: executor extraction must admit before promotion and clean only its own failures."""
+    from tests.compare.direct.unit20_cli import write_report
+
+    from planner.environments.linux_executor_runtime import extract_runtime, read_runtime_revision
+    from planner.platform_runtime.targets import LINUX_EXECUTOR
+
+    began = time.perf_counter()
+    app = build_app(tmp_path / "legacy", SHA, "sentinel")
+    (app / "mac-runtime.json").write_text(
+        json.dumps(
+            dict(
+                schema_version=1,
+                application_revision=SHA,
+                platform="linux",
+                architecture="x86_64",
+                role="executor",
+            )
+        )
+    )
+    rewrite_artifact_digest(app)
+    archive = tmp_path / "legacy.tar.gz"
+    digest = create_app_archive(app, archive, expected_target=LINUX_EXECUTOR)
+    size = archive.stat().st_size
+
+    def outcome(operation: Any) -> str:
+        try:
+            operation()
+            return "accepted"
+        except ValueError as error:
+            return str(error)
+
+    expected: dict[str, Any] = dict(
+        revision=read_runtime_revision(app, SHA),
+        wrong_revision=outcome(lambda: read_runtime_revision(app, "b" * 40)),
+        size=outcome(
+            lambda: extract_runtime(
+                archive,
+                tmp_path / "python-size",
+                expected_sha256=digest,
+                expected_size=size + 1,
+                expected_revision=SHA,
+            )
+        ),
+    )
+    calls = 0
+
+    def admit(*_: Any) -> None:
+        nonlocal calls
+        calls += 1
+
+    with patch("planner.environments.linux_executor_runtime.admit_runtime", admit):
+        restored = extract_runtime(
+            archive,
+            tmp_path / "python-releases",
+            expected_sha256=digest,
+            expected_size=size,
+            expected_revision=SHA,
+        )
+        retained = extract_runtime(
+            archive,
+            tmp_path / "python-releases",
+            expected_sha256=digest,
+            expected_size=size,
+            expected_revision=SHA,
+        )
+    expected["retained"] = [restored == retained, (retained / "sentinel").read_text(), calls]
+    failed = tmp_path / "python-failed"
+    (failed / "foreign").mkdir(parents=True)
+    (failed / "foreign/keep").write_text("foreign")
+
+    owned_until_settled = False
+
+    def refuse(runtime: Path, *_: Any) -> None:
+        nonlocal owned_until_settled
+        time.sleep(0.05)
+        owned_until_settled = runtime.is_dir()
+        raise ValueError("trusted admission refused")
+
+    with patch("planner.environments.linux_executor_runtime.admit_runtime", refuse):
+        expected["failure"] = outcome(
+            lambda: extract_runtime(
+                archive, failed, expected_sha256=digest, expected_size=size, expected_revision=SHA
+            )
+        )
+    expected["cleanup"] = [
+        sorted(path.name for path in failed.iterdir()),
+        (failed / "foreign/keep").read_text(),
+    ]
+    expected["owned_until_settled"] = owned_until_settled
+    code = """
+import {cp,mkdir,readFile,readdir,stat,writeFile} from 'node:fs/promises';
+import {dirname,join} from 'node:path';
+import {ChildProcesses} from './server/lifecycle/owned_processes.ts';
+import {create_app_archive} from './server/environments/release/archive.ts';
+import {digest_app_artifact} from './server/environments/release/identity.ts';
+import {NODE_RUNTIME_FILES} from './server/environments/release/configuration.ts';
+import {LINUX_EXECUTOR} from './server/environments/release/contracts.ts';
+import {RuntimeProbeUnsettled} from './server/environments/release/admission_process.ts';
+import {extract_runtime,read_runtime_revision}
+  from './server/environments/linux_executor/archive.ts';
+const root=process.argv[1], app=join(root,'native'), owner=new ChildProcesses();
+const execution={child_processes:owner,signal:new AbortController().signal,
+  deadline:performance.now()/1000+30};
+const outcome=async f=>{try{await f();return 'accepted';}
+  catch(e){return e instanceof RuntimeProbeUnsettled?e.cause.message:e.message;}};
+try {
+  await cp(join(root,'legacy'),app,{recursive:true});
+  const document=JSON.parse(await readFile(join(app,'manifest.json'),'utf8'));
+  delete document.runtime_contract.python_version;
+  Object.assign(document.runtime_contract,{version:2,minimum_node_version:'22.18.0'});
+  for(const name of [...NODE_RUNTIME_FILES,'server/executor/mac/entrypoint.ts']) {
+    const path=join(app,name);await mkdir(dirname(path),{recursive:true});await writeFile(path,'');
+  }
+  await writeFile(join(app,'runtime/contract.json'),JSON.stringify(document.runtime_contract));
+  document.artifact_digest=await digest_app_artifact(app);
+  await writeFile(join(app,'manifest.json'),JSON.stringify(document));
+  const archive=join(root,'native.tar.gz'), sha=document.app_sha;
+  const digest=await create_app_archive(app,archive,LINUX_EXECUTOR);
+  const size=(await stat(archive)).size;
+  const approval={expected_sha256:digest,expected_size:size,expected_revision:sha};
+  const result={revision:await read_runtime_revision(app,sha),
+    wrong_revision:await outcome(()=>read_runtime_revision(app,'b'.repeat(40))),
+    size:await outcome(()=>extract_runtime(archive,join(root,'node-size'),
+      {...approval,expected_size:size+1},execution))};
+  let calls=0;
+  const operations={admit:async()=>{calls++;}};
+  const restored=await extract_runtime(
+    archive,join(root,'node-releases'),approval,execution,operations);
+  const retained=await extract_runtime(
+    archive,join(root,'node-releases'),approval,execution,operations);
+  result.retained=[restored===retained,await readFile(join(retained,'sentinel'),'utf8'),calls];
+  const failed=join(root,'node-failed');
+  await mkdir(join(failed,'foreign'),{recursive:true});
+  await writeFile(join(failed,'foreign/keep'),'foreign');
+  let ownedUntilSettled=false;
+  result.failure=await outcome(()=>extract_runtime(archive,failed,approval,execution,
+    {admit:async payload=>{
+      const settled=(async()=>{
+        await new Promise(resolve=>setTimeout(resolve,50));
+        ownedUntilSettled=(await stat(payload)).isDirectory();
+      })();
+      throw new RuntimeProbeUnsettled(settled,Error('trusted admission refused'));
+    }}));
+  result.cleanup=[(await readdir(failed)).sort(),
+    await readFile(join(failed,'foreign/keep'),'utf8')];
+  result.owned_until_settled=ownedUntilSettled;
+  console.log(JSON.stringify(result));
+} finally {owner.seal();await owner.settled();}
+"""
+    actual = json.loads(
+        subprocess.check_output(
+            ["node", "--input-type=module", "-e", code, str(tmp_path)], cwd=ROOT, text=True
+        )
+    )
+    write_report(
+        request,
+        "unit21-linux-executor-archive",
+        dict(
+            python=expected,
+            typescript=actual,
+            equal=actual == expected,
+            seconds=time.perf_counter() - began,
+            scope="synthetic archive and promotion only; native admission is an injected boundary",
+        ),
+    )
+    assert actual == expected
+
+
+def test_linux_executor_publication_matches_selected_source(
+    tmp_path: Path, request: pytest.FixtureRequest
+) -> None:
+    """Gap: the native receipt must refuse failed builds and changed proof, role or bytes."""
+    started = time.perf_counter()
+    revision = "a" * 40
+    app = build_app(tmp_path / "payload", revision, "sentinel")
+    shutil.rmtree(app / ".venv")
+    entrypoint = app / "server/executor/mac/entrypoint.ts"
+    entrypoint.parent.mkdir(parents=True)
+    entrypoint.write_text("// synthetic native entrypoint\n")
+    marker = dict(
+        schema_version=1,
+        application_revision=revision,
+        platform="linux",
+        architecture="x86_64",
+        role="executor",
+    )
+    (app / "mac-runtime.json").write_text(json.dumps(marker))
+    contract = NodeRuntimeContract(
+        hashlib.sha256((app / "runtime/inventory.json").read_bytes()).hexdigest()
+    ).as_dict()
+    (app / "runtime/contract.json").write_text(json.dumps(contract))
+    manifest = json.loads((app / "manifest.json").read_text())
+    (app / "manifest.json").write_text(json.dumps({**manifest, "runtime_contract": contract}))
+    rewrite_artifact_digest(app)
+    archive = tmp_path / "panels-linux-executor.tar.gz"
+    with tarfile.open(archive, "w:gz") as packed:
+        for child in app.iterdir():
+            packed.add(child, arcname=child.name)
+    original = archive.read_bytes()
+    receipt = dict(
+        marker,
+        archive_sha256=hashlib.sha256(original).hexdigest(),
+        archive_size=len(original),
+        proof=dict(native_startup="passed", relocated_archive="passed", executor_cli="passed"),
+    )
+    path = tmp_path / "linux-executor-publication.json"
+    cases: list[dict[str, Any]] = [
+        {},
+        {"build_result": "failure"},
+        {"patch": {"role": "home"}},
+        {"patch": {"proof": {}}},
+        {"changed": True},
+    ]
+    expected = []
+    for case in cases:
+        path.write_text(json.dumps({**receipt, **case.get("patch", {})}))
+        archive.write_bytes(original + (b"changed" if case.get("changed") else b""))
+        try:
+            result = validate_linux_executor_publication(
+                tmp_path,
+                requested=revision,
+                artifact_id=41,
+                build_result=case.get("build_result", "success"),
+            )
+            expected.append(asdict(result))
+        except ValueError as error:
+            expected.append({"error": str(error)})
+    archive.write_bytes(original)
+    input_path = tmp_path / "request.json"
+    input_path.write_text(
+        json.dumps(dict(root=str(tmp_path), receipt=receipt, cases=cases, revision=revision))
+    )
+    code = """
+import {readFileSync,writeFileSync} from 'node:fs';
+import {join} from 'node:path';
+import {ChildProcesses} from './server/lifecycle/owned_processes.ts';
+const {validate_linux_executor_publication}=await import(process.argv[1]);
+const input=JSON.parse(readFileSync(process.argv[2],'utf8'));
+const owner=new ChildProcesses(), controller=new AbortController();
+const execution={child_processes:owner,signal:controller.signal,deadline:performance.now()/1000+15};
+const archive=join(input.root,'panels-linux-executor.tar.gz'), original=readFileSync(archive);
+const result=[];
+try {
+  for(const item of input.cases){
+    writeFileSync(join(input.root,'linux-executor-publication.json'),
+      JSON.stringify({...input.receipt,...item.patch}));
+    writeFileSync(archive,item.changed?Buffer.concat([original,Buffer.from('changed')]):original);
+    try {result.push(await validate_linux_executor_publication(input.root,input.revision,41,
+      item.build_result??'success',execution));} catch(error){result.push({error:error.message});}
+  }
+  console.log(JSON.stringify(result));
+} finally {controller.abort();owner.seal();await owner.settled();}
+"""
+    completed = subprocess.run(
+        [
+            "node",
+            "--input-type=module",
+            "-e",
+            code,
+            (ROOT / "server/environments/release/publication_receipt.ts").as_uri(),
+            str(input_path),
+        ],
+        cwd=ROOT,
+        env=_environment(tmp_path),
+        capture_output=True,
+        text=True,
+        timeout=20,
+        check=False,
+    )
+    assert completed.returncode == 0, completed.stderr
+    actual = json.loads(completed.stdout)
+    _report(
+        request,
+        "linux-executor-publication.json",
+        dict(
+            equal=actual == expected,
+            python=expected,
+            typescript=actual,
+            seconds=time.perf_counter() - started,
+        ),
+    )
+    assert actual == expected

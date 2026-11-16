@@ -1,0 +1,105 @@
+{
+  "revisions": {
+    "actual_compaction_boundaries": [
+      "merge_iphone_staging"
+    ],
+    "agent_launch_tokens": [
+      "proposal_before_errored_claim"
+    ],
+    "automatic_start_lookup": [
+      "worker_cleanup_recheck"
+    ],
+    "canonical_manager_identities": [
+      "retire_explicit_reply_requirement"
+    ],
+    "consequences_without_approval": [
+      "actual_compaction_boundaries"
+    ],
+    "executor_mailboxes": [
+      "canonical_manager_identities"
+    ],
+    "goal_holders": [],
+    "linux_executor_platform": [
+      "merge_home_recap"
+    ],
+    "local_child_custody": [
+      "ticket_workspace_lifecycle"
+    ],
+    "memory_notice_turns_are_maintenance": [
+      "retire_executor_websocket_tables"
+    ],
+    "merge_home_recap": [
+      "recap_freshness",
+      "retryable_original_credential"
+    ],
+    "merge_home_setup_maintenance": [
+      "automatic_start_lookup",
+      "memory_notice_turns_are_maintenance"
+    ],
+    "merge_home_staging_compaction": [
+      "linux_executor_platform",
+      "working_turn_compaction_boundary"
+    ],
+    "merge_iphone_staging": [
+      "notification_message_context",
+      "merge_home_staging_compaction"
+    ],
+    "multi_machine_credentials": [
+      "multi_machine_executors"
+    ],
+    "multi_machine_executors": [
+      "merge_home_setup_maintenance"
+    ],
+    "named_machines": [
+      "local_child_custody"
+    ],
+    "native_shared_decision_notes": [
+      "ticket_decision_operations",
+      "ticket_decision_messages"
+    ],
+    "notification_message_context": [
+      "native_shared_decision_notes"
+    ],
+    "proposal_before_errored_claim": [
+      "consequences_without_approval"
+    ],
+    "recap_freshness": [
+      "ticket_decision_messages"
+    ],
+    "restore_consequences_review": [
+      "agent_launch_tokens"
+    ],
+    "retire_executor_websocket_tables": [
+      "stall_alarm_preference"
+    ],
+    "retire_explicit_reply_requirement": [
+      "goal_holders"
+    ],
+    "retryable_original_credential": [
+      "multi_machine_credentials"
+    ],
+    "stall_alarm_preference": [
+      "executor_mailboxes"
+    ],
+    "ticket_decision_messages": [
+      "memory_notice_turns_are_maintenance"
+    ],
+    "ticket_decision_operations": [
+      "retire_executor_websocket_tables"
+    ],
+    "ticket_workspace_lifecycle": [
+      "retire_executor_websocket_tables"
+    ],
+    "worker_cleanup_recheck": [
+      "worker_supervision"
+    ],
+    "worker_supervision": [
+      "named_machines"
+    ],
+    "working_turn_compaction_boundary": [
+      "recap_freshness"
+    ]
+  },
+  "source_digest": "21d619e34f4b95aff0074e792ecbe7ccb8624f9a4b9330a905faf93dbc33320e",
+  "version": 1
+}

@@ -16,6 +16,8 @@ a native list, with deployment status in a Panels server row above them. Active
 deployment status adds a dot to More; healthy idle has no dot. The tab bar is visible on these three roots; the shared `AppRoute`
 destination hides it on detail pages and their pushed children. Roots use the system
 default visibility: explicit root overrides compete with the shared detail rule.
+The artifact viewer also hides the tab bar at its own destination, including direct
+Review links and links inside another artifact. Back restores the root tabs.
 Navigation uses native pushes and back swipes;
 every destination has a separate source file.
 The existing full ticket API supplies ticket detail. On 2026-10-22, the lighter
@@ -24,6 +26,17 @@ The existing full ticket API supplies ticket detail. On 2026-10-22, the lighter
 working endpoint rather than inventing a new backend route. Its saved `workflow`
 supplies Ticket and Review controls, stage names and approval gates. The nullable
 `worker_type` identifies the creation preset and never supplies those controls.
+
+## Chief swipe diagnostics
+
+Settings → Config includes a local Chief swipe diagnostics switch, off by default.
+It enables passive observation of horizontal attempts on the Chief page, including
+failed edge swipes. The log contains view geometry, recognizer states, navigation
+transitions, and app/OS versions. It excludes page text and conversation content.
+The local log retains at most 1 MiB from the last 24 hours. Settings can share a
+local file through the iOS share sheet or clear the log. Nothing uploads automatically.
+The logger does not change scroll or back-swipe behavior and does not diagnose the
+phone fault by itself.
 
 ## Refresh work
 
@@ -109,6 +122,25 @@ its text; a changed byte count, version or body identity reads it again. Image
 artifacts load their image once per successful document load, outside the view
 body. A failed reload retains the previous document and image.
 
+## Photo messages
+
+The native composer prepares each photo off the main actor when it joins the draft.
+Its attachment shows “Preparing photo…” and Send stays disabled until preparation finishes.
+Accepted photos reuse their prepared bytes; only a combined size above 3 MiB triggers another reduction.
+Restored raw drafts also prepare off the main actor before send. Newer draft edits cancel that send capture.
+HEIC becomes
+an oriented JPEG. Large images are recompressed or reduced to keep all image bytes
+within the server's existing 3 MiB message limit. Supported photos that already fit
+retain their bytes. File attachments keep their existing handling.
+
+The same preparation applies to restored editable drafts, Review replies and explicit
+retries of failed messages. It never changes an in-flight or uncertain outgoing body.
+If the server still returns HTTP 422, the phone shows a photo-specific error and keeps
+the draft. An ordinary conversation restores its cleared draft only when both saved
+composer versions still match the cleared versions. Newer edits stay intact. An explicit
+retry gets a new message identity and clears only the exact restored draft it retries.
+The server's limits and retention policy do not change.
+
 ## Typography
 
 Shared text roles in `Core/Theme/Theme.swift` follow the mobile web's weights.
@@ -139,8 +171,10 @@ An empty send-back note focuses the field. Approval captures the displayed note
 for that exact server and proposal. Notes retain the existing durable draft keys.
 How far precedes Who reviews. A later stage submits a protected approval. An earlier
 or current stage changes the ceiling and reviewer and leaves the proposal waiting.
-When the next stage is Done, Approve takes one tap. The approver in the card
-opens reviewer-only choices. Scope and reviewer changes use the existing PATCH route
+Consequences remains a review boundary and an approval-ceiling choice. Done is
+not an approval ceiling. The approval-limit control remains available during
+Consequences. When the next stage is Done, Approve takes one tap. The approver
+in the card opens reviewer-only choices. Scope and reviewer changes use the existing PATCH route
 only while online. They never enter the Outbox or retry automatically. A fresh Ticket
 read compares the absolute ceiling and reviewer with the choice after an uncertain
 answer. The sheet keeps the choice and states that nothing was approved. A
@@ -181,7 +215,7 @@ runtime; the deployment target remains iOS 18):
 | Lane | Device identifier |
 | --- | --- |
 | PanelsLaneA | `5BEBCEA8-BDF2-4F47-9CAA-0E25C1D147B6` |
-| PanelsLaneB | `566D051B-B6BB-4046-9038-66C05CCC2B96` |
+| PanelsLaneB | `47890EEA-D1D8-4E5A-AF74-DB66866D7840` |
 | PanelsLaneC | `5D323346-68F9-4A0D-A90B-74507469C98A` |
 
 Later workers reuse their assigned lane. Erase between runs: terminate your app,
@@ -425,33 +459,34 @@ plus the existing host tests for that integration; no simulator was used for the
 rebase checks.
 ## Workspace home
 
-Workspace follows the web rail's section precedence and visibility: approval,
-answer, Yours, errors, Agent, Consequences, agent approval, then Other. Backlogged,
-blocked and completed tickets leave this rail. Unread dots and working spinners
-are independent. Chief activity comes from the navigation view's Chief record.
+Workspace follows the web rail's current section precedence, card layout and compact rows.
+Focus is always on, with no switch. Unread owner messages keep otherwise hidden agent
+work visible. The native bottom bar and Review routes stay unchanged.
 
-The approved mobile design keeps hairline cards, full-width 32pt group bars with
-sentence-case labels on the cards’ 16pt inner line, one-line
-rows at standard text sizes and native pushes. Accessibility text sizes wrap row titles. Settled is a plain expandable list after the cards, with
-the server's total count. Opening scrolls its header to the top, then fades in
-the rows. Closing fades out the rows and returns to the previous scroll offset.
-Pages load automatically when the last ten rows become visible; refresh preserves
-the loaded window. Surviving rows retain order, and section changes fade instead of travelling.
-Regrouping waits during scrolling and context previews; titles and marks stay live.
-Reduce Motion removes layout animation.
+Card headers open their holder. The separate goal status tag opens the worst-status
+active goal. Goal rows are off by default; Settings can show the same compact rows as
+the web. Each card, the parent list and Settled use their own server window and page
+controls. Settled stays beneath the active rail and scrolls within a bounded dock.
+Its Reopen action uses the existing Manager endpoint.
 
-Long press previews the full title, recap and saved-workflow stage sentence.
-Its menu opens the page, requests a recap, backlogs/resumes a ticket, or settles an
-orchestrator. These use existing endpoints. Failed or uncertain actions show an
-error; confirmed actions give success haptics. Pushes use the owner-approved light feedback; the Settled toggle gives
-selection feedback, and pull refresh/context menus use system feedback. Every shared route
-destination hides the tab bar; returning to a tab root restores it. Physical haptic feel
-still needs a device. Conversation contents use the shared native conversation page described below.
+Surviving rows retain order. New arrivals follow activity, title and identity.
+Structural updates wait while a finger, scroll, preview or layout animation is active;
+conversation status marks stay current. Movement uses the web rail's timing and curve.
+Reduce Motion removes layout animation. Standard text sizes keep one-line Ticket rows;
+accessibility text sizes wrap them.
 
-Four focused Workspace tests reuse the existing ticket fixture and an in-process
-URLProtocol stub. They cover attention precedence, hidden-ticket exclusion, stable
-section ordering, and write methods/payloads including uncertain recap delivery.
-They add no backend or browser host. Live Simulator verification invokes no writes.
+A long press on a title or row opens a native sheet without page navigation.
+It replaces web hover and shows the full title,
+recap, stage, current conversation activity and goal display. Checklist and manual
+chart controls remain interactive. Preview reads do not acknowledge messages.
+The existing page, recap, backlog, resume, settle and reopen actions use their existing
+routes. Uncertain actions keep an explicit error. Physical haptic feel still needs
+a device.
+
+Workspace reads the machine catalogue and scoped health while visible. It refreshes
+both every five seconds. Unknown activity removes a working mark but keeps unread
+messages. The existing contract suites cover grouping, machine projection, scoped
+reads, authoritative Settled membership and action payloads without a new server host.
 
 ## Artifact integration
 
@@ -482,15 +517,19 @@ conversation ID from the owner and uses the existing owner send door. Context-me
 previews set `showsConversation: false`. Listing, opening, reloading and sharing
 artifacts do not write to the server; sending a message requires an explicit tap.
 
-Artifact links in proposals, messages, and decision notes stay inline with their
-authored labels. Review does not append file previews. A tap opens the existing
-native viewer. Conversation text resolves relative links against the configured
-server and uses the same managed-file route. Artifact catalogs and viewers keep
-their existing presentation.
+Artifact links in proposals, messages, Ticket fields and Goal prose stay inline
+with their authored labels. Only linked photos and videos also display inline.
+The shared media selector excludes code, external links and every other file kind,
+so Review never reads or expands a text file before a tap. Audio stays a link.
+A tap opens the existing native viewer. Conversation text resolves relative links
+against the configured server and uses the same managed-file route. Artifact
+catalogs and viewers keep their existing presentation.
 
-The three artifact logic tests cover cross-owner URLs and encoding, unsafe file
-paths, and preservation of markdown code blocks. They reuse the existing XCTest
-target and require no server. Simulator captures are a separate read-only smoke
+Artifact logic tests cover cross-owner URLs and encoding, unsafe file paths,
+Markdown code blocks, and the photo/video-only rule. The media cases cover a gap
+in the earlier URL tests: file links must not enter the automatic media loader,
+and literal code must not load photos. They reuse the existing XCTest target and
+require no server. Simulator captures are a separate read-only smoke
 pass, and do not establish physical-device haptics or frame-rate performance.
 
 ## Native conversation
@@ -793,8 +832,7 @@ Tailscale identity, microphone permissions, and actual APNs delivery.
 ## Mac execution release compatibility
 
 Ticket detail and Review identify the Ticket's machine. Navigation preserves that identity through generated Ticket wire fields and the native presentation adapter. An unknown or missing machine identity cannot authorize a working mark. Workspace rows and their
-long-press previews omit machine labels. The server's
-executor health decides whether a Mac working mark is current. A disconnected or
+long-press previews use the machine catalogue for identity and scoped health for current activity. A disconnected or
 reconciling Mac retains unread messages but shows activity as unknown. The full
 conversation and Settings show the last measured contact, rather than treating a
 saved running state as proof the Mac is still working. Ticket setup and conversation
@@ -832,8 +870,10 @@ one build for multiple fixture cases without another simulator or build host.
 
 ## Goals
 
-Active goals sit inside their Chief or Manager holder's card in Workspace. A tap
-opens the goal; a long press shows its main display and an Open action. A binary goal without a checklist
+Workspace shows active goals through a status tag by default. Settings can show compact
+goal rows inside each holder card. A tag or row opens the goal. A long press on
+a row shows that goal; a long press on the holder header shows its goal display.
+Both previews include an Open action. A binary goal without a checklist
 also offers Mark done or Mark not done. Manual charts offer their configured
 increments, such as Add 100 words. Chief and Managers show their own goals with
 working checklists and manual charts. A Manager with one goal displays that goal
@@ -848,7 +888,10 @@ open; old queued goal sends keep their words without replay.
 Ordinary Ticket and Manager files still use the native reader.
 Project, deadline, state, title and explanation can be edited in place. Saved page
 text can be edited too; Markdown keeps its links and offers Edit on a long press.
-Tables sort without changing the stored row order. Grids stack on the phone.
+Tables keep their headers and rows in one horizontal scroll with aligned columns.
+The surrounding page stays at the phone width. The caption stays outside the
+scroll, and the left-edge back gesture retains priority. Tables sort without
+changing the stored row order. Grids stack on the phone.
 
 Charts have two sizes. Main charts use the web's small presentation. Supporting
 charts and extra checklists fold in place; each chart remembers its range and
@@ -880,6 +923,16 @@ a separate task bundle ID, lane lock name and output directory through its
 `PANELS_OFFLINE_DEVICE`, `PANELS_OFFLINE_BUNDLE`, `PANELS_OFFLINE_LANE` and
 `PANELS_OFFLINE_OUTPUT` settings. It uses loopback data and no live writes.
 
+The one-off table and artifact review uses the same loopback fixture and
+`PanelsReview` scheme. Set `PANELS_TABLE_SCROLL_SMOKE=1` and
+`PANELS_OFFLINE_TEST=GoalFlowTests/testSharedTableScrollAndReviewArtifactTabs`,
+then run `ios/scripts/test-offline-simulator.py --review` with the assigned device,
+separate bundle, lane lock, and worktree output directory. It checks shared table
+motion, a fixed page, edge Back at two table offsets, and tab restoration after
+Review opens artifacts. It never sends a message and stays outside the permanent
+screen suite. This native touch and navigation boundary requires the real app
+host; Foundation tests cannot prove gesture priority or tab restoration.
+
 ## Decision notes
 
 Ticket and Review keep Approve and Send back on the protected outbox path. Both
@@ -897,3 +950,14 @@ still cannot be sent. The outbox clears a note draft only after an applied recei
 and only when its text and saved timestamp still match the captured draft. Offline,
 refused, stale, and uncertain decisions retain drafts. Newer edits survive an older
 receipt, including edits that restore the same text.
+
+## Text entry and navigation
+
+Each visible screen owns focus for its conversation fields and decision notes.
+Review shares one owner across the note and reply fields on its current card.
+In chat and Review, inert background taps clear that screen's focus.
+The normal-priority tap gesture lets child text selection, controls, links, and inputs keep their interactions.
+Those scroll areas also support interactive keyboard dismissal.
+
+Chat and artifact navigation clear the outgoing screen's focus before the route changes.
+Drafts, attachments, and expanded composers, including the Goal composer, retain their existing content and shape.
