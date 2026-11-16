@@ -345,7 +345,14 @@ def _preview_lifecycle(browser, url):
         assert sum('reload.html' in href for href in reads) == refresh_before + 1
         with page.expect_request('**/files/tickets/t_preview/replacement.html'):
             page.evaluate("window.__retained('document','/files/tickets/t_preview/replacement.html')")
-        expect(document_content.locator('.skeleton')).to_have_count(1)
+        # A different full HTML target gets its own native frame, without a parent
+        # skeleton. While its response waits, it cannot show the obsolete document.
+        assert not page.evaluate('window.__refreshFrame.isConnected')
+        replacement_frame = document_content.locator('iframe')
+        assert replacement_frame.evaluate("element=>element!==window.__refreshFrame")
+        expect(replacement_frame).to_have_attribute('src', '/files/tickets/t_preview/replacement.html')
+        expect(document_content.frame_locator('iframe').locator('body')).to_have_text('')
+        expect(document_content.locator('.skeleton')).to_have_count(0)
         hold_previews = False
         for route in held_reads:
             route.fulfill(content_type='text/html', body='<html><body>' + (
