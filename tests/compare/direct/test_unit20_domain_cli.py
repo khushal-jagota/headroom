@@ -591,18 +591,26 @@ def _deferral_proof(handle: ServerHandle, root: Path, ticket_id: str) -> dict[st
             "field_approvals", "stage", "ceiling", "ceiling_holder",
         ):
             assert ticket[key] == original[key]
+    # Consequences is worker-owned. Its parked report needs review, but it does
+    # not assign the work to the owner like the earlier user-owned stages did.
     for kind in ("assigned", "awaiting_approval"):
         states = [
             next(row for row in state["notification_attention_state"]
                  if row["notification_type"] == kind)
             for state in snapshots
         ]
-        assert [state["active"] for state in states] == [1, 0, 1]
         generation = states[0]["generation"]
-        assert [state["generation"] for state in states] == [generation, generation, generation + 1]
+        if kind == "assigned":
+            assert [state["active"] for state in states] == [0, 0, 0]
+            assert states == [states[0]] * 3
+        else:
+            assert [state["active"] for state in states] == [1, 0, 1]
+            assert [state["generation"] for state in states] == [
+                generation, generation, generation + 1,
+            ]
     assert paused["notification_attention_edges"] == before["notification_attention_edges"]
     assert len(resumed["notification_attention_edges"]) == (
-        len(before["notification_attention_edges"]) + 2
+        len(before["notification_attention_edges"]) + 1
     )
     for row in before["notification_attention_edges"]:
         assert row in resumed["notification_attention_edges"]

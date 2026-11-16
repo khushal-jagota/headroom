@@ -2,8 +2,7 @@ import { path_is_within } from '../core/path_containment.ts';
 import { filesRoot } from '../files/logic/paths.ts';
 import { register_workspace } from '../ticket_workspaces/data.ts';
 import { workspace_identity } from '../ticket_workspaces/filesystem.ts';
-import { RETENTION_SECONDS } from '../ticket_workspaces/contracts.ts';
-import type { ScratchRuntimeOptions } from '../environments/ticket_scratch/contracts.ts';
+import type { CleanupResult } from '../ticket_workspaces/contracts.ts';
 import type { TestCompositionContext } from '../core/start.ts';
 import { SqliteProcessConversationSystem } from '../conversation/system.ts';
 import { ConversationMessageFiles } from '../conversation/record/message_files.ts';
@@ -397,12 +396,32 @@ test.skipIf(process.platform !== 'linux')(
         throw new Error('synthetic symlink escape');
       return target;
     }
-    let cleanup!: ScratchRuntimeOptions['clean_workspaces'];
-    const factory = scratchRuntime.create_ticket_scratch_runtime;
-    vi.spyOn(scratchRuntime, 'create_ticket_scratch_runtime').mockImplementation((options) => {
-      cleanup = options.clean_workspaces;
-      return factory(options);
+    const fixture_ready = deferred();
+    let finish_pass!: (result: CleanupResult) => void;
+    let fail_pass!: (error: unknown) => void;
+    const first_scheduled_result = new Promise<CleanupResult>((resolve, reject) => {
+      finish_pass = resolve;
+      fail_pass = reject;
     });
+    // Observe failures even if fixture setup fails before it awaits the pass.
+    void first_scheduled_result.catch(() => {});
+    const factory = scratchRuntime.create_ticket_scratch_runtime;
+    vi.spyOn(scratchRuntime, 'create_ticket_scratch_runtime').mockImplementation((options) =>
+      factory({
+        ...options,
+        clean_workspaces: async (db_path, now, pass_options) => {
+          // Eager cleanup and lifecycle wakes share this real scheduled pass.
+          // Populate both ownership/custody fixtures before it can inspect them.
+          await fixture_ready.promise;
+          const pass = options.clean_workspaces(db_path, now, {
+            ...pass_options,
+            admit_path: admit,
+          });
+          void pass.then(finish_pass, fail_pass);
+          return pass;
+        },
+      }),
+    );
     let core!: SqliteProcessConversationSystem;
     let database!: TestCompositionContext['database'];
     const server = await startServer({
@@ -457,10 +476,10 @@ test.skipIf(process.platform !== 'linux')(
         });
         fixtures.push({ ticket, folder, identity, conversation_id });
       }
-      // Invoke the exact cleanup closure supplied by production composition to its
-      // scheduled runtime. The scheduler proof below owns initial and periodic wake timing.
-      const cleanup_options = { signal: new AbortController().signal, admit_path: admit };
-      const result = await cleanup(path, RETENTION_SECONDS, cleanup_options);
+      // Observe the real scheduler's result, rather than race it with a second
+      // manual pass that can find the eligible folder already removed.
+      fixture_ready.resolve();
+      const result = await first_scheduled_result;
       const [eligible, uncertain] = fixtures;
       expect(retirement).toHaveBeenCalledWith(
         eligible!.ticket.id,
@@ -496,6 +515,7 @@ test.skipIf(process.platform !== 'linux')(
         ),
       ).toBeUndefined();
     } finally {
+      fixture_ready.resolve();
       // Release the synthetic uncertainty after its preservation assertion so this
       // test's server can complete its ordinary shutdown without retained custody.
       database.write((sql) =>
