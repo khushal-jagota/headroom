@@ -47,17 +47,10 @@ Area preparation retains the exact new Ticket integrity faults from one audit. T
 
 Agent requests authenticate with private conversation launch tokens. Trusted ingress supplies the owner identity. On a hosted server, unidentified callers can read and send a message to Chief. Identity-free local calls retain owner access. A failed credential never inherits owner access. There is no process or cgroup peer check.
 
-The default peer resolver refuses before constructing its proc context or doing I/O
-when `VITEST=true`, `PYTEST_CURRENT_TEST` is present, or `PLAN_TEST_MODE` is a truthy
-test-mode value. Tests can supply an explicit private `PeerLookupContext` to exercise
-the resolver. The current raw WebSocket preview upgrade requires Tailscale-owner
-ingress. `executor/app_transport.ts` handles the obsolete executor connect upgrade
-through trusted executor ingress and refuses it before acceptance.
+The raw WebSocket preview upgrade requires Tailscale-owner ingress.
+`executor/app_transport.ts` handles the obsolete executor connect upgrade through
+trusted executor ingress and refuses it before acceptance.
 There is no general application WebSocket route.
-
-One direct comparison reuses Python's synthetic proc fixtures and Fastify injection, without a listener or database.
-It covers peer evidence, bypasses, refusal values, config consumption and the default test I/O guard. Its body takes 0.51 seconds, with zero skill-tree guard receipts.
-TypeScript, Ruff and mypy pass. Added helpers total 423 lines against 426 product lines (99.3%).
 
 ## How an area adds itself
 
