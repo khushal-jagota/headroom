@@ -13,7 +13,7 @@ The database and the folders are copied back to back, not at one transactional i
 
 ## How snapshots are made and kept
 
-A snapshot is written to a temporary folder and published only after the database integrity check and the file checksums pass. A failure leaves earlier snapshots untouched. Only the newest few verified snapshots are kept. Two callers take them, both through the installed app: the nightly timer described in [Environments](environments.md), and [Deployment](deployment.md) before an update whose new release changes the database schema, while the server still runs. If that backup fails, the live app is not replaced. A mismatch against the installed app record logs a warning and does not block a backup. The strict file check at install time stays.
+A snapshot is written to a temporary folder and published only after the database integrity check and the file checksums pass. A failure leaves earlier snapshots untouched. Only the newest few verified snapshots are kept. Two callers take them, both through the installed app: the nightly timer described in [Environments](environments.md), and [Deployment](deployment.md) before an update whose new release changes the database schema, while the server still runs. If that backup fails, the live app is not replaced. The installed launcher forwards backup and maintenance commands to the same CLI as manual operations. The timer units stay unchanged for a TypeScript release. A mismatch against the installed app record logs a warning and does not block a backup. The strict file check at install time stays.
 
 ## Restore
 
@@ -30,8 +30,8 @@ Deployment's own recovery uses a snapshot only before the new app is proven. Aft
 ## Code
 
 - `src/planner/environments/backup.py`: capture, verification, retention, and restore.
-- The `environment backup`, `backup-current`, and `restore` commands in `src/planner/environments/cli.py`.
+- The `environment backup`, `backup-current`, and `restore` commands in `server/environments/cli.ts` and `src/planner/environments/cli.py`.
 - `ops/panels-environments/panels-db-backup.*`: the Linux nightly unit.
 - [Mac source installation](../ops/mac-home/installation.md): the login-session backup schedule and isolated restore procedure.
 
-_Last verified: 2026-11-04._
+_Last verified: 2026-11-16._

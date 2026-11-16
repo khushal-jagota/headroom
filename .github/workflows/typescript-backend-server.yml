@@ -3,7 +3,7 @@ on:
   pull_request:
     branches: [feature/typescript-backend]
   push:
-    branches: [feature/typescript-backend]
+    branches: [feature/typescript-backend, ticket/t_57s7b5hm-workspace-8f6df478325e]
   schedule:
     - cron: '17 */4 * * *'
   workflow_dispatch:
@@ -41,7 +41,7 @@ jobs:
       - name: Check new native-style violations
         if: matrix.node == '22'
         env:
-          STYLE_BASE: ${{ github.event.pull_request.base.sha }}
+          STYLE_BASE: ${{ github.ref == 'refs/heads/ticket/t_57s7b5hm-workspace-8f6df478325e' && 'ca81dd8335f587a3d17926870d52f245dcbd6f4f' || github.event.pull_request.base.sha }}
         run: |
           if [ -z "$STYLE_BASE" ]; then
             git fetch origin feature/typescript-backend:refs/remotes/origin/feature/typescript-backend
