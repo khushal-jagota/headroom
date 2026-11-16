@@ -58,7 +58,9 @@ export function admitMessage(sql: AuthoritySql, caller: Principal, recipient: Pr
   }
   if (recipient.kind === 'owner' || recipient.kind === 'chief') return;
   if (recipient.kind === 'unidentified')
-    throw new PlannerError('validation', 'unknown message recipient kind', { kind: recipient.kind });
+    throw new PlannerError('validation', 'unknown message recipient kind', {
+      kind: recipient.kind,
+    });
   const target: Target = { kind: recipient.kind, id: recipient.id };
   if (isAbove(sql, caller, target)) return;
   if (
