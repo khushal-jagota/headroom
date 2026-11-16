@@ -3592,7 +3592,9 @@ select {
   min-width: 0;
   max-width: 100%;
   min-height: 0;
+  /* Clipped, never scrolled: see .manager-page. */
   overflow: hidden;
+  overflow: clip;
   /* The gap under the conversation, matching the one between the nav and the ticket's
    * title, so the page breathes the same at both ends. On a notched phone the
    * safe-area inset wins, so the composer clears the home indicator. */
@@ -4407,7 +4409,13 @@ a.artifact-chip:hover,
   min-width: 0;
   max-width: 100%;
   min-height: 0;
+  /* Clipped, never scrolled. The floating conversation zone sits at this page's bottom edge, so
+   * if the page could scroll, the zone would scroll with it and stand lifted off the floor.
+   * `overflow: hidden` still scrolls when the browser reveals the caret of a pasted draft, and
+   * anything that escapes the document's own scroller (the hidden loading status of a list far
+   * down the page) gives it room to. `clip` has no scroll position. */
   overflow: hidden;
+  overflow: clip;
   --conversation-edge-gap: max(var(--space-4), env(safe-area-inset-bottom));
   container-type: inline-size;
   /* Its own name for its own rules, and `conversation-host` for the one question every
