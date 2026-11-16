@@ -142,6 +142,12 @@ export async function home_install_comparison(
           const operation = argv[1]!,
             label = argv.at(-1)!.split('/').at(-1)!;
           if (operation === 'print') {
+            // A real unresolved stop consumes its observation budget. Keep this RPC below 30 seconds.
+            if (
+              value.scenario === 'stop-unconfirmed' &&
+              effects.some((effect) => effect[1] === 'bootout')
+            )
+              throw new Error('scripted stop observation deadline');
             if (value.scenario === 'loaded-conflict' && label === service)
               stdout = 'path = /another/home.plist\n';
             else if (jobs.has(label)) {

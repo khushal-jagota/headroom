@@ -318,27 +318,46 @@ test('replacement root and changed service files retain their trees before any u
   }
   const darwin = await fixture(),
     controls: string[][] = [];
-  let loaded: string | undefined;
+  let loaded: string | undefined,
+    plan: HomeServicePlan | undefined,
+    foreign = true,
+    stopping = false,
+    persistent = false,
+    expired = false,
+    polls = 0;
   try {
     await assert.rejects(
       install_home(darwin.request, {
         ...darwin.deps,
         system: 'darwin',
         architecture: 'arm64',
-        service: create_darwin_home_service,
+        service: async (request, host) => (plan = await create_darwin_home_service(request, host)),
         async command(argv) {
           if (argv[0] === '/usr/bin/plutil')
             return { code: 0, stdout: readFileSync(argv.at(-1)!, 'utf8'), stderr: '' };
-          if (argv[1] === 'print')
-            return loaded
-              ? {
-                  code: 0,
-                  stdout: `path = ${loaded}\nprogram = /foreign/idle-program\n`,
-                  stderr: '',
-                }
-              : { code: 1, stdout: '', stderr: 'Could not find service' };
+          if (argv[1] === 'print') {
+            if (loaded && stopping) {
+              polls++;
+              if (persistent) expired = true;
+              else if (polls > 1) loaded = undefined;
+            }
+            if (!loaded) return { code: 1, stdout: '', stderr: 'Could not find service' };
+            const job = JSON.parse(readFileSync(loaded, 'utf8'));
+            return {
+              code: 0,
+              stdout: foreign
+                ? `path = ${loaded}\nprogram = /foreign/idle-program\n`
+                : `path = ${loaded}\nprogram = ${job.ProgramArguments[0]}\nworking directory = ${job.WorkingDirectory}\narguments = {\n${job.ProgramArguments.join('\n')}\n}\nenvironment = {\n${Object.entries(
+                    job.EnvironmentVariables,
+                  )
+                    .map(([key, value]) => `${key} => ${value}`)
+                    .join('\n')}\n}\n`,
+              stderr: '',
+            };
+          }
           controls.push([...argv]);
           if (argv[1] === 'bootstrap') loaded = argv.at(-1)!;
+          if (argv[1] === 'bootout') stopping = true;
           return { code: 0, stdout: '', stderr: '' };
         },
       }),
@@ -348,6 +367,36 @@ test('replacement root and changed service files retain their trees before any u
     assert(!controls.some((argv) => argv[1] === 'bootout'));
     assert(existsSync(join(darwin.request.root, 'app/sealed')));
     assert(existsSync(loaded));
+    const path = loaded,
+      bytes = readFileSync(path);
+    const assert_owned = async (current: string) => {
+      assert.equal(current, path);
+      assert.deepEqual(readFileSync(current), bytes);
+    };
+    foreign = false;
+    controls.length = 0;
+    await plan!.stop(darwin.deps.execution, assert_owned);
+    assert.equal(polls, 2);
+    assert.equal(controls.filter((argv) => argv[1] === 'bootout').length, 1);
+    assert(existsSync(path));
+    loaded = path;
+    stopping = false;
+    persistent = true;
+    controls.length = 0;
+    const actual_now = performance.now.bind(performance);
+    const clock = vi
+      .spyOn(performance, 'now')
+      .mockImplementation(() => actual_now() + (expired ? 1000 : 0));
+    try {
+      await assert.rejects(
+        plan!.stop({ ...darwin.deps.execution, deadline: actual_now() / 1000 + 0.5 }, assert_owned),
+        /time budget/,
+      );
+      assert.equal(controls.filter((argv) => argv[1] === 'bootout').length, 1);
+      assert(existsSync(path));
+    } finally {
+      clock.mockRestore();
+    }
   } finally {
     await darwin.close();
   }

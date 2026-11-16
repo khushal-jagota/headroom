@@ -3,12 +3,18 @@ import { lstat } from 'node:fs/promises';
 import { realpathSync } from 'node:fs';
 import { join } from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
+import { setTimeout as pause } from 'node:timers/promises';
 import type { ReleaseExecution } from '../environments/release/contracts.ts';
 import { home_service_environment } from './environment.ts';
 import { external_home_node } from '../environments/updates/darwin/identity.ts';
 import { darwin_schedule_jobs, read_home_job } from '../environments/updates/darwin/jobs.ts';
 import { create_darwin_home_io } from '../environments/updates/darwin/service.ts';
 import { authenticate_loaded_job } from '../environments/updates/darwin/logic/launchd.ts';
+import {
+  DARWIN_HOME_COMMAND_SECONDS,
+  DARWIN_HOME_POLL_MILLISECONDS,
+} from '../environments/updates/darwin/configuration.ts';
+import { assert_release_execution } from '../environments/release/process.ts';
 import {
   HOME_SERVICE_COMMAND_TIMEOUT_SECONDS,
   HOME_SERVICE_OBSERVATION_TIMEOUT_SECONDS,
@@ -115,7 +121,12 @@ export async function create_darwin_home_service(
     host.command(
       ['/bin/launchctl', ...args],
       execution,
-      observation ? HOME_SERVICE_OBSERVATION_TIMEOUT_SECONDS : HOME_SERVICE_COMMAND_TIMEOUT_SECONDS,
+      Math.min(
+        observation
+          ? HOME_SERVICE_OBSERVATION_TIMEOUT_SECONDS
+          : HOME_SERVICE_COMMAND_TIMEOUT_SECONDS,
+        execution.deadline === null ? Infinity : execution.deadline - performance.now() / 1000,
+      ),
       allow_nonzero,
     );
   const missing = (result: { code: number; stderr: string }) =>
@@ -150,20 +161,34 @@ export async function create_darwin_home_service(
       for (const index of [1, 2, 3]) await start(index, execution);
     },
     async stop(execution, assert_owned) {
-      const io = create_darwin_home_io(execution, host.environment, {
-        command: host.command,
+      const scope = {
+        ...execution,
+        deadline: Math.min(
+          execution.deadline ?? Infinity,
+          performance.now() / 1000 + DARWIN_HOME_COMMAND_SECONDS,
+        ),
+      };
+      const io = create_darwin_home_io(scope, host.environment, {
+        command: (argv, budget, seconds, allow_nonzero) =>
+          host.command(
+            argv,
+            budget,
+            Math.min(seconds, scope.deadline - performance.now() / 1000),
+            allow_nonzero,
+          ),
         uid: host.uid,
         account_home: host.account_home,
       });
       for (const index of [...attempted].reverse()) {
+        assert_release_execution(scope);
         const label = labels[index]!,
           path = files[index]!.path;
         await assert_owned(path);
-        const plist = await read_home_job(path, io, execution);
+        const plist = await read_home_job(path, io, scope);
         if (!isDeepStrictEqual(plist, jobs[label]))
           throw new Error(`The LaunchAgent definition changed after creation: ${label}`);
         await assert_owned(path);
-        const result = await command(['print', domain + '/' + label], execution, true, true);
+        const result = await command(['print', domain + '/' + label], scope, true, true);
         if (missing(result)) continue;
         await assert_owned(path);
         if (result.code !== 0)
@@ -175,9 +200,32 @@ export async function create_darwin_home_service(
           Object.keys(plist.EnvironmentVariables),
           realpathSync,
         );
-        await command(['bootout', domain + '/' + label], execution);
-        if (!missing(await command(['print', domain + '/' + label], execution, true, true)))
-          throw new Error(`Cannot confirm that the new LaunchAgent stopped: ${label}`);
+        await command(['bootout', domain + '/' + label], scope);
+        for (;;) {
+          assert_release_execution(scope);
+          await assert_owned(path);
+          const after = await command(['print', domain + '/' + label], scope, true, true);
+          assert_release_execution(scope);
+          if (missing(after)) break;
+          if (after.code !== 0)
+            throw new Error(`Cannot confirm that the new LaunchAgent stopped: ${label}`);
+          await assert_owned(path);
+          authenticate_loaded_job(
+            after.stdout,
+            path,
+            plist,
+            Object.keys(plist.EnvironmentVariables),
+            realpathSync,
+          );
+          await pause(
+            Math.min(
+              DARWIN_HOME_POLL_MILLISECONDS,
+              Math.max(0, (scope.deadline - performance.now() / 1000) * 1000),
+            ),
+            undefined,
+            { signal: scope.signal },
+          );
+        }
       }
     },
   };

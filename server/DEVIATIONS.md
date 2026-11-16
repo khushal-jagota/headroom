@@ -848,6 +848,9 @@ All remaining ordered PATH entries and service environment values compare with f
 Cleanup uses retained directory descriptors and exclusive creation, rather than recursive deletion through a replaceable pathname.
 Changed root or service file identities retain installation files. A timed-out cleanup observer retains descriptors until actual native work settles.
 This deliberate uncertainty can retain more files than Python cleanup. It never broadens service control or deletion authority.
+After authenticated Darwin bootout, first-install cleanup now waits for job removal with the shared updater limits: one 120-second budget and 500-millisecond polls.
+Python first-install cleanup checks once immediately and can refuse while launchd completes removal.
+The Manager accepted this correction after hosted evidence on November 16, 2026. Changed ownership, unreadable jobs, or deadline expiry still refuse cleanup.
 Darwin home admission uses the shared explicit home target and native Node version-2 proof.
 Darwin updates select only the nested Mac home receipt and artifact, and use launchd for their independent copied installer.
 They retain the existing barrier, attempt writer, exact schema frontier, app swap and restore owners.
