@@ -61,6 +61,7 @@ from planner.tickets.logic import (
     review_transfer,
 )
 from planner.tickets.logic.decisions import Decision
+from planner.tickets.logic.recap import validate_recap
 from planner.tickets.proposal_contention import begin_proposal
 from planner.worker_settings.contracts import ManagedWorkerLaunchDefaults
 from planner.worker_settings.service import read_worker_launch_defaults_for_ticket_creation
@@ -2009,6 +2010,7 @@ def edit_ticket(
         # The recap and settled field values are whole documents set through the same
         # Ticket edit door as scalar fields.
         if "recap" in edit:
+            validate_recap(edit["recap"])
             changes.append(("recap", "recap", ticket.recap, edit["recap"]))
             changes.append(
                 (

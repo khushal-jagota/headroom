@@ -419,14 +419,18 @@ def test_work_overviews_keep_recaps_and_freshness_without_individual_reads(
         "title": "Child result", "worker_type": "coding",
         "manager": {"kind": "manager", "id": manager["id"]},
     }))
-    # Longer than the summary preview, so a preview cannot masquerade as the full recap.
+    # A recap stored before the 80-character cap, longer than the summary preview, so a
+    # preview cannot masquerade as the full recap.
     ticket_recap = "A full recap with the next decision. " * 20
     manager_recap = "Own result awaits a decision."
     cli(server, "manager", "set", manager["id"], "recap", "--value", manager_recap)
     cli(
         server, "ticket", "edit", ticket["id"], "--input-json", "-",
-        stdin=json.dumps({"recap": ticket_recap}),
+        stdin=json.dumps({"recap": "Short."}),
     )
+    with closing(connect(str(server.db_path))) as conn:
+        conn.execute("UPDATE tickets SET recap = ? WHERE id = ?", (ticket_recap, ticket["id"]))
+        conn.commit()
     manager_row = cli(server, "manager", "list", "--active")["managers"][0]
     ticket_row = cli(server, "ticket", "list", "--manager", manager["id"])["tickets"][0]
     workspace = cli(server, "manager", "workspace", manager["id"])
