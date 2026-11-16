@@ -111,8 +111,9 @@ export class DarwinWorkerProcesses implements WorkerProcessPrimitives {
     try {
       if (!this.#native.exists(recorded.pid)) return true;
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === 'EPERM') return false;
-      throw error;
+      // A reused PID can belong to another user. Inspect its birth before
+      // retaining a legacy fence merely because kill(pid, 0) was refused.
+      if ((error as NodeJS.ErrnoException).code !== 'EPERM') throw error;
     }
     try {
       const current = this.#native.info(recorded.pid);

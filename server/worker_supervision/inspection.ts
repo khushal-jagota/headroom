@@ -1,7 +1,7 @@
 import { stringify_python_json } from '../core/http/numeric_json.ts';
 /** Journal inspection and bounded cleanup share the same locked source evidence. */
 import { readdir } from 'node:fs/promises';
-import { join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 import { setTimeout as pause } from 'node:timers/promises';
 import type { LocalChildIdentity } from '../conversation/local_child_contracts.ts';
 import type {
@@ -18,11 +18,12 @@ import { discover, validate_pending_shape } from './logic/ownership.ts';
 import { capture_observation } from './observation.ts';
 import { WorkerSupervisionRuntime } from './runtime.ts';
 import * as records from './records.ts';
+import { remove_transport } from '../platform_runtime/darwin/launchd/transport.ts';
 
 export const failure_message = (error: unknown): string =>
   error instanceof Error ? error.message : String(error);
 export const CLEANUP_SCOPE =
-  'Linux cleanup requires empty delegated cgroup custody for all inherited descendants. Legacy or unsupported Linux custody retains a cleanup fence. Processes launched through external brokers are outside descendant custody. Mac cleanup covers recorded process incarnations and observed session members only, with an immediate matching microsecond birth check and an accepted check-to-signal race.';
+  'Linux cleanup requires empty delegated cgroup custody for all inherited descendants. Legacy or unsupported Linux custody retains a cleanup fence. Processes launched through external brokers are outside descendant custody. Mac job cleanup requires removal of the exact launchd service. launchd owns its process group; detached descendants require native verification. Legacy Mac records use exact process birth checks.';
 export function cleanup_result(complete: boolean, reason: string): CleanupResult {
   return { complete, reason, scope: CLEANUP_SCOPE };
 }
@@ -48,13 +49,20 @@ export async function observe_unlocked(
   const context = options.context ?? (await runtime.context(deadline));
   if (context.host.host !== record.host)
     throw new Error('Worker process record belongs to another machine');
-  if (context.host.boot !== record.boot)
+  if (context.host.boot !== record.boot) {
+    if (record.launchd_socket_directory) await remove_transport(record.launchd_socket_directory);
     Object.assign(record, {
       state: 'complete',
       boot_ended: true,
       reason: 'The recorded boot ended',
     });
-  else if (record.state !== 'complete') {
+  } else if (record.launchd) {
+    // Job custody never falls through to PID or session discovery.
+    if (!runtime.jobs) throw new Error('Worker launchd inspector is unavailable');
+    const expected = runtime.jobs.identity(dirname(path), basename(path, '.json'));
+    if (record.launchd.domain !== expected.domain || record.launchd.label !== expected.label)
+      throw new Error('Worker launchd custody does not match its record');
+  } else if (record.state !== 'complete') {
     const observation =
       options.observation ??
       (options.fresh
@@ -93,6 +101,9 @@ function identity_matches(
 ): boolean {
   return (
     identity === undefined ||
+    (record.launchd !== undefined &&
+      record.boot === identity.boot &&
+      identity.unit === `${record.launchd.domain}/${record.launchd.label}`) ||
     (record.root != null &&
       record.root.pid === identity.pid &&
       record.root.birth === identity.birth &&
@@ -119,8 +130,35 @@ export async function inspect_unlocked(
   let record = await observe_unlocked(path, options);
   if (!identity_matches(record, options.identity))
     return cleanup_result(false, 'Worker custody does not match its process record');
-  if (record.state === 'complete')
+  if (record.state === 'complete') {
+    runtime.active_jobs.delete(path);
     return cleanup_result(true, record.reason ?? 'Recorded processes ended');
+  }
+  if (record.launchd) {
+    if (!runtime.jobs) throw new Error('Worker launchd inspector is unavailable');
+    if (
+      record.state === 'pending' &&
+      !record.launch_revoked &&
+      !record.launch_failed &&
+      !options.revoke_pending
+    )
+      return cleanup_result(false, 'Worker job launch is pending');
+    const status = await runtime.jobs.status(record.launchd, deadline);
+    if (status !== 'absent')
+      return cleanup_result(
+        false,
+        status === 'running' ? 'Worker job is running' : 'Worker job remains loaded',
+      );
+    if (record.launchd_socket_directory) await remove_transport(record.launchd_socket_directory);
+    Object.assign(record, {
+      state: 'complete',
+      launch_revoked: true,
+      reason: 'Worker launchd job is absent',
+    });
+    await records.write(path, record);
+    runtime.active_jobs.delete(path);
+    return cleanup_result(true, record.reason!);
+  }
   if (record.root == null) {
     if (
       !options.revoke_pending &&
@@ -199,8 +237,21 @@ export function stop_record(path: string, options: InspectionOptions): Promise<C
           let record = await observe_unlocked(path, settings);
           if (!identity_matches(record, options.identity))
             return cleanup_result(false, 'Worker custody does not match its process record');
-          if (record.state === 'complete')
+          if (record.state === 'complete') {
+            runtime.active_jobs.delete(path);
+            if (record.launchd_socket_directory)
+              await remove_transport(record.launchd_socket_directory);
             return cleanup_result(true, record.reason ?? 'Recorded processes ended');
+          }
+          if (record.launchd) {
+            if (!runtime.jobs) throw new Error('Worker launchd inspector is unavailable');
+            // Serialize revocation with the proxy's bootstrap. No late job can
+            // appear after this stop's absence receipt.
+            record.launch_revoked = true;
+            await records.write(path, record);
+            await runtime.jobs.stop(record.launchd, deadline);
+            return inspect_unlocked(path, settings);
+          }
           if (record.root == null) return revoke(path, record);
           const term_deadline = Math.min(deadline, runtime.clock() + TERM_SECONDS);
           for (const [signal, phase_deadline] of [
@@ -354,6 +405,10 @@ export function reconcile(
           if (context_error) result = cleanup_result(false, context_error);
           else if (context!.host.host !== record.host)
             result = cleanup_result(false, 'Prior Worker custody belongs to another machine');
+          else if (record.launchd)
+            result = options.runtime.active_jobs.has(path)
+              ? await inspect_record(path, { runtime: options.runtime, deadline, context })
+              : await stop_record(path, { runtime: options.runtime, deadline, context });
           else if (
             context!.host.boot === record.boot &&
             record.owner != null &&

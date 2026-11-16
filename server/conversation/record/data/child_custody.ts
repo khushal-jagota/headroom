@@ -84,7 +84,12 @@ export function write_started(
     identity.pid <= 0 ||
     !identity.birth.trim() ||
     !identity.boot.trim() ||
-    (identity.unit !== null && !/^panels-worker-[0-9a-f]{32}\.service$/.test(identity.unit))
+    (identity.unit !== null &&
+      !/^panels-worker-[0-9a-f]{32}\.service$/.test(identity.unit) &&
+      !(
+        identity.supervision_record !== null &&
+        /^gui\/[0-9]+\/com\.panels\.worker\.[0-9a-f]+\.[0-9a-f]{32}$/.test(identity.unit)
+      ))
   )
     return;
   tx.run(

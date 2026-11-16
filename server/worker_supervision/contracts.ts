@@ -32,6 +32,16 @@ export interface WorkerCgroupPrimitives {
   empty(identity: CgroupIdentity): Promise<boolean>;
   remove(identity: CgroupIdentity): Promise<void>;
 }
+/** One launch attempt in the executor user's launchd domain. Never a PID authority. */
+export interface WorkerJobIdentity {
+  readonly domain: string;
+  readonly label: string;
+}
+export interface WorkerJobPrimitives {
+  identity(root: string, token: string): WorkerJobIdentity;
+  status(job: WorkerJobIdentity, deadline: number): Promise<'absent' | 'loaded' | 'running'>;
+  stop(job: WorkerJobIdentity, deadline: number): Promise<void>;
+}
 export interface CleanupResult {
   readonly complete: boolean;
   readonly reason: string;
@@ -93,4 +103,6 @@ export interface WorkerProcessRecord {
   cgroup_error?: string;
   observation_error?: string;
   unattributed_session_members?: WorkerProcess[];
+  launchd?: WorkerJobIdentity;
+  launchd_socket_directory?: string;
 }

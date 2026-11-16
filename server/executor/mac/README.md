@@ -8,7 +8,12 @@ Each producer receives the original absolute stop deadline. Actual joins precede
 `host/entry.ts` supplies the production update, provider, catalog, and Darwin process bindings plus signal ownership.
 The packaged `entrypoint.ts` reuses the ordinary CLI. `run.ts` binds parent mode to the fixed runtime supervisor and child mode to the host.
 
-Worker supervision records exact process custody in `run/worker-processes`.
+Mac Worker supervision records one launchd job per launch in `run/worker-processes`.
+The private record retains the executor's login domain and a unique job label before bootstrap.
+New jobs use those identities for stop and restart, rather than recorded process numbers.
+Provider input and output cross a private local bridge because launchd does not return child pipes.
+The job does not restart a crashed Worker automatically. Recovery removes its retained job before a new launch.
+Historical PID records still require exact incarnation evidence. A changed birth retires an old PID record even if its numeric existence probe returns EPERM.
 Startup runs the one-time legacy cleanup pass before modern reconciliation and a cleanup snapshot.
 Starts serialize per Ticket before inspection, and unresolved cleanup fences only the affected Ticket.
 Explicit cleanup commands check the exact historical source. Leases copy the cached evidence.
