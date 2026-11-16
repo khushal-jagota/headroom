@@ -160,10 +160,10 @@ def test_settle_reopen_keeps_outstanding_work_and_worker_address(
     # Advance the fixed clock so the later settlement is newer through the server's write door.
     next_update = datetime.fromtimestamp(int(empty_settled["updated_at"]) + 1, UTC)
     api.direct_post(server, "/api/test/set-now", {"now": next_update.isoformat()})
-    # The row waits on the owner's approval, so its mark column shows the Review mark, which
-    # outranks its unread message's dot (redesign, owner). The mark stays through settle,
-    # reopen and the other conversations' reads below.
-    attention = row.get_by_role("img", name="Needs your approval")
+    # The unread message takes the mark column ahead of the pending approval.
+    # It stays through settle, reopen, and reads of the other conversations below.
+    # The approval bucket independently preserves the pending proposal.
+    attention = row.get_by_role("img", name="Unread message")
     expect(attention).to_be_visible(timeout=WAIT_MS)
     expect(card.locator(".item-head .stage-mark")).to_have_count(0)
     expect(left.locator("[data-chief-destination] .stage-mark")).to_have_count(0)

@@ -74,11 +74,12 @@ def _finish(api: ApiHelper, server: ServerHandle, ticket: JsonObject) -> None:
     api.direct_post(
         server,
         f"/api/tickets/{identity}/accept/brief",
-        {"next_ceiling": "done", "next_holder": OWNER},
+        {"next_ceiling": "needs_consequences", "next_holder": OWNER},
     )
-    # A Done ceiling accepts each proposal as it arrives.
+    # Earlier proposals settle below the ceiling. The final report needs acceptance.
     for field in ("what_changes", "implementation", "consequences"):
         _propose(server, identity, f"Synthetic {field}.")
+    api.direct_post(server, f"/api/tickets/{identity}/accept/consequences", {})
     assert api.get(server, f"/api/tickets?detail=full&id={identity}")["stage"] == "done"
 
 

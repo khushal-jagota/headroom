@@ -263,10 +263,23 @@ def _preview_lifecycle(browser, url):
         page.wait_for_function("!document.querySelector('[data-preview-index=\"0\"] [data-visible-content-restoring]')")
         assert not page.evaluate("window.__firstPreview.isConnected")
         assert sum('preview0.html' in href for href in reads) == 2, reads
-        expect(restored_slot.locator('[data-html-fetch-notice]')).to_have_text('file fetch failed: 503')
-        # Failure completes restoration and is retryable when this preview returns.
-        page.locator('[data-preview-fixture]').evaluate("element=>element.scrollTop=element.scrollHeight")
-        page.wait_for_function("document.querySelector('[data-preview-index=\"0\"] [data-visible-content-state]')?.dataset.visibleContentState !== 'active'")
+        # HTML loads as a native document. Its HTTP error body completes restoration,
+        # without a separate fetched-text error surface in the parent component.
+        expect(restored_slot.frame_locator('iframe').locator('body')).to_have_text('Temporary restore failure')
+        failed_frame = restored_slot.locator('iframe').element_handle()
+        # Returning inside the retention budget keeps native state. Traverse enough
+        # distinct previews to evict this document before proving a fresh request.
+        for index in (4, 8, 12, 16, 23):
+            page.locator(f'[data-preview-index="{index}"]').evaluate(
+                "element=>element.closest('[data-preview-fixture]').scrollTop=element.offsetTop"
+            )
+            page.wait_for_function(
+                "index=>Array.from(document.querySelectorAll('[data-file-preview-html]')).some(frame=>frame.title.includes('preview'+index+'.html'))",
+                arg=index,
+            )
+            page.wait_for_function("window.__retainedRoots().length <= window.__inactiveLimit")
+        assert failed_frame is not None
+        page.wait_for_function("frame=>!frame.isConnected", arg=failed_frame)
         page.locator('[data-preview-fixture]').evaluate("element=>element.scrollTop=0")
         restored_slot.frame_locator('iframe').get_by_role('button', name='Increment').wait_for()
         assert sum('preview0.html' in href for href in reads) == 3, reads
@@ -332,7 +345,14 @@ def _preview_lifecycle(browser, url):
         assert sum('reload.html' in href for href in reads) == refresh_before + 1
         with page.expect_request('**/files/tickets/t_preview/replacement.html'):
             page.evaluate("window.__retained('document','/files/tickets/t_preview/replacement.html')")
-        expect(document_content.locator('.skeleton')).to_have_count(1)
+        # A different full HTML target gets its own native frame, without a parent
+        # skeleton. While its response waits, it cannot show the obsolete document.
+        assert not page.evaluate('window.__refreshFrame.isConnected')
+        replacement_frame = document_content.locator('iframe')
+        assert replacement_frame.evaluate("element=>element!==window.__refreshFrame")
+        expect(replacement_frame).to_have_attribute('src', '/files/tickets/t_preview/replacement.html')
+        expect(document_content.frame_locator('iframe').locator('body')).to_have_text('')
+        expect(document_content.locator('.skeleton')).to_have_count(0)
         hold_previews = False
         for route in held_reads:
             route.fulfill(content_type='text/html', body='<html><body>' + (

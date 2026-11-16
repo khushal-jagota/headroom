@@ -394,14 +394,22 @@ def test_real_vite_applications_share_only_their_generation(
 
         for peer in active_sockets:
             peer.on("close", record_close)
-        expired_at = time.monotonic()
-        api(
+        proposed = api(
             "POST",
             f"/api/tickets/{apps[0][0]['id']}/propose",
             headers=worker,
             client=agent,
             json={"body": "Synthetic browser proof complete."},
         )
+        assert proposed["stage"] == "needs_consequences"
+        assert proposed["pending_proposal"] is not None
+        # A report at its ceiling waits for approval. Only acceptance finishes the Ticket.
+        expired_at = time.monotonic()
+        completed = api(
+            "POST", f"/api/tickets/{apps[0][0]['id']}/accept/consequences", json={}
+        )
+        assert completed["stage"] == "done"
+        assert completed["pending_proposal"] is None
         api("DELETE", f"/api/tickets/{apps[1][0]['id']}")
         deadline = expired_at + 2
         while len(closed_at) < 2:
