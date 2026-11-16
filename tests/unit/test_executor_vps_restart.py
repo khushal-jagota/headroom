@@ -608,7 +608,9 @@ def test_a_mac_restart_recovers_one_drained_conversation_once(
                 for event in await harness.events("mac-a")
                 if isinstance(event.payload, PromptEventPayload)
             ]
-            assert prompts == ["work", RECOVERY_TEXT]
+            assert len(prompts) == 2 and prompts[0] == "work"
+            assert prompts[1].startswith(RECOVERY_TEXT)
+            assert "panels api METHOD PATH --input-json - --json" in prompts[1]
             assert ConversationEventKind.prompt_delivery_refused not in (
                 await harness.recorded_kinds("mac-a")
             )
@@ -1065,6 +1067,14 @@ def test_a_kill_while_a_never_ran_prompt_waits_to_be_written_again_starts_no_age
                 )
             )
             await asyncio.wait_for(entered.wait(), 5)
+            # The real factory reads the close transaction through ExecutorStore.
+            # Refresh scripted custody at this barrier before kill checks its proof.
+            from planner.executor.store import ExecutorStore
+
+            assert _run_closed(db_path, old)
+            (retired,) = ExecutorStore(str(db_path)).retained_runs()
+            assert retired.reference == old and retired.retirement_confirmed
+            runs.runs["mac"] = retired
             await asyncio.wait_for(harness.system.kill("mac"), 5)
             go.set()
             await asyncio.wait_for(retiring, 5)

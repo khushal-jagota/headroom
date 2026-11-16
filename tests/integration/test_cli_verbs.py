@@ -9,6 +9,7 @@ import subprocess
 import sys
 from pathlib import Path
 
+from tests.support.launch_identity import agent_environment
 from tests.support.server import ApiHelper, ServerHandle
 
 from planner.environments.app import _write_app_entrypoints
@@ -51,6 +52,7 @@ def test_installed_panels_preserves_worker_identity_for_read_and_write(
             "PLAN_SERVER_URL": server.base,
             "PLAN_TICKET_ID": ticket_id,
             "PLAN_ACTOR": "worker",
+            **agent_environment(server, "worker", ticket_id),
             "PLAN_APP_ROOT": "/ambient/wrong-app",
             "PLAN_APP_SHA": "76543210fedcba9876543210fedcba9876543210",
             "PYTHONPATH": "/ambient/package",
@@ -61,11 +63,12 @@ def test_installed_panels_preserves_worker_identity_for_read_and_write(
         ["panels", "environment", "status", "--json"],
         cwd=outside_checkout,
         env=environment,
-        check=True,
+        check=False,
         capture_output=True,
         text=True,
         timeout=30,
     )
+    assert local_status.returncode == 0, local_status.stderr
     assert json.loads(local_status.stdout)["app"] == {
         "state": "healthy",
         "summary": "configured app identity",
@@ -76,11 +79,12 @@ def test_installed_panels_preserves_worker_identity_for_read_and_write(
         ["panels", "worker", "my-ticket", "--json"],
         cwd=outside_checkout,
         env=environment,
-        check=True,
+        check=False,
         capture_output=True,
         text=True,
         timeout=30,
     )
+    assert identity.returncode == 0, identity.stderr
     assert json.loads(identity.stdout)["header"]["id"] == ticket_id
 
     proposal = subprocess.run(
@@ -93,11 +97,12 @@ def test_installed_panels_preserves_worker_identity_for_read_and_write(
         input="Success through installed panels.",
         cwd=outside_checkout,
         env=environment,
-        check=True,
+        check=False,
         capture_output=True,
         text=True,
         timeout=30,
     )
+    assert proposal.returncode == 0, proposal.stderr
     assert json.loads(proposal.stdout)["id"] == ticket_id
     detail = api.get(server, f"/api/tickets?detail=full&id={ticket_id}")
     assert detail["pending_proposal"]["body"] == "Success through installed panels."

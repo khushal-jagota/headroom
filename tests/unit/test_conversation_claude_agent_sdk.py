@@ -20,7 +20,7 @@ import json
 import sqlite3
 from pathlib import Path
 from types import SimpleNamespace
-from typing import cast
+from typing import Any, cast
 from unittest.mock import AsyncMock
 from uuid import UUID
 
@@ -50,6 +50,10 @@ from tests.support.conversation_claude_agent_sdk_bench import (
     _write,
 )
 
+from planner.agent_identity.contracts import (
+    LAUNCH_TOKEN_ENVIRONMENT_NAME,
+    UNIDENTIFIED_LAUNCH_TOKEN,
+)
 from planner.conversation.backends.claude_agent_sdk import (
     _ClaudeCleanupTransport,
     _ClaudeProtocolTransport,
@@ -128,7 +132,10 @@ def test_a_resume_that_answers_under_another_session_is_refused(tmp_path: Path) 
         assert options.cli_path == Path("/usr/bin/claude")
         assert options.model == start.model
         assert options.effort == "medium"
-        assert options.env == {"PLAN_ACTOR": "worker"}
+        assert options.env == {
+            "PLAN_ACTOR": "worker",
+            LAUNCH_TOKEN_ENVIRONMENT_NAME: UNIDENTIFIED_LAUNCH_TOKEN,
+        }
         assert options.permission_mode == "bypassPermissions"
         assert options.can_use_tool is not None
         assert options.resume == SESSION_ID
@@ -169,7 +176,10 @@ def test_a_manager_wake_crosses_the_claude_adapter_with_its_sender_label(
         assert options.cli_path == Path("/usr/bin/claude")
         assert options.model == start.model
         assert options.effort == "medium"
-        assert options.env == {"PLAN_ACTOR": "worker"}
+        assert options.env == {
+            "PLAN_ACTOR": "worker",
+            LAUNCH_TOKEN_ENVIRONMENT_NAME: UNIDENTIFIED_LAUNCH_TOKEN,
+        }
         assert options.permission_mode == "bypassPermissions"
         assert options.can_use_tool is not None
         assert options.resume is None
@@ -504,6 +514,8 @@ def test_claudes_own_command_reply_is_reported_only_when_nothing_else_says_it(
          SESSION_ID, BackendSpawnFailed),
         (RuntimeError("Not logged in. Run /login."), None, BackendSpawnFailed),
         (RuntimeError("Requested session is unavailable"), SESSION_ID, SessionLoadFailed),
+        (Exception("Control request timeout: initialize"), SESSION_ID, SessionLoadFailed),
+        (Exception("Control request timeout: other"), None, BackendSpawnFailed),
     ],
 )
 def test_unavailable_claude_start_preserves_adapter_failure_and_sends_no_prompt(
@@ -745,5 +757,37 @@ def test_a_reader_that_died_with_an_error_does_not_keep_the_client_open(tmp_path
         assert child._reader is None
         assert child._client is None
         assert clients[0].disconnected
+
+    _run(exercise)
+
+
+@pytest.mark.parametrize("cursor", [None, SESSION_ID])
+def test_initialize_timeout_remains_distinct_for_new_and_resumed_sessions(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, cursor: str | None
+) -> None:
+    from planner.conversation.backends.contracts import ClaudeInitializeTimeout
+
+    async def timeout(self: _ScriptedClaudeSdkClient) -> None:
+        from claude_agent_sdk._internal.query import Query
+
+        class SilentTransport:
+            async def write(self, data: str) -> None:
+                pass
+
+        query = Query(transport=cast(Any, SilentTransport()), is_streaming_mode=True)
+        await query._send_control_request({"subtype": "initialize"}, timeout=0.001)
+
+    monkeypatch.setattr(_ScriptedClaudeSdkClient, "connect", timeout)
+
+    async def exercise() -> None:
+        start = _start_request(workspace_folder=tmp_path)
+        child, sink, clients = _bench(start)
+        try:
+            with pytest.raises(ClaudeInitializeTimeout):
+                await child.start(start, vendor_session_cursor=cursor)
+            assert clients[0].prompts == []
+            assert sink.cursors == []
+        finally:
+            await child.stop()
 
     _run(exercise)

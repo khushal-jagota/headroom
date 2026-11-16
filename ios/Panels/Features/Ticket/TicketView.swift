@@ -30,6 +30,10 @@ struct TicketView: View {
     }
 
     var body: some View {
+        ScreenTextEntryScope { textEntry in ticketContent(textEntry: textEntry) }
+    }
+
+    private func ticketContent(textEntry: ScreenTextEntryContext) -> some View {
         ScrollView {
             VStack(alignment: .leading, spacing: PanelsTheme.Space.xl) {
                 AgentPageControls { ticketMenu }
@@ -53,7 +57,7 @@ struct TicketView: View {
                 TicketDecisionDock(presentation: presentation, proposal: proposal, decision: decision)
             }
         }
-        .conversationNavigation(owner: .ticket(ticketID), conversationID: detail?.conversationId, title: detail?.title ?? "Ticket", openConversationID: openConversationID, refreshError: error, retry: { await load() })
+        .conversationNavigation(owner: .ticket(ticketID), conversationID: detail?.conversationId, title: detail?.title ?? "Ticket", openConversationID: openConversationID, refreshError: error, retry: { await load() }, textEntry: textEntry)
         .panelsRefreshable { await load(); await loadArtifacts() }
         .screenLoadState("ticket", hasContent: detail != nil, error: error, showsRefreshError: false) { await load() }
         .resourceDemand(resource)
@@ -84,7 +88,7 @@ struct TicketView: View {
         }
         .navigationDestination(item: $linkedArtifact) { RouteDestination(route: $0) }
         .environment(\.openURL, OpenURLAction { url in
-            if let route = TicketArtifactRoute.linkedDestination(url, baseURL: store.baseURL, title: url.lastPathComponent) { linkedArtifact = route; return .handled }
+            if let route = TicketArtifactRoute.linkedDestination(url, baseURL: store.baseURL, title: url.lastPathComponent) { textEntry.endEditingBeforeNavigation { linkedArtifact = route }; return .handled }
             return ArtifactTarget.isRetiredGoalURL(url, baseURL: store.baseURL) ? .discarded : .systemAction
         })
     }
@@ -167,7 +171,7 @@ struct TicketView: View {
                     .panelsScaledFont(size: 15, weight: .semibold)
                     .foregroundStyle(presentation.ticket.agentState == "errored" ? PanelsTheme.Web.error : PanelsTheme.Web.strong)
                     .accessibilityAddTraits(.isHeader)
-                if !presentation.terminal && presentation.currentField != "consequences" {
+                if !presentation.terminal {
                     Button { scopeOpen = true } label: {
                         HStack(alignment: .firstTextBaseline, spacing: PanelsTheme.Space.sm) {
                             Text("Approved until **\(presentation.ceilingLabel)**, then **\(presentation.holderLabel(presentation.ticket.ceilingHolder))** reviews")

@@ -1,0 +1,12 @@
+{
+  "ignore": {
+    "attention_history_metadata.started_at": "Schema initialization reads real wall time before the synthetic host clock is installed."
+  },
+  "response_ignore": {},
+  "tokens": {
+    "resource_source_versions.revision": "Trigger counters count SQL updates, so compare change rather than magnitude.",
+    "navigation_view_meta.ordering_generation": "Manager-approved comparator-generation metadata: Python uses ICU and TypeScript uses Intl. Compare generation changes while retaining exact semantic rows, source content hashes, and response bytes."
+  },
+  "response_tokens": {},
+  "derived_tables": {}
+}

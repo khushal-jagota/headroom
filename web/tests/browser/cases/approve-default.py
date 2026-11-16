@@ -37,7 +37,7 @@ def run(browser, urls):
             "label": label,
             "stages": stage_rows,
             "advance": {stages[i][0]: stages[i + 1][0] for i in range(len(stages) - 1)},
-            "ceiling_range": [stage for stage, _, field in stages if field != "consequences"],
+            "ceiling_range": [stage for stage, _, field in stages if field is not None],
             "default_ceiling": stages[1][0],
             "worker_profile_id": f"panels-worker-{worker_type}",
             "default_backend": "codex",
@@ -117,7 +117,7 @@ def run(browser, urls):
             "t_findings", "exploration", "needs_findings", "findings", "Evidence", 2
         ),
         "t_final_follow_up": ticket(
-            "t_final_follow_up", "exploration", "needs_proposed_follow_up", "proposed_follow_up", "Approved follow-up", 3
+            "t_final_follow_up", "exploration", "needs_consequences", "consequences", "Completed follow-up", 3
         ),
         "t_brief": ticket("t_brief", "coding", "needs_brief", "brief", "Kickoff request", 5),
         "t_review_replace": ticket(
@@ -125,7 +125,7 @@ def run(browser, urls):
         ),
         "t_stale": ticket("t_stale", "coding", "needs_plan", "plan", "Original stale plan", 6),
         "t_failure": ticket(
-            "t_failure", "coding", "needs_implementation", "implementation", "Retry me", 4
+            "t_failure", "coding", "needs_consequences", "consequences", "Retry me", 4
         ),
     }
     approvals = []
@@ -482,7 +482,7 @@ def run(browser, urls):
         else:
             assert panel.locator(".listbox-picker-list").evaluate("list => list.scrollHeight>list.clientHeight"), panel.evaluate("p => ({panel:p.getBoundingClientRect().toJSON(),doc:p.closest('.ticket-doc').getBoundingClientRect().toJSON(),list:p.querySelector('.listbox-picker-list').outerHTML,style:p.getAttribute('style')})")
             page.get_by_role("listbox").press("End")
-            last = panel.locator('[data-ceiling-picker-choice="done"]')
+            last = panel.locator('[data-ceiling-picker-choice="needs_design_12"]')
             assert last.evaluate("""row => {
                 const r=row.getBoundingClientRect(), p=row.closest('[data-ceiling-picker-panel]').getBoundingClientRect();
                 return r.top>=p.top && r.bottom<=p.bottom;
@@ -626,7 +626,7 @@ def run(browser, urls):
     page.evaluate("window.__refresh()")
     expect(proposal).to_have_text("Local edit")
     open_approval()
-    page.locator('[data-ceiling-picker-choice="done"]').click()
+    page.locator('[data-ceiling-picker-choice="needs_consequences"]').click()
     page.evaluate("fetch('/api/test/replace-coding', {method: 'POST'})")
     page.evaluate("window.__refresh()")
     expect(proposal).to_have_text("Replacement result")
@@ -739,7 +739,7 @@ def run(browser, urls):
     page.evaluate("window.__showReview('t_review_replace', 'plan')")
     expect(block().locator("[contenteditable]")).to_have_text("Original Review plan")
     open_approval()
-    page.locator('[data-ceiling-picker-choice="done"]').click()
+    page.locator('[data-ceiling-picker-choice="needs_consequences"]').click()
     page.evaluate("fetch('/api/test/replace-review', {method: 'POST'})")
     page.evaluate("window.__refresh()")
     expect(block().locator("[contenteditable]")).to_have_text("Replacement Review plan")

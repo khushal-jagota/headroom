@@ -23,7 +23,7 @@ final class TicketTests: XCTestCase {
             ceilingRange: ["needs_brief", "needs_wireframe", "done"])
         let presentation = TicketPresentation(ticket: try ticket(), manifest: manifest)
         XCTAssertEqual(presentation.completedCount, 1)
-        XCTAssertEqual(presentation.ceilingOptions.map(\.id), ["needs_wireframe", "done"])
+        XCTAssertEqual(presentation.ceilingOptions.map(\.id), ["needs_wireframe"])
         XCTAssertEqual(presentation.ceilingLabel, "Draw it")
         XCTAssertEqual(presentation.heading, "Currently working on Drawing")
         XCTAssertTrue(presentation.working)
@@ -44,18 +44,20 @@ final class TicketTests: XCTestCase {
         XCTAssertEqual(delivery.note, "Delivery uncertain · do not resend")
     }
 
-    func testLastDecisionRecognizesFollowThroughByItsFieldAndUsesServedBoundaries() throws {
+    func testConsequencesRemainsAReviewBoundary() throws {
         let manifest = TicketWorkerType(workerType: nil, label: "Custom workflow", stages: [
             .init(id: "needs_wireframe", label: "Review design", gatingField: "design", isTerminal: false, ownershipMode: "worker"),
             .init(id: "land", label: "Land it", gatingField: "consequences", isTerminal: false, ownershipMode: "worker"),
             .init(id: "done", label: "Done", gatingField: nil, isTerminal: true, ownershipMode: nil)
         ], fields: [.init(id: "design", label: "Design"), .init(id: "consequences", label: "Consequences")],
-            ceilingRange: ["needs_wireframe", "done"], advance: ["needs_wireframe": "land", "land": "done"])
+            ceilingRange: ["needs_wireframe", "land", "done"], advance: ["needs_wireframe": "land", "land": "done"])
         let presentation = TicketPresentation(ticket: try ticket(), manifest: manifest)
-        XCTAssertTrue(presentation.finalApproval)
-        XCTAssertEqual(presentation.ceilingOptions.map(\.id), ["needs_wireframe", "done"])
+        XCTAssertFalse(presentation.finalApproval)
+        XCTAssertEqual(presentation.ceilingOptions.map(\.id), ["needs_wireframe", "land"])
         XCTAssertEqual(manifest.stages.map(\.id), ["needs_wireframe", "land", "done"])
-        XCTAssertFalse(ReviewWorkerManifest(workflow: manifest).approvalBoundaries.contains { $0.id == "land" })
+        let review = ReviewWorkerManifest(workflow: manifest)
+        XCTAssertTrue(review.approvalBoundaries.contains { $0.id == "land" })
+        XCTAssertTrue(review.isFinalApproval(at: "land"))
     }
 
     func testRetainedEditsUseNarrowBodies() async throws {

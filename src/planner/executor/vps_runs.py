@@ -20,6 +20,7 @@ from functools import partial
 from typing import Any
 from uuid import uuid4
 
+from planner.agent_identity.data import canonical_principal
 from planner.conversation.backends.contracts import (
     BackendEventSink,
     BackendSpawnFailed,
@@ -126,8 +127,6 @@ class MacRuns:
         message_files: ConversationMessageFiles,
     ) -> MacRemoteChild:
         del message_files
-        if not ticket_id_of(resolved_start):
-            raise BackendSpawnFailed("Mac runs require a Ticket Worker identity")
         reference = self.assign_child(resolved_start)
         child = self._make_child(reference, event_sink=event_sink, initial_history_complete=True)
         self.children[reference.child_id] = child
@@ -151,9 +150,7 @@ class MacRuns:
         return child
 
     def _read_skill_snapshot(self, start: ResolvedConversationStart) -> CanonicalSkillSnapshot:
-        ticket_id = ticket_id_of(start)
-        if not ticket_id:
-            raise BackendSpawnFailed("Canonical skill bootstrap requires a Worker Ticket identity")
+        ticket_id = self._require_current_ticket(start)
         conn = db.connect(self.db_path)
         try:
             conn.execute("BEGIN")
@@ -181,12 +178,25 @@ class MacRuns:
                 raise BackendSpawnFailed(execution_unavailable_reason(conn, TicketLocale.macos))
             finally:
                 conn.close()
-        ticket_id = ticket_id_of(start)
-        if not ticket_id:
-            raise BackendSpawnFailed("Mac runs require a Ticket Worker identity")
+        ticket_id = self._require_current_ticket(start)
         child = ChildReference(identity.executor_incarnation, str(uuid4()), start.conversation_id)
         self.store.register_child(child, "ticket", ticket_id, now_ms())
         return child
+
+    def _require_current_ticket(self, start: ResolvedConversationStart) -> str:
+        """Only a current canonical Ticket link can receive a native capability."""
+        conn = db.connect(self.db_path)
+        try:
+            principal = canonical_principal(conn, start.conversation_id)
+        finally:
+            conn.close()
+        if (
+            principal is None
+            or principal.kind is not PrincipalKind.ticket
+            or ticket_id_of(start) != principal.id
+        ):
+            raise BackendSpawnFailed("Mac runs require the Ticket's current conversation identity")
+        return principal.id
 
     def _make_child(
         self,

@@ -6,6 +6,7 @@ from sqlite3 import Connection, IntegrityError
 import pytest
 from fastapi.testclient import TestClient
 from tests.support.api_app import _app
+from tests.support.launch_identity import agent_headers
 from tests.unit.test_manager_wakes import _item_and_ticket
 from tests.unit.test_measure_persistence import NOW, run, source, taken
 
@@ -281,8 +282,8 @@ def test_source_authority_project_agreement_and_revisions(
     )}
     with TestClient(_app(tmp_db)) as client:
         for headers in (
-            {"X-Plan-Actor": "sprint_item_supervisor", "X-Plan-Sprint-Item-ID": other_manager},
-            {"X-Plan-Actor": "worker", "X-Plan-Ticket-ID": other_ticket},
+            agent_headers(tmp_db, "sprint_item_supervisor", other_manager),
+            agent_headers(tmp_db, "worker", other_ticket),
         ):
             denied = client.post("/api/datasets", json=body, headers=headers)
             assert denied.status_code == 400, denied.text

@@ -7,6 +7,7 @@ from zoneinfo import ZoneInfo
 import pytest
 from fastapi.testclient import TestClient
 from tests.support.api_app import _app
+from tests.support.launch_identity import agent_headers
 from tests.support.measure_sources import NOW, configured_source
 from tests.unit.test_manager_wakes import _item_and_ticket
 
@@ -86,10 +87,7 @@ def test_assigned_worker_saves_tests_and_collects_without_daily_schedule(
         denied = client.put(
             f"/api/measure-sources/{source.id}/script",
             json={"expected_revision": source.source_revision, "text": "pass"},
-            headers={
-                "X-Plan-Actor": "sprint_item_supervisor",
-                "X-Plan-Sprint-Item-ID": other_manager,
-            },
+            headers=agent_headers(tmp_db, "sprint_item_supervisor", other_manager),
         )
         assert denied.status_code == 400, denied.text
         assert denied.json()["error"]["code"] == "agent_forbidden"

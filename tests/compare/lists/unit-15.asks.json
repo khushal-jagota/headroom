@@ -1,0 +1,607 @@
+{
+  "source_roots": [
+    "src/planner/conversation/system.py",
+    "src/planner/conversation/api.py",
+    "src/planner/conversation/logic/",
+    "src/planner/conversation/backends/contracts.py"
+  ],
+  "scenarios": [
+    "test_nothing_ever_answers_a_permission_ask_by_itself",
+    "test_a_pending_ask_holds_the_turn_open_until_it_is_answered",
+    "test_an_answer_lands_only_on_a_pending_ask_of_the_live_turn"
+  ],
+  "requests": [
+    {
+      "area": "test_nothing_ever_answers_a_permission_ask_by_itself",
+      "method": "POST",
+      "path": "/api/conversation/conversations",
+      "status": 201,
+      "json": {
+        "conversation_id": "u15-s14",
+        "model": "a-model",
+        "backend_key": "codex",
+        "workspace_folder": "/tmp"
+      }
+    },
+    {
+      "area": "test_nothing_ever_answers_a_permission_ask_by_itself",
+      "method": "GET",
+      "path": "/api/test/signals/u15-s14/inspect",
+      "status": 200,
+      "capture": {
+        "asks_1": ""
+      }
+    },
+    {
+      "area": "test_nothing_ever_answers_a_permission_ask_by_itself",
+      "method": "POST",
+      "path": "/api/conversation/conversations/u15-s14/send",
+      "status": 200,
+      "json": {
+        "content": [
+          {
+            "piece": "text",
+            "text": "incumbent"
+          }
+        ],
+        "sender_label": "owner"
+      }
+    },
+    {
+      "area": "test_nothing_ever_answers_a_permission_ask_by_itself",
+      "method": "GET",
+      "path": "/api/test/signals/u15-s14/inspect",
+      "status": 200,
+      "capture": {
+        "asks_2": ""
+      }
+    },
+    {
+      "area": "test_nothing_ever_answers_a_permission_ask_by_itself",
+      "method": "POST",
+      "path": "/api/test/signals/u15-s14/backend-news",
+      "status": 200,
+      "json": {
+        "events": [
+          {
+            "kind": "permission_asked",
+            "ask_id": "permission-1",
+            "title": "Read source?",
+            "detail": "Synthetic permission detail",
+            "options": [
+              {
+                "option_id": "allow-once",
+                "label": "Allow once",
+                "option_kind": "allow_once"
+              },
+              {
+                "option_id": "deny",
+                "label": "Deny",
+                "option_kind": "reject_once"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "area": "test_nothing_ever_answers_a_permission_ask_by_itself",
+      "method": "GET",
+      "path": "/api/test/signals/u15-s14/inspect",
+      "status": 200,
+      "capture": {
+        "asks_3": ""
+      }
+    },
+    {
+      "area": "test_nothing_ever_answers_a_permission_ask_by_itself",
+      "method": "GET",
+      "path": "/api/test/signals/u15-s14/inspect",
+      "status": 200,
+      "capture": {
+        "asks_4": "",
+        "ask_u15_s14_u15_s14": "runtime.pending_permission_ask_ids.0"
+      }
+    },
+    {
+      "area": "test_nothing_ever_answers_a_permission_ask_by_itself",
+      "method": "GET",
+      "path": "/api/test/signals/u15-s14/inspect",
+      "status": 200,
+      "capture": {
+        "asks_5": ""
+      }
+    },
+    {
+      "area": "test_nothing_ever_answers_a_permission_ask_by_itself",
+      "method": "POST",
+      "path": "/api/conversation/conversations/u15-s14/kill",
+      "status": 204
+    },
+    {
+      "area": "test_nothing_ever_answers_a_permission_ask_by_itself",
+      "method": "GET",
+      "path": "/api/test/signals/u15-s14/inspect",
+      "status": 200,
+      "capture": {
+        "asks_6": ""
+      }
+    },
+    {
+      "area": "test_a_pending_ask_holds_the_turn_open_until_it_is_answered",
+      "method": "POST",
+      "path": "/api/conversation/conversations",
+      "status": 201,
+      "json": {
+        "conversation_id": "u15-s15",
+        "model": "a-model",
+        "backend_key": "codex",
+        "workspace_folder": "/tmp"
+      }
+    },
+    {
+      "area": "test_a_pending_ask_holds_the_turn_open_until_it_is_answered",
+      "method": "GET",
+      "path": "/api/test/signals/u15-s15/inspect",
+      "status": 200,
+      "capture": {
+        "asks_7": ""
+      }
+    },
+    {
+      "area": "test_a_pending_ask_holds_the_turn_open_until_it_is_answered",
+      "method": "POST",
+      "path": "/api/conversation/conversations/u15-s15/send",
+      "status": 200,
+      "json": {
+        "content": [
+          {
+            "piece": "text",
+            "text": "incumbent"
+          }
+        ],
+        "sender_label": "owner"
+      }
+    },
+    {
+      "area": "test_a_pending_ask_holds_the_turn_open_until_it_is_answered",
+      "method": "GET",
+      "path": "/api/test/signals/u15-s15/inspect",
+      "status": 200,
+      "capture": {
+        "asks_8": ""
+      }
+    },
+    {
+      "area": "test_a_pending_ask_holds_the_turn_open_until_it_is_answered",
+      "method": "POST",
+      "path": "/api/test/signals/u15-s15/backend-news",
+      "status": 200,
+      "json": {
+        "events": [
+          {
+            "kind": "permission_asked",
+            "ask_id": "permission-1",
+            "title": "Read source?",
+            "detail": "Synthetic permission detail",
+            "options": [
+              {
+                "option_id": "allow-once",
+                "label": "Allow once",
+                "option_kind": "allow_once"
+              },
+              {
+                "option_id": "deny",
+                "label": "Deny",
+                "option_kind": "reject_once"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "area": "test_a_pending_ask_holds_the_turn_open_until_it_is_answered",
+      "method": "GET",
+      "path": "/api/test/signals/u15-s15/inspect",
+      "status": 200,
+      "capture": {
+        "asks_9": ""
+      }
+    },
+    {
+      "area": "test_a_pending_ask_holds_the_turn_open_until_it_is_answered",
+      "method": "GET",
+      "path": "/api/test/signals/u15-s15/inspect",
+      "status": 200,
+      "capture": {
+        "asks_10": "",
+        "ask_u15_s15_u15_s15": "runtime.pending_permission_ask_ids.0"
+      }
+    },
+    {
+      "area": "test_a_pending_ask_holds_the_turn_open_until_it_is_answered",
+      "method": "GET",
+      "path": "/api/test/signals/u15-s15/inspect",
+      "status": 200,
+      "capture": {
+        "asks_11": ""
+      }
+    },
+    {
+      "area": "test_a_pending_ask_holds_the_turn_open_until_it_is_answered",
+      "method": "GET",
+      "path": "/api/conversation/conversations/u15-s15",
+      "status": 200,
+      "capture": {
+        "asks_http_state_before_answer": ""
+      }
+    },
+    {
+      "area": "test_a_pending_ask_holds_the_turn_open_until_it_is_answered",
+      "method": "POST",
+      "path": "/api/conversation/conversations/u15-s15/permission-answers",
+      "status": 200,
+      "json": {
+        "ask_id": "${ask_u15_s15_u15_s15}",
+        "option_id": "allow-once"
+      }
+    },
+    {
+      "area": "test_a_pending_ask_holds_the_turn_open_until_it_is_answered",
+      "method": "GET",
+      "path": "/api/test/signals/u15-s15/inspect",
+      "status": 200,
+      "capture": {
+        "asks_12": ""
+      }
+    },
+    {
+      "area": "test_a_pending_ask_holds_the_turn_open_until_it_is_answered",
+      "method": "GET",
+      "path": "/api/conversation/conversations/u15-s15",
+      "status": 200,
+      "capture": {
+        "asks_http_state_after_answer": ""
+      }
+    },
+    {
+      "area": "test_a_pending_ask_holds_the_turn_open_until_it_is_answered",
+      "method": "POST",
+      "path": "/api/test/signals/u15-s15/finish",
+      "status": 200
+    },
+    {
+      "area": "test_a_pending_ask_holds_the_turn_open_until_it_is_answered",
+      "method": "GET",
+      "path": "/api/test/signals/u15-s15/inspect",
+      "status": 200,
+      "capture": {
+        "asks_13": ""
+      }
+    },
+    {
+      "area": "test_an_answer_lands_only_on_a_pending_ask_of_the_live_turn",
+      "method": "POST",
+      "path": "/api/conversation/conversations",
+      "status": 201,
+      "json": {
+        "conversation_id": "u15-s16",
+        "model": "a-model",
+        "backend_key": "codex",
+        "workspace_folder": "/tmp"
+      }
+    },
+    {
+      "area": "test_an_answer_lands_only_on_a_pending_ask_of_the_live_turn",
+      "method": "GET",
+      "path": "/api/test/signals/u15-s16/inspect",
+      "status": 200,
+      "capture": {
+        "asks_14": ""
+      }
+    },
+    {
+      "area": "test_an_answer_lands_only_on_a_pending_ask_of_the_live_turn",
+      "method": "POST",
+      "path": "/api/conversation/conversations/u15-s16/send",
+      "status": 200,
+      "json": {
+        "content": [
+          {
+            "piece": "text",
+            "text": "incumbent"
+          }
+        ],
+        "sender_label": "owner"
+      }
+    },
+    {
+      "area": "test_an_answer_lands_only_on_a_pending_ask_of_the_live_turn",
+      "method": "GET",
+      "path": "/api/test/signals/u15-s16/inspect",
+      "status": 200,
+      "capture": {
+        "asks_15": ""
+      }
+    },
+    {
+      "area": "test_an_answer_lands_only_on_a_pending_ask_of_the_live_turn",
+      "method": "POST",
+      "path": "/api/test/signals/u15-s16/backend-news",
+      "status": 200,
+      "json": {
+        "events": [
+          {
+            "kind": "permission_asked",
+            "ask_id": "permission-1",
+            "title": "Read source?",
+            "detail": "Synthetic permission detail",
+            "options": [
+              {
+                "option_id": "allow-once",
+                "label": "Allow once",
+                "option_kind": "allow_once"
+              },
+              {
+                "option_id": "deny",
+                "label": "Deny",
+                "option_kind": "reject_once"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "area": "test_an_answer_lands_only_on_a_pending_ask_of_the_live_turn",
+      "method": "GET",
+      "path": "/api/test/signals/u15-s16/inspect",
+      "status": 200,
+      "capture": {
+        "asks_16": ""
+      }
+    },
+    {
+      "area": "test_an_answer_lands_only_on_a_pending_ask_of_the_live_turn",
+      "method": "GET",
+      "path": "/api/test/signals/u15-s16/inspect",
+      "status": 200,
+      "capture": {
+        "asks_17": "",
+        "ask_u15_s16_u15_s16": "runtime.pending_permission_ask_ids.0"
+      }
+    },
+    {
+      "area": "test_an_answer_lands_only_on_a_pending_ask_of_the_live_turn",
+      "method": "POST",
+      "path": "/api/conversation/conversations/u15-s16/permission-answers",
+      "status": 200,
+      "json": {
+        "ask_id": "no-such-ask",
+        "option_id": "allow"
+      }
+    },
+    {
+      "area": "test_an_answer_lands_only_on_a_pending_ask_of_the_live_turn",
+      "method": "GET",
+      "path": "/api/test/signals/u15-s16/inspect",
+      "status": 200,
+      "capture": {
+        "asks_18": ""
+      }
+    },
+    {
+      "area": "test_an_answer_lands_only_on_a_pending_ask_of_the_live_turn",
+      "method": "POST",
+      "path": "/api/conversation/conversations/u15-s16/permission-answers",
+      "status": 200,
+      "json": {
+        "ask_id": "${ask_u15_s16_u15_s16}",
+        "option_id": "allow-once"
+      }
+    },
+    {
+      "area": "test_an_answer_lands_only_on_a_pending_ask_of_the_live_turn",
+      "method": "GET",
+      "path": "/api/test/signals/u15-s16/inspect",
+      "status": 200,
+      "capture": {
+        "asks_19": ""
+      }
+    },
+    {
+      "area": "test_an_answer_lands_only_on_a_pending_ask_of_the_live_turn",
+      "method": "POST",
+      "path": "/api/conversation/conversations/u15-s16/permission-answers",
+      "status": 200,
+      "json": {
+        "ask_id": "${ask_u15_s16_u15_s16}",
+        "option_id": "deny"
+      }
+    },
+    {
+      "area": "test_an_answer_lands_only_on_a_pending_ask_of_the_live_turn",
+      "method": "GET",
+      "path": "/api/test/signals/u15-s16/inspect",
+      "status": 200,
+      "capture": {
+        "asks_20": ""
+      }
+    },
+    {
+      "area": "test_an_answer_lands_only_on_a_pending_ask_of_the_live_turn",
+      "method": "POST",
+      "path": "/api/test/signals/u15-s16/finish",
+      "status": 200
+    },
+    {
+      "area": "test_an_answer_lands_only_on_a_pending_ask_of_the_live_turn",
+      "method": "GET",
+      "path": "/api/test/signals/u15-s16/inspect",
+      "status": 200,
+      "capture": {
+        "asks_21": ""
+      }
+    },
+    {
+      "area": "test_an_answer_lands_only_on_a_pending_ask_of_the_live_turn",
+      "method": "POST",
+      "path": "/api/conversation/conversations",
+      "status": 201,
+      "json": {
+        "conversation_id": "u15-s16-dead",
+        "model": "a-model",
+        "backend_key": "codex",
+        "workspace_folder": "/tmp"
+      }
+    },
+    {
+      "area": "test_an_answer_lands_only_on_a_pending_ask_of_the_live_turn",
+      "method": "GET",
+      "path": "/api/test/signals/u15-s16-dead/inspect",
+      "status": 200,
+      "capture": {
+        "asks_22": ""
+      }
+    },
+    {
+      "area": "test_an_answer_lands_only_on_a_pending_ask_of_the_live_turn",
+      "method": "POST",
+      "path": "/api/conversation/conversations/u15-s16-dead/send",
+      "status": 200,
+      "json": {
+        "content": [
+          {
+            "piece": "text",
+            "text": "incumbent"
+          }
+        ],
+        "sender_label": "owner"
+      }
+    },
+    {
+      "area": "test_an_answer_lands_only_on_a_pending_ask_of_the_live_turn",
+      "method": "GET",
+      "path": "/api/test/signals/u15-s16-dead/inspect",
+      "status": 200,
+      "capture": {
+        "asks_23": ""
+      }
+    },
+    {
+      "area": "test_an_answer_lands_only_on_a_pending_ask_of_the_live_turn",
+      "method": "POST",
+      "path": "/api/test/signals/u15-s16-dead/backend-news",
+      "status": 200,
+      "json": {
+        "events": [
+          {
+            "kind": "permission_asked",
+            "ask_id": "permission-1",
+            "title": "Read source?",
+            "detail": "Synthetic permission detail",
+            "options": [
+              {
+                "option_id": "allow-once",
+                "label": "Allow once",
+                "option_kind": "allow_once"
+              },
+              {
+                "option_id": "deny",
+                "label": "Deny",
+                "option_kind": "reject_once"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "area": "test_an_answer_lands_only_on_a_pending_ask_of_the_live_turn",
+      "method": "GET",
+      "path": "/api/test/signals/u15-s16-dead/inspect",
+      "status": 200,
+      "capture": {
+        "asks_24": ""
+      }
+    },
+    {
+      "area": "test_an_answer_lands_only_on_a_pending_ask_of_the_live_turn",
+      "method": "GET",
+      "path": "/api/test/signals/u15-s16-dead/inspect",
+      "status": 200,
+      "capture": {
+        "asks_25": "",
+        "ask_u15_s16_u15_s16_dead": "runtime.pending_permission_ask_ids.0"
+      }
+    },
+    {
+      "area": "test_an_answer_lands_only_on_a_pending_ask_of_the_live_turn",
+      "method": "POST",
+      "path": "/api/conversation/conversations/u15-s16-dead/interrupt",
+      "status": 204
+    },
+    {
+      "area": "test_an_answer_lands_only_on_a_pending_ask_of_the_live_turn",
+      "method": "GET",
+      "path": "/api/test/signals/u15-s16-dead/inspect",
+      "status": 200,
+      "capture": {
+        "asks_26": ""
+      }
+    },
+    {
+      "area": "test_an_answer_lands_only_on_a_pending_ask_of_the_live_turn",
+      "method": "POST",
+      "path": "/api/conversation/conversations/u15-s16-dead/permission-answers",
+      "status": 200,
+      "json": {
+        "ask_id": "${ask_u15_s16_u15_s16_dead}",
+        "option_id": "allow"
+      }
+    },
+    {
+      "area": "test_an_answer_lands_only_on_a_pending_ask_of_the_live_turn",
+      "method": "GET",
+      "path": "/api/test/signals/u15-s16-dead/inspect",
+      "status": 200,
+      "capture": {
+        "asks_27": ""
+      }
+    }
+  ],
+  "probes": [],
+  "report_captures": [
+    "asks_1",
+    "asks_2",
+    "asks_3",
+    "asks_4",
+    "asks_5",
+    "asks_6",
+    "asks_7",
+    "asks_8",
+    "asks_9",
+    "asks_10",
+    "asks_11",
+    "asks_12",
+    "asks_13",
+    "asks_14",
+    "asks_15",
+    "asks_16",
+    "asks_17",
+    "asks_18",
+    "asks_19",
+    "asks_20",
+    "asks_21",
+    "asks_22",
+    "asks_23",
+    "asks_24",
+    "asks_25",
+    "asks_26",
+    "asks_27",
+    "asks_http_state_after_answer",
+    "asks_http_state_before_answer"
+  ],
+  "candidate": "typescript"
+}

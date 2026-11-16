@@ -120,17 +120,31 @@ async def restart_worker(
             killed_conversation_looked_running = await conversations.is_running(
                 killed_conversation_id
             )
-            # kill owns cleanup proof. Its refusal must precede this transaction,
-            # so the Ticket still points at the Worker whose cleanup needs a recheck.
-            await conversations.kill(killed_conversation_id)
-        await run_on_worker_thread(
-            _unlink_give_back_the_claim_and_write_configuration,
-            conn,
-            ticket_id,
-            killed_conversation_id=killed_conversation_id,
-            write_employee_configuration=write_employee_configuration,
-            now=now(),
-        )
+            async def finish_restart(
+                check_cleanup: Callable[[sqlite3.Connection], None] | None,
+            ) -> None:
+                await run_on_worker_thread(
+                    _unlink_give_back_the_claim_and_write_configuration,
+                    conn,
+                    ticket_id,
+                    killed_conversation_id=killed_conversation_id,
+                    write_employee_configuration=write_employee_configuration,
+                    now=now(),
+                    check_cleanup=check_cleanup,
+                )
+
+            # The conversation owns both cleanup proof and the delivery fence until
+            # the old link is gone. A refused cleanup leaves the link untouched.
+            await conversations.kill_for_restart(killed_conversation_id, ticket_id, finish_restart)
+        else:
+            await run_on_worker_thread(
+                _unlink_give_back_the_claim_and_write_configuration,
+                conn,
+                ticket_id,
+                killed_conversation_id=None,
+                write_employee_configuration=write_employee_configuration,
+                now=now(),
+            )
     # Start obtains fresh read ownership, after mutation ownership ends.
     with explicit_start():
         start_result = await start_worker_step()
@@ -153,15 +167,20 @@ def _unlink_give_back_the_claim_and_write_configuration(
     write_employee_configuration: Callable[[sqlite3.Connection, int], None] | None,
     now: int,
     recover_after_failure: bool = True,
+    check_cleanup: Callable[[sqlite3.Connection], None] | None = None,
 ) -> None:
     """Unlink the killed conversation, give back any claim, and write the configuration.
 
     One transaction. The Ticket is read again inside it, because a Worker can file its
     proposal while the kill is awaited, and that gives the claim back by itself.
     """
+    cleanup_checked = check_cleanup is None
     try:
         conn.execute("BEGIN IMMEDIATE")
         ticket = tickets_data.read_ticket(conn, ticket_id)
+        if check_cleanup is not None:
+            check_cleanup(conn)
+            cleanup_checked = True
         if not recover_after_failure and ticket.conversation_id != killed_conversation_id:
             conn.execute("COMMIT")
             return
@@ -203,7 +222,7 @@ def _unlink_give_back_the_claim_and_write_configuration(
     except BaseException:
         if conn.in_transaction:
             conn.execute("ROLLBACK")
-        if killed_conversation_id is not None and recover_after_failure:
+        if killed_conversation_id is not None and recover_after_failure and cleanup_checked:
             try:
                 # The configuration failed, but the old child is already gone.
                 # Unlink it, but hold an errored claim so automatic readiness
@@ -215,6 +234,7 @@ def _unlink_give_back_the_claim_and_write_configuration(
                     write_employee_configuration=None,
                     now=now,
                     recover_after_failure=False,
+                    check_cleanup=check_cleanup,
                 )
             except BaseException:
                 logging.getLogger(__name__).exception(

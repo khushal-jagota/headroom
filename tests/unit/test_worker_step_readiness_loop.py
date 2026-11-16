@@ -12,7 +12,7 @@ import json
 import logging
 import sqlite3
 import threading
-from collections.abc import Callable, Iterator
+from collections.abc import Awaitable, Callable, Iterator
 from contextlib import closing
 from dataclasses import replace
 from datetime import datetime
@@ -23,6 +23,7 @@ from typing import Any, cast
 import pytest
 from tests.support.in_memory_conversation_system import InMemoryConversationSystem
 from tests.support.principals import OWNER_PRINCIPAL
+from tests.support.ticket_progress import advance_ticket
 
 from planner.conversation.contracts import (
     ConversationStartRequest,
@@ -239,6 +240,13 @@ class _MutateOnKillConversationSystem:
         self.mutate()
         await self.base.kill(conversation_id)
 
+    async def kill_for_restart(
+        self, conversation_id: str, ticket_id: str,
+        finish: Callable[[Callable[[sqlite3.Connection], None] | None], Awaitable[None]],
+    ) -> None:
+        self.mutate()
+        await self.base.kill_for_restart(conversation_id, ticket_id, finish)
+
 
 class _PauseKillConversationSystem:
     def __init__(self, base: InMemoryConversationSystem) -> None:
@@ -253,6 +261,14 @@ class _PauseKillConversationSystem:
         self.kill_started.set()
         await self.release_kill.wait()
         await self.base.kill(conversation_id)
+
+    async def kill_for_restart(
+        self, conversation_id: str, ticket_id: str,
+        finish: Callable[[Callable[[sqlite3.Connection], None] | None], Awaitable[None]],
+    ) -> None:
+        self.kill_started.set()
+        await self.release_kill.wait()
+        await self.base.kill_for_restart(conversation_id, ticket_id, finish)
 
 
 @pytest.fixture
@@ -299,6 +315,30 @@ def test_two_racing_claimers_on_one_database_produce_exactly_one_winner(
 
     assert sorted(outcomes) == [False, True]
     assert world.ticket(ticket_id).ticket_status is TicketStatus.agent
+
+
+def test_two_consequences_steps_can_claim_independently(world: _World) -> None:
+    """A claim for one Consequences step must not hold another Ticket back."""
+    first = world.ready_ticket(title="First", next_ceiling="needs_consequences")
+    second = world.ready_ticket(title="Second", next_ceiling="needs_consequences")
+    with closing(world.connect()) as conn:
+        for ticket_id in (first, second):
+            advance_ticket(
+                conn, ticket_id, new_stage="needs_consequences", principal=OWNER_PRINCIPAL, now=1
+            )
+            conn.execute(
+                "UPDATE ticket_decision_messages SET delivery_status='delivered' WHERE ticket_id=?",
+                (ticket_id,),
+            )
+        for ticket_id in (first, second):
+            claimed = tickets_data.claim_ticket_for_worker_step(
+                conn,
+                ticket_id,
+                readiness_check=worker_step_readiness.is_ready_for_worker_step,
+                now=2,
+            )
+            assert claimed is not None
+            assert claimed.worker_step_claim is WorkerStepClaim.out
 
 
 # --- the per-Ticket flow -------------------------------------------------------
@@ -1607,7 +1647,7 @@ def test_custom_guidance_reaches_first_payload_but_not_later_stage(
         specialist_skill=None,
         guidance="CUSTOM KICKOFF GUIDE",
     )
-    ticket_id = world.ready_ticket(workflow=workflow, next_ceiling="done")
+    ticket_id = world.ready_ticket(workflow=workflow, next_ceiling="needs_consequences")
     if first_sender == "loop":
         assert world.start_step(ticket_id).started
     else:

@@ -52,6 +52,7 @@ from planner.executor.protocol import (
     read_typed_frame,
 )
 
+pytestmark = pytest.mark.usefixtures("executor_transport_home")
 
 @asynccontextmanager
 async def ipc_service(
@@ -341,7 +342,7 @@ def test_response_failure_after_send_retains_original_identity(
             await writer.wait_closed()
             completed.set()
 
-        async with await asyncio.start_unix_server(peer, path=path / "executor.sock"):
+        async with await asyncio.start_unix_server(peer, path=ExecutorPaths(tmp_path).ipc_socket):
             response = await asyncio.to_thread(
                 ipc_client.request,
                 IpcOperation.write,

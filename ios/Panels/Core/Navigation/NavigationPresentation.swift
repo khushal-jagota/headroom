@@ -24,6 +24,7 @@ struct NavigationSignal: Equatable, Sendable {
 }
 
 struct NavigationTicket: Sendable {
+    let machineId: String
     let locale: String?
     let id: String
     let title: String
@@ -188,7 +189,7 @@ struct NavigationPresentation: Sendable {
             let projectId = parent == nil ? row.projectId : parentRow?.projectId
             let project = projectId.flatMap { projects[$0] }
             if row.integrityError != nil {
-                return NavigationTicket(locale: row.locale, id: id, title: row.title, workerType: row.workerType, stage: row.stage, ticketStatus: "errored",
+                return NavigationTicket(machineId: row.machineId, locale: row.locale, id: id, title: row.title, workerType: row.workerType, stage: row.stage, ticketStatus: "errored",
                     isBacklogged: row.isBacklogged, blocked: false, terminal: false, createdAt: row.createdAt, activityAt: row.updatedAt,
                     conversationId: row.conversationId, signal: NavigationSignal(facts), awaitingReply: facts?.messageForOwner,
                     awaitingAnswer: facts?.awaitingAnswer, awaitingApproval: false, awaitingAgentApproval: false, assigned: false,
@@ -197,7 +198,7 @@ struct NavigationPresentation: Sendable {
             }
             let owner = row.ceilingHolder == ViewPrincipal(kind: "owner", id: "owner")
             let parked = row.ticketStatus == "awaiting_approval"
-            return NavigationTicket(locale: row.locale, id: id, title: row.title, workerType: row.workerType, stage: row.stage, ticketStatus: row.ticketStatus,
+            return NavigationTicket(machineId: row.machineId, locale: row.locale, id: id, title: row.title, workerType: row.workerType, stage: row.stage, ticketStatus: row.ticketStatus,
                 isBacklogged: row.isBacklogged, blocked: row.blocked ?? false, terminal: row.terminal ?? false, createdAt: row.createdAt,
                 activityAt: row.updatedAt, conversationId: row.conversationId, signal: NavigationSignal(facts),
                 awaitingReply: facts?.messageForOwner, awaitingAnswer: facts?.awaitingAnswer,

@@ -1,0 +1,316 @@
+{
+  "source_roots": [
+    "src/planner/conversation/",
+    "src/planner/tickets/api.py"
+  ],
+  "external_proofs": [
+    {
+      "source_test": "test_review_reply_reads_only_displayed_run_on_queue_admission_and_later_delivery",
+      "coverage": "actual Ticket owner route; displayed seq2 and unseen seq3; queue admission and delivery preserve bound2; receipt repeat writes once"
+    },
+    {
+      "source_test": "test_refused_review_reply_does_not_acknowledge_displayed_messages",
+      "coverage": "actual Ticket owner route; native start refusal with displayed seq1 leaves bound0"
+    }
+  ],
+  "seed_requests": [
+    {
+      "method": "POST",
+      "path": "/api/tickets",
+      "status": 200,
+      "json": {
+        "title": "Bounded queued review",
+        "worker_type": "coding",
+        "project_id": "project_other",
+        "brief": "Bounded review receipt proof"
+      },
+      "capture": {
+        "queued_ticket": "id"
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/api/tickets",
+      "status": 200,
+      "json": {
+        "title": "Bounded refused review",
+        "worker_type": "coding",
+        "project_id": "project_other",
+        "brief": "Bounded review receipt proof"
+      },
+      "capture": {
+        "refused_ticket": "id"
+      }
+    }
+  ],
+  "requests": [
+    {
+      "area": "bounded-review-receipts",
+      "method": "POST",
+      "path": "/api/conversation/conversations",
+      "status": 201,
+      "json": {
+        "conversation_id": "u15b-queued",
+        "model": "gpt-6.1-sol",
+        "workspace_folder": "/tmp"
+      }
+    },
+    {
+      "area": "bounded-review-receipts",
+      "method": "POST",
+      "path": "/api/test/connected/bind",
+      "status": 200,
+      "json": {
+        "kind": "ticket",
+        "id": "${queued_ticket}",
+        "conversation_id": "u15b-queued"
+      }
+    },
+    {
+      "area": "bounded-review-receipts",
+      "method": "POST",
+      "path": "/api/tickets/${queued_ticket}/conversation/send",
+      "status": 200,
+      "json": {
+        "conversation_id": "u15b-queued",
+        "content": [
+          {
+            "piece": "text",
+            "text": "busy"
+          }
+        ],
+        "sender_label": "owner",
+        "sender_message_id": "busy"
+      }
+    },
+    {
+      "area": "bounded-review-receipts",
+      "method": "POST",
+      "path": "/api/test/signals/u15b-queued/message",
+      "status": 200,
+      "json": {
+        "kind": "ticket",
+        "id": "${queued_ticket}",
+        "label": "Worker",
+        "text": "displayed"
+      }
+    },
+    {
+      "area": "bounded-review-receipts",
+      "method": "GET",
+      "path": "/api/conversation/conversations/u15b-queued/events",
+      "status": 200,
+      "capture": {
+        "queued_displayed_events": ""
+      }
+    },
+    {
+      "area": "bounded-review-receipts",
+      "method": "POST",
+      "path": "/api/test/signals/u15b-queued/message",
+      "status": 200,
+      "json": {
+        "kind": "ticket",
+        "id": "${queued_ticket}",
+        "label": "Worker",
+        "text": "not displayed"
+      }
+    },
+    {
+      "area": "bounded-review-receipts",
+      "method": "POST",
+      "path": "/api/tickets/${queued_ticket}/conversation/send",
+      "status": 200,
+      "json": {
+        "conversation_id": "u15b-queued",
+        "content": [
+          {
+            "piece": "text",
+            "text": "bounded reply"
+          }
+        ],
+        "sender_label": "owner",
+        "sender_message_id": "queued-review",
+        "owner_read_through_sequence": 2
+      },
+      "capture": {
+        "queued_fate": ""
+      }
+    },
+    {
+      "area": "bounded-review-receipts",
+      "method": "GET",
+      "path": "/api/test/signals/u15b-queued/inspect",
+      "status": 200,
+      "capture": {
+        "queued_admission": ""
+      }
+    },
+    {
+      "area": "bounded-review-receipts",
+      "method": "POST",
+      "path": "/api/test/signals/u15b-queued/finish",
+      "status": 200
+    },
+    {
+      "area": "bounded-review-receipts",
+      "method": "GET",
+      "path": "/api/test/signals/u15b-queued/inspect",
+      "status": 200,
+      "capture": {
+        "queued_delivered": ""
+      }
+    },
+    {
+      "area": "bounded-review-receipts",
+      "method": "POST",
+      "path": "/api/tickets/${queued_ticket}/conversation/send",
+      "status": 200,
+      "json": {
+        "conversation_id": "u15b-queued",
+        "content": [
+          {
+            "piece": "text",
+            "text": "bounded reply"
+          }
+        ],
+        "sender_label": "owner",
+        "sender_message_id": "queued-review",
+        "owner_read_through_sequence": 2
+      },
+      "capture": {
+        "queued_duplicate": ""
+      }
+    },
+    {
+      "area": "bounded-review-receipts",
+      "method": "GET",
+      "path": "/api/test/signals/u15b-queued/inspect",
+      "status": 200,
+      "capture": {
+        "queued_after_duplicate": ""
+      }
+    },
+    {
+      "area": "bounded-review-receipts",
+      "method": "POST",
+      "path": "/api/conversation/conversations",
+      "status": 201,
+      "json": {
+        "conversation_id": "u15b-refused",
+        "model": "gpt-6.1-sol",
+        "workspace_folder": "/tmp"
+      }
+    },
+    {
+      "area": "bounded-review-receipts",
+      "method": "POST",
+      "path": "/api/test/connected/bind",
+      "status": 200,
+      "json": {
+        "kind": "ticket",
+        "id": "${refused_ticket}",
+        "conversation_id": "u15b-refused"
+      }
+    },
+    {
+      "area": "bounded-review-receipts",
+      "method": "POST",
+      "path": "/api/test/signals/u15b-refused/message",
+      "status": 200,
+      "json": {
+        "kind": "ticket",
+        "id": "${refused_ticket}",
+        "label": "Worker",
+        "text": "displayed"
+      }
+    },
+    {
+      "area": "bounded-review-receipts",
+      "method": "GET",
+      "path": "/api/conversation/conversations/u15b-refused/events",
+      "status": 200,
+      "capture": {
+        "refused_displayed_events": ""
+      }
+    },
+    {
+      "area": "bounded-review-receipts",
+      "method": "POST",
+      "path": "/api/test/signals/u15b-refused/configure",
+      "status": 200,
+      "json": {
+        "command": "start",
+        "target": "next",
+        "behavior": {
+          "error": {
+            "name": "BackendSpawnFailed",
+            "message": "bounded synthetic refusal"
+          }
+        }
+      }
+    },
+    {
+      "area": "bounded-review-receipts",
+      "method": "POST",
+      "path": "/api/tickets/${refused_ticket}/conversation/send",
+      "status": 200,
+      "json": {
+        "conversation_id": "u15b-refused",
+        "content": [
+          {
+            "piece": "text",
+            "text": "bounded reply"
+          }
+        ],
+        "sender_label": "owner",
+        "sender_message_id": "refused-review",
+        "owner_read_through_sequence": 1
+      },
+      "capture": {
+        "refused_fate": ""
+      }
+    },
+    {
+      "area": "bounded-review-receipts",
+      "method": "GET",
+      "path": "/api/test/signals/u15b-refused/inspect",
+      "status": 200,
+      "capture": {
+        "refused_admission": ""
+      }
+    },
+    {
+      "area": "navigation-operand-public-order",
+      "method": "GET",
+      "path": "/api/navigation/view/snapshot?view={%22projection_version%22%3A7%2C%22scope_generation%22%3A1%2C%22locale%22%3A%22en-US%22%2C%22selected%22%3A{%22kind%22%3A%22chief%22%2C%22id%22%3A%22chief%22}%2C%22selected_conversation_id%22%3Anull%2C%22review_conversation_ids%22%3A%5B%5D%2C%22review_skipped_keys%22%3A%5B%5D%2C%22review_priority_keys%22%3A%5B%5D%2C%22windows%22%3A%5B{%22section%22%3A%22children%22%2C%22owner%22%3A{%22kind%22%3A%22chief%22%2C%22id%22%3A%22chief%22}%2C%22group%22%3A%22all%22%2C%22child_filter%22%3A%22active%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A16}%2C{%22section%22%3A%22children%22%2C%22owner%22%3A{%22kind%22%3A%22chief%22%2C%22id%22%3A%22chief%22}%2C%22group%22%3A%22all%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A16}%2C{%22section%22%3A%22children%22%2C%22owner%22%3A{%22kind%22%3A%22chief%22%2C%22id%22%3A%22chief%22}%2C%22group%22%3A%22awaiting_approval%22%2C%22child_filter%22%3A%22active%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A16}%2C{%22section%22%3A%22children%22%2C%22owner%22%3A{%22kind%22%3A%22chief%22%2C%22id%22%3A%22chief%22}%2C%22group%22%3A%22awaiting_approval%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A16}%2C{%22section%22%3A%22rail_tickets%22%2C%22owner%22%3A{%22kind%22%3A%22chief%22%2C%22id%22%3A%22chief%22}%2C%22group%22%3A%22all%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A16}%2C{%22section%22%3A%22rail_tickets%22%2C%22owner%22%3A{%22kind%22%3A%22chief%22%2C%22id%22%3A%22chief%22}%2C%22group%22%3A%22awaiting_approval%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A16}%2C{%22section%22%3A%22review%22%2C%22owner%22%3Anull%2C%22group%22%3A%22all%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A16}%2C{%22section%22%3A%22unread%22%2C%22owner%22%3A{%22kind%22%3A%22chief%22%2C%22id%22%3A%22chief%22}%2C%22group%22%3A%22all%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A16}%2C{%22section%22%3A%22unread%22%2C%22owner%22%3A{%22kind%22%3A%22ticket%22%2C%22id%22%3A%22${queued_ticket}%22}%2C%22group%22%3A%22all%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A16}%2C{%22section%22%3A%22unread%22%2C%22owner%22%3A{%22kind%22%3A%22ticket%22%2C%22id%22%3A%22${refused_ticket}%22}%2C%22group%22%3A%22all%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A16}%2C{%22section%22%3A%22unread%22%2C%22owner%22%3Anull%2C%22group%22%3A%22all%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A16}%5D}",
+      "status": 200,
+      "capture": {
+        "receipt_windows_en": ""
+      }
+    },
+    {
+      "area": "navigation-operand-public-order",
+      "method": "GET",
+      "path": "/api/navigation/view/snapshot?view={%22projection_version%22%3A7%2C%22scope_generation%22%3A1%2C%22locale%22%3A%22de-DE%22%2C%22selected%22%3A{%22kind%22%3A%22chief%22%2C%22id%22%3A%22chief%22}%2C%22selected_conversation_id%22%3Anull%2C%22review_conversation_ids%22%3A%5B%5D%2C%22review_skipped_keys%22%3A%5B%5D%2C%22review_priority_keys%22%3A%5B%5D%2C%22windows%22%3A%5B{%22section%22%3A%22children%22%2C%22owner%22%3A{%22kind%22%3A%22chief%22%2C%22id%22%3A%22chief%22}%2C%22group%22%3A%22all%22%2C%22child_filter%22%3A%22active%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A16}%2C{%22section%22%3A%22children%22%2C%22owner%22%3A{%22kind%22%3A%22chief%22%2C%22id%22%3A%22chief%22}%2C%22group%22%3A%22all%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A16}%2C{%22section%22%3A%22children%22%2C%22owner%22%3A{%22kind%22%3A%22chief%22%2C%22id%22%3A%22chief%22}%2C%22group%22%3A%22awaiting_approval%22%2C%22child_filter%22%3A%22active%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A16}%2C{%22section%22%3A%22children%22%2C%22owner%22%3A{%22kind%22%3A%22chief%22%2C%22id%22%3A%22chief%22}%2C%22group%22%3A%22awaiting_approval%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A16}%2C{%22section%22%3A%22rail_tickets%22%2C%22owner%22%3A{%22kind%22%3A%22chief%22%2C%22id%22%3A%22chief%22}%2C%22group%22%3A%22all%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A16}%2C{%22section%22%3A%22rail_tickets%22%2C%22owner%22%3A{%22kind%22%3A%22chief%22%2C%22id%22%3A%22chief%22}%2C%22group%22%3A%22awaiting_approval%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A16}%2C{%22section%22%3A%22review%22%2C%22owner%22%3Anull%2C%22group%22%3A%22all%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A16}%2C{%22section%22%3A%22unread%22%2C%22owner%22%3A{%22kind%22%3A%22chief%22%2C%22id%22%3A%22chief%22}%2C%22group%22%3A%22all%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A16}%2C{%22section%22%3A%22unread%22%2C%22owner%22%3A{%22kind%22%3A%22ticket%22%2C%22id%22%3A%22${queued_ticket}%22}%2C%22group%22%3A%22all%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A16}%2C{%22section%22%3A%22unread%22%2C%22owner%22%3A{%22kind%22%3A%22ticket%22%2C%22id%22%3A%22${refused_ticket}%22}%2C%22group%22%3A%22all%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A16}%2C{%22section%22%3A%22unread%22%2C%22owner%22%3Anull%2C%22group%22%3A%22all%22%2C%22child_filter%22%3A%22all%22%2C%22anchor%22%3Anull%2C%22direction%22%3A%22after%22%2C%22limit%22%3A16}%5D}",
+      "status": 200,
+      "capture": {
+        "receipt_windows_de": ""
+      }
+    }
+  ],
+  "report_captures": [
+    "queued_displayed_events",
+    "queued_fate",
+    "queued_admission",
+    "queued_delivered",
+    "queued_duplicate",
+    "queued_after_duplicate",
+    "refused_displayed_events",
+    "refused_fate",
+    "refused_admission",
+    "receipt_windows_en",
+    "receipt_windows_de"
+  ],
+  "candidate": "typescript"
+}

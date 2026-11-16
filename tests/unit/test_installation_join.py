@@ -19,6 +19,7 @@ from click.testing import CliRunner
 from planner.executor.credential_file import write_credential
 from planner.installation import join
 from planner.installation.join_cli import machine_join_command
+from planner.installation.join_command import join_command
 from planner.installation.join_linux import install_linux_executor
 
 REVISION = "a" * 40
@@ -53,6 +54,56 @@ def test_owner_join_command_keeps_secret_out_of_command(monkeypatch: pytest.Monk
     assert CREDENTIAL not in command
     assert "--platform" not in command
     assert result.output.count(CREDENTIAL) == 1
+
+
+def test_owner_endpoint_returns_the_cli_command_and_refuses_without_origin(
+    tmp_path: Path,
+) -> None:
+    """The browser path must give the same command as the CLI, from the configured origin."""
+    import asyncio
+    from contextlib import closing
+    from types import SimpleNamespace
+
+    import httpx
+    from fastapi import FastAPI
+    from tests.support.launch_identity import agent_headers
+
+    from planner.core.db import connect, create_schema
+    from planner.core.errors import PlannerError
+    from planner.machines.credential_api import router
+
+    async def run() -> None:
+        database = str(tmp_path / "home.db")
+        with closing(connect(database)) as conn:
+            create_schema(conn)
+        app = FastAPI()
+        app.state.conn_factory = lambda: connect(database)
+        app.state.config = SimpleNamespace(
+            trusted_ingress_canonical_origin="https://home.example",
+            app_sha=REVISION, db_path=database
+        )
+        app.include_router(router, prefix="/api")
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://test"
+        ) as http:
+            worker = agent_headers(database, "worker", "t_01234567")
+            with pytest.raises(PlannerError):
+                await http.post("/api/machines/join-command", headers=worker, json={"name": "X"})
+            reply = await http.post("/api/machines/join-command", json={"name": "Studio"})
+            assert reply.status_code == 200
+            grant = reply.json()
+            expected = join_command(
+                home_url="https://home.example",
+                revision=REVISION,
+                machine_id=grant["machine_id"],
+                credential=grant["credential"],
+            )
+            assert grant["command"] == expected and grant["credential"] not in expected
+            app.state.config.trusted_ingress_canonical_origin = None
+            with pytest.raises(PlannerError, match="trusted_ingress_canonical_origin"):
+                await http.post("/api/machines/join-command", json={"name": "Again"})
+
+    asyncio.run(run())
 
 
 def test_join_refuses_existing_installation_before_native_actions(tmp_path: Path) -> None:

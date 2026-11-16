@@ -26,6 +26,7 @@ from planner.conversation.backends.contracts import (
     BackendStreamEnded,
     BackgroundTaskEnded,
     BackgroundTaskStarted,
+    ClaudeInitializeTimeout,
     NeedsRebind,
     PermissionAskRaised,
     PromptWriteRefused,
@@ -133,6 +134,7 @@ class _CommandAdmissionRefused(Exception):
 # A write_prompt for a child whose start failed is refused with this reason. Its R1
 # turn failure is then followed by R2, a stop proof, so the VPS retires the child.
 CHILD_START_FAILED = "child_start_failed"
+CLAUDE_START_RETRY_DELAY_SECONDS = 5
 
 
 def _digest(value: str) -> str:
@@ -697,7 +699,14 @@ class MacRunner:
             # Serialize only this Ticket before any slow native inspection. The
             # physical workspace mutex stays available to every other Ticket.
             await self.refresh_worker_cleanup(ticket_id=ticket_id)
-            return await self._start_run_admitted(command, args)
+            for attempt in range(3):
+                try:
+                    return await self._start_run_admitted(command, args)
+                except ClaudeInitializeTimeout:
+                    if attempt == 2:
+                        raise
+                    await asyncio.sleep(CLAUDE_START_RETRY_DELAY_SECONDS)
+            raise AssertionError("unreachable")
 
     async def _start_run_admitted(self, command: ChildCommand, args: StartRun) -> JsonObject:
         if command.child.child_id in self._children:

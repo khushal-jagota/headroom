@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any
 
 from fastapi.testclient import TestClient
+from tests.support.launch_identity import agent_headers
 from tests.unit.test_ticket_create_api import create_api as create_api
 
 
@@ -92,7 +93,7 @@ def test_custom_workflow_reaches_its_own_gate_and_accepts_its_own_result(
     proposal = client.post(
         f"/api/tickets/{ticket_id}/propose",
         json={"body": "The records agree."},
-        headers={"X-Plan-Actor": "worker", "X-Plan-Ticket-ID": ticket_id},
+        headers=agent_headers(client, "worker", ticket_id),
     )
     assert proposal.status_code == 200, proposal.text
     assert proposal.json()["pending_proposal"]["field"] == "evidence"

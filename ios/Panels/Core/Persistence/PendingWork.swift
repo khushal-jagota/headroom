@@ -21,6 +21,7 @@ struct PendingWork: Codable, Identifiable, Sendable {
     var decisionDraftUpdatedAt: Date?
     var completed: Date?
     var priorMessageIDs: [String]?
+    var rejectedPhotoDraft: RejectedPhotoDraft?
     var ticketTitle: String?
     var proposalFieldLabel: String?
     var displayText: String {
@@ -28,3 +29,11 @@ struct PendingWork: Codable, Identifiable, Sendable {
     }
 }
 
+
+/// Only empty post-clear versions are stored. Photo bytes stay once in the message.
+struct RejectedPhotoDraft: Codable, Sendable {
+    let id: String
+    let originalText: String?
+    let clearedTextUpdatedAt: Date?
+    let clearedAttachmentsUpdatedAt: Date?
+}

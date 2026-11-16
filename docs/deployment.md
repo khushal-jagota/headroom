@@ -19,11 +19,15 @@ installer unit: stop → swap folders → start → health ── healthy → do
 
 ## What it is made of
 
+The TypeScript Linux builder rebuilds browser assets from source, then removes build tools and unused platform binaries before it seals the archive. The Linux executor uses the same builder. Installation consumes the sealed archive and runs no source build.
+
 - **Publication.** A GitHub workflow on hosted machines. For one commit, the suites and static checks run on their own machines while another builds once and seals the archive. It then proves the archive on a clean Debian root and, at the same time, rehearses the install on a throwaway known-good release with the same installer the live host uses. A native Mac machine builds and proves separate Mac executor and home artifacts. A last machine checks every proof against the build and writes the receipt. Panels offers a release only when the whole run passed. If one job fails, "Re-run failed jobs" reruns only that job. Every attempt of a run checks the same commit, so the last machine accepts evidence from the attempt that made it, and still requires the latest result of every job to be a pass. Shared or unknown changes select all default suites.
 - **The sealed release.** An archive plus a receipt. It holds the app, a private CPython 3.12 with its native libraries, a virtual environment with every pinned Python dependency, the built browser app, and the agent backends' Node packages. Each build resolves current Claude Code and Codex CLIs and records the versions it checks. Once sealed, the archive never changes.
 - **The live tree.** `~/Deployments/Panels/current/` with `app`, `data`, and `logs`. An install changes only `app`. The next release waits beside it, unpacked, and the previous one stays beside it after an install. See [Environments](environments.md).
 - **The installer.** One small program that uses only Python's standard library. It runs outside every app, so the app it replaces cannot break it.
 - **The attempt record.** One small file beside the live data, outside the database and its backups. It says what one press of Update is doing and how it ended, with the time of each step. The update card and the deployment status that the iOS app shows read it. It is the one file that crosses versions, so every version ignores what it does not know and keeps it when it writes.
+
+The separate hosted cutover rehearsal uses a synthetic database and a real Linux user service. It exercises the Python migration bridge, the TypeScript replacement, and both rollback paths. Its fixture supplies the staged release and attempt, so it does not prove GitHub publication discovery or the owner's Update action. No live host or Mac participates.
 
 ## What a release needs from the host
 
@@ -99,19 +103,13 @@ The deploy workflow never changes Tailscale Serve. A separate manual workflow re
 - Data is restorable only until the new app is proven.
 - Every attempt ends, and nothing waits for the Mac.
 
-## When `scripts/dev` refuses
+## Development checkouts
 
-Development worktrees must never share dependency storage with the installed app, because a shared `node_modules` or `.venv` can write into the deployed tree and break its integrity proof. `scripts/dev` guards setup, npm, pytest, and mypy before the tool starts. No flag turns it off.
+Development dependencies and runtime state stay separate from the installed app. `scripts/dev` launches setup and development tools without a filesystem safety scan.
 
-Python tests also replace inherited runtime paths with private scratch storage. The shared pytest setup and Python browser runners apply this rule before application imports. They refuse remaining deployment paths and live server URLs. Each process gets separate storage, and server fixtures select their own local server. An explicit test URL prevents the CLI from falling back to the live server. Original launch evidence remains available to the existing containment checks.
+Python tests replace inherited runtime paths with private scratch storage before application imports. They refuse remaining deployment paths and live server URLs. Each process gets separate storage, and server fixtures select their own local server. An explicit test URL prevents the CLI from falling back to the live server.
 
-A refusal prints the command and one of two findings: shared deployment storage detected, or dependency safety could not be established. It names the path examined, what it resolved to, the protected deployment path, and the signal used.
-
-- **The sharing is real.** Make a fresh worktree and run `scripts/dev setup`. Do not delete dependencies through an unresolved link or mount.
-- **Independent dependencies were refused.** Fix the detector and add a regression check.
-- **Evidence was missing.** Restore it, then retry.
-
-Commands outside the guard, such as Ruff or a direct `.venv/bin` call, can still write into the deployed tree. The archive digest shows the damage afterwards; it does not prevent it. If a write reaches the installed tree, leave it in place and report it. Never clean the installed tree to force an install through.
+The archive digest detects damage after a write. If a write reaches the installed tree, leave it in place and report it. Never clean the installed tree to force an install through.
 
 ## Code
 
@@ -121,8 +119,8 @@ Commands outside the guard, such as Ruff or a direct `.venv/bin` call, can still
 - `src/planner/platform_runtime/`: shared contracts and selection, with Linux native packaging, contract validation, and service operations. `src/planner/environments/runtime_admission.py` and `scripts/runtime_target_proof.py` coordinate runtime proof.
 - `src/planner/environments/mac_updates.py`: the Mac target and its progress.
 - `web/src/components/UpdateActions.svelte`, `web/src/lib/updates/`: the card.
-- `scripts/dev`, `scripts/development_safety/`: the worktree guard.
+- `scripts/dev`, `scripts/dev_launcher.py`: setup and development commands.
 - `scripts/test_runtime/`: private runtime paths and early deployment refusal for Python tests.
 - `ops/panels-environments/`: user units and runner setup.
 
-_Last verified: 2026-11-13._
+_Last verified: 2026-11-16._

@@ -3264,3 +3264,142 @@ def test_local_cancel_revokes_saved_answer_before_native_wait_across_restart(
             await harness.close()
 
     asyncio.run(run())
+
+
+def test_claude_initialize_timeout_preserves_ordered_prompt_across_replacement(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A real mailbox and journal carry one prompt across a failed native start.
+
+    Unit tests cannot show that the queued prompt remains behind the start command
+    and is delivered once through the executor transport after replacement.
+    """
+    from planner.conversation.backends.contracts import ClaudeInitializeTimeout
+
+    monkeypatch.setattr("planner.executor.mac_runner.CLAUDE_START_RETRY_DELAY_SECONDS", 0.01)
+    events: list[str] = []
+    children: list[ScriptedNativeChild] = []
+
+    class TimeoutThenReady(ScriptedNativeChild):
+        async def start(
+            self, resolved_start: ResolvedConversationStart, *, vendor_session_cursor: str | None
+        ) -> None:
+            events.append(f"start-{len(children)}")
+            await super().start(resolved_start, vendor_session_cursor=vendor_session_cursor)
+            if len(children) == 1:
+                raise ClaudeInitializeTimeout("Control request timeout: initialize")
+
+        async def stop(self) -> None:
+            events.append("stop")
+            await super().stop()
+
+        async def write_prompt(
+            self, turn_token: TurnToken, content: MessageContent, **arguments: object
+        ) -> BackendPromptAccepted:
+            events.append("prompt")
+            return await super().write_prompt(turn_token, content, **arguments)
+
+    def factory(resolved: ResolvedConversationStart) -> BackendChildFactory:
+        del resolved
+
+        def create(**arguments: object) -> BackendChild:
+            child = TimeoutThenReady()
+            child.sink = cast(BackendEventSink, arguments["event_sink"])
+            children.append(child)
+            return cast(BackendChild, child)
+
+        return cast(BackendChildFactory, create)
+
+    async def run() -> None:
+        harness = await boot(
+            tmp_path, monkeypatch, native_factory=factory,
+            backend_key=ConversationBackendKey.claude,
+        )
+        try:
+            assert events == ["start-1", "stop", "start-2", "prompt"]
+            assert len(children) == 2
+            assert [child.prompt_count for child in children] == [0, 1]
+            assert len(harness.mailbox_commands("start")) == 1
+            assert len(harness.mailbox_commands("write_prompt")) == 1
+            await harness.wait_settled("recovered command outcomes did not drain")
+            assert [child.prompt_count for child in children] == [0, 1]
+        finally:
+            await harness.close()
+
+    asyncio.run(run())
+
+
+def test_mac_restart_during_claude_start_retry_does_not_replay_prompt(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A process restart while a start retry waits must not duplicate its prompt."""
+    from planner.conversation.backends.contracts import ClaudeInitializeTimeout
+
+    monkeypatch.setattr("planner.executor.mac_runner.CLAUDE_START_RETRY_DELAY_SECONDS", 30)
+    fast_leases(monkeypatch)
+
+    async def run() -> None:
+        harness = await boot(tmp_path, monkeypatch, backend_key=ConversationBackendKey.claude)
+        stopped = asyncio.Event()
+        attempted: list[ScriptedNativeChild] = []
+        sending: asyncio.Task[Any] | None = None
+        try:
+            await harness.system.kill("c_scripted")
+            delivered: list[str] = []
+            write_prompt = harness.native.write_prompt
+
+            async def record_prompt(
+                turn: TurnToken, content: MessageContent, **arguments: object
+            ) -> BackendPromptAccepted:
+                delivered.append(
+                    "\n".join(piece.text for piece in content if isinstance(piece, MessageText))
+                )
+                return await write_prompt(turn, content, **arguments)
+
+            monkeypatch.setattr(harness.native, "write_prompt", record_prompt)
+
+            class TimedOutChild(ScriptedNativeChild):
+                async def start(
+                    self, resolved_start: ResolvedConversationStart, *,
+                    vendor_session_cursor: str | None,
+                ) -> None:
+                    await super().start(resolved_start, vendor_session_cursor=vendor_session_cursor)
+                    raise ClaudeInitializeTimeout("Control request timeout: initialize")
+
+                async def stop(self) -> None:
+                    await super().stop()
+                    stopped.set()
+
+            def factory(resolved: ResolvedConversationStart) -> BackendChildFactory:
+                del resolved
+
+                def create(**arguments: object) -> BackendChild:
+                    child = TimedOutChild()
+                    child.sink = cast(BackendEventSink, arguments["event_sink"])
+                    attempted.append(child)
+                    return cast(BackendChild, child)
+
+                return cast(BackendChildFactory, create)
+
+            harness.mac.runner.factory = factory
+            sending = asyncio.create_task(harness.system.send(
+                "c_scripted", text_message_content("Pending retry"), sender_label="Test"
+            ))
+            await asyncio.wait_for(stopped.wait(), 5)
+            await harness.stop_mac()
+            replacement = harness.new_mac()
+            # Any fresh start after recovery uses the ordinary scripted child.
+            replacement.runner.factory = native_factory_for(harness.native)
+            await harness.start_mac(replacement)
+            await asyncio.wait_for(sending, 15)
+            await harness.wait_settled("restart did not settle", seconds=15)
+            assert len(attempted) == 1
+            assert attempted[0].prompt_count == 0
+            assert sum("Pending retry" in text for text in delivered) <= 1
+        finally:
+            if sending is not None and not sending.done():
+                sending.cancel()
+                await asyncio.gather(sending, return_exceptions=True)
+            await harness.close()
+
+    asyncio.run(run())

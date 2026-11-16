@@ -1,0 +1,569 @@
+"""One plain-function comparison proves operator streams and exception boundaries.
+
+The seven Part 3 storage/registry/scratch proofs own physical behavior. This adds
+only the adapter boundary, with the same synthetic status and Git fixtures.
+"""
+
+from __future__ import annotations
+
+import io
+import json
+import os
+import re
+import shutil
+import sqlite3
+import subprocess
+import tempfile
+import time
+from contextlib import ExitStack, redirect_stderr, redirect_stdout
+from datetime import datetime
+from pathlib import Path
+from typing import Any, cast
+
+import click
+import pytest
+from tests.compare.direct.test_unit21_status import _seed
+from tests.compare.direct.unit20_cli import _python_library, comparable
+from tests.support.synthetic_homes import create_synthetic_homes
+from tests.unit.test_database_backups import _legacy_snapshot
+
+from planner.core.config import load_config
+from planner.environments import cli, vps_status
+
+ROOT = Path(__file__).resolve().parents[3]
+
+
+def _python(root: Path, calls: list[dict[str, Any]], monkeypatch: pytest.MonkeyPatch) -> list[Any]:
+    config = load_config(
+        path=str(root / "config.yaml"),
+        env={
+            **os.environ,
+            "PLAN_DB_PATH": str(root / "runtime/database.sqlite"),
+            "PLAN_BACKUP_DIR": str(root / "backups"),
+            "PLAN_LOGS_DIR": str(root / "logs"),
+            "PLAN_APP_SHA": "a" * 40,
+            "PLAN_TICKET_SCRATCH_ROOT": str(root / "git/panels"),
+            "PLAN_TICKET_SCRATCH_DATABASE": str(root / "runtime/database.sqlite"),
+        },
+    )
+    deps = cli.EnvironmentCliDependencies(
+        load_config=lambda: config,
+        vps_status_dependencies=vps_status.VpsStatusDependencies(
+            now=lambda: datetime.fromisoformat("2026-11-05T12:00:00+00:00"),
+            platform_name=lambda: "Darwin",
+            statvfs=lambda _: type(
+                "Disk",
+                (),
+                dict(f_frsize=4096, f_blocks=100_000_000, f_bavail=60_000_000),
+            )(),
+            process_lines=lambda: (),
+            git_worktree_output=lambda _: "",
+            live_reference_paths=lambda: (),
+        ),
+    )
+    results: list[Any] = []
+    monkeypatch.setattr(time, "time", lambda: 1_800_000_000)
+    for call in calls:
+        if "manifest" in call:
+            (root / "app/manifest.json").write_text(call["manifest"])
+        stdout, stderr = io.StringIO(), io.StringIO()
+        args = dict(call["args"])
+        if "json" in args:
+            args["as_json" if call["command"] in ("status", "cleanup") else "json_output"] = (
+                args.pop("json")
+            )
+        for key in (
+            "source_db",
+            "backup_dir",
+            "current_app",
+            "database_parent",
+            "hermes_home",
+            "codex_home",
+            "claude_home",
+            "snapshot",
+            "destination_db",
+            "environment_root",
+            "credentials_env_file",
+        ):
+            if args.get(key) is not None:
+                args[key] = Path(args[key])
+        if "repository_roots" in args:
+            args["repository_roots"] = tuple(map(Path, args["repository_roots"]))
+        code = 0
+        with (
+            monkeypatch.context() as scoped,
+            redirect_stdout(stdout),
+            redirect_stderr(stderr),
+            click.Context(cli.environment, obj=deps),
+        ):
+            scoped.setattr(time, "time", lambda: 1_800_000_000)
+            if call.get("validator_failure"):
+
+                def fail_validator(
+                    *_args: Any,
+                    category: str = call["validator_failure"],
+                    **_kwargs: Any,
+                ) -> None:
+                    error = {
+                        "os": OSError,
+                        "value": ValueError,
+                        "runtime": RuntimeError,
+                        "unexpected": LookupError,
+                    }[category]
+                    raise error(
+                        "synthetic unexpected validator failure"
+                        if category == "unexpected"
+                        else "app artifact digest does not match its manifest"
+                    )
+
+                scoped.setattr(cli, "validate_app_manifest", fail_validator)
+            try:
+                command = cli.environment.commands[call["command"]]
+                assert command.callback is not None
+                command.callback(**args)
+            except click.ClickException as error:
+                error.show(file=stderr)
+                code = error.exit_code
+            except Exception as error:
+                results.append({"thrown": type(error).__name__})
+                continue
+        results.append(dict(exit_code=code, stdout=stdout.getvalue(), stderr=stderr.getvalue()))
+    return results
+
+
+@pytest.mark.parametrize(
+    "scope",
+    [
+        "operators",
+        "scratch",
+    ],
+)
+def test_unit21_environment_command_function_parity(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, request: pytest.FixtureRequest, scope: str
+) -> None:
+    started = time.perf_counter()
+    node = shutil.which("node")
+    assert node is not None
+    environment = {
+        "PATH": str(Path(node).parent) + os.pathsep + os.defpath,
+        "LANG": "C.UTF-8",
+        "TMPDIR": str(Path(tempfile.gettempdir()).resolve()),
+        **create_synthetic_homes(tmp_path),
+        "PLAN_TEST_MODE": "1",
+        "PLAN_SERVER_URL": "http://127.0.0.1:0",
+    }
+    with (
+        tempfile.TemporaryDirectory(
+            prefix="p21-cli-", dir=Path(tempfile.gettempdir()).resolve()
+        ) as temporary,
+        ExitStack() as cleanup,
+    ):
+        root = Path(temporary)
+        source = _seed(root)
+        (root / "workspace").mkdir()
+        (root / "config.yaml").write_text("{}\n")
+        snapshot = _legacy_snapshot(source, root / "restore-snapshot")
+        (root / "git/panels").mkdir(parents=True)
+        if scope == "scratch":
+            from tests.support.ticket_workspace_git import _layout
+
+            with monkeypatch.context() as private_git:
+                for key in list(os.environ):
+                    private_git.delenv(key)
+                for key, value in environment.items():
+                    private_git.setenv(key, value)
+                layout = _layout(root / "git")
+            scratch = layout.folders[0] / "t_12345678"
+            scratch.mkdir()
+            (scratch / ".git").write_text("gitdir: missing\n")
+            workspace = source.parent / "files/tickets/t_12345678"
+            workspace.mkdir(parents=True)
+            eligible_workspace = source.parent / "files/tickets/t_abcdefgh"
+            eligible_workspace.mkdir()
+            (workspace / ".git").write_text("gitdir: missing\n")
+            with sqlite3.connect(source) as connection:
+                connection.execute("CREATE TABLE tickets(id TEXT,worker_step_claim TEXT)")
+                connection.execute(
+                    "CREATE TABLE ticket_workspace_lifecycle"
+                    "(ticket_id TEXT,ended_at INTEGER,deleted INTEGER)"
+                )
+                connection.execute("INSERT INTO tickets VALUES('t_abcdefgh',NULL)")
+                connection.execute(
+                    "INSERT INTO ticket_workspace_lifecycle VALUES('t_abcdefgh',0,0)"
+                )
+                for ddl in (
+                    "CREATE TABLE ticket_workspace_conversations"
+                    "(conversation_id TEXT,ticket_id TEXT,machine_id TEXT,workspace_id TEXT)",
+                    "CREATE TABLE conversation_child_custody(conversation_id TEXT,state TEXT)",
+                    "CREATE TABLE ticket_workspace_retirements"
+                    "(ticket_id TEXT,machine_id TEXT,workspace_id TEXT,authorized_at INTEGER,"
+                    "UNIQUE(ticket_id,machine_id,workspace_id))",
+                    "CREATE TABLE conversations"
+                    "(conversation_id TEXT,identity_environment_variables TEXT)",
+                    "CREATE TABLE conversation_lifecycle_facts"
+                    "(conversation_id TEXT,kind TEXT,status TEXT)",
+                    "CREATE TABLE conversation_background_tasks(conversation_id TEXT)",
+                ):
+                    connection.execute(ddl)
+                connection.execute("INSERT INTO tickets VALUES('t_12345678',NULL)")
+                connection.execute(
+                    "INSERT INTO ticket_workspace_lifecycle VALUES('t_12345678',0,0)"
+                )
+        for key, path in {
+            "PLAN_CONFIG_PATH": root / "config.yaml",
+            "PLAN_DB_PATH": source,
+            "PLAN_BACKUP_DIR": root / "backups",
+            "PLAN_LOGS_DIR": root / "logs",
+            "PLAN_APP_ROOT": root / "app",
+            "PLAN_TICKET_SCRATCH_ROOT": root / "git/panels",
+            "PLAN_TICKET_SCRATCH_DATABASE": source,
+            "PLAN_DISPATCHER_LOCK_PATH": root / "dispatcher.lock",
+            "PLAN_SERVER_CONTROL_SOCKET": root / "control.sock",
+            "PLAN_WORKSPACE_ROOT": root / "workspace",
+            "PLAN_CREDENTIAL_KEY_PATH": root / "key",
+        }.items():
+            environment[key] = str(path)
+        registry: dict[str, Any] = dict(
+            kind="staging",
+            environment_root=str(root / "estate"),
+            instance_id=None,
+            port=None,
+            credentials_env_file=None,
+            repository_roots=[],
+            json=True,
+        )
+        current = dict(
+            source_db=str(source),
+            backup_dir=str(root / "command-backups"),
+            current_app=str(root / "app"),
+        )
+        app = dict(
+            format="panels-app-v1",
+            app_sha="a" * 40,
+            source_digest="b" * 64,
+            artifact_digest="c" * 64,
+        )
+        denied = root / "denied'app-\té"
+        denied.mkdir()
+        (denied / "manifest.json").write_text(json.dumps(app))
+        cleanup.callback(denied.chmod, 0o700)
+        denied.chmod(0)
+        (root / "corrupt.sqlite").write_bytes(b"not a SQLite database\n")
+        calls: list[dict[str, Any]] = [
+            dict(command="status", args=dict(json=True)),
+            dict(command="status", args=dict(json=False)),
+            dict(command="cleanup", args=dict(apply=False, json=True)),
+            dict(command="cleanup", args=dict(apply=True, json=True)),
+            dict(
+                command="backup",
+                args=dict(
+                    source_db=str(source),
+                    backup_dir=str(root / "command-backups"),
+                    deployed_revision="synthetic",
+                ),
+            ),
+            dict(command="backup-current", args=current, manifest=json.dumps(app)),
+            dict(
+                command="provision-skills",
+                args=dict(
+                    database_parent=str(source.parent),
+                    **{
+                        f"{name}_home": str(root / f"native-{name}")
+                        for name in ("hermes", "codex", "claude")
+                    },
+                ),
+            ),
+            dict(
+                command="restore",
+                args=dict(
+                    snapshot=str(snapshot),
+                    destination_db=str(root / "restored.sqlite"),
+                    live_stopped=True,
+                ),
+            ),
+            dict(command="prepare", args=registry),
+            dict(command="inspect", args={**registry, "json": False}),
+            dict(command="reset", args=registry),
+            dict(command="remove", args=registry),
+            dict(command="reset", args=registry),
+            *[
+                dict(
+                    command="backup-current",
+                    args=current,
+                    manifest=json.dumps(app),
+                    validator_failure=category,
+                )
+                for category in ("os", "runtime", "unexpected")
+            ],
+            dict(command="backup-current", args={**current, "current_app": denied.name}),
+            *[
+                dict(command="backup-current", args=current, manifest=manifest)
+                for manifest in (
+                    "{",
+                    "{}",
+                    '{"app_sha": 1}',
+                    json.dumps({"app_sha": "a" * 40 + "\n"}),
+                    '{"app_sha": NaN}',
+                    "1",
+                    # Python 3.13 changes trailing-comma diagnostics. This missing
+                    # value pins the cursor after NaN on both 3.12 and 3.13.
+                    '{"app_sha":NaN,"optional":}',
+                )
+            ],
+            dict(
+                command="backup",
+                args=dict(
+                    source_db=str(root / "corrupt.sqlite"),
+                    backup_dir=str(root / "command-backups"),
+                    deployed_revision="synthetic",
+                ),
+            ),
+        ]
+        if scope != "scratch":
+            calls = [call for call in calls if call["command"] != "cleanup"]
+        with monkeypatch.context() as private:
+            private.chdir(root)
+            for key in list(os.environ):
+                private.delenv(key)
+            for key, value in environment.items():
+                private.setenv(key, value)
+            expected = _python(root, calls, monkeypatch)
+            if scope == "scratch":
+                assert not eligible_workspace.exists(), (
+                    "Python must exercise real synthetic removal"
+                )
+                eligible_workspace.mkdir()
+            # Both functions see the same original app/status state and private paths.
+            (root / "app/manifest.json").unlink()
+            bindings = json.loads(
+                (Path(__file__).with_name("unit20_operators.json"))
+                .read_text()
+                .replace("@root@", str(root))
+            )
+            routing: list[dict[str, Any]] = []
+            aliases = {"as_json": "json", "json_output": "json", "db_path": "db"}
+            from planner.cli.main import main
+
+            for case in bindings:
+                command: Any = main
+                for name in case["path"]:
+                    command = command.commands[name]
+
+                def record(_name: str = case["name"], **values: Any) -> None:
+                    routing.append(
+                        {
+                            "name": _name,
+                            "args": {aliases.get(k, k): v for k, v in values.items()},
+                        }
+                    )
+
+                with monkeypatch.context() as callback:
+                    callback.setattr(command, "callback", record)
+                    parsed = _python_library(case["argv"], b"", environment)
+                assert parsed["exit_code"] == 0, parsed
+            spec = root / "calls.json"
+            spec.write_text(json.dumps(dict(root=str(root), calls=calls, bindings=bindings)))
+            launcher = root / "probe.mjs"
+            launcher.write_text(
+                "import{readFileSync}from'node:fs';"
+                "import{createRequire}from'node:module';"
+                "const require=createRequire(import.meta.url);"
+                "const before=new Set(Object.keys(require.cache));"
+                "const signals=['SIGINT','SIGTERM'].map(s=>process.listenerCount(s));"
+                "const began=performance.now();"
+                "await import(new URL('../commands.ts',process.argv[2]));"
+                "const table_seconds=(performance.now()-began)/1000,second=performance.now();"
+                "await import(new URL('../operator_dependencies.ts',process.argv[2]));"
+                "const cold={table_seconds,factory_seconds:(performance.now()-second)/1000,"
+                "new_require_modules:Object.keys(require.cache).filter(p=>!before.has(p)),"
+                "signals_unchanged:['SIGINT','SIGTERM'].every((s,i)=>process.listenerCount(s)===signals[i])};"
+                "const s=JSON.parse(readFileSync(process.argv[3],'utf8'));"
+                "const{default:koffi}=await import("
+                "new URL('../../node_modules/koffi/index.js',process.argv[2]));"
+                "const load=koffi.load;"
+                "let injected=0,acquire_calls=0,actions=0,registry,result,injecting=false;"
+                "koffi.load=(...args)=>new Proxy(load(...args),{get(lib,key){"
+                "if(key!=='func')return Reflect.get(lib,key);"
+                "return(...signature)=>{const fn=lib.func(...signature);"
+                "if(signature[0]!=='int flock(int fd, int operation)')return fn;"
+                "return(fd,operation)=>{if(injecting&&operation===2){acquire_calls++;"
+                "if(!injected){injected++;koffi.errno(4);return -1;}}"
+                "return fn(fd,operation);};};}});"
+                "try{const{command_probe}=await import(process.argv[2]);"
+                "result=await command_probe(s.root,s.calls,s.bindings);"
+                "registry=await import(new URL('../registry/store.ts',process.argv[2]));}"
+                "finally{koffi.load=load;}"
+                "injecting=true;"
+                "await registry.with_registry_lock(s.root+'/eintr-registry',async()=>{actions++;});"
+                "console.log(JSON.stringify({...result,cold,"
+                "interrupted_lock:{injected,acquire_calls,actions}}));"
+            )
+            completed = subprocess.run(
+                [
+                    node,
+                    str(launcher),
+                    (ROOT / "server/environments/testing/commands.ts").as_uri(),
+                    str(spec),
+                ],
+                cwd=root,
+                env=environment,
+                capture_output=True,
+                text=True,
+                timeout=90,
+                check=False,
+            )
+        assert completed.returncode == 0, completed.stderr
+        actual = json.loads(completed.stdout)
+        # The native declarations load Commander, but no server, SQLite, or
+        # provider package. Permit only this parser's own entry and library files.
+        commander = (ROOT / "server/node_modules/commander").resolve(strict=True)
+        parser_modules = {commander / "index.js", *(commander / "lib").glob("*.js")}
+        loaded_modules = {
+            Path(module).resolve(strict=True) for module in actual["cold"]["new_require_modules"]
+        }
+        assert loaded_modules <= parser_modules, actual["cold"]
+        assert actual["cold"]["signals_unchanged"]
+        assert actual["interrupted_lock"] == dict(injected=1, acquire_calls=2, actions=1)
+
+        def stable(value: Any) -> Any:
+            # Operator comparisons keep JSON fields and exit codes, not human text.
+            value = [comparable(result) if "exit_code" in result else result for result in value]
+            return json.loads(
+                re.sub(
+                    r"snapshot-\d{8}T\d{6}Z-[0-9a-f]{8}",
+                    "snapshot-<generated>",
+                    json.dumps(value),
+                )
+            )
+
+        expected_commands = list(expected)
+        native_manifest_failures = []
+        for index, call in enumerate(calls):
+            if (
+                call["command"] == "backup-current"
+                and "manifest" in call
+                and expected[index].get("thrown") in {"KeyError", "TypeError"}
+            ):
+                result = actual["results"][index]
+                assert type(result["exit_code"]) is int and result["exit_code"] == 1
+                assert result["stdout"] == "" and result["stderr"]
+                native_manifest_failures.append({"case": index, "python": expected[index]})
+                expected_commands[index] = dict(exit_code=1, stdout="", stderr="")
+        if scope == "scratch":
+            index = next(
+                i
+                for i, call in enumerate(calls)
+                if call["command"] == "cleanup" and call["args"]["apply"]
+            )
+            python_result = json.loads(expected_commands[index]["stdout"])[
+                "ticket_workspaces_result"
+            ]
+            native_result = json.loads(actual["results"][index]["stdout"])[
+                "ticket_workspaces_result"
+            ]
+            assert python_result["removed"] == [str(eligible_workspace)]
+            assert native_result == python_result
+            assert not eligible_workspace.exists()
+        assert stable(actual["results"][:-1]) == stable(expected_commands[:-1])
+        assert expected[-1] == {"thrown": "DatabaseError"}
+        assert actual["results"][-1] == {"thrown": "SqliteError"}
+        assert actual["routing"] == json.loads(json.dumps(routing, default=str))
+        operators = actual["operators"]
+        assert operators["invocation_home"] == str(root)
+        assert operators["unsafe_paths_refused"] == 4
+        snapshot = operators["snapshot_only_refusals"]
+        assert snapshot["actual_test_mode"] is False and snapshot["snapshot_test_mode"] is True
+        assert snapshot["home"] == str(root / "snapshot-home")
+        assert snapshot["refused"] == [
+            "environment-tree",
+            "provision-home",
+            "cleanup-legacy-home",
+        ]
+        assert snapshot["admissions"]
+        assert any(
+            row["path"] == str(root / "snapshot-home/hermes") for row in snapshot["admissions"]
+        )
+        assert all(
+            row["canonical"] == str(Path(row["path"]).resolve()) for row in snapshot["admissions"]
+        )
+        assert operators["interrupted_status"]["ready"]
+        assert operators["interrupted_status"]["actual_closed"]
+        assert operators["interrupted_status"]["cleanup_failure_retained"]
+        assert operators["interrupted_status"]["later_spawns"] == 0
+        if scope == "scratch":
+            assert actual["scratch_owned"]["actual_children"] > 0
+        else:
+            assert actual["scratch_owned"]["actual_children"] == 0
+        assert actual["scratch_owned"]["all_closed"]
+        assert operators["composed_callbacks"] == {
+            "app-build": ["build_app"],
+            "run": ["prepare_run"],
+            "serve": ["run_supervisor"],
+            "restart": ["request_restart"],
+        }
+        message = "The TypeScript runtime cannot enumerate Promise await chains."
+        assert operators["diagnostic"] == [
+            dict(
+                exit_code=1,
+                stdout="",
+                stderr="error: "
+                + message
+                + "\nThis diagnostic is unavailable in the TypeScript server.\n",
+            ),
+            dict(
+                exit_code=1,
+                stdout="",
+                stderr=json.dumps(
+                    {"error": {"code": "unsupported", "message": message, "detail": {}}}
+                )
+                + "\n",
+            ),
+        ]
+        assert operators["watchdog"] == dict(exit_code=0, stdout="recorded watchdog\n", stderr="")
+        backup_current = next(
+            index for index, call in enumerate(calls) if call["command"] == "backup-current"
+        )
+        assert actual["results"][backup_current]["stderr"].startswith(
+            "Warning: app artifact digest does not match its manifest."
+        )
+        denied_app = next(
+            index
+            for index, call in enumerate(calls)
+            if cast(dict[str, Any], call["args"]).get("current_app") == denied.name
+        )
+        assert expected[denied_app]["stderr"] == (
+            f"Error: [Errno 13] Permission denied: {str(Path(denied.name) / 'manifest.json')!r}\n"
+        )
+        assert all(
+            type(result["exit_code"]) is int and result["exit_code"] == 1
+            for result in actual["results"][-8:-1]
+        )
+    report = request.config.getoption("compare_report_dir", default=None)
+    if report:
+        destination = Path(report)
+        destination.mkdir(parents=True, exist_ok=True)
+        (destination / "unit-21-environment-commands.json").write_text(
+            json.dumps(
+                {
+                    "seconds": time.perf_counter() - started,
+                    "boundary": (
+                        "Plain Python callback/TS handler streams and error classification. "
+                        "The parser and binder use recorded handlers with real factory selection. "
+                        "No real app validator or host-service acceptance."
+                    ),
+                    "routing": {
+                        "python": json.loads(json.dumps(routing, default=str)),
+                        "typescript": actual["routing"],
+                    },
+                    "results": actual["results"],
+                    "raw_results": actual["raw_results"],
+                    "native_manifest_failures": native_manifest_failures,
+                    "operators": actual["operators"],
+                    "scratch_owned": actual["scratch_owned"],
+                    "cold_imports": actual["cold"],
+                    "interrupted_lock": actual["interrupted_lock"],
+                },
+                indent=2,
+            )
+            + "\n"
+        )

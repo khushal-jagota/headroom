@@ -97,6 +97,26 @@ struct ConversationStatus: Equatable, Codable, Sendable {
     /// A change of either needs a fresh tail snapshot, as on the web.
     var stoppedWithoutEnding: Bool? = nil
     var runtimeEpoch: String? = nil
+    var pendingPermission: RequestIdentity? = nil
+    var pendingUserInput: RequestIdentity? = nil
+    var backgroundTasks: [BackgroundTask]? = nil
+
+    struct RequestIdentity: Equatable, Codable, Sendable {
+        let kind: String
+        let requestId: String
+        let rowKey: String
+        let sourceSequence: Int
+    }
+    struct BackgroundTask: Equatable, Codable, Sendable {
+        let taskId: String
+        let taskDescription: String
+    }
+    struct LatestTurn: Equatable, Codable, Sendable {
+        let startedAtUnixMilliseconds: Int64?
+    }
+    var hasBackgroundTaskAfterTheTurn: Bool {
+        turnRunning == false && backgroundTasks?.isEmpty == false
+    }
     struct Rest: Equatable, Codable, Sendable {
         let latestHappened: Happened?
         let latestOwnerMessageSequence: Int?
@@ -104,6 +124,7 @@ struct ConversationStatus: Equatable, Codable, Sendable {
         let permissionTitleExcerpt: String?
         let planProgress: Plan
         var latestOwnerMessagePreview: String? = nil
+        var latestTurn: LatestTurn? = nil
     }
     struct Happened: Equatable, Codable, Sendable {
         let kind: String

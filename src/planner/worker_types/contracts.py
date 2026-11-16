@@ -129,19 +129,14 @@ class WorkflowDefinition:
         return self.stages[index + 1].id
 
     def ceiling_range(self) -> tuple[str, ...]:
-        return tuple(
-            stage.id for stage in self.stages if stage.gating_field != CONSEQUENCES_FIELD_ID
-        )
+        return tuple(stage.id for stage in self.stages if not stage.is_terminal)
 
     def resolve_ceiling(self, raw: str) -> str:
         """Accept a stage id or the plain name of the field that stage gates."""
         if raw in self.ceiling_range():
             return raw
         try:
-            stage = self.stage_gated_by(raw)
-            if stage in self.ceiling_range():
-                return stage
-            raise PlannerError(ErrorCode.scope_invalid, "Consequences is not an approval stop")
+            return self.stage_gated_by(raw)
         except PlannerError as exc:
             raise PlannerError(
                 ErrorCode.scope_invalid, "unknown ceiling", {"ceiling": raw}
@@ -171,7 +166,7 @@ class WorkflowDefinition:
             )
         # Historical terminal rows retain the exact scope their holder once granted.
         # This read-only exception never admits an unfinished position or a new write.
-        if allow_historical_terminal_ceiling and self.is_terminal(stage):
+        if self.is_terminal(stage) and (allow_historical_terminal_ceiling or ceiling == stage):
             return
         # Existing Tickets retain their granted scope; new requests use resolve_ceiling.
         legacy_completion_ceiling = (

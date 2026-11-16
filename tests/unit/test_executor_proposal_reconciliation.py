@@ -88,12 +88,11 @@ def test_mac_user_owned_proposal_and_receipt_settle_once_then_replay_after_advan
             title_max_chars=TITLE_MAX_CHARS,
         )
         if not at_ceiling:
-            # Consequences is no longer a selectable stop. Grant the remainder after
-            # creation to keep this case about below-ceiling executor settlement.
+            # Keep this case below the ceiling until the Consequences stage.
             ticket = data.edit_ticket(
                 tmp_db,
                 ticket.id,
-                edit=TicketEdit(ceiling="done"),
+                edit=TicketEdit(ceiling=next_stage),
                 principal=OWNER_PRINCIPAL,
                 title_max_chars=TITLE_MAX_CHARS,
                 now=1,
@@ -181,7 +180,7 @@ def test_mac_user_owned_proposal_and_receipt_settle_once_then_replay_after_advan
                 field=field,
                 principal=OWNER_PRINCIPAL,
                 now=5,
-                next_ceiling="done",
+                next_ceiling=next_stage,
                 next_holder=CHIEF_PRINCIPAL,
                 expected_proposal_revision=settled.pending_proposal_revision,
             )

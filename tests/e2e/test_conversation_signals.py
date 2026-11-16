@@ -25,6 +25,7 @@ from tests.e2e.harness import (
     capture_success,
 )
 from tests.support.connected_rows import _bind
+from tests.support.launch_identity import agent_headers
 from tests.support.server_fixtures import signal_server as signal_server
 
 EVIDENCE = REPO_ROOT / "data/verification/conversation-signals/message-precedence-revision"
@@ -143,7 +144,7 @@ def test_exact_conversation_signals_cross_runtime_stream_and_surfaces(
     )
     proposed = httpx.post(
         server.base + f"/api/tickets/{ticket['id']}/propose",
-        headers={"X-Plan-Actor": "worker", "X-Plan-Ticket-ID": ticket["id"]},
+        headers=agent_headers(server, "worker", ticket["id"]),
         json={"body": "Quiet approval remains visible.", "recap": "Browser signal proof."},
         timeout=10,
     )
@@ -173,11 +174,17 @@ def test_exact_conversation_signals_cross_runtime_stream_and_surfaces(
 
     def row_marks(conversation: str, row: Locator, working: bool, message: bool) -> None:
         if conversation == "proof-worker":
-            # The Worker waits on the owner's approval, so its row's mark column shows the
-            # Review mark, which outranks its working mark and unread dot (redesign, owner).
-            # Its signals are proved on the page's own marks below.
-            expect(row.locator('[data-approval-mark="owner"]')).to_have_count(1, timeout=WAIT_MS)
-            expect(row.locator("[data-conversation-signal]")).to_have_count(0, timeout=WAIT_MS)
+            # An unread message takes the mark column. Once read, the pending
+            # proposal returns its Review mark, ahead of the working spinner.
+            expect(row.locator('[data-approval-mark="owner"]')).to_have_count(
+                int(not message), timeout=WAIT_MS
+            )
+            expect(row.locator('[data-conversation-signal="message"]')).to_have_count(
+                int(message), timeout=WAIT_MS
+            )
+            expect(row.locator('[data-conversation-signal="working"]')).to_have_count(
+                0, timeout=WAIT_MS
+            )
         else:
             _marks(row, working, message)
 

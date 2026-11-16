@@ -141,44 +141,41 @@ private struct GoalPageTable: View {
                 GoalEditableText(value: caption, label: "Table caption", session: session, blockID: block.id, path: ["caption"]).panelsScaledFont(size: 17, weight: .medium)
             }
             ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 20) {
-                    ForEach(Array(block["columns"].array.enumerated()), id: \.offset) { index, column in
-                        HStack(spacing: 6) {
-                            GoalEditableText(value: column.text, label: "Column \(index + 1)", session: session, blockID: block.id, path: ["columns", String(index)])
-                            Button { if sortColumn == index { ascending.toggle() } else { sortColumn = index; ascending = true } } label: { Image(systemName: sortColumn == index ? (ascending ? "arrow.up" : "arrow.down") : "arrow.up.arrow.down") }.accessibilityLabel("Sort by " + column.text)
-                        }.fixedSize().font(.caption)
-                    }
-                }.padding(.vertical, 10)
-            }.overlay(alignment: .top) { Divider() }.overlay(alignment: .bottom) { Divider() }
-            ForEach(rows, id: \.0) { rowIndex, row in
-                VStack(alignment: .leading, spacing: 10) {
-                    HStack(alignment: .firstTextBaseline) {
-                        if let first = row.array.first {
-                            GoalEditableText(value: first.text, label: "Row \(rowIndex + 1), \(block["columns"].array.first?.text ?? "name")", session: session, blockID: block.id, path: ["rows", String(rowIndex), "0"]).panelsScaledFont(size: 13, weight: .medium)
-                        }
-                        if let column = readingColumn, row.array.indices.contains(column) {
-                            Spacer(minLength: 8)
-                            GoalEditableText(value: row.array[column].text, label: "Row \(rowIndex + 1), column \(column + 1)", session: session, blockID: block.id, path: ["rows", String(rowIndex), String(column)]).panelsScaledFont(size: 13).monospacedDigit()
+                Grid(alignment: .leading, horizontalSpacing: 20, verticalSpacing: 0) {
+                    GridRow {
+                        ForEach(Array(block["columns"].array.enumerated()), id: \.offset) { index, column in
+                            HStack(spacing: 6) {
+                                GoalEditableText(value: column.text, label: "Column \(index + 1)", session: session, blockID: block.id, path: ["columns", String(index)])
+                                Button { if sortColumn == index { ascending.toggle() } else { sortColumn = index; ascending = true } } label: { Image(systemName: sortColumn == index ? (ascending ? "arrow.up" : "arrow.down") : "arrow.up.arrow.down") }.accessibilityLabel("Sort by " + column.text)
+                            }.fixedSize().font(.caption).padding(.vertical, 10)
+                                .accessibilityIdentifier("table-column-" + block.id + "-" + String(index))
                         }
                     }
-                    ViewThatFits(in: .horizontal) {
-                        HStack(spacing: 14) { cells(rowIndex, row) }
-                        VStack(alignment: .leading, spacing: 8) { cells(rowIndex, row) }
+                    Divider().gridCellUnsizedAxes(.horizontal)
+                    ForEach(rows, id: \.0) { rowIndex, row in
+                        GridRow {
+                            ForEach(Array(row.array.enumerated()), id: \.offset) { index, cell in
+                                cellView(cell, rowIndex: rowIndex, column: index)
+                                    .fixedSize(horizontal: true, vertical: false).padding(.vertical, 8)
+                                    .accessibilityIdentifier("table-cell-" + block.id + "-" + String(rowIndex) + "-" + String(index))
+                            }
+                        }
+                        if rowIndex != rows.last?.0 { Divider().gridCellUnsizedAxes(.horizontal) }
                     }
-                }.padding(.vertical, 8)
-                if rowIndex != rows.last?.0 { Divider() }
-            }
+                }
+            }.accessibilityIdentifier("goal-table-" + block.id)
             if rows.isEmpty {
                 GoalEditableText(value: block["empty_message"].string ?? "No rows", label: "Empty message", session: session, blockID: block.id, path: ["empty_message"], editable: !block["empty_message"].isNull).font(.footnote).foregroundStyle(PanelsTheme.Goal.faint)
             }
         }.modifier(GoalPanel(padding: 16))
     }
-    @ViewBuilder private func cells(_ rowIndex: Int, _ row: GoalJSON) -> some View {
-        ForEach(Array(row.array.enumerated().dropFirst().filter { $0.offset != readingColumn }), id: \.offset) { index, cell in
-            HStack(spacing: 4) {
-                if block["cell_tones"].array.indices.contains(rowIndex), block["cell_tones"].array[rowIndex].array.indices.contains(index), let tone = block["cell_tones"].array[rowIndex].array[index].string { Circle().fill(PanelsTheme.Goal.tone(tone)).frame(width: 4, height: 4) }
-                GoalEditableText(value: cell.text, label: "Row \(rowIndex + 1), column \(index + 1)", session: session, blockID: block.id, path: ["rows", String(rowIndex), String(index)]).panelsScaledFont(size: 11).foregroundStyle(PanelsTheme.Goal.faint)
-            }
+    private func cellView(_ cell: GoalJSON, rowIndex: Int, column: Int) -> some View {
+        HStack(spacing: 4) {
+            if block["cell_tones"].array.indices.contains(rowIndex), block["cell_tones"].array[rowIndex].array.indices.contains(column), let tone = block["cell_tones"].array[rowIndex].array[column].string { Circle().fill(PanelsTheme.Goal.tone(tone)).frame(width: 4, height: 4) }
+            GoalEditableText(value: cell.text, label: "Row \(rowIndex + 1), column \(column + 1)", session: session, blockID: block.id, path: ["rows", String(rowIndex), String(column)])
+                .panelsScaledFont(size: column == 0 || column == readingColumn ? 13 : 11, weight: column == 0 ? .medium : .regular)
+                .foregroundStyle(column == 0 || column == readingColumn ? PanelsTheme.strong : PanelsTheme.Goal.faint)
+                .monospacedDigit()
         }
     }
 }

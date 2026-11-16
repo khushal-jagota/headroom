@@ -20,6 +20,8 @@ All of them run as one Unix user, the existing `vps` account. They are separated
 
 Live and staging are registered environments. Headroom validates them together: one live environment, distinct ports, and no staging root inside the live tree. Ticket servers and local checkouts are outside that registry. Their isolation is the worktree and its `PLAN_*` paths. [`AGENTS.md`](../AGENTS.md) holds the setup rules agents follow. A second isolated server on one machine is set up with [ops/runbooks/isolated-server.md](../ops/runbooks/isolated-server.md).
 
+Development checkouts reuse third-party dependencies from an account-level cache outside the installed release. Dependency inputs and compatible runtimes select each cache entry. Setup creates a local Python environment with an editable installation of that checkout. Each Node package has a local dependency directory with links to cached packages, while mutable tool output stays local. Backend CLIs still resolve current versions. A dependency change builds a new cache entry once.
+
 ## The operating-system boundary
 
 The home uses one platform contract for service identity, app-child launch, process evidence, private sockets, locks, and resource collection. The Linux adapter preserves the existing systemd and kernel operations. Shared installation paths keep explicit configuration and current defaults. Runtime selection separates the operating system, architecture, and home or executor role. Existing archive formats and integrity checks stay the same. A Mac executor archive cannot become a home release.
@@ -30,9 +32,15 @@ A real home provisions its managed skills in the provider account folders. One o
 
 The home provisions workspace and account skill files on awaited worker threads, so file removal does not block the event loop. Startup waits for provisioning before normal work starts.
 
-The disposable test option disables provisioning and can read the existing instance's skills. That exception is for tests only.
+Eligible Ticket folders use directory descriptors for safe removal on Linux and Mac. Replacement directories and symlinks cannot redirect recursive removal. Unknown ownership, unpublished work, or uncertain process retirement retains the folder. Retirement retries keep the same checks and recorded scratch snapshot.
 
-A release-installed Mac home updates through an independent LaunchAgent. Its installer and external Python remain outside the app that it replaces. A failed health trial returns to the previous app and snapshot record. This rollback can discard later record writes. It does not prove preservation of active work. The Mac home uses native process evidence for local previews and metrics. Its jobs run only during the graphical login session. Other POSIX source servers retain their existing foreground lifecycle. The Mac executor remains separate. Linux checks do not prove Mac behavior.
+Disposable tests can disable provisioning explicitly and read the existing instance's skills. Test mode alone does not suppress account provisioning.
+
+A release-installed Mac home uses an external Node 22 runtime. Its first installation and independent update LaunchAgent use native TypeScript. The installer stays outside the app that it replaces. Updates read legacy identities without a Python probe. Its jobs run only during the graphical login session.
+
+A failed health trial returns to the previous app and snapshot record. This rollback can discard later record writes and does not prove preservation of active work. Native process evidence supports local previews and metrics. The Mac executor remains separate. Linux checks do not prove Mac behavior.
+
+Mac home publication requires a hosted Apple Silicon build and proof of the sealed archive. The proof admits its native dependencies, starts the real home, checks readiness, and confirms a clean stop. Publication binds the uploaded archive and proof to the same source revision and workflow attempt. The home archive contains the server, provider packages, web assets, and installation recipe. The host supplies Node. The Mac executor archive has a separate identity and cannot substitute for it.
 
 Worker supervision is one subsystem for home and executor processes. It uses exact identities and durable custody for bounded shutdown and scoped cleanup proof. Unknown cleanup retains a fence. Linux Workers share the home service resource domain, but the adapter removes its protected OOM score before the backend starts. Delegated cgroup v2 child groups keep each Linux Worker and its descendants inside a separate cleanup boundary. Unsupported hosts retain a cleanup fence. Separate Worker units and slices do not apply.
 
@@ -57,9 +65,11 @@ The user units in `ops/panels-environments/` cover the live service, the deploym
 
 ## Ticket scratch
 
-Panels owns each Ticket's workspace. A Project can name its repository directly or contain one repository; the conventional `repository` child also selects it explicitly. On the Mac, a Ticket without a Project gets a plain work folder, independent of repositories in the shared workspace. Before repository work starts, it creates the branch and the `worktree/` folder inside that machine's Ticket files folder. The sibling `artifacts/` folder holds documents and evidence. Workers use the same workspace on later turns. They install dependencies, commit, push, open pull requests, and perform approved merges. They do not create worktrees or remove Ticket files.
+Panels owns each Ticket's workspace. A Project can name its repository directly or contain one repository; the conventional `repository` child also selects it explicitly. On the Mac, a Ticket without a Project gets a plain work folder, independent of repositories in the shared workspace. Before repository work starts, it creates the branch and the `worktree/` folder inside that machine's Ticket files folder. The sibling `artifacts/` folder holds documents and evidence. TypeScript Workers start in the Ticket folder on the home and Mac. Their checkout stays inside `worktree/`. Workers use the same workspace on later turns. They install dependencies, commit, push, open pull requests, and perform approved merges. They do not create worktrees or remove Ticket files.
 
 New Panels Ticket checkouts are independent partial clones of GitHub's current staging branch. Other repositories use their own origin's default branch. Preparation stops if the remote cannot be cloned. Older linked worktrees stay attached to their original repository until their Tickets end and cleanup removes them.
+
+On macOS, managed Ticket Workers receive an Xcode configuration that enables a shared compilation cache beneath the executor root. The cache survives Ticket removal. Each checkout keeps its own DerivedData and build products, so concurrent builds share cached compilation results without sharing writable build directories. The configuration preserves the native account's existing Xcode configuration. Hosted Xcode 26.6 checks prove reuse of SDK compilation results across checkouts. Project-source cache keys still contain private build paths, so this does not prove project-source reuse or Wren's Xcode 27.1 build times.
 
 Codex, Claude, and Hermes use real disk scratch at `~/.pw/<ticket-id>-<six hex characters>` on Linux and macOS. This short path leaves room for Unix sockets. `TMPDIR`, `TMP`, and `TEMP` point there, and the launcher removes it when the backend process ends, including failed startup. A fresh backend folder replaces other scratch folders for the same Ticket. Retirement removes the scratch recorded before that workspace detached, so a later retry preserves fresh backend scratch.
 
@@ -96,6 +106,8 @@ Renaming the account, moving host state, or changing Tailscale Serve is operator
 - `src/planner/environments/`: the registry, launch environments, status, and cleanup. `logic/validation.py` and `logic/launch_env.py` hold the rules.
 - `src/planner/core/config.py`: configuration and `PLAN_*` overrides. `src/planner/skill_sources.py`: the workspace skills link.
 - `src/planner/server_lifecycle/`: who may stop a server.
+- `server/lifecycle/`, `server/skills/account.ts`, and `server/environments/vps_status/`: TypeScript home custody, account publication, and cleanup.
+- `server/installation/` and `server/environments/release/mac_home*.ts`: native first-home installation and sealed Mac home publication.
 - `ops/panels-environments/`: user units, timers, and the host wrapper.
 
 Named execution destinations and physical workspace identity are separate. A Ticket’s `machine_id` selects home execution or the original executor. `WorkspaceIdentity.machine_id` identifies one local physical data tree. Workspace registration binds its folder to the conversation on that destination. A display edit never rotates either identity.

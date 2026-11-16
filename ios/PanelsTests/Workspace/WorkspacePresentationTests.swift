@@ -20,6 +20,7 @@ final class WorkspacePresentationTests: XCTestCase {
         try await client.workspaceAction(.backlog, route: .ticket("t1"))
         try await client.workspaceAction(.resume, route: .ticket("t1"))
         try await client.workspaceAction(.settle, route: .orchestrator("m1"))
+        try await client.workspaceAction(.reopen, route: .orchestrator("m2"))
         try await client.workspaceAction(.recap, route: .chief)
         do {
             try await client.workspaceAction(.recap, route: .ticket("uncertain"))
@@ -63,17 +64,53 @@ final class WorkspacePresentationTests: XCTestCase {
         XCTAssertEqual(WorkspaceGrouping.focused(WorkspaceGrouping.groups([yours])).first?.tickets.map(\.id), ["yours"])
     }
 
+    func testMachineCatalogueAndScopedHealthKeepUnreadWhenActivityIsUnknown() async throws {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [WorkspaceURLProtocol.self]
+        let session = URLSession(configuration: configuration)
+        defer { session.invalidateAndCancel() }
+        let client = APIClient(baseURL: URL(string: "https://workspace-stub.invalid")!, session: session)
+        let machines = try await client.workspaceMachines().machines
+        let machine = try XCTUnwrap(machines.first)
+        XCTAssertEqual(machine.machineId, "present /?&")
+        XCTAssertEqual(machine.name, "Office Mac")
+        XCTAssertFalse(machine.isHome)
+        XCTAssertNil(machine.runningWorkers)
+        let running = try ticket(["locale": "macos", "machine_id": machine.machineId, "ticket_status": "agent",
+                                  "conversation_signal": ["working": true, "message_for_owner": true]])
+        XCTAssertEqual(running.machineId, machine.machineId)
+        let present = try await client.workspaceMachineHealth(machineId: machine.machineId)
+        XCTAssertTrue(present.activityKnown)
+        XCTAssertTrue(try XCTUnwrap(WorkspaceMachineHealth.signal(for: running, health: present)).working)
+        let away = try await client.workspaceMachineHealth(machineId: "away")
+        let unknown = try XCTUnwrap(WorkspaceMachineHealth.signal(for: running, health: away))
+        XCTAssertFalse(unknown.working)
+        XCTAssertTrue(unknown.messageForOwner)
+        XCTAssertEqual(away.activityLabel(for: running), "Paused: the Mac is away")
+        let held = try ticket(["locale": "macos", "ticket_status": "agent", "agent_state": "idle",
+                               "conversation_signal": ["working": false, "message_for_owner": false]])
+        XCTAssertEqual(away.activityLabel(for: held), "Waiting for the Mac")
+        XCTAssertFalse(try XCTUnwrap(WorkspaceMachineHealth.signal(for: running, health: nil)).working)
+        let resource = WorkspaceResources.machineHealth(machine.machineId)
+        XCTAssertEqual(URLComponents(string: resource.key)?.queryItems?.first?.value, machine.machineId)
+    }
+
     func testSurvivorsKeepPositionAndArrivalsAppendWhenSectionsChange() throws {
-        let alpha = try ticket(["id": "a", "title": "Alpha", "assigned": true])
-        let beta = try ticket(["id": "b", "title": "Beta", "assigned": true])
+        let alpha = try ticket(["id": "a", "title": "Alpha", "assigned": true, "activity_at": 1])
+        let beta = try ticket(["id": "b", "title": "Beta", "assigned": true, "activity_at": 2])
+        let tied = try ticket(["id": "z", "title": "alpha", "assigned": true, "activity_at": 1])
+        XCTAssertEqual(WorkspaceGrouping.groups([tied, alpha, beta]).first?.tickets.map(\.id), ["b", "a", "z"],
+                       "Equal activity uses case-insensitive title, then identity")
         let previous = WorkspaceGrouping.groups([beta, alpha])
-        let newArrival = try ticket(["id": "c", "title": "A new arrival", "assigned": true])
-        let refresh = WorkspaceGrouping.groups([newArrival, beta, alpha], previous: previous)
-        XCTAssertEqual(refresh.first?.tickets.map(\.id), ["a", "b", "c"])
+        XCTAssertEqual(previous.first?.tickets.map(\.id), ["b", "a"], "Initial activity outranks alphabetic order")
+        let newArrival = try ticket(["id": "c", "title": "A new arrival", "assigned": true, "activity_at": 3])
+        let newerArrival = try ticket(["id": "d", "title": "Z newest arrival", "assigned": true, "activity_at": 4])
+        let refresh = WorkspaceGrouping.groups([newArrival, beta, newerArrival, alpha], previous: previous)
+        XCTAssertEqual(refresh.first?.tickets.map(\.id), ["b", "a", "d", "c"], "Arrivals append in activity order")
         let moved = try ticket(["id": "a", "title": "Alpha", "ticket_status": "agent"])
-        let next = WorkspaceGrouping.groups([moved, beta, newArrival], previous: refresh)
+        let next = WorkspaceGrouping.groups([moved, beta, newArrival, newerArrival], previous: refresh)
         XCTAssertEqual(next.map(\.section), [.yours, .agent])
-        XCTAssertEqual(next.first?.tickets.map(\.id), ["b", "c"])
+        XCTAssertEqual(next.first?.tickets.map(\.id), ["b", "d", "c"])
         XCTAssertEqual(next.last?.tickets.map(\.id), ["a"])
     }
 }
@@ -99,8 +136,15 @@ private final class WorkspaceURLProtocol: URLProtocol, @unchecked Sendable {
         switch path {
         case "/api/tickets/t1/backlog", "/api/tickets/t1/resume":
             valid = request.httpMethod == "POST" && body?.isEmpty == true
-        case "/api/managers/m1/settled":
-            valid = request.httpMethod == "PATCH" && body?["settled"] as? Bool == true
+        case "/api/managers/m1/settled", "/api/managers/m2/settled":
+            valid = request.httpMethod == "PATCH" && body?["settled"] as? Bool == path.contains("/m1/")
+        case "/api/machines":
+            valid = request.httpMethod == "GET"
+            reply = #"{"machines":[{"machine_id":"present /?&","name":"Office Mac","icon":"laptop","color":"orchid","is_home":false,"available":true,"running_workers":null,"waiting_tickets":2}]}"#
+        case "/api/executor/health":
+            let machine = URLComponents(url: request.url!, resolvingAgainstBaseURL: false)?.queryItems?.first(where: { $0.name == "machine_id" })?.value
+            valid = request.httpMethod == "GET" && ["present /?&", "away"].contains(machine ?? "")
+            reply = machine == "away" ? #"{"mode":"remote","presence":"asleep","since_ms":1000,"last_contact_at_ms":1000,"refusal":null}"# : #"{"mode":"remote","presence":"present","since_ms":1000,"last_contact_at_ms":1000,"refusal":null}"#
         case "/api/recap-requests":
             let target = body?["target"] as? [String: String]
             valid = request.httpMethod == "POST" && (target == ["kind": "chief", "id": "chief"] || target == ["kind": "ticket", "id": "uncertain"])

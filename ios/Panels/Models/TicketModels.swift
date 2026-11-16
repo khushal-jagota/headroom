@@ -49,6 +49,8 @@ struct TicketBackend: Decodable, Identifiable, Sendable {
     struct Model: Decodable, Identifiable, Sendable {
         let modelId: String
         let displayName: String?
+        var resolvedModelId: String? = nil
+        var selectedVariant: String? = nil
         let enabled: Bool
         let reasoningEffortOptions: [String]?
         var id: String { modelId }

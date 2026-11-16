@@ -1,0 +1,43 @@
+{
+  "name": "panels-server",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22.18.0 <23 || >=24 <25"
+  },
+  "scripts": {
+    "start": "node main.ts",
+    "check": "tsc --noEmit",
+    "test": "vitest run",
+    "format": "prettier --write \"**/*.ts\"",
+    "format:check": "prettier --check \"**/*.ts\""
+  },
+  "dependencies": {
+    "@agentclientprotocol/sdk": "2.6.0",
+    "@anthropic-ai/claude-agent-sdk": "0.3.316",
+    "ajv": "8.20.0",
+    "better-sqlite3": "13.1.1",
+    "fastify": "5.12.8",
+    "https-proxy-agent": "9.1.0",
+    "koffi": "3.3.7",
+    "yaml": "2.8.1",
+    "markdown-it": "15.0.3",
+    "web-push": "4.0.0",
+    "jose": "6.2.17",
+    "ws": "8.22.2",
+    "pako": "3.0.2",
+    "yauzl": "3.4.0",
+    "tar": "7.5.23",
+    "commander": "14.0.3"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "7.6.13",
+    "@types/node": "22.19.3",
+    "typescript": "5.9.3",
+    "vitest": "4.1.10",
+    "prettier": "3.10.0",
+    "@types/web-push": "3.6.4",
+    "@types/ws": "8.18.1",
+    "@types/yauzl": "3.4.0"
+  }
+}

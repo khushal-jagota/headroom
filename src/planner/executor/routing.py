@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from planner.agent_identity.data import canonical_principal
+from planner.agent_identity.launch import AuthenticatedLocalChild
 from planner.conversation.backends.contracts import (
     BackendChild,
     BackendChildFactory,
@@ -13,9 +15,9 @@ from planner.conversation.backends.contracts import (
 )
 from planner.conversation.contracts import ResolvedConversationStart
 from planner.conversation.message_files import ConversationMessageFiles
+from planner.core.contracts import PrincipalKind
 from planner.core.db import connect
 from planner.execution_identity import ChildReference
-from planner.executor.worker_identity import ticket_id_of
 from planner.machines.contracts import HOME_MACHINE_ID
 
 
@@ -41,18 +43,21 @@ class LocaleBackendChildFactory:
         event_sink: BackendEventSink,
         message_files: ConversationMessageFiles,
     ) -> BackendChild:
-        ticket_id = ticket_id_of(resolved_start)
-        remote = False
-        if ticket_id:
-            conn = connect(self.db_path)
-            try:
-                row = conn.execute(
-                    "SELECT machine_id FROM tickets WHERE id=?", (ticket_id,)
+        conn = connect(self.db_path)
+        try:
+            principal = canonical_principal(conn, resolved_start.conversation_id)
+            row = (
+                conn.execute(
+                    "SELECT machine_id FROM tickets WHERE id=?", (principal.id,)
                 ).fetchone()
-                remote = row is not None and row["machine_id"] != HOME_MACHINE_ID
-            finally:
-                conn.close()
+                if principal is not None and principal.kind is PrincipalKind.ticket
+                else None
+            )
+            remote = row is not None and row["machine_id"] != HOME_MACHINE_ID
+        finally:
+            conn.close()
         factory = self.remote_factory if remote else self.local_factory
-        return factory(
+        child = factory(
             resolved_start=resolved_start, event_sink=event_sink, message_files=message_files
         )
+        return child if remote else AuthenticatedLocalChild(child, self.db_path)

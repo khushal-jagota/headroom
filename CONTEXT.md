@@ -40,8 +40,8 @@ _Avoid_: chat transcript, Panels Chat, employee session history
 
 **Automatic Employee-step eligibility**:
 Whether Planner may automatically start a Ticket's next Employee step now. It includes today's board
-membership, the derived Ticket status, the Stage and its ownership, the user-owned-Stage
-opener fact, and the Consequences lane. A parked proposal and a live blocker are not asked
+machine availability, the derived Ticket status, the Stage and its ownership, and the
+user-owned-Stage opener fact. A parked proposal and a live blocker are not asked
 about separately: both reach the decision through the derived status.
 _Avoid_: Ticket readiness, runnable Ticket, ready Ticket, System A
 

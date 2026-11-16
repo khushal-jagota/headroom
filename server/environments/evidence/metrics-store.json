@@ -1,0 +1,47 @@
+{
+  "kind": "direct",
+  "equal": true,
+  "cases": [
+    {
+      "case": "weighted-gaps-reboot-entities",
+      "operations": 13,
+      "exact_rows_and_compressed_bytes": true
+    },
+    {
+      "case": "cached-slow-source",
+      "operations": 7,
+      "exact_rows_and_compressed_bytes": true
+    },
+    {
+      "case": "immutable-process-pages",
+      "operations": 10,
+      "exact_rows_and_compressed_bytes": true
+    },
+    {
+      "case": "durable-progress-activity-failure",
+      "operations": 13,
+      "exact_rows_and_compressed_bytes": true
+    },
+    {
+      "case": "age-byte-retention",
+      "operations": 25,
+      "exact_rows_and_compressed_bytes": true
+    },
+    {
+      "case": "append-rollback-and-plaintext-budget",
+      "operations": 7,
+      "exact_rows_and_compressed_bytes": true
+    },
+    {
+      "case": "sqlite-page-cap-rollback",
+      "operations": 2,
+      "exact_rows_and_compressed_bytes": true
+    },
+    {
+      "case": "pinned-wal-backpressure-and-recovery",
+      "operations": 5,
+      "exact_rows_and_compressed_bytes": true
+    }
+  ],
+  "seconds": 1.8916068873368204
+}

@@ -14,7 +14,7 @@ A Manager is an agent that holds one direction and the Tickets that serve it. It
 
 ## Manager identity
 
-Current agent identities use `PLAN_ACTOR=manager` and `PLAN_MANAGER_ID`. The forward migration preserves each Manager and its conversation. Retained conversations receive the current role instructions on their next turn. Old actor names, command aliases, request headers, and environment names do not select a Manager.
+Each Manager conversation receives its own launch credential. `PLAN_ACTOR=manager` and `PLAN_MANAGER_ID` describe its role and workspace, but do not establish authority. The server resolves the Manager from its canonical conversation association. The CLI sends the credential automatically, including through `panels api` for an operation without a dedicated command.
 
 Manager files retain `/files/sprint-items/` addresses so that existing Ticket links still open. Historical migration backfills remain isolated from current navigation writes.
 
@@ -77,4 +77,4 @@ Manager lists include recap freshness. Workspace reads also include each child T
 - `src/planner/worker_settings/`: Chief's own settings.
 - `web/src/components/ManagerWorkspace.svelte` and `web/src/components/ChiefConversation.svelte`: the screens.
 
-_Last verified: 2026-11-13._
+_Last verified: 2026-11-16._

@@ -10,7 +10,7 @@ A conversation is one agent, working in one folder, with a permanent record of w
 - **Three backend adapters.** Hermes over ACP, Codex through its app server, and Claude through the Claude Agent SDK. The backends are a closed set, and one door turns an untrusted name into a member of it or refuses it.
 - **Send Message.** The door a person, the Chief, a Manager, or a Worker uses to address someone. It finds the recipient's current conversation and records who sent the message.
 - **The pane.** The same conversation dock on a Ticket, the Chief, and a Manager (a [goal](goals.md) shows its holder's), with a composer for text, images, files, a video, and voice. Voice is transcribed into the draft, so audio never enters the conversation. The dock opens into the full conversation, and on a phone typing always happens there: the open conversation fills the screen above the keyboard. A transcript already read stays loaded at the dock, so opening it again draws it at once. The dock keeps its menus within the visible screen. Hover previews show the same model label as the composer and the current activity. While a turn runs, previews and the status above the composer show the same live elapsed time as the open conversation.
-- **Files in a message.** A named HTML or Markdown file is a link in its sentence that opens the full preview. A picture or video keeps its own shape, several side by side form a grid, and a press opens one at a time in a dark full-screen view that Esc closes. Audio keeps its inline player.
+- **Files in a message.** HTML pages run on the Panels origin in the web and iPhone apps. They can use the owner’s Panels access. Managed file boundaries still protect private files and worktrees. A named HTML or Markdown file is a link in its sentence that opens the full preview. A picture or video keeps its own shape, several side by side form a grid, and a press opens one at a time in a dark full-screen view that Esc closes. Audio keeps its inline player.
 
 ```
  person or agent             Worker step · Manager wake · recovery
@@ -27,6 +27,8 @@ A conversation is one agent, working in one folder, with a permanent record of w
    child process on the VPS, or on the Mac through the executor
 ```
 The backend's own session id is internal and can be rebound without anything outside the system noticing.
+
+Panels gives a local agent a private launch credential for its current conversation. It enters only the child’s environment, after saved launch settings have been written. The database keeps its hash, never the token. A new child receives a fresh credential from its canonical association, including after a restart. Reset revokes the old conversation’s authority while preserving its notebook. Generic conversation starts cannot choose a privileged identity. Remote children retain the executor’s existing per-child capability; a local token never enters an executor command.
 
 Claude and Codex run from owner-maintained CLI installations outside the app. Settings → Backends shows their installed and latest versions on the VPS. Only the owner can update them there. Updates change the selected user-local installation, and new agent processes use that version. A failed lookup of newer releases does not stop ordinary conversations. Before each backend starts, it checks its selected CLI. If that CLI lacks a required feature, the backend names the required update. The adapter reads only the protocol fields it needs and ignores unrelated additions. The feature minimums and their reasons live in `conversation/backends/cli_compatibility.py`. Mac CLI updates stay local to the Mac.
 
@@ -76,7 +78,11 @@ Values accept fractions between -9007199254740991 and 9007199254740991, inclusiv
 
 ## Lifecycle
 
-A conversation has at most one child process. After a server restart, the home first checks the previous child’s ownership. A Mac agent can keep its turn, open asks included. A child that sits idle is stopped, and the next send resumes the stored session. If the backend cannot restore that session, the send is refused.
+A conversation has at most one child process. During a server restart, local native processes stop. Startup checks ownership and automatically resumes eligible interrupted conversations in fresh processes with new credentials. Cleanup that remains unproven keeps the conversation fenced.
+
+An executor agent can keep its process, turn and open asks across a home restart. Its existing capability keeps working. A child that sits idle is stopped, and the next send resumes the stored session. If the backend cannot restore that session, the send is refused.
+
+A Mac Claude start that times out during initialization can recover before the waiting message is delivered. The [executor](executor.md#commands-and-output) keeps the message in order and only replaces a child after proving cleanup. This does not retry a message that may have reached an agent.
 
 A Claude agent can start a background task, such as a long test run, that keeps going after its turn ends. Claude reports its whole set of live tasks after every change, and Headroom keeps the conversation's record equal to that set, so a task whose end Claude never announced still leaves it. A ScheduleWakeup timer is not a task. While a task is live, the child is not idle, and the sidebar, the status line above the composer, and hover cards show the conversation as working. They never show a separate background-work state. Stop and the composer still follow the turn alone. The idle clock starts again when a task ends. If the child goes away first, the task dies with it. Claude stops its tasks as it is terminated, so a task stopped just before the stream ends counts as lost too. The child may be stopped, its process may die, or the server may restart. Headroom then sends one prompt per lost task, from Panels, saying the task did not finish and asking the agent to read its output and restart it or report. A killed conversation drops its tasks without a prompt, because nothing runs in it until someone sends again. Headroom never puts a fresh agent behind an old transcript. A conversation that has gone quiet after real work is compacted automatically while the backend's prompt cache is still warm. Panels' own upkeep, that compaction and a Worker's memory-loss note, is not work, so it never schedules another round. A Worker's conversation gets upkeep only while it is its Ticket's current one and the Ticket is not in the backlog.
 
@@ -86,7 +92,7 @@ New conversation ends the running turn, discards held work, and links a fresh co
 
 After a deploy or ordinary crash interrupts a session, an eligible conversation gets one inspection prompt through the ordinary send path. Headroom never replays uncertain actions. Recovery requires proof that the exact previous child stopped. The home records its identity before dispatch and checks its process birth, host boot, and supervision records. Older unit-backed children retain exact-unit checks. If a machine is unavailable, recovery retries with a capped delay. An update can start between attempts, and the next startup resumes any remaining recovery.
 
-Missing evidence, a live child, or a failed inspection keeps the conversation fenced. An unresolved owner never counts as an idle workspace. A cleanup recheck proves ownership without a new start. The next ordinary send can resume eligible held messages.
+Missing evidence, a live child, or a failed inspection keeps the conversation fenced. An unresolved owner never counts as an idle workspace. A cleanup recheck proves ownership without a new start. Restart checks remote cleanup again and keeps delivery fenced until the old conversation is unlinked. Local retirement and remote retirement are separate proofs. An unknown delivery remains unknown. The next ordinary send can resume eligible held messages.
 
 Codex, Hermes, and Claude save the exact process identity as soon as native spawn returns, before protocol initialization. Stop can then end that recorded process after a home crash. If identity inspection or the durable write fails, startup must stop its owned process. Failed cleanup keeps that handle and blocks a second agent.
 
@@ -143,4 +149,4 @@ The pane reads a stored view that is built from the notebook. When the app conne
 - `src/planner/runtime/conversation_start.py` and `runtime/workspaces.py`: starting a conversation and choosing its folder.
 - `web/src/components/conversation/` and `web/src/lib/conversation/`: the pane and composer.
 
-_Last verified: 2026-11-13._
+_Last verified: 2026-11-16._

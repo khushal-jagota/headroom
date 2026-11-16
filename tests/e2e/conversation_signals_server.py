@@ -41,6 +41,7 @@ from planner.conversation.events import (
 from planner.conversation.local_child_contracts import LocalChildIdentity
 from planner.conversation.message_content import MessageContent, MessageText, text_message_content
 from planner.conversation.snapshot import SubprocessBackendProbeEnvironment
+from planner.conversation.video_uploads import config as video_upload_config
 from planner.core.clock import build_clock
 from planner.core.config import Config, load_config
 from planner.core.contracts import OWNER_PRINCIPAL, Principal, PrincipalKind
@@ -324,6 +325,9 @@ def build_app(config: Config) -> FastAPI:
 def main() -> None:
     config = load_config("config.yaml")
     assert config.db_path.endswith("conversation-signals-proof.db")
+    # The production 5 GiB reserve would make video reservations depend on the free space of
+    # the shared test filesystem. tests/unit/test_video_uploads.py proves the real rule.
+    video_upload_config.FREE_SPACE_FLOOR_BYTES = 0
     app = build_app(config)
     # The fixture binds the port and hands the listener over, so nothing can take it.
     listener_fd = int(os.environ["PLAN_SERVER_LISTENER_FD"])

@@ -4,12 +4,98 @@ import XCTest
 /// menus, chart controls, checklist geometry and Goal Review/conversation routing;
 /// Foundation tests cannot prove that SwiftUI delivers these touches to writers.
 final class GoalFlowTests: XCTestCase {
-    @MainActor func testGoalsFromWorkspaceThroughNativeEditsAndReview() async throws {
+    /// One-off regression review reuses the existing loopback host. Only the real
+    /// SwiftUI navigation and touch stack can prove horizontal-pan and edge-pop
+    /// priority plus tab restoration across Review's direct artifact destination.
+    @MainActor func testSharedTableScrollAndReviewArtifactTabs() async throws {
         continueAfterFailure = false
         let base = try XCTUnwrap(ProcessInfo.processInfo.environment["PANELS_OFFLINE_STUB_URL"])
         XCTAssertEqual(URL(string: base)?.host, "127.0.0.1")
         let app = XCUIApplication()
         app.launchArguments = ["--conversation-stub", base]
+        app.launch(); defer { app.terminate() }
+        func capture(_ name: String) {
+            let attachment = XCTAttachment(screenshot: app.screenshot())
+            attachment.name = name; attachment.lifetime = .keepAlways; add(attachment)
+        }
+        func element(_ id: String) -> XCUIElement {
+            app.descendants(matching: .any).matching(identifier: id).firstMatch
+        }
+        func backFromArtifact() {
+            app.navigationBars.buttons.element(boundBy: 0).tap()
+        }
+        let review = app.tabBars.buttons["Review"]
+        XCTAssertTrue(review.waitForExistence(timeout: 15)); review.tap()
+        let evidence = app.links["Open table evidence"]
+        XCTAssertTrue(evidence.waitForExistence(timeout: 10)); evidence.tap()
+        XCTAssertTrue(app.staticTexts["Table artifact proof"].waitForExistence(timeout: 10))
+        XCTAssertFalse(app.tabBars.firstMatch.isHittable)
+        capture("review-artifact-tabs-hidden")
+        let nested = app.links["Next artifact"]
+        XCTAssertTrue(nested.waitForExistence(timeout: 5)); nested.tap()
+        XCTAssertTrue(app.staticTexts["Nested artifact proof"].waitForExistence(timeout: 10))
+        XCTAssertFalse(app.tabBars.firstMatch.isHittable)
+        capture("nested-artifact-tabs-hidden")
+        backFromArtifact()
+        XCTAssertTrue(app.staticTexts["Table artifact proof"].waitForExistence(timeout: 5))
+        XCTAssertFalse(app.tabBars.firstMatch.isHittable)
+        backFromArtifact()
+        XCTAssertTrue(review.waitForExistence(timeout: 5)); XCTAssertTrue(review.isHittable)
+        capture("review-tabs-restored")
+
+        let workspace = app.tabBars.buttons["Workspace"]
+        workspace.tap()
+        let chief = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Chief of Staff")).firstMatch
+        XCTAssertTrue(chief.waitForExistence(timeout: 10))
+        for scrolled in [false, true] {
+            chief.tap()
+            let table = element("goal-table-scroll-proof")
+            XCTAssertTrue(table.waitForExistence(timeout: 10))
+            let caption = app.staticTexts["Table scroll proof"]
+            XCTAssertTrue(caption.waitForExistence(timeout: 5))
+            let header = element("table-column-scroll-proof-1")
+            let cell = element("table-cell-scroll-proof-0-1")
+            XCTAssertTrue(header.exists); XCTAssertTrue(cell.exists)
+            let missingDataError = app.staticTexts.matching(NSPredicate(
+                format: "label CONTAINS[c] %@ AND label CONTAINS[c] %@", "data", "missing"
+            )).firstMatch
+            XCTAssertFalse(missingDataError.exists, "The fixture must supply a complete Chief readings response")
+            let pageX = caption.frame.minX
+            capture(scrolled ? "table-before-shared-pan" : "table-initial")
+            if scrolled {
+                let headerX = header.frame.minX, cellX = cell.frame.minX
+                let start = table.coordinate(withNormalizedOffset: CGVector(dx: 0.8, dy: 0.6))
+                let finish = table.coordinate(withNormalizedOffset: CGVector(dx: 0.6, dy: 0.6))
+                start.press(forDuration: 0.1, thenDragTo: finish, withVelocity: .slow, thenHoldForDuration: 0.4)
+                let headerDelta = header.frame.minX - headerX
+                let cellDelta = cell.frame.minX - cellX
+                XCTAssertLessThan(headerDelta, -20, "The wide table must move horizontally")
+                XCTAssertEqual(headerDelta, cellDelta, accuracy: 2, "Headers and rows must share the same horizontal offset")
+                XCTAssertEqual(caption.frame.minX, pageX, accuracy: 1, "The page must stay fixed while its table moves")
+                capture("table-after-shared-pan")
+            }
+            let y = table.frame.midY / app.frame.height
+            let edge = app.coordinate(withNormalizedOffset: CGVector(dx: 0.005, dy: y))
+            edge.press(forDuration: 0.1, thenDragTo: app.coordinate(withNormalizedOffset: CGVector(dx: 0.9, dy: y)))
+            XCTAssertTrue(workspace.waitForExistence(timeout: 5))
+            XCTAssertTrue(workspace.isHittable, "The edge swipe must pop the Chief page at either table offset")
+            XCTAssertTrue(table.waitForNonExistence(timeout: 5))
+            capture(scrolled ? "edge-back-from-scrolled-table" : "edge-back-from-initial-table")
+        }
+        let (data, _) = try await URLSession.shared.data(from: URL(string: base + "/proof/writes")!)
+        let writes = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [[String: Any]])
+        XCTAssertFalse(writes.contains { entry in
+            let path = entry["path"] as? String ?? ""
+            return ["/messages", "/reply", "/send"].contains { path.hasSuffix($0) }
+        }, "This review never sends messages")
+    }
+
+    @MainActor func testGoalsFromWorkspaceThroughNativeEditsAndReview() async throws {
+        continueAfterFailure = false
+        let base = try XCTUnwrap(ProcessInfo.processInfo.environment["PANELS_OFFLINE_STUB_URL"])
+        XCTAssertEqual(URL(string: base)?.host, "127.0.0.1")
+        let app = XCUIApplication()
+        app.launchArguments = ["--conversation-stub", base, "-panels.goals-sidebar-rows", "YES"]
         app.launch(); defer { app.terminate() }
         let workspace = app.tabBars.buttons["Workspace"]
         XCTAssertTrue(workspace.waitForExistence(timeout: 15)); workspace.tap()

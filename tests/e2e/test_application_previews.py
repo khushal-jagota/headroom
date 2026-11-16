@@ -22,6 +22,7 @@ from urllib.parse import urlsplit
 import httpx
 import pytest
 from playwright.sync_api import Browser, WebSocket, expect
+from tests.support.launch_identity import agent_environment, agent_headers
 from tests.support.server import REPO_ROOT, ServerHandle
 
 
@@ -119,10 +120,18 @@ def test_real_vite_applications_share_only_their_generation(
         capture_output=True,
         env=environment,
     )
-    with ExitStack() as stack, httpx.Client(base_url=server.base, timeout=10) as owner:
+    owner_login = {"Tailscale-User-Login": "owner@example.test"}
+    with (
+        ExitStack() as stack,
+        # Khushal's calls carry the login Tailscale Serve adds; a Worker's carry none.
+        httpx.Client(base_url=server.base, timeout=10, headers=owner_login) as owner,
+        httpx.Client(base_url=server.base, timeout=10) as agent,
+    ):
 
-        def api(method: str, path: str, **kwargs: Any) -> dict[str, Any]:
-            response = owner.request(method, path, **kwargs)
+        def api(
+            method: str, path: str, client: httpx.Client | None = None, **kwargs: Any
+        ) -> dict[str, Any]:
+            response = (client or owner).request(method, path, **kwargs)
             assert response.is_success, response.text
             return dict(response.json())
 
@@ -132,6 +141,7 @@ def test_real_vite_applications_share_only_their_generation(
                 "PLAN_ACTOR": "worker",
                 "PLAN_TICKET_ID": ticket_id,
                 "PLAN_SERVER_URL": server.base,
+                **agent_environment(server, "worker", ticket_id, owner_headers=owner_login),
             }
             result = subprocess.run(
                 [str(REPO_ROOT / ".venv/bin/panels"), "preview", *arguments, "--json"],
@@ -256,11 +266,12 @@ def test_real_vite_applications_share_only_their_generation(
         # Advance this synthetic Ticket to Consequences while its preview remains eligible.
         fields = ("brief", "what_changes", "implementation")
         for field, next_field in zip(fields, (*fields[1:], "consequences"), strict=True):
-            worker = {"X-Plan-Actor": "worker", "X-Plan-Ticket-ID": apps[0][0]["id"]}
+            worker = agent_headers(server, "worker", apps[0][0]["id"])
             api(
                 "POST",
                 f"/api/tickets/{apps[0][0]['id']}/propose",
                 headers=worker,
+                client=agent,
                 json={"body": "Synthetic browser proof."},
             )
             api(
@@ -383,13 +394,22 @@ def test_real_vite_applications_share_only_their_generation(
 
         for peer in active_sockets:
             peer.on("close", record_close)
-        expired_at = time.monotonic()
-        api(
+        proposed = api(
             "POST",
             f"/api/tickets/{apps[0][0]['id']}/propose",
             headers=worker,
+            client=agent,
             json={"body": "Synthetic browser proof complete."},
         )
+        assert proposed["stage"] == "needs_consequences"
+        assert proposed["pending_proposal"] is not None
+        # A report at its ceiling waits for approval. Only acceptance finishes the Ticket.
+        expired_at = time.monotonic()
+        completed = api(
+            "POST", f"/api/tickets/{apps[0][0]['id']}/accept/consequences", json={}
+        )
+        assert completed["stage"] == "done"
+        assert completed["pending_proposal"] is None
         api("DELETE", f"/api/tickets/{apps[1][0]['id']}")
         deadline = expired_at + 2
         while len(closed_at) < 2:

@@ -32,6 +32,7 @@ from uuid import uuid4
 
 from pydantic import JsonValue
 
+from planner.agent_identity.contracts import LAUNCH_TOKEN_ENVIRONMENT_NAME
 from planner.conversation import child_custody
 from planner.conversation.backend_event_contracts import AcceptedEvent, CommitParticipant
 from planner.conversation.backends.contracts import BackendSpawnFailed
@@ -2822,6 +2823,8 @@ def _stored_event(row: sqlite3.Row) -> StoredConversationEvent:
 def _identity_environment_variables_to_json(
     identity_environment_variables: tuple[tuple[str, str], ...],
 ) -> str:
+    if any(name == LAUNCH_TOKEN_ENVIRONMENT_NAME for name, _ in identity_environment_variables):
+        raise ValueError("launch tokens are transient and cannot be stored in a conversation")
     return json.dumps(
         [[name, value] for name, value in identity_environment_variables],
         separators=(",", ":"),

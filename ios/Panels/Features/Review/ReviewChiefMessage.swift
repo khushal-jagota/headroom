@@ -19,7 +19,7 @@ struct ReviewChiefMessage: View {
                         .disabled(message.busy).accessibilityIdentifier("review.chief.checkDelivery")
                 }
                 Spacer()
-                NavigationLink("Open Chief", value: AppRoute.chief)
+                ScreenTextEntryNavigationLink("Open Chief", value: AppRoute.chief)
             }
             .font(PanelsTheme.TypeScale.small)
             .frame(minHeight: 44)

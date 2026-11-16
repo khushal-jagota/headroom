@@ -1,0 +1,191 @@
+import type { AutomaticStartAdmission } from '../start_admission/index.ts';
+/** Process-local state and injected effects for the local conversation core. */
+import type { Principal } from '../../core/contracts.ts';
+import type {
+  ConversationBackendKey,
+  DeploymentRecoveryReference,
+  NativeMessageOperation,
+  PromptDeliveryMode,
+  PromptDeliveryRefusalReason,
+  PromptQueueReason,
+} from '../contracts.ts';
+import type {
+  BackendChildFactory,
+  BackendEventSink,
+  BackendChild,
+  TurnToken,
+} from '../backends/contracts.ts';
+import type { ConversationLiveTailFrame } from '../events.ts';
+import type { MessageContent } from '../message_content.ts';
+import type { ConversationMessageFiles } from '../message_files.ts';
+import type { ConversationRecordStore, StoredConversationEvent } from '../record/contracts.ts';
+import type { Deferred } from './state.ts';
+
+export type ConversationPhase = 'idle' | 'starting' | 'running' | 'ending' | 'draining';
+export interface Message {
+  readonly held_prompt_id: string;
+  readonly content: MessageContent;
+  readonly sender_label: string;
+  readonly sender: Principal | null;
+  readonly recipient: Principal | null;
+  readonly sender_message_id: string | null;
+  readonly sent_at_unix_milliseconds: number | null;
+  readonly snapshot_sent_at_unix_milliseconds: number;
+  readonly model_change: string | null;
+  readonly reasoning_effort_change: string | null;
+  readonly reasoning_effort_is_set: boolean;
+  readonly owner_read_through_sequence: number | null;
+  readonly acknowledge_owner_on_failure: boolean;
+  readonly recovery_references: readonly DeploymentRecoveryReference[];
+  readonly recording_receipt: NativeMessageOperation | null;
+  readonly queue_reason: PromptQueueReason;
+  readonly delivery_uncertain: boolean;
+  readonly system_generated: boolean;
+  readonly dispatch_memory_note?: boolean;
+}
+export interface SenderAdmission {
+  readonly message: Message;
+  readonly settled: Deferred<void>;
+}
+export interface ReservedTurn {
+  readonly token: TurnToken;
+  readonly resolved: Deferred<void>;
+  readonly automatic_compaction: boolean;
+  automatic_notice: boolean;
+  memory_notice_only: boolean;
+  prompt_accepted: boolean;
+  prompt_write_attempted: boolean;
+  messages: readonly Message[];
+  mode: PromptDeliveryMode;
+  shutdown_owned: boolean;
+  shutdown_fate: import('../contracts.ts').PromptDeliveryFate | null;
+}
+export interface DeliveryAttempt {
+  readonly refusal_reason: PromptDeliveryRefusalReason | null;
+  readonly refusal_detail: string | null;
+  readonly record_refusal: boolean;
+  readonly suppression_reason: string | null;
+  readonly composed_content_delivered: boolean;
+  readonly messages: readonly Message[];
+  readonly automatic_notice: boolean;
+  readonly memory_notice_only: boolean;
+}
+/** Applying a field returns its rollback operation for this synchronous attempt. */
+export interface RuntimeMutation {
+  /** A refused remote take cancels its predictions before commit publication. */
+  readonly active?: boolean;
+  apply(): () => void;
+}
+export type SaveAttempt = <T>(
+  conversation_id: string,
+  work: () => T,
+  mutations: readonly RuntimeMutation[],
+) => T;
+export interface TrackedSaveRetry {
+  set_detail(detail: string): void;
+  close(): void;
+}
+/** Structural slice of the stalls unit's registry. The owner injects its clock. */
+export interface SaveWaitRegistry {
+  track(
+    kind: 'vps_save_retrying',
+    wait_key: string,
+    options: { detail: string; conversation_id?: string | null },
+  ): TrackedSaveRetry;
+}
+export interface ConversationCoreOptions {
+  readonly store: ConversationRecordStore;
+  readonly wait_registry?: SaveWaitRegistry;
+  readonly backend_child_factories: Readonly<Record<ConversationBackendKey, BackendChildFactory>>;
+  readonly message_files: ConversationMessageFiles;
+  readonly publish_event?: (event: StoredConversationEvent) => void;
+  readonly publish_frame?: (conversation_id: string, frame: ConversationLiveTailFrame) => void;
+  readonly publish_status_changed?: (conversation_id: string) => void;
+  readonly emit_change?: () => void;
+  readonly save_attempt?: SaveAttempt;
+  readonly require_runtime_ownership?: () => void;
+  readonly require_signal_current?: () => void;
+  readonly on_shutdown?: () => void;
+  readonly unix_time_now?: () => number;
+  readonly monotonic_now?: () => number;
+  readonly idle_child_stop_after_seconds?: number;
+  readonly idle_child_sweep_interval_seconds?: number;
+  readonly delivery_model_refusal: (
+    backend: ConversationBackendKey,
+    model: string,
+    ticket_id: string | null,
+  ) => string | null;
+  readonly execution_refusal: (
+    conversation_id: string,
+  ) => import('../../core/contracts.ts').PlannerError | null;
+  readonly on_held_model_change?: (
+    conversation_id: string,
+    model: string,
+    reasoning_effort: string | null,
+  ) => void | Promise<void>;
+  readonly remote_recovery?: {
+    retire_replaced(
+      reference: import('../backends/contracts.ts').ChildReference,
+      replaced_by: string,
+      undelivered_message?: string,
+    ): void | Promise<void>;
+    close_rewritten(
+      conversation_id: string,
+      turn_number: number,
+      note: string,
+    ): void | Promise<void>;
+    recover(conversation_id: string): Promise<void>;
+  };
+}
+
+/** Only synchronous persistence effects enter a retry. Provider calls never do. */
+export interface CoreBackendEventSink extends BackendEventSink {
+  readonly generation: string;
+}
+export interface DeliveryServices {
+  readonly start_admission: AutomaticStartAdmission;
+  accept_automatic_start(
+    state: import('./state.ts').ConversationState,
+    turn: TurnToken,
+  ): Promise<void>;
+  settle_automatic_ids(
+    state: import('./state.ts').ConversationState,
+    identities: Iterable<string | null>,
+  ): Promise<void>;
+  readonly options: ConversationCoreOptions;
+  readonly shutting_down: boolean;
+  make_sink(state: import('./state.ts').ConversationState): CoreBackendEventSink;
+  ensure_local_custody(state: import('./state.ts').ConversationState): Promise<void>;
+  record_local_child_preparation(
+    state: import('./state.ts').ConversationState,
+    child: BackendChild,
+    sink: CoreBackendEventSink,
+  ): Promise<void>;
+  check_local_child_started(
+    state: import('./state.ts').ConversationState,
+    turn: TurnToken,
+  ): Promise<boolean>;
+  persist<T>(
+    state: import('./state.ts').ConversationState,
+    work: () => T,
+    mutations?: readonly RuntimeMutation[],
+  ): Promise<T>;
+  native_operation<T>(operation: () => Promise<T>): Promise<T>;
+  retained_run(
+    state: import('./state.ts').ConversationState,
+  ):
+    | (Omit<import('../backends/contracts.ts').RetainedBackendRun, 'turn'> & { turn: TurnToken })
+    | null;
+  discard_child(
+    state: import('./state.ts').ConversationState,
+    child: import('../backends/contracts.ts').BackendChild,
+  ): Promise<boolean>;
+  retire_child_for_rebind(
+    state: import('./state.ts').ConversationState,
+    child: import('../backends/contracts.ts').BackendChild,
+  ): Promise<boolean>;
+  note_written(
+    state: import('./state.ts').ConversationState,
+    rows: readonly StoredConversationEvent[],
+  ): void;
+}
