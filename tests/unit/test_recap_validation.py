@@ -62,4 +62,7 @@ def test_manager_and_chief_recap_writes_refuse_ids(tmp_db: Connection, fake_cloc
     with pytest.raises(PlannerError, match="names an ID"):
         update_chief_recap(tmp_db, {"recap": "See 2f417385a."})
     assert update_chief_recap(tmp_db, {"recap": "Plain."}).recap == "Plain."
-    assert managers_data.read_manager(tmp_db, manager.id).recap == "Plain."
+    assert (
+        tmp_db.execute("SELECT recap FROM managers WHERE id=?", (manager.id,)).fetchone()[0]
+        == "Plain."
+    )
