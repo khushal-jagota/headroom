@@ -54,7 +54,8 @@ private struct GoalWorkspaceRow: View {
             }.foregroundStyle(PanelsTheme.Web.railRow)
                 .frame(maxWidth: .infinity, minHeight: PanelsTheme.Web.Rail.goalRowHeight, alignment: .leading)
                 .padding(.horizontal, PanelsTheme.Web.Rail.textInset).contentShape(Rectangle())
-        }.buttonStyle(WorkspacePreviewButtonStyle(preview: { showingPreview = true }))
+        }.buttonStyle(WorkspaceRailButtonStyle())
+            .highPriorityGesture(LongPressGesture().onEnded { _ in showingPreview = true })
             .accessibilityIdentifier("workspace-goal-\(goal.id)")
             .accessibilityAction(named: "Preview") { showingPreview = true }
             .sheet(isPresented: $showingPreview, onDismiss: {
