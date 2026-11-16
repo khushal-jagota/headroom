@@ -335,10 +335,15 @@ def main() -> int:
         type="table", id="scroll-proof", caption="Table scroll proof",
         columns=["Track", "Owner", "Reading", "Evidence"],
         rows=[
-            ["First shared row", "Chief of Staff", "120", "A wide evidence cell that stays in its column"],
-            ["Second shared row", "Release manager", "240", "Another wide evidence cell with its original row"],
+            ["First shared row", "Chief of Staff", "120",
+             "A wide evidence cell that stays in its column"],
+            ["Second shared row", "Release manager", "240",
+             "Another wide evidence cell with its original row"],
         ],
-        cell_tones=[["neutral", "good", "good", "neutral"], ["neutral", "attention", "good", "neutral"]],
+        cell_tones=[
+            ["neutral", "good", "good", "neutral"],
+            ["neutral", "attention", "good", "neutral"],
+        ],
     )
     manual: dict[str, Any] = dict(
         measure_id="words",
@@ -1164,16 +1169,22 @@ def main() -> int:
                 )
                 return
             if TABLE_SCROLL_SMOKE and path == "/api/goals":
-                self.respond(dict(goals=[], status_date="2026-11-04", next_refresh_at=time.time() + 3600))
+                self.respond(dict(
+                    goals=[], status_date="2026-11-04", next_refresh_at=time.time() + 3600
+                ))
                 return
             if TABLE_SCROLL_SMOKE and path == "/api/chief/page":
-                self.respond(dict(page=dict(kind="headroom.page", version=1, blocks=[table_proof]), page_revision=1))
+                self.respond(dict(
+                    page=dict(kind="headroom.page", version=1, blocks=[table_proof]),
+                    page_revision=1,
+                ))
                 return
             if TABLE_SCROLL_SMOKE and path == "/api/chief/page/readings":
                 self.respond(dict(values=[], sources=[]))
                 return
             if TABLE_SCROLL_SMOKE and path in (
-                "/files/tickets/offline-1/table-proof.md", "/files/tickets/offline-1/nested-proof.md"
+                "/files/tickets/offline-1/table-proof.md",
+                "/files/tickets/offline-1/nested-proof.md",
             ):
                 content = (
                     b"# Table artifact proof\n\n[Next artifact](nested-proof.md)"
