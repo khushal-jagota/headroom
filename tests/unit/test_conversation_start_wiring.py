@@ -8,7 +8,7 @@ back out of the Ticket row.
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from dataclasses import replace
 from pathlib import Path
 from sqlite3 import Connection
@@ -226,6 +226,12 @@ class _LinkWatchingConversationSystem:
 
     async def kill(self, conversation_id: str) -> None:
         await self._system.kill(conversation_id)
+
+    async def kill_for_restart(
+        self, conversation_id: str, ticket_id: str,
+        finish: Callable[[Callable[[Connection], None] | None], Awaitable[None]],
+    ) -> None:
+        await self._system.kill_for_restart(conversation_id, ticket_id, finish)
 
     async def is_running(self, conversation_id: str) -> bool:
         return await self._system.is_running(conversation_id)

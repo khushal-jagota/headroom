@@ -524,3 +524,362 @@ def test_constructor_prefetch_does_not_revive_intent_with_unknown_prompt(
         system._runtime_ownership.close()
 
     _run(exercise)
+
+
+
+def _fresh_mac_lease(harness: _Harness) -> None:
+    import json
+
+    from planner.execution_configuration import PROTOCOL_VERSION
+    from planner.execution_identity import ExecutorIdentity
+    from planner.executor.protocol import LeaseRequest, as_object
+    from planner.machines.contracts import ORIGINAL_MAC_MACHINE_ID
+
+    lease = LeaseRequest(
+        ExecutorIdentity(PROTOCOL_VERSION, "revision", 5, "inc"),
+        42, 0, 0, None, (), False, (), False,
+    )
+    with connect(str(harness.db_path)) as conn:
+        conn.execute(
+            "INSERT INTO mac_executor_presence(machine_id,executor_incarnation,"
+            "last_lease_at_ms,lease_json) "
+            "VALUES (?,'inc',?,?) ON CONFLICT(machine_id) DO UPDATE SET "
+            "executor_incarnation=excluded.executor_incarnation,"
+            "last_lease_at_ms=excluded.last_lease_at_ms,lease_json=excluded.lease_json",
+            (ORIGINAL_MAC_MACHINE_ID, int(harness.clock.now * 1000), json.dumps(as_object(lease))),
+        )
+        conn.commit()
+
+def test_remote_restart_keeps_retired_local_proof_and_unknown_delivery(
+    stopped: tuple[_Harness, _StopFactory], monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A remote start must not turn an old uncertain delivery into a local cleanup failure."""
+    from tests.unit.test_conversation_system import _link_worker_ticket
+
+    from planner.conversation.lifecycle import (
+        LifecycleFact,
+        LifecycleKind,
+        LifecycleOperation,
+        LifecycleStatus,
+    )
+    from planner.conversation.lifecycle_storage import apply_facts
+    from planner.core.contracts import OWNER_PRINCIPAL
+    from planner.machines.contracts import ORIGINAL_MAC_MACHINE_ID
+    from planner.runtime.worker_step_readiness_loop import WorkerStepStartResult
+    from planner.tickets import locale_configuration
+    from planner.tickets.worker_restart import restart_worker
+    from planner.worker_supervision.contracts import CleanupResult
+
+    harness, factory = stopped
+
+    async def exercise() -> None:
+        await _start(harness, "mac")
+        _link_worker_ticket(harness.db_path, "mac")
+        with connect(str(harness.db_path)) as conn:
+            conn.execute(
+                "UPDATE tickets SET machine_id=? WHERE id='t_worker'",
+                (ORIGINAL_MAC_MACHINE_ID,),
+            )
+            # The old delivery was uncertain when its turn became unavailable. The
+            # retired custody is produced by conversation creation, not edited here.
+            apply_facts(conn, "mac", (
+                LifecycleFact(
+                    LifecycleKind.turn, "1", 1, LifecycleOperation.turn, LifecycleStatus.unavailable
+                ),
+                LifecycleFact(
+                    LifecycleKind.attempt, "prompt:1", 1, LifecycleOperation.prompt,
+                    LifecycleStatus.unknown,
+                ),
+            ))
+            conn.commit()
+            assert conn.execute(
+                "SELECT state FROM conversation_child_custody WHERE conversation_id='mac'"
+            ).fetchone()[0] == "retired"
+        state = harness.system._conversations["mac"]
+        assert state.local_child_retirement_proven
+        await harness.system.send("mac", text_message_content("later turn"), sender_label="Owner")
+        await harness.complete_turn("mac")
+        factory.link_back.set()
+        harness.clock.advance(1801)
+        await harness.system._sweep_idle_children()
+        await harness.settle()
+        async def recheck(reference: ChildReference, ticket_id: str) -> CleanupResult:
+            assert reference == factory.runs["mac"].reference
+            assert ticket_id == "t_worker"
+            return CleanupResult(True, "Recorded Worker cleanup is complete")
+        harness.system.configure_worker_cleanup_recheck(recheck)
+        _fresh_mac_lease(harness)
+        assert (await harness.system.recheck_worker_cleanup("t_worker")).complete
+        monkeypatch.setattr(locale_configuration, "mac_is_present", lambda *args: True)
+        async def no_start() -> WorkerStepStartResult:
+            return WorkerStepStartResult(False)
+        conn = connect(str(harness.db_path))
+        try:
+            result = await restart_worker(
+                harness.system, conn, OWNER_PRINCIPAL, "t_worker", start_worker_step=no_start,
+                now=lambda: 10,
+            )
+        finally:
+            conn.close()
+        assert result["killed_conversation_id"] == "mac"
+        facts = await harness.store.lifecycle_facts("mac")
+        assert any(f.identity == "prompt:1" and f.status is LifecycleStatus.unknown for f in facts)
+        assert harness.backend("mac").written_texts() == ("later turn",)
+
+    _run(exercise)
+
+
+def test_restart_fences_new_delivery_until_old_conversation_is_unlinked(
+    stopped: tuple[_Harness, _StopFactory], monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """No new remote child can start between cleanup and the Ticket unlink."""
+    import threading
+
+    from tests.unit.test_conversation_system import _link_worker_ticket
+
+    from planner.core.contracts import OWNER_PRINCIPAL, PlannerError
+    from planner.machines.contracts import ORIGINAL_MAC_MACHINE_ID
+    from planner.runtime.worker_step_readiness_loop import WorkerStepStartResult
+    from planner.tickets import locale_configuration, worker_restart
+    from planner.worker_supervision.contracts import CleanupResult
+
+    harness, factory = stopped
+    entered = threading.Event()
+    release = threading.Event()
+    unlink = worker_restart._unlink_give_back_the_claim_and_write_configuration
+
+    def paused_unlink(*args: object, **kwargs: object) -> None:
+        entered.set()
+        assert release.wait(5)
+        unlink(*args, **kwargs)  # type: ignore[arg-type]
+
+    async def exercise() -> None:
+        await _start(harness, "mac")
+        _link_worker_ticket(harness.db_path, "mac")
+        with connect(str(harness.db_path)) as conn:
+            conn.execute(
+                "UPDATE tickets SET machine_id=? WHERE id='t_worker'",
+                (ORIGINAL_MAC_MACHINE_ID,),
+            )
+            conn.commit()
+        await harness.system.send("mac", text_message_content("first"), sender_label="Owner")
+        await harness.complete_turn("mac")
+        factory.link_back.set()
+        _fresh_mac_lease(harness)
+
+        async def recheck(reference: ChildReference, ticket_id: str) -> CleanupResult:
+            return CleanupResult(True, "retired")
+
+        harness.system.configure_worker_cleanup_recheck(recheck)
+        monkeypatch.setattr(locale_configuration, "mac_is_present", lambda *args: True)
+        monkeypatch.setattr(
+            worker_restart, "_unlink_give_back_the_claim_and_write_configuration", paused_unlink
+        )
+
+        async def no_start() -> WorkerStepStartResult:
+            return WorkerStepStartResult(False)
+
+        conn = connect(str(harness.db_path))
+        task = asyncio.create_task(worker_restart.restart_worker(
+            harness.system, conn, OWNER_PRINCIPAL, "t_worker", start_worker_step=no_start,
+            now=lambda: 10,
+        ))
+        try:
+            assert await asyncio.to_thread(entered.wait, 5)
+            sending = asyncio.create_task(harness.system.send(
+                "mac", text_message_content("racing"), sender_label="Owner"
+            ))
+            await asyncio.sleep(0.05)
+            assert harness.backend("mac").written_texts() == ("first",)
+        finally:
+            release.set()
+            await task
+            conn.close()
+        with pytest.raises(PlannerError, match="conversation was restarted"):
+            await sending
+        assert harness.backend("mac").written_texts() == ("first",)
+
+    _run(exercise)
+
+
+def test_recheck_refuses_when_remote_source_changes_during_inspection(
+    stopped: tuple[_Harness, _StopFactory],
+) -> None:
+    """A receipt for one remote source cannot prove its successor ended."""
+    from tests.unit.test_conversation_system import _link_worker_ticket
+
+    from planner.machines.contracts import ORIGINAL_MAC_MACHINE_ID
+    from planner.worker_supervision.contracts import CleanupResult
+
+    harness, factory = stopped
+
+    async def exercise() -> None:
+        await _start(harness, "mac")
+        _link_worker_ticket(harness.db_path, "mac")
+        with connect(str(harness.db_path)) as conn:
+            conn.execute(
+                "UPDATE tickets SET machine_id=? WHERE id='t_worker'",
+                (ORIGINAL_MAC_MACHINE_ID,),
+            )
+            conn.commit()
+        await harness.system.send("mac", text_message_content("first"), sender_label="Owner")
+        await harness.complete_turn("mac")
+
+        checked = False
+
+        async def replaced(reference: ChildReference, ticket_id: str) -> CleanupResult:
+            nonlocal checked
+            checked = True
+            run = factory.runs["mac"]
+            assert run.reference == reference
+            factory.runs["mac"] = replace(
+                run, reference=ChildReference("new-inc", "new-child", "mac")
+            )
+            return CleanupResult(True, "old source retired")
+
+        harness.system.configure_worker_cleanup_recheck(replaced)
+        _fresh_mac_lease(harness)
+        result = await harness.system.recheck_worker_cleanup("t_worker")
+        assert not result.complete
+        assert "source changed" in result.reason
+        assert checked
+        factory.link_back.set()
+
+    _run(exercise)
+
+
+def test_restart_refuses_if_executor_changes_before_unlink(
+    stopped: tuple[_Harness, _StopFactory], monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A source change after cleanup proof must leave the Ticket linked to its Worker."""
+    from tests.unit.test_conversation_system import _link_worker_ticket
+
+    from planner.core.contracts import OWNER_PRINCIPAL, PlannerError
+    from planner.machines.contracts import ORIGINAL_MAC_MACHINE_ID
+    from planner.runtime.worker_step_readiness_loop import WorkerStepStartResult
+    from planner.tickets import locale_configuration, worker_restart
+    from planner.worker_supervision.contracts import CleanupResult
+
+    harness, factory = stopped
+    unlink = worker_restart._unlink_give_back_the_claim_and_write_configuration
+
+    def replace_executor(*args: object, **kwargs: object) -> None:
+        with connect(str(harness.db_path)) as conn:
+            conn.execute(
+                "UPDATE mac_executor_presence SET executor_incarnation='new-inc' "
+                "WHERE machine_id=?",
+                (ORIGINAL_MAC_MACHINE_ID,),
+            )
+            conn.commit()
+        unlink(*args, **kwargs)  # type: ignore[arg-type]
+
+    async def exercise() -> None:
+        await _start(harness, "mac")
+        _link_worker_ticket(harness.db_path, "mac")
+        with connect(str(harness.db_path)) as conn:
+            conn.execute(
+                "UPDATE tickets SET machine_id=? WHERE id='t_worker'",
+                (ORIGINAL_MAC_MACHINE_ID,),
+            )
+            conn.commit()
+        await harness.system.send("mac", text_message_content("first"), sender_label="Owner")
+        await harness.complete_turn("mac")
+        factory.link_back.set()
+        _fresh_mac_lease(harness)
+
+        async def recheck(reference: ChildReference, ticket_id: str) -> CleanupResult:
+            return CleanupResult(True, "retired")
+
+        async def no_start() -> WorkerStepStartResult:
+            raise AssertionError("restart must not start a replacement")
+
+        harness.system.configure_worker_cleanup_recheck(recheck)
+        monkeypatch.setattr(locale_configuration, "mac_is_present", lambda *args: True)
+        monkeypatch.setattr(
+            worker_restart, "_unlink_give_back_the_claim_and_write_configuration", replace_executor
+        )
+        conn = connect(str(harness.db_path))
+        try:
+            with pytest.raises(PlannerError):
+                await worker_restart.restart_worker(
+                    harness.system, conn, OWNER_PRINCIPAL, "t_worker", start_worker_step=no_start,
+                    now=lambda: 10,
+                )
+            assert conn.execute(
+                "SELECT conversation_id FROM tickets WHERE id='t_worker'"
+            ).fetchone()[0] == "mac"
+        finally:
+            conn.close()
+
+    _run(exercise)
+
+
+def test_restart_rechecks_cleanup_after_configuration_failure(
+    stopped: tuple[_Harness, _StopFactory], monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A rollback must not let fallback unlink a Worker whose source changed."""
+    import sqlite3
+
+    from tests.unit.test_conversation_system import _link_worker_ticket
+
+    from planner.core.contracts import OWNER_PRINCIPAL
+    from planner.machines.contracts import ORIGINAL_MAC_MACHINE_ID
+    from planner.runtime.worker_step_readiness_loop import WorkerStepStartResult
+    from planner.tickets import locale_configuration, worker_restart
+    from planner.worker_supervision.contracts import CleanupResult
+
+    harness, factory = stopped
+    unlink = worker_restart._unlink_give_back_the_claim_and_write_configuration
+
+    def replace_before_fallback(*args: object, **kwargs: object) -> None:
+        if kwargs.get("recover_after_failure") is False:
+            with connect(str(harness.db_path)) as conn:
+                conn.execute(
+                    "UPDATE mac_executor_presence SET executor_incarnation='new-inc' "
+                    "WHERE machine_id=?", (ORIGINAL_MAC_MACHINE_ID,),
+                )
+                conn.commit()
+        unlink(*args, **kwargs)  # type: ignore[arg-type]
+
+    async def exercise() -> None:
+        await _start(harness, "mac")
+        _link_worker_ticket(harness.db_path, "mac")
+        with connect(str(harness.db_path)) as conn:
+            conn.execute(
+                "UPDATE tickets SET machine_id=? WHERE id='t_worker'", (ORIGINAL_MAC_MACHINE_ID,),
+            )
+            conn.commit()
+        await harness.system.send("mac", text_message_content("first"), sender_label="Owner")
+        await harness.complete_turn("mac")
+        factory.link_back.set()
+        _fresh_mac_lease(harness)
+
+        async def recheck(reference: ChildReference, ticket_id: str) -> CleanupResult:
+            return CleanupResult(True, "retired")
+
+        async def no_start() -> WorkerStepStartResult:
+            raise AssertionError("failed configuration cannot start a replacement")
+
+        def fail_configuration(conn: sqlite3.Connection, now: int) -> None:
+            raise RuntimeError("configuration failed")
+
+        harness.system.configure_worker_cleanup_recheck(recheck)
+        monkeypatch.setattr(locale_configuration, "mac_is_present", lambda *args: True)
+        monkeypatch.setattr(
+            worker_restart, "_unlink_give_back_the_claim_and_write_configuration",
+            replace_before_fallback,
+        )
+        conn = connect(str(harness.db_path))
+        try:
+            with pytest.raises(RuntimeError, match="configuration failed"):
+                await worker_restart.restart_worker(
+                    harness.system, conn, OWNER_PRINCIPAL, "t_worker", start_worker_step=no_start,
+                    write_employee_configuration=fail_configuration, now=lambda: 10,
+                )
+            assert conn.execute(
+                "SELECT conversation_id FROM tickets WHERE id='t_worker'"
+            ).fetchone()[0] == "mac"
+        finally:
+            conn.close()
+
+    _run(exercise)

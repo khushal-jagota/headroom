@@ -46,11 +46,11 @@
 {#snippet content()}
   {#if lead}<span class="ticket-row-lead">{@render lead()}</span>{/if}
   <span class="ticket-row-title">{#if titleMark}{@render titleMark()}{/if}<span class="ticket-row-text">{title}</span></span>
-  <!-- The mark column says what matters most about the row (owner): the Review icon in the accent
-       when it waits on your approval, before an unread message's dot; the icon greyed when it
-       waits on an agent's approval and nothing else is showing; otherwise the dot or the
-       working mark, or nothing. -->
-  {#if approval === "owner"}
+  <!-- The mark column says what matters most about the row (owner): an unread message's dot first;
+       else the Review icon in the accent when it waits on your approval; the icon greyed when it
+       waits on an agent's approval and nothing else is showing; otherwise the working mark, or
+       nothing. -->
+  {#if approval === "owner" && !signal?.message_for_owner}
     <span class="conversation-signal-marks approval-mark approval-mark--owner" role="img" aria-label="Needs your approval" data-approval-mark="owner" data-conversation-id={conversationId ?? undefined}><DestinationIcon name="review" /></span>
   {:else if approval === "agent" && !signal?.message_for_owner && !signal?.working}
     <span class="conversation-signal-marks approval-mark approval-mark--agent" role="img" aria-label="Awaiting an agent's approval" data-approval-mark="agent" data-conversation-id={conversationId ?? undefined}><DestinationIcon name="review" /></span>

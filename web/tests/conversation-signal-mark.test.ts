@@ -61,9 +61,9 @@ describe("shared conversation signal consumers", () => {
     } }).body;
     expect(html).toContain('data-conversation-id="child-exact"');
     expect(html).not.toContain('data-conversation-signal="working"');
-    // The child's row carries its own mark, and its approval outranks its message (owner): the
-    // Review icon, once. The Chief's header carries none of the child's activity.
-    expect(html.match(/data-approval-mark="owner"/g)).toHaveLength(1);
-    expect(html).not.toContain('data-conversation-signal="message"');
+    // The child's row carries its own mark, and its unread message outranks its approval (owner):
+    // the dot, once, and no Review icon. The Chief's header carries none of the child's activity.
+    expect(html.match(/data-conversation-signal="message"/g)).toHaveLength(1);
+    expect(html).not.toContain('data-approval-mark="owner"');
   });
 });
