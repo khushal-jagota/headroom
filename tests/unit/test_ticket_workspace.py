@@ -198,14 +198,18 @@ def test_workspace_exposes_failed_feedback_and_refreshes_its_version(tmp_db: Con
     tmp_db.commit()
     after = resources.capture(tmp_db, request, key)
     assert before is not None and after is not None and before.revision != after.revision
-    assert workspace_ticket(tmp_db, ticket.id)["unresolved_decision_feedback"] == [
+    detail = workspace_ticket(tmp_db, ticket.id)
+    assert "integrity_error" not in detail
+    assert detail["unresolved_decision_feedback"] == [
         {"decision_id": "decision", "status": "uncertain", "message": "Please revise"}
     ]
     tmp_db.execute("UPDATE ticket_decision_messages SET delivery_status='delivered'")
     tmp_db.commit()
     resolved = resources.capture(tmp_db, request, key)
     assert resolved is not None and resolved.revision != after.revision
-    assert workspace_ticket(tmp_db, ticket.id)["unresolved_decision_feedback"] == []
+    detail = workspace_ticket(tmp_db, ticket.id)
+    assert "integrity_error" not in detail
+    assert detail["unresolved_decision_feedback"] == []
 
 
 def test_feedback_restart_preserves_proposal_and_requires_authority(tmp_db: Connection) -> None:
@@ -242,7 +246,8 @@ def test_feedback_restart_preserves_proposal_and_requires_authority(tmp_db: Conn
     worker_restart._unlink_give_back_the_claim_and_write_configuration(
         tmp_db, ticket.id, killed_conversation_id=None, write_employee_configuration=None, now=3,
     )
-    assert data.read_ticket(tmp_db, ticket.id).pending_proposal.body == "New proposal"
+    proposal = data.read_ticket(tmp_db, ticket.id).pending_proposal
+    assert proposal is not None and proposal.body == "New proposal"
     assert tmp_db.execute(
         "SELECT delivery_status FROM ticket_decision_messages WHERE decision_id='decision'"
     ).fetchone()[0] == "pending"
