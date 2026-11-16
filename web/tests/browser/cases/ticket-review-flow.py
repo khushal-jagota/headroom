@@ -956,7 +956,8 @@ def run(browser, urls):
         before = writes()
         field.press("End")
         field.press("Enter")
-        expect(field).to_have_value(draft + "\n")
+        expect(field).to_have_value(draft)
+        expect(page.locator(".decision.flash").first).to_be_attached()
         for key in ("Control+Enter", "Meta+Enter"):
             field.fill(draft)
             field.press(key)

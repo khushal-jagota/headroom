@@ -284,14 +284,15 @@
         {/if}
       </div>
 
-      {#snippet revisionEditor()}
-        <!-- The note goes with the explicit decision. Enter adds a line; the field never
-             chooses Send it back or Approve. Spoken words append to the note. -->
+      {#snippet revisionEditor(flashDecisions: () => void)}
+        <!-- The note goes with the explicit decision. Enter flashes the decision buttons and
+             Shift+Enter adds a line; the field never chooses Send it back or Approve. Spoken words append to the note. -->
         <div class="review-revise review-arrive review-arrive--4" data-review-revision>
           <ComposerField
             bind:value={revisionDraft}
             placeholder="Add a note for the worker…"
             inputAttributes={{ "data-review-revision-input": "" }}
+            onsubmit={flashDecisions}
             record={voiceAvailable
               ? {
                   label: "Speak a revision",
