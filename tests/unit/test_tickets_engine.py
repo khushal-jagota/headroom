@@ -262,7 +262,11 @@ def test_a07_closeout_routing(tmp_db: Connection, cfg: Config, fake_clock: TestC
     assert t1.stage == "needs_implementation"
     assert t1.pending_proposal is not None
     t1 = data.accept_proposal(
-        tmp_db, t1.id, field="implementation", principal=OWNER_PRINCIPAL, now=now,
+        tmp_db,
+        t1.id,
+        field="implementation",
+        principal=OWNER_PRINCIPAL,
+        now=now,
     )
     assert t1.stage == "needs_consequences"
     t1 = data.file_current_proposal(
@@ -302,7 +306,6 @@ def test_a07_closeout_routing(tmp_db: Connection, cfg: Config, fake_clock: TestC
             ("consequences", "c"),
         ]
     )
-
 
 
 def test_a36_onward_scope(tmp_db: Connection, cfg: Config, fake_clock: TestClock) -> None:
@@ -366,8 +369,12 @@ def test_a36_onward_scope(tmp_db: Connection, cfg: Config, fake_clock: TestClock
 
     with pytest.raises(PlannerError) as e_agent:
         admit_command(
-            tmp_db, TEST_TICKET_PRINCIPAL, "POST", "/api/tickets/{ticket_id}/accept/{field}",
-            {"ticket_id": t.id, "field": "what_changes"}, {},
+            tmp_db,
+            TEST_TICKET_PRINCIPAL,
+            "POST",
+            "/api/tickets/{ticket_id}/accept/{field}",
+            {"ticket_id": t.id, "field": "what_changes"},
+            {},
         )
         data.accept_proposal(
             tmp_db,
@@ -650,6 +657,11 @@ def test_a_claim_release_does_not_fire_once_the_ticket_has_moved_on(
     # come back to it legitimately, and a late release must not erase that second arrival.
     now = fake_clock.now_unix()
     t = _create(tmp_db, cfg, fake_clock)
+    # Exercise claim identity after the prior decision has reached the Worker.
+    tmp_db.execute(
+        "UPDATE ticket_decision_messages SET delivery_status='delivered' WHERE ticket_id=?", (t.id,)
+    )
+    tmp_db.commit()
     claimed = _claim_ready_worker_step(tmp_db, t.id, now=now)
     assert claimed is not None
 
