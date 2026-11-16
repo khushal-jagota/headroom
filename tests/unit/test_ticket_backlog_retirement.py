@@ -57,6 +57,11 @@ def test_backlog_preserves_pending_proposal_and_direct_authority(tmp_db: Connect
         is None
     )
     resumed = backlog(tmp_db, tid, False)
+    # Continue after the accepted decision reaches the Worker.
+    tmp_db.execute(
+        "UPDATE ticket_decision_messages SET delivery_status='delivered' WHERE ticket_id=?", (tid,)
+    )
+    tmp_db.commit()
     assert resumed.stage == advanced.stage and resumed.pending_proposal is None
     assert is_ready_for_worker_step(tmp_db, resumed, worker_type_definition=definition)
     assert (
@@ -71,8 +76,6 @@ def test_backlog_preserves_pending_proposal_and_direct_authority(tmp_db: Connect
     assert deferred_again.worker_step_claim_revision == claimed.worker_step_claim_revision
 
 
-
-
 def test_backlog_accepts_same_second_changes_and_authority_is_unchanged(
     tmp_db: Connection,
 ) -> None:
@@ -83,7 +86,8 @@ def test_backlog_accepts_same_second_changes_and_authority_is_unchanged(
     before = dict(tmp_db.execute("SELECT * FROM tickets WHERE id=?", (tid,)).fetchone())
     with TestClient(_app(tmp_db)) as client:
         denied = client.post(
-            f"/api/tickets/{tid}/backlog", json={},
+            f"/api/tickets/{tid}/backlog",
+            json={},
             headers={"X-Plan-Actor": "worker", "X-Plan-Ticket-ID": tid},
         )
         assert denied.status_code == 400, denied.text
@@ -92,13 +96,9 @@ def test_backlog_accepts_same_second_changes_and_authority_is_unchanged(
     assert data.read_ticket(tmp_db, tid).stage == "needs_brief"
 
 
-
-
-
-
 def ready_ticket(conn: Connection, *, ceiling: str = "needs_what_changes") -> Ticket:
     tid = create(conn)
-    return data.accept_proposal(
+    ticket = data.accept_proposal(
         conn,
         tid,
         field="brief",
@@ -107,6 +107,12 @@ def ready_ticket(conn: Connection, *, ceiling: str = "needs_what_changes") -> Ti
         next_ceiling=ceiling,
         next_holder=OWNER_PRINCIPAL,
     )
+    # These backlog cases begin after decision feedback was delivered.
+    conn.execute(
+        "UPDATE ticket_decision_messages SET delivery_status='delivered' WHERE ticket_id=?", (tid,)
+    )
+    conn.commit()
+    return ticket
 
 
 def test_backlog_after_ready_scan_refuses_transactional_claim(tmp_db: Connection) -> None:
@@ -217,11 +223,10 @@ def test_active_list_filters_before_pagination_and_resume_restores_membership(
 ) -> None:
     deferred, finished, active = (create(tmp_db) for _ in range(3))
     backlog(tmp_db, deferred)
-    tmp_db.execute(
-        "UPDATE tickets SET stage='done', pending_proposal=NULL WHERE id=?", (finished,)
-    )
+    tmp_db.execute("UPDATE tickets SET stage='done', pending_proposal=NULL WHERE id=?", (finished,))
     tmp_db.commit()
     with TestClient(_app(tmp_db)) as client:
+
         def listed(**params: str | int | bool) -> dict[str, Any]:
             response = client.get("/api/tickets", params={"detail": "summary", **params})
             assert response.status_code == 200, response.text
@@ -234,7 +239,9 @@ def test_active_list_filters_before_pagination_and_resume_restores_membership(
         assert selected["page"]["match_count"] == 1
         assert selected["page"]["complete"] is True
         assert {row["id"] for row in listed(include_terminal=True)["tickets"]} == {
-            deferred, finished, active,
+            deferred,
+            finished,
+            active,
         }
         assert [row["id"] for row in listed(is_backlogged=True)["tickets"]] == [deferred]
         for conflict in ({"is_backlogged": True}, {"include_terminal": True}):
