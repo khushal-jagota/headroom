@@ -257,19 +257,23 @@ def _git_fixture(root: Path) -> dict[str, Any]:
                 str(root / "origin.git"),
                 "module",
             )
-            _git(checkout, "commit", "-qm", "submodule")
+            _git(checkout, "-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid",
+                 "commit", "-qm", "submodule")
             _git(checkout, "push", "-q", "origin", "HEAD:published-submodule")
             _git(checkout, "config", "submodule.module.ignore", "all")
         if kind == "dirty":
             (checkout / "draft.txt").write_text("unsaved")
         if kind in {"unpublished", "published", "off-head"}:
-            _git(checkout, "commit", "--allow-empty", "-qm", kind)
+            _git(checkout, "-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid",
+                 "commit", "--allow-empty", "-qm", kind)
             if kind == "published":
                 _git(checkout, "push", "-q", "origin", "HEAD:published-unmerged")
             if kind == "off-head":
                 _git(checkout, "branch", "retained-off-head")
                 _git(checkout, "reset", "--hard", "HEAD~1")
         if kind == "invalid":
+            if (checkout / ".git").is_dir():
+                (checkout / ".git").rename(checkout / ".invalid-git-metadata")
             (checkout / ".git").write_text("gitdir: missing")
         if kind == "no-remote":
             # A separate clone isolates removal of its remote from the shared worktrees.

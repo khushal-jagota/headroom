@@ -1156,7 +1156,7 @@ def test_local_child_custody_populated_transitions(tmp_path: Path) -> None:
         points: list[dict[str, Any]] = []
         absent, change_during_inspection, restoring = False, False, False
 
-        def inspected(row: sqlite3.Row) -> bool:
+        def inspected(row: sqlite3.Row, *, ticket_worker: bool = False) -> bool:
             if restoring and row["conversation_id"] == "startup-blocked":
                 return False
             if change_during_inspection or (
