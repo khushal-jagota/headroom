@@ -78,7 +78,7 @@ struct ReviewView: View {
                         .padding(.vertical, PanelsTheme.Space.xl)
                         .frame(maxWidth: .infinity, minHeight: geometry.size.height)
                     }
-                    .simultaneousGesture(TapGesture().onEnded { textEntry.endEditing() })
+                    .gesture(TapGesture().onEnded { textEntry.endEditing() })
                     .scrollDismissesKeyboard(.interactively)
                     .panelsRefreshable { await store.refresh() }
                 }
@@ -291,7 +291,7 @@ private struct ReviewCardView: View {
                         })
             }
             .accessibilityIdentifier("review-content")
-            .simultaneousGesture(TapGesture().onEnded { textEntry?.endEditing() })
+            .gesture(TapGesture().onEnded { textEntry?.endEditing() })
             .scrollDismissesKeyboard(.interactively)
             .scrollDisabled(leaving || messages.contains { messageStates[$0.id]?.sending == true })
             .safeAreaInset(edge: .bottom, spacing: 0) {

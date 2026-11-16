@@ -926,7 +926,8 @@ receipt, including edits that restore the same text.
 
 Each visible screen owns focus for its conversation fields and decision notes.
 Review shares one owner across the note and reply fields on its current card.
-Taps in the chat transcript and Review scroll areas clear that screen's focus.
+In chat and Review, inert background taps clear that screen's focus.
+The normal-priority tap gesture lets child text selection, controls, links, and inputs keep their interactions.
 Those scroll areas also support interactive keyboard dismissal.
 
 Chat and artifact navigation clear the outgoing screen's focus before the route changes.

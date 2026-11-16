@@ -420,7 +420,7 @@ struct ConversationThread: View {
             }
             .defaultScrollAnchor(.bottom, for: .initialOffset)
             .defaultScrollAnchor(scrollPolicy.shouldFollowContent ? .bottom : .top, for: .sizeChanges)
-            .simultaneousGesture(TapGesture().onEnded { textEntry?.endEditing() })
+            .gesture(TapGesture().onEnded { textEntry?.endEditing() })
             .scrollDismissesKeyboard(.interactively)
             .scrollPosition($position)
             .onScrollPhaseChange { old, phase, context in
