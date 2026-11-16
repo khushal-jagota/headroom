@@ -388,7 +388,8 @@ def main() -> int:
         tickets = {"offline-1": tickets["offline-1"]}
         tickets["offline-1"]["title"] = "Artifact links stay inline"
         tickets["offline-1"]["pending_proposal"]["body"] = (
-            "Read [Migration verification](/files/tickets/t_8rmd1ebk/artifacts/migration-verification.txt) before approval."
+            "Read [Migration verification]"
+            "(/files/tickets/t_8rmd1ebk/artifacts/migration-verification.txt) before approval."
             "\n\n[Review photo](/files/tickets/t_8rmd1ebk/artifacts/review-photo.png)"
         )
     lock = threading.RLock()
@@ -577,6 +578,8 @@ def main() -> int:
         return records
 
     def ticket_record(ticket: dict[str, Any], proposal: dict[str, Any] | None) -> dict[str, Any]:
+        stage: dict[str, Any] = next((item for item in ticket.get("workflow", {}).get("stages", [])
+                      if item["id"] == ticket["stage"]), {})
         return {
             "kind": "ticket",
             "id": ticket["id"],
@@ -589,13 +592,13 @@ def main() -> int:
                 "machine_id": "75a49e78-97de-4e28-8dc5-79646761c46f",
                 "recap_reference": None,
                 "worker_type": ticket["worker_type"],
-                "stage_label": "What Changes" if DESIGN_REVIEW else "Current",
+                "stage_label": stage.get("label", "Current"),
                 "workflow_label": "Product design",
                 "stage": ticket["stage"],
                 "ticket_status": "awaiting_approval" if proposal else "empty",
                 "blocked": False,
                 "created_at": 1,
-                "updated_at": 1,
+                "updated_at": ticket.get("proof_revision", 1),
                 "worker_step_claim_out": False,
                 "deadline": None,
                 "project_id": None,
@@ -607,12 +610,12 @@ def main() -> int:
                 "ceiling_holder": (
                     ticket["ceiling_holder"] if DESIGN_REVIEW else {"kind": "owner", "id": "owner"}
                 ),
-                "gating_field": "what_changes" if DESIGN_REVIEW else "wireframe",
+                "gating_field": stage.get("gating_field") if DESIGN_REVIEW else "wireframe",
                 "proposal_field": proposal["field"] if proposal else None,
                 "proposal_revision": proposal["revision"] if proposal else 0,
                 "proposal_created_at": proposal["created_at"] if proposal else None,
                 "stage_ownership": "worker",
-                "terminal": False,
+                "terminal": stage.get("is_terminal", False),
                 "locale": "vps",
             },
         }
@@ -1039,6 +1042,45 @@ def main() -> int:
                             return
                     self.respond({})
                     return
+                if DESIGN_REVIEW and name.startswith("consequences-review/"):
+                    action = name.rsplit("/", 1)[-1]
+                    with lock:
+                        if action == "implementation":
+                            ticket = copy.deepcopy(tickets["offline-1"])
+                            state["consequences_proposal"] = copy.deepcopy(
+                                ticket["pending_proposal"]
+                            )
+                            tickets.clear()
+                            tickets["offline-1"] = ticket
+                            state["writes"] = []
+                            state["consequences_decisions"] = []
+                            ticket.update(
+                                stage="needs_implementation", ceiling="needs_implementation"
+                            )
+                        else:
+                            ticket = tickets["offline-1"]
+                        if action in {"implementation", "proposal", "revision"}:
+                            proposal = copy.deepcopy(state["consequences_proposal"])
+                            revision = {
+                                "implementation": 101, "proposal": 102, "revision": 103
+                            }[action]
+                            proposal.update(
+                                field="implementation"
+                                if action == "implementation" else "consequences",
+                                            revision=revision, created_at=revision,
+                                            body="Assembled native review " + action)
+                            ticket.update(pending_proposal=proposal, proof_revision=revision,
+                                          ticket_status="awaiting_approval")
+                        elif action == "state":
+                            self.respond(
+                                dict(ticket=ticket, decisions=state["consequences_decisions"])
+                            )
+                            return
+                        else:
+                            self.respond({"error": "Unknown Consequences review action"}, 400)
+                            return
+                    self.respond({})
+                    return
                 if DESIGN_REVIEW and name.startswith("design-state/"):
                     mode = name.rsplit("/", 1)[-1]
                     with lock:
@@ -1182,7 +1224,7 @@ def main() -> int:
                     )
                 )
                 return
-            if TABLE_SCROLL_SMOKE and path == "/api/goals":
+            if TABLE_SCROLL_SMOKE and not state.get("workspace_fixture") and path == "/api/goals":
                 self.respond(dict(
                     goals=[], status_date="2026-11-04", next_refresh_at=time.time() + 3600
                 ))
@@ -1334,7 +1376,9 @@ def main() -> int:
                 with lock:
                     state["artifact_reads"]["photo" if photo else "text"] += 1
                 content = (
-                    (ROOT / "ios/Panels/Features/Workspace/Resources/workspace-chief.png").read_bytes()
+                    (
+                        ROOT / "ios/Panels/Features/Workspace/Resources/workspace-chief.png"
+                    ).read_bytes()
                     if photo
                     else b"Migration verification body must appear only after a tap."
                 )
@@ -1613,7 +1657,10 @@ def main() -> int:
                             if refused
                             else dict(
                                 stage=(
-                                    ticket["stage"] if body["decision"] == "send_back" else "done"
+                                    ticket["stage"] if body["decision"] == "send_back"
+                                    else ticket["workflow"]["advance"][ticket["stage"]]
+                                    if DESIGN_REVIEW
+                                    else "done"
                                 ),
                                 ceiling=body.get("next_ceiling", ticket["ceiling"]),
                                 ceiling_holder=body.get("next_holder", ticket["ceiling_holder"]),
@@ -1629,6 +1676,11 @@ def main() -> int:
                     )
                     decision_receipts[path] = receipt
                     if not refused:
+                        if DESIGN_REVIEW:
+                            ticket.update(receipt["transition"])
+                            ticket["proof_revision"] = ticket.get("proof_revision", 1) + 1
+                            if "consequences_decisions" in state:
+                                state["consequences_decisions"].append(body)
                         ticket["pending_proposal"] = None
                         state["writes"].append(
                             "approve" if body["decision"] == "approve" else "sendBack"
