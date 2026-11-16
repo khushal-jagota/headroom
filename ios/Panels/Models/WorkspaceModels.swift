@@ -15,6 +15,7 @@ struct ManagersResponse: Codable, Sendable { let managers: [ManagerSummary]; let
 struct TicketSummary: Codable, Identifiable, Sendable {
     var integrityError: TicketIntegrityIssue? = nil
     var locale: String? = nil
+    var machineId: String? = nil
     let id: String
     let title: String
     let workerType: String?
@@ -36,7 +37,7 @@ struct TicketSummary: Codable, Identifiable, Sendable {
     let assigned: Bool
     var agentState: String
     var conversationSignal: ConversationSignal?
-    enum CodingKeys: String, CodingKey { case integrityError, locale, id, title, workerType, stage, ticketStatus, isBacklogged, blocked, recapPreview, activityAt, projectId, project, manager, managerId, managerTitle, awaitingReply, awaitingAnswer, awaitingApproval, awaitingAgentApproval, assigned, agentState, conversationSignal }
+    enum CodingKeys: String, CodingKey { case integrityError, locale, machineId, id, title, workerType, stage, ticketStatus, isBacklogged, blocked, recapPreview, activityAt, projectId, project, manager, managerId, managerTitle, awaitingReply, awaitingAnswer, awaitingApproval, awaitingAgentApproval, assigned, agentState, conversationSignal }
 }
 /// A detail read's worker row whose working and unread marks the navigation view keeps current.
 protocol LiveMarkedWorker {
@@ -115,6 +116,7 @@ extension TicketSummary {
         }
         integrityError = issue
         locale = try c.decodeIfPresent(String.self, forKey: .locale)
+        machineId = try c.decodeIfPresent(String.self, forKey: .machineId)
         id = try required(String.self, .id, broken: "")
         title = try required(String.self, .title, broken: "")
         workerType = try c.decodeIfPresent(String.self, forKey: .workerType)
@@ -136,5 +138,57 @@ extension TicketSummary {
         assigned = try required(Bool.self, .assigned, broken: false)
         agentState = try required(String.self, .agentState, broken: "errored")
         conversationSignal = try c.decodeIfPresent(ConversationSignal.self, forKey: .conversationSignal)
+    }
+}
+
+
+/// Read subset of the existing machine catalogue, shared by Workspace rows and previews.
+struct WorkspaceMachinesResponse: Codable, Sendable {
+    let machines: [WorkspaceMachine]
+}
+
+struct WorkspaceMachine: Codable, Identifiable, Sendable {
+    let machineId: String
+    let name: String
+    let icon: String
+    let color: String
+    let isHome: Bool
+    let available: Bool
+    let runningWorkers: Int?
+    let waitingTickets: Int
+    var id: String { machineId }
+}
+
+/// Current machine-scoped health contract. Legacy health callers keep their own DTO.
+struct WorkspaceMachineHealth: Codable, Sendable {
+    struct Refusal: Codable, Sendable { let reason: String }
+    let mode: String
+    let presence: String?
+    let sinceMs: Double?
+    let lastContactAtMs: Double?
+    let refusal: Refusal?
+
+    var activityKnown: Bool { mode == "remote" && presence == "present" }
+
+    /// Mirrors macTicketActivityLabel: durable agent ownership survives an absent live turn.
+    func activityLabel(for ticket: TicketSummary) -> String? {
+        guard ticket.locale == "macos" else { return nil }
+        if presence == "refused" { return refusal?.reason }
+        guard ["asleep", "not_heard_from", "never"].contains(presence ?? "") else { return nil }
+        if ticket.conversationSignal?.working == true { return "Paused: the Mac is away" }
+        return ticket.ticketStatus == "agent" || ticket.agentState == "working" ? "Waiting for the Mac" : nil
+    }
+
+    static func signal(for ticket: TicketSummary, health: WorkspaceMachineHealth?) -> ConversationSignal? {
+        let known: Bool
+        switch ticket.locale {
+        case "vps": known = true
+        case "macos": known = health?.activityKnown == true
+        default: known = false
+        }
+        return ticket.conversationSignal.map {
+            ConversationSignal(working: $0.working && ticket.stage != "done" && ticket.stage != "cancelled" && known,
+                               messageForOwner: $0.messageForOwner)
+        }
     }
 }

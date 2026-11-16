@@ -7,6 +7,20 @@ import XCTest
 final class NavigationViewTests: XCTestCase {
     // MARK: Frame application (web/src/lib/navigation/views/applyFrame.ts)
 
+    func testSettledWindowKeepsLeanMembersAndSignalsFromItsOwnSnapshot() throws {
+        let first: [String: Any] = ["kind": "manager", "id": "first", "value": ["title": "First", "created_at": 1, "updated_at": 2, "settled": true, "conversation_id": "c"]]
+        let second: [String: Any] = ["kind": "manager", "id": "second", "value": ["title": "Second", "created_at": 2, "updated_at": 3, "settled": true, "conversation_id": NSNull()]]
+        let window = viewWindow("settled", members: [["kind": "manager", "id": "second"], ["kind": "manager", "id": "first"]])
+        let initial = try snapshot([first, second, parentManager(), conversation("c")], windows: [window])
+        let rows = try XCTUnwrap(NavigationPresentation(initial.content.records).workspaceSettledManagers(in: initial))
+        XCTAssertEqual(rows.map(\.id), ["second", "first"], "Window membership excludes another loaded Manager and owns order")
+        XCTAssertEqual(rows.last?.project, "", "Lean records do not invent a project")
+        XCTAssertEqual(rows.last?.conversationSignal?.messageForOwner, true)
+        let read = try snapshot([first, second, parentManager(), conversation("c", message: false)], windows: [window])
+        let updated = try XCTUnwrap(NavigationPresentation(read.content.records).workspaceSettledManagers(in: read))
+        XCTAssertEqual(updated.last?.conversationSignal?.messageForOwner, false)
+    }
+
     func testFramesApplyCheckpointPatchAndRefuseGaps() throws {
         let lean: [String: Any] = ["kind": "manager", "id": "settled", "value": ["title": "Settled", "created_at": 1, "updated_at": 1, "settled": true, "conversation_id": "c"]]
         let initial = try snapshot([project("p", "one"), conversation("c"), lean])
@@ -106,6 +120,7 @@ final class NavigationViewTests: XCTestCase {
         XCTAssertEqual(presented.locale, "macos")
         let summary = presented.summary
         XCTAssertEqual(summary.locale, "macos")
+        XCTAssertEqual(summary.machineId, decoded.machineId, "The rail keeps the exact machine identity from its view record")
         let unavailable = try XCTUnwrap(TicketMachine.signal(summary.conversationSignal, locale: summary.locale, health: nil))
         XCTAssertFalse(unavailable.working)
         XCTAssertTrue(unavailable.messageForOwner)

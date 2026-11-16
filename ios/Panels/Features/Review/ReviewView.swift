@@ -43,6 +43,10 @@ struct ReviewView: View {
     }
 
     var body: some View {
+        ScreenTextEntryScope { textEntry in reviewContent(textEntry: textEntry) }
+    }
+
+    private func reviewContent(textEntry: ScreenTextEntryContext) -> some View {
         Group {
             if savedWork.key?.server != server { Color.clear }
             else if let card = shownCard {
@@ -74,6 +78,7 @@ struct ReviewView: View {
                         .padding(.vertical, PanelsTheme.Space.xl)
                         .frame(maxWidth: .infinity, minHeight: geometry.size.height)
                     }
+                    .gesture(TapGesture().onEnded { textEntry.endEditing() })
                     .scrollDismissesKeyboard(.interactively)
                     .panelsRefreshable { await store.refresh() }
                 }
@@ -226,6 +231,7 @@ private struct ReviewCardView: View {
     let onSkip: () -> Void
     let onResolved: (ReviewItem) -> Void
     @Environment(AppStore.self) private var store
+    @Environment(\.screenTextEntry) private var textEntry
     @Environment(\.dynamicTypeSize) private var typeSize
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var sheet: ReviewSheet?
@@ -284,6 +290,8 @@ private struct ReviewCardView: View {
                             crossedThreshold = false
                         })
             }
+            .accessibilityIdentifier("review-content")
+            .gesture(TapGesture().onEnded { textEntry?.endEditing() })
             .scrollDismissesKeyboard(.interactively)
             .scrollDisabled(leaving || messages.contains { messageStates[$0.id]?.sending == true })
             .safeAreaInset(edge: .bottom, spacing: 0) {
@@ -349,9 +357,12 @@ private struct ReviewCardView: View {
             Button("Skip") { skip(width: 12, button: true) }.disabled(skipLocked).accessibilityIdentifier("review.skip")
             if !card.ticketId.isEmpty {
                 if let openTicket {
-                    Button("Open ticket") { openTicket(card.ticketId) }.accessibilityIdentifier("review.openTicket")
+                    Button("Open ticket") {
+                        if let textEntry { textEntry.endEditingBeforeNavigation { openTicket(card.ticketId) } }
+                        else { openTicket(card.ticketId) }
+                    }.accessibilityIdentifier("review.openTicket")
                 } else {
-                    NavigationLink("Open ticket", value: AppRoute.ticket(card.ticketId)).accessibilityIdentifier("review.openTicket")
+                    ScreenTextEntryNavigationLink("Open ticket", value: AppRoute.ticket(card.ticketId)).accessibilityIdentifier("review.openTicket")
                 }
             }
         }.buttonStyle(.plain).panelsScaledFont(size: 13.5, weight: .medium)

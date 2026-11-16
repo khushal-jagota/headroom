@@ -46,7 +46,39 @@ enum PanelsTheme {
         static let smallSize: CGFloat = 12.5
         static let cardRadius: CGFloat = 12
         static let cardPadding: CGFloat = 20
+        static func goalTone(_ status: String) -> Color {
+            switch status { case "bad": error; case "attention": attention; case "good": success; default: tertiary }
+        }
+        enum Machine {
+            static let jade = Color(hex: 0x83b7a7)
+            static let orchid = Color(hex: 0xbd99bf)
+            static let sand = Color(hex: 0xb8ad97)
+            static let cyan = Color(hex: 0x6fc9d0)
+            static let rose = Color(hex: 0xd393aa)
+            static let plum = Color(hex: 0xa784d4)
+            static let lime = Color(hex: 0xb9c77c)
+            static let stone = Color(hex: 0xc6c6c6)
+        }
         enum Rail {
+            enum Motion {
+                static let moveMin = 0.36
+                static let moveMax = 0.56
+                static let space = 0.34
+                static let fadeIn = 0.32
+                static let fadeDelay = 0.14
+                static let exit = 0.16
+                static func moveDuration(distance: CGFloat) -> Double {
+                    (max(moveMin * 1000, min(moveMax * 1000, (300 + Double(abs(distance)) * 0.7))).rounded()) / 1000
+                }
+                static func glide(duration: Double) -> Animation { .timingCurve(0.4, 0.02, 0.2, 1, duration: duration) }
+                static let enter = Animation.timingCurve(0.05, 0.7, 0.1, 1, duration: fadeIn)
+                static let leave = Animation.timingCurve(0.3, 0, 0.8, 0.15, duration: exit)
+            }
+            static let machineRefreshInterval: Double = 5
+            static let goalRowHeight: CGFloat = 28
+            static let goalSize: CGFloat = 14
+            static let previewPadding: CGFloat = 16
+            static let previewRecapSize: CGFloat = 13
             static let inset: CGFloat = 8
             static let gap: CGFloat = 8
             static let padding: CGFloat = 4
@@ -65,6 +97,7 @@ enum PanelsTheme {
             static let settledRowHeight: CGFloat = 28
         }
     }
+    static let inlineArtifactMediaHeight: CGFloat = 320
     enum Space { static let xs: CGFloat = 4; static let sm: CGFloat = 8; static let md: CGFloat = 12; static let lg: CGFloat = 16; static let xl: CGFloat = 24; static let xxl: CGFloat = 32; static let hero: CGFloat = 48 }
     enum Radius { static let sm: CGFloat = 4; static let md: CGFloat = 8; static let lg: CGFloat = 12 }
     enum TypeScale {

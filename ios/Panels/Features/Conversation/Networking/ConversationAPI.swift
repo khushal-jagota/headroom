@@ -72,7 +72,13 @@ extension APIClient: ConversationServing {
         let encoder = JSONEncoder(); encoder.keyEncodingStrategy = .convertToSnakeCase
         request.httpBody = try encoder.encode(message)
         let (data, response) = try await session.data(for: request)
-        try Self.validate(response, data: data)
+        do { try Self.validate(response, data: data) }
+        catch let error as APIError where error.status == 422 && message.content.contains(where: { $0.piece == "image" }) {
+            // FastAPI admission errors use `detail`; other requests keep ordinary error handling.
+            let detail = (try? JSONSerialization.jsonObject(with: data) as? [String: Any])?["detail"] as? String
+            let reason = detail.map { " " + $0 + "." } ?? ""
+            throw APIError(status: 422, message: "The server could not accept these photos." + reason + " Your draft is kept. Remove a photo or choose another photo, then try again.")
+        }
         return try Self.decoder().decode(ConversationDelivery.self, from: data)
     }
 }

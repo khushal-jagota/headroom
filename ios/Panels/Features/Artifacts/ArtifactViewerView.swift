@@ -39,12 +39,17 @@ struct ArtifactViewerView: View {
     private var waitingForPreview: Bool { isLoading || (target.kind == .html && htmlURL != nil && !webReady && error == nil) }
 
     var body: some View {
+        ScreenTextEntryScope { textEntry in artifactContent(textEntry: textEntry) }
+            .toolbar(.hidden, for: .tabBar)
+    }
+
+    private func artifactContent(textEntry: ScreenTextEntryContext) -> some View {
         VStack(spacing: 0) {
             if let htmlURL {
                 htmlContent(htmlURL)
             } else if let document {
                 content(document)
-                    .environment(\.openURL, OpenURLAction { url in follow(url); return .handled })
+                    .environment(\.openURL, OpenURLAction { url in follow(url, textEntry: textEntry); return .handled })
             } else if let error {
                 ContentUnavailableView {
                     Label("Couldn't open artifact", systemImage: "doc.badge.ellipsis")
@@ -63,7 +68,7 @@ struct ArtifactViewerView: View {
             }
         }
         .panelsScreen()
-        .modifier(ArtifactConversationSurface(owner: activeConversationOwner, conversationID: conversationID, enabled: showsConversation))
+        .modifier(ArtifactConversationSurface(owner: activeConversationOwner, conversationID: conversationID, enabled: showsConversation, textEntry: textEntry))
         .navigationTitle((path as NSString).lastPathComponent)
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
@@ -162,10 +167,10 @@ struct ArtifactViewerView: View {
             }
         }
     }
-    private func follow(_ url: URL) {
+    private func follow(_ url: URL, textEntry: ScreenTextEntryContext) {
         if ArtifactTarget.isRetiredGoalURL(url, baseURL: store.baseURL) { return }
         if let target = ArtifactTarget.from(url, baseURL: store.baseURL) {
-            if target.id != self.target.id { linkedArtifact = target }
+            if target.id != self.target.id { textEntry.endEditingBeforeNavigation { linkedArtifact = target } }
         } else if ["https", "http", "mailto"].contains(url.scheme?.lowercased() ?? "") { openURL(url) }
     }
     private func share() async {
@@ -238,8 +243,9 @@ private struct ArtifactConversationSurface: ViewModifier {
     let owner: ConversationOwner
     let conversationID: String?
     let enabled: Bool
+    let textEntry: ScreenTextEntryContext
     @ViewBuilder func body(content: Content) -> some View {
-        if enabled { content.conversationNavigation(owner: owner, conversationID: conversationID) }
+        if enabled { content.conversationNavigation(owner: owner, conversationID: conversationID, textEntry: textEntry) }
         else { content }
     }
 }

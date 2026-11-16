@@ -26,7 +26,8 @@ struct ConversationComposer: View {
     @State private var picture: PhotosPickerItem?
     @State private var camera = false
     @State private var dropTargeted = false
-    @FocusState private var focused: Bool
+    @Environment(\.screenTextEntry) private var textEntry
+    @State private var inputID = UUID()
     // Unknown Mac activity changes the indicator; Stop still targets the saved turn, as on the web.
     private var stopsTurn: Bool { !reviewReply && model.status?.turnRunning == true && model.draft.isEmpty && model.attachments.isEmpty && !speech.recording }
     private var card: Bool { (!model.draft.isEmpty || !model.attachments.isEmpty) && !speech.recording && !speech.transcribing }
@@ -42,15 +43,17 @@ struct ConversationComposer: View {
                 do {
                     guard let bytes = try await selected.loadTransferable(type: Data.self) else { return }
                     let type = selected.supportedContentTypes.first ?? .jpeg
-                    model.attach(bytes, type: type, fileName: "Picture." + (type.preferredFilenameExtension ?? "jpg"))
+                    await model.attach(bytes, type: type, fileName: "Picture." + (type.preferredFilenameExtension ?? "jpg"))
                     picture = nil
                 } catch { model.error = error.localizedDescription }
             }
         }
         .sheet(isPresented: $camera) {
-            ConversationCamera { data in
-                if let data { model.attach(data, type: .jpeg, fileName: "Photo.jpg") }
+            ConversationCamera { image in
                 camera = false
+                if let image {
+                    Task { await model.attachPhoto(fileName: "Photo.jpg") { image.jpegData(compressionQuality: 0.85) } }
+                }
             }.ignoresSafeArea()
         }
         .fileImporter(isPresented: $importFile, allowedContentTypes: [.data]) { result in
@@ -59,11 +62,11 @@ struct ConversationComposer: View {
                 let access = url.startAccessingSecurityScopedResource()
                 defer { if access { url.stopAccessingSecurityScopedResource() } }
                 let data = try Data(contentsOf: url)
-                model.attach(data, type: UTType(filenameExtension: url.pathExtension), fileName: url.lastPathComponent)
+                Task { await model.attach(data, type: UTType(filenameExtension: url.pathExtension), fileName: url.lastPathComponent) }
             } catch { model.error = error.localizedDescription }
         }
         .onChange(of: capturingSpeech) { _, capturing in
-            if capturing { focused = false }
+            if capturing { textEntry?.endEditing() }
             onCaptureChanged?(capturing)
         }
         .onChange(of: scenePhase) { _, phase in if phase != .active { speech.cancel() } }
@@ -85,8 +88,9 @@ struct ConversationComposer: View {
             }.font(PanelsTheme.TypeScale.small).foregroundStyle(PanelsTheme.muted)
                 .accessibilityIdentifier("conversation-error")
         }
-        if !model.attachments.isEmpty {
-            ConversationAttachmentTray(pieces: model.attachments) { index in
+        if !model.attachments.isEmpty || model.preparingPhoto {
+            ConversationAttachmentTray(pieces: model.attachments, preparingPhotoNames: model.preparingPhotos.values.sorted(),
+                preparing: model.preparingDraftPhotos) { index in
                 guard model.attachments.indices.contains(index) else { return }
                 model.attachments.remove(at: index)
             }
@@ -96,7 +100,7 @@ struct ConversationComposer: View {
                 Text(statusNote).frame(maxWidth: .infinity, alignment: .leading)
                 if retryReply {
                     Button("Retry reply") { Haptics.light(); Task { _ = await sendReply?() } }
-                        .frame(minHeight: 44).disabled(capturingSpeech)
+                        .frame(minHeight: 44).disabled(capturingSpeech || model.preparingPhoto)
                 }
             }.font(PanelsTheme.TypeScale.small).foregroundStyle(PanelsTheme.muted)
         }
@@ -166,7 +170,7 @@ struct ConversationComposer: View {
                         Button("File", systemImage: "paperclip") { importFile = true }
                         Button("Picture", systemImage: "photo") { pickPicture = true }
                         Button("Photo", systemImage: "camera") { camera = true }.disabled(!UIImagePickerController.isSourceTypeAvailable(.camera))
-                        Button("Command", systemImage: "slash.circle") { model.draft = "/"; focused = true }
+                        Button("Command", systemImage: "slash.circle") { model.draft = "/"; textEntry?.requestFocus(inputID) }
                     } label: { Image(systemName: "plus").font(.system(size: min(iconSize, 28))).frame(width: 36, height: 36).background(PanelsTheme.raised, in: Circle()).frame(width: 44, height: 44) }.accessibilityLabel("Add attachment or command")
                     if card && !reviewReply && !typeSize.isAccessibilitySize { configurationControls }
                     Spacer(minLength: 0)
@@ -179,13 +183,13 @@ struct ConversationComposer: View {
                         .font(.system(size: min(iconSize, 28), weight: .medium)).foregroundStyle(PanelsTheme.ink)
                         .frame(width: typeSize.isAccessibilitySize ? 40 : 30, height: typeSize.isAccessibilitySize ? 40 : 30).background(PanelsTheme.strong, in: Circle())
                         .frame(width: 44, height: 44)
-                }.disabled(speech.starting || speech.transcribing || model.sending)
+                }.disabled(speech.starting || speech.transcribing || model.sending || model.preparingPhoto)
                     .accessibilityLabel(speech.recording ? "Stop recording" : stopsTurn ? "Stop turn" : card || !model.attachments.isEmpty ? "Send message" : "Record voice input")
             }.padding(.horizontal, card ? 1 : 2).padding(.bottom, card ? 1 : 0)
     }
 
     @ViewBuilder private var configurationControls: some View {
-        Button { focused = false; modelSheet = true } label: {
+        Button { textEntry?.endEditing(); modelSheet = true } label: {
             HStack(spacing: 4) {
                 ConversationBackendMark(backend: model.backendKey ?? "codex")
                 Text(model.selectedModel?.components(separatedBy: "/").last ?? "Model").lineLimit(1)
@@ -204,11 +208,12 @@ struct ConversationComposer: View {
 
     private var field: some View {
         TextField(placeholder ?? (reviewReply ? "Reply…" : "Message"), text: $model.draft, axis: .vertical)
-            .font(PanelsTheme.TypeScale.body).lineLimit(1...5).focused($focused)
+            .font(PanelsTheme.TypeScale.body).lineLimit(1...5)
             .disabled(capturingSpeech).allowsHitTesting(!capturingSpeech)
             .accessibilityHidden(capturingSpeech)
             .textFieldStyle(.plain).accessibilityIdentifier("conversation-input")
             .modifier(ImagePaste(model: model))
+            .screenTextInput(inputID)
     }
     private func primaryAction() {
         if speech.recording { speech.stop() }
@@ -236,13 +241,13 @@ struct ConversationComposer: View {
             Task { @MainActor in
                 if let data {
                     let fileName = (name as NSString).pathExtension.isEmpty ? name + "." + (type.preferredFilenameExtension ?? "png") : name
-                    model.attach(data, type: type, fileName: fileName)
+                    await model.attach(data, type: type, fileName: fileName)
                 } else if let error { model.error = error.localizedDescription }
             }
         }
     }
     private func startVoice() {
-        focused = false
+        textEntry?.endEditing()
         let prefix = model.draft
         Task { await speech.start { model.updateSpeechTranscript($0, prefix: prefix) } }
     }
@@ -252,12 +257,25 @@ struct ConversationComposer: View {
 /// size for other files. Remove is omitted where the message has already left the composer.
 struct ConversationAttachmentTray: View {
     let pieces: [ConversationSend.Piece]
+    var preparingPhotoNames: [String] = []
+    var preparing = false
     var remove: ((Int) -> Void)? = nil
     var body: some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 8) {
                 ForEach(Array(pieces.enumerated()), id: \.offset) { index, piece in
-                    ConversationAttachmentTile(piece: piece, remove: remove.map { action in { action(index) } })
+                    ConversationAttachmentTile(piece: piece, preparing: preparing && piece.piece == "image", remove: remove.map { action in { action(index) } })
+                }
+                ForEach(Array(preparingPhotoNames.enumerated()), id: \.offset) { _, name in
+                    HStack(spacing: 8) {
+                        RingSpinner(size: .compact)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(name).lineLimit(1).truncationMode(.middle)
+                            Text("Preparing photo…").foregroundStyle(PanelsTheme.muted)
+                        }.font(PanelsTheme.TypeScale.small)
+                    }
+                    .padding(10).background(PanelsTheme.raised, in: RoundedRectangle(cornerRadius: 10))
+                    .accessibilityIdentifier("conversation-photo-preparing")
                 }
             }.padding(.vertical, 2)
         }
@@ -269,6 +287,7 @@ struct ConversationAttachmentTray: View {
 
 struct ConversationAttachmentTile: View {
     let piece: ConversationSend.Piece
+    var preparing = false
     var remove: (() -> Void)? = nil
     @State private var thumbnail: UIImage?
     @ScaledMetric(relativeTo: .body) private var side = 64.0
@@ -299,6 +318,12 @@ struct ConversationAttachmentTile: View {
             }
         }
         .overlay(RoundedRectangle(cornerRadius: 10).stroke(PanelsTheme.border))
+        .overlay(alignment: .bottom) {
+            if preparing {
+                Text("Preparing photo…").font(PanelsTheme.TypeScale.caption)
+                    .padding(3).background(PanelsTheme.surface)
+            }
+        }
         .overlay(alignment: .topTrailing) {
             if let remove {
                 Button { Haptics.light(); remove() } label: {
@@ -336,10 +361,14 @@ private struct ImagePaste: ViewModifier {
         if #available(iOS 27.0, *) {
             content.pasteDestination(for: Data.self) { items in
                 for data in items {
-                    let type = CGImageSourceCreateWithData(data as CFData, nil).flatMap(CGImageSourceGetType).flatMap { UTType($0 as String) } ?? .png
-                    model.attach(data, type: type, fileName: "Pasted image." + (type.preferredFilenameExtension ?? "png"))
+                    Task {
+                        let type = await Task.detached(priority: .userInitiated) {
+                            CGImageSourceCreateWithData(data as CFData, nil).flatMap(CGImageSourceGetType).flatMap { UTType($0 as String) } ?? .png
+                        }.value
+                        await model.attach(data, type: type, fileName: "Pasted image." + (type.preferredFilenameExtension ?? "png"))
+                    }
                 }
-            } validator: { items in items.filter { UIImage(data: $0) != nil } }
+            } validator: { $0 }
         } else { content }
         #else
         content
