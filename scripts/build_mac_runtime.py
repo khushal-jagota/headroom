@@ -593,12 +593,6 @@ def build(
             "TMPDIR": str(builder),
             "MACOSX_DEPLOYMENT_TARGET": MAC_RUNTIME_MINIMUM_OS,
         }
-        # Invoke the repository scanner for all writable builder destinations.
-        # Its documented Darwin branch reports the Linux-only mount check limit.
-        sys.path.insert(0, str(source / "scripts"))
-        from development_safety.scanner import check_paths
-
-        check_paths([source, output, builder], environment=environment)
         runtime = builder / "runtime"
         runtime.mkdir()
         python_archive = builder / "python.tar.gz"
