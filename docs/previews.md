@@ -33,7 +33,7 @@ The lifecycle checks active previews once per second and after record changes. M
 
 ## How a preview is kept apart from Headroom
 
-A preview page is code a Worker wrote, so it runs on its own address. The port differs, so the browser treats the page as another origin. The page cannot read Headroom's answers or its storage. Its writes to the main address carry the preview origin, and Headroom refuses them. On the preview address Headroom answers only preview paths, so the page finds no Headroom API there either.
+A preview page is code a Worker wrote, so it runs on its own address. The port differs, so the browser treats the page as another origin. The page cannot read Headroom's answers or its storage. Its writes to the main address carry the preview origin, and Headroom refuses them. On the preview address Headroom answers only preview paths, so the page finds no Headroom API there either. The web app page may be framed only by Headroom itself, so a preview page cannot show Headroom inside a frame and steer Khushal's clicks.
 
 Cookies ignore ports, so the browser also sends Khushal's owner cookie to the preview address. The proxy forwards only the cookies the preview set itself, so the app never receives it.
 

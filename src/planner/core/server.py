@@ -909,7 +909,12 @@ def create_app(
         """Serve the web app, and hand whoever loads it the owner credential cookie."""
         response = HTMLResponse(
             content=svelte_index_html(config.app_sha),
-            headers={"Cache-Control": "no-cache, must-revalidate"},
+            headers={
+                "Cache-Control": "no-cache, must-revalidate",
+                # A page that carries the owner cookie is framed by nothing else: a
+                # preview page is same-site, so it could otherwise frame Panels.
+                "Content-Security-Policy": "frame-ancestors 'self'",
+            },
         )
         response.set_cookie(
             OWNER_CREDENTIAL_COOKIE,

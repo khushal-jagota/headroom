@@ -217,6 +217,8 @@ def test_static_and_file_surfaces_pass_through_trusted_ingress(
     assert cookie.startswith(f"panels_owner={credential_file.read_text().strip()};")
     for attribute in ("HttpOnly", "Max-Age=315360000", "Path=/", "SameSite=strict", "Secure"):
         assert attribute in cookie
+    # Only Panels may frame the page that acts as the owner.
+    assert allowed_root.headers["content-security-policy"] == "frame-ancestors 'self'"
     assert allowed_app.status_code == 200
     assert allowed_asset.status_code == 200
     assert allowed_static.status_code == 200
