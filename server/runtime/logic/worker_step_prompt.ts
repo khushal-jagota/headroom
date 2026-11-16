@@ -35,16 +35,25 @@ export function compose_worker_step_prompt(
   const ownership = stage_ownership_mode(ticket.stage, options);
   const ownership_wire = ownership ?? 'terminal';
   let instruction =
-    ownership === 'user'
+    field === 'consequences' && ownership !== 'user'
       ? `Work ticket ${ticket.id} — ${ticket.title}. It is at Stage '${ticket.stage}'; ` +
-        `open the collaborative discussion for the '${field}' field. ` +
-        'Ask bounded questions or resume the Stage conversation, and do not file a ' +
-        'proposal until the discussion has enough shared understanding. ' +
-        'Once filed, the answer settles below the ceiling and waits for approval ' +
-        `at or beyond it. Stage owner: ${ownership_wire}.`
-      : `Work ticket ${ticket.id} — ${ticket.title}. It is at Stage '${ticket.stage}'; ` +
-        `take the next step and propose the '${field}' field for approval. ` +
-        `Stage owner: ${ownership_wire}.`;
+        'complete the authorized Consequences work and submit its verified report. ' +
+        'The ceiling holder reviews the Consequences report. ' +
+        'Preserve actual blockers and required human work. ' +
+        'Do not repeat completed side effects. ' +
+        `Stage owner: ${ownership_wire}.`
+      : ownership === 'user'
+        ? `Work ticket ${ticket.id} — ${ticket.title}. It is at Stage '${ticket.stage}'; ` +
+          `open the collaborative discussion for the '${field}' field. ` +
+          'Ask bounded questions or resume the Stage conversation, and do not file a ' +
+          'proposal until the discussion has enough shared understanding. ' +
+          (field === 'consequences'
+            ? 'Once the required human work is complete, the Consequences report waits for the ceiling holder to review it. '
+            : 'Once filed, the answer settles below the ceiling and waits for approval at or beyond it. ') +
+          `Stage owner: ${ownership_wire}.`
+        : `Work ticket ${ticket.id} — ${ticket.title}. It is at Stage '${ticket.stage}'; ` +
+          `take the next step and propose the '${field}' field for approval. ` +
+          `Stage owner: ${ownership_wire}.`;
   instruction += ` Read your Ticket first: ${READ_YOUR_TICKET_COMMAND}. ${FOLLOW_YOUR_WORKFLOW_GUIDE}`;
   return new WorkerStepPrompt({
     inputs: [
@@ -53,6 +62,17 @@ export function compose_worker_step_prompt(
         text: instruction,
         quoted: false,
       },
+      ...(field === 'consequences'
+        ? [
+            {
+              name: 'Consequences work and recovery',
+              text: options.worker_type_definition.stages.find(
+                (stage) => stage.id === ticket.stage,
+              )!.instructions,
+              quoted: true,
+            },
+          ]
+        : []),
     ],
   });
 }

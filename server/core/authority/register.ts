@@ -40,6 +40,11 @@ export function registerArea(
 ): void {
   app.register(
     async (scope) => {
+      scope.addHook('onRequest', async (request: FastifyRequest) => {
+        Object.assign(request, {
+          trustedIngressConfigured: Boolean(services.config.trusted_ingress_provider),
+        });
+      });
       scope.addHook('preHandler', async (request: FastifyRequest) => {
         services.database.read((sql) => requestAdmission(sql, request, area.admission));
       });

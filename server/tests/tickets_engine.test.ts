@@ -1,6 +1,9 @@
 // Ports the 12 existing Python rule tests. Real SQLite through the shared write door
 // protects stage/claim ordering and atomic row updates that pure decision tests omit.
 import { expect, test, vi, afterEach } from 'vitest';
+import type { FastifyRequest } from 'fastify';
+import { compose_worker_step_prompt } from '../runtime/logic/worker_step_prompt.ts';
+import { TicketWorkspaceResources } from '../tickets/resource_versions.ts';
 import { OWNER } from '../core/contracts.ts';
 import { ORIGINAL_MAC_MACHINE_ID } from '../execution_identity.ts';
 import { register_machine } from '../machines/executor_credentials.ts';
@@ -82,14 +85,9 @@ test('a07_closeout_routing', () => {
   expect(t1.stage).toBe('done');
   expect(t1.field_values.consequences).toBe('c');
   expect(t1.ceiling).toBe('done');
-  let t2 = edit(db, create(db), { ceiling: 'done' });
-  for (const body of ['a', 'i', 'c']) t2 = propose(db, t2, body);
-  expect(t2.stage).toBe('done');
-  expect(t2.field_values).toMatchObject({
-    what_changes: 'a',
-    implementation: 'i',
-    consequences: 'c',
-  });
+  expect(() => edit(db, create(db), { ceiling: 'done' })).toThrow(
+    expect.objectContaining({ code: 'scope_invalid' }),
+  );
   let t3 = edit(db, create(db), { ceiling: 'needs_implementation' });
   t3 = propose(db, t3, 'a');
   expect(t3.stage).toBe('needs_implementation');
@@ -152,8 +150,7 @@ test('a36_onward_scope', () => {
     field_values: { implementation: 'a' },
     pending_proposal: null,
   });
-  let t4 = edit(db, create(db), { ceiling: 'done' });
-  for (const body of ['a', 'i', 'c']) t4 = propose(db, t4, body);
+  const t4 = advance(db, create(db));
   expect(t4.stage).toBe('done');
   expect(t4.ceiling).toBe('done');
 });
@@ -329,4 +326,127 @@ test('worker model overrides use the named destination rather than the legacy Ma
   expect(worker_resolve(db, ticket, { model: 'remote-model' }, options)).toMatchObject({
     model: 'remote-model',
   });
+});
+
+// Gap: simple stage tests omit final holder preservation, raw receipt replay after
+// advancement, and the actual recovery instructions delivered into existing turns.
+test('Consequences remains a reviewed report and preserves final approval replay', () => {
+  const db = fixture();
+  let ticket = edit(db, advance(db, create(db), 'needs_implementation'), {
+    ceiling: 'needs_implementation',
+  });
+  ticket = propose(db, ticket, 'Implemented');
+  const options = {
+    principal: OWNER,
+    now,
+    next_ceiling: 'done',
+    expected_proposal_revision: ticket.pending_proposal_revision,
+    decision_id: 'final-scope-replay',
+  };
+  ticket = db.write((tx) => data.accept_proposal(tx, ticket.id, 'implementation', options));
+  expect(ticket).toMatchObject({
+    stage: 'needs_consequences',
+    ceiling: 'needs_consequences',
+    ceiling_holder: OWNER,
+  });
+  expect(
+    db.write((tx) => data.accept_proposal(tx, ticket.id, 'implementation', options)).stage,
+  ).toBe('needs_consequences');
+  const prompt = compose_worker_step_prompt(ticket, { worker_type_definition: ticket.workflow });
+  expect(prompt.model_text).toContain('The ceiling holder reviews the Consequences report.');
+  expect(prompt.model_text).toContain('Do not repeat completed side effects.');
+  expect(prompt.inputs[1]).toEqual({
+    name: 'Consequences work and recovery',
+    quoted: true,
+    text: ticket.workflow.stages.find((s) => s.id === ticket.stage)!.instructions,
+  });
+  ticket = propose(db, ticket, 'Verified consequences');
+  const final = {
+    principal: OWNER,
+    now,
+    expected_proposal_revision: ticket.pending_proposal_revision,
+    decision_id: 'final-report-replay',
+  };
+  ticket = db.write((tx) => data.accept_proposal(tx, ticket.id, 'consequences', final));
+  expect(ticket).toMatchObject({
+    stage: 'done',
+    ceiling: 'done',
+    ceiling_holder: OWNER,
+    field_values: { consequences: 'Verified consequences' },
+  });
+  expect(db.write((tx) => data.accept_proposal(tx, ticket.id, 'consequences', final))).toEqual(
+    ticket,
+  );
+  const historical = {
+    ...ticket.workflow,
+    specialist_skill: null,
+    stages: ticket.workflow.stages.map((stage) =>
+      stage.gating_field === 'consequences' ? { ...stage, ownership_mode: 'user' as const } : stage,
+    ),
+  };
+  expect(() => create(db, { worker_type: null, workflow: historical })).toThrow(
+    'Consequences must be the final worker-owned stage before Done',
+  );
+  db.write((tx) =>
+    tx.run('UPDATE tickets SET workflow_json=? WHERE id=?', [
+      JSON.stringify(historical),
+      ticket.id,
+    ]),
+  );
+  expect(read(db, ticket.id).workflow).toEqual(historical);
+});
+
+// Gap: receipt failures can arrive after a replacement proposal, and delivery-only
+// status changes must produce a matching workspace body/version without a Ticket edit.
+test('old decision failures preserve a newer proposal and version unresolved feedback', () => {
+  const db = fixture();
+  const first = propose(db, create(db), 'First proposal');
+  const newer = propose(db, first, 'Replacement proposal');
+  const mark = (revision: number | null) =>
+    db.write((tx) =>
+      data.mark_worker_step_claim_errored(tx, newer.id, {
+        expected_claim: newer.worker_step_claim,
+        expected_claim_revision: newer.worker_step_claim_revision,
+        decision_delivery: true,
+        decision_proposal_revision: revision,
+        error_reason: 'late receipt',
+        now,
+      }),
+    );
+  expect(mark(first.pending_proposal_revision)).toBe(false);
+  expect(mark(null)).toBe(false);
+  db.write((tx) => data.mark_ticket_errored(tx, newer.id, { now, error_reason: 'Existing error' }));
+  expect(read(db, newer.id).ticket_status).toBe('awaiting_approval');
+  const resources = new TicketWorkspaceResources();
+  const capture = () =>
+    db.read((sql) => {
+      const snapshot = resources.capture(
+        sql,
+        {} as FastifyRequest,
+        `/api/tickets/${newer.id}/workspace`,
+      )!;
+      return {
+        revision: snapshot.revision,
+        body: snapshot.read() as { unresolved_decision_feedback: unknown[] },
+      };
+    });
+  const before = capture();
+  db.write((tx) =>
+    tx.run("UPDATE ticket_decision_messages SET delivery_status='uncertain' WHERE ticket_id=?", [
+      newer.id,
+    ]),
+  );
+  const unresolved = capture();
+  expect(unresolved.revision).not.toEqual(before.revision);
+  expect(unresolved.body.unresolved_decision_feedback).toEqual([
+    expect.objectContaining({ status: 'uncertain', message: expect.any(String) }),
+  ]);
+  db.write((tx) =>
+    tx.run("UPDATE ticket_decision_messages SET delivery_status='delivered' WHERE ticket_id=?", [
+      newer.id,
+    ]),
+  );
+  const resolved = capture();
+  expect(resolved.revision).not.toEqual(unresolved.revision);
+  expect(resolved.body.unresolved_decision_feedback).toEqual([]);
 });

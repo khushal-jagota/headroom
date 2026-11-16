@@ -1,11 +1,47 @@
 import { constants } from 'node:fs';
 import { unlink, open, lstat, readdir, rmdir, readFile } from 'node:fs/promises';
 import type { FileHandle } from 'node:fs/promises';
-import { basename, dirname, join, resolve, sep } from 'node:path';
+import { basename, dirname, join, relative, resolve, sep } from 'node:path';
 import { path_is_within } from '../../core/path_containment.ts';
-import type { WorkspaceOptions, WorkspaceState } from '../contracts.ts';
+import { OWNERSHIP_FILE, WORKTREE_DIRECTORY } from '../contracts.ts';
+import type { WorkspaceMarker, WorkspaceOptions, WorkspaceState } from '../contracts.ts';
 import { remove_darwin_workspace } from './darwin_removal.ts';
-import { admit, checkouts, entry_stat, git, ticket_match, ticket_mentions } from './shared.ts';
+import {
+  admit,
+  checkouts,
+  entry_stat,
+  git,
+  json,
+  ticket_match,
+  ticket_mentions,
+} from './shared.ts';
+export async function recorded_checkout_problem(
+  root: string,
+  options: WorkspaceOptions,
+): Promise<string | null> {
+  const marker_path = join(root, OWNERSHIP_FILE);
+  const info = await entry_stat(marker_path);
+  if (info === null) return null;
+  try {
+    if (info.isSymbolicLink() || !info.isFile()) return 'workspace ownership evidence is invalid';
+    const marker = await json<WorkspaceMarker>(marker_path);
+    if (
+      (marker.checkout_kind !== 'clone' && marker.repository == null) ||
+      marker.worktree === undefined
+    )
+      return null;
+    const checkout = join(root, WORKTREE_DIRECTORY),
+      metadata = await entry_stat(join(checkout, '.git'));
+    if ((await entry_stat(checkout))?.isSymbolicLink() || !metadata || metadata.isSymbolicLink())
+      return 'recorded Git checkout or its metadata is missing or invalid';
+    const top = await git(checkout, ['rev-parse', '--show-toplevel'], options);
+    if (top.returncode || resolve(top.stdout.trim()) !== resolve(checkout))
+      return 'recorded Git checkout or its metadata is missing or invalid';
+  } catch {
+    return 'cannot inspect recorded Git checkout ownership';
+  }
+  return null;
+}
 export async function workspace_ticket_owners(
   root: string,
   options: WorkspaceOptions = {},
@@ -13,7 +49,7 @@ export async function workspace_ticket_owners(
   root = admit(root, options);
   const owners = new Set<string>();
   for (const checkout of await checkouts(root)) {
-    for (const part of checkout.split(sep)) {
+    for (const part of [basename(root), ...relative(root, checkout).split(sep)]) {
       const match = ticket_match.exec(part);
       if (match) owners.add(match[1]!);
     }
@@ -36,6 +72,8 @@ export async function reason_to_keep(
     (await entry_stat(dirname(root)))?.isSymbolicLink()
   )
     return 'workspace path is a symlink';
+  const recorded = await recorded_checkout_problem(root, options);
+  if (recorded) return recorded;
   let found: string[];
   try {
     found = await checkouts(root);
@@ -58,7 +96,7 @@ export async function reason_to_keep(
         return `submodules require owner review before cleanup: ${checkout}`;
       if (states) {
         const owners: string[] = [];
-        for (const part of checkout.split(sep)) {
+        for (const part of [basename(root), ...relative(root, checkout).split(sep)]) {
           const match = ticket_match.exec(part);
           if (match) owners.push(match[1]!);
         }
@@ -89,21 +127,37 @@ export async function reason_to_keep(
             return `repository still owns an external worktree: ${line.slice(9)}`;
       }
       const remotes = await git(checkout, ['remote'], options);
-      if (remotes.returncode || !remotes.stdout.trim())
-        return `no remote copy can be verified for ${checkout}`;
+      if (remotes.returncode || !remotes.stdout.trim().split('\n').includes('origin'))
+        return `no origin copy can be verified for ${checkout}`;
       const hashes = new Set<string>();
-      for (const remote of remotes.stdout.trim().split('\n')) {
-        const fetched = await git(checkout, ['fetch', '--prune', remote], options),
-          advertised = await git(checkout, ['ls-remote', '--heads', '--tags', remote], options);
+      {
+        const fetched = await git(checkout, ['fetch', '--prune', 'origin'], options),
+          advertised = await git(checkout, ['ls-remote', '--heads', '--tags', 'origin'], options);
         if (fetched.returncode || advertised.returncode)
           return `remote verification failed for ${checkout}`;
-        for (const line of advertised.stdout.trim().split('\n').filter(Boolean))
-          hashes.add(line.split(/\s+/)[0]!);
+        for (const line of advertised.stdout.trim().split('\n').filter(Boolean)) {
+          const commit = line.split(/\s+/)[0]!;
+          if (
+            (await git(checkout, ['cat-file', '-e', `${commit}^{commit}`], options)).returncode ===
+            0
+          )
+            hashes.add(commit);
+        }
       }
       if (!hashes.size) return `no remote copy can be verified for ${checkout}`;
+      const refs = ['HEAD'];
+      const marker_root = basename(root) === WORKTREE_DIRECTORY ? dirname(root) : root;
+      const marker_path = join(marker_root, OWNERSHIP_FILE);
+      if (
+        checkout === join(marker_root, WORKTREE_DIRECTORY) &&
+        (await entry_stat(marker_path))?.isFile()
+      ) {
+        const marker = await json<WorkspaceMarker>(marker_path);
+        if (marker.branch) refs.push(`refs/heads/${marker.branch}`);
+      }
       const unpublished = await git(
         checkout,
-        ['rev-list', '-n', '1', main ? '--all' : 'HEAD', '--not', ...[...hashes].sort()],
+        ['rev-list', '-n', '1', ...refs, '--not', ...[...hashes].sort()],
         options,
       );
       if (unpublished.returncode) return `Git cannot compare remote work for ${checkout}`;

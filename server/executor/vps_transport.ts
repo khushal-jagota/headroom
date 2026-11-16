@@ -394,6 +394,10 @@ export class VpsExecutor {
       );
       require_incarnation_owner(sql, read.child.executor_incarnation, this.machine_id);
     });
+    if (read.path === '/api/executor/capabilities') {
+      this.runs.authority(read.child);
+      return { ticket_send_back: true };
+    }
     if (!READABLE_PATHS.some((prefix) => read.path.startsWith(prefix)))
       throw new PlannerError('validation', 'unsupported executor read');
     const principal = this.runs.authority(read.child);

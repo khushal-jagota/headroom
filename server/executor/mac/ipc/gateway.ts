@@ -164,6 +164,36 @@ export class AgentGateway {
       const incoming = decode_value(request.payload, 'IpcWritePayload');
       const submission = safe_component(request.request_id);
       if (this.options.runner.admission_stopped) throw permission('executor admission stopped');
+      if (incoming.operation === 'ticket.send_back') {
+        if (this.options.client === null)
+          throw connection('Home unavailable; send-back support is unconfirmed');
+        let support: JsonObject;
+        try {
+          support = await this.options.client.read(
+            { child: child.reference, path: '/api/executor/capabilities', params: {} },
+            AbortSignal.any([
+              this.controller.signal,
+              AbortSignal.timeout(Math.max(1, Math.floor((deadline - monotonic()) * 1000))),
+            ]),
+          );
+        } catch (error) {
+          if (error instanceof ExecutorHttpError) {
+            if (error.status === 400 && error.message === 'unsupported executor read')
+              throw new ExecutorValidationError(
+                'Send-back is not supported by Home yet; update Home before retrying',
+              );
+            if (error.status === 403) throw permission(error.message || 'support read forbidden');
+            throw connection(`Home support read failed: HTTP ${error.status} ${error.code}`);
+          }
+          throw connection(
+            `Home support read failed: ${error instanceof Error ? error.name : 'Error'}`,
+          );
+        }
+        if (support.ticket_send_back !== true)
+          throw new ExecutorValidationError(
+            'Send-back is not supported by Home yet; update Home before retrying',
+          );
+      }
       const write = {
         operation: incoming.operation,
         arguments: incoming.arguments,

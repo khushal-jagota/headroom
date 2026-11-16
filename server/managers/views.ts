@@ -130,7 +130,6 @@ export function manager_tickets(sql: ReadSql, id: string): Record<string, unknow
                 kind: ticket.ceiling_holder.kind,
               },
         ticket_status: ticket.ticket_status,
-        waiting_to_closeout: field === 'consequences' && ticket.ticket_status === 'empty',
         gating_field: field,
         blocked: blocked.has(ticket.id),
         employee_backend: ticket.employee_backend,

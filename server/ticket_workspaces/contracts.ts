@@ -25,6 +25,7 @@ export type WorkspaceRetirementOperation = (
   operation: () => MaybePromise<RetirementTarget>,
 ) => MaybePromise<RetirementTarget>;
 export interface WorkspaceOptions {
+  panels_project?: boolean;
   signal?: AbortSignal;
   admit_path?: (path: string) => string;
   git_execution?: {
@@ -35,6 +36,7 @@ export interface WorkspaceOptions {
   prune_ticket_scratch?: (ticket_id: string, names: readonly string[]) => MaybePromise<boolean>;
 }
 export interface WorkspaceCleanupOptions extends WorkspaceOptions {
+  measure_size?: boolean;
   extra_roots?: readonly string[];
   active_ticket_ids?: ReadonlySet<string>;
   apply?: boolean;
@@ -47,6 +49,7 @@ export interface WorkspaceCleanupOptions extends WorkspaceOptions {
     path: string,
     state: WorkspaceState,
     identity: WorkspaceIdentity,
+    checkout_only: boolean,
   ) => MaybePromise<RetirementTarget>;
   retirement_is_committed?: (
     state: WorkspaceState,
@@ -54,10 +57,13 @@ export interface WorkspaceCleanupOptions extends WorkspaceOptions {
   ) => MaybePromise<boolean>;
 }
 export interface RetirementOptions extends WorkspaceOptions {
+  checkout_only?: boolean;
   retired_root?: string;
   identity?: WorkspaceIdentity;
 }
 export interface WorkspaceMarker extends WorkspaceIdentity {
+  checkout_kind?: 'clone';
+  temporary?: string;
   ticket_id: string;
   repository?: string | null;
   worktree?: string;
@@ -66,6 +72,7 @@ export interface WorkspaceMarker extends WorkspaceIdentity {
   initial_commit?: string | null;
 }
 export interface RetirementRecord extends WorkspaceState, WorkspaceIdentity {
+  checkout_only?: boolean;
   source: string;
   target: string;
   scratch_names: readonly string[];

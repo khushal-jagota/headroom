@@ -38,6 +38,7 @@ export class MacRunner implements MacRunnerContract {
   private readonly options: MacRunnerOptions;
   private uncertainties: readonly WorkerCleanupUncertainty[] = [];
   private cleanup_notice: string | null = null;
+  private readonly cleanup_refresh_lock = new FifoLock();
   readonly native_children: MacNativeChildrenContract;
   private readonly commands: MacCommandServiceContract;
   private readonly state: MacChildState;
@@ -137,6 +138,9 @@ export class MacRunner implements MacRunnerContract {
       workspace_git: options.workspace_git,
       retire_workspace: options.retire_workspace,
       retirement_is_committed: options.retirement_is_committed,
+      cleanup_refused: (ticket_id) =>
+        this.cleanup_notice !== null ||
+        this.uncertainties.some((item) => item.ticket_id === ticket_id),
       native_children: native,
       sources,
       commands,
@@ -169,22 +173,24 @@ export class MacRunner implements MacRunnerContract {
   async refresh_worker_cleanup(
     options: { ticket_id?: string; revoke_pending?: boolean } = {},
   ): Promise<void> {
-    const snapshot = await snapshot_cleanup(this.options.native.paths, this.options.cleanup, {
-      ...options,
-      healthy_sources: this.native_children.healthy_sources(),
-      preparing_sources: this.commands
-        .records()
-        .filter(
-          (record) =>
-            record.command.arguments.kind === 'start' &&
-            record.outcome === null &&
-            record.task !== null &&
-            !this.state.is_retiring(record.command.child.child_id) &&
-            !this.native_children.is_retiring(record.command.child.child_id),
-        )
-        .map((record) => record.command.child),
+    await this.cleanup_refresh_lock.run(async () => {
+      const snapshot = await snapshot_cleanup(this.options.native.paths, this.options.cleanup, {
+        ...options,
+        healthy_sources: this.native_children.healthy_sources(),
+        preparing_sources: this.commands
+          .records()
+          .filter(
+            (record) =>
+              record.command.arguments.kind === 'start' &&
+              record.outcome === null &&
+              record.task !== null &&
+              !this.state.is_retiring(record.command.child.child_id) &&
+              !this.native_children.is_retiring(record.command.child.child_id),
+          )
+          .map((record) => record.command.child),
+      });
+      this.cache_cleanup(snapshot, options.ticket_id);
     });
-    this.cache_cleanup(snapshot, options.ticket_id);
   }
   private async recheck_cleanup(source: ChildReference, ticket_id: string) {
     // Explicit historical rechecks carry no exemption for a healthy current child.

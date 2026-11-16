@@ -21,7 +21,6 @@ const groups = [
   'errored',
   'backlog',
   'agent',
-  'waiting_to_closeout',
   'status_awaiting_approval',
   'empty',
   'blocked',

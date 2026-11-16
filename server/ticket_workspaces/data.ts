@@ -1,6 +1,5 @@
 /** Durable clocks and grants for exact physical Ticket workspaces. */
 import type { ReadSql, TransactionSql } from '../core/database/contracts.ts';
-import { RETENTION_SECONDS } from './contracts.ts';
 import type { WorkspaceIdentity, WorkspaceState } from './contracts.ts';
 
 type StateRow = { ticket_id: string; ended_at: number | null; deleted: number };
@@ -70,7 +69,7 @@ export function has_workspace_activity(sql: ReadSql, ticket_id: string): boolean
     WHERE json_extract(owner.value,'$[1]')=? AND (EXISTS(
     SELECT 1 FROM conversation_lifecycle_facts f WHERE f.conversation_id=c.conversation_id
     AND ((f.kind='turn' AND f.status IN ('intent','running','unknown'))
-    OR (f.kind='attempt' AND f.status IN ('intent','unknown'))
+    OR (f.kind='attempt' AND f.status='intent')
     OR (f.kind='request' AND f.status IN ('pending','answering')))) OR EXISTS(
     SELECT 1 FROM conversation_background_tasks b WHERE b.conversation_id=c.conversation_id)) LIMIT 1`,
       [ticket_id],
@@ -88,8 +87,7 @@ export function authorize_retirement(
     !current ||
     current.ended_at !== expected.ended_at ||
     current.deleted !== expected.deleted ||
-    expected.ended_at === null ||
-    now < expected.ended_at + RETENTION_SECONDS
+    expected.ended_at === null
   )
     return false;
   if (

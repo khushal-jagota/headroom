@@ -128,6 +128,14 @@ export function validate_definition(
       { worker_type, default_reasoning_effort: profile.default_reasoning_effort },
     );
 }
+export function validate_completion_stage(definition: WorkflowDefinition): void {
+  const completion = definition.stages.find((stage) => stage.gating_field === 'consequences');
+  if (completion !== definition.stages.at(-2) || completion?.ownership_mode !== 'worker')
+    throw new PlannerError(
+      'validation',
+      'Consequences must be the final worker-owned stage before Done',
+    );
+}
 export function workflow_manifest(
   definition: WorkflowDefinition,
   worker_type: string | null = null,
@@ -144,7 +152,7 @@ export function workflow_manifest(
         s.is_terminal ? [] : [[s.id, definition.stages[i + 1].id]],
       ),
     ),
-    ceiling_range: definition.stages.map((s) => s.id),
+    ceiling_range: definition.stages.filter((s) => !s.is_terminal).map((s) => s.id),
     default_ceiling: definition.stages[0].id,
     worker_profile_id: specialist_skill,
   };

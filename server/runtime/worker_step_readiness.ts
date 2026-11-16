@@ -1,3 +1,4 @@
+import { has_undelivered } from '../tickets/decision_messages.ts';
 /** The read-only readiness decision. Preserve first-refusal order. */
 import type { ReadSql } from '../core/database/contracts.ts';
 import type { Ticket } from '../tickets/contracts.ts';
@@ -32,6 +33,7 @@ export function worker_step_blocker(
   if (ticket.ticket_status !== 'empty') {
     return `the Ticket is at ${ticket.ticket_status}, so no worker step is due`;
   }
+  if (has_undelivered(sql, ticket.id)) return 'decision feedback delivery is unresolved';
   if (
     ownership === 'user' &&
     sql.get('SELECT 1 FROM ticket_paired_stage_openers WHERE ticket_id=? AND stage=?', [

@@ -17,39 +17,11 @@ import {
 } from '../list_reads/http.ts';
 import { body_str } from '../tickets/routes.ts';
 import type { OwnerKind } from './contracts.ts';
-import {
-  resolveFile,
-  resolveHtml,
-  unsafeEncoded,
-  safeId,
-  safeRelative,
-  filesRoot,
-} from './logic/paths.ts';
+import { resolveFile, unsafeEncoded, safeId, safeRelative, filesRoot } from './logic/paths.ts';
 import { ownerRoot, writeText, deleteFile } from './managed_files.ts';
 import { inventory } from './catalog/inventory.ts';
 import { linked } from './catalog/read.ts';
 import { PAGE_SIZE, PAGE_MAX_BYTES } from './catalog/config.ts';
-const INLINE = new Set([
-  'image/avif',
-  'image/bmp',
-  'image/gif',
-  'image/jpeg',
-  'image/png',
-  'image/webp',
-  'audio/aac',
-  'audio/flac',
-  'audio/mp4',
-  'audio/mpeg',
-  'audio/ogg',
-  'audio/wav',
-  'audio/webm',
-  'audio/x-wav',
-  'video/mp4',
-  'video/ogg',
-  'video/quicktime',
-  'video/webm',
-  'video/x-m4v',
-]);
 const REUSE_MEMORY_BOUND_BYTES = 2 * 1024 * 1024;
 export const routes: FastifyPluginAsync<AreaServices> = async (app, services) => {
   function requireGoal(id: string): void {
@@ -63,81 +35,80 @@ export const routes: FastifyPluginAsync<AreaServices> = async (app, services) =>
       family === 'tickets' ? 'ticket' : family === 'goals' ? 'goal' : 'manager';
     const parameter = kind === 'ticket' ? 'ticket_id' : kind === 'goal' ? 'goal_id' : 'manager_id';
     const label = kind === 'manager' ? 'Manager' : kind;
-    app.get(`/files/${family}/:${parameter}/*`, async (request, reply) => {
-      const params = request.params as Record<string, string>,
-        owner = params[parameter]!;
-      const missing = () => new PlannerError('not_found', `${label} file not found`, {});
-      if (unsafeEncoded.test((request.raw.url ?? '').split('?')[0]!)) throw missing();
-      if (kind === 'goal') requireGoal(owner);
-      let file: string;
-      try {
-        const root = request.headers['x-panels-artifact-root'];
-        file =
-          typeof root === 'string'
-            ? resolveHtml(services.config.db_path, root, (request.raw.url ?? '').split('?')[0]!)
-            : resolveFile(services.config.db_path, kind, owner, params['*']!);
-      } catch {
-        throw missing();
-      }
-      const mime = mimeType(file);
-      const filename = basename(file),
-        encoded = encodeURIComponent(filename).replace(
-          /[!'()*]/g,
-          (c) => '%' + c.charCodeAt(0).toString(16).toUpperCase(),
-        );
-      const disposition = INLINE.has(mime) ? 'inline' : 'attachment';
-      reply
-        .header(
-          'content-disposition',
-          encoded === filename
-            ? `${disposition}; filename="${filename.replaceAll('\\', '\\\\').replaceAll('"', '\\"')}"`
-            : `${disposition}; filename*=utf-8''${encoded}`,
-        )
-        .header('x-content-type-options', 'nosniff')
-        .header('cache-control', 'private, no-cache');
-      const contentType = mime.startsWith('text/') ? mime + '; charset=utf-8' : mime;
-      if (!request.headers.range && !/^(audio|video)\//.test(mime)) {
-        const handle = await open(file, 'r');
+    app.route({
+      method: ['GET', 'HEAD'],
+      url: `/files/${family}/:${parameter}/*`,
+      handler: async (request, reply) => {
+        const params = request.params as Record<string, string>,
+          owner = params[parameter]!;
+        const missing = () => new PlannerError('not_found', `${label} file not found`, {});
+        if (unsafeEncoded.test((request.raw.url ?? '').split('?')[0]!)) throw missing();
+        if (kind === 'goal') requireGoal(owner);
+        let file: string;
         try {
-          const info = await handle.stat(),
-            bytes = Buffer.alloc(REUSE_MEMORY_BOUND_BYTES + 1);
-          // Read through EOF or one byte over the bound, even if the file grows.
-          let length = 0;
-          while (length < bytes.length) {
-            const read = await handle.read(bytes, length, bytes.length - length, null);
-            if (!read.bytesRead) break;
-            length += read.bytesRead;
-          }
-          if (length <= REUSE_MEMORY_BOUND_BYTES) {
-            const body = bytes.subarray(0, length),
-              etag = '"' + createHash('sha256').update(body).digest('hex') + '"';
-            reply.header('etag', etag);
-            const named = request.headers['if-none-match'];
-            if (
-              named
-                ?.split(',')
-                .map((v) => v.trim().replace(/^W\//, ''))
-                .some((v) => v === '*' || v === etag)
-            ) {
-              reply.removeHeader('content-disposition').removeHeader('x-content-type-options');
-              reply.code(304).send();
+          file = resolveFile(services.config.db_path, kind, owner, params['*']!);
+        } catch {
+          throw missing();
+        }
+        const mime = mimeType(file);
+        const filename = basename(file),
+          encoded = encodeURIComponent(filename).replace(
+            /[!'()*]/g,
+            (c) => '%' + c.charCodeAt(0).toString(16).toUpperCase(),
+          );
+        reply
+          .header(
+            'content-disposition',
+            encoded === filename
+              ? `inline; filename="${filename.replaceAll('\\', '\\\\').replaceAll('"', '\\"')}"`
+              : `inline; filename*=utf-8''${encoded}`,
+          )
+          .header('cache-control', 'private, no-cache');
+        const contentType = mime.startsWith('text/') ? mime + '; charset=utf-8' : mime;
+        if (!request.headers.range && !/^(audio|video)\//.test(mime)) {
+          const handle = await open(file, 'r');
+          try {
+            const info = await handle.stat(),
+              bytes = Buffer.alloc(REUSE_MEMORY_BOUND_BYTES + 1);
+            // Read through EOF or one byte over the bound, even if the file grows.
+            let length = 0;
+            while (length < bytes.length) {
+              const read = await handle.read(bytes, length, bytes.length - length, null);
+              if (!read.bytesRead) break;
+              length += read.bytesRead;
+            }
+            if (length <= REUSE_MEMORY_BOUND_BYTES) {
+              const body = bytes.subarray(0, length),
+                etag = '"' + createHash('sha256').update(body).digest('hex') + '"';
+              reply.header('etag', etag);
+              const named = request.headers['if-none-match'];
+              if (
+                named
+                  ?.split(',')
+                  .map((v) => v.trim().replace(/^W\//, ''))
+                  .some((v) => v === '*' || v === etag)
+              ) {
+                reply.removeHeader('content-disposition');
+                reply.code(304).send();
+                return;
+              }
+              reply
+                .header('content-type', contentType)
+                .header('content-length', body.length)
+                .header('last-modified', info.mtime.toUTCString())
+                .header('accept-ranges', 'bytes')
+                .send(request.method === 'HEAD' ? Buffer.alloc(0) : body);
               return;
             }
-            reply
-              .header('content-type', contentType)
-              .header('last-modified', info.mtime.toUTCString())
-              .header('accept-ranges', 'bytes')
-              .send(body);
-            return;
+          } finally {
+            await handle.close();
           }
-        } finally {
-          await handle.close();
         }
-      }
-      await sendFile(request, reply, file, {
-        mime: contentType,
-        rangeErrorHeaders: ['cache-control', 'content-disposition', 'x-content-type-options'],
-      });
+        await sendFile(request, reply, file, {
+          mime: contentType,
+          rangeErrorHeaders: ['cache-control', 'content-disposition'],
+        });
+      },
     });
     if (kind === 'ticket') continue;
     for (const method of ['PUT', 'DELETE'] as const)

@@ -142,9 +142,16 @@ export function accept(
   );
 }
 export function advance(db: Database, t: Ticket, new_stage = 'done'): Ticket {
-  t = edit(db, t, { ceiling: 'done' });
+  const review_ceiling = t.workflow.stages.filter((stage) => !stage.is_terminal).at(-1)!.id;
+  t = edit(db, t, { ceiling: review_ceiling });
   while (t.stage !== new_stage) {
-    if (t.pending_proposal) t = accept(db, t, t.pending_proposal.field, 'done');
+    if (t.pending_proposal)
+      t = accept(
+        db,
+        t,
+        t.pending_proposal.field,
+        t.stage === review_ceiling ? null : review_ceiling,
+      );
     else t = propose(db, t, 'Advance');
   }
   return t;

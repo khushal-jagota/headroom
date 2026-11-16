@@ -337,6 +337,14 @@ test('local composition refuses a retained Mac Ticket before constructing its se
           now: 100,
         }),
       );
+      // Recovery starts after the kickoff decision reached this Worker. Pending
+      // feedback is a separate readiness refusal, before this fixture's Mac guard.
+      database.write((sql) =>
+        sql.run(
+          "UPDATE ticket_decision_messages SET delivery_status='delivered' WHERE ticket_id=?",
+          [owner.id],
+        ),
+      );
       const claimed = database.write((sql) =>
         claim_ticket_for_worker_step(sql, owner.id, {
           readiness_check: is_ready_for_worker_step,

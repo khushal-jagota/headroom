@@ -1,6 +1,6 @@
 import { once } from 'node:events';
 import { ChildProcesses } from '../lifecycle/owned_processes.ts';
-import { mkdtemp, mkdir, readdir, rm, symlink, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, readdir, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { afterEach, expect, test, vi } from 'vitest';
@@ -36,11 +36,20 @@ test('Worker run owns private disk scratch, prunes old run, sets all temporary v
   const home = await fixture();
   const processes = new ChildProcesses();
   const old = await WorkerScratch.create({ PLAN_TICKET_ID: 't_test' }, { home, processes });
-  const fresh = await WorkerScratch.create({ PLAN_TICKET_ID: 't_test' }, { home, processes });
+  const fresh = await WorkerScratch.create(
+    { PLAN_TICKET_ID: 't_test', TMUX: 'inherited', STY: 'inherited' },
+    { home, processes },
+  );
   expect(fresh.directory).not.toBe(old.directory);
   expect(fresh.environment.TMPDIR).toBe(fresh.directory);
   expect(fresh.environment.TMP).toBe(fresh.directory);
   expect(fresh.environment.TEMP).toBe(fresh.directory);
+  // Terminal servers must live inside this run, never an inherited multiplexer.
+  expect(fresh.environment.TMUX).toBeUndefined();
+  expect(fresh.environment.STY).toBeUndefined();
+  expect(fresh.environment.TMUX_TMPDIR).toBe(fresh.directory);
+  expect(fresh.environment.SCREENDIR).toBe(join(fresh.directory, 'screen'));
+  expect((await stat(fresh.environment.SCREENDIR!)).mode & 0o777).toBe(0o700);
   expect(await readdir(join(home, '.pw'))).toHaveLength(1);
   await fresh.close();
   expect(await readdir(join(home, '.pw'))).toEqual([]);

@@ -18,7 +18,19 @@ export function requestContext(request: FastifyRequest): RequestContext {
   const ticket = normalized(firstHeader(request, 'x-plan-ticket-id'));
   const manager = normalized(firstHeader(request, 'x-plan-manager-id'));
   const conversationId = normalized(firstHeader(request, 'x-plan-conversation-id'));
-  if (actor === null) return { principal: OWNER, conversationId };
+  if (actor === null) {
+    const ingress = request as FastifyRequest & {
+      trustedIngressConfigured?: boolean;
+      authenticatedOwner?: boolean;
+    };
+    return {
+      principal:
+        ingress.authenticatedOwner || !ingress.trustedIngressConfigured
+          ? OWNER
+          : { kind: 'unidentified', id: 'unidentified' },
+      conversationId,
+    };
+  }
   if (actor === 'chief') return { principal: CHIEF, conversationId };
   if (actor === 'worker' && ticket)
     return { principal: { kind: 'ticket', id: ticket }, conversationId };

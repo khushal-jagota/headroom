@@ -61,12 +61,25 @@ export class LocalChildCustody implements LocalChildCustodyInspection {
       })
       .catch(() => null);
   }
-  retirement_row_proven(row: LocalChildCustodyRow, options?: StopOptions): Promise<boolean> {
+  retirement_row_proven(
+    row: LocalChildCustodyRow,
+    options?: StopOptions,
+    ticket_worker = false,
+  ): Promise<boolean> {
     if (row.state === 'retired') return Promise.resolve(true);
     return this.#inspect(async (deadline) => {
       if (row.state === 'launch_pending') {
         if (row.supervision_record !== null)
           return this.inspect_supervision(row.supervision_record, undefined, { deadline });
+        const current = (await this.#runtime.context(deadline)).host;
+        return row.boot !== null && current.host === row.host && current.boot !== row.boot;
+      }
+      if (
+        process.platform === 'linux' &&
+        ticket_worker &&
+        row.supervision_record === null &&
+        row.unit === null
+      ) {
         const current = (await this.#runtime.context(deadline)).host;
         return row.boot !== null && current.host === row.host && current.boot !== row.boot;
       }
@@ -112,7 +125,18 @@ export class LocalChildCustody implements LocalChildCustodyInspection {
     identity: LocalChildIdentity,
     host: string | null,
     options?: StopOptions,
+    ticket_worker = false,
   ): Promise<boolean> {
+    if (
+      process.platform === 'linux' &&
+      ticket_worker &&
+      identity.supervision_record === null &&
+      identity.unit === null
+    )
+      return this.stop_recorded_child(identity, host, options).then(async () => {
+        const current = await this.host_boot_identity();
+        return current !== null && current.host === host && current.boot !== identity.boot;
+      });
     return this.#inspect(
       async (deadline) => {
         if (identity.supervision_record !== null) {

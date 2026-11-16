@@ -36,6 +36,12 @@ Startup installs signal handlers before asynchronous setup. Before a writer open
 
 Area preparation retains the exact new Ticket integrity faults from one audit. The owned recovery flight sends their ordinary owner-to-Chief system notices before lost-background-task notices and automatic recovery. A failed notice logs and does not stop startup. App and environment shutdown record each actual identity before callbacks, so a late setup continuation never closes the same identity again. A stop after successful listen is normal shutdown. A pre-listen failure remains a startup error.
 
+On a host behind trusted ingress, an unnamed caller receives owner authority only
+through the configured owner's ingress. Other unnamed callers can read and message
+Chief. Other writes refuse before domain actions. A source server without trusted
+ingress retains the local owner default. The separate launch-token Ticket owns
+removal of the legacy peer guard described below.
+
 `PLAN_REFUSE_UNIDENTIFIED_AGENT_CALLS` enables the existing opt-in identity refusal;
 it defaults to false and cannot be enabled by YAML. The application consumes the
 variable when loading its actual process environment, before agents inherit it.

@@ -1,5 +1,6 @@
 /** Legacy layout discovery and owned workspace cleanup scheduling. */
 import type { ComposedBackgroundService, OwnedOneShotChildren } from '../../lifecycle/contracts.ts';
+import type { ChangeSignal } from '../../core/changes/index.ts';
 
 export interface ScratchLayout {
   readonly repository: string;
@@ -20,6 +21,7 @@ export interface GitResult {
   stderr: string;
 }
 export interface ScratchRuntimeOptions {
+  readonly changes?: Pick<ChangeSignal, 'subscribe'>;
   readonly layout: ScratchLayout | null;
   readonly db_path: string;
   readonly test_mode: boolean;

@@ -2,6 +2,7 @@ import { requestOrigin } from './origin.ts';
 import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import { HttpError, ResponseDepthError } from './errors.ts';
 import { PlannerError } from '../contracts.ts';
+import { unidentifiedWriteRefusal } from '../authority/intake.ts';
 import { jsonFailure } from './json.ts';
 interface Match {
   pattern: RegExp;
@@ -89,6 +90,11 @@ export function installCompatibility(app: FastifyInstance): void {
       error.code === 'FST_ERR_CTP_INVALID_JSON_BODY' ||
       error.code === 'FST_ERR_CTP_EMPTY_JSON_BODY'
     ) {
+      const unidentified = unidentifiedWriteRefusal(request);
+      if (unidentified) {
+        reply.code(unidentified.statusCode).send(unidentified.toPayload());
+        return;
+      }
       const failure = jsonFailure(error.jsonSource ?? '');
       reply.code(422).send({
         detail: [

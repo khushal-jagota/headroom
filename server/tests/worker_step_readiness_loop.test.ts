@@ -14,6 +14,7 @@ import {
 } from './ticket_fixture.ts';
 import * as data from '../tickets/data/index.ts';
 import * as decisions from '../tickets/decision_messages.ts';
+import { deliver_ticket_decision_messages } from '../runtime/decision_message_delivery.ts';
 import { conversation_holds_an_unanswered_memory_loss } from '../runtime/worker_memory.ts';
 import { restart_worker } from '../tickets/worker_restart.ts';
 import { OWNER, PlannerError } from '../core/contracts.ts';
@@ -368,8 +369,18 @@ test('decisions reach the actual prompt and queue ownership prevents replay', as
     ]),
   );
   expect(db.read((sql) => decisions.has_undelivered(sql, ticket.id))).toBe(true);
-  // Without a queue item or durable outcome, only explicit restart authorizes retry.
+  // A dequeued prompt remains owned until its canonical ownership contract releases it.
   vi.spyOn(system, 'held_prompts').mockResolvedValueOnce([]);
+  await start_ready_worker_step(ticket.id, options);
+  expect(
+    db.read((sql) =>
+      sql.get<{ delivery_status: string }>(
+        "SELECT delivery_status FROM ticket_decision_messages WHERE decision_id='test-reject'",
+      ),
+    )!.delivery_status,
+  ).toBe('queued');
+  // Once ownership and durable outcome are both absent, explicit restart authorizes retry.
+  vi.spyOn(system, 'sender_message_ids_awaiting_outcome').mockResolvedValueOnce(new Set());
   await start_ready_worker_step(ticket.id, options);
   const status = () =>
     db.read((sql) =>
@@ -678,4 +689,60 @@ test('loop stop aborts its observer immediately and retains raw start ownership 
     await loop.settled();
     owner.close();
   }
+});
+
+// Gap: queue removal and durable receipt publication can race; the first lookup
+// can miss the receipt even though releasing ownership has already published it.
+// Reuse setup's in-memory backend and SQLite, with no new host/provider.
+test('dequeued feedback rereads its receipt and late delivery unblocks the first failed decision', async () => {
+  const { db, system, options } = setup();
+  const ticket = create_ticket(db);
+  await start_ready_worker_step(ticket.id, options);
+  const current = read(db, ticket.id);
+  const proposed = propose(db, current, 'Proposal');
+  db.write((tx) =>
+    data.reject_proposal(tx, ticket.id, {
+      principal: OWNER,
+      now,
+      message: 'Revise.',
+      decision_id: 'receipt-race',
+      expected_proposal_revision: proposed.pending_proposal_revision,
+    }),
+  );
+  await deliver_ticket_decision_messages(ticket.id, options);
+  const receipt = db.read((sql) =>
+    sql.get<{ sender_message_id: string; conversation_id: string }>(
+      "SELECT sender_message_id,conversation_id FROM ticket_decision_messages WHERE decision_id='receipt-race'",
+    ),
+  )!;
+  vi.spyOn(system, 'sender_message_ids_awaiting_outcome').mockImplementationOnce(async () => {
+    db.write((tx) =>
+      tx.run(
+        "INSERT INTO conversation_events(conversation_id,sequence,kind,payload,created_at) SELECT ?,COALESCE(MAX(sequence),0)+1,'prompt',?,? FROM conversation_events WHERE conversation_id=?",
+        [
+          receipt.conversation_id,
+          JSON.stringify({ sender_message_id: receipt.sender_message_id }),
+          now,
+          receipt.conversation_id,
+        ],
+      ),
+    );
+    return new Set();
+  });
+  await deliver_ticket_decision_messages(ticket.id, options);
+  expect(
+    db.read((sql) =>
+      sql.get<{ delivery_status: string }>(
+        "SELECT delivery_status FROM ticket_decision_messages WHERE decision_id='receipt-race'",
+      ),
+    )!.delivery_status,
+  ).toBe('delivered');
+  db.write((tx) =>
+    tx.run(
+      "UPDATE ticket_decision_messages SET delivery_status='uncertain' WHERE decision_id='receipt-race'",
+    ),
+  );
+  expect(db.read(decisions.pending_ticket_ids)).toContain(ticket.id);
+  await deliver_ticket_decision_messages(ticket.id, options);
+  expect(db.read((sql) => decisions.has_undelivered(sql, ticket.id))).toBe(false);
 });

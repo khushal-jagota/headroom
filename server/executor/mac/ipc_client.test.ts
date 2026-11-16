@@ -5,6 +5,18 @@ import { join } from 'node:path';
 import { expect, test, vi } from 'vitest';
 import { cli_mutation, request } from './ipc_client.ts';
 
+test('maps proposal send-back to the executor without changing inspected revision or guidance', () => {
+  const body = {
+    message: 'Keep this exact guidance',
+    expected_proposal_revision: 7,
+    decision_id: 'review-seven',
+  };
+  expect(cli_mutation('POST', '/api/tickets/t_12345678/reject', body)).toEqual([
+    'ticket.send_back',
+    { ticket_id: 't_12345678', body },
+  ]);
+});
+
 test('refuses retired help and unsafe sockets before child capability emission', async () => {
   expect(() =>
     cli_mutation('POST', '/api/tickets/t_12345678/request-help', { message: 'Help' }),

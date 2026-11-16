@@ -107,6 +107,7 @@ export class ConversationState {
   delivery_uncertain = false;
   has_delivered_prompt = false;
   being_killed = false;
+  restart_retired = false;
   last_touched_monotonic = 0;
   model_thinking_shown_at_monotonic = 0;
   constructor(record: ConversationRecord) {
