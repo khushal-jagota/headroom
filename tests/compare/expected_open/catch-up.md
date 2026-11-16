@@ -1,6 +1,6 @@
 # Temporary catch-up gaps
 
-Retained cases: 7, listed individually in checkpoint.json with the prefix `catch-up`.
+Retained cases: 6, listed individually in checkpoint.json with the prefix `catch-up`.
 
 Evidence: https://github.com/khushal-jagota/headroom/actions/runs/43904665539
 

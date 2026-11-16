@@ -11,7 +11,6 @@
   "tests/compare/direct/test_unit20_domain_cli.py::test_unit20_domain_same_python_host[python]": "launch tokens: generic conversation starts can no longer assign agent identity",
   "tests/compare/direct/test_unit20_domain_cli.py::test_unit20_domain_same_python_host[typescript]": "launch tokens: generic conversation starts can no longer assign agent identity",
   "tests/compare/direct/test_unit20_domain_cli.py::test_unit20_real_preview_cli": "launch tokens: seed request uses role claims without a credential",
-  "tests/compare/direct/test_unit20_domain_cli.py::test_unit20_retained_dataset_cli": "catch-up Consequences: custom workflow and onward ceiling contract changed; fixture migrated to worker-owned final report",
   "tests/compare/direct/test_unit20_domain_cli.py::test_unit20_worker_cleanup_cli": "catch-up restart cleanup: fresh executor evidence and distinct local/remote proof refusals differ",
   "tests/compare/direct/test_unit21_backups.py::test_unit21_backup_v2_cross_language_wal_roots_and_retention": "catch-up Consequences: restored workflow ceiling_range still includes Done on TypeScript",
   "tests/compare/direct/test_unit21_interruption_capture.py::test_unit21_fixed_restore_entry_preserves_populated_snapshot": "catch-up Consequences: restored workflow ceiling_range still includes Done on TypeScript",
