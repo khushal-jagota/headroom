@@ -79,6 +79,8 @@ export const DARWIN_HOME_INSTALLER_SOURCE_FILES = [
   'server/environments/updates/darwin/launch.ts',
   'server/environments/updates/darwin/logic/launchd.ts',
   'server/executor/mac/platform.ts',
+  'server/platform_runtime/darwin/launchd/configuration.ts',
+  'server/platform_runtime/darwin/launchd/logic/process_arguments.ts',
   'server/environments/linux_executor/logic/paths.ts',
   'server/environments/linux_executor/configuration.ts',
   'server/executor/configuration.ts',

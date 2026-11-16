@@ -244,7 +244,7 @@ jobs:
           python -I -S -B scripts/dev_launcher.py npm --prefix server ci
           # Reuse this host for native process/socket and provider directory/lock evidence.
           python -I -S -B scripts/dev_launcher.py npm --prefix server run test -- \
-            platform_runtime/worker_processes.native.test.ts lifecycle/paths.native.test.ts \
+            platform_runtime/worker_processes.native.test.ts platform_runtime/worker_launchd.native.test.ts lifecycle/paths.native.test.ts \
             previews/darwin.native.test.ts skills/account.test.ts \
             ticket_workspaces/filesystem.test.ts --reporter=junit \
             --outputFile "$NATIVE_EVIDENCE/process-home-preview-abi.xml"

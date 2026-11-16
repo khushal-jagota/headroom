@@ -34,6 +34,7 @@ import {
 } from './inspection.ts';
 import * as records from './records.ts';
 import { WorkerSupervisionRuntime } from './runtime.ts';
+import { local_process_identity } from './identity.ts';
 
 const expand_home = (path: string): string =>
   path === '~' ? homedir() : path.startsWith('~/') ? join(homedir(), path.slice(2)) : path;
@@ -46,6 +47,7 @@ export class WorkerSupervisor {
   readonly #native_stops = new Set<Promise<void>>();
   #ended = false;
   #stopping: Promise<CleanupResult> | null = null;
+  #proxy_pid: number | null = null;
   private constructor(
     environment: Readonly<Record<string, string>>,
     working_directory: string,
@@ -92,13 +94,16 @@ export class WorkerSupervisor {
         if (previous.ticket_id !== environment.PLAN_TICKET_ID) continue;
         if (previous.state === 'complete') {
           validate_pending_shape(previous);
+          runtime.active_jobs.delete(prior);
           continue;
         }
+        if (previous.launchd && runtime.active_jobs.has(prior))
+          throw new Error('Ticket already has retained Worker job custody');
         const inspected = await inspect_record(prior, { runtime, context });
         if (inspected.complete) continue;
         if (context.host.host !== previous.host)
           throw new Error('Prior Worker custody belongs to another machine');
-        if (context.host.boot === previous.boot) {
+        if (!previous.launchd && context.host.boot === previous.boot) {
           const table = await context.primitives.snapshot(runtime.clock() + INSPECTION_SECONDS);
           if (previous.owner != null && alive(previous.owner, table))
             throw new Error('Ticket already has retained Worker process custody');
@@ -106,10 +111,12 @@ export class WorkerSupervisor {
         const stopped = await stop_record(prior, { runtime, context });
         if (!stopped.complete) throw new Error(stopped.reason);
       }
-      const owner = (await context.primitives.snapshot(runtime.clock() + INSPECTION_SECONDS)).get(
-        process.pid,
-      );
-      if (!owner) throw new Error('Worker supervisor identity is unavailable');
+      const owner = runtime.jobs
+        ? null
+        : (await context.primitives.snapshot(runtime.clock() + INSPECTION_SECONDS)).get(
+            process.pid,
+          );
+      if (!runtime.jobs && !owner) throw new Error('Worker supervisor identity is unavailable');
       if (runtime.closed) throw new Error('Worker supervision is closed');
       const path = join(root, randomUUID().replaceAll('-', '') + '.json');
       await records.write(path, {
@@ -127,7 +134,9 @@ export class WorkerSupervisor {
         source_child_id: environment.PLAN_EXECUTOR_CHILD_ID ?? null,
         source_incarnation: environment.PLAN_EXECUTOR_SOURCE_INCARNATION ?? null,
         reason: 'Launch pending',
+        ...(runtime.jobs ? { launchd: runtime.jobs.identity(root, path.slice(-37, -5)) } : {}),
       });
+      if (runtime.jobs) runtime.active_jobs.add(path);
       return new WorkerSupervisor(environment, working_directory, root, path, runtime);
     });
   }
@@ -155,7 +164,12 @@ export class WorkerSupervisor {
     if (!executable) throw new Error(`Worker executable is unavailable: ${original[0]}`);
     return [
       process.execPath,
-      fileURLToPath(new URL('./launch.ts', import.meta.url)),
+      fileURLToPath(
+        new URL(
+          this.#runtime.jobs ? '../platform_runtime/darwin/launchd/proxy.ts' : './launch.ts',
+          import.meta.url,
+        ),
+      ),
       this.path,
       executable,
       ...original.slice(1),
@@ -169,6 +183,11 @@ export class WorkerSupervisor {
         async () => {
           const record = await records.read(this.path);
           validate_pending_shape(record);
+          if (record.launchd) {
+            record.launch_revoked = true;
+            await records.write(this.path, record);
+            return;
+          }
           if (record.root != null) throw new Error('Cannot cancel a registered Worker process');
           Object.assign(record, {
             state: 'complete',
@@ -182,6 +201,10 @@ export class WorkerSupervisor {
     );
   }
   spawned(pid: number): Promise<void> {
+    if (this.#runtime.jobs) {
+      this.#proxy_pid = pid;
+      return Promise.resolve();
+    }
     return this.#runtime.operation(async () => {
       const deadline = this.#runtime.clock() + INSPECTION_SECONDS;
       await records.locked(
@@ -214,6 +237,17 @@ export class WorkerSupervisor {
       const deadline = this.#runtime.clock() + START_SECONDS;
       while (this.#runtime.clock() < deadline) {
         const record = await records.read(this.path);
+        if (record.launchd) {
+          if (record.state === 'bootstrap_failed' || record.launch_revoked || this.#ended)
+            throw new Error(record.reason ?? 'Worker launch failed');
+          if (
+            record.state === 'running' &&
+            (await this.#runtime.jobs!.status(record.launchd, deadline)) === 'running'
+          )
+            return;
+          await pause(10);
+          continue;
+        }
         if (
           record.root != null &&
           (record.state === 'running' || record.state === 'bootstrap_failed')
@@ -248,6 +282,18 @@ export class WorkerSupervisor {
       try {
         const record = await records.read(this.path),
           root = record.root;
+        if (record.launchd && record.boot && this.#proxy_pid !== null) {
+          // Preserve the external custody shape. The proxy incarnation is diagnostic;
+          // all lifecycle authority comes from the exact job and journal.
+          const diagnostic = await local_process_identity(this.#proxy_pid, this.#runtime);
+          return diagnostic === null
+            ? null
+            : {
+                ...diagnostic,
+                unit: `${record.launchd.domain}/${record.launchd.label}`,
+                supervision_record: this.path,
+              };
+        }
         return root == null || !record.boot
           ? null
           : {

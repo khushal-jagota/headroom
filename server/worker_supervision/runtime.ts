@@ -7,11 +7,14 @@ import type {
   InspectionContext,
   WorkerCgroupPrimitives,
   WorkerProcessPrimitives,
+  WorkerJobPrimitives,
 } from './contracts.ts';
 import { FreshProcessObservations, SharedProcessObserver } from './observation.ts';
 export class WorkerSupervisionRuntime {
   readonly primitives: WorkerProcessPrimitives;
   readonly cgroups: WorkerCgroupPrimitives | undefined;
+  readonly jobs: WorkerJobPrimitives | undefined;
+  readonly active_jobs = new Set<string>();
   readonly clock: () => number;
   readonly fresh: FreshProcessObservations;
   readonly observer: SharedProcessObserver;
@@ -22,10 +25,12 @@ export class WorkerSupervisionRuntime {
   constructor(options: {
     primitives: WorkerProcessPrimitives;
     cgroups?: WorkerCgroupPrimitives;
+    jobs?: WorkerJobPrimitives;
     clock?: () => number;
   }) {
     this.primitives = options.primitives;
     this.cgroups = options.cgroups;
+    this.jobs = options.jobs;
     this.clock = options.clock ?? (() => performance.now() / 1000);
     this.fresh = new FreshProcessObservations(this.clock);
     this.observer = new SharedProcessObserver((deadline) => this.context(deadline), this.clock);

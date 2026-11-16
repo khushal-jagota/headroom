@@ -41,6 +41,19 @@ export function alive(process: WorkerProcess, table: ReadonlyMap<number, WorkerP
   return current !== undefined && current.birth === process.birth && !current.zombie;
 }
 export function validate_pending_shape(record: WorkerProcessRecord): void {
+  if (record.launchd !== undefined) {
+    if (
+      !/^gui\/[0-9]+$/.test(record.launchd.domain) ||
+      !/^com\.panels\.worker\.[0-9a-f]+\.[0-9a-f]{32}$/.test(record.launchd.label) ||
+      !record.host ||
+      !record.boot ||
+      record.processes.length ||
+      record.root != null ||
+      record.owner != null
+    )
+      throw new Error('Invalid Worker launchd custody');
+    return;
+  }
   if (record.root != null) return;
   if (record.processes.length)
     throw new Error('Worker record has process custody without an exact root');

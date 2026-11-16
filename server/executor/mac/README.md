@@ -8,7 +8,19 @@ Each producer receives the original absolute stop deadline. Actual joins precede
 `host/entry.ts` supplies the production update, provider, catalog, and Darwin process bindings plus signal ownership.
 The packaged `entrypoint.ts` reuses the ordinary CLI. `run.ts` binds parent mode to the fixed runtime supervisor and child mode to the host.
 
-Worker supervision records exact process custody in `run/worker-processes`.
+Mac Worker supervision records one launchd job per launch in `run/worker-processes`.
+The private record retains the executor's login domain and a unique job label before bootstrap.
+New jobs use those identities for stop and restart, rather than recorded process numbers.
+Provider input and output cross a private local bridge because launchd does not return child pipes.
+Plist generation omits environment entries with XML-forbidden control characters and logs only their names.
+The job does not restart a crashed Worker automatically. Recovery removes its retained job before a new launch.
+After confirmed job absence, a best-effort sweep reads same-user environments through `KERN_PROCARGS2`.
+Only an exact `PANELS_WORKER_JOB=<label>` match permits TERM and then KILL.
+Each signal requires a fresh marker, user, and birth check. The sweep never supplies liveness authority.
+Cleared environments cannot identify a leftover. Notices explain that limit and any sweep or transport cleanup errors.
+Once the job is absent, these cleanup notices never fence stop or restart.
+Historical PID records still require exact incarnation evidence. A changed birth retires an old PID record even if its numeric existence probe returns EPERM.
+Cross-user birth checks use `KERN_PROC_PID`. A different owner alone does not prove absence.
 Startup runs the one-time legacy cleanup pass before modern reconciliation and a cleanup snapshot.
 Starts serialize per Ticket before inspection, and unresolved cleanup fences only the affected Ticket.
 Explicit cleanup commands check the exact historical source. Leases copy the cached evidence.

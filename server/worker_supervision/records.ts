@@ -72,6 +72,19 @@ export async function read(path: string): Promise<WorkerProcessRecord> {
     if (cgroup.inode <= 0n) throw new Error('Invalid Worker cgroup identity');
   }
   const members = record.unattributed_session_members;
+  if (record.launchd !== undefined) {
+    const job = record.launchd;
+    if (
+      job === null ||
+      typeof job !== 'object' ||
+      Array.isArray(job) ||
+      !('domain' in job) ||
+      typeof job.domain !== 'string' ||
+      !('label' in job) ||
+      typeof job.label !== 'string'
+    )
+      throw new Error('Invalid Worker launchd identity');
+  }
   if (members !== undefined && !Array.isArray(members))
     throw new Error('Invalid Worker session evidence');
   for (const key of [
@@ -82,6 +95,7 @@ export async function read(path: string): Promise<WorkerProcessRecord> {
     'reason',
     'cgroup_error',
     'observation_error',
+    'launchd_socket_directory',
   ])
     if (record[key] !== undefined && typeof record[key] !== 'string')
       throw new Error(`Invalid Worker record ${key}`);
