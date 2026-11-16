@@ -189,7 +189,7 @@ def _unit_boundaries(
         assert 'EnvironmentFile="' + environment_file["path"] + '"\n' in output
         assert 'UNIT_LITERAL="' + escaped + '"\n' in environment_file["contents"]
         assert (
-            'PLAN_REFUSE_UNIDENTIFIED_AGENT_CALLS="1"\n' in environment_file["contents"]
+            'PLAN_REFUSE_UNIDENTIFIED_AGENT_CALLS' not in environment_file["contents"]
         )
         assert (
             f'PLAN_CONFIG_PATH="{root / "unit-config.yaml"}"\n'

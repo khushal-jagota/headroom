@@ -75,11 +75,8 @@ function start_request(raw: unknown): ConversationStartRequest {
   let workspace_folder = fields.text('workspace_folder', true, false);
   const access = fields.choice('access', ['full'], true, false);
   fields.finish();
-  if (role_text === null && identity.length > 0)
-    throw new HttpError(
-      422,
-      'identity environment variables belong to a role, so role_text is required',
-    );
+  if (identity.length > 0)
+    throw new HttpError(422, 'generic conversation starts cannot assign an agent identity');
   if (workspace_folder === '~') workspace_folder = homedir();
   else if (workspace_folder?.startsWith('~/'))
     workspace_folder = join(homedir(), workspace_folder.slice(2));

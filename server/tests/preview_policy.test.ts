@@ -12,6 +12,7 @@ describe('preview policy', () => {
         ['X-Private', 'secret'],
         ['Tailscale-User-Login', 'owner'],
         ['X-Plan-Ticket', 't_other'],
+        ['Authorization', 'Bearer private-launch-token'],
         ['X-Forwarded-Host', 'evil'],
         ['Host', 'evil'],
         ['Cookie', 'panels=secret; demo=one'],
@@ -22,7 +23,7 @@ describe('preview policy', () => {
     expect(clean.cookie).toBe('demo=one');
     expect(clean.host).toBe('127.0.0.1:3333');
     expect(clean['x-forwarded-host']).toBe('panels.example');
-    for (const name of ['x-private', 'tailscale-user-login', 'x-plan-ticket'])
+    for (const name of ['x-private', 'tailscale-user-login', 'x-plan-ticket', 'authorization'])
       expect(clean).not.toHaveProperty(name);
   });
   it('refuses redirects outside the generation', () => {

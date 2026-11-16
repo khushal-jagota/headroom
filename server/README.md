@@ -36,32 +36,13 @@ Startup installs signal handlers before asynchronous setup. Before a writer open
 
 Area preparation retains the exact new Ticket integrity faults from one audit. The owned recovery flight sends their ordinary owner-to-Chief system notices before lost-background-task notices and automatic recovery. A failed notice logs and does not stop startup. App and environment shutdown record each actual identity before callbacks, so a late setup continuation never closes the same identity again. A stop after successful listen is normal shutdown. A pre-listen failure remains a startup error.
 
-On a host behind trusted ingress, an unnamed caller receives owner authority only
-through the configured owner's ingress. Other unnamed callers can read and message
-Chief. Other writes refuse before domain actions. A source server without trusted
-ingress retains the local owner default. The separate launch-token Ticket owns
-removal of the legacy peer guard described below.
+Agent requests authenticate with private conversation launch tokens. Trusted ingress supplies the owner identity. On a hosted server, unidentified callers can read and send a message to Chief. Identity-free local calls retain owner access. A failed credential never inherits owner access. There is no process or cgroup peer check.
 
-`PLAN_REFUSE_UNIDENTIFIED_AGENT_CALLS` enables the existing opt-in identity refusal;
-it defaults to false and cannot be enabled by YAML. The application consumes the
-variable when loading its actual process environment, before agents inherit it.
-A supervisor must load configuration from an environment copy and preserve the flag
-for its application child. Unidentified loopback callers need same-user socket-holder
-evidence outside the exact agent cgroups. Trusted owners, identified actors and
-non-loopback callers keep the source bypass rules. The accepted TypeScript service
-name and rollback prerequisite are recorded in [DEVIATIONS.md](DEVIATIONS.md).
 
-The default peer resolver refuses before constructing its proc context or doing I/O
-when `VITEST=true`, `PYTEST_CURRENT_TEST` is present, or `PLAN_TEST_MODE` is a truthy
-test-mode value. Tests can supply an explicit private `PeerLookupContext` to exercise
-the resolver. The current raw WebSocket preview upgrade requires Tailscale-owner
-ingress. `executor/app_transport.ts` handles the obsolete executor connect upgrade
-through trusted executor ingress and refuses it before acceptance.
+The raw WebSocket preview upgrade requires Tailscale-owner ingress.
+`executor/app_transport.ts` handles the obsolete executor connect upgrade through
+trusted executor ingress and refuses it before acceptance.
 There is no general application WebSocket route.
-
-One direct comparison reuses Python's synthetic proc fixtures and Fastify injection, without a listener or database.
-It covers peer evidence, bypasses, refusal values, config consumption and the default test I/O guard. Its body takes 0.51 seconds, with zero skill-tree guard receipts.
-TypeScript, Ruff and mypy pass. Added helpers total 423 lines against 426 product lines (99.3%).
 
 ## How an area adds itself
 

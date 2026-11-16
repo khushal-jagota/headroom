@@ -9,11 +9,23 @@ import { gunzipSync, inflateSync, brotliDecompressSync } from 'node:zlib';
 import { HttpsProxyAgent } from 'https-proxy-agent';
 import { rates_proxy_for } from '../conversation/usage/proxy.ts';
 import { parse_numeric_json } from '../core/http/numeric_json.ts';
+import {
+  LAUNCH_TOKEN_ENVIRONMENT_NAME,
+  UNIDENTIFIED_LAUNCH_TOKEN,
+} from '../agent_identity/contracts.ts';
 import type { CommandResult, Invocation } from './contracts.ts';
 import { CliFailure, human_error } from './errors.ts';
 import { ExecutorValidationError } from '../executor/protocol_errors.ts';
 import { executor_client_settings } from '../core/config.ts';
 import type { IpcResponse } from '../executor/wire.generated.ts';
+
+/** Role variables remain context. Only the launch credential authenticates transport. */
+export function authentication_headers(env: NodeJS.ProcessEnv): Record<string, string> {
+  const token = env[LAUNCH_TOKEN_ENVIRONMENT_NAME]?.trim();
+  if (LAUNCH_TOKEN_ENVIRONMENT_NAME in env)
+    return { Authorization: `Bearer ${token || UNIDENTIFIED_LAUNCH_TOKEN}` };
+  return env.PLAN_ACTOR?.trim() ? { Authorization: `Bearer ${UNIDENTIFIED_LAUNCH_TOKEN}` } : {};
+}
 
 export interface TransportLimits {
   connect_ms: number;
@@ -325,11 +337,15 @@ async function request(
     if (!base.includes('://'))
       throw new Error("Request URL is missing an 'http://' or 'https://' protocol.");
     let url: URL;
+    let server_origin: string;
     try {
+      server_origin = new URL(base).origin;
       url = new URL(base.replace(/\/+$/, '') + path);
     } catch {
       throw new ClientConfigurationError(`Invalid Panels server URL: ${base}`);
     }
+    if (url.origin !== server_origin)
+      throw new ClientConfigurationError('API request must stay on the configured Panels server');
     if (!['http:', 'https:'].includes(url.protocol))
       throw new Error(`Request URL has an unsupported protocol '${url.protocol.slice(0, -1)}://'.`);
     for (const [key, value] of Object.entries(options.params ?? {})) {
@@ -345,17 +361,7 @@ async function request(
               : String(value),
         );
     }
-    const headers: Record<string, string> = {};
-    const actor = env.PLAN_ACTOR?.trim();
-    if (actor) {
-      headers['X-Plan-Actor'] = actor;
-      if (actor === 'worker' && env.PLAN_TICKET_ID?.trim())
-        headers['X-Plan-Ticket-ID'] = env.PLAN_TICKET_ID.trim();
-      if (actor === 'manager' && env.PLAN_MANAGER_ID?.trim())
-        headers['X-Plan-Manager-ID'] = env.PLAN_MANAGER_ID.trim();
-      if (env.PLAN_CONVERSATION_ID?.trim())
-        headers['X-Plan-Conversation-ID'] = env.PLAN_CONVERSATION_ID.trim();
-    }
+    const headers = authentication_headers(env);
     if (options.json_body !== undefined) headers['Content-Type'] = 'application/json';
     return await read_request(
       url,

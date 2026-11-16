@@ -178,7 +178,6 @@ try {
         PLAN_PORT: String(port),
         PLAN_APP_ROOT: app,
         PLAN_SERVER_CONTROL_SOCKET: join(state, 'control/server.sock'),
-        PLAN_REFUSE_UNIDENTIFIED_AGENT_CALLS: '1',
         PLAN_TEST_MODE: '0',
       };
       phase('initialize');

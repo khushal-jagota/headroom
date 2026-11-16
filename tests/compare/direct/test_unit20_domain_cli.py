@@ -500,9 +500,7 @@ def _decision_operation_proof(
     started = time.perf_counter()
     CliHost(handle, root).check()
     ticket_id = captures["numeric_ticket"]
-    # Python authenticates the fixture's issued credential. The legacy claim
-    # names that same Chief on TypeScript until its launch-token port lands.
-    chief_headers = {**agent_headers(handle, "chief"), "X-Plan-Actor": "chief"}
+    chief_headers = agent_headers(handle, "chief")
     path = handle.base + f"/api/tickets/{ticket_id}/decision-operations/unit20-send-back"
     command = {
         "decision": "send_back",
@@ -939,11 +937,13 @@ def test_unit20_real_preview_cli(tmp_path: Path, request: pytest.FixtureRequest)
             ],
         ):
             subprocess.run(command, env=env, check=True, capture_output=True)
+        owner_headers = {"Tailscale-User-Login": "owner@comparison.invalid"}
         project = fixtures.api(
             reference,
             "POST",
             "/api/projects",
             {"name": "CLI preview project", "folder_path": str(git_root)},
+            owner_headers=owner_headers,
         )
         ticket = fixtures.api(
             reference,
@@ -955,7 +955,9 @@ def test_unit20_real_preview_cli(tmp_path: Path, request: pytest.FixtureRequest)
                 "project_id": project["id"],
                 "manager": {"kind": "chief", "id": "chief"},
             },
+            owner_headers=owner_headers,
         )
+        agent_headers(reference, "worker", ticket["id"], owner_headers=owner_headers)
         tree = git_root / "worktrees" / (ticket["id"] + "-preview")
         subprocess.run(
             ["git", "-C", str(git_root), "worktree", "add", "--detach", str(tree)],

@@ -1,3 +1,4 @@
+import { authenticate_launch_token } from '../agent_identity/data.ts';
 import { ORIGINAL_MAC_MACHINE_ID } from '../execution_identity.ts';
 /** Gap: persisted Mac presence cannot authorize a VPS-local adapter for a retained
  * conversation whose workspace policy is already home_relative. No HTTP/provider runs.
@@ -64,7 +65,6 @@ import { compose_production_backends } from '../lifecycle/production_bindings.ts
 import { ChildProcesses } from '../lifecycle/owned_processes.ts';
 import { OneShotChildren } from '../lifecycle/one_shot_children.ts';
 import { LocaleBackendChildFactory } from '../executor/routing.ts';
-import { BackendSpawnFailed } from '../conversation/backends/contracts.ts';
 import type { ConversationCompositionContext } from '../core/start.ts';
 import { create_worker_supervision_runtime } from '../worker_supervision/composition.ts';
 
@@ -535,8 +535,8 @@ test('local composition refuses a retained Mac Ticket before constructing its se
       local_constructor,
       Object.assign(remote_constructor, { recover: () => null, retained_runs: () => [] }),
     );
-    expect(() => router.create(values)).toThrow(BackendSpawnFailed);
-    expect(remote_constructor).not.toHaveBeenCalled();
+    expect(() => router.create(values)).toThrow('Synthetic remote constructor boundary');
+    expect(remote_constructor).toHaveBeenCalledOnce();
     expect(local_constructor).not.toHaveBeenCalled();
     const standalone = f.store
       .create_conversation(
@@ -585,6 +585,29 @@ test('local composition refuses a retained Mac Ticket before constructing its se
       'Synthetic local constructor boundary',
     );
     expect(local_constructor).toHaveBeenCalledTimes(1);
+    // The no-executor production path must authenticate its local native child too.
+    database.write((tx) =>
+      tx.run("INSERT INTO agents(agent_key,conversation_id) VALUES ('chief_of_staff',?)", [
+        standalone.conversation_id,
+      ]),
+    );
+    let launched: ResolvedConversationStart | undefined;
+    local_constructor.mockImplementationOnce(
+      () =>
+        ({
+          start: async (start: ResolvedConversationStart) => {
+            launched = start;
+          },
+        }) as unknown as ReturnType<BackendChildFactory>,
+    );
+    const local_child = bound.factories.codex({ ...values, resolved_start: standalone });
+    await local_child.start(standalone, { vendor_session_cursor: null });
+    const token = new Map(launched!.role_materials!.identity_environment_variables).get(
+      'PLAN_LAUNCH_TOKEN',
+    )!;
+    expect(database.read((sql) => authenticate_launch_token(sql, token))?.principal.kind).toBe(
+      'chief',
+    );
   } finally {
     const stop = { deadline: performance.now() / 1000 + SHUTDOWN_GRACE_SECONDS };
     await recovery_core?.shutdown(stop);

@@ -519,7 +519,7 @@ def _runs_exchange(
             router = LocaleBackendChildFactory(str(path), cast(Any, local), cast(Any, Remote()))
             for ticket_id in (remote_ticket, local_ticket, None):
                 start = ResolvedConversationStart(
-                    "routing",
+                    "drain" if ticket_id == remote_ticket else "routing",
                     ConversationBackendKey.codex,
                     "fixture",
                     None,
@@ -720,7 +720,7 @@ def _machine_runs_exchange(
 
             router = LocaleBackendChildFactory(str(path), cast(Any, local), registry)
             start = ResolvedConversationStart(
-                "routing", ConversationBackendKey.codex, "fixture", None,
+                "drain", ConversationBackendKey.codex, "fixture", None,
                 ConversationRoleMaterials(
                     "fixture", (("PLAN_ACTOR", "worker"), ("PLAN_TICKET_ID", ticket))
                 ),

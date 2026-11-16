@@ -6,6 +6,9 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
 import type { public_event } from '../../conversation/http/record.ts';
+import { createDatabase } from '../../core/database/index.ts';
+import { load_worker_runtime_definitions } from '../../worker_types/configuration.ts';
+import { smoke_worker_token } from './identity.ts';
 
 type Json = Record<string, unknown>;
 type Event = ReturnType<typeof public_event>;
@@ -122,12 +125,21 @@ export async function smoke_before_restart(
   const ticket_id = ticket.id;
   await cli_ticket(base, ticket_id, environment);
   step('02 HTTP create and executed TypeScript CLI read Ticket', { ticket_id });
+  assert.ok(environment.PLAN_DB_PATH);
+  const database = createDatabase(environment.PLAN_DB_PATH);
+  let worker_token: string;
+  try {
+    database.read(load_worker_runtime_definitions);
+    worker_token = smoke_worker_token(database, ticket_id, options);
+  } finally {
+    database.close();
+  }
   const proposed = await api(
     `/api/tickets/${ticket_id}/propose`,
     {
       body: 'Production smoke proposal ready for owner review.',
     },
-    { 'x-plan-actor': 'worker', 'x-plan-ticket-id': ticket_id },
+    { authorization: `Bearer ${worker_token}` },
   );
   assert.equal(proposed.ticket_status, 'awaiting_approval');
   await review_gate(base, ticket_id);

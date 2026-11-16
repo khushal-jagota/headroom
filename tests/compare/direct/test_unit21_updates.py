@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from tests.support.launch_identity import agent_headers
 from tests.support.synthetic_homes import create_synthetic_homes
 from tests.support.update_apps import release
 
@@ -660,6 +661,7 @@ def _service_fixture(
 
     host: Any = Harness(tmp_path / "python", node=node)
     callers: dict[str, str] = {}
+    caller_headers: dict[str, dict[str, str]] = {}
     if seed_callers:
         from contextlib import closing
 
@@ -667,6 +669,10 @@ def _service_fixture(
 
         with closing(connect(str(host.database))) as connection:
             callers = _seed_route_callers(connection)
+            caller_headers = {
+                actor: agent_headers(connection, actor, callers.get(key))
+                for actor, key in (("worker", "ticket"), ("manager", "manager"), ("chief", "chief"))
+            }
     node_root = tmp_path / "node"
     node_database = node_root / "data" / "planner.db"
     node_database.parent.mkdir(parents=True)
@@ -688,6 +694,7 @@ def _service_fixture(
         "now": NOW,
         "release": json.loads(json.dumps(asdict(host.release))),
         "callers": callers,
+        "caller_headers": caller_headers,
     }
 
 
@@ -1079,6 +1086,9 @@ def test_owner_routes_populated_mac_reads_and_deployment_snapshot_match_python(
     app = FastAPI()
     app.include_router(router, prefix="/api")
     app.state.updates = host.service
+    from types import SimpleNamespace
+
+    app.state.config = SimpleNamespace(db_path=str(host.database))
     counts = {"health_reads": 0, "mac_reads": 0}
     status = MacUpdateStatus(
         "mac-controller", "c" * 40, "ready_to_restart", "controller status read"
@@ -1133,15 +1143,15 @@ def test_owner_routes_populated_mac_reads_and_deployment_snapshot_match_python(
             method,
             path,
             payload,
-            {"x-plan-actor": "worker", "x-plan-ticket-id": value["callers"]["ticket"]},
+            value["caller_headers"]["worker"],
         )
         for method, path, payload in protected_requests
     ]
     denied.extend(
         ("GET", "/api/updates", None, headers)
         for headers in [
-            {"x-plan-actor": "chief"},
-            {"x-plan-actor": "manager", "x-plan-manager-id": value["callers"]["manager"]},
+            value["caller_headers"]["chief"],
+            value["caller_headers"]["manager"],
         ]
     )
     for method, path, payload, headers in denied:

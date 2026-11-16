@@ -1001,7 +1001,9 @@
         "ticket",
         "proposal",
         "${ticket}",
-        "revise"
+        "revise",
+        "--body-file",
+        "-"
       ],
       "identity": {
         "actor": "owner"

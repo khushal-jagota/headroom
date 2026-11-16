@@ -1,3 +1,7 @@
+import {
+  LAUNCH_TOKEN_ENVIRONMENT_NAME,
+  UNIDENTIFIED_LAUNCH_TOKEN,
+} from '../../../agent_identity/contracts.ts';
 /** Codex inherits the account environment. A copied rotating credential is refused. */
 import { readlinkSync, realpathSync } from 'node:fs';
 import { basename, dirname, join, resolve } from 'node:path';
@@ -13,6 +17,7 @@ export function child_environment(
 ): Record<string, string> {
   const environment = copy_environment(process.env);
   Object.assign(environment, Object.fromEntries(options.overrides ?? []));
+  environment[LAUNCH_TOKEN_ENVIRONMENT_NAME] = UNIDENTIFIED_LAUNCH_TOKEN;
   Object.assign(environment, Object.fromEntries(options.identity ?? []));
   refuse_a_duplicated_codex_login(environment);
   return environment;

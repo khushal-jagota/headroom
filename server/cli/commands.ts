@@ -9,6 +9,7 @@ import {
   integer,
   choice,
   readable_path,
+  readable_file,
 } from './declarations.ts';
 
 export function create_commands(environment: NodeJS.ProcessEnv = {}): CliCommand {
@@ -25,6 +26,17 @@ export function create_commands(environment: NodeJS.ProcessEnv = {}): CliCommand
     by_path.get(words.slice(0, -1).join(' '))!.addCommand(current, { hidden });
     by_path.set(path, current);
   };
+  command(
+    'api',
+    "Call a Panels API path with this conversation's automatic authentication.",
+    [
+      argument('method', '<METHOD>', text),
+      argument('path', '<PATH>', text),
+      option('input_json', '--input-json <FILENAME>', readable_file, {}),
+      option('as_json', '--json', boolean, { default: false }),
+    ],
+    true,
+  );
   command('attention', 'Read where owner involvement went over selected dates.');
   command(
     'attention setup-collection',

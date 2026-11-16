@@ -1,5 +1,6 @@
 /** Shutdown races require an exact pause between the committed action and dispatch. */
 import { expect, test, vi } from 'vitest';
+import { issue_launch_token } from '../agent_identity/data.ts';
 import { SHUTDOWN_GRACE_SECONDS } from '../lifecycle/configuration.ts';
 import { createApp } from '../app.ts';
 import { loadConfig } from '../core/config.ts';
@@ -94,11 +95,7 @@ test('a sealed shared write scope refuses late requests and drains an admitted s
       areas: [{ prefix: '/api', routes: createCredentialRequestRoutes(operations) }],
     },
   );
-  const headers = {
-    'x-plan-actor': 'worker',
-    'x-plan-ticket-id': ticket.id,
-    'x-plan-conversation-id': conversation_id,
-  };
+  const headers = { Authorization: `Bearer ${issue_launch_token(f.database, conversation_id)}` };
   const request_id = '19000000-0000-4000-8000-000000000010';
   const pending = await app.inject({
     method: 'POST',

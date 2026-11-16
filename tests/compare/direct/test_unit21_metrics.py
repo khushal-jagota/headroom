@@ -1063,6 +1063,7 @@ def test_unit21_metrics_routes_populated_errors_and_callers_match_python(
     from fastapi import FastAPI
     from fastapi.testclient import TestClient
     from tests.compare.direct.test_unit21_updates import _assert_route_callers, _seed_route_callers
+    from tests.support.launch_identity import agent_headers
 
     from planner.core.db import connect, create_schema
     from planner.environments.vps_metrics.api import router
@@ -1073,6 +1074,9 @@ def test_unit21_metrics_routes_populated_errors_and_callers_match_python(
     with closing(connect(str(source_application))) as connection:
         create_schema(connection)
         callers = _seed_route_callers(connection)
+        worker = agent_headers(connection, "worker", callers["ticket"])
+        chief = agent_headers(connection, "chief")
+        manager = agent_headers(connection, "manager", callers["manager"])
         with closing(sqlite3.connect(tmp_path / "application.sqlite")) as copied:
             connection.backup(copied)
             _assert_route_callers(copied, callers)
@@ -1106,14 +1110,10 @@ def test_unit21_metrics_routes_populated_errors_and_callers_match_python(
         {"method": "POST", "path": "/api/vps-metrics/activity"},
     ]
     operations: list[dict[str, Any]] = list(base)
-    worker = {"x-plan-actor": "worker", "x-plan-ticket-id": callers["ticket"]}
     operations.extend({**operation, "headers": worker} for operation in base)
     operations.extend(
         {**base[0], "headers": headers}
-        for headers in [
-            {"x-plan-actor": "chief"},
-            {"x-plan-actor": "manager", "x-plan-manager-id": callers["manager"]},
-        ]
+        for headers in [chief, manager]
     )
     public_count = len(operations)
     operations.extend(

@@ -44,6 +44,8 @@ def declarations() -> list[dict[str, Any]]:
                 typ = "boolean"
             elif type(kind) is click.types.UUIDParameterType:
                 typ = "uuid"
+            elif type(kind) is click.File:
+                typ = "file"
             elif type(kind) is click.Path:
                 typ = "path"
             else:

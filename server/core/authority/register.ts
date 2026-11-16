@@ -3,7 +3,7 @@ import type { Database } from '../database/index.ts';
 import type { Config } from '../config.ts';
 import type { Clock } from '../clock.ts';
 import type { ChangeSignal } from '../changes/index.ts';
-import { requestContext } from './identity.ts';
+import { requestContext, TRUSTED_INGRESS_CONFIGURED, REQUEST_IDENTITY_READER } from './identity.ts';
 import { requestAdmission } from './intake.ts';
 import type { AdmissionDependencies } from './intake.ts';
 import type { ConversationSystem } from '../../conversation/contracts.ts';
@@ -15,7 +15,7 @@ export interface AreaServices {
   database: Database;
   config: Config;
   clock: Clock;
-  identity: typeof requestContext;
+  identity: (request: FastifyRequest) => ReturnType<typeof requestContext>;
 }
 /** Background and test composition receives this only under database ownership. */
 export interface OwnedAreaContext extends Omit<AreaServices, 'identity'> {
@@ -42,13 +42,18 @@ export function registerArea(
     async (scope) => {
       scope.addHook('onRequest', async (request: FastifyRequest) => {
         Object.assign(request, {
-          trustedIngressConfigured: Boolean(services.config.trusted_ingress_provider),
+          [TRUSTED_INGRESS_CONFIGURED]: Boolean(services.config.trusted_ingress_provider),
+          [REQUEST_IDENTITY_READER]: () =>
+            services.database.read((sql) => requestContext(request, sql)),
         });
       });
       scope.addHook('preHandler', async (request: FastifyRequest) => {
         services.database.read((sql) => requestAdmission(sql, request, area.admission));
       });
-      await scope.register(area.routes, { ...services, identity: requestContext });
+      await scope.register(area.routes, {
+        ...services,
+        identity: (request) => services.database.read((sql) => requestContext(request, sql)),
+      });
     },
     { prefix: area.prefix },
   );

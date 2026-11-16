@@ -9,9 +9,8 @@ import type {
 } from '../conversation/backends/contracts.ts';
 import type { ResolvedConversationStart } from '../conversation/contracts.ts';
 import type { Database } from '../core/database/contracts.ts';
-import { PlannerError } from '../core/contracts.ts';
-import { BackendSpawnFailed } from '../conversation/backends/contracts.ts';
-import { read_ticket_by_conversation_id } from '../tickets/data/index.ts';
+import { canonical_principal } from '../agent_identity/data.ts';
+import { authenticated_local_child } from '../agent_identity/launch.ts';
 import { HOME_MACHINE_ID } from '../execution_identity.ts';
 
 export function ticket_id_of(start: ResolvedConversationStart): string | null {
@@ -43,28 +42,18 @@ export class LocaleBackendChildFactory {
     return this.remote_factory.recover(reference, options);
   }
   create(options: Parameters<BackendChildFactory>[0]): BackendChild {
-    const ticket_id = ticket_id_of(options.resolved_start);
     const remote = this.database.read((sql) => {
-      let canonical;
-      try {
-        canonical = read_ticket_by_conversation_id(sql, options.resolved_start.conversation_id);
-      } catch (error) {
-        if (!(error instanceof PlannerError && error.code === 'not_found')) throw error;
-      }
-      if (canonical && canonical.machine_id !== HOME_MACHINE_ID) {
-        if (canonical.id !== ticket_id)
-          throw new BackendSpawnFailed('Remote Ticket requires its canonical Worker identity');
-        return true;
-      }
-      const destination =
-        ticket_id === null
-          ? undefined
-          : sql.get<{ machine_id: string }>('SELECT machine_id FROM tickets WHERE id=?', [
-              ticket_id,
-            ]);
-      return destination !== undefined && destination.machine_id !== HOME_MACHINE_ID;
+      const principal = canonical_principal(sql, options.resolved_start.conversation_id);
+      const row =
+        principal?.kind === 'ticket'
+          ? sql.get<{ machine_id: string }>('SELECT machine_id FROM tickets WHERE id=?', [
+              principal.id,
+            ])
+          : undefined;
+      return row !== undefined && row.machine_id !== HOME_MACHINE_ID;
     });
-    return (remote ? this.remote_factory : this.local_factory)(options);
+    const child = (remote ? this.remote_factory : this.local_factory)(options);
+    return remote ? child : authenticated_local_child(child, this.database);
   }
   /** The existing core consumes a callable factory with retained recovery methods. */
   as_factory(): RetainedBackendChildFactory {

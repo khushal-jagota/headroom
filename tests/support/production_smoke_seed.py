@@ -20,6 +20,7 @@ from tests.compare.runner import (
     request_body,
     substitute,
 )
+from tests.support.launch_identity import agent_headers
 from tests.support.server_fixtures import _start_server, _stop_server
 from tests.support.synthetic_homes import (
     create_synthetic_homes,
@@ -48,6 +49,13 @@ def main() -> None:
     source = Path(__file__).resolve().parents[2]
     specification = source / "tests/compare/lists/unit-04.populated.json"
     steps = json.loads(specification.read_text())["seed_requests"]
+    # The smoke needs ordinary populated records, not obsolete recap-size probes.
+    # Keep these replacements private to this smoke; the comparison list owns its cases.
+    for step in steps:
+        if step["path"] == "/api/managers/${ma}" and "recap" in step.get("json", {}):
+            step["json"]["recap"] = "The populated smoke Manager awaits its next authorized step."
+        if step["path"] == "/api/tickets/${a2}" and "recap" in step.get("json", {}):
+            step["json"]["recap"] = "The populated smoke Ticket awaits its next authorized step."
     captures: dict[str, object] = {}
     host = _start_server(
         root / "seed-source",
@@ -60,11 +68,15 @@ def main() -> None:
         ) as client:
             for step in steps:
                 call = substitute(step, captures)
+                headers = call.get("headers", {})
+                if headers.get("X-Plan-Actor") == "worker":
+                    # Seed each Worker through an issued credential for its current conversation.
+                    headers = agent_headers(host, "worker", headers["X-Plan-Ticket-ID"])
                 response = client.request(
                     call["method"],
                     host.base + call["path"],
                     **request_body(call),
-                    headers=call.get("headers"),
+                    headers=headers,
                 )
                 if response.status_code != call["status"]:
                     raise RuntimeError(

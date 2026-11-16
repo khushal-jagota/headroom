@@ -1,3 +1,7 @@
+import {
+  LAUNCH_TOKEN_ENVIRONMENT_NAME,
+  UNIDENTIFIED_LAUNCH_TOKEN,
+} from '../../../agent_identity/contracts.ts';
 /** Hermes inherits ACP's allowlist, explicit launch values, then conversation identity. */
 import { fileURLToPath } from 'node:url';
 import { posix } from 'node:path';
@@ -67,6 +71,7 @@ export function child_environment(
   }
   Object.assign(environment, Object.fromEntries(launch.environment_overrides));
   if (resolved_start.access === ConversationAccess.full) environment.HERMES_YOLO_MODE = '1';
+  environment[LAUNCH_TOKEN_ENVIRONMENT_NAME] = UNIDENTIFIED_LAUNCH_TOKEN;
   Object.assign(
     environment,
     Object.fromEntries(resolved_start.role_materials?.identity_environment_variables ?? []),

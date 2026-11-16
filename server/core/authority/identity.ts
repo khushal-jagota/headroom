@@ -1,44 +1,54 @@
 import type { FastifyRequest } from 'fastify';
-import { CHIEF, OWNER, PlannerError, legacyActor } from '../contracts.ts';
+import { OWNER, PlannerError, legacyActor } from '../contracts.ts';
 import type { RequestContext } from '../contracts.ts';
-function normalized(value: string | string[] | undefined): string | null {
-  return (Array.isArray(value) ? value[0] : value)?.trim() || null;
-}
-function firstHeader(request: FastifyRequest, name: string): string | string[] | undefined {
-  // Trusted ingress can remove untrusted claim headers before admission.
-  if (!(name in request.headers)) return undefined;
-  const raw = request.raw.rawHeaders;
-  for (let i = 0; i < raw.length; i += 2) {
-    if (raw[i]?.toLowerCase() === name) return raw[i + 1];
+import type { ReadSql } from '../database/contracts.ts';
+import { authenticate_launch_token } from '../../agent_identity/data.ts';
+
+export const IN_PROCESS_REQUEST_CONTEXT = Symbol('verified in-process request context');
+export const REQUEST_IDENTITY_READER = Symbol('request identity reader');
+export const TRUSTED_INGRESS_CONFIGURED = Symbol('trusted ingress configured');
+type IdentityRequest = FastifyRequest & {
+  [TRUSTED_INGRESS_CONFIGURED]?: boolean;
+  authenticatedOwner?: boolean;
+  [REQUEST_IDENTITY_READER]?: () => RequestContext;
+};
+export function requestContext(request: FastifyRequest, sql?: ReadSql): RequestContext {
+  const identityRequest = request as IdentityRequest;
+  const internal = (
+    request.raw as typeof request.raw & {
+      [IN_PROCESS_REQUEST_CONTEXT]?: RequestContext;
+    }
+  )[IN_PROCESS_REQUEST_CONTEXT];
+  if (internal) return internal;
+  if (!sql && identityRequest[REQUEST_IDENTITY_READER])
+    return identityRequest[REQUEST_IDENTITY_READER]();
+  const unidentified: RequestContext = {
+    principal: { kind: 'unidentified', id: 'unidentified' },
+    conversationId: null,
+  };
+  const authorizations: string[] = [];
+  for (let index = 0; index < request.raw.rawHeaders.length; index += 2) {
+    if (request.raw.rawHeaders[index]?.toLowerCase() === 'authorization')
+      authorizations.push(request.raw.rawHeaders[index + 1]!);
   }
-  return request.headers[name];
-}
-export function requestContext(request: FastifyRequest): RequestContext {
-  const actor = normalized(firstHeader(request, 'x-plan-actor'));
-  const ticket = normalized(firstHeader(request, 'x-plan-ticket-id'));
-  const manager = normalized(firstHeader(request, 'x-plan-manager-id'));
-  const conversationId = normalized(firstHeader(request, 'x-plan-conversation-id'));
-  if (actor === null) {
-    const ingress = request as FastifyRequest & {
-      trustedIngressConfigured?: boolean;
-      authenticatedOwner?: boolean;
-    };
-    return {
-      principal:
-        ingress.authenticatedOwner || !ingress.trustedIngressConfigured
-          ? OWNER
-          : { kind: 'unidentified', id: 'unidentified' },
-      conversationId,
-    };
+  if (authorizations.length > 1) return unidentified;
+  const authorization = authorizations[0] ?? request.headers.authorization;
+  if (authorization !== undefined) {
+    const parts = authorization.trim().split(/\s+/);
+    if (parts.length !== 2 || parts[0]!.toLowerCase() !== 'bearer' || !sql) return unidentified;
+    const identity = authenticate_launch_token(sql, parts[1]!);
+    return identity
+      ? { principal: identity.principal, conversationId: identity.conversation_id }
+      : unidentified;
   }
-  if (actor === 'chief') return { principal: CHIEF, conversationId };
-  if (actor === 'worker' && ticket)
-    return { principal: { kind: 'ticket', id: ticket }, conversationId };
-  if (actor === 'manager' && manager)
-    return { principal: { kind: 'manager', id: manager }, conversationId };
-  throw new PlannerError('agent_forbidden', 'request actor does not name a Panels principal', {
-    actor,
-  });
+  if (identityRequest.authenticatedOwner === true)
+    return { principal: OWNER, conversationId: null };
+  const legacyClaim = Object.keys(request.headers).some((name) =>
+    name.toLowerCase().startsWith('x-plan-'),
+  );
+  return !legacyClaim && !identityRequest[TRUSTED_INGRESS_CONFIGURED]
+    ? { principal: OWNER, conversationId: null }
+    : unidentified;
 }
 export function requireOwner(context: RequestContext): void {
   if (context.principal.kind !== 'owner')

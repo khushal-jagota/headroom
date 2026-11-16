@@ -8,6 +8,7 @@ import { buildClock } from '../core/clock.ts';
 import { registerArea } from '../core/authority/register.ts';
 import { routes } from '../credentials/routes.ts';
 import { PlannerError } from '../core/contracts.ts';
+import { launch_headers } from '../testing/launch_identity.ts';
 import { OWNER } from '../core/contracts.ts';
 import { fixture, fixture_path } from './ticket_fixture.ts';
 import {
@@ -170,10 +171,24 @@ test('private HTTP parsing rejects malformed bytes without secret reflection and
     });
     expect(malformed.statusCode).toBe(400);
     expect(malformed.body.includes('synthetic-private-malformed')).toBe(false);
+    const chief_conversation_id = 'credential-parser-chief';
+    database.write((tx) => {
+      tx.run(
+        'INSERT INTO conversations(conversation_id,backend_key,model,workspace_folder,identity_environment_variables,access,created_at) VALUES(?,?,?,?,?,?,?)',
+        [chief_conversation_id, 'codex', 'model', '/synthetic-workspace', '[]', 'full', 1],
+      );
+      tx.run(
+        'INSERT INTO agents(agent_key,conversation_id) VALUES(?,?) ON CONFLICT(agent_key) DO UPDATE SET conversation_id=excluded.conversation_id',
+        ['chief_of_staff', chief_conversation_id],
+      );
+    });
     const chief = await app.inject({
       method: 'POST',
       url: '/api/credentials',
-      headers: { 'content-type': 'application/json', 'x-plan-actor': 'chief' },
+      headers: {
+        'content-type': 'application/json',
+        ...launch_headers(database, chief_conversation_id),
+      },
       payload: 'not-json',
     });
     expect(chief.json()).toEqual({

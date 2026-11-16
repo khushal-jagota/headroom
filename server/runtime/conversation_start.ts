@@ -1,3 +1,4 @@
+import { revoke_launch_tokens } from '../agent_identity/data.ts';
 import { HOME_MACHINE_ID } from '../execution_identity.ts';
 import { read_machine } from '../machines/data.ts';
 import { filesRoot } from '../files/logic/paths.ts';
@@ -774,6 +775,7 @@ export async function start_agent_conversation(
   return { conversation_id: now_in, made_here: now_in === options.conversation_id };
 }
 function unlink_agent(database: Database, agent_key: string, conversation_id: string): void {
+  revoke_launch_tokens(database, conversation_id);
   database.write((tx) =>
     tx.run('UPDATE agents SET conversation_id=NULL WHERE agent_key=? AND conversation_id=?', [
       agent_key,
@@ -899,6 +901,7 @@ export async function reset_ticket_conversation(
     const id = database.read((sql) => tickets.read_ticket(sql, ticket_id)).conversation_id;
     if (id === null) return;
     await system.kill(id);
+    revoke_launch_tokens(database, id);
     database.write((tx) =>
       tickets.clear_ticket_conversation_link(tx, ticket_id, {
         expected_conversation_id: id,

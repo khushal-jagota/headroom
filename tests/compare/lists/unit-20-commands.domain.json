@@ -186,11 +186,7 @@
         "model": "gpt-6.1-sol",
         "backend_key": "codex",
         "workspace_folder": "/tmp",
-        "role_text": "Synthetic CLI credential requester.",
-        "identity_environment_variables": {
-          "PLAN_ACTOR": "worker",
-          "PLAN_TICKET_ID": "${worker}"
-        }
+        "role_text": "Synthetic CLI credential requester."
       }
     },
     {

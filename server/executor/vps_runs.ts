@@ -1,3 +1,4 @@
+import { canonical_principal } from '../agent_identity/data.ts';
 /** Retained Mac children and restart recovery, with durable assignments and owned waits. */
 import { same_reference } from './child_reference.ts';
 import { randomUUID } from 'node:crypto';
@@ -156,8 +157,6 @@ export class MacRuns {
   }
   create(options: Parameters<BackendChildFactory>[0]): MacRemoteChild {
     this.admit();
-    if (!ticket_id_of(options.resolved_start))
-      throw new BackendSpawnFailed('Mac runs require a Ticket Worker identity');
     const reference = this.assign_child(options.resolved_start);
     const child = this.make_child(reference, {
       event_sink: options.event_sink,
@@ -193,9 +192,7 @@ export class MacRuns {
     start: ResolvedConversationStart,
   ): WireValue<'CanonicalSkillSnapshot'> => {
     this.admit();
-    const ticket_id = ticket_id_of(start);
-    if (!ticket_id)
-      throw new BackendSpawnFailed('Canonical skill bootstrap requires a Worker Ticket identity');
+    const ticket_id = this.require_current_ticket(start);
     return this.database.read((sql) => read_canonical_skill_snapshot(sql, ticket_id));
   };
   assign_child(start: ResolvedConversationStart): ChildReference {
@@ -211,8 +208,7 @@ export class MacRuns {
       throw new BackendSpawnFailed(
         this.database.read((sql) => execution_unavailable_reason(sql, 'macos')),
       );
-    const ticket_id = ticket_id_of(start);
-    if (!ticket_id) throw new BackendSpawnFailed('Mac runs require a Ticket Worker identity');
+    const ticket_id = this.require_current_ticket(start);
     const child = {
       executor_incarnation: identity.executor_incarnation,
       child_id: randomUUID(),
@@ -220,6 +216,12 @@ export class MacRuns {
     };
     this.store.register_child(child, 'ticket', ticket_id, now_ms());
     return child;
+  }
+  private require_current_ticket(start: ResolvedConversationStart): string {
+    const principal = this.database.read((sql) => canonical_principal(sql, start.conversation_id));
+    if (principal?.kind !== 'ticket' || ticket_id_of(start) !== principal.id)
+      throw new BackendSpawnFailed("Mac runs require the Ticket's current conversation identity");
+    return principal.id;
   }
   private make_child(
     reference: ChildReference,

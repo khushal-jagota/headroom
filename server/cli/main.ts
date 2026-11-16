@@ -23,6 +23,8 @@ export async function run(
     if (parsed.help) return { exit_code: 0, stdout: parsed.help, stderr: '' };
     invocation = { ...parsed, environment, stdin, write_stderr };
     switch (parsed.command.path[0]) {
+      case 'api':
+        return await (await import('./api.ts')).run_api_command(invocation);
       case 'executor':
         return await (await import('../executor/mac/cli.ts')).run_executor_command(invocation);
       case 'environment':

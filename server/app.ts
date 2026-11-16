@@ -54,7 +54,6 @@ export async function createApp(config: Config, services: AppServices): Promise<
     app,
     config,
     services.workspaceAdmission,
-    undefined,
     request_lifetime,
     services.updateBarrier,
   );

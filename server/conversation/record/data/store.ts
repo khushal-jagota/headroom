@@ -1,3 +1,4 @@
+import { LAUNCH_TOKEN_ENVIRONMENT_NAME } from '../../../agent_identity/contracts.ts';
 import { HOME_MACHINE_ID } from '../../../execution_identity.ts';
 import { write_bindings } from '../../start_admission/index.ts';
 import type { AdmissionDatabase, StartRequest } from '../../start_admission/contracts.ts';
@@ -198,7 +199,7 @@ export class ConversationStorePrimitives {
             value.workspace_folder,
             value.workspace_path_policy,
             value.role_text,
-            JSON.stringify(value.identity_environment_variables),
+            identity_environment_json(value.identity_environment_variables),
             value.access,
             value.vendor_session_cursor,
             composer_catalog_to_json(value.composer_catalog),
@@ -1670,7 +1671,9 @@ export function ensure_started_conversation_record(
   start: ResolvedConversationStart,
   options: { created_at: number },
 ): void {
-  const identity = JSON.stringify(start.role_materials?.identity_environment_variables ?? []);
+  const identity = identity_environment_json(
+    start.role_materials?.identity_environment_variables ?? [],
+  );
   const expected = [
     start.backend_key,
     start.workspace_folder,
@@ -1727,4 +1730,10 @@ export function ensure_started_conversation_record(
       `conversation ${start.conversation_id} started with values that differ from its durable record`,
     );
   }
+}
+
+function identity_environment_json(environment: readonly (readonly [string, string])[]): string {
+  if (environment.some(([name]) => name === LAUNCH_TOKEN_ENVIRONMENT_NAME))
+    throw new Error('launch tokens are transient and cannot be stored in a conversation');
+  return JSON.stringify(environment);
 }

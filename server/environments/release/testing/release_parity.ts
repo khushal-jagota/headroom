@@ -89,12 +89,10 @@ export async function unit_boundaries_parity(
     PLAN_CONFIG_PATH: config_path,
     PLAN_SERVER_CONTROL_SOCKET: control,
     PLAN_SERVER_LIFECYCLE_LEASE_PATH: lease,
-    PLAN_REFUSE_UNIDENTIFIED_AGENT_CALLS: '1',
     PLAN_TEST_MODE: '1',
     PLAN_PORT: '0',
   };
   const runtime_directory = join(root, 'unit-runtime');
-  let refusal_preserved = false;
   const context = await (async () => {
     const saved = Object.fromEntries(Object.keys(input).map((key) => [key, process.env[key]]));
     Object.assign(process.env, input);
@@ -104,7 +102,6 @@ export async function unit_boundaries_parity(
         process.env,
         current,
       );
-      refusal_preserved = process.env.PLAN_REFUSE_UNIDENTIFIED_AGENT_CALLS === '1';
       return resolved;
     } finally {
       for (const [key, value] of Object.entries(saved)) {
@@ -140,7 +137,6 @@ export async function unit_boundaries_parity(
     environment: {
       UNIT_LITERAL: literal,
       PLAN_CONFIG_PATH: '/unused-conflicting-config',
-      PLAN_REFUSE_UNIDENTIFIED_AGENT_CALLS: '0',
       NODE_OPTIONS: '--unused-loader-marker',
     },
   };
@@ -168,8 +164,6 @@ export async function unit_boundaries_parity(
       lease: context.lease_path === lease,
       config: context.config_path === config_path,
       runtime: context.runtime_directory === runtime_directory,
-      refusal: context.config.refuse_unidentified_agent_calls,
-      refusal_preserved,
       listener_removed,
       descriptor_closed,
     },
