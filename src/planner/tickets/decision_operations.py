@@ -152,7 +152,10 @@ def _apply(
         completing = machine.completion_follows(
             current_ticket.stage, worker_type_definition=definition
         )
-        if holder is None and not completing:
+        before_consequences = machine.consequences_follows(
+            current_ticket.stage, worker_type_definition=definition
+        )
+        if holder is None and not (completing or before_consequences):
             raise PlannerError(
                 ErrorCode.scope_missing, "approval requires next_holder",
                 {"missing": ["next_holder"]},

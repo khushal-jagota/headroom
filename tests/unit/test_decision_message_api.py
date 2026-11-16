@@ -111,6 +111,13 @@ def test_authenticated_manager_owns_the_exact_decision_note_and_retry(
         json={"body": "Verified follow-through"}, headers=worker,
     )
     assert done.status_code == 200, done.text
+    assert done.json()["stage"] == "needs_consequences"
+    done = client.post(
+        f"/api/tickets/{ticket.id}/accept/consequences",
+        json={"expected_proposal_revision": done.json()["pending_proposal"]["revision"]},
+        headers=headers,
+    )
+    assert done.status_code == 200, done.text
     assert done.json()["stage"] == "done"
     final_retry = client.post(
         final_path, json={**final_body, "next_ceiling": "consequences"}, headers=headers

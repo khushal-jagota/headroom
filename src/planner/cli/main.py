@@ -1327,11 +1327,7 @@ def _approve_ticket_proposal(
             "the visible proposal changed; read it again before accepting", as_json
         )
     next_stage = manifest["advance"].get(stage)
-    final_approval = next_stage == "done" or (
-        isinstance(next_stage, str)
-        and _gating_field_for_stage(manifest, next_stage) == "consequences"
-        and manifest["advance"].get(next_stage) == "done"
-    )
+    final_approval = next_stage == "done"
     if ceiling is None and not final_approval:
         http.fail_validation("approval requires --ceiling", as_json)
     if kickoff_title is not None:

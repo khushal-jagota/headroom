@@ -182,7 +182,7 @@ def validate_workflow(definition: WorkflowDefinition) -> None:
 
 
 def validate_completion_stage(definition: WorkflowDefinition) -> None:
-    """New workflows finish with Worker follow-through, without a review gate.
+    """New workflows finish with Worker follow-through before Done.
 
     Historical workflows remain readable with their exact ownership and stage order.
     """

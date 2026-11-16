@@ -78,7 +78,7 @@ def compose_worker_step_prompt(
         step_instruction = (
             f"Work ticket {ticket.id} — {ticket.title}. It is at Stage '{str(ticket.stage)}'; "
             "complete the authorized Consequences work and submit its verified report. "
-            "Consequences has no further approval gate. Its report settles automatically. "
+            "The ceiling holder reviews the Consequences report. "
             "Preserve actual blockers and required human work. "
             "Do not repeat completed side effects. "
             f"Stage owner: {ownership_wire}."
@@ -90,8 +90,8 @@ def compose_worker_step_prompt(
             "Ask bounded questions or resume the Stage conversation, and do not file a "
             "proposal until the discussion has enough shared understanding. "
             + (
-                "Once the required human work is complete, the Consequences report settles "
-                "automatically without another approval. "
+                "Once the required human work is complete, the Consequences report waits "
+                "for the ceiling holder to review it. "
                 if gating == CONSEQUENCES_FIELD_ID
                 else "Once filed, the answer settles below the ceiling and waits for approval "
                 "at or beyond it. "

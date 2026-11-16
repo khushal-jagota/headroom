@@ -4,7 +4,7 @@ A Worker type is a way of paying attention. Coding, research, debugging, and des
 
 ## What a type declares
 
-- **The ladder.** Every type starts at Brief and ends with Consequences, then Done. Consequences is where the follow-through happens: merge, follow-up Tickets, bookkeeping, and a report. The final decision authorizes this follow-through. Its verified report finishes the Ticket without another approval. Deployment stays a separate owner action. The stages between are the type's own argument for how that kind of work should unfold.
+- **The ladder.** Every type starts at Brief and ends with Consequences, then Done. Consequences is where the follow-through happens: merge, follow-up Tickets, bookkeeping, and a report. The final decision authorizes this follow-through. The ceiling holder reviews its verified report before the Ticket reaches Done. Deployment stays a separate owner action. The stages between are the type's own argument for how that kind of work should unfold.
 - **Stage ownership.** A worker-owned stage is the Worker's to draft. A user-owned stage is collaborative: the Worker gets one automatic opening turn, then the person and the Worker continue in the same conversation until the gate is filled. Ownership does not decide whether a proposal waits. The [ceiling](tickets.md) does.
 - **A specialist skill**, the instructions this kind of Worker reads on top of the shared Worker skill. See [Skills](skills.md).
 - **Launch defaults**: the backend, model, and reasoning a new Ticket copies as its starting setup. Khushal can change them in Settings. A change affects future Tickets only.
@@ -44,7 +44,7 @@ The New worker and Amend worker types are how these changes are usually made. A 
 ## Decisions that shape it
 
 - **The Ticket owns its stages.** A preset records where the initial workflow came from. It does not control an existing Ticket.
-- **Ownership and the ceiling are separate.** Ownership says who drafts a stage. The ceiling says whether a decision waits for someone. Consequences reports settle automatically.
+- **Ownership and the ceiling are separate.** Ownership says who drafts a stage. The ceiling says whether a decision waits for someone. Consequences reports wait for the ceiling holder.
 - **Defaults are copied, not referenced.** A Ticket owns its launch setup from creation, so changing a type's defaults never changes running work.
 - **Creation has two routes.** Select and adapt a preset, or define stages, ownership, results, and instructions directly. Review the whole workflow before creation.
 - **Adding a type is a product decision, not a code change**: a new ladder and a specialist skill, saved as a new definition.

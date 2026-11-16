@@ -68,7 +68,7 @@ def test_pending_same_or_lower_scope_preserves_authored_work(
 def test_generic_scope_patch_cannot_approve_a_pending_proposal(tmp_db: Connection) -> None:
     original = _park(tmp_db)
     with pytest.raises(PlannerError, match="explicit accept"):
-        _edit(tmp_db, original, ceiling="done", ceiling_holder=CHIEF_PRINCIPAL)
+        _edit(tmp_db, original, ceiling="needs_consequences", ceiling_holder=CHIEF_PRINCIPAL)
     assert data.read_ticket(tmp_db, original.id) == original
 
 
@@ -120,7 +120,7 @@ def test_stale_or_wrong_visible_proposal_acceptance_has_no_effects(
             field="implementation" if change == "field" else "what_changes",
             principal=OWNER_PRINCIPAL,
             now=5,
-            next_ceiling="done",
+            next_ceiling="needs_consequences",
             next_holder=OWNER_PRINCIPAL,
             expected_proposal_revision=original.pending_proposal_revision,
         )
