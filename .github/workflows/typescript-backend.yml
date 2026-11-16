@@ -5,7 +5,7 @@ on:
     branches: [feature/typescript-backend]
     types: [opened, synchronize, reopened, ready_for_review]
   push:
-    branches: [feature/typescript-backend, ticket/t_57s7b5hm-workspace-8f6df478325e]
+    branches: [feature/typescript-backend]
   schedule:
     - cron: '17 */4 * * *'
   workflow_dispatch:
