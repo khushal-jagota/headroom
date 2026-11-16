@@ -1403,6 +1403,8 @@ def mark_worker_step_claim_errored(
     now: int,
     error_reason: str,
     notify_supervisor: bool = True,
+    decision_proposal_revision: int | None = None,
+    decision_delivery: bool = False,
 ) -> bool:
     """Expose one failed claim, unless a later claim transition replaced it.
 
@@ -1413,6 +1415,14 @@ def mark_worker_step_claim_errored(
     """
     with _txn_without_nested_savepoint(conn):
         ticket = _load_ticket_for_write(conn, ticket_id)
+        # A receipt for an older decision cannot change a newer proposal's control
+        # state. Legacy feedback has no revision; preserve an existing proposal.
+        if decision_delivery and (
+            (decision_proposal_revision is None and ticket.pending_proposal is not None)
+            or (decision_proposal_revision is not None
+                and ticket.pending_proposal_revision > decision_proposal_revision)
+        ):
+            return False
         if ticket.worker_step_claim is not expected_claim:
             return False
         if ticket.worker_step_claim_revision != expected_claim_revision:

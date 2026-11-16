@@ -53,6 +53,12 @@ def _ticket(
         next_ceiling=ceiling or definition.stage_ids()[1],
         next_holder=OWNER_PRINCIPAL,
     )
+    # These readiness cases begin after the preceding decision was delivered.
+    conn.execute(
+        "UPDATE ticket_decision_messages SET delivery_status='delivered' WHERE ticket_id=?",
+        (ticket.id,),
+    )
+    conn.commit()
     return ticket
 
 
@@ -87,6 +93,11 @@ def test_user_owned_ticket_is_ready_once_per_stage_entry(tmp_path: Path) -> None
             principal=OWNER_PRINCIPAL,
             now=5,
         )
+        conn.execute(
+            "UPDATE ticket_decision_messages SET delivery_status='delivered' WHERE ticket_id=?",
+            (ticket.id,),
+        )
+        conn.commit()
         assert (
             conn.execute(
                 "SELECT 1 FROM ticket_paired_stage_openers WHERE ticket_id = ?",
