@@ -134,7 +134,6 @@ export async function localize_start(
       await prepare_xcode_compilation_cache(
         options.paths.root,
         artifacts,
-        workspace,
         process.env.XCODE_XCCONFIG_FILE,
       ),
     );
