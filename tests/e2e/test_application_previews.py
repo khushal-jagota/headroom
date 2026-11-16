@@ -263,7 +263,7 @@ def test_real_vite_applications_share_only_their_generation(
                 time.sleep(0.05)
             record = preview_cli(ticket["id"], "register", "--port", str(app_port))
             apps.append((ticket, record, source))
-        # Settle this synthetic Ticket through the real writers before timing expiry.
+        # Advance this synthetic Ticket to Consequences while its preview remains eligible.
         fields = ("brief", "what_changes", "implementation")
         for field, next_field in zip(fields, (*fields[1:], "consequences"), strict=True):
             worker = {"X-Plan-Actor": "worker", "X-Plan-Ticket-ID": apps[0][0]["id"]}
