@@ -2025,3 +2025,116 @@ def test_decision_outcome_recorded_during_ownership_check_is_not_lost(
         assert world.ticket(ticket_id).ticket_status is not TicketStatus.errored
     else:
         assert world.ticket(ticket_id).worker_step_claim is WorkerStepClaim.errored
+
+
+def test_old_uncertain_decision_cannot_error_a_newer_proposal(world: _World) -> None:
+    """An old receipt must not replace the approval state of a later revision."""
+    ticket_id = world.ready_ticket(
+        next_ceiling="needs_what_changes", conversation_id="conv-old-decision"
+    )
+    worker = Principal(PrincipalKind.ticket, ticket_id)
+    with closing(world.connect()) as conn:
+        conn.execute(
+            "INSERT INTO conversations "
+            "(conversation_id,backend_key,workspace_folder,access,created_at) "
+            "VALUES ('conv-old-decision','codex','/tmp','full',0)"
+        )
+        first = tickets_data.file_current_proposal(
+            conn, ticket_id, body="First", principal=worker, now=2,
+        )
+        tickets_data.reject_proposal(
+            conn, ticket_id, message="Please revise", principal=OWNER_PRINCIPAL,
+            now=3, expected_proposal_revision=first.pending_proposal_revision,
+            decision_id="old-feedback",
+        )
+        conn.execute(
+            "UPDATE ticket_decision_messages SET delivery_status='sending', "
+            "conversation_id='conv-old-decision' WHERE decision_id=?",
+            ("old-feedback",),
+        )
+        conn.commit()
+        newer = tickets_data.file_current_proposal(
+            conn, ticket_id, body="Revised", principal=worker, now=4,
+        )
+        before_claim = newer.worker_step_claim_revision
+    asyncio.run(deliver_ticket_decision_messages(
+        ticket_id, connect_database=world.connect,
+        conversation_system=cast(ConversationSystem, world.conversations),
+        worker_type_registry=configured_worker_type_registry(), now=world.clock.now_unix,
+    ))
+    with closing(world.connect()) as conn:
+        current = tickets_data.read_ticket(conn, ticket_id)
+        status = conn.execute(
+            "SELECT delivery_status FROM ticket_decision_messages WHERE decision_id=?",
+            ("old-feedback",),
+        ).fetchone()[0]
+    assert current.pending_proposal == newer.pending_proposal
+    assert current.ticket_status is TicketStatus.awaiting_approval
+    assert current.worker_step_claim_revision == before_claim
+    assert status == "uncertain"
+    with closing(world.connect()) as conn:
+        assert ticket_id not in decision_messages.pending_ticket_ids(conn)
+        sender_id = conn.execute(
+            "SELECT sender_message_id FROM ticket_decision_messages WHERE decision_id=?",
+            ("old-feedback",),
+        ).fetchone()[0]
+        conn.execute(
+            "INSERT INTO conversation_events "
+            "(conversation_id,sequence,kind,payload,created_at) VALUES (?,1,'prompt',?,0)",
+            ("conv-old-decision", json.dumps({"sender_message_id": sender_id})),
+        )
+        conn.commit()
+        assert ticket_id in decision_messages.pending_ticket_ids(conn)
+    asyncio.run(deliver_ticket_decision_messages(
+        ticket_id, connect_database=world.connect,
+        conversation_system=cast(ConversationSystem, world.conversations),
+        worker_type_registry=configured_worker_type_registry(), now=world.clock.now_unix,
+    ))
+    with closing(world.connect()) as conn:
+        assert ticket_id not in decision_messages.pending_ticket_ids(conn)
+        assert conn.execute(
+            "SELECT delivery_status FROM ticket_decision_messages WHERE decision_id=?",
+            ("old-feedback",),
+        ).fetchone()[0] == "delivered"
+    assert world.ticket(ticket_id).pending_proposal == newer.pending_proposal
+
+
+def test_unresolved_old_feedback_blocks_next_stage_opener(world: _World) -> None:
+    """Accepting a newer proposal must not bypass its unresolved earlier feedback."""
+    ticket_id = world.ready_ticket(
+        next_ceiling="needs_what_changes", conversation_id="conv-unresolved"
+    )
+    world.start_conversation("conv-unresolved")
+    worker = Principal(PrincipalKind.ticket, ticket_id)
+    with closing(world.connect()) as conn:
+        first = tickets_data.file_current_proposal(
+            conn, ticket_id, body="First", principal=worker, now=2,
+        )
+        tickets_data.reject_proposal(
+            conn, ticket_id, message="Please revise", principal=OWNER_PRINCIPAL,
+            now=3, expected_proposal_revision=first.pending_proposal_revision,
+            decision_id="unresolved-feedback",
+        )
+        conn.execute(
+            "UPDATE ticket_decision_messages SET delivery_status='sending' WHERE decision_id=?",
+            ("unresolved-feedback",),
+        )
+        conn.commit()
+        newer = tickets_data.file_current_proposal(
+            conn, ticket_id, body="Revised", principal=worker, now=4,
+        )
+    asyncio.run(deliver_ticket_decision_messages(
+        ticket_id, connect_database=world.connect,
+        conversation_system=cast(ConversationSystem, world.conversations),
+        worker_type_registry=configured_worker_type_registry(), now=world.clock.now_unix,
+    ))
+    with closing(world.connect()) as conn:
+        tickets_data.accept_proposal(
+            conn, ticket_id, field="what_changes", principal=OWNER_PRINCIPAL, now=5,
+            next_ceiling="needs_implementation", next_holder=OWNER_PRINCIPAL,
+            expected_proposal_revision=newer.pending_proposal_revision,
+        )
+        assert ticket_id not in decision_messages.pending_ticket_ids(conn)
+    assert not world.start_step(ticket_id).started
+    assert world.ticket(ticket_id).worker_step_claim is WorkerStepClaim.none
+    assert world.conversations.backend_prompt_writes("conv-unresolved") == ()
