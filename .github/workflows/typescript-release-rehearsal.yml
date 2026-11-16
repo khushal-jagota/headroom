@@ -66,7 +66,7 @@ jobs:
           node -e 'require("node:fs").writeFileSync(process.env.PROOF_EVIDENCE+"/node.json",JSON.stringify({version:process.version,executable:process.execPath,architecture:process.arch}));if(process.platform!=="linux"||process.arch!=="x64"||!process.version.startsWith("v22."))throw Error("Linux x64 Node22 proof required")'
           .venv/bin/python -m pip install -r requirements.txt
           .venv/bin/python -m pip install --editable . --config-settings editable_mode=compat
-          python -I -S -B scripts/development_safety/bootstrap.py npm --prefix server ci
+          python -I -S -B scripts/dev_launcher.py npm --prefix server ci
           .venv/bin/python tests/compare/direct/unit21_release_hosted.py \
             "$PROOF_ROOT" "$PROOF_ROOT/proof.json" "$PROOF_SHA"
           PROOF

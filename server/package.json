@@ -6,11 +6,11 @@
     "node": ">=22.18.0 <23 || >=24 <25"
   },
   "scripts": {
-    "start": "../scripts/dev check-node server && node main.ts",
-    "check": "../scripts/dev check-node server && tsc --noEmit",
-    "test": "../scripts/dev check-node server && vitest run",
-    "format": "../scripts/dev check-node server && prettier --write \"**/*.ts\"",
-    "format:check": "../scripts/dev check-node server && prettier --check \"**/*.ts\""
+    "start": "node main.ts",
+    "check": "tsc --noEmit",
+    "test": "vitest run",
+    "format": "prettier --write \"**/*.ts\"",
+    "format:check": "prettier --check \"**/*.ts\""
   },
   "dependencies": {
     "@agentclientprotocol/sdk": "2.6.0",

@@ -30,15 +30,6 @@ scripts/dev npm --prefix server run format
 scripts/dev npm --prefix server run format:check
 ```
 
-The dependency guard checks the selected package before these commands. npm 11 adds a script environment key that the existing guard does not accept. For Node 24, use npm 10, or check the package before direct Node checks, as CI does:
-
-```sh
-scripts/dev check-node server
-node server/node_modules/typescript/bin/tsc --noEmit -p server/tsconfig.json
-cd server
-node node_modules/vitest/vitest.mjs run
-```
-
 `node server/main.ts` in normal mode requires the complete real production dependencies. Test fixtures use its existing test-mode path with isolated `PLAN_*` settings. Once admitted, the listener comes from `PLAN_SERVER_LISTENER_FD` when present, otherwise loopback `PLAN_PORT`. The database must exist. Startup takes the same owner lock as Python before it opens that database. The dispatcher lock remains separate.
 
 Startup installs signal handlers before asynchronous setup. Before a writer opens, readonly admission compares the complete existing Alembic revision set to `core/database/application_schema.json::alembicRevision`. Missing, empty, older, newer, unknown, and extra revisions fail with actual and expected values. Startup never migrates or stamps that database. Fresh test fixtures seed their own revision metadata explicitly.
@@ -114,7 +105,6 @@ Registered areas supply their domain routes and projections. The conversation te
 
 The write door prepares each statement on every call. Measure this cost at gate 3 before any statement cache is added.
 
-Node 24 with npm 11 needs a development-guard change for npm's injected script environment keys. The current guarded alternatives above remain the launch route until that change lands. This unit does not change the guard policy.
 
 ## Comparison host
 

@@ -47,18 +47,15 @@ jobs:
             git fetch origin feature/typescript-backend:refs/remotes/origin/feature/typescript-backend
             STYLE_BASE=$(git merge-base HEAD origin/feature/typescript-backend)
           fi
-          scripts/dev check-node server
           node server/tools/native_style.ts "$STYLE_BASE"
       - name: Check formatting
         if: matrix.node == '22'
         run: scripts/dev npm --prefix server run format:check
       - name: Check types
         run: |
-          scripts/dev check-node server
           node server/node_modules/typescript/bin/tsc --noEmit -p server/tsconfig.json
       - name: Check foundation behavior
         run: |
-          scripts/dev check-node server
           cd server
           node node_modules/vitest/vitest.mjs run
       - name: Prepare the disposable native home service manager

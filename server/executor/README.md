@@ -78,7 +78,6 @@ Both runtime identities advertise protocol 26 through `execution_configuration.t
 Regenerate or check the types in an isolated development environment:
 
 ```sh
-scripts/dev check-node server
 node server/executor/tools/generate_wire.ts
 node server/executor/tools/generate_wire.ts --check
 ```

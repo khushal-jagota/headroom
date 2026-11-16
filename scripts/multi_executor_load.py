@@ -142,7 +142,7 @@ if __name__ == "__main__":
 
 
 def test_load_comparison() -> None:
-    """Explicit guarded entry: scripts/dev pytest scripts/multi_executor_load.py -s."""
+    """Explicit test entry: scripts/dev pytest scripts/multi_executor_load.py -s."""
     asyncio.run(run(Path(os.environ["MULTI_EXECUTOR_PROOF_OUTPUT"]).resolve(), 12))
 
 
