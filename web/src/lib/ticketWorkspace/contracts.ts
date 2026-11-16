@@ -77,6 +77,7 @@ export interface ValidWorkspaceTicket {
   field_values: Record<string, string>;
   field_summaries: Record<string, WorkspaceFieldSummary>;
   field_approvals: Record<string, TicketFieldApproval>;
+  unresolved_decision_feedback: Array<Record<string, string>>;
   pending_proposal: WorkspaceProposal | null;
   created_at: number;
   updated_at: number;
