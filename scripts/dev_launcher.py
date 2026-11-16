@@ -66,13 +66,13 @@ def main(args: Sequence[str] | None = None) -> int:
             raise ValueError("Use setup, npm, pytest, mypy, or python -m pytest|mypy.")
         if arguments == ["setup"]:
             return setup(TREE, environment)
-        if arguments[0] == "npm":
-            detach_npm_dependencies(TREE, arguments[1:], environment)
         command = (
             npm_command(TREE, arguments[1:], environment)
             if arguments[0] == "npm"
             else python_command(TREE, arguments)
         )
+        if arguments[0] == "npm":
+            detach_npm_dependencies(TREE, arguments[1:], environment)
         is_pytest = arguments[0] != "npm" and (
             Path(arguments[0]).name == "pytest"
             or (len(arguments) > 2 and arguments[1:3] == ["-m", "pytest"])
