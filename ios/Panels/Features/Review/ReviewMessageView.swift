@@ -63,7 +63,7 @@ struct ReviewMessageSection: View {
                         .buttonStyle(ReviewActionStyle(context: .message)).accessibilityIdentifier("review.markRead")
                         .disabled(decision.through == 0 || decision.busy || decision.pending || capturing || locked)
                     if let owner = item.owner, let id = item.conversationId {
-                        NavigationLink(value: AppRoute.conversation(owner: owner, id: id)) { Text("Open conversation") }
+                        ScreenTextEntryNavigationLink("Open conversation", value: AppRoute.conversation(owner: owner, id: id))
                             .buttonStyle(ReviewActionStyle(context: .message)).accessibilityIdentifier("review.openConversation")
                     }
                 }

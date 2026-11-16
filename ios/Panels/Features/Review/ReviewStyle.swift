@@ -152,16 +152,19 @@ struct DecisionNoteActions: View {
     var blurRequest = 0
     let onApprove: () -> Void
     let onSendBack: () -> Void
-    @FocusState private var focused: Bool
+    @Environment(\.screenTextEntry) private var textEntry
+    @State private var inputID = UUID()
+    private var focused: Bool { textEntry?.focus.wrappedValue == inputID }
     @Environment(\.dynamicTypeSize) private var typeSize
     var body: some View {
         VStack(alignment: .trailing, spacing: 12) {
             HStack(alignment: .bottom, spacing: 4) {
                 TextField("Add a note for the worker…", text: $note, axis: .vertical)
-                    .lineLimit(1...5).panelsScaledFont(size: 16).focused($focused)
+                    .lineLimit(1...5).panelsScaledFont(size: 16)
                     .frame(minHeight: 32).padding(.vertical, 5)
                     .disabled(!noteEnabled || busyAction != nil)
                     .accessibilityIdentifier("review.revision")
+                    .screenTextInput(inputID)
                 if let accessory { accessory }
             }.padding(.leading, 16).padding(.trailing, 6).padding(.vertical, 1)
                 .background(PanelsTheme.Web.composer, in: RoundedRectangle(cornerRadius: 12))
@@ -189,20 +192,20 @@ struct DecisionNoteActions: View {
                 }.ignoresSafeArea(.container, edges: .bottom)
             }
             .foregroundStyle(PanelsTheme.Web.text)
-            .onChange(of: noteEnabled) { _, enabled in if !enabled { focused = false } }
-            .onChange(of: focusRequest) { _, _ in focused = true }
-            .onChange(of: blurRequest) { _, _ in focused = false }
+            .onChange(of: noteEnabled) { _, enabled in if !enabled { textEntry?.endEditing() } }
+            .onChange(of: focusRequest) { _, _ in textEntry?.requestFocus(inputID) }
+            .onChange(of: blurRequest) { _, _ in textEntry?.endEditing() }
     }
     @ViewBuilder private var actionButtons: some View {
         if showsSendBack {
             Button {
-                if note.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { focused = true }
-                else { focused = false; onSendBack() }
+                if note.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { textEntry?.requestFocus(inputID) }
+                else { textEntry?.endEditing(); onSendBack() }
             } label: { actionLabel("Send it back", active: busyAction == "back") }
                 .disabled(!ready || !canReturn || !noteEnabled || busyAction != nil)
                 .accessibilityIdentifier("review.sendBack")
         }
-        Button { focused = false; onApprove() } label: { actionLabel("Approve", active: busyAction == "approve") }
+        Button { textEntry?.endEditing(); onApprove() } label: { actionLabel("Approve", active: busyAction == "approve") }
             .disabled(!ready || !noteEnabled || busyAction != nil).accessibilityIdentifier("review.approve")
     }
     private func actionLabel(_ title: String, active: Bool) -> some View {

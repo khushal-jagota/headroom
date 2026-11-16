@@ -20,28 +20,36 @@ struct ConversationNavigation: ViewModifier {
     var refreshError: String?
     var retry: (() async -> Void)?
     @Environment(AppStore.self) private var store
+    var textEntry: ScreenTextEntryContext? = nil
     @State private var opened = false
     @State private var followedLink = false
     @State private var linkedConversationID: String?
     @State private var model = ConversationModel()
     @State private var speech = ConversationSpeech()
 
-    func body(content: Content) -> some View {
+    @ViewBuilder func body(content: Content) -> some View {
+        if let textEntry { navigation(content: content, textEntry: textEntry) }
+        else { ScreenTextEntryScope { textEntry in navigation(content: content, textEntry: textEntry) } }
+    }
+
+    private func navigation(content: Content, textEntry: ScreenTextEntryContext) -> some View {
         content
             .toolbar(.hidden, for: .tabBar)
             .safeAreaInset(edge: .bottom, spacing: 0) {
-                surface(isPage: false)
+                surface(isPage: false, textEntry: textEntry)
             }
             .navigationDestination(isPresented: $opened) {
-                surface(isPage: true)
-                    .toolbar(.hidden, for: .navigationBar)
-                    .toolbar(.hidden, for: .tabBar)
+                ScreenTextEntryScope { childEntry in
+                    surface(isPage: true, textEntry: childEntry)
+                        .toolbar(.hidden, for: .navigationBar)
+                        .toolbar(.hidden, for: .tabBar)
+                }
             }
             .task {
                 guard openConversationID != nil, !followedLink else { return }
                 followedLink = true
                 linkedConversationID = openConversationID
-                opened = true
+                textEntry.endEditingBeforeNavigation { opened = true }
             }
             .onChange(of: opened) { _, isOpen in
                 Haptics.light()
@@ -53,9 +61,10 @@ struct ConversationNavigation: ViewModifier {
             .onChange(of: store.baseURL) { _, _ in speech.cancel(); model = ConversationModel() }
     }
 
-    private func surface(isPage: Bool) -> some View {
+    private func surface(isPage: Bool, textEntry: ScreenTextEntryContext) -> some View {
         ConversationSurface(owner: owner, conversationID: isPage ? linkedConversationID ?? conversationID : conversationID, title: title,
-                            isPage: isPage, active: isPage || !opened, open: { opened = true },
+                            isPage: isPage, active: isPage || !opened,
+                            open: { textEntry.endEditingBeforeNavigation { opened = true } },
                             model: model, speech: speech, refreshError: refreshError, retry: retry,
                             checksCurrentConversation: isPage && linkedConversationID != nil)
     }
@@ -91,6 +100,7 @@ private struct ConversationSurface: View {
         return !currentConversationConfirmed
     }
     @State private var changingQueue = false
+    @Environment(\.screenTextEntry) private var textEntry
 
     var body: some View {
         conversation
@@ -216,7 +226,7 @@ private struct ConversationSurface: View {
     private var header: some View {
         HStack(spacing: 0) {
             if isPage {
-                AgentPageControls {
+                AgentPageControls(beforeBack: { textEntry?.endEditing() }) {
                     Menu {
                         Picker("Conversation lens", selection: $model.lens) {
                             ForEach(ConversationLens.allCases, id: \.self) { lens in
@@ -325,6 +335,7 @@ struct ConversationThread: View {
         model.visibleReadBoundary(rowIDs: visibleRowIDs, active: active && appeared)
     }
     @Environment(AppStore.self) private var store
+    @Environment(\.screenTextEntry) private var textEntry
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var scrollPolicy = ConversationScrollPolicy()
     @State private var position = ScrollPosition(edge: .bottom)
@@ -409,6 +420,7 @@ struct ConversationThread: View {
             }
             .defaultScrollAnchor(.bottom, for: .initialOffset)
             .defaultScrollAnchor(scrollPolicy.shouldFollowContent ? .bottom : .top, for: .sizeChanges)
+            .gesture(TapGesture().onEnded { textEntry?.endEditing() })
             .scrollDismissesKeyboard(.interactively)
             .scrollPosition($position)
             .onScrollPhaseChange { old, phase, context in
@@ -547,8 +559,8 @@ struct ConversationModelSheet: View {
 }
 
 extension View {
-    func conversationNavigation(owner: ConversationOwner, conversationID: String?, title: String = "Conversation", openConversationID: String? = nil, refreshError: String? = nil, retry: (() async -> Void)? = nil) -> some View {
-        modifier(ConversationNavigation(owner: owner, conversationID: conversationID, title: title, openConversationID: openConversationID, refreshError: refreshError, retry: retry))
+    func conversationNavigation(owner: ConversationOwner, conversationID: String?, title: String = "Conversation", openConversationID: String? = nil, refreshError: String? = nil, retry: (() async -> Void)? = nil, textEntry: ScreenTextEntryContext? = nil) -> some View {
+        modifier(ConversationNavigation(owner: owner, conversationID: conversationID, title: title, openConversationID: openConversationID, refreshError: refreshError, retry: retry, textEntry: textEntry))
     }
 }
 

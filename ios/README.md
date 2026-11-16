@@ -921,3 +921,14 @@ still cannot be sent. The outbox clears a note draft only after an applied recei
 and only when its text and saved timestamp still match the captured draft. Offline,
 refused, stale, and uncertain decisions retain drafts. Newer edits survive an older
 receipt, including edits that restore the same text.
+
+## Text entry and navigation
+
+Each visible screen owns focus for its conversation fields and decision notes.
+Review shares one owner across the note and reply fields on its current card.
+In chat and Review, inert background taps clear that screen's focus.
+The normal-priority tap gesture lets child text selection, controls, links, and inputs keep their interactions.
+Those scroll areas also support interactive keyboard dismissal.
+
+Chat and artifact navigation clear the outgoing screen's focus before the route changes.
+Drafts, attachments, and expanded composers, including the Goal composer, retain their existing content and shape.
