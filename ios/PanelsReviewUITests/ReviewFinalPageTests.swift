@@ -4,6 +4,74 @@ import UIKit
 /// One-off review tools. These methods stay outside the permanent release suite.
 /// The existing loopback host proves real SwiftUI placement, keyboard and live updates.
 final class ReviewFinalPageTests: XCTestCase {
+    /// One-off repeat of the first Chief Back tap and the reported Workspace composer.
+    /// The existing loopback host exercises real navigation and focus; model tests cannot.
+    @MainActor func testChiefFirstBackAndWorkspaceComposer() async throws {
+        continueAfterFailure = false
+        let base = try XCTUnwrap(ProcessInfo.processInfo.environment["PANELS_OFFLINE_STUB_URL"])
+        XCTAssertEqual(URL(string: base)?.host, "127.0.0.1")
+        let app = XCUIApplication()
+        app.launchArguments = ["--conversation-stub", base]
+        app.launch()
+        defer { app.terminate() }
+        let workspace = app.tabBars.buttons["Workspace"]
+        XCTAssertTrue(workspace.waitForExistence(timeout: 10)); workspace.tap()
+        let chief = app.buttons.matching(NSPredicate(format: "label == %@", "Chief of Staff")).firstMatch
+        let chiefScreen = app.descendants(matching: .any).matching(identifier: "chief-screen").firstMatch
+        let input = app.descendants(matching: .any).matching(identifier: "conversation-input").firstMatch
+        let keyboard = app.keyboards.firstMatch
+
+        for mode in ["empty", "draft-dismissed", "keyboard-open"] {
+            XCTAssertTrue(chief.waitForExistence(timeout: 8)); chief.tap()
+            XCTAssertTrue(chiefScreen.waitForExistence(timeout: 8))
+            XCTAssertTrue(input.waitForExistence(timeout: 5))
+            if mode == "empty" {
+                // Run this review first on the fresh lane; never delete a restored draft.
+                XCTAssertTrue(["", "Message"].contains(input.value as? String ?? "missing"),
+                              "The empty-composer case requires a fresh app store")
+            } else {
+                input.tap()
+                input.typeText(mode == "draft-dismissed" ? "Keep this Chief Back draft" : " with keyboard open")
+                XCTAssertTrue(keyboard.waitForExistence(timeout: 5))
+                if mode == "draft-dismissed" {
+                    // Use the conversation's known inert gutter, not selectable Chief prose.
+                    app.buttons["conversation-line"].tap()
+                    let thread = app.scrollViews["conversation-thread"]
+                    XCTAssertTrue(thread.waitForExistence(timeout: 8))
+                    input.tap()
+                    XCTAssertTrue(keyboard.waitForExistence(timeout: 5))
+                    thread.coordinate(withNormalizedOffset: CGVector(dx: 0.01, dy: 0.5)).tap()
+                    XCTAssertTrue(keyboard.waitForNonExistence(timeout: 5))
+                    app.buttons["detail-back"].tap()
+                    XCTAssertTrue(chiefScreen.waitForExistence(timeout: 5))
+                    XCTAssertFalse(keyboard.exists)
+                    XCTAssertEqual(input.value as? String, "Keep this Chief Back draft")
+                }
+            }
+            capture(app, "chief-first-back-" + mode + "-before")
+            let back = app.buttons["detail-back"]
+            XCTAssertTrue(back.isHittable)
+            back.tap() // Exactly one Chief Back tap. Do not retry a refused navigation.
+            let returned = NSPredicate { _, _ in
+                MainActor.assumeIsolated {
+                    workspace.exists && workspace.isHittable && !chiefScreen.exists && !input.exists
+                }
+            }
+            let result = XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: returned, object: nil)], timeout: 5)
+            capture(app, "chief-first-back-" + mode + "-after")
+            if result != .completed {
+                let tree = XCTAttachment(string: app.debugDescription)
+                tree.name = "chief-first-back-" + mode + "-failure-tree"
+                tree.lifetime = .keepAlways
+                add(tree)
+            }
+            XCTAssertEqual(result, .completed, "One Chief Back tap must reveal Workspace without a composer (\(mode))")
+            XCTAssertTrue(workspace.isHittable)
+            XCTAssertFalse(chiefScreen.exists)
+            XCTAssertFalse(input.exists, "The detail composer must not remain on Workspace")
+        }
+    }
+
     /// One-off proof of the Markdown-to-view boundary that parser tests cannot establish.
     @MainActor func testArtifactLinksOpenOnlyAfterTap() async throws {
         continueAfterFailure = false

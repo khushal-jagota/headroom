@@ -171,8 +171,10 @@ An empty send-back note focuses the field. Approval captures the displayed note
 for that exact server and proposal. Notes retain the existing durable draft keys.
 How far precedes Who reviews. A later stage submits a protected approval. An earlier
 or current stage changes the ceiling and reviewer and leaves the proposal waiting.
-When the next stage is Done, Approve takes one tap. The approver in the card
-opens reviewer-only choices. Scope and reviewer changes use the existing PATCH route
+Consequences remains a review boundary and an approval-ceiling choice. Done is
+not an approval ceiling. The approval-limit control remains available during
+Consequences. When the next stage is Done, Approve takes one tap. The approver
+in the card opens reviewer-only choices. Scope and reviewer changes use the existing PATCH route
 only while online. They never enter the Outbox or retry automatically. A fresh Ticket
 read compares the absolute ceiling and reviewer with the choice after an uncertain
 answer. The sheet keeps the choice and states that nothing was approved. A
@@ -213,7 +215,7 @@ runtime; the deployment target remains iOS 18):
 | Lane | Device identifier |
 | --- | --- |
 | PanelsLaneA | `5BEBCEA8-BDF2-4F47-9CAA-0E25C1D147B6` |
-| PanelsLaneB | `566D051B-B6BB-4046-9038-66C05CCC2B96` |
+| PanelsLaneB | `47890EEA-D1D8-4E5A-AF74-DB66866D7840` |
 | PanelsLaneC | `5D323346-68F9-4A0D-A90B-74507469C98A` |
 
 Later workers reuse their assigned lane. Erase between runs: terminate your app,
