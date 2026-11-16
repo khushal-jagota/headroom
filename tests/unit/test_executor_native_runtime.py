@@ -1761,3 +1761,113 @@ def test_ticket_inspection_does_not_hold_workspace_retirement(
         assert inspected == ["t_one", "t_other", None]
 
     asyncio.run(run())
+
+@pytest.mark.parametrize("scenario", ["recover", "exhaust", "cleanup_failure", "other_failure"])
+def test_claude_start_retry_respects_cleanup_and_delivery(
+    native_registry: tuple[MacRunner, MacOutbox, ScriptedChild, ChildCommand],
+    monkeypatch: pytest.MonkeyPatch,
+    scenario: str,
+) -> None:
+    from planner.conversation.backends.contracts import ClaudeInitializeTimeout
+    from planner.executor import mac_runner
+
+    monkeypatch.setattr(mac_runner, "CLAUDE_START_RETRY_DELAY_SECONDS", 0)
+
+    async def run() -> None:
+        registry, spool, _, start = native_registry
+        children: list[ScriptedChild] = []
+        events: list[str] = []
+
+        class Attempt(ScriptedChild):
+            async def start(self, resolved_start: ResolvedConversationStart, *,
+                            vendor_session_cursor: str | None) -> None:
+                events.append("start")
+                if scenario == "other_failure":
+                    raise SessionLoadFailed("missing session")
+                if scenario != "recover" or len(children) == 1:
+                    raise ClaudeInitializeTimeout("Control request timeout: initialize")
+
+            async def stop(self) -> None:
+                events.append("stop")
+                if scenario == "cleanup_failure":
+                    raise RuntimeError("cleanup uncertain")
+
+            async def write_prompt(self, turn: TurnToken, content: MessageContent,
+                                   **kwargs: object) -> BackendPromptAccepted:
+                events.append("prompt")
+                return await super().write_prompt(turn, content, **kwargs)
+
+        def factory(resolved: ResolvedConversationStart) -> BackendChildFactory:
+            def create(**kwargs: object) -> BackendChild:
+                child = Attempt()
+                children.append(child)
+                return cast(BackendChild, child)
+            return cast(BackendChildFactory, create)
+
+        registry.factory = factory
+        outcome = await registry.run(start)
+        prompt = ChildCommand(
+            "prompt", start.child, ChildOperation.write_prompt, TurnToken("c_one", 1),
+            WritePrompt(content=text_message_content("work"), sender_content=(),
+                        sender_label="owner", mode=PromptDeliveryMode.queue),
+        )
+        delivery = await registry.run(prompt)
+        if scenario == "recover":
+            assert outcome.disposition is CommandDisposition.succeeded
+            assert delivery.disposition is CommandDisposition.succeeded
+            assert events == ["start", "stop", "start", "prompt"]
+            assert sum(child.prompts for child in children) == 1
+        else:
+            assert outcome.disposition is not CommandDisposition.succeeded
+            assert delivery.disposition is not CommandDisposition.succeeded
+            assert "prompt" not in events
+            assert len(children) == (3 if scenario == "exhaust" else 1)
+            if scenario != "cleanup_failure":
+                assert [entry.kind for entry in spool.pending()] == [
+                    EnvelopeKind.backend_event, EnvelopeKind.child_stopped
+                ]
+            else:
+                assert start.child.child_id in registry._retiring_children
+
+    asyncio.run(run())
+
+
+def test_stop_during_claude_start_retry_prevents_replacement(
+    native_registry: tuple[MacRunner, MacOutbox, ScriptedChild, ChildCommand],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from planner.conversation.backends.contracts import ClaudeInitializeTimeout
+    from planner.executor import mac_runner
+
+    async def run() -> None:
+        registry, _, native, start = native_registry
+        entered = asyncio.Event()
+        release = asyncio.Event()
+        original_sleep = asyncio.sleep
+
+        async def delay(seconds: float) -> None:
+            if seconds == mac_runner.CLAUDE_START_RETRY_DELAY_SECONDS:
+                entered.set()
+                await release.wait()
+            else:
+                await original_sleep(seconds)
+
+        async def fail(*args: object, **kwargs: object) -> None:
+            native.starts += 1
+            raise ClaudeInitializeTimeout("Control request timeout: initialize")
+
+        monkeypatch.setattr(native, "start", fail)
+        monkeypatch.setattr(mac_runner.asyncio, "sleep", delay)
+        starting = asyncio.create_task(registry.run(start))
+        await asyncio.wait_for(entered.wait(), 5)
+        stop = ChildCommand("stop", start.child, ChildOperation.stop, None, StopRun())
+        stopping = asyncio.create_task(registry.run(stop))
+        while start.child.child_id not in registry._retiring_children:
+            await original_sleep(0)
+        release.set()
+        assert (await starting).disposition is not CommandDisposition.succeeded
+        assert (await stopping).disposition is CommandDisposition.succeeded
+        assert native.starts == 1
+        assert start.child.child_id not in registry._children
+
+    asyncio.run(run())

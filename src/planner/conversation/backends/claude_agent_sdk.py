@@ -125,6 +125,7 @@ from planner.conversation.backends.contracts import (
     BackendUserInputRequest,
     BackgroundTaskEnded,
     BackgroundTaskStarted,
+    ClaudeInitializeTimeout,
     CommandReplyReported,
     ComposerCatalogReported,
     ContextCompacted,
@@ -1543,6 +1544,12 @@ class ClaudeAgentSdkBackendChild:
         ) as start_failure:
             raise BackendSpawnFailed(str(start_failure)) from start_failure
         except Exception as would_not_come_up:
+            if (
+                type(would_not_come_up) is Exception
+                and str(would_not_come_up) == "Control request timeout: initialize"
+                and isinstance(would_not_come_up.__cause__, TimeoutError)
+            ):
+                raise ClaudeInitializeTimeout(str(would_not_come_up)) from would_not_come_up
             why = self._with_the_standard_error(str(would_not_come_up))
             if resumed_from is not None:
                 raise SessionLoadFailed(why) from would_not_come_up
