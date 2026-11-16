@@ -20,7 +20,7 @@
     disabled?: boolean;
     /** The Review screen's voice-enabled note field beside the decision controls.
      *  What is written there goes with Send it back, and with Approve. */
-    revisionEditor?: Snippet;
+    revisionEditor?: Snippet<[() => void]>;
     /** What is written in that line now. */
     revisionText?: string;
     /** The line is being spoken into: Send it back and Approve wait for its words to land. */
@@ -37,6 +37,15 @@
   let draft = $state("");
   let mounted = true;
   onDestroy(() => { mounted = false; });
+  let decisionRow = $state<HTMLElement | null>(null);
+  // Enter in the note cannot know which decision is meant, so it shows the choices: the focus
+  // ring breathes once around each decision button that can be used, then leaves.
+  function flashDecisions(): void {
+    if (!decisionRow) return;
+    decisionRow.classList.remove("flash");
+    void decisionRow.offsetWidth;
+    decisionRow.classList.add("flash");
+  }
   let busy = $state(false);
   let resolved = $state(false);
   let error = $state<unknown>(null);
@@ -139,9 +148,9 @@
   </div>
   {#if contextRow}<div class="context">{@render contextRow()}</div>{/if}
   <div class="revision" bind:this={revisionSlot}>
-    {#if revisionEditor}{@render revisionEditor()}{:else}
+    {#if revisionEditor}{@render revisionEditor(flashDecisions)}{:else}
       <ComposerField bind:value={revisionText} placeholder="Add a note for the worker…"
-        inputAttributes={{ "data-revision-note": "" }} />
+        inputAttributes={{ "data-revision-note": "" }} onsubmit={flashDecisions} />
     {/if}
   </div>
   <!-- Every button row sits at the right, the most important action furthest right, as in a
@@ -149,7 +158,7 @@
        group, Send it back and Approve last. -->
   <div class="actions">
     {#if utilityActions}<div class="utilities">{@render utilityActions()}</div>{/if}
-    <div class="decision">
+    <div class="decision" bind:this={decisionRow} onanimationend={() => decisionRow?.classList.remove("flash")}>
       {#if proposal.field !== "brief"}
         <Button variant="secondary" data-send-back disabled={disabled || !canReturn || busy || resolved || holdDecisions}
           onclick={() => void sendItBack()}>Send it back</Button>
@@ -160,7 +169,6 @@
         onclick={(event) => finalApproval ? void completeScope({ approval:true, holder }) : scopePicker?.openApproval(event.currentTarget as HTMLElement)}>Approve</Button>
     </div>
   </div>
-  <p class="revision-hint">{proposal.field === "brief" ? "Enter adds a line. Choose Approve." : "Enter adds a line. Choose Send it back or Approve."}</p>
   <CeilingPicker externalTrigger newStage={stage} {lifecycle} {ceiling} {holder} {manager} below pendingStage={stage}
     approvalCeiling={nextCeiling} bind:controller={scopePicker}
     holderLabel={(value) => value ? reviewerLabel(value) : "User"} onComplete={(change) => void completeScope(change)} />
@@ -192,13 +200,20 @@
   .reviewer-chevron { width:12px; height:12px; flex:none; fill:none; stroke:var(--tone-tertiary); stroke-width:1.5; stroke-linecap:round; stroke-linejoin:round; }
   .reviewer:focus-visible { outline:var(--focus-width) solid var(--focus-ring); outline-offset:2px; }
   .return-unavailable { color:var(--tone-tertiary); font-size:var(--type-small); margin:var(--space-2) 0 0; }
-  .revision-hint { color:var(--tone-tertiary); font-size:var(--type-small); margin:var(--space-2) 0 0; }
   .revision { margin-top:var(--space-5); min-width:0; }
   /* The decision's own buttons are never smaller than staging's (37px tall, 18px either side). */
   .decision :global(.button) { height:var(--decision-button-height); padding-inline:18px; }
   .context { margin-top:var(--space-4); }
   .utilities { display:flex; align-items:center; gap:var(--space-2); margin-right:calc(var(--space-4) - var(--space-2)); }
   .decision { display:flex; align-items:center; gap:var(--space-2); }
+  .decision:global(.flash) :global(.button:not(:disabled)) { animation:decision-flash .9s ease-in-out; outline-offset:2px; }
+  @keyframes decision-flash {
+    0%, 100% { outline:var(--focus-width) solid color-mix(in srgb, var(--focus-ring) 0%, transparent); }
+    50% { outline:var(--focus-width) solid color-mix(in srgb, var(--focus-ring) 60%, transparent); }
+  }
+  @media (prefers-reduced-motion:reduce) {
+    .decision:global(.flash) :global(.button:not(:disabled)) { animation:none; outline:var(--focus-width) solid color-mix(in srgb, var(--focus-ring) 60%, transparent); }
+  }
   /* On both proposal screens the card ends in one
      row: the note, then Send it back and Approve; Skip and Open ticket stand in the page's top
      band, as staging (owner's choice). On a phone the decisions go under the note. */
