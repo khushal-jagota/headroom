@@ -1,4 +1,4 @@
-"""Authenticated notification settings and device-subscription HTTP surface."""
+"""Owner notification settings and device-subscription HTTP surface."""
 
 from __future__ import annotations
 
@@ -9,7 +9,7 @@ from urllib.parse import urlsplit
 from fastapi import APIRouter, Request
 from pydantic import BaseModel, Field
 
-from planner.core.authctx import require_authenticated_owner
+from planner.core.authctx import request_context, require_owner
 from planner.core.errors import ErrorCode, PlannerError
 from planner.notifications import apns_data, data
 from planner.notifications.apns import canonical_server_origin
@@ -45,7 +45,7 @@ class APNsDeviceWrite(BaseModel):
 
 @router.put("/apns/devices")
 def register_apns_device(body: APNsDeviceWrite, request: Request) -> dict[str, bool]:
-    require_authenticated_owner(request)
+    require_owner(request_context(request))
     config = request.app.state.config.apns
     if (
         config is None
@@ -71,7 +71,7 @@ def register_apns_device(body: APNsDeviceWrite, request: Request) -> dict[str, b
 
 @router.delete("/apns/devices")
 def unregister_apns_device(body: APNsDeviceWrite, request: Request) -> dict[str, bool]:
-    require_authenticated_owner(request)
+    require_owner(request_context(request))
     # Revocation remains available after keys or an allowed bundle have been removed.
     conn = _conn(request)
     try:

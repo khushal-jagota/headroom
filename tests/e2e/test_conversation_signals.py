@@ -88,7 +88,9 @@ def _navigate_to_retained_history(page: Page, newest_sequence: int) -> None:
 
 
 def _post(server: ServerHandle, path: str, body: dict[str, object] | None = None) -> JsonObject:
-    response = httpx.post(server.base + path, json=body or {}, timeout=10)
+    response = httpx.post(
+        server.base + path, json=body or {}, cookies=server.owner_cookies, timeout=10
+    )
     assert response.is_success, response.text
     result: JsonObject = response.json()
     return result
@@ -531,7 +533,6 @@ def test_history_refused_row_keeps_unread_credit_until_latest_delivery(
     signal_server: ServerHandle,
     context_factory: Callable[[], BrowserContext],
     open_page: Callable[..., Page],
-    cli: Callable[..., JsonObject],
 ) -> None:
     """Real tail refusal must constrain canonical read credit and unread projections.
 
@@ -541,15 +542,14 @@ def test_history_refused_row_keeps_unread_credit_until_latest_delivery(
     """
     server = signal_server
     conversation = "history-read-credit-proof"
-    ticket = cli(
+    ticket = ApiHelper().create_ticket(
         server,
-        "ticket", "create", "--input-json", "-",
-        stdin=json.dumps({
+        {
             "worker_type": "coding",
             "title": "History read credit proof",
             "brief": "Agreed brief.",
             "manager": {"kind": "chief", "id": "chief"},
-        }),
+        },
         settle_brief=True,
     )["id"]
     _post(server, f"/api/test/signals/{conversation}/start")

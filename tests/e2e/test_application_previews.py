@@ -1,8 +1,9 @@
-"""A browser alone can prove Vite's generated module/HMR URLs under the root SW.
+"""A browser alone can prove Vite's generated module/HMR URLs on the preview address,
+and that a preview page cannot read Panels answers from the main address.
 
 One Panels host, context and connected case cover two real Git-worktree apps.
-The extra loopback TLS edge replaces only Tailscale TLS/header insertion: neither
-Vite, Linux socket evidence nor Panels transport is mocked. Cost is printed.
+Two loopback TLS edges, one per address, replace only Tailscale TLS/header insertion:
+neither Vite, Linux socket evidence nor Panels transport is mocked. Cost is printed.
 """
 
 from __future__ import annotations
@@ -27,8 +28,8 @@ from tests.support.server import REPO_ROOT, ServerHandle
 
 @pytest.fixture(scope="session")
 def browser_type_launch_args(browser_type_launch_args: dict[str, Any]) -> dict[str, Any]:
-    # Chromium's service-worker loader does not honor context.ignore_https_errors.
-    # The isolated self-signed TLS edge needs the browser-level equivalent too.
+    # The isolated self-signed TLS edges need the browser-level equivalent of
+    # context.ignore_https_errors too.
     return {
         **browser_type_launch_args,
         "args": [
@@ -67,13 +68,15 @@ def test_real_vite_applications_share_only_their_generation(
     }
     # Survey existing listeners before choosing OS-assigned free ports.
     subprocess.run(["ss", "-ltn"], check=True, capture_output=True, env=environment)
-    edge_port = _port()
+    main_edge_port, edge_port = _port(), _port()
+    main_origin = f"https://localhost:{main_edge_port}"
     origin = f"https://localhost:{edge_port}"
     server = server_factory(
         trusted_ingress_env={
             "PLAN_TRUSTED_INGRESS_PROVIDER": "tailscale",
             "PLAN_TRUSTED_INGRESS_ALLOWED_LOGIN": "owner@example.test",
-            "PLAN_TRUSTED_INGRESS_CANONICAL_ORIGIN": origin,
+            "PLAN_TRUSTED_INGRESS_CANONICAL_ORIGIN": main_origin,
+            "PLAN_PREVIEW_ORIGIN": origin,
         }
     )
     repo = tmp_path / "project"
@@ -119,10 +122,17 @@ def test_real_vite_applications_share_only_their_generation(
         capture_output=True,
         env=environment,
     )
-    with ExitStack() as stack, httpx.Client(base_url=server.base, timeout=10) as owner:
+    with (
+        ExitStack() as stack,
+        httpx.Client(base_url=server.base, timeout=10, cookies=server.owner_cookies) as owner,
+        # A Worker carries no owner cookie: with it, any request is the owner's.
+        httpx.Client(base_url=server.base, timeout=10) as agent,
+    ):
 
-        def api(method: str, path: str, **kwargs: Any) -> dict[str, Any]:
-            response = owner.request(method, path, **kwargs)
+        def api(
+            method: str, path: str, client: httpx.Client | None = None, **kwargs: Any
+        ) -> dict[str, Any]:
+            response = (client or owner).request(method, path, **kwargs)
             assert response.is_success, response.text
             return dict(response.json())
 
@@ -261,6 +271,7 @@ def test_real_vite_applications_share_only_their_generation(
                 "POST",
                 f"/api/tickets/{apps[0][0]['id']}/propose",
                 headers=worker,
+                client=agent,
                 json={"body": "Synthetic browser proof."},
             )
             api(
@@ -275,43 +286,50 @@ def test_real_vite_applications_share_only_their_generation(
             "POST",
             f"/api/tickets/{apps[0][0]['id']}/propose",
             headers=worker,
+            client=agent,
             json={"body": "Synthetic browser proof complete."},
         )
-        edge_log = stack.enter_context((tmp_path / "edge.log").open("wb"))
-        edge = subprocess.Popen(
-            [
-                sys.executable,
-                "-m",
-                "tests.support.application_preview_browser",
-                server.base,
-                str(edge_port),
-                str(certificate),
-                str(key),
-            ],
-            cwd=REPO_ROOT,
-            env=environment,
-            stdout=edge_log,
-            stderr=subprocess.STDOUT,
-        )
-        stack.callback(_stop, edge)
-        deadline = time.monotonic() + 10
-        while True:
-            try:
-                if httpx.get(origin + "/api/meta", verify=False, timeout=1).status_code == 200:
-                    break
-            except httpx.HTTPError:
-                pass
-            assert edge.poll() is None, (tmp_path / "edge.log").read_text()
-            assert time.monotonic() < deadline
-            time.sleep(0.05)
+        for port, address, ready_status in (
+            (main_edge_port, main_origin, 200),
+            # The preview address answers preview paths only.
+            (edge_port, origin, 404),
+        ):
+            edge_log_path = tmp_path / f"edge-{port}.log"
+            edge_log = stack.enter_context(edge_log_path.open("wb"))
+            edge = subprocess.Popen(
+                [
+                    sys.executable,
+                    "-m",
+                    "tests.support.application_preview_browser",
+                    server.base,
+                    str(port),
+                    str(certificate),
+                    str(key),
+                ],
+                cwd=REPO_ROOT,
+                env=environment,
+                stdout=edge_log,
+                stderr=subprocess.STDOUT,
+            )
+            stack.callback(_stop, edge)
+            deadline = time.monotonic() + 10
+            while True:
+                try:
+                    probe = httpx.get(address + "/api/meta", verify=False, timeout=1)
+                    if probe.status_code == ready_status:
+                        break
+                except httpx.HTTPError:
+                    pass
+                assert edge.poll() is None, edge_log_path.read_text()
+                assert time.monotonic() < deadline
+                time.sleep(0.05)
         context = browser.new_context(ignore_https_errors=True)
         stack.callback(context.close)
+        # The Panels page hands this browser the owner cookie, which it also sends to
+        # the preview address: cookies ignore ports. The read-cookie checks below show
+        # the app never receives it.
         root = context.new_page()
-        root.goto(origin + "/", timeout=15000)
-        root.evaluate("navigator.serviceWorker.register('/service-worker.js', {scope:'/'})")
-        root.evaluate("navigator.serviceWorker.ready.then(registration=>registration.scope)")
-        root.reload(timeout=15000)
-        root.wait_for_function("navigator.serviceWorker.controller !== null", timeout=10000)
+        root.goto(main_origin + "/", timeout=15000)
         network: list[str] = []
         sockets: list[str] = []
         socket_peers: list[WebSocket] = []
@@ -363,6 +381,15 @@ def test_real_vite_applications_share_only_their_generation(
             assert parsed.netloc == urlsplit(origin).netloc, address
             assert any(parsed.path.startswith(app[1]["base_path"]) for app in apps), address
         assert all(address.startswith("wss://") for address in sockets)
+        # Another origin: the browser refuses the preview page a read of Panels answers.
+        assert (
+            pages[0].evaluate(
+                "async url=>{try{await fetch(url,{credentials:'include'});return 'read';}"
+                "catch{return 'blocked';}}",
+                main_origin + "/api/meta",
+            )
+            == "blocked"
+        )
         evidence = os.environ.get("PANELS_UI_PROOF_DIR")
         if evidence:
             folder = Path(evidence)
@@ -373,7 +400,6 @@ def test_real_vite_applications_share_only_their_generation(
                     {
                         "requests": network,
                         "websockets": sockets,
-                        "root_service_worker": True,
                         "elapsed_seconds": time.monotonic() - started,
                     },
                     indent=2,

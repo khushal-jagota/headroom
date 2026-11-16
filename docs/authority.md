@@ -6,25 +6,15 @@ Khushal, Chief, Managers, and Workers all call the same routes. There is no sepa
 
 ## Who can call
 
-The server knows four kinds of caller: the **owner** (Khushal), **Chief**, a **Manager**, and a **Ticket** (its Worker). Goals have no agent. Old goal transcripts remain stored without a goal conversation interface. The authenticated browser is the owner. An agent's `panels` calls carry its identity, set by the conversation that launched it.
+The server knows four kinds of caller: the **owner** (Khushal), **Chief**, a **Manager**, and a **Ticket** (its Worker). A call that is none of these is unidentified. Goals have no agent. Old goal transcripts remain stored without a goal conversation interface.
 
-The live service sets `PLAN_REFUSE_UNIDENTIFIED_AGENT_CALLS=1`. For loopback calls without a nonempty `X-Plan-Actor`, the server checks the socket's holders through `/proc`. Ticket or Manager IDs alone do not skip this check. Workers and their tools now share `panels-live.service` with the home. The guard refuses unidentified callers there with `agent_forbidden` and asks them to restore `PLAN_ACTOR`. It also recognizes the retired `panels-workers.slice` for legacy processes. At least one readable holder must establish the caller's identity. Every readable holder must remain outside these cgroups.
+Khushal proves that he is the owner with the **owner credential**. Panels makes one random secret the first time it starts. It keeps the secret in a file beside the database, and only this user can read the file. When the server sends the web app page, it also sets the secret as a cookie. The browser and the iOS app then send the cookie with every call. A call with the cookie is the owner, whatever else it says.
 
-Calls with a nonempty actor, authenticated browser calls, and nonloopback callers retain their existing path without a socket lookup. Missing or unknown client addresses still require evidence.
+An agent's `panels` calls carry its identity, set by the conversation that launched it. Manager requests use the `manager` actor and `X-Plan-Manager-ID`. Old Sprint Item actors and identity headers do not establish authority.
 
-If a same-user process has unreadable descriptors, the server checks its cgroup. The server skips that process only if the cgroup is readable and outside the recognized cgroups. Otherwise it refuses the call. The refusal detail and debug log include the number of skipped processes. Missing socket evidence or unreadable holder evidence also causes refusal. Other local callers remain the owner.
+A call with no cookie and no agent identity is **unidentified**. It stands above nothing. It can read what any caller can read, and it can send a message to Chief. Every other write is refused with `agent_forbidden`. The refusal says how to fix it: an agent restores `PLAN_ACTOR`, and Khushal uses the web app or the iOS app. Chief sees such a message as from an unidentified caller, not from Khushal. A terminal with no identity, the stall watchdog, and the Hermes gateway are all callers of this kind.
 
-This environment-only setting defaults to off. The application removes it from its environment at startup, so agents and their scratch servers do not inherit it. Generic agents with no role identity also lose implicit owner access to Panels when the setting is on.
-
-The Hermes gateway (`hermes-gateway.service`) is a known owner-level caller outside Panels. Its calls without identity remain the owner.
-
-A known gap remains: a local process can send a forged `tailscale-user-login` header directly to loopback. Trusted ingress then treats it as the owner. This rule does not close that gap.
-
-Uvicorn also trusts `X-Forwarded-For` from `127.0.0.1` by default. A local process can forge a nonloopback address there and skip this check. This deliberate forgery stays out of scope.
-
-Deliberate forgery through hidden descriptors outside the agent cgroups is also outside this rule. The scan cannot inspect descriptors that the kernel hides from it.
-
-Manager requests use the `manager` actor and `X-Plan-Manager-ID`. Old Sprint Item actors and identity headers do not establish authority.
+The Tailscale login header does not prove the owner, because a local process can forge it. Trusted ingress still uses it to refuse other tailnet users.
 
 ## Position
 
@@ -57,9 +47,11 @@ Who must look at a parked proposal, the holder, is a narrower fact owned by the 
 
 ## What this is not
 
-The rule decides what a caller may do. It does not prove who the caller is. The browser and the command line state an identity and the server believes it. It is not a login system.
+The rule decides what a caller may do. An agent's identity is stated, and the server believes it. It is not a login system.
 
-Reading Tickets and Managers is open to every caller. The rule guards writes.
+The owner credential guards against accidents, not against an agent that sets out to cheat. Any local process that loads the web app page receives the owner cookie. Any process that runs as this user can read the secret in the data folder. Panels accepts this limit.
+
+Reading Tickets and Managers is open to every caller, including an unidentified one. The rule guards writes.
 
 Recap requests follow the same hierarchy. The owner can request any agent. Chief can request Managers and Tickets. Managers can request their child Tickets. A Ticket can request none. Each request names its caller and clears the old recap before delivery.
 
@@ -68,7 +60,8 @@ Recap requests follow the same hierarchy. The owner can request any agent. Chief
 - **One rule instead of per-route lists.** Adding a route means asking where its target sits, not writing a new list of who is allowed.
 - **Self-approval is impossible by structure.** It falls out of position, so no route can forget to forbid it.
 - **Authority cannot be handed away.** Re-parenting is reserved for the top.
-- **Identity is trusted, not proven.** Keeping strangers out is the host's job, not this rule's.
+- **Agent identity is trusted, not proven.** Keeping strangers out is the host's job, not this rule's.
+- **Losing an identity never makes you the owner.** The owner holds a credential, so an agent that loses `PLAN_ACTOR` becomes unidentified, not Khushal.
 
 ## Code
 
@@ -76,5 +69,6 @@ Recap requests follow the same hierarchy. The owner can request any agent. Chief
 - `src/planner/core/authority/intake.py`: checks requests and Mac commands against the target and relation at intake.
 - `src/planner/core/authority/service.py`: supplies the database facts for the rank rule.
 - `src/planner/core/authctx.py`: turns a request into a caller, and holds the owner-only doors.
+- `src/planner/core/owner_credential.py`: makes, stores, and checks the owner credential.
 
-_Last verified: 2026-11-12._
+_Last verified: 2026-11-15._

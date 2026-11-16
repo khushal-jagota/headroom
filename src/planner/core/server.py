@@ -48,6 +48,11 @@ from planner.core.config import (
     Config,
 )
 from planner.core.errors import ErrorCode, PlannerError
+from planner.core.owner_credential import (
+    OWNER_CREDENTIAL_COOKIE,
+    OWNER_CREDENTIAL_COOKIE_MAX_AGE_SECONDS,
+    load_or_create_owner_credential,
+)
 from planner.core.path_observer import observe_path_changes
 from planner.core.request_guidance import preserve_authored_request_examples
 from planner.core.response_compression import (
@@ -60,7 +65,6 @@ from planner.core.sse import change_stream
 from planner.core.task_settlement import run_on_worker_thread
 from planner.core.testmode import build_test_router
 from planner.core.trusted_ingress import TrustedIngressMiddleware, trusted_ingress_config
-from planner.core.unidentified_agent_calls import UnidentifiedAgentCallsMiddleware
 from planner.core.web_assets import WebAssets
 from planner.credentials.api import router as credentials_router
 from planner.credentials.requests.api import router as credential_requests_router
@@ -102,6 +106,7 @@ from planner.message_delivery.api import router as message_delivery_router
 from planner.navigation.delivery import create_delivery_runtime
 from planner.navigation.views.delivery import ScopedDeliveryRuntime
 from planner.notifications.api import router as notifications_router
+from planner.previews.address import PreviewAddressMiddleware
 from planner.previews.api import handle_preview_error
 from planner.previews.api import router as previews_router
 from planner.previews.contracts import PreviewError
@@ -652,7 +657,7 @@ def create_app(
     scoped_navigation = ScopedDeliveryRuntime(navigation_delivery)
     app = FastAPI(title="planner", version="2.0.0", lifespan=_configured_lifespan)
     preview_service = PreviewService(
-        config.db_path, config.trusted_ingress_canonical_origin or "", panels_port=config.port
+        config.db_path, config.preview_origin or "", panels_port=config.port
     )
     preview_transport = PreviewTransport(preview_service)
     preview_runtime = PreviewRuntime(preview_service, preview_transport)
@@ -661,9 +666,6 @@ def create_app(
     app.state.video_uploads = video_uploads
     app.state.navigation_delivery = navigation_delivery
     app.add_middleware(ConversationSendBodyLimitMiddleware)
-    app.add_middleware(
-        UnidentifiedAgentCallsMiddleware, enabled=config.refuse_unidentified_agent_calls
-    )
     app.add_middleware(TrustedIngressMiddleware, config=trusted_ingress_config(config))
     from planner.executor.app_transport import build_executor_router
 
@@ -677,6 +679,7 @@ def create_app(
     app.include_router(machine_credential_router, prefix="/api")
     uncompressed_patterns.extend(uncompressed_route_patterns(executor_router.routes))
     app.state.executor_id = config.executor_id
+    app.state.owner_credential = load_or_create_owner_credential(config.db_path)
     app.state.config = config
     app.state.clock = clock
     app.state.conn_factory = conn_factory
@@ -892,12 +895,27 @@ def create_app(
             media_type="text/event-stream",
         )
 
+    # Tailscale Serve terminates TLS, so uvicorn sees plain HTTP. The configured public
+    # origin says whether the browser reached Panels over HTTPS.
+    owner_cookie_secure = (config.trusted_ingress_canonical_origin or "").startswith("https://")
+
     @app.get("/", response_class=HTMLResponse)
     async def index() -> HTMLResponse:
-        return HTMLResponse(
+        """Serve the web app, and hand whoever loads it the owner credential cookie."""
+        response = HTMLResponse(
             content=svelte_index_html(config.app_sha),
             headers={"Cache-Control": "no-cache, must-revalidate"},
         )
+        response.set_cookie(
+            OWNER_CREDENTIAL_COOKIE,
+            app.state.owner_credential,
+            max_age=OWNER_CREDENTIAL_COOKIE_MAX_AGE_SECONDS,
+            path="/",
+            secure=owner_cookie_secure,
+            httponly=True,
+            samesite="strict",
+        )
+        return response
 
     @app.get("/service-worker.js", response_class=FileResponse)
     async def service_worker() -> FileResponse:
@@ -927,5 +945,7 @@ def create_app(
         minimum_size=1024,
         compresslevel=4,
     )
+    # Outermost: on the preview address only previews answer; the main address answers none.
+    app.add_middleware(PreviewAddressMiddleware, preview_origin=config.preview_origin)
     preserve_authored_request_examples(app)
     return app

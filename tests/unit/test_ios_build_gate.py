@@ -35,7 +35,7 @@ def test_incompatible_native_never_reaches_endpoint(scope_type: str, value: byte
 
 
 @pytest.mark.parametrize(
-    "headers", [[], [(b"x-panels-ios-build", b"1")], [(b"x-panels-ios-build", b"2")]]
+    "headers", [[], [(b"x-panels-ios-build", b"6")], [(b"x-panels-ios-build", b"7")]]
 )
 def test_supported_native_and_other_clients_reach_endpoint(
     headers: list[tuple[bytes, bytes]],

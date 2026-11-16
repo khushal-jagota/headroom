@@ -1,8 +1,9 @@
 """Truthful request identity: who is asking, before anything asks what they may do.
 
-The request boundary translates transport headers into one shared Principal. An
-unattributed browser or ordinary CLI request is the owner. Employee requests name
-the Chief, a Ticket, or a Manager. Header names stay private to this adapter.
+The request boundary translates transport headers into one shared Principal. A request
+that carries the owner credential cookie is the owner, whatever else it says. Employee
+requests name the Chief, a Ticket, or a Manager. A request that does neither is
+unidentified: it stands above nothing. Header names stay private to this adapter.
 
 Whether that principal may act on a given thing is planner.core.authority, which asks
 one question. The guards that used to live here each named their own set of principal
@@ -19,20 +20,18 @@ from fastapi import Request
 from planner.core.contracts import (
     CHIEF_PRINCIPAL,
     OWNER_PRINCIPAL,
+    UNIDENTIFIED_PRINCIPAL,
     Principal,
     PrincipalKind,
     principal_legacy_actor,
 )
 from planner.core.errors import ErrorCode, PlannerError
+from planner.core.owner_credential import OWNER_CREDENTIAL_COOKIE, presents_owner_credential
 
 X_PLAN_CONVERSATION_ID: Final = "X-Plan-Conversation-ID"
-PLAN_CONVERSATION_ID_SCOPE_KEY: Final = "planner.request_conversation_id"
 X_PLAN_ACTOR: Final = "X-Plan-Actor"
 X_PLAN_TICKET_ID: Final = "X-Plan-Ticket-ID"
 X_PLAN_MANAGER_ID: Final = "X-Plan-Manager-ID"
-PLAN_ACTOR_SCOPE_KEY: Final = "planner.request_actor"
-PLAN_TICKET_ID_SCOPE_KEY: Final = "planner.request_ticket_id"
-PLAN_MANAGER_ID_SCOPE_KEY: Final = "planner.request_manager_id"
 
 
 @dataclass(frozen=True)
@@ -57,7 +56,7 @@ def _classify(
     normalized_ticket_id = _normalize(ticket_id)
     normalized_manager_id = _normalize(manager_id)
     if actor is None:
-        return RequestContext(OWNER_PRINCIPAL)
+        return RequestContext(UNIDENTIFIED_PRINCIPAL)
     if actor == "chief":
         return RequestContext(CHIEF_PRINCIPAL)
     if actor == "worker" and normalized_ticket_id is not None:
@@ -72,29 +71,21 @@ def _classify(
 
 
 def request_context(request: Request) -> RequestContext:
-    """Normalize the actor and its optional truthful local Ticket claim."""
-    actor = (
-        request.scope[PLAN_ACTOR_SCOPE_KEY]
-        if PLAN_ACTOR_SCOPE_KEY in request.scope
-        else request.headers.get(X_PLAN_ACTOR)
-    )
-    ticket_id = (
-        request.scope[PLAN_TICKET_ID_SCOPE_KEY]
-        if PLAN_TICKET_ID_SCOPE_KEY in request.scope
-        else request.headers.get(X_PLAN_TICKET_ID)
-    )
-    manager_id = (
-        request.scope[PLAN_MANAGER_ID_SCOPE_KEY]
-        if PLAN_MANAGER_ID_SCOPE_KEY in request.scope
-        else request.headers.get(X_PLAN_MANAGER_ID)
-    )
+    """The owner by cookie, else the actor and its optional truthful local Ticket claim."""
+    app = request.scope.get("app")
+    if presents_owner_credential(
+        request.cookies.get(OWNER_CREDENTIAL_COOKIE),
+        getattr(getattr(app, "state", None), "owner_credential", None),
+    ):
+        return RequestContext(OWNER_PRINCIPAL)
     classified = _classify(
-        _normalize(actor), _normalize(ticket_id), manager_id
+        _normalize(request.headers.get(X_PLAN_ACTOR)),
+        _normalize(request.headers.get(X_PLAN_TICKET_ID)),
+        request.headers.get(X_PLAN_MANAGER_ID),
     )
-    origin = request.scope.get(
-        PLAN_CONVERSATION_ID_SCOPE_KEY, request.headers.get(X_PLAN_CONVERSATION_ID)
+    return RequestContext(
+        classified.principal, _normalize(request.headers.get(X_PLAN_CONVERSATION_ID))
     )
-    return RequestContext(classified.principal, _normalize(origin))
 
 
 def require_owner_or_chief(ctx: RequestContext) -> None:
@@ -127,13 +118,3 @@ def require_owner(ctx: RequestContext) -> None:
         "this operation is available only to the owner",
         {"actor": principal_legacy_actor(ctx.principal)},
     )
-
-
-AUTHENTICATED_OWNER_SCOPE_KEY: Final = "planner.authenticated_owner"
-
-
-def require_authenticated_owner(request: Request) -> None:
-    """Device registration needs the deployed access boundary's owner identity."""
-    require_owner(request_context(request))
-    if request.scope.get(AUTHENTICATED_OWNER_SCOPE_KEY) is not True:
-        raise PlannerError(ErrorCode.agent_forbidden, "authenticated owner access is required", {})

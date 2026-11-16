@@ -98,6 +98,8 @@ def run_application_process() -> None:
             ws_max_queue=preview_limits.WEBSOCKET_QUEUE_DEPTH,
             ws_ping_interval=preview_limits.WEBSOCKET_PING_SECONDS,
             ws_ping_timeout=preview_limits.WEBSOCKET_PONG_SECONDS,
+            # Nothing reads the client address, so no forwarded header may rewrite it.
+            proxy_headers=False,
         )
     else:
         server_config = uvicorn.Config(
@@ -110,6 +112,8 @@ def run_application_process() -> None:
             ws_max_queue=preview_limits.WEBSOCKET_QUEUE_DEPTH,
             ws_ping_interval=preview_limits.WEBSOCKET_PING_SECONDS,
             ws_ping_timeout=preview_limits.WEBSOCKET_PONG_SECONDS,
+            # Nothing reads the client address, so no forwarded header may rewrite it.
+            proxy_headers=False,
         )
     # The supervisor names its control socket for the child it starts; the event-loop-tasks
     # socket lives beside it. Without a supervisor there is no socket to stand beside.

@@ -5,6 +5,7 @@ from __future__ import annotations
 from http.cookies import CookieError, SimpleCookie
 from urllib.parse import unquote, urljoin, urlsplit
 
+from planner.core.owner_credential import OWNER_CREDENTIAL_COOKIE
 from planner.previews import config
 from planner.previews.contracts import PreviewError
 
@@ -56,15 +57,12 @@ def request_headers(
         ):
             continue
         if name == "cookie":
-            cookie = SimpleCookie()
-            try:
-                cookie.load(value)
-            except CookieError:
-                continue
+            # Split the way a browser does: every ";" ends a cookie, quoted or not.
+            # A quote-aware parser would let one declared cookie carry the owner's.
             value = "; ".join(
-                f"{name}={morsel.coded_value}"
-                for name, morsel in cookie.items()
-                if name in cookie_names
+                pair
+                for pair in (part.strip() for part in value.split(";"))
+                if pair.partition("=")[0].strip() in cookie_names
             )
             if not value:
                 continue
@@ -114,6 +112,10 @@ def response_headers(
             if not parsed:
                 raise PreviewError("Preview returned an incompatible cookie.", 502)
             for cookie_name, morsel in parsed.items():
+                # The browser sends Khushal's owner cookie to the preview address too.
+                # A preview that claimed its name would have the proxy forward it.
+                if cookie_name == OWNER_CREDENTIAL_COOKIE:
+                    raise PreviewError("Preview cookies cannot use the Panels owner name.", 502)
                 if (
                     cookie_name.startswith("__Host-")
                     or morsel["domain"]

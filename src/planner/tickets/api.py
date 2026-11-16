@@ -453,6 +453,8 @@ def _parse_principal(raw: object, field: str, *, allow_ticket: bool = False) -> 
         kind = PrincipalKind(kind_raw)
         if kind is PrincipalKind.ticket and not allow_ticket:
             raise ValueError("Ticket cannot hold a review")
+        if kind is PrincipalKind.unidentified:
+            raise ValueError("an unidentified caller is nobody")
     except (TypeError, ValueError):
         raise PlannerError(
             ErrorCode.validation,

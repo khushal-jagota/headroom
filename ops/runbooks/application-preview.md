@@ -2,7 +2,10 @@
 
 For a Worker on the VPS that needs Khushal to open its running dev server. The design,
 the trust boundary, and the limits are in [docs/previews.md](../../docs/previews.md).
-Only put code you trust behind a preview: it runs in Headroom's own browser origin.
+The link opens on the preview address: the same name as Headroom, on another port.
+Only put code you trust behind a preview. It is kept off Headroom's origin, but it runs
+as the same Unix user as Headroom. Previews refuse until the operator sets up the
+preview address.
 
 The commands use the Worker's own Ticket identity. They cannot aim at another Ticket
 or invent a hostname. They refuse for Tickets set to run on the Mac.
@@ -12,7 +15,7 @@ or invent a hostname. They refuse for Tickets set to run on the Mac.
 1. Create the git worktree at exactly `<project.folder_path>/worktrees/<ticket-id>-preview`,
    inside the project folder. A symlink that escapes is refused.
 2. Run `panels preview prepare`. It reserves the address and returns `base_path`,
-   `generation`, `public_origin`, and `worktree`.
+   `generation`, `public_origin` (the preview address), and `worktree`.
 3. Start the application from that worktree, on `127.0.0.1`, on a free unprivileged
    port, serving that exact `base_path` including the trailing slash.
 4. Run `panels preview register --port <port>`. It checks the listener and returns the
@@ -28,8 +31,8 @@ The proxy does not rewrite HTML, CSS, or JavaScript and does not strip the base 
 Assets, API calls, redirects, cookies, and hot reload all use the generation prefix.
 
 - For Vite, set `base` to the returned path, bind `127.0.0.1` with a strict port, and
-  point hot reload at the public hostname over `wss` on port 443, with the socket path
-  under `base`.
+  point hot reload at the host and port in `public_origin` over `wss`, with the socket
+  path under `base`.
 - Relative redirects stay inside the generation. Cookies set an explicit Path inside it
   and no Domain.
 - Root-only apps, root auth callbacks, `__Host-` cookies, public hot-reload ports, and

@@ -3,7 +3,9 @@
 Native SwiftUI foundation, iOS 18 minimum. The app defaults to
 `https://panels-vps.tail687c57.ts.net`; More → Settings changes and persists the
 HTTPS server address. The Mac must be able to reach the server over Tailscale.
-No backend changes or third-party packages are needed.
+No third-party packages are needed.
+
+The app gets the owner cookie by loading the server's web app page once, through the same request factory, before its first request to a server. URLSession keeps the cookie and sends it on every read, write and stream. A new server address loads the page again. Build 6 is the minimum build, because older builds have no cookie and cannot write.
 
 The app icon uses the Chief of Staff portrait from
 `web/src/assets/chief-of-staff-profile.webp`, centered on its black background.

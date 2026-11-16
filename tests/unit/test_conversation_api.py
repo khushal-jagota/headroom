@@ -24,7 +24,7 @@ import httpx
 import pytest
 from fastapi import FastAPI
 from tests.support.conversation_test_loop import conversation_test_loop, run_conversation_test
-from tests.support.principals import OWNER_PRINCIPAL
+from tests.support.principals import OWNER_PRINCIPAL, TEST_OWNER_CREDENTIAL
 
 from planner.conversation.api import (
     COMMITTED_EVENT_STREAM_NAME,
@@ -399,6 +399,7 @@ class _Harness:
             sse_heartbeat_ms=HEARTBEAT_MILLISECONDS,
         )
         self.app = FastAPI()
+        self.app.state.owner_credential = TEST_OWNER_CREDENTIAL
         self.app.include_router(router, prefix=CONVERSATION_PREFIX)
         self.app.state.conversation = self.runtime
 

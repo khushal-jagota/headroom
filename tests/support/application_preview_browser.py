@@ -1,8 +1,9 @@
 """Local TLS edge for the real Vite browser proof; never used by the product.
 
 Tailscale terminates TLS and supplies identity in production. This loopback-only
-shim supplies precisely those two facilities so browser-generated WSS URLs exercise
-the unchanged canonical-origin gate. It forwards real bytes and WebSocket frames.
+shim supplies precisely those two facilities, once per address, so browser-generated
+WSS URLs exercise the unchanged preview-origin gate. It forwards real bytes and
+WebSocket frames.
 """
 
 from __future__ import annotations

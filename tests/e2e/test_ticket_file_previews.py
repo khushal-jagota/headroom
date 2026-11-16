@@ -16,8 +16,9 @@ from playwright.sync_api import (
     Page,
     expect,
 )
-from tests.e2e.harness import REPO_ROOT, JsonObject, ServerHandle
+from tests.e2e.harness import REPO_ROOT, ServerHandle
 from tests.support.connected_rows import _bind, _message, _post, _propose
+from tests.support.server import ApiHelper
 from tests.support.server_fixtures import rail_server as rail_server
 
 from planner.core.contracts import CHIEF_PRINCIPAL
@@ -160,7 +161,6 @@ def test_html_artifact_interacts_loads_sibling_assets_and_refreshes_in_place(
     rail_server: ServerHandle,
     context_factory: Callable[[], BrowserContext],
     open_page: Callable[..., Page],
-    cli: Callable[..., JsonObject],
 ) -> None:
     """The real sandbox resolves managed assets and refreshes over its Ticket.
 
@@ -170,12 +170,12 @@ def test_html_artifact_interacts_loads_sibling_assets_and_refreshes_in_place(
     """
     server = rail_server
     started_at = time.monotonic()
-    ticket_id = cli(
-        server, "ticket", "create", "--input-json", "-",
-        stdin=json.dumps({
+    ticket_id = ApiHelper().create_ticket(
+        server,
+        {
             "worker_type": "coding", "title": "HTML artifact", "brief": "Agreed brief.",
             "manager": {"kind": "chief", "id": "chief"},
-        }),
+        },
         settle_brief=True,
     )["id"]
     _write_ticket_files(server, ticket_id)
@@ -502,7 +502,6 @@ def test_a_video_preview_shows_a_poster_then_plays_and_seeks(
     server: ServerHandle,
     context_factory: Callable[[], BrowserContext],
     open_page: Callable[..., Page],
-    cli: Callable[..., JsonObject],
 ) -> None:
     """A real browser and a real route, because nothing smaller can prove this.
 
@@ -512,12 +511,12 @@ def test_a_video_preview_shows_a_poster_then_plays_and_seeks(
     a unit test has no media stack, so neither can tell a working preview from one that
     shows a player and then refuses.
     """
-    ticket_id = cli(
-        server, "ticket", "create", "--input-json", "-",
-        stdin=json.dumps({
+    ticket_id = ApiHelper().create_ticket(
+        server,
+        {
             "worker_type": "coding", "title": "Media preview", "brief": "Agreed brief.",
             "manager": {"kind": "chief", "id": "chief"},
-        }),
+        },
         settle_brief=True,
     )["id"]
     _write_ticket_files(server, ticket_id)

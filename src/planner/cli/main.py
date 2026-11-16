@@ -69,11 +69,12 @@ _HOLDER_ALIASES = {
 }
 
 
-def caller_principal() -> dict[str, str]:
+def caller_principal(as_json: bool) -> dict[str, str]:
     """The principal this process is, as a holder object.
 
-    A caller who does not say where a ceiling goes next keeps it. Khushal keeps it as the
-    owner, and a Manager keeps it as itself. A Worker cannot hold a review.
+    A caller who does not say where a ceiling goes next keeps it. A Manager keeps it as
+    itself. A Worker cannot hold a review. A terminal with no Panels identity is nobody,
+    so it has nothing to keep it as: the server refuses its approval anyway.
     """
     actor = os.environ.get(_ACTOR_ENV, "").strip()
     ticket_id = os.environ.get(_TICKET_ID_ENV, "").strip()
@@ -84,7 +85,12 @@ def caller_principal() -> dict[str, str]:
         return {"kind": "ticket", "id": ticket_id}
     if actor == "manager" and manager_id:
         return {"kind": "manager", "id": manager_id}
-    return {"kind": "owner", "id": "owner"}
+    http.fail_validation(
+        "this terminal has no Panels identity, so it cannot approve. An agent restores "
+        "PLAN_ACTOR; Khushal approves in the Panels web app or the iOS app.",
+        as_json,
+    )
+    raise AssertionError("unreachable")
 
 
 def resolve_holder(raw: str, as_json: bool) -> dict[str, str]:
@@ -1340,7 +1346,7 @@ def _approve_ticket_proposal(
         "decision_id": f"{tid}:{revision}:accept",
         "next_ceiling": ceiling,
         "next_holder": (
-            resolve_holder(holder, as_json) if holder is not None else caller_principal()
+            resolve_holder(holder, as_json) if holder is not None else caller_principal(as_json)
         ),
     }
     if edit_file is not None:

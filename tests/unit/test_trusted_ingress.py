@@ -7,10 +7,10 @@ from typing import Any
 import pytest
 from fastapi import FastAPI, Request
 from fastapi.testclient import TestClient
+from tests.support.in_memory_conversation_system import InMemoryConversationSystem
 from tests.support.principals import OWNER_PRINCIPAL
 
 from planner.core import server as server_module
-from planner.core import unidentified_agent_calls
 from planner.core.clock import build_clock
 from planner.core.config import load_config
 from planner.core.db import connect, create_schema
@@ -27,9 +27,7 @@ _VITE_CSS_ROUTE = "/_app/assets/" + next(
 )
 
 
-def _make_app(
-    tmp_path: Path, *, hosted: bool = True, refuse_unidentified: bool = False
-) -> tuple[FastAPI, Path]:
+def _make_app(tmp_path: Path, *, hosted: bool = True) -> tuple[FastAPI, Path]:
     db_path = tmp_path / "data" / "planning-test.db"
     db_path.parent.mkdir(parents=True)
     boot = connect(str(db_path))
@@ -39,8 +37,6 @@ def _make_app(
         "PLAN_TEST_MODE": "1",
         "PLAN_DB_PATH": str(db_path),
     }
-    if refuse_unidentified:
-        env["PLAN_REFUSE_UNIDENTIFIED_AGENT_CALLS"] = "1"
     if hosted:
         env.update(
             {
@@ -55,7 +51,10 @@ def _make_app(
     def conn_factory() -> Connection:
         return connect(str(db_path))
 
-    return create_app(config, clock, conn_factory), db_path
+    app = create_app(
+        config, clock, conn_factory, conversation_system_for_test=InMemoryConversationSystem()
+    )
+    return app, db_path
 
 
 def _ticket(db_path: Path) -> str:
@@ -85,49 +84,78 @@ def test_tailscale_allowed_and_wrong_login_are_enforced(tmp_path: Path) -> None:
     assert wrong.json()["error"]["code"] == "agent_forbidden"
 
 
-def test_trusted_owner_reaches_enabled_agent_boundary_after_ingress(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    lookups: list[tuple[Any, ...]] = []
+def test_unidentified_caller_only_reads_and_messages_the_chief(tmp_path: Path) -> None:
+    """No cookie and no agent identity: reads pass, a Chief message passes, writes do not.
 
-    def refuse(*args: Any) -> unidentified_agent_calls.PeerLookupResult:
-        lookups.append(args)
-        return unidentified_agent_calls.PeerLookupResult(False)
-
-    monkeypatch.setattr(unidentified_agent_calls, "resolve_loopback_peer", refuse)
-    app, _db_path = _make_app(tmp_path, refuse_unidentified=True)
-    with TestClient(app) as client:
-        owner = client.get("/api/meta", headers=REMOTE)
-        unidentified = client.get("/api/meta")
-
-    assert owner.status_code == 200, owner.text
-    assert unidentified.status_code == 403
-    assert unidentified.json()["error"]["code"] == "agent_forbidden"
-    assert len(lookups) == 1
-
-
-def test_remote_tailscale_actor_spoof_is_ignored_but_internal_actor_remains(
-    tmp_path: Path,
-) -> None:
+    The Tailscale login is present on every call, so it is shown not to be the owner.
+    """
     app, db_path = _make_app(tmp_path)
     ticket_id = _ticket(db_path)
 
     with TestClient(app) as client:
-        remote = client.patch(
-            f"/api/tickets/{ticket_id}",
-            json={"title": "Remote human edit"},
-            headers={**REMOTE, "X-Plan-Actor": "agent"},
-        )
-        internal = client.patch(
-            f"/api/tickets/{ticket_id}",
-            json={"title": "Internal agent edit"},
-            headers={"X-Plan-Actor": "agent"},
+        client.cookies.clear()
+        read = client.get(f"/api/tickets?detail=full&id={ticket_id}", headers=REMOTE)
+        posted_read = client.post("/api/measures/read", json={}, headers=REMOTE)
+        writes = [
+            client.patch(f"/api/tickets/{ticket_id}", json={"title": "x"}, headers=REMOTE),
+            client.post("/api/projects", json={"name": "x"}, headers=REMOTE),
+            client.post("/api/messages/send", content=b"{", headers=REMOTE),
+            client.post(
+                "/api/messages/send",
+                json={"target": {"kind": "ticket", "id": ticket_id}, "message": "x"},
+                headers=REMOTE,
+            ),
+        ]
+        to_chief = client.post(
+            "/api/messages/send",
+            json={"target": {"kind": "chief", "id": "chief"}, "message": "x"},
+            headers=REMOTE,
         )
 
-    assert remote.status_code == 200, remote.text
-    assert remote.json()["title"] == "Remote human edit"
-    assert internal.status_code == 400
-    assert internal.json()["error"]["code"] == "agent_forbidden"
+    assert read.status_code == 200, read.text
+    assert posted_read.json().get("error", {}).get("code") != "agent_forbidden"
+    for write in writes:
+        assert write.status_code == 400, write.text
+        assert write.json()["error"]["code"] == "agent_forbidden"
+        assert "PLAN_ACTOR" in write.json()["error"]["message"]
+    # Admitted: whatever the delivery answers, it is not the identity refusal.
+    assert to_chief.status_code == 200, to_chief.text
+
+
+def test_owner_is_the_cookie_alone(tmp_path: Path) -> None:
+    from planner.core.authctx import request_context
+
+    app, _db_path = _make_app(tmp_path)
+
+    @app.get("/identity-boundary-proof")
+    def identity_boundary(request: Request) -> dict[str, str | None]:
+        context = request_context(request)
+        return {"kind": context.principal.kind.value, "conversation_id": context.conversation_id}
+
+    manager = {
+        **REMOTE,
+        "X-Plan-Actor": "manager",
+        "X-Plan-Manager-ID": "si_one",
+        "X-Plan-Conversation-ID": "conversation_one",
+    }
+    with TestClient(app) as client:
+        # This test sends the owner cookie beside agent headers on purpose.
+        client.event_hooks = {"request": [], "response": []}
+        owner_cookie = dict(client.cookies)
+        assert client.get("/identity-boundary-proof", headers=manager).json() == {
+            "kind": "owner", "conversation_id": None,
+        }
+        client.cookies.clear()
+        assert client.get("/identity-boundary-proof", headers=manager).json() == {
+            "kind": "manager", "conversation_id": "conversation_one",
+        }
+        assert client.get("/identity-boundary-proof", headers=REMOTE).json()["kind"] == (
+            "unidentified"
+        )
+        client.cookies.set("panels_owner", owner_cookie["panels_owner"] + "x")
+        assert client.get("/identity-boundary-proof", headers=REMOTE).json()["kind"] == (
+            "unidentified"
+        )
 
 
 def test_wrong_present_origin_rejected_for_unsafe_http_and_absent_origin_allowed(
@@ -182,6 +210,13 @@ def test_static_and_file_surfaces_pass_through_trusted_ingress(
 
     assert [response.status_code for response in blocked] == [403] * len(blocked)
     assert allowed_root.status_code == 200
+    # The app page hands its loader the owner credential, kept beside the database.
+    credential_file = db_path.parent / "owner-credential"
+    assert credential_file.stat().st_mode & 0o777 == 0o600
+    cookie = allowed_root.headers["set-cookie"]
+    assert cookie.startswith(f"panels_owner={credential_file.read_text().strip()};")
+    for attribute in ("HttpOnly", "Max-Age=315360000", "Path=/", "SameSite=strict", "Secure"):
+        assert attribute in cookie
     assert allowed_app.status_code == 200
     assert allowed_asset.status_code == 200
     assert allowed_static.status_code == 200
@@ -189,7 +224,6 @@ def test_static_and_file_surfaces_pass_through_trusted_ingress(
 
 
 def test_manager_identity_accepts_only_current_names() -> None:
-    import pytest
 
     from planner.core.authctx import RequestContext, request_context
     from planner.core.errors import PlannerError
@@ -211,38 +245,8 @@ def test_manager_identity_accepts_only_current_names() -> None:
             context(headers)
 
 
-def test_hosted_owner_strips_manager_identity(tmp_path: Path) -> None:
-
-    from planner.core.authctx import request_context
-
-    app, _db_path = _make_app(tmp_path)
-
-    @app.get("/identity-boundary-proof")
-    def identity_boundary(request: Request) -> dict[str, str | None]:
-        context = request_context(request)
-        principal = context.principal
-        return {
-            "kind": principal.kind.value,
-            "id": principal.id,
-            "conversation_id": context.conversation_id,
-        }
-
-    with TestClient(app) as client:
-        response = client.get(
-            "/identity-boundary-proof",
-            headers={
-                **REMOTE,
-                "X-Plan-Actor": "manager",
-                "X-Plan-Conversation-ID": "spoofed_employee_origin",
-                "X-Plan-Manager-ID": "si_one",
-                "X-Plan-Sprint-Item-ID": "si_other",
-            },
-        )
-    assert response.json() == {"kind": "owner", "id": "owner", "conversation_id": None}
-
-
 def test_native_routes_require_hosted_identity_and_reject_browser_origin() -> None:
-    """Internal owner defaults must not grant executor transport authority."""
+    """The owner cookie must not grant executor transport authority."""
     from fastapi import HTTPException
 
     from planner.core.trusted_ingress import (
@@ -281,31 +285,3 @@ def test_native_routes_require_hosted_identity_and_reject_browser_origin() -> No
             [*valid, ("Origin", CANONICAL_ORIGIN)],
         ):
             assert client.get("/native-admission", headers=headers).status_code == 403
-
-def test_preview_gate_requires_explicit_edge_evidence_even_on_safe_reads() -> None:
-    """Ordinary local-owner access must never accidentally admit application traffic."""
-    import pytest
-
-    from planner.core.errors import PlannerError
-    from planner.core.trusted_ingress import TrustedIngressConfig, require_preview_ingress
-
-    config = TrustedIngressConfig("tailscale", ALLOWED_LOGIN, CANONICAL_ORIGIN)
-    valid = [(b"host", b"panels.tailnet.ts.net"), (b"tailscale-user-login", ALLOWED_LOGIN.encode())]
-    require_preview_ingress({"type": "http", "method": "GET", "headers": valid}, config)
-    require_preview_ingress(
-        {"type": "websocket", "headers": valid + [(b"origin", CANONICAL_ORIGIN.encode())]}, config
-    )
-    rejected = [
-        [],
-        [(b"host", b"panels.tailnet.ts.net")],
-        valid + [(b"tailscale-user-login", ALLOWED_LOGIN.encode())],
-        valid + [(b"host", b"panels.tailnet.ts.net")],
-        valid + [(b"origin", b"https://foreign.example")],
-        [(b"host", b"127.0.0.1:8767"), valid[1]],
-        [valid[0], (b"tailscale-user-login", b"someone-else")],
-    ]
-    for headers in rejected:
-        with pytest.raises(PlannerError):
-            require_preview_ingress({"type": "http", "method": "GET", "headers": headers}, config)
-    with pytest.raises(PlannerError):
-        require_preview_ingress({"headers": valid}, TrustedIngressConfig(None, None, None))

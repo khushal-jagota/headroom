@@ -1,8 +1,9 @@
 """Trusted hosted-ingress boundary for the server shell.
 
 The first hosted provider is Tailscale Serve. Provider-specific header parsing
-stays here so the rest of the app continues to consume only the normalized
-request actor contract.
+stays here. The Tailscale login refuses other tailnet users and marks executor and
+preview ingress. It is not proof of the owner: a local process can forge it at the
+loopback listener. The owner credential cookie is that proof.
 """
 
 from __future__ import annotations
@@ -13,17 +14,6 @@ from dataclasses import dataclass
 from typing import Any, Final
 from urllib.parse import urlsplit
 
-from planner.core.authctx import (
-    AUTHENTICATED_OWNER_SCOPE_KEY,
-    PLAN_ACTOR_SCOPE_KEY,
-    PLAN_CONVERSATION_ID_SCOPE_KEY,
-    PLAN_MANAGER_ID_SCOPE_KEY,
-    PLAN_TICKET_ID_SCOPE_KEY,
-    X_PLAN_ACTOR,
-    X_PLAN_CONVERSATION_ID,
-    X_PLAN_MANAGER_ID,
-    X_PLAN_TICKET_ID,
-)
 from planner.core.config import Config
 from planner.core.errors import ErrorCode, PlannerError
 
@@ -77,7 +67,6 @@ class TrustedIngressMiddleware:
         # Never accept a caller-supplied normalized identity.
         scope = dict(scope)
         scope.pop(TRUSTED_LOGIN_SCOPE_KEY, None)
-        scope.pop(AUTHENTICATED_OWNER_SCOPE_KEY, None)
         duplicate_header = _duplicate_singleton_security_header(scope)
         if duplicate_header is not None:
             await self._reject(scope, send, "duplicate security header is not allowed")
@@ -102,19 +91,6 @@ class TrustedIngressMiddleware:
                     await self._reject(scope, send, "Tailscale user is not allowed")
                     return
                 scope[TRUSTED_LOGIN_SCOPE_KEY] = login
-                scope[AUTHENTICATED_OWNER_SCOPE_KEY] = True
-
-                if str(scope.get("path", "")).startswith("/api/updates"):
-                    await self.app(scope, receive, send)
-                    return
-                scope = _without_header(scope, X_PLAN_CONVERSATION_ID)
-                scope[PLAN_CONVERSATION_ID_SCOPE_KEY] = None
-                scope = _without_header(scope, X_PLAN_ACTOR)
-                scope = _without_header(scope, X_PLAN_TICKET_ID)
-                scope = _without_header(scope, X_PLAN_MANAGER_ID)
-                scope[PLAN_ACTOR_SCOPE_KEY] = None
-                scope[PLAN_TICKET_ID_SCOPE_KEY] = None
-                scope[PLAN_MANAGER_ID_SCOPE_KEY] = None
 
         await self.app(scope, receive, send)
 
@@ -164,15 +140,6 @@ def _duplicate_singleton_security_header(scope: dict[str, Any]) -> str | None:
     return None
 
 
-def _without_header(scope: dict[str, Any], header_name: str) -> dict[str, Any]:
-    lowered = header_name.lower().encode("latin1")
-    copied = dict(scope)
-    copied["headers"] = [
-        (name, value) for name, value in scope.get("headers", ()) if name.lower() != lowered
-    ]
-    return copied
-
-
 def executor_ingress_claim(scope: Mapping[str, Any]) -> str:
     """Read a caller ID after the trusted ingress check. Credentials bind its authority."""
     if not scope.get(TRUSTED_LOGIN_SCOPE_KEY):
@@ -200,8 +167,11 @@ def require_executor_ingress(scope: Mapping[str, Any], executor_id: str | None) 
     return claimed_id
 
 
-def require_preview_ingress(scope: dict[str, Any], config: TrustedIngressConfig) -> None:
-    """Require the configured tailnet gate, including reads and socket upgrades.
+def require_preview_ingress(
+    scope: dict[str, Any], config: TrustedIngressConfig, preview_origin: str | None
+) -> None:
+    """Require the configured tailnet gate on the preview address, including reads and
+    socket upgrades.
 
     Tailscale Serve enforces network membership. These headers are not authentication
     against same-user local processes, which can forge them at the loopback listener.
@@ -212,8 +182,8 @@ def require_preview_ingress(scope: dict[str, Any], config: TrustedIngressConfig)
     if (
         config.provider != "tailscale"
         or not config.allowed_login
-        or not config.canonical_origin
-        or not config.canonical_origin.startswith("https://")
+        or not preview_origin
+        or not preview_origin.startswith("https://")
     ):
         message = "application previews require configured Tailscale HTTPS ingress"
     elif any(
@@ -222,9 +192,9 @@ def require_preview_ingress(scope: dict[str, Any], config: TrustedIngressConfig)
         message = "duplicate preview security header is not allowed"
     elif headers.get(TAILSCALE_USER_LOGIN_HEADER) != config.allowed_login:
         message = "application previews require the configured Tailscale login"
-    elif headers.get("host") != urlsplit(config.canonical_origin).netloc:
-        message = "preview host is not the configured public origin"
-    elif ORIGIN_HEADER in headers and headers[ORIGIN_HEADER] != config.canonical_origin:
+    elif headers.get("host") != urlsplit(preview_origin).netloc:
+        message = "preview host is not the configured preview origin"
+    elif ORIGIN_HEADER in headers and headers[ORIGIN_HEADER] != preview_origin:
         message = "preview origin is not allowed"
     if message is not None:
         raise PlannerError(ErrorCode.agent_forbidden, message, {})

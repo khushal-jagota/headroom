@@ -400,6 +400,7 @@ extension APIClient {
         var urlRequest = try self.request(try navigationViewURL("/api/navigation/view/snapshot", request))
         urlRequest.cachePolicy = .reloadIgnoringLocalCacheData
         urlRequest.timeoutInterval = 25
+        await ensureOwnerCookie()
         let (data, response) = try await session.data(for: urlRequest)
         try Self.validate(response, data: data)
         guard case .snapshot(let snapshot) = try Self.decoder().decode(ViewFrame.self, from: data), Self.supported(snapshot)
@@ -420,6 +421,7 @@ extension APIClient {
                     urlRequest.cachePolicy = .reloadIgnoringLocalCacheData
                     // Longer than the server's 15 s heartbeat, so a silent socket is noticed.
                     urlRequest.timeoutInterval = 45
+                    await ensureOwnerCookie()
                     let (bytes, response) = try await session.bytes(for: urlRequest)
                     try Self.validate(response)
                     let decoder = Self.decoder()

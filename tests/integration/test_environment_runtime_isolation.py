@@ -49,11 +49,11 @@ def test_staging_runs_on_demand_with_dynamic_port_and_persistent_state(
         first = _start_staging(repository, environment_root, log_path)
         first_url = _wait_for_staging_url(first, log_path)
         _wait_for_health(first, first_url, log_path)
-        created = httpx.post(
-            f"{first_url}/api/projects",
-            json={"name": "Retained staging activity"},
-            timeout=5.0,
-        )
+        with httpx.Client(timeout=5.0) as owner:
+            owner.get(f"{first_url}/")  # The app page sets the owner credential cookie.
+            created = owner.post(
+                f"{first_url}/api/projects", json={"name": "Retained staging activity"}
+            )
         assert created.status_code < 300, created.text
         project_id = created.json()["id"]
         _terminate(first)

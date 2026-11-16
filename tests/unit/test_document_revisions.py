@@ -46,7 +46,7 @@ def test_native_document_revision_success_and_stale_preservation(
             "UPDATE managers SET page_revision=? WHERE id=?", (captured_revision, manager.id)
         )
     tmp_db.commit()
-    with TestClient(_app(tmp_db), headers={"X-Panels-iOS-Build": "5"}) as client:
+    with TestClient(_app(tmp_db), headers={"X-Panels-iOS-Build": "6"}) as client:
         captured = client.get(path).json()[revision_key]
         assert captured == captured_revision
         # Swift checks its actual PageSession PATCH bytes against this same fixture.

@@ -18,8 +18,8 @@ def test_native_floor_gates_reads_writes_and_stream_before_endpoint(tmp_path: Pa
     config = load_config(env={"PLAN_TEST_MODE": "1", "PLAN_DB_PATH": database})
     app = create_app(config, build_clock(config), lambda: connect(database))
     client = TestClient(app)
-    supported = {"X-Panels-iOS-Build": "1"}
-    stale = {"X-Panels-iOS-Build": "0"}
+    supported = {"X-Panels-iOS-Build": "6"}
+    stale = {"X-Panels-iOS-Build": "5"}
     assert client.get("/api/ideas", headers=supported).status_code == 200
     # A supported operation proves the mutation route works in this same app.
     assert (

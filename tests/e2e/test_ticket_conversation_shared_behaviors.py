@@ -13,7 +13,7 @@ from contextlib import closing
 
 import httpx
 from playwright.sync_api import BrowserContext, Page, Response, expect
-from tests.e2e.harness import WAIT_MS, JsonObject, ServerHandle, capture_success
+from tests.e2e.harness import WAIT_MS, ApiHelper, ServerHandle, capture_success
 from tests.e2e.test_conversation_signals import (  # noqa: F401
     _navigate_to_retained_history,
     _post,
@@ -24,17 +24,16 @@ from tests.support.connected_rows import _bind, _propose
 
 def _create_ticket_conversation(
     server: ServerHandle,
-    cli: Callable[..., JsonObject],
     *,
     conversation_id: str,
     title: str,
 ) -> str:
-    ticket_id: str = cli(
-        server, "ticket", "create", "--input-json", "-",
-        stdin=json.dumps({
+    ticket_id: str = ApiHelper().create_ticket(
+        server,
+        {
             "worker_type": "coding", "title": title, "brief": "Agreed brief.",
             "manager": {"kind": "chief", "id": "chief"},
-        }),
+        },
         settle_brief=True,
     )["id"]
     _post(server, f"/api/test/signals/{conversation_id}/start")
@@ -67,13 +66,12 @@ def test_agent_questions_survive_reload_submit_as_one_map_and_replay_answers(
     signal_server: ServerHandle,  # noqa: F811 - imported pytest fixture
     context_factory: Callable[[], BrowserContext],
     open_page: Callable[..., Page],
-    cli: Callable[..., JsonObject],
 ) -> None:
     """Browser answers reach the backend sink and survive durable replay."""
     server = signal_server
     conversation_id = "e2e-ticket-agent-questions"
     ticket_id = _create_ticket_conversation(
-        server, cli, conversation_id=conversation_id, title="Answer agent questions",
+        server, conversation_id=conversation_id, title="Answer agent questions",
     )
     _post(server, f"/api/test/signals/{conversation_id}/questions")
     context = context_factory()
@@ -138,7 +136,6 @@ def test_canonical_queue_writes_refresh_the_mounted_pane(
     signal_server: ServerHandle,  # noqa: F811 - imported pytest fixture
     context_factory: Callable[[], BrowserContext],
     open_page: Callable[..., Page],
-    cli: Callable[..., JsonObject],
 ) -> None:
     """Actual held IDs reach real writers and refresh the mounted pane.
 
@@ -148,7 +145,7 @@ def test_canonical_queue_writes_refresh_the_mounted_pane(
     server = signal_server
     conversation_id = "e2e-ticket-canonical-queue"
     ticket_id = _create_ticket_conversation(
-        server, cli, conversation_id=conversation_id, title="Manage held prompts",
+        server, conversation_id=conversation_id, title="Manage held prompts",
     )
     path = f"/api/conversation/conversations/{conversation_id}"
     _post(server, f"/api/test/signals/{conversation_id}/queue")
@@ -318,7 +315,6 @@ def test_owner_send_lands_at_the_end_of_the_conversation_not_the_retained_window
     signal_server: ServerHandle,  # noqa: F811 - imported pytest fixture
     context_factory: Callable[[], BrowserContext],
     open_page: Callable[..., Page],
-    cli: Callable[..., JsonObject],
 ) -> None:
     """The owner's own copy is the last row in the thread and stays in the frame.
 
@@ -330,7 +326,7 @@ def test_owner_send_lands_at_the_end_of_the_conversation_not_the_retained_window
     server = signal_server
     conversation_id = "e2e-ticket-own-send-placement"
     ticket_id = _create_ticket_conversation(
-        server, cli, conversation_id=conversation_id, title="Place an owner send",
+        server, conversation_id=conversation_id, title="Place an owner send",
     )
     _seed_long_worker_reports(server, conversation_id, ticket_id, 160)
     _post(server, f"/api/test/signals/{conversation_id}/finish")
@@ -393,7 +389,6 @@ def test_private_credential_save_survives_reload_and_reaches_the_actual_wire(
     signal_server: ServerHandle,  # noqa: F811 - imported pytest fixture
     context_factory: Callable[[], BrowserContext],
     open_page: Callable[..., Page],
-    cli: Callable[..., JsonObject],
 ) -> None:
     """Only browser → private owner API → encrypted store → live card proves this wiring.
 
@@ -405,15 +400,14 @@ def test_private_credential_save_survives_reload_and_reaches_the_actual_wire(
 
     server = signal_server
     conversation_id = "e2e-ticket-private-credential"
-    ticket_id = cli(
+    ticket_id = ApiHelper().create_ticket(
         server,
-        "ticket", "create", "--input-json", "-",
-        stdin=json.dumps({
+        {
             "worker_type": "coding",
             "title": "Supply an API key",
             "brief": "Agreed brief.",
             "manager": {"kind": "chief", "id": "chief"},
-        }),
+        },
         settle_brief=True,
     )["id"]
     _post(server, f"/api/test/signals/{conversation_id}/start", {"ticket_id": ticket_id})
@@ -521,7 +515,6 @@ def test_decision_notes_reach_backend_and_full_history(
     signal_server: ServerHandle,  # noqa: F811 - imported pytest fixture
     context_factory: Callable[[], BrowserContext],
     open_page: Callable[..., Page],
-    cli: Callable[..., JsonObject],
 ) -> None:
     """One browser host proves the decision controls through actual backend input.
 
@@ -532,12 +525,14 @@ def test_decision_notes_reach_backend_and_full_history(
     server = signal_server
     conversation_id = "e2e-ticket-decision-notes"
     ticket_id = _create_ticket_conversation(
-        server, cli, conversation_id=conversation_id, title="Deliver attributed decision notes",
+        server, conversation_id=conversation_id, title="Deliver attributed decision notes",
     )
     owner = {"kind": "owner", "id": "owner"}
     response = httpx.patch(
         server.base + f"/api/tickets/{ticket_id}",
-        json={"ceiling": "needs_what_changes", "ceiling_holder": owner}, timeout=10,
+        json={"ceiling": "needs_what_changes", "ceiling_holder": owner},
+        cookies=server.owner_cookies,
+        timeout=10,
     )
     assert response.is_success, response.text
     _propose(server, ticket_id, "The proposal needs a precise review.")

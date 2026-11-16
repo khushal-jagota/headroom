@@ -20,7 +20,7 @@ def test_request_discards_authority_and_only_forwards_declared_cookies() -> None
             ("X-Plan-Ticket", "t_other"),
             ("X-Forwarded-Host", "evil"),
             ("Host", "evil"),
-            ("Cookie", "panels=secret; demo=one"),
+            ("Cookie", "panels_owner=secret; demo=one"),
         ],
         port=3333,
         origin=ORIGIN,
@@ -31,6 +31,16 @@ def test_request_discards_authority_and_only_forwards_declared_cookies() -> None
     assert clean["host"] == "127.0.0.1:3333"
     assert clean["x-forwarded-host"] == "panels.example"
     assert not {"x-private", "tailscale-user-login", "x-plan-ticket"} & clean.keys()
+
+
+def test_a_quoted_declared_cookie_cannot_carry_the_owner_cookie() -> None:
+    headers = request_headers(
+        [("Cookie", 'demo="x; panels_owner=secret; other=y"')],
+        port=3333,
+        origin=ORIGIN,
+        cookie_names={"demo"},
+    )
+    assert "secret" not in {key.lower(): value for key, value in headers}.get("cookie", "")
 
 
 @pytest.mark.parametrize(
@@ -51,6 +61,7 @@ def test_redirect_cannot_leave_generation(location: str) -> None:
         "demo=yes; Path=/",
         f"demo=yes; Path={PREFIX}; Domain=panels.example",
         f"__Host-demo=yes; Path={PREFIX}",
+        f"panels_owner=yes; Path={PREFIX}",
     ],
 )
 def test_cookie_requires_generation_path_without_domain(cookie: str) -> None:

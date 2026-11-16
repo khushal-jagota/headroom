@@ -12,12 +12,11 @@ DOM, never on a sleep.
 
 from __future__ import annotations
 
-import json
 from collections.abc import Callable
 
 import httpx
 from playwright.sync_api import BrowserContext, Page
-from tests.e2e.harness import ApiHelper, JsonObject, ServerHandle
+from tests.e2e.harness import ApiHelper, ServerHandle
 
 WAIT_MS = 10_000
 
@@ -59,7 +58,11 @@ FOCUS_AT_END = """() => {
 
 
 def _set_recap(server: ServerHandle, ticket_id: str, recap: str) -> None:
-    response = httpx.patch(server.base + f"/api/tickets/{ticket_id}", json={"recap": recap})
+    response = httpx.patch(
+        server.base + f"/api/tickets/{ticket_id}",
+        json={"recap": recap},
+        cookies=server.owner_cookies,
+    )
     assert response.is_success, response.text
 
 
@@ -90,18 +93,16 @@ def test_composing_survives_a_change_to_the_same_ticket(
     server: ServerHandle,
     context_factory: Callable[[], BrowserContext],
     open_page: Callable[..., Page],
-    cli: Callable[..., JsonObject],
     api: ApiHelper,
 ) -> None:
-    ticket_id = cli(
+    ticket_id = api.create_ticket(
         server,
-        "ticket", "create", "--input-json", "-",
-        stdin=json.dumps({
+        {
             "worker_type": "coding",
             "title": "Composer ticket before the change",
             "brief": "Agreed brief.",
             "manager": {"kind": "chief", "id": "chief"},
-        }),
+        },
         settle_brief=True,
     )["id"]
     _set_recap(server, ticket_id, RECAP_SEED)
