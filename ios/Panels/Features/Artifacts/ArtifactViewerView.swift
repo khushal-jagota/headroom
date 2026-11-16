@@ -33,6 +33,7 @@ struct ArtifactViewerView: View {
 
     var body: some View {
         ScreenTextEntryScope { textEntry in artifactContent(textEntry: textEntry) }
+            .toolbar(.hidden, for: .tabBar)
     }
 
     private func artifactContent(textEntry: ScreenTextEntryContext) -> some View {

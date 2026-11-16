@@ -33,7 +33,8 @@ LANE_LOCK = (
     + ".lock"
 )
 BUNDLE = os.environ.get("PANELS_OFFLINE_BUNDLE", "app.panels.ios.pios-offline")
-GOALS_SMOKE = os.environ.get("PANELS_GOALS_SMOKE") == "1"
+TABLE_SCROLL_SMOKE = os.environ.get("PANELS_TABLE_SCROLL_SMOKE") == "1"
+GOALS_SMOKE = os.environ.get("PANELS_GOALS_SMOKE") == "1" or TABLE_SCROLL_SMOKE
 REPLACEMENT_SMOKE = os.environ.get("PANELS_REPLACEMENT_SMOKE") == "1"
 REVIEW_MESSAGES = (
     os.environ.get("PANELS_REVIEW_MESSAGES") == "1" or GOALS_SMOKE or REPLACEMENT_SMOKE
@@ -326,6 +327,19 @@ def main() -> int:
             goal_record("kit", "Explore the page kit", "binary", blocks=kit_blocks),
         ]
     }
+    if TABLE_SCROLL_SMOKE:
+        tickets["offline-1"]["pending_proposal"]["body"] = (
+            "[Open table evidence](/files/tickets/offline-1/table-proof.md)"
+        )
+    table_proof = dict(
+        type="table", id="scroll-proof", caption="Table scroll proof",
+        columns=["Track", "Owner", "Reading", "Evidence"],
+        rows=[
+            ["First shared row", "Chief of Staff", "120", "A wide evidence cell that stays in its column"],
+            ["Second shared row", "Release manager", "240", "Another wide evidence cell with its original row"],
+        ],
+        cell_tones=[["neutral", "good", "good", "neutral"], ["neutral", "attention", "good", "neutral"]],
+    )
     manual: dict[str, Any] = dict(
         measure_id="words",
         definition_revision=1,
@@ -352,8 +366,8 @@ def main() -> int:
         "tail_requests": [],
     }
     state.update(
-        read_through=1,
-        historical_read=False,
+        read_through=3 if TABLE_SCROLL_SMOKE else 1,
+        historical_read=TABLE_SCROLL_SMOKE,
         new_message=False,
         refused=False,
         review_owner="chief",
@@ -645,7 +659,7 @@ def main() -> int:
             proposal = None if message_owner else ticket["pending_proposal"]
             records[("ticket", ticket["id"])] = ticket_record(ticket, proposal)
             # The Goals smoke reaches Review for its message card only.
-            if proposal and not GOALS_SMOKE:
+            if proposal and (not GOALS_SMOKE or TABLE_SCROLL_SMOKE):
                 cards[("ticket", ticket["id"])] = proposal["created_at"]
         conversations = [("stub", state["read_through"], None)]
         if REVIEW_MESSAGES:
@@ -1148,6 +1162,28 @@ def main() -> int:
                         next_refresh_at=time.time()+3600,
                     )
                 )
+                return
+            if TABLE_SCROLL_SMOKE and path == "/api/goals":
+                self.respond(dict(goals=[], status_date="2026-11-04", next_refresh_at=time.time() + 3600))
+                return
+            if TABLE_SCROLL_SMOKE and path == "/api/chief/page":
+                self.respond(dict(page=dict(kind="headroom.page", version=1, blocks=[table_proof]), page_revision=1))
+                return
+            if TABLE_SCROLL_SMOKE and path == "/api/chief/page/readings":
+                self.respond(dict(values=[], sources=[]))
+                return
+            if TABLE_SCROLL_SMOKE and path in (
+                "/files/tickets/offline-1/table-proof.md", "/files/tickets/offline-1/nested-proof.md"
+            ):
+                content = (
+                    b"# Table artifact proof\n\n[Next artifact](nested-proof.md)"
+                    if path.endswith("/table-proof.md") else b"# Nested artifact proof"
+                )
+                self.send_response(200)
+                self.send_header("Content-Type", "text/markdown")
+                self.send_header("Content-Length", str(len(content)))
+                self.end_headers()
+                self.wfile.write(content)
                 return
             if (GOALS_SMOKE or state.get("workspace_fixture")) and path == "/api/goals":
                 self.respond(

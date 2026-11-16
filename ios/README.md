@@ -16,6 +16,8 @@ a native list, with deployment status in a Panels server row above them. Active
 deployment status adds a dot to More; healthy idle has no dot. The tab bar is visible on these three roots; the shared `AppRoute`
 destination hides it on detail pages and their pushed children. Roots use the system
 default visibility: explicit root overrides compete with the shared detail rule.
+The artifact viewer also hides the tab bar at its own destination, including direct
+Review links and links inside another artifact. Back restores the root tabs.
 Navigation uses native pushes and back swipes;
 every destination has a separate source file.
 The existing full ticket API supplies ticket detail. On 2026-10-22, the lighter
@@ -872,7 +874,10 @@ open; old queued goal sends keep their words without replay.
 Ordinary Ticket and Manager files still use the native reader.
 Project, deadline, state, title and explanation can be edited in place. Saved page
 text can be edited too; Markdown keeps its links and offers Edit on a long press.
-Tables sort without changing the stored row order. Grids stack on the phone.
+Tables keep their headers and rows in one horizontal scroll with aligned columns.
+The surrounding page stays at the phone width. The caption stays outside the
+scroll, and the left-edge back gesture retains priority. Tables sort without
+changing the stored row order. Grids stack on the phone.
 
 Charts have two sizes. Main charts use the web's small presentation. Supporting
 charts and extra checklists fold in place; each chart remembers its range and
@@ -903,6 +908,16 @@ The existing simulator fixture host supports `PANELS_GOALS_SMOKE=1` and
 a separate task bundle ID, lane lock name and output directory through its
 `PANELS_OFFLINE_DEVICE`, `PANELS_OFFLINE_BUNDLE`, `PANELS_OFFLINE_LANE` and
 `PANELS_OFFLINE_OUTPUT` settings. It uses loopback data and no live writes.
+
+The one-off table and artifact review uses the same loopback fixture and
+`PanelsReview` scheme. Set `PANELS_TABLE_SCROLL_SMOKE=1` and
+`PANELS_OFFLINE_TEST=GoalFlowTests/testSharedTableScrollAndReviewArtifactTabs`,
+then run `ios/scripts/test-offline-simulator.py --review` with the assigned device,
+separate bundle, lane lock, and worktree output directory. It checks shared table
+motion, a fixed page, edge Back at two table offsets, and tab restoration after
+Review opens artifacts. It never sends a message and stays outside the permanent
+screen suite. This native touch and navigation boundary requires the real app
+host; Foundation tests cannot prove gesture priority or tab restoration.
 
 ## Decision notes
 
