@@ -18,6 +18,7 @@ def test_request_discards_authority_and_only_forwards_declared_cookies() -> None
             ("X-Private", "secret"),
             ("Tailscale-User-Login", "owner"),
             ("X-Plan-Ticket", "t_other"),
+            ("Authorization", "Bearer private-launch-token"),
             ("X-Forwarded-Host", "evil"),
             ("Host", "evil"),
             ("Cookie", "panels=secret; demo=one"),
@@ -30,7 +31,9 @@ def test_request_discards_authority_and_only_forwards_declared_cookies() -> None
     assert clean["cookie"] == "demo=one"
     assert clean["host"] == "127.0.0.1:3333"
     assert clean["x-forwarded-host"] == "panels.example"
-    assert not {"x-private", "tailscale-user-login", "x-plan-ticket"} & clean.keys()
+    assert not {
+        "x-private", "tailscale-user-login", "x-plan-ticket", "authorization"
+    } & clean.keys()
 
 
 @pytest.mark.parametrize(

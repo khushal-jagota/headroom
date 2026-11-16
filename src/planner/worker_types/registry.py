@@ -181,6 +181,22 @@ def validate_workflow(definition: WorkflowDefinition) -> None:
         )
 
 
+def validate_completion_stage(definition: WorkflowDefinition) -> None:
+    """New workflows finish with Worker follow-through before Done.
+
+    Historical workflows remain readable with their exact ownership and stage order.
+    """
+    completion = definition.stage_definition(definition.stage_gated_by(CONSEQUENCES_FIELD_ID))
+    if (
+        completion != definition.stages[-2]
+        or completion.ownership_mode is not StageOwnershipMode.worker
+    ):
+        raise PlannerError(
+            ErrorCode.validation,
+            "Consequences must be the final worker-owned stage before Done",
+        )
+
+
 def validate_definition(
     definition: WorkerTypeDefinition,
     *,

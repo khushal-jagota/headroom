@@ -13,7 +13,7 @@ import time
 from collections.abc import Iterator
 from dataclasses import replace
 from pathlib import Path
-from typing import Literal, cast
+from typing import Any, Literal, cast
 from uuid import uuid4
 
 import pytest
@@ -220,13 +220,28 @@ def test_managed_native_start_selects_only_its_project_repository(
         _git(repository, "init", "-q")
         _git(repository, "-c", "user.name=Test", "-c", "user.email=test@example.com",
              "commit", "-q", "--allow-empty", "-m", "base")
+        origin = registry.paths.root / "origin.git"
+        _git(registry.paths.root, "init", "--bare", "-b", "staging", str(origin))
+        _git(repository, "remote", "add", "origin", str(origin))
+        _git(repository, "push", "origin", "HEAD:staging")
+        from planner.ticket_workspaces import filesystem
+        monkeypatch.setattr(filesystem, "_PANELS_ORIGIN", str(origin))
         source_file = repository / "unfinished.txt"
         source_file.write_text("preserve source work")
         assert isinstance(start.arguments, StartRun)
+        role_materials = start.arguments.resolved_start.role_materials
+        assert role_materials is not None
         resolved = replace(
             start.arguments.resolved_start,
             workspace_folder=Path("/projects/project_panels") if has_project else Path("/"),
             workspace_path_policy=WorkspacePathPolicy.executor_default,
+            role_materials=replace(
+                role_materials,
+                identity_environment_variables=(
+                    *role_materials.identity_environment_variables,
+                    ("PLAN_TICKET_PROJECT_ID", "project_panels" if has_project else ""),
+                ),
+            ),
         )
         received: list[ResolvedConversationStart] = []
 
@@ -244,19 +259,18 @@ def test_managed_native_start_selects_only_its_project_repository(
         workspace = ticket_folder / "worktree"
         assert len(received) == 1 and received[0].workspace_folder == workspace
         marker = json.loads((ticket_folder / ".panels-workspace.json").read_text())
-        assert marker["repository"] == (str(repository.resolve()) if has_project else None)
+        assert marker["repository"] is None
         if has_project:
-            assert (workspace / ".git").is_file()
-            assert _git(workspace, "rev-parse", "--git-common-dir").strip() == str(
-                repository / ".git"
-            )
+            assert (workspace / ".git").is_dir()
+            assert _git(workspace, "rev-parse", "HEAD") == _git(repository, "rev-parse", "HEAD")
         else:
             assert not (workspace / ".git").exists()
         retained = workspace / "retained.txt"
         retained.write_text("keep Ticket work")
         assert registry._localize_start(
             resolved, start.child, "capability", relative,
-            {"PLAN_TICKET_ID": "t_one", "PLAN_TICKET_WORKSPACE_MANAGED": "1"},
+            {"PLAN_TICKET_ID": "t_one", "PLAN_TICKET_WORKSPACE_MANAGED": "1",
+             "PLAN_TICKET_PROJECT_ID": "project_panels" if has_project else ""},
             registry.paths.skills,
         ).workspace_folder == workspace
         assert retained.read_text() == "keep Ticket work"
@@ -1591,7 +1605,87 @@ def test_healthy_native_source_is_not_an_uncertain_cleanup_alarm(
     asyncio.run(run())
 
 
-def test_ticket_inspection_does_not_hold_other_starts_or_workspace_retirement(
+
+def test_stale_global_cleanup_finishes_before_ticket_start_refresh(
+    native_registry: tuple[MacRunner, MacOutbox, ScriptedChild, ChildCommand],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A scan with old live sources cannot overwrite the start's fresh result."""
+    from planner.executor import cleanup_reconciliation
+    from planner.executor.cleanup_reconciliation import ExecutorCleanupSnapshot
+    from planner.executor.mac_mailbox import CommandJournal
+    from planner.executor.mac_runner import command_owes_outputs
+    from planner.executor.protocol import MailboxCommand, MailboxPollReply
+
+    async def run() -> None:
+        registry, _, native, start = native_registry
+        entered, release = threading.Event(), threading.Event()
+        ticket_refresh_waiting = asyncio.Event()
+        ticket_snapshot_entered = asyncio.Event()
+        run_in_thread = asyncio.to_thread
+        snapshot = cleanup_reconciliation.snapshot_cleanup
+        refresh = registry.refresh_worker_cleanup
+        observed: list[tuple[str | None, int]] = []
+
+        def held_snapshot(
+            paths: ExecutorPaths, *, current_incarnation: str, revoke_pending: bool = False,
+            ticket_id: str | None = None, healthy_sources: frozenset[ChildReference] = frozenset(),
+            preparing_sources: frozenset[ChildReference] = frozenset(),
+        ) -> ExecutorCleanupSnapshot:
+            if ticket_id is None:
+                entered.set()
+                if not release.wait(5):
+                    raise TimeoutError("global scan was not released")
+            result = snapshot(paths, current_incarnation=current_incarnation,
+                              revoke_pending=revoke_pending, ticket_id=ticket_id,
+                              healthy_sources=healthy_sources, preparing_sources=preparing_sources)
+            observed.append((ticket_id, len(result.uncertainties)))
+            return result
+
+        async def tracked_refresh(*, ticket_id: str | None = None,
+                                  revoke_pending: bool = False) -> None:
+            if ticket_id is not None:
+                ticket_refresh_waiting.set()
+            await refresh(ticket_id=ticket_id, revoke_pending=revoke_pending)
+
+        async def tracked_thread(func: Any, /, *args: Any, **kwargs: Any) -> Any:
+            if func is held_snapshot and kwargs.get("ticket_id") is not None:
+                ticket_snapshot_entered.set()
+            return await run_in_thread(func, *args, **kwargs)
+
+        monkeypatch.setattr(asyncio, "to_thread", tracked_thread)
+        monkeypatch.setattr(cleanup_reconciliation, "snapshot_cleanup", held_snapshot)
+        monkeypatch.setattr(registry, "refresh_worker_cleanup", tracked_refresh)
+        registry.paths.spool.mkdir(parents=True, exist_ok=True)
+        with contextlib.closing(CommandJournal(
+            registry.paths.spool, registry.incarnation, outputs_owed=command_owes_outputs,
+        )) as journal:
+            global_scan = asyncio.create_task(registry.refresh_worker_cleanup())
+            try:
+                assert await asyncio.to_thread(entered.wait, 5)
+                journal.record_poll_reply(MailboxPollReply((MailboxCommand(
+                    1, start.command_id, 1, child_command=start,
+                ),)), registry.incarnation)
+                starting = asyncio.create_task(registry.run(start))
+                await asyncio.wait_for(ticket_refresh_waiting.wait(), 5)
+                assert not ticket_snapshot_entered.is_set()
+            finally:
+                release.set()
+            await global_scan
+            assert (await starting).disposition is CommandDisposition.succeeded
+            prompt = ChildCommand(
+                "prompt", start.child, ChildOperation.write_prompt, TurnToken("c_one", 1),
+                WritePrompt(content=text_message_content("work"), sender_content=(),
+                            sender_label="owner", mode=PromptDeliveryMode.queue),
+            )
+            assert (await registry.run(prompt)).disposition is CommandDisposition.succeeded
+            assert native.starts == native.prompts == 1
+            assert observed == [(None, 1), ("t_one", 0)]
+            assert registry.cleanup_uncertainties == ()
+
+    asyncio.run(run())
+
+def test_ticket_inspection_does_not_hold_workspace_retirement(
     native_registry: tuple[MacRunner, MacOutbox, ScriptedChild, ChildCommand],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1636,9 +1730,7 @@ def test_ticket_inspection_does_not_hold_other_starts_or_workspace_retirement(
                     resolved.role_materials, identity_environment_variables=tuple(env.items()),
                 ),
             )))
-            outcome = await asyncio.wait_for(registry.run(other), 2)
-            assert outcome.disposition is CommandDisposition.succeeded
-            assert native.starts == 1
+            other_start = asyncio.create_task(registry.run(other))
             folder = registry.paths.artifacts / "t_00000001"
             prepare_workspace(folder, None, "t_00000001")
 
@@ -1649,17 +1741,133 @@ def test_ticket_inspection_does_not_hold_other_starts_or_workspace_retirement(
             await asyncio.wait_for(registry.cleanup_workspaces(
                 (WorkspaceState("t_00000001", 0, True),), RETENTION_SECONDS + 1,
             ), 2)
+            assert folder.exists()  # Unassigned legacy custody cannot prove this workspace safe.
+            registry.legacy_cleanup_notice = None
+            await asyncio.wait_for(registry.cleanup_workspaces(
+                (WorkspaceState("t_00000001", 0, True),), RETENTION_SECONDS + 1,
+            ), 2)
             assert not folder.exists()
             assert registry.cleanup_uncertainties == (retained,)
-            assert inspected == ["t_one", "t_other"]
+            assert inspected == ["t_one"]
         finally:
             release.set()
             await first
+        assert (await other_start).disposition is CommandDisposition.succeeded
         assert native.starts == 2
         assert registry.cleanup_uncertainties == (retained,)
-        assert registry.legacy_cleanup_notice == "Unassigned legacy PID 123"
+        registry.legacy_cleanup_notice = "Unassigned legacy PID 123"
         await registry.refresh_worker_cleanup()
         assert registry.legacy_cleanup_notice is None
         assert inspected == ["t_one", "t_other", None]
+
+    asyncio.run(run())
+
+@pytest.mark.parametrize("scenario", ["recover", "exhaust", "cleanup_failure", "other_failure"])
+def test_claude_start_retry_respects_cleanup_and_delivery(
+    native_registry: tuple[MacRunner, MacOutbox, ScriptedChild, ChildCommand],
+    monkeypatch: pytest.MonkeyPatch,
+    scenario: str,
+) -> None:
+    from planner.conversation.backends.contracts import ClaudeInitializeTimeout
+    from planner.executor import mac_runner
+
+    monkeypatch.setattr(mac_runner, "CLAUDE_START_RETRY_DELAY_SECONDS", 0)
+
+    async def run() -> None:
+        registry, spool, _, start = native_registry
+        children: list[ScriptedChild] = []
+        events: list[str] = []
+
+        class Attempt(ScriptedChild):
+            async def start(self, resolved_start: ResolvedConversationStart, *,
+                            vendor_session_cursor: str | None) -> None:
+                events.append("start")
+                if scenario == "other_failure":
+                    raise SessionLoadFailed("missing session")
+                if scenario != "recover" or len(children) == 1:
+                    raise ClaudeInitializeTimeout("Control request timeout: initialize")
+
+            async def stop(self) -> None:
+                events.append("stop")
+                if scenario == "cleanup_failure":
+                    raise RuntimeError("cleanup uncertain")
+
+            async def write_prompt(self, turn: TurnToken, content: MessageContent,
+                                   **kwargs: object) -> BackendPromptAccepted:
+                events.append("prompt")
+                return await super().write_prompt(turn, content, **kwargs)
+
+        def factory(resolved: ResolvedConversationStart) -> BackendChildFactory:
+            def create(**kwargs: object) -> BackendChild:
+                child = Attempt()
+                children.append(child)
+                return cast(BackendChild, child)
+            return cast(BackendChildFactory, create)
+
+        registry.factory = factory
+        outcome = await registry.run(start)
+        prompt = ChildCommand(
+            "prompt", start.child, ChildOperation.write_prompt, TurnToken("c_one", 1),
+            WritePrompt(content=text_message_content("work"), sender_content=(),
+                        sender_label="owner", mode=PromptDeliveryMode.queue),
+        )
+        delivery = await registry.run(prompt)
+        if scenario == "recover":
+            assert outcome.disposition is CommandDisposition.succeeded
+            assert delivery.disposition is CommandDisposition.succeeded
+            assert events == ["start", "stop", "start", "prompt"]
+            assert sum(child.prompts for child in children) == 1
+        else:
+            assert outcome.disposition is not CommandDisposition.succeeded
+            assert delivery.disposition is not CommandDisposition.succeeded
+            assert "prompt" not in events
+            assert len(children) == (3 if scenario == "exhaust" else 1)
+            if scenario != "cleanup_failure":
+                assert [entry.kind for entry in spool.pending()] == [
+                    EnvelopeKind.backend_event, EnvelopeKind.child_stopped
+                ]
+            else:
+                assert start.child.child_id in registry._retiring_children
+
+    asyncio.run(run())
+
+
+def test_stop_during_claude_start_retry_prevents_replacement(
+    native_registry: tuple[MacRunner, MacOutbox, ScriptedChild, ChildCommand],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from planner.conversation.backends.contracts import ClaudeInitializeTimeout
+    from planner.executor import mac_runner
+
+    async def run() -> None:
+        registry, _, native, start = native_registry
+        entered = asyncio.Event()
+        release = asyncio.Event()
+        original_sleep = asyncio.sleep
+
+        async def delay(seconds: float) -> None:
+            if seconds == mac_runner.CLAUDE_START_RETRY_DELAY_SECONDS:
+                entered.set()
+                await release.wait()
+            else:
+                await original_sleep(seconds)
+
+        async def fail(*args: object, **kwargs: object) -> None:
+            native.starts += 1
+            raise ClaudeInitializeTimeout("Control request timeout: initialize")
+
+        monkeypatch.setattr(native, "start", fail)
+        monkeypatch.setattr(asyncio, "sleep", delay)
+        starting = asyncio.create_task(registry.run(start))
+        await asyncio.wait_for(entered.wait(), 5)
+        stop = ChildCommand("stop", start.child, ChildOperation.stop, None, StopRun())
+        stopping = asyncio.create_task(registry.run(stop))
+        while start.child.child_id not in registry._retiring_children:
+            await original_sleep(0)
+        release.set()
+        assert (await starting).disposition is not CommandDisposition.succeeded
+        assert (await stopping).disposition is CommandDisposition.succeeded
+        assert native.starts == 1
+        assert start.child.child_id not in registry._children
 
     asyncio.run(run())

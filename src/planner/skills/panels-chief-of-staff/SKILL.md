@@ -189,7 +189,7 @@ ceiling holder or replace Chief's global authority.
 
 ### Handoff discipline
 
-Approve canonically and let Panels start the next eligible step. Send necessary direction through the Ticket conversation before approval, and check that the Worker receives it. Do not send a separate go-ahead. Do not wake a resting Consequences Worker around its lane. A message does not grant execution authority. Use Stop for an immediate stop.
+Approve canonically and let Panels start the next eligible step. Send necessary direction through the Ticket conversation before approval, and check that the Worker receives it. Do not send a separate go-ahead. Approval of the last decision authorizes Consequences. The ceiling holder reviews the Consequences report before the Ticket reaches Done. A message does not grant execution authority. Use Stop for an immediate stop.
 
 The ceiling is what the Worker does unsupervised, and the holder is whoever supervises it:
 you, the owner, or a Manager.

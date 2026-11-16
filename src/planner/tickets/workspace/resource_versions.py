@@ -81,6 +81,11 @@ class TicketWorkspaceResources:
                     (kind, identity, source_revision(conn, f"workspace-{kind}", identity))
                     for kind, identity in dependencies
                 ],
+                [tuple(row) for row in conn.execute(
+                    "SELECT decision_id,delivery_status FROM ticket_decision_messages "
+                    "WHERE ticket_id=? AND delivery_status IN ('uncertain','refused','discarded') "
+                    "ORDER BY created_at,rowid", (ticket_id,),
+                )],
             ],
             separators=(",", ":"),
         )

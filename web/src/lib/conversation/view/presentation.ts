@@ -73,7 +73,7 @@ export function progressFor(status: ConversationViewStatus): ConversationTaskPro
     const p = status.rest.plan_progress;
     return { entries: [], totalCount: p.total_count, currentPosition: p.current_position, currentEntry: p.current_text_excerpt === null ? null : { text: p.current_text_excerpt, status: 'in_progress' }, completedCount: p.completed_count, hasUnfinishedEntry: p.has_unfinished_entry, turnRunning: status.turn_running === true };
 }
-function happened(event: ViewRestEvent | null, sender: string): {
+export function happened(event: ViewRestEvent | null, sender: string): {
     who: string | null;
     text: string;
 } | null {

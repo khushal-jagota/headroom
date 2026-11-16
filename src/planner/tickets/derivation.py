@@ -22,7 +22,7 @@ from enum import StrEnum
 
 from planner.core import ticket_blocks
 from planner.tickets.contracts import TicketStatus, WorkerStepClaim
-from planner.worker_types.contracts import CONSEQUENCES_FIELD_ID, WorkflowDefinition
+from planner.worker_types.contracts import WorkflowDefinition
 from planner.worker_types.store import workflow_from_row
 
 
@@ -46,7 +46,6 @@ class TicketFacts:
     ticket_id: str
     ticket_status: TicketStatus
     blocked: bool
-    waiting_to_closeout: bool
 
 
 class AgentState(StrEnum):
@@ -58,15 +57,15 @@ class AgentState(StrEnum):
 def derive_ticket_status(stored: StoredTicketFacts) -> TicketStatus:
     """The one rule. First match wins, and the order is the order the writers produced.
 
-    A failed claim outranks everything: it is the reason no step is running. A parked
-    proposal outranks a claim, because filing one gives the claim back. A claim outranks
+    A parked proposal outranks a claim, because it remains actionable even if an older
+    delivery left the claim in error. Otherwise a failed claim outranks rest. A claim outranks
     a blocker, because a Ticket whose step is out is not resting. What is left is a
     Ticket at rest, and ``blocked`` is what rest is called while another Ticket blocks it.
     """
-    if stored.worker_step_claim is WorkerStepClaim.errored:
-        return TicketStatus.errored
     if stored.has_pending_proposal:
         return TicketStatus.awaiting_approval
+    if stored.worker_step_claim is WorkerStepClaim.errored:
+        return TicketStatus.errored
     if stored.worker_step_claim is WorkerStepClaim.out:
         return TicketStatus.agent
     if stored.has_live_blocker:
@@ -86,17 +85,10 @@ def derive_ticket_facts(
     stored: StoredTicketFacts, *, worker_type_definition: WorkflowDefinition | None = None
 ) -> TicketFacts:
     ticket_status = derive_ticket_status(stored)
-    definition = worker_type_definition or stored.workflow
-    if definition is None:
-        raise ValueError("Ticket facts require the saved workflow")
-    gating_field = definition.gating_field(stored.stage)
     return TicketFacts(
         ticket_id=stored.ticket_id,
         ticket_status=ticket_status,
         blocked=stored.has_live_blocker,
-        waiting_to_closeout=(
-            gating_field == CONSEQUENCES_FIELD_ID and ticket_status is TicketStatus.empty
-        ),
     )
 
 

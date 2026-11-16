@@ -8,10 +8,11 @@ with ``asyncio.run`` and no threads at all.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import sqlite3
 import threading
-from collections.abc import Callable, Iterator
+from collections.abc import Awaitable, Callable, Iterator
 from contextlib import closing
 from dataclasses import replace
 from datetime import datetime
@@ -22,6 +23,7 @@ from typing import Any, cast
 import pytest
 from tests.support.in_memory_conversation_system import InMemoryConversationSystem
 from tests.support.principals import OWNER_PRINCIPAL
+from tests.support.ticket_progress import advance_ticket
 
 from planner.conversation.contracts import (
     ConversationStartRequest,
@@ -43,6 +45,7 @@ from planner.core.errors import ErrorCode, PlannerError
 from planner.database_modules import attach
 from planner.machines.contracts import HOME_MACHINE_ID, ORIGINAL_MAC_MACHINE_ID
 from planner.runtime import conversation_start, worker_step_readiness
+from planner.runtime.decision_message_delivery import deliver_ticket_decision_messages
 from planner.runtime.logic.worker_step_prompt import (
     MEMORY_LOSS_NOTICE,
 )
@@ -237,6 +240,13 @@ class _MutateOnKillConversationSystem:
         self.mutate()
         await self.base.kill(conversation_id)
 
+    async def kill_for_restart(
+        self, conversation_id: str, ticket_id: str,
+        finish: Callable[[Callable[[sqlite3.Connection], None] | None], Awaitable[None]],
+    ) -> None:
+        self.mutate()
+        await self.base.kill_for_restart(conversation_id, ticket_id, finish)
+
 
 class _PauseKillConversationSystem:
     def __init__(self, base: InMemoryConversationSystem) -> None:
@@ -251,6 +261,14 @@ class _PauseKillConversationSystem:
         self.kill_started.set()
         await self.release_kill.wait()
         await self.base.kill(conversation_id)
+
+    async def kill_for_restart(
+        self, conversation_id: str, ticket_id: str,
+        finish: Callable[[Callable[[sqlite3.Connection], None] | None], Awaitable[None]],
+    ) -> None:
+        self.kill_started.set()
+        await self.release_kill.wait()
+        await self.base.kill_for_restart(conversation_id, ticket_id, finish)
 
 
 @pytest.fixture
@@ -297,6 +315,30 @@ def test_two_racing_claimers_on_one_database_produce_exactly_one_winner(
 
     assert sorted(outcomes) == [False, True]
     assert world.ticket(ticket_id).ticket_status is TicketStatus.agent
+
+
+def test_two_consequences_steps_can_claim_independently(world: _World) -> None:
+    """A claim for one Consequences step must not hold another Ticket back."""
+    first = world.ready_ticket(title="First", next_ceiling="needs_consequences")
+    second = world.ready_ticket(title="Second", next_ceiling="needs_consequences")
+    with closing(world.connect()) as conn:
+        for ticket_id in (first, second):
+            advance_ticket(
+                conn, ticket_id, new_stage="needs_consequences", principal=OWNER_PRINCIPAL, now=1
+            )
+            conn.execute(
+                "UPDATE ticket_decision_messages SET delivery_status='delivered' WHERE ticket_id=?",
+                (ticket_id,),
+            )
+        for ticket_id in (first, second):
+            claimed = tickets_data.claim_ticket_for_worker_step(
+                conn,
+                ticket_id,
+                readiness_check=worker_step_readiness.is_ready_for_worker_step,
+                now=2,
+            )
+            assert claimed is not None
+            assert claimed.worker_step_claim is WorkerStepClaim.out
 
 
 # --- the per-Ticket flow -------------------------------------------------------
@@ -1605,7 +1647,7 @@ def test_custom_guidance_reaches_first_payload_but_not_later_stage(
         specialist_skill=None,
         guidance="CUSTOM KICKOFF GUIDE",
     )
-    ticket_id = world.ready_ticket(workflow=workflow, next_ceiling="done")
+    ticket_id = world.ready_ticket(workflow=workflow, next_ceiling="needs_consequences")
     if first_sender == "loop":
         assert world.start_step(ticket_id).started
     else:
@@ -1962,3 +2004,177 @@ def test_ambiguous_decision_survives_restart_without_automatic_replay(world: _Wo
     fresh = world.ticket(ticket_id).conversation_id
     assert fresh is not None
     assert "Retain ambiguous\nnote" in world.conversations.backend_prompt_writes(fresh)[0].text
+
+
+@pytest.mark.parametrize(
+    ("event_kind", "expected_status"),
+    [("prompt", "delivered"), ("prompt_delivery_refused", "refused"),
+     ("prompt_discarded", "discarded")],
+)
+def test_decision_outcome_recorded_during_ownership_check_is_not_lost(
+    world: _World, monkeypatch: pytest.MonkeyPatch, event_kind: str, expected_status: str
+) -> None:
+    """Settlement between the two reads must win over apparent loss of ownership."""
+    conversation_id = "conv-outcome-race"
+    ticket_id = world.ready_ticket(conversation_id=conversation_id)
+    world.start_conversation(conversation_id)
+    world.add_revision_feedback(ticket_id, "Decision")
+    with closing(world.connect()) as conn:
+        conn.execute(
+            "INSERT INTO conversations "
+            "(conversation_id,backend_key,workspace_folder,access,created_at) "
+            "VALUES (?, 'codex', '/tmp', 'full', 0)", (conversation_id,)
+        )
+        row = conn.execute(
+            "SELECT sender_message_id FROM ticket_decision_messages "
+            "WHERE ticket_id=? AND delivery_status='pending'", (ticket_id,)
+        ).fetchone()
+        sender_id = str(row[0])
+        conn.execute(
+            "UPDATE ticket_decision_messages SET delivery_status='queued',conversation_id=? "
+            "WHERE sender_message_id=?", (conversation_id, sender_id)
+        )
+        conn.commit()
+
+    async def settle_before_ownership_read(_conversation_id: str) -> frozenset[str]:
+        with closing(connect(world.db_path)) as conn:
+            conn.execute(
+                "INSERT INTO conversation_events "
+                "(conversation_id,sequence,kind,payload,created_at) VALUES (?,1,?,?,0)",
+                (conversation_id, event_kind, json.dumps({"sender_message_id": sender_id})),
+            )
+            conn.commit()
+        return frozenset()
+
+    monkeypatch.setattr(
+        world.conversations, "sender_message_ids_awaiting_outcome", settle_before_ownership_read
+    )
+    asyncio.run(deliver_ticket_decision_messages(
+        ticket_id, connect_database=world.connect,
+        conversation_system=cast(ConversationSystem, world.conversations),
+        worker_type_registry=configured_worker_type_registry(), now=world.clock.now_unix,
+    ))
+    with closing(world.connect()) as conn:
+        status = conn.execute(
+            "SELECT delivery_status FROM ticket_decision_messages WHERE sender_message_id=?",
+            (sender_id,),
+        ).fetchone()[0]
+    assert status == expected_status
+    assert world.conversations.backend_prompt_writes(conversation_id) == ()
+    if expected_status == "delivered":
+        assert world.ticket(ticket_id).ticket_status is not TicketStatus.errored
+    else:
+        assert world.ticket(ticket_id).worker_step_claim is WorkerStepClaim.errored
+
+
+def test_old_uncertain_decision_cannot_error_a_newer_proposal(world: _World) -> None:
+    """An old receipt must not replace the approval state of a later revision."""
+    ticket_id = world.ready_ticket(
+        next_ceiling="needs_what_changes", conversation_id="conv-old-decision"
+    )
+    worker = Principal(PrincipalKind.ticket, ticket_id)
+    with closing(world.connect()) as conn:
+        conn.execute(
+            "INSERT INTO conversations "
+            "(conversation_id,backend_key,workspace_folder,access,created_at) "
+            "VALUES ('conv-old-decision','codex','/tmp','full',0)"
+        )
+        first = tickets_data.file_current_proposal(
+            conn, ticket_id, body="First", principal=worker, now=2,
+        )
+        tickets_data.reject_proposal(
+            conn, ticket_id, message="Please revise", principal=OWNER_PRINCIPAL,
+            now=3, expected_proposal_revision=first.pending_proposal_revision,
+            decision_id="old-feedback",
+        )
+        conn.execute(
+            "UPDATE ticket_decision_messages SET delivery_status='sending', "
+            "conversation_id='conv-old-decision' WHERE decision_id=?",
+            ("old-feedback",),
+        )
+        conn.commit()
+        newer = tickets_data.file_current_proposal(
+            conn, ticket_id, body="Revised", principal=worker, now=4,
+        )
+        before_claim = newer.worker_step_claim_revision
+    asyncio.run(deliver_ticket_decision_messages(
+        ticket_id, connect_database=world.connect,
+        conversation_system=cast(ConversationSystem, world.conversations),
+        worker_type_registry=configured_worker_type_registry(), now=world.clock.now_unix,
+    ))
+    with closing(world.connect()) as conn:
+        current = tickets_data.read_ticket(conn, ticket_id)
+        status = conn.execute(
+            "SELECT delivery_status FROM ticket_decision_messages WHERE decision_id=?",
+            ("old-feedback",),
+        ).fetchone()[0]
+    assert current.pending_proposal == newer.pending_proposal
+    assert current.ticket_status is TicketStatus.awaiting_approval
+    assert current.worker_step_claim_revision == before_claim
+    assert status == "uncertain"
+    with closing(world.connect()) as conn:
+        assert ticket_id not in decision_messages.pending_ticket_ids(conn)
+        sender_id = conn.execute(
+            "SELECT sender_message_id FROM ticket_decision_messages WHERE decision_id=?",
+            ("old-feedback",),
+        ).fetchone()[0]
+        conn.execute(
+            "INSERT INTO conversation_events "
+            "(conversation_id,sequence,kind,payload,created_at) VALUES (?,1,'prompt',?,0)",
+            ("conv-old-decision", json.dumps({"sender_message_id": sender_id})),
+        )
+        conn.commit()
+        assert ticket_id in decision_messages.pending_ticket_ids(conn)
+    asyncio.run(deliver_ticket_decision_messages(
+        ticket_id, connect_database=world.connect,
+        conversation_system=cast(ConversationSystem, world.conversations),
+        worker_type_registry=configured_worker_type_registry(), now=world.clock.now_unix,
+    ))
+    with closing(world.connect()) as conn:
+        assert ticket_id not in decision_messages.pending_ticket_ids(conn)
+        assert conn.execute(
+            "SELECT delivery_status FROM ticket_decision_messages WHERE decision_id=?",
+            ("old-feedback",),
+        ).fetchone()[0] == "delivered"
+    assert world.ticket(ticket_id).pending_proposal == newer.pending_proposal
+
+
+def test_unresolved_old_feedback_blocks_next_stage_opener(world: _World) -> None:
+    """Accepting a newer proposal must not bypass its unresolved earlier feedback."""
+    ticket_id = world.ready_ticket(
+        next_ceiling="needs_what_changes", conversation_id="conv-unresolved"
+    )
+    world.start_conversation("conv-unresolved")
+    worker = Principal(PrincipalKind.ticket, ticket_id)
+    with closing(world.connect()) as conn:
+        first = tickets_data.file_current_proposal(
+            conn, ticket_id, body="First", principal=worker, now=2,
+        )
+        tickets_data.reject_proposal(
+            conn, ticket_id, message="Please revise", principal=OWNER_PRINCIPAL,
+            now=3, expected_proposal_revision=first.pending_proposal_revision,
+            decision_id="unresolved-feedback",
+        )
+        conn.execute(
+            "UPDATE ticket_decision_messages SET delivery_status='sending' WHERE decision_id=?",
+            ("unresolved-feedback",),
+        )
+        conn.commit()
+        newer = tickets_data.file_current_proposal(
+            conn, ticket_id, body="Revised", principal=worker, now=4,
+        )
+    asyncio.run(deliver_ticket_decision_messages(
+        ticket_id, connect_database=world.connect,
+        conversation_system=cast(ConversationSystem, world.conversations),
+        worker_type_registry=configured_worker_type_registry(), now=world.clock.now_unix,
+    ))
+    with closing(world.connect()) as conn:
+        tickets_data.accept_proposal(
+            conn, ticket_id, field="what_changes", principal=OWNER_PRINCIPAL, now=5,
+            next_ceiling="needs_implementation", next_holder=OWNER_PRINCIPAL,
+            expected_proposal_revision=newer.pending_proposal_revision,
+        )
+        assert ticket_id not in decision_messages.pending_ticket_ids(conn)
+    assert not world.start_step(ticket_id).started
+    assert world.ticket(ticket_id).worker_step_claim is WorkerStepClaim.none
+    assert world.conversations.backend_prompt_writes("conv-unresolved") == ()

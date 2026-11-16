@@ -50,7 +50,7 @@ Automatic admission carries the same stable machine ID as the Ticket. A rename n
 
 ## How a step is sent
 
-Decision notes use the same conversation door as separate system messages before ordinary stage openers. They preserve the actor, action, proposal, and complete note. A note does not change the stage or authorize further work. See [Review](review.md).
+Decision notes use the same conversation door as separate system messages before ordinary stage openers. They preserve the actor, action, proposal, and complete note. A note does not change the stage or authorize further work. Undelivered decision feedback must settle or be explicitly retried before another stage opener starts. A late failure for an older decision cannot change a newer proposal’s claim. Its delivery outcome remains recorded for explicit recovery. Panels checks for a later receipt and updates the outcome if one appears; it does not replay an uncertain note automatically. See [Review](review.md).
 
 One guarded write repeats every readiness check and takes the claim, so two passes cannot both win. On a user-owned stage, it records the opener fact. The loop starts or reuses the conversation and builds its opener from the current Ticket and saved workflow. Queue mode waits for a free turn.
 
@@ -64,7 +64,7 @@ One guarded write repeats every readiness check and takes the claim, so two pass
 
 On a Worker-owned stage the claim stays out until the Worker files a proposal or someone decides the parked one. A turn that merely ends does not give it back. A Worker that was compacted while its step was still out also gets a short memory-loss note, because nothing in its shortened conversation says that it forgot. Panels' own `/compact` after about 50 minutes without activity sends no note: the Worker was idle, so there is no step to continue. That note, like a backlogged Ticket's, waits for the next wake to carry it. Panels records the actual compaction event as the boundary, so later activity and the end of that turn cannot make the same compaction look new. It sends one note per compaction, and counts a note that is still queued or on its way to the agent. Before a queued mid-step note is delivered, Panels checks that the Ticket still has the same conversation and an active step, and that the compaction still needs a note. A step opener keeps its original message; at delivery Panels adds any needed memory note as a separate input, so replay keeps the opener’s identity.
 
-Every Ticket receives its complete workflow guide at kickoff, from its own copy, so a later edit to its Worker type does not change what it reads. Context recovery restores access to that guide. Ordinary later stage prompts identify the current step.
+Every Ticket receives its complete workflow guide at kickoff, from its own copy, so a later edit to its Worker type does not change what it reads. Context recovery restores access to that guide. Ordinary later stage prompts identify the current step. A Consequences prompt also carries the completion rule and any report returned for verification. The Worker checks existing results before repeating a side effect. Backlog, blockers, errors, and human engagement requirements still apply.
 
 ## Where it shows up
 
@@ -87,4 +87,4 @@ Database work runs on worker threads, so a database wait does not stop the serve
 - `src/planner/tickets/data.py`: the claim writers.
 - `src/planner/runtime/conversation_start.py`: starting the conversation and sending.
 
-_Last verified: 2026-11-13._
+_Last verified: 2026-11-15._

@@ -2,9 +2,10 @@
 
 The push uses the existing Web Push and APNs adapters with the subscriptions and devices
 the watchdog read from the database. The Chief message is the same HTTP call as
-`panels send-message --chief`, made as the owner, with a 10 s limit and best effort: a
-stuck server must not hold up or stop the push, which is the channel that does not
-need it.
+`panels send-message --chief`, made with no Panels identity. A caller with no identity
+may still message the Chief, and the Chief sees it as from an unidentified caller, not
+from Khushal. The call has a 10 s limit and is best effort: a stuck server must not hold
+up or stop the push, which is the channel that does not need it.
 """
 
 from __future__ import annotations

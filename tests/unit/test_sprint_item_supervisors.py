@@ -16,6 +16,7 @@ from fastapi.testclient import TestClient
 from tests.support.in_memory_conversation_system import (
     InMemoryConversationSystem,
 )
+from tests.support.launch_identity import agent_headers
 from tests.support.principals import OWNER_PRINCIPAL
 
 from planner.conversation.backends.contracts import BackendChildFactory
@@ -104,25 +105,22 @@ def _park_a_proposal(client: TestClient, item_id: str) -> dict[str, Any]:
             "manager": {"kind": "manager", "id": item_id},
             "ceiling": "needs_what_changes",
         },
-        headers=_supervisor_headers(item_id),
+        headers=_supervisor_headers(client, item_id),
     )
     assert created.status_code == 200, created.text
     ticket_id = str(created.json()["id"])
     proposed = client.post(
         f"/api/tickets/{ticket_id}/propose",
         json={"body": "The result is verified.", "recap": "Ready for review"},
-        headers={"X-Plan-Actor": "worker", "X-Plan-Ticket-ID": ticket_id},
+        headers=agent_headers(client, "worker", ticket_id),
     )
     assert proposed.status_code == 200, proposed.text
     assert proposed.json()["ticket_status"] == "awaiting_approval"
     return cast(dict[str, Any], proposed.json())
 
 
-def _supervisor_headers(item_id: str) -> dict[str, str]:
-    return {
-        "X-Plan-Actor": "manager",
-        "X-Plan-Manager-ID": item_id,
-    }
+def _supervisor_headers(client: TestClient, item_id: str) -> dict[str, str]:
+    return agent_headers(client, "manager", item_id)
 
 
 def test_a_worker_can_answer_the_outcome_that_asked_it_something(tmp_path: Path) -> None:
@@ -145,7 +143,7 @@ def test_a_worker_can_answer_the_outcome_that_asked_it_something(tmp_path: Path)
                 "manager": {"kind": "manager", "id": own["id"]},
             },
         ).json()
-        worker = {"X-Plan-Actor": "worker", "X-Plan-Ticket-ID": str(ticket["id"])}
+        worker = agent_headers(client, "worker", str(ticket["id"]))
         reply = client.post(
             "/api/messages/send",
             json={"target": {"kind": "manager", "id": own["id"]}, "message": "Answered."},
@@ -164,9 +162,9 @@ def test_a_worker_can_answer_the_outcome_that_asked_it_something(tmp_path: Path)
 
     assert reply.status_code == 200, reply.text
     assert stranger.json()["error"]["code"] == "agent_forbidden"
-    # Nobody stands above Khushal, so this one asks no authority question at all. It
-    # fails later, on the Ticket having no conversation to send from.
-    assert to_owner.json()["error"]["code"] == "not_found"
+    # A launch identity now always has a current conversation. Speaking to the
+    # owner is admitted from that conversation without standing above the owner.
+    assert to_owner.status_code == 200, to_owner.text
 
 
 def test_supervisor_rejection_stores_attributed_feedback_without_backend_io(
@@ -194,16 +192,18 @@ def test_supervisor_rejection_stores_attributed_feedback_without_backend_io(
         cross = client.post(
             path,
             json={"message": "Not your Ticket."},
-            headers=_supervisor_headers(str(other["id"])),
+            headers=_supervisor_headers(client, str(other["id"])),
         )
         assert cross.status_code == 400
         assert cross.json()["error"]["code"] == "agent_forbidden"
         assert system.backend_prompt_writes(conversation_id) == ()
         rejected = client.post(
             path,
-            json={"message": "State the verification evidence.",
-                  "expected_proposal_revision": ticket["pending_proposal"]["revision"]},
-            headers=_supervisor_headers(str(item["id"])),
+            json={
+                "message": "State the verification evidence.",
+                "expected_proposal_revision": ticket["pending_proposal"]["revision"],
+            },
+            headers=_supervisor_headers(client, str(item["id"])),
         )
 
     with closing(connect(str(db_path))) as conn:
@@ -262,9 +262,11 @@ def test_rejection_after_the_day_boundary_rearms_one_worker_step(tmp_path: Path)
             assert moved.status_code == 200, moved.text
             rejected = client.post(
                 f"/api/tickets/{ticket['id']}/reject",
-                json={"message": "Keep the rollover evidence exact.",
-                      "expected_proposal_revision": ticket["pending_proposal"]["revision"]},
-                headers=_supervisor_headers(str(item["id"])),
+                json={
+                    "message": "Keep the rollover evidence exact.",
+                    "expected_proposal_revision": ticket["pending_proposal"]["revision"],
+                },
+                headers=_supervisor_headers(client, str(item["id"])),
             )
             assert rejected.status_code == 200, rejected.text
 
@@ -509,7 +511,7 @@ def test_a_ticket_cannot_choose_who_stands_above_it(tmp_path: Path) -> None:
                 "manager": {"kind": "manager", "id": own["id"]},
             },
         ).json()
-        itself = {"X-Plan-Actor": "worker", "X-Plan-Ticket-ID": str(ticket["id"])}
+        itself = agent_headers(client, "worker", str(ticket["id"]))
         moved = client.put(
             f"/api/collections/outcome_tickets/{other['id']}/{ticket['id']}", headers=itself
         )
@@ -518,7 +520,7 @@ def test_a_ticket_cannot_choose_who_stands_above_it(tmp_path: Path) -> None:
         )
         parent_moves_it = client.put(
             f"/api/collections/outcome_tickets/{other['id']}/{ticket['id']}",
-            headers=_supervisor_headers(str(own["id"])),
+            headers=_supervisor_headers(client, str(own["id"])),
         )
         khushal_moves_it = client.put(
             f"/api/collections/outcome_tickets/{other['id']}/{ticket['id']}"
@@ -550,7 +552,7 @@ def test_worker_messages_reach_their_manager_but_not_unrelated_tickets(tmp_path:
             "/api/tickets",
             json={"worker_type": "coding", "title": "Stranger", "brief": "Start."},
         ).json()
-        itself = {"X-Plan-Actor": "worker", "X-Plan-Ticket-ID": str(mine["id"])}
+        itself = agent_headers(client, "worker", str(mine["id"]))
         into_a_stranger = client.post(
             "/api/messages/send",
             json={"message": "Help.", "target": {"kind": "ticket", "id": stranger["id"]}},
@@ -576,8 +578,8 @@ def test_supervisor_peer_messages_do_not_expand_worker_or_mutation_reach(tmp_pat
         mine = _park_a_proposal(client, str(own["id"]))
         theirs = _park_a_proposal(client, str(other["id"]))
         before = client.get(f"/api/tickets?detail=full&id={theirs['id']}").json()
-        own_headers = _supervisor_headers(str(own["id"]))
-        worker = {"X-Plan-Actor": "worker", "X-Plan-Ticket-ID": str(mine["id"])}
+        own_headers = _supervisor_headers(client, str(own["id"]))
+        worker = agent_headers(client, "worker", str(mine["id"]))
         peer = client.post(
             "/api/messages/send",
             json={"target": {"kind": "manager", "id": other["id"]}, "message": "Coordinate"},

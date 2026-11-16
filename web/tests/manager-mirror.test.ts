@@ -27,7 +27,6 @@ function ticket(
     activity_at: 1,
     is_backlogged: false,
     ticket_status: "empty",
-    waiting_to_closeout: false,
     has_pending_proposal: false,
     gating_field: "implementation",
     blocked: false,
@@ -111,7 +110,7 @@ describe("the shared Item and Ticket presentation", () => {
     [{ awaiting_reply: true }, "awaiting_reply"],
     [{ agent_state: "errored" }, "errored"],
     [{ ticket_status: "agent" }, "agent"],
-    [{ waiting_to_closeout: true }, "waiting_to_closeout"],
+    [{ gating_field: "consequences" }, "empty"],
     [{ awaiting_agent_approval: true }, "status_awaiting_approval"],
     [{ ticket_status: "empty" }, "empty"],
     [{ ticket_status: "blocked" }, "blocked"],
@@ -125,7 +124,7 @@ describe("the shared Item and Ticket presentation", () => {
     [{ awaiting_agent_approval: true, has_pending_proposal: true }, "status_awaiting_approval"],
     [{ awaiting_answer: true }, "awaiting_answer"], [{ assigned: true }, "assigned"], [{ awaiting_reply: true }, "awaiting_reply"],
     [{ agent_state: "errored" }, "errored"], [{ agent_state: "working" }, "agent"],
-    [{ waiting_to_closeout: true }, "waiting_to_closeout"], [{ ticket_status: "blocked" }, "blocked"],
+    [{ gating_field: "consequences" }, "empty"], [{ ticket_status: "blocked" }, "blocked"],
     [{ stage: "done" }, "done"]
   ] as const)("gives supplied backlogged work one group while preserving %o", (facts, resumedGroup) => {
     const row = ticket("backlogged", { ...facts, is_backlogged: true });
@@ -192,7 +191,7 @@ describe("the shared Item and Ticket presentation", () => {
     const rows = [
       ticket("done", { stage: "done" }), ticket("blocked", { ticket_status: "blocked" }),
       ticket("empty"), ticket("agent-review", { awaiting_agent_approval: true }),
-      ticket("closeout", { waiting_to_closeout: true }), ticket("working", { agent_state: "working" }),
+      ticket("closeout", { gating_field: "consequences" }), ticket("working", { agent_state: "working" }),
       ticket("deferred", { is_backlogged: true }), ticket("failed", { agent_state: "errored" }),
       ticket("reply", { awaiting_reply: true }), ticket("assigned", { assigned: true }),
       ticket("answer", { awaiting_answer: true }), ticket("approval", { awaiting_approval: true })
@@ -200,8 +199,8 @@ describe("the shared Item and Ticket presentation", () => {
     expect(workItemTicketGroups(rows).map(group => [group.key, group.tickets.map(row => row.id)])).toEqual([
       ["awaiting_approval", ["approval"]], ["awaiting_answer", ["answer"]], ["assigned", ["assigned"]],
       ["awaiting_reply", ["reply"]], ["errored", ["failed"]], ["backlog", ["deferred"]],
-      ["agent", ["working"]], ["waiting_to_closeout", ["closeout"]],
-      ["status_awaiting_approval", ["agent-review"]], ["empty", ["empty"]],
+      ["agent", ["working"]],
+      ["status_awaiting_approval", ["agent-review"]], ["empty", ["closeout", "empty"]],
       ["blocked", ["blocked"]], ["done", ["done"]]
     ]);
     expect(

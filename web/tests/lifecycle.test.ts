@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { advanceTargetFor, buildLifecycle, preferredScopeCeilingFor, type WorkerTypeManifest } from "../src/lib/lifecycle";
+import { advanceTargetFor, buildLifecycle, ceilingOptionsFor, finalApprovalFor, preferredScopeCeilingFor, type WorkerTypeManifest } from "../src/lib/lifecycle";
 
 function manifest(stages: string[], advance: Record<string, string>): WorkerTypeManifest {
   return {
@@ -36,5 +36,19 @@ describe("manifest terminal stages", () => {
     expect(lifecycle.stageIsTerminal[target!]).toBe(true);
     expect(lifecycle.stageIsTerminal.needs_answer).toBe(false);
     expect(lifecycle.stageIsTerminal.needs_other).toBe(false);
+  });
+});
+
+
+describe("Consequences review", () => {
+  it("offers Consequences as a ceiling and treats its approval as final", () => {
+    const definition = manifest(["draft", "land", "done"], { draft: "land", land: "done" });
+    definition.stages[1]!.gating_field = "consequences";
+    definition.ceiling_range = ["draft", "land", "done"];
+    const lifecycle = buildLifecycle(definition);
+    expect(finalApprovalFor(lifecycle, "draft")).toBe(false);
+    expect(finalApprovalFor(lifecycle, "land")).toBe(true);
+    expect(ceilingOptionsFor(lifecycle, "draft").map(option => option.value)).toEqual(["draft", "land"]);
+    expect(preferredScopeCeilingFor(lifecycle, "land")).toBe("land");
   });
 });

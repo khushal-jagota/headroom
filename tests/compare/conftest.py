@@ -1,6 +1,16 @@
+import json
 from pathlib import Path
 
 import pytest
+
+
+def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
+    expected = json.loads(
+        (Path(__file__).parent / "expected_open" / "checkpoint.json").read_text()
+    )
+    for item in items:
+        if reason := expected.get(item.nodeid):
+            item.add_marker(pytest.mark.xfail(reason=reason, strict=True))
 
 
 def pytest_addoption(parser: pytest.Parser) -> None:

@@ -7,11 +7,9 @@ dependency-free.
 The chain is already in the data and this module stores nothing new. A Ticket's Manager
 is ``tickets.manager_id``. Workers have no declared reach above other objects.
 
-A position is a truthful local claim, exactly as it was before: the caller's
-``X-Plan-Actor`` and its one id header, resolved once in
-:mod:`planner.core.authctx`. Nothing here authenticates a claim, and nothing here
-compares a claimed Manager against an agent key. What
-the rule does add is that a claim must name the thing being acted on.
+The request boundary authenticates the caller in :mod:`planner.core.authctx`.
+This module supplies the current relationships for that principal; it grants no
+identity from role labels or saved environment values.
 """
 
 from __future__ import annotations

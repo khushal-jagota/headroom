@@ -44,6 +44,8 @@ def sender_label(ctx: RequestContext) -> str:
         return "Chief"
     if ctx.principal.kind is PrincipalKind.ticket:
         return f"Ticket {ctx.principal.id}"
+    if ctx.principal.kind is PrincipalKind.unidentified:
+        return "Unidentified caller"
     return f"Manager {ctx.principal.id}"
 
 
@@ -111,7 +113,11 @@ async def send_message(
         PrincipalKind.manager,
         PrincipalKind.ticket,
     }
-    if caller.kind not in message_kinds or recipient.kind not in message_kinds:
+    # An unidentified caller can send one kind of message: one to the Chief.
+    caller_may_send = caller.kind in message_kinds or (
+        caller.kind is PrincipalKind.unidentified and recipient.kind is PrincipalKind.chief
+    )
+    if not caller_may_send or recipient.kind not in message_kinds:
         raise PlannerError(ErrorCode.validation, "unsupported message principal kind", {})
     if owner_read_through_sequence is not None and (
         caller.kind is not PrincipalKind.owner or system_message

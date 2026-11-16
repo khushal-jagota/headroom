@@ -106,12 +106,16 @@ def test_skill_edit_commands_keep_worker_identity_and_resolve_declared_skill(
         main,
         [*command, "--json"],
         input="# New body",
-        env={"PLAN_ACTOR": "worker", "PLAN_TICKET_ID": "t_current"},
+        env={
+            "PLAN_ACTOR": "worker",
+            "PLAN_TICKET_ID": "t_current",
+            "PLAN_LAUNCH_TOKEN": "synthetic-launch-secret",
+        },
     )
 
     assert result.exit_code == 0, result.output
     for _method, _path, kwargs in skill_requests:
-        assert kwargs["headers"] == {"X-Plan-Actor": "worker", "X-Plan-Ticket-ID": "t_current"}
+        assert kwargs["headers"] == {"Authorization": "Bearer synthetic-launch-secret"}
     patches = [
         (method, path, kwargs["json"])
         for method, path, kwargs in skill_requests

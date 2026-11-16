@@ -16,6 +16,7 @@ import pytest
 from fastapi.testclient import TestClient
 from starlette.requests import Request
 from tests.support.api_app import _app
+from tests.support.launch_identity import agent_headers
 from tests.unit.test_manual_measures import manual_measure
 from tests.unit.test_measure_persistence import NOW, collect, run, source, taken
 
@@ -93,6 +94,7 @@ def create(conn: Connection, **extra: Any) -> Goal:
 
 def test_saved_page_race_and_independent_completion_activation(tmp_db: Connection) -> None:
     from planner.managers.data import create_manager
+
     manager = create_manager(
         tmp_db, title="Guide", project_id="project_vylo",
         clock=FakeClock(datetime.fromtimestamp(NOW, UTC)),
@@ -131,8 +133,9 @@ def test_saved_page_race_and_independent_completion_activation(tmp_db: Connectio
     other = create(tmp_db, title="Another goal")
     with TestClient(_app(tmp_db)) as client:
         denied = client.patch(
-            f"/api/goals/{other.id}", json={"active": False},
-            headers={"X-Plan-Actor": "goal", "X-Plan-Goal-ID": goal.id},
+            f"/api/goals/{other.id}",
+            json={"active": False},
+            headers=agent_headers(tmp_db, "goal", goal.id),
         )
         assert denied.status_code == 400, denied.text
         assert denied.json()["error"]["code"] == "agent_forbidden"

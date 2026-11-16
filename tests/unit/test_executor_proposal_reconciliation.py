@@ -33,7 +33,7 @@ from planner.executor.vps_agent_writes import write_ticket_mutation
 from planner.executor.vps_inbox import InboxStore
 from planner.runtime.worker_step_readiness import is_ready_for_worker_step
 from planner.tickets import data
-from planner.tickets.contracts import TITLE_MAX_CHARS, TicketLocale, WorkerStepClaim
+from planner.tickets.contracts import TITLE_MAX_CHARS, TicketEdit, TicketLocale, WorkerStepClaim
 
 
 def _openers(connection: Connection, ticket_id: str) -> list[tuple[object, ...]]:
@@ -79,7 +79,7 @@ def test_mac_user_owned_proposal_and_receipt_settle_once_then_replay_after_advan
             worker_type=worker_type,
             principal=OWNER_PRINCIPAL,
             brief="Brief",
-            stated_ceiling=user_stage if at_ceiling else next_stage,
+            stated_ceiling=user_stage,
             stated_holder=CHIEF_PRINCIPAL,
             locale=TicketLocale.macos,
             employee_backend="codex",
@@ -87,6 +87,16 @@ def test_mac_user_owned_proposal_and_receipt_settle_once_then_replay_after_advan
             now=1,
             title_max_chars=TITLE_MAX_CHARS,
         )
+        if not at_ceiling:
+            # Keep this case below the ceiling until the Consequences stage.
+            ticket = data.edit_ticket(
+                tmp_db,
+                ticket.id,
+                edit=TicketEdit(ceiling=next_stage),
+                principal=OWNER_PRINCIPAL,
+                title_max_chars=TITLE_MAX_CHARS,
+                now=1,
+            )
         worker = Principal(PrincipalKind.ticket, ticket.id)
         ticket = data.file_current_proposal(
             tmp_db, ticket.id, body="Alpha", principal=worker, now=2
@@ -170,7 +180,7 @@ def test_mac_user_owned_proposal_and_receipt_settle_once_then_replay_after_advan
                 field=field,
                 principal=OWNER_PRINCIPAL,
                 now=5,
-                next_ceiling="done",
+                next_ceiling=next_stage,
                 next_holder=CHIEF_PRINCIPAL,
                 expected_proposal_revision=settled.pending_proposal_revision,
             )
@@ -183,6 +193,12 @@ def test_mac_user_owned_proposal_and_receipt_settle_once_then_replay_after_advan
         advanced = data.read_ticket(tmp_db, ticket.id)
         assert advanced.stage == next_stage
         assert advanced.field_values[field] == "Shared answer Ω\nExact work"
+        # The next claim follows delivery of the approval when one was required.
+        tmp_db.execute(
+            "UPDATE ticket_decision_messages SET delivery_status='delivered' WHERE ticket_id=?",
+            (ticket.id,),
+        )
+        tmp_db.commit()
         next_claim = data.claim_ticket_for_worker_step(
             tmp_db,
             ticket.id,

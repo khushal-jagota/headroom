@@ -46,22 +46,23 @@ export function ticketSectionFacts(section:TicketSection,view:EffectiveNavigatio
 
 export function ticketSectionHeading(section:TicketSection,view:EffectiveNavigationView | null | undefined):string {
   const row=section.record.value,facts=ticketSectionFacts(section,view);
-  return row.blocked || row.ticket_status==='blocked' ? 'Blocked on'
+  return row.ticket_status==='awaiting_approval' ? 'Waiting at'
+    : row.blocked || row.ticket_status==='blocked' ? 'Blocked on'
     : facts.agent_state==='errored' ? 'Error working on'
       : facts.assigned ? 'Your step:' : row.stage==='needs_brief' ? 'Waiting for'
-        : agentHoldsTicket(facts) ? 'Currently working on' : 'Waiting at';
+        : agentHoldsTicket(facts) ? 'Currently working on' : row.gating_field==='consequences' ? 'At' : 'Waiting at';
 }
 
 export function ticketSectionRunLabel(section:TicketSection,view:EffectiveNavigationView | null | undefined):string | null {
   const row=section.record.value,facts=ticketSectionFacts(section,view);
-  if(row.blocked || row.ticket_status==='blocked') return null;
-  return facts.awaiting_approval ? 'Awaiting approval' : facts.assigned ? "You're on it" : null;
+  if(row.ticket_status!=='awaiting_approval' && (row.blocked || row.ticket_status==='blocked')) return null;
+  return facts.awaiting_approval ? 'Awaiting approval' : row.ticket_status==='awaiting_approval' ? null : facts.assigned ? "You're on it" : null;
 }
 
 export function ticketSectionFieldState(section:TicketSection,view:EffectiveNavigationView | null | undefined,field:string):FieldStageVisualState {
   const row=section.record.value,lc=section.lifecycle;
   const facts=ticketSectionFacts(section,view);
-  const status=facts.awaiting_approval ? 'awaiting_approval' : facts.assigned ? 'assigned'
+  const status=row.ticket_status==='awaiting_approval' ? 'awaiting_approval' : facts.assigned ? 'assigned'
     : facts.agent_state==='errored' ? 'errored' : agentHoldsTicket(facts) ? 'agent' : row.ticket_status;
   return ticketStageVisualStateFor(lc,{ticketStage:row.stage,ticketStatus:status,fieldName:field,
     fieldHasProposal:row.proposal_field===field});

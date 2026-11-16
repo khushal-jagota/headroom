@@ -131,6 +131,11 @@ def decide_accept(
     resolved_ceiling = machine.resolve_next_ceiling(
         target, next_ceiling, worker_type_definition=worker_type_definition
     )
+    if next_holder is None and (
+        machine.completion_follows(ticket.stage, worker_type_definition=worker_type_definition)
+        or machine.consequences_follows(ticket.stage, worker_type_definition=worker_type_definition)
+    ):
+        next_holder = ticket.ceiling_holder
     if next_holder is None:
         raise PlannerError(
             ErrorCode.scope_missing,
@@ -209,7 +214,13 @@ def decide_complete_user_owned_gate(
         ticket,
         field,
         new_body,
-        target,
+        (
+            worker_type_definition.completed_stage()
+            if machine.completion_follows(
+                ticket.stage, worker_type_definition=worker_type_definition
+            )
+            else target
+        ),
         principal,
         worker_type_definition=worker_type_definition,
     )

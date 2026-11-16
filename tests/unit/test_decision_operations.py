@@ -17,6 +17,7 @@ from typing import Any
 import pytest
 from fastapi.testclient import TestClient
 from tests.support.api_app import _app
+from tests.support.launch_identity import agent_headers
 from tests.unit.test_notifications import _conversation_on_a_ticket
 from tests.unit.test_pending_ceiling import _park
 
@@ -65,7 +66,9 @@ def _count(conn: sqlite3.Connection) -> int:
 
 @pytest.mark.parametrize("decision", ["approve", "send_back"])
 def test_lost_response_lookup_and_retry_keep_original_outcome_after_ticket_advances(
-    tmp_db: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch, decision: str,
+    tmp_db: sqlite3.Connection,
+    monkeypatch: pytest.MonkeyPatch,
+    decision: str,
 ) -> None:
     root = Path(__file__).resolve().parents[2]
     monkeypatch.setattr(server, "_ASSETS_DIR", root / "assets")
@@ -95,8 +98,8 @@ def test_lost_response_lookup_and_retry_keep_original_outcome_after_ticket_advan
         assert client.post(path, json=command).status_code == 500
         monkeypatch.setattr(decision_operations, "apply", real_apply)
         receipt = client.get(path).json()
-        private = client.get(path, headers={"X-Plan-Actor": "chief"})
-        unknown = client.get(path + "-unknown", headers={"X-Plan-Actor": "chief"})
+        private = client.get(path, headers=agent_headers(tmp_db, "chief"))
+        unknown = client.get(path + "-unknown", headers=agent_headers(tmp_db, "chief"))
         assert private.status_code == unknown.status_code == 200
         assert private.json() == unknown.json() == {"receipt_contract": 1, "receipt": None}
         if decision == "approve":
@@ -143,8 +146,10 @@ def test_lost_response_lookup_and_retry_keep_original_outcome_after_ticket_advan
         assert client.get(alternate).json() == {"receipt_contract": 1, "receipt": None}
         assert data.read_ticket(tmp_db, other.id) == other
         assert _count(tmp_db) == 1
+
         def unavailable_workflow(*_args: Any, **_kwargs: Any) -> Any:
             raise PlannerError(ErrorCode.validation, "current workflow is unavailable")
+
         # Replay must not consult the current workflow. Keep persisted rows valid.
         monkeypatch.setattr(data, "workflow_from_row", unavailable_workflow)
         assert client.get(path).json() == receipt
@@ -292,8 +297,14 @@ def test_stale_refusal_preserves_new_content_and_feedback_and_replays(
 
 @pytest.mark.parametrize(
     "failure",
-    ["receipt_insert", "send_back_receipt_insert", "unexpected_domain",
-     "business_refusal", "integrity", "structural"],
+    [
+        "receipt_insert",
+        "send_back_receipt_insert",
+        "unexpected_domain",
+        "business_refusal",
+        "integrity",
+        "structural",
+    ],
 )
 def test_receipt_or_unexpected_failure_rolls_back_canonical_transition(
     tmp_db: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch, failure: str,

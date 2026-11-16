@@ -1343,7 +1343,7 @@ def test_unobserved_detached_children_end_without_killing_other_workers(
         import tempfile
 
         # screen stores a Unix socket here, so keep the path below AF_UNIX limits.
-        screen_dir = Path(tempfile.mkdtemp(prefix="ps-"))
+        screen_dir = Path(tempfile.mkdtemp(prefix="ps-", dir=Path("/tmp").resolve()))
         environment = dict(
             os.environ, PLAN_WORKER_PROCESS_ROOT=str(tmp_path), SCREENDIR=str(screen_dir)
         )
@@ -1482,3 +1482,90 @@ def test_missing_cgroup_requires_the_original_readable_hierarchy(
     controllers.unlink()
     with pytest.raises(FileNotFoundError):
         worker_cgroups.empty(identity)
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="Linux delegated cgroup v2 cleanup")
+def test_worker_default_terminal_servers_are_isolated(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Default tmux and screen sockets must not attach to another Worker's server."""
+    import shutil
+
+    from planner.conversation import worker_scratch
+    from planner.conversation.worker_scratch import WorkerScratch
+    from planner.platform_runtime.linux.worker_processes import LinuxWorkerProcesses
+
+    if not shutil.which("tmux") or not shutil.which("screen"):
+        pytest.skip("tmux and screen are required for the terminal-server proof")
+    _require_delegated_cgroup()
+    scratch_root = tmp_path / "s"
+    # tmux and screen use real paths in AF_UNIX sockets, whose Linux limit is 108 bytes.
+    longest_socket = scratch_root / "one-ffffff" / "screen" / "4194304.same"
+    tmux_socket = scratch_root / "one-ffffff" / f"tmux-{os.getuid()}" / "default"
+    if max(len(os.fsencode(longest_socket)), len(os.fsencode(tmux_socket))) >= 108:
+        pytest.skip("Temporary path is too long for terminal sockets; use a short --basetemp")
+    monkeypatch.setattr(worker_scratch, "_scratch_root", lambda: scratch_root)
+    monkeypatch.setattr(worker_scratch, "_disk_directory", lambda path: None)
+
+    async def run() -> None:
+        workers = []
+        scratches = []
+        roots = []
+        try:
+            for name in ("one", "two"):
+                folder = tmp_path / name
+                folder.mkdir()
+                env = dict(os.environ, PLAN_TICKET_ID=name,
+                           PLAN_WORKER_PROCESS_ROOT=str(tmp_path / "records"),
+                           TMUX="external", STY="external")
+                worker = await WorkerSupervisor.create(env, tmp_path)
+                assert worker is not None
+                workers.append(worker)
+                scratch = await WorkerScratch.create(env)
+                scratches.append(scratch)
+                worker.environment.update(scratch.environment)
+                assert "TMUX" not in worker.environment and "STY" not in worker.environment
+                # Simulate the Claude SDK merging these inherited names back at spawn.
+                worker.environment.update(TMUX="external", STY="external")
+                markers = [folder / "tmux", folder / "screen"]
+                commands = []
+                for terminal, marker in zip(("tmux", "screen"), markers, strict=True):
+                    code = ("import os,time; from pathlib import Path; "
+                            f"Path({str(marker)!r}).write_text(str(os.getpid())); time.sleep(60)")
+                    prefix = (["tmux", "new-session", "-d", "-s", "same"]
+                              if terminal == "tmux" else ["screen", "-dmS", "same"])
+                    commands.append(prefix + [sys.executable, "-c", code])
+                code = ("import os,subprocess,time; "
+                        "assert not os.getenv('TMUX') and not os.getenv('STY'); "
+                        f"commands={commands!r}; "
+                        "[subprocess.run(c,check=True) for c in commands]; time.sleep(60)")
+                process = await asyncio.create_subprocess_exec(
+                    *worker.argv([sys.executable, "-c", code]), env=worker.environment,
+                    stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.PIPE,
+                )
+                roots.append(process)
+                await worker.started(process.pid)
+                deadline = time.monotonic() + 8
+                while not all(marker.exists() for marker in markers):
+                    if process.returncode is not None:
+                        assert process.stderr is not None
+                        raise AssertionError((await process.stderr.read()).decode())
+                    assert time.monotonic() < deadline
+                    await asyncio.sleep(0.02)
+            first = [int((tmp_path / "one" / name).read_text()) for name in ("tmux", "screen")]
+            second = [int((tmp_path / "two" / name).read_text()) for name in ("tmux", "screen")]
+            assert set(first).isdisjoint(second)
+            result = await workers[0].stop()
+            assert result.complete, result.reason
+            table = LinuxWorkerProcesses().snapshot(time.monotonic() + 2)
+            assert all(pid not in table or table[pid].zombie for pid in first)
+            assert all(pid in table and not table[pid].zombie for pid in second)
+        finally:
+            for worker in workers:
+                await worker.stop()
+            for process in roots:
+                await asyncio.wait_for(process.wait(), 5)
+            for scratch in scratches:
+                await scratch.aclose()
+
+    asyncio.run(run())

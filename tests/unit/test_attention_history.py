@@ -190,7 +190,7 @@ def test_automatic_acceptance_does_not_create_explicit_approval(
     data.edit_ticket(
         tmp_db,
         ticket_id,
-        edit=TicketEdit(ceiling="needs_consequences"),
+        edit=TicketEdit(ceiling="needs_implementation"),
         title_max_chars=200,
         principal=OWNER_PRINCIPAL,
         now=250,

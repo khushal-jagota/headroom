@@ -8,7 +8,7 @@ back out of the Ticket row.
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from dataclasses import replace
 from pathlib import Path
 from sqlite3 import Connection
@@ -227,6 +227,12 @@ class _LinkWatchingConversationSystem:
     async def kill(self, conversation_id: str) -> None:
         await self._system.kill(conversation_id)
 
+    async def kill_for_restart(
+        self, conversation_id: str, ticket_id: str,
+        finish: Callable[[Callable[[Connection], None] | None], Awaitable[None]],
+    ) -> None:
+        await self._system.kill_for_restart(conversation_id, ticket_id, finish)
+
     async def is_running(self, conversation_id: str) -> bool:
         return await self._system.is_running(conversation_id)
 
@@ -396,7 +402,16 @@ def test_resetting_stops_the_conversation_and_unlinks_it(
             sender_label="loop",
         )
 
+        from planner.agent_identity.data import authenticate_launch_token, issue_launch_token
+
+        token = issue_launch_token(tmp_db, conversation_id)
+        assert authenticate_launch_token(tmp_db, token) is not None
         await reset_ticket_conversation(system, tmp_db, ticket.id, now=30)
+        assert authenticate_launch_token(tmp_db, token) is None
+        assert tmp_db.execute(
+            "SELECT count(*) FROM agent_launch_tokens WHERE conversation_id=?",
+            (conversation_id,),
+        ).fetchone()[0] == 0
 
         assert system.backend_cancellations(conversation_id) == 1
         assert await system.is_running(conversation_id) is False
@@ -428,11 +443,14 @@ def test_an_existing_conversation_keeps_its_workspace_after_the_project_folder_c
         )
         tmp_db.execute("UPDATE tickets SET project_id = ? WHERE id = ?", (project.id, ticket.id))
         system = InMemoryConversationSystem()
+        values = worker_resolve(tmp_db, read_ticket(tmp_db, ticket.id))
+        identity = dict(values.role_materials.identity_environment_variables)
+        assert identity["PLAN_TICKET_PROJECT_ID"] == project.id
         conversation_id = await _started(
             system,
             tmp_db,
             read_ticket(tmp_db, ticket.id),
-            worker_resolve(tmp_db, read_ticket(tmp_db, ticket.id)),
+            values,
             now=3,
         )
 
@@ -519,6 +537,7 @@ def test_registered_linux_project_ticket_starts_in_its_executor_workspace_projec
     assert request.role_materials is not None
     identity_environment = dict(request.role_materials.identity_environment_variables)
     assert identity_environment["PLAN_TICKET_ID"] == ticket.id
+    assert identity_environment["PLAN_TICKET_PROJECT_ID"] == project.id
     assert f"Its fixed destination is {destination}." in request.role_materials.role_text
     assert read_ticket(tmp_db, ticket.id).machine_id == destination
     row = tmp_db.execute(

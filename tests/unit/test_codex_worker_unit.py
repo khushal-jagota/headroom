@@ -91,6 +91,8 @@ def test_only_explicit_worker_identity_selects_supervision(
             assert scratch.parent == tmp_path / "runs"
             assert scratch.is_dir()
             assert scripted.launched()["environment"]["TMPDIR"] == str(scratch)
+            assert scripted.launched()["environment"]["TMUX_TMPDIR"] == str(scratch)
+            assert scripted.launched()["environment"]["SCREENDIR"] == str(scratch / "screen")
             assert units[0].environment["BASH_ENV"] == str(tmp_path / "user-bash-env")
             assert not units[0].stopped
             scripted.sink.expect_another_turn()

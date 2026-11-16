@@ -198,9 +198,9 @@ def test_populated_legacy_move_preserves_executor_authority(
             "vps": HOME_MACHINE_ID,
             "macos": ORIGINAL_MAC_MACHINE_ID,
         }
-        assert dict(conn.execute(
-            "SELECT machine_id,snapshot_json FROM machine_backend_snapshots"
-        )) == {
+        assert dict(
+            conn.execute("SELECT machine_id,snapshot_json FROM machine_backend_snapshots")
+        ) == {
             HOME_MACHINE_ID: '{"model":"home-only"}',
             ORIGINAL_MAC_MACHINE_ID: '{"model":"mac-only"}',
         }
@@ -275,6 +275,13 @@ def test_away_machine_never_uses_local_factory(tmp_db: sqlite3.Connection, tmp_p
         tmp_path,
         ConversationAccess.full,
     )
+    from planner.conversation.storage import ensure_started_conversation_record
+
+    ensure_started_conversation_record(tmp_db, start, created_at=1)
+    tmp_db.execute(
+        "UPDATE tickets SET conversation_id=? WHERE id=?", (start.conversation_id, ticket.id)
+    )
+    tmp_db.commit()
     router(resolved_start=start, event_sink=Mock(), message_files=Mock())
     local.assert_not_called()
     remote.assert_called_once()

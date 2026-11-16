@@ -1,16 +1,16 @@
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from sqlite3 import Connection
 from typing import Any
 
-import pytest
 from fastapi import FastAPI, Request
 from fastapi.testclient import TestClient
+from tests.support.in_memory_conversation_system import InMemoryConversationSystem
 from tests.support.principals import OWNER_PRINCIPAL
 
 from planner.core import server as server_module
-from planner.core import unidentified_agent_calls
 from planner.core.clock import build_clock
 from planner.core.config import load_config
 from planner.core.db import connect, create_schema
@@ -22,14 +22,16 @@ CANONICAL_ORIGIN = "https://panels.tailnet.ts.net"
 REMOTE = {"Tailscale-User-Login": ALLOWED_LOGIN}
 REMOTE_WRONG = {"Tailscale-User-Login": "other@example.com"}
 _REPO_ROOT = Path(__file__).resolve().parents[2]
-_VITE_CSS_ROUTE = "/_app/assets/" + next(
-    path.name for path in (_REPO_ROOT / "web" / "dist" / "assets").glob("index-*.css")
-)
 
 
-def _make_app(
-    tmp_path: Path, *, hosted: bool = True, refuse_unidentified: bool = False
-) -> tuple[FastAPI, Path]:
+def _vite_css_route() -> str:
+    index = (_REPO_ROOT / "web" / "dist" / "index.html").read_text()
+    match = re.search(r'href="(/_app/assets/index-[^"]+\.css)"', index)
+    assert match is not None
+    return match.group(1)
+
+
+def _make_app(tmp_path: Path, *, hosted: bool = True) -> tuple[FastAPI, Path]:
     db_path = tmp_path / "data" / "planning-test.db"
     db_path.parent.mkdir(parents=True)
     boot = connect(str(db_path))
@@ -39,8 +41,6 @@ def _make_app(
         "PLAN_TEST_MODE": "1",
         "PLAN_DB_PATH": str(db_path),
     }
-    if refuse_unidentified:
-        env["PLAN_REFUSE_UNIDENTIFIED_AGENT_CALLS"] = "1"
     if hosted:
         env.update(
             {
@@ -55,7 +55,10 @@ def _make_app(
     def conn_factory() -> Connection:
         return connect(str(db_path))
 
-    return create_app(config, clock, conn_factory), db_path
+    app = create_app(
+        config, clock, conn_factory, conversation_system_for_test=InMemoryConversationSystem()
+    )
+    return app, db_path
 
 
 def _ticket(db_path: Path) -> str:
@@ -85,25 +88,51 @@ def test_tailscale_allowed_and_wrong_login_are_enforced(tmp_path: Path) -> None:
     assert wrong.json()["error"]["code"] == "agent_forbidden"
 
 
-def test_trusted_owner_reaches_enabled_agent_boundary_after_ingress(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+def test_tailscale_owner_writes_and_a_local_call_with_no_identity_only_reads(
+    tmp_path: Path,
 ) -> None:
-    lookups: list[tuple[Any, ...]] = []
+    """The live shape: the browser and the iPhone app come through Tailscale Serve, which
+    adds the login header. A direct loopback call with no identity carries none."""
+    app, db_path = _make_app(tmp_path)
+    ticket_id = _ticket(db_path)
+    iphone = {**REMOTE, "X-Panels-iOS-Build": "8"}
 
-    def refuse(*args: Any) -> unidentified_agent_calls.PeerLookupResult:
-        lookups.append(args)
-        return unidentified_agent_calls.PeerLookupResult(False)
-
-    monkeypatch.setattr(unidentified_agent_calls, "resolve_loopback_peer", refuse)
-    app, _db_path = _make_app(tmp_path, refuse_unidentified=True)
     with TestClient(app) as client:
-        owner = client.get("/api/meta", headers=REMOTE)
-        unidentified = client.get("/api/meta")
+        browser_write = client.patch(
+            f"/api/tickets/{ticket_id}", json={"title": "Browser edit"}, headers=REMOTE
+        )
+        iphone_write = client.patch(
+            f"/api/tickets/{ticket_id}", json={"title": "iPhone edit"}, headers=iphone
+        )
+        read = client.get(f"/api/tickets?detail=full&id={ticket_id}")
+        posted_read = client.post("/api/measures/read", json={})
+        writes = [
+            client.patch(f"/api/tickets/{ticket_id}", json={"title": "x"}),
+            client.post("/api/projects", json={"name": "x"}),
+            client.post("/api/messages/send", content=b"{"),
+            client.post(
+                "/api/messages/send",
+                json={"target": {"kind": "ticket", "id": ticket_id}, "message": "x"},
+            ),
+        ]
+        to_chief = client.post(
+            "/api/messages/send",
+            json={"target": {"kind": "chief", "id": "chief"}, "message": "x"},
+        )
 
-    assert owner.status_code == 200, owner.text
-    assert unidentified.status_code == 403
-    assert unidentified.json()["error"]["code"] == "agent_forbidden"
-    assert len(lookups) == 1
+    assert browser_write.status_code == 200, browser_write.text
+    assert iphone_write.status_code == 200, iphone_write.text
+    assert iphone_write.json()["title"] == "iPhone edit"
+    assert read.status_code == 200, read.text
+    assert read.json()["title"] == "iPhone edit"
+    assert posted_read.json().get("error", {}).get("code") != "agent_forbidden"
+    for write in writes:
+        assert write.status_code == 400, write.text
+        assert write.json()["error"]["code"] == "agent_forbidden"
+        assert "launch credential" in write.json()["error"]["message"]
+        assert "panels api METHOD PATH" in write.json()["error"]["message"]
+    # Admitted: whatever the delivery answers, it is not the identity refusal.
+    assert to_chief.status_code == 200, to_chief.text
 
 
 def test_remote_tailscale_actor_spoof_is_ignored_but_internal_actor_remains(
@@ -169,13 +198,13 @@ def test_static_and_file_surfaces_pass_through_trusted_ingress(
     with TestClient(app) as client:
         blocked = [
             client.get("/", headers=REMOTE_WRONG),
-            client.get(_VITE_CSS_ROUTE, headers=REMOTE_WRONG),
+            client.get(_vite_css_route(), headers=REMOTE_WRONG),
             client.get("/assets/app.css", headers=REMOTE_WRONG),
             client.get("/static/favicon.ico", headers=REMOTE_WRONG),
             client.get("/files/tickets/t_file123/notes.md", headers=REMOTE_WRONG),
         ]
         allowed_root = client.get("/", headers=REMOTE)
-        allowed_app = client.get(_VITE_CSS_ROUTE, headers=REMOTE)
+        allowed_app = client.get(_vite_css_route(), headers=REMOTE)
         allowed_asset = client.get("/assets/app.css", headers=REMOTE)
         allowed_static = client.get("/static/favicon.ico", headers=REMOTE)
         allowed_ticket_file = client.get("/files/tickets/t_file123/notes.md", headers=REMOTE)
@@ -188,27 +217,28 @@ def test_static_and_file_surfaces_pass_through_trusted_ingress(
     assert allowed_ticket_file.status_code == 200
 
 
-def test_manager_identity_accepts_only_current_names() -> None:
-    import pytest
+def test_self_declared_identity_names_never_authenticate() -> None:
+    from planner.core.authctx import request_context
 
-    from planner.core.authctx import RequestContext, request_context
-    from planner.core.errors import PlannerError
-
-    def context(headers: dict[str, str]) -> RequestContext:
-        return request_context(Request({
-            "type": "http",
-            "headers": [(key.lower().encode(), value.encode()) for key, value in headers.items()],
-        }))
-
-    current = context({"X-Plan-Actor": "manager", "X-Plan-Manager-ID": "si_one"})
-    assert current.principal.kind.value == "manager"
-    assert current.principal.id == "si_one"
     for headers in (
+        {"X-Plan-Actor": "chief"},
+        {"X-Plan-Actor": "manager", "X-Plan-Manager-ID": "si_one"},
         {"X-Plan-Actor": "sprint_item_supervisor", "X-Plan-Sprint-Item-ID": "si_one"},
         {"X-Plan-Actor": "manager", "X-Plan-Sprint-Item-ID": "si_one"},
+        {"X-Plan-Conversation-ID": "spoofed"},
     ):
-        with pytest.raises(PlannerError, match="does not name a Panels principal"):
-            context(headers)
+        context = request_context(
+            Request(
+                {
+                    "type": "http",
+                    "headers": [
+                        (key.lower().encode(), value.encode()) for key, value in headers.items()
+                    ],
+                }
+            )
+        )
+        assert context.principal.kind.value == "unidentified"
+        assert context.conversation_id is None
 
 
 def test_hosted_owner_strips_manager_identity(tmp_path: Path) -> None:
@@ -281,6 +311,7 @@ def test_native_routes_require_hosted_identity_and_reject_browser_origin() -> No
             [*valid, ("Origin", CANONICAL_ORIGIN)],
         ):
             assert client.get("/native-admission", headers=headers).status_code == 403
+
 
 def test_preview_gate_requires_explicit_edge_evidence_even_on_safe_reads() -> None:
     """Ordinary local-owner access must never accidentally admit application traffic."""

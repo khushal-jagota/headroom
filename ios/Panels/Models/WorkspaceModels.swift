@@ -23,7 +23,6 @@ struct TicketSummary: Codable, Identifiable, Sendable {
     let isBacklogged: Bool
     let blocked: Bool?
     let recapPreview: String
-    let waitingToCloseout: Bool?
     let activityAt: Double?
     let projectId: String?
     let project: String?
@@ -37,7 +36,7 @@ struct TicketSummary: Codable, Identifiable, Sendable {
     let assigned: Bool
     var agentState: String
     var conversationSignal: ConversationSignal?
-    enum CodingKeys: String, CodingKey { case integrityError, locale, id, title, workerType, stage, ticketStatus, isBacklogged, blocked, recapPreview, waitingToCloseout, activityAt, projectId, project, manager, managerId, managerTitle, awaitingReply, awaitingAnswer, awaitingApproval, awaitingAgentApproval, assigned, agentState, conversationSignal }
+    enum CodingKeys: String, CodingKey { case integrityError, locale, id, title, workerType, stage, ticketStatus, isBacklogged, blocked, recapPreview, activityAt, projectId, project, manager, managerId, managerTitle, awaitingReply, awaitingAnswer, awaitingApproval, awaitingAgentApproval, assigned, agentState, conversationSignal }
 }
 /// A detail read's worker row whose working and unread marks the navigation view keeps current.
 protocol LiveMarkedWorker {
@@ -124,7 +123,6 @@ extension TicketSummary {
         isBacklogged = try required(Bool.self, .isBacklogged, broken: false)
         blocked = try c.decodeIfPresent(Bool.self, forKey: .blocked)
         recapPreview = try required(String.self, .recapPreview, broken: issue?.reason ?? "")
-        waitingToCloseout = try c.decodeIfPresent(Bool.self, forKey: .waitingToCloseout)
         activityAt = try c.decodeIfPresent(Double.self, forKey: .activityAt)
         projectId = try c.decodeIfPresent(String.self, forKey: .projectId)
         project = try c.decodeIfPresent(String.self, forKey: .project)

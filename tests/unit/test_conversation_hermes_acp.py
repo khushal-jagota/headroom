@@ -535,8 +535,12 @@ def test_real_core_and_scripted_acp_persist_confirmed_compaction_and_release_the
 
             after = await subject.conversation_record("c")
             assert after is not None
-            assert after.automatically_compacted_through_sequence == activity_sequence
             events = await subject.recorded_events("c")
+            compacted = next(
+                event for event in events if isinstance(event.payload, ContextCompactedEventPayload)
+            )
+            assert after.automatically_compacted_through_sequence == compacted.sequence
+            assert compacted.sequence > activity_sequence
             assert (
                 sum(isinstance(event.payload, ContextCompactedEventPayload) for event in events)
                 == 1
@@ -641,6 +645,8 @@ def test_absent_hermes_interpreter_preserves_spawn_failure_without_session_or_pr
         scratch = Path(environment["TMPDIR"])
         assert scratch.parent == scratch_root and scratch.is_dir()
         assert environment["TMP"] == environment["TEMP"] == str(scratch)
+        assert environment["TMUX_TMPDIR"] == str(scratch)
+        assert environment["SCREENDIR"] == str(scratch / "screen")
         scratch_paths.append(scratch)
         raise failure
         yield  # pragma: no cover - an async context manager that refuses entry

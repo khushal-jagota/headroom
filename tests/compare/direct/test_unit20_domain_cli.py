@@ -116,7 +116,11 @@ def test_unit20_retained_dataset_cli(tmp_path: Path, request: pytest.FixtureRequ
                 worker_type="unit20_year_fields",
                 fields=tuple(FieldDefinition(field, field) for field in fields),
                 stages=tuple(
-                    StageDefinition("needs_" + field, field, field, False, StageOwnershipMode.user)
+                    StageDefinition(
+                        "needs_" + field, field, field, False,
+                        StageOwnershipMode.worker
+                        if field == "consequences" else StageOwnershipMode.user,
+                    )
                     for field in fields
                 )
                 + (StageDefinition("done", "Done", None, True, None),),
@@ -172,6 +176,17 @@ def test_unit20_retained_dataset_cli(tmp_path: Path, request: pytest.FixtureRequ
                     )
                 else:
                     for field in fields:
+                        if field == "consequences":
+                            excluded = tickets_data.file_current_proposal(
+                                conn, excluded.id, body="Complete",
+                                principal=Principal(PrincipalKind.ticket, excluded.id), now=NOW,
+                            )
+                            excluded = tickets_data.accept_proposal(
+                                conn, excluded.id, field=field, principal=OWNER_PRINCIPAL,
+                                now=NOW, next_holder=OWNER_PRINCIPAL,
+                                expected_proposal_revision=excluded.pending_proposal_revision,
+                            )
+                            continue
                         excluded = tickets_data.complete_user_owned_gate(
                             conn, excluded.id, field=field, new_body="Complete",
                             principal=OWNER_PRINCIPAL, now=NOW,

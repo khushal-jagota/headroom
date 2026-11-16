@@ -7,6 +7,7 @@ import pytest
 from fastapi.testclient import TestClient
 from tests.support.executor_catalog import ScriptedBackendSnapshots
 from tests.support.in_memory_conversation_system import InMemoryConversationSystem
+from tests.support.launch_identity import agent_headers
 
 from planner.conversation.backend_state import BackendStateStore
 from planner.conversation.contracts import ConversationBackendKey as Backend
@@ -78,7 +79,7 @@ def test_http_scoped_read_exact_write_and_retired_corrections(
         forbidden = client.post(
             "/api/conversation/backends",
             json={"ticket_id": worker.id},
-            headers={"X-Plan-Actor": "worker", "X-Plan-Ticket-ID": "outside"},
+            headers=agent_headers(client, "worker", "outside"),
         )
         assert forbidden.status_code in (400, 403, 404)
         from typing import Any, cast
@@ -88,6 +89,7 @@ def test_http_scoped_read_exact_write_and_retired_corrections(
         mac_source = ScriptedBackendSnapshots()
         mac_source.model = "mac-only-model"
         from types import SimpleNamespace
+
         runtime.system.configure_machine_catalog(cast(Any, SimpleNamespace(
             catalog_for=lambda machine_id: mac_source,
         )))

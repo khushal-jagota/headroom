@@ -1409,8 +1409,8 @@ button.list-row:hover .list-row-title {
 
 /* --- Error line ---------------------------------------------------------- */
 
-/* An error stands in its own quiet tint, the fill that replaced the old left bar: the code
- * chip and the sentence read as one marked line without a rule beside them. */
+/* An error is one sentence in its own quiet tint. The code is for tests and logs, not for
+ * the person reading. */
 .error-line {
   display: flex;
   align-items: baseline;
@@ -1421,14 +1421,15 @@ button.list-row:hover .list-row-title {
   background: var(--error-surface);
 }
 
-/* The code is inline code: Small mono on the code lift, in the line's own tone. */
-.error-code {
-  font-family: var(--font-mono);
-  font-size: var(--type-code);
-  color: var(--tone-primary);
-  background: var(--surface-code);
-  padding: var(--code-pad-y) var(--code-pad-x);
-  border-radius: var(--radius-sm);
+/* A small error-coloured dot leads the sentence, so it reads as a status, not a card. */
+.error-line::before {
+  content: "";
+  flex: none;
+  align-self: center;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent-error);
 }
 
 .error-message {
@@ -3591,7 +3592,9 @@ select {
   min-width: 0;
   max-width: 100%;
   min-height: 0;
+  /* Clipped, never scrolled: see .manager-page. */
   overflow: hidden;
+  overflow: clip;
   /* The gap under the conversation, matching the one between the nav and the ticket's
    * title, so the page breathes the same at both ends. On a notched phone the
    * safe-area inset wins, so the composer clears the home indicator. */
@@ -4406,7 +4409,13 @@ a.artifact-chip:hover,
   min-width: 0;
   max-width: 100%;
   min-height: 0;
+  /* Clipped, never scrolled. The floating conversation zone sits at this page's bottom edge, so
+   * if the page could scroll, the zone would scroll with it and stand lifted off the floor.
+   * `overflow: hidden` still scrolls when the browser reveals the caret of a pasted draft, and
+   * anything that escapes the document's own scroller (the hidden loading status of a list far
+   * down the page) gives it room to. `clip` has no scroll position. */
   overflow: hidden;
+  overflow: clip;
   --conversation-edge-gap: max(var(--space-4), env(safe-area-inset-bottom));
   container-type: inline-size;
   /* Its own name for its own rules, and `conversation-host` for the one question every

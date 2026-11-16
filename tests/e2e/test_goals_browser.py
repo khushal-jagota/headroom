@@ -17,6 +17,7 @@ from urllib.parse import parse_qs, urlparse
 import httpx
 from playwright.sync_api import APIResponse, BrowserContext, Locator, Page, Route, expect
 from tests.e2e.harness import WAIT_MS, ApiHelper, JsonObject, ServerHandle
+from tests.support.launch_identity import agent_headers
 from tests.support.server_fixtures import signal_server as signal_server
 
 
@@ -433,6 +434,12 @@ def test_goal_page_persistence_external_refresh_and_owned_conversation(
         },
     )
     path = f"/api/goals/{goal['id']}"
+    chief_headers = agent_headers(server, "chief")
+    seeded_chief_conversation = api.get(server, "/api/chief/conversation")["conversation_id"]
+    seeded_chief_status = api.get(
+        server, f"/api/conversation/conversations/{seeded_chief_conversation}"
+    )
+    assert seeded_chief_status["is_running"] is False
     page = open_page(
         context_factory(), server, f"#/workspace/goal/{goal['id']}", "[data-goal-page]"
     )
@@ -465,7 +472,7 @@ def test_goal_page_persistence_external_refresh_and_owned_conversation(
     before_selection = current["page"]
     selected = httpx.patch(
         server.base + path,
-        headers={"X-Plan-Actor": "chief"},
+        headers=chief_headers,
         json={
             "primary_checklist_block_id": "approach",
         },
@@ -481,6 +488,7 @@ def test_goal_page_persistence_external_refresh_and_owned_conversation(
     )
     expect(page.get_by_role("button", name="Mark done", exact=True)).to_have_count(0)
     expect(page.get_by_role("checkbox", name="Review the draft", exact=True)).to_have_count(1)
+
     # The controlled browser fixture cannot prove that a date edit crosses the real
     # writer, saved page JSON, query invalidation, and a subsequent reload. Reuse
     # this selected-checklist scenario rather than another connected server/host.
@@ -607,7 +615,7 @@ def test_goal_page_persistence_external_refresh_and_owned_conversation(
     updated_page["blocks"][0]["items"][1]["state"] = "open"
     response = httpx.patch(
         server.base + path,
-        headers={"X-Plan-Actor": "chief"},
+        headers=chief_headers,
         json={
             "page": updated_page,
             "active": True,
@@ -781,7 +789,7 @@ def test_goal_page_persistence_external_refresh_and_owned_conversation(
     ):
         remote = httpx.patch(
             server.base + path,
-            headers={"X-Plan-Actor": "chief"},
+            headers=chief_headers,
             json={
                 "title": "Chief title",
                 "page": reordered,
@@ -888,8 +896,14 @@ def test_goal_page_persistence_external_refresh_and_owned_conversation(
     expect(primary.get_by_role("progressbar")).to_have_attribute(
         "aria-valuetext", "2 of 2 done", timeout=WAIT_MS
     )
-    # Opening either goal starts no model. Both pages use their shared holder.
-    assert api.get(server, "/api/chief/conversation")["conversation_id"] is None
+    # The authenticated fixture already has a Chief conversation. Opening either
+    # goal must reuse it without starting work or adding model/session events.
+    assert (
+        api.get(server, "/api/chief/conversation")["conversation_id"] == seeded_chief_conversation
+    )
+    idle_chief = api.get(server, f"/api/conversation/conversations/{seeded_chief_conversation}")
+    assert idle_chief["is_running"] is False
+    assert idle_chief["latest_sequence"] == seeded_chief_status["latest_sequence"]
     other_message = api.direct_post(
         server,
         "/api/messages/send",

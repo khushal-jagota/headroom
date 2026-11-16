@@ -31,7 +31,7 @@ Settings → Machines shows availability, current Worker activity, and Tickets t
 
 ## Credentials and the original Mac
 
-The owner registers an extra destination and obtains one join command and its private credential. The command installs a new executor and checks an accepted lease. The owner supplies the trusted HTTPS origin of the same home that issues the credential. A credential permits executor requests for one destination. Replacing it invalidates the old credential. The home normally stores only a verifier. During the original Mac handover, it also keeps the pending credential until the handover closes.
+The owner registers an extra destination from Settings → Machines (Add a machine) and obtains one join command and its private credential, both shown once. The page takes the home's trusted HTTPS origin from the home's own configuration and refuses to issue a command when none is set. The `panels machine join-command` command does the same for a terminal that has owner authority. The command installs a new executor and checks an accepted lease. The command always names the trusted HTTPS origin of the same home that issues the credential. A credential permits executor requests for one destination. Replacing it invalidates the old credential. The home normally stores only a verifier. During the original Mac handover, it also keeps the pending credential until the handover closes.
 
 The original Mac has a one-time transition from its existing authority. The first upgraded runtime requests its credential automatically and saves it privately before its work loops start. That runtime is an update trial, and the Mac supervisor keeps it only if it confirms in time. So the old authority stays open until the supervisor's decision to keep it is final: the supervisor's saved selection names this trial, and no attempt is pending. The runtime then sends a credentialed close request, and retries with backoff until the home accepts. That request closes the handover: the old authority closes permanently, and the pending secret is removed. That closure survives home restarts and migration replay.
 
@@ -53,11 +53,15 @@ Presence comes from leases, judged by the home clock. A silent machine becomes a
 
 A lease reads pending work and the current cleanup evidence. The slower workspace maintenance pass refreshes retained history. Startup and explicit Worker actions still refresh their cleanup evidence directly.
 
+On the Mac, background and start-time cleanup refreshes run in order. A start checks its Ticket after any older refresh has finished, so an older scan cannot replace its newer evidence. Native child starts and mailbox polling remain independent of that reconciliation.
+
 Each machine has one current process incarnation. A restart replaces only that machine's old incarnation. The home refuses stale process requests. The new process can replay its own machine's retained output under the existing assignments. It cannot replay another machine's output.
 
 ## Commands and output
 
 Commands wait in the home's durable mailbox until their destination fetches them. The executor journals a command before it runs it. A duplicate returns its saved result instead of another execution. Journal tombstones prevent repetition after a home database restore. Commands for one conversation retain their order. Different conversations can progress independently.
+
+When Claude initialization times out on the Mac, the executor keeps the waiting prompt in order and makes a bounded attempt to start a fresh child. It first proves the failed child has stopped. If startup still fails, or cleanup is uncertain, it reports the failure instead of risking a second child. It never retries a prompt that may have reached an agent.
 
 The outbox saves each durable event before delivery. Each conversation sends its numbered items in order. The home commits each item and its receipt together. A duplicate receives the stored receipt. The home checks each sender against its own machine, including message delivery and duplicate receipts.
 
@@ -68,6 +72,18 @@ Live text and tool progress remain lossy. Finished messages and durable events w
 Files reach the home before an item that refers to them. Uploads wait privately until the home accepts their item. The home checks file ownership before publication and publishes in small groups so other writers can proceed. A matching digest does not grant another machine access.
 
 Each Worker uses its own local Ticket workspace. The executor transfers prompts, skills, and Ticket artifacts. It does not transfer the private worktree or its dependencies. The home grants workspace retirement only for the exact registered folder and its owning destination. See [Ticket workspaces](environments.md#ticket-scratch).
+
+Agents can send a proposal back with `panels ticket proposal ID revise` and guidance
+from `--message TEXT` or `--body-file PATH`. Use `--body-file -` for stdin. The executor
+checks Home support before it saves the submission. An older Home returns an update
+request without queued work. An older executor still refuses the command locally.
+
+Home checks the sender's current assignment and ordinary Ticket authority, then uses
+the same send-back resolver as the direct CLI. Guidance enters the Worker's prompt
+through the existing delivery path. The decision and receipt commit together. A lost
+reply can return the original receipt through `panels executor retry SUBMISSION_ID`.
+Mac and Linux receive this support through their versioned runtime update channel,
+which preserves their journals and outboxes.
 
 ## Restarts and recovery
 

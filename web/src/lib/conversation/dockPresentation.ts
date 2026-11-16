@@ -30,3 +30,13 @@ export function dockPreviewText(source: string | null | undefined): string | nul
   }
   return text(tree).replace(/\n[ \t]*\n+/g, '\n').trim() || null;
 }
+
+const FEEDBACK_KINDS = ['prompt_refused', 'prompt_uncertain', 'prompt_discarded', 'turn_stopped', 'turn_ended'];
+/** Exceptional dock feedback for the latest thing that happened. Its words are that event's
+ * own, never the running turn's line: an earlier ending beside a new running turn must not
+ * repeat what the activity line already says. */
+export function dockFeedbackFor(latest: { kind: string; ending?: string } | null, said: { text: string } | null): string | null {
+  if (!latest || !FEEDBACK_KINDS.includes(latest.kind)) return null;
+  if (latest.kind === 'turn_ended' && latest.ending === 'completed') return null;
+  return said?.text || null;
+}

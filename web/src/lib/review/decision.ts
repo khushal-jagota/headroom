@@ -5,10 +5,13 @@ import type { DecisionCommand, DecisionReceipt, SavedDecision } from "./contract
 
 export type ReviewDecisionBody = Omit<DecisionCommand, "decision" | "field">;
 export type ReviewDecision = { action: DecisionCommand["decision"]; body: ReviewDecisionBody };
-export type DecisionRecovery = { saved: SavedDecision; error: unknown; busy: boolean; terminal?: boolean };
-export const decisionRecovery = writable<DecisionRecovery[]>([]);
+/** A decision the server refused. The proposal it was made on shows it. */
+export type DecisionRefusal = { saved: SavedDecision; error: unknown };
+export const decisionRefusals = writable<DecisionRefusal[]>([]);
 const prefix = "panels:decision-operation:v1:";
-const active = new Map<string, DecisionRecovery>();
+const refusals = new Map<string, DecisionRefusal>();
+// A lookup or send that gets no answer must end, or its lock and its decision wait forever.
+const requestTimeoutMs = 15_000;
 export class DecisionRefusedError extends PlannerFetchError {}
 
 export function decisionIdentity(ticketId: string, revision: number): string {
@@ -40,7 +43,7 @@ export function recallReviewDecision(identity: string): SavedDecision | null {
   try {
     // An old command has no receipt contract. Never promote it into a new operation.
     if (window.sessionStorage.getItem(`panels:review-decision:${identity}`) !== null) {
-      throw new Error("A previous decision uses the older route. Check the Ticket before another decision.");
+      throw new Error("A previous decision uses the older route. Open the Ticket and check it before another decision.");
     }
     const raw = window.localStorage.getItem(storageKey(identity));
     if (raw === null) return null;
@@ -62,22 +65,23 @@ function save(identity: string, value: SavedDecision): void {
   try { window.localStorage.setItem(storageKey(identity), JSON.stringify(value)); }
   catch { throw storageError(); }
 }
-function publish(identity: string, saved: SavedDecision, error: unknown, busy: boolean, terminal = false): void {
-  active.set(identity, { saved, error, busy, terminal });
-  decisionRecovery.set([...active.values()]);
-}
 function forget(identity: string): void {
   try { window.localStorage.removeItem(storageKey(identity)); }
   catch { throw storageError(); }
-  active.delete(identity);
-  decisionRecovery.set([...active.values()]);
 }
-export function dismissDecisionRecovery(saved: SavedDecision): void {
-  active.delete(decisionIdentity(saved.ticketId, saved.command.expected_proposal_revision));
-  decisionRecovery.set([...active.values()]);
+function publishRefusal(identity: string, saved: SavedDecision, error: unknown): void {
+  refusals.set(identity, { saved, error });
+  decisionRefusals.set([...refusals.values()]);
+}
+// A new decision on the same field replaces its earlier refusal.
+function clearRefusals(ticketId: string, field: string): void {
+  for (const [identity, entry] of refusals) {
+    if (entry.saved.ticketId === ticketId && entry.saved.command.field === field) refusals.delete(identity);
+  }
+  decisionRefusals.set([...refusals.values()]);
 }
 export function validateDecisionResponse(value: unknown, saved: SavedDecision, allowMissing: boolean): DecisionReceipt | null {
-  const invalid = () => new Error("The decision result is unconfirmed. Check the decision again.");
+  const invalid = () => new Error("The decision result is unconfirmed. Press the button again to check it.");
   if (!isObject(value) || value.receipt_contract !== 1) throw invalid();
   if (value.receipt === null && allowMissing) return null;
   const receipt = value.receipt;
@@ -103,34 +107,29 @@ async function locked<T>(identity: string, action: () => Promise<T>): Promise<T>
   return navigator.locks.request(storageKey(identity), action);
 }
 async function resolve(identity: string, saved: SavedDecision): Promise<DecisionReceipt> {
-  publish(identity, saved, null, true);
-  try {
-    const path = `/api/tickets/${encodeURIComponent(saved.ticketId)}/decision-operations/${encodeURIComponent(saved.operationId)}`;
-    const found = validateDecisionResponse(await fetchJson(path, { cache: "no-store" }), saved, true);
-    const receipt = found ?? validateDecisionResponse(await fetchJson(path, {
-      method: "POST", body: saved.command, cache: "no-store"
-    }), saved, false)!;
-    forget(identity);
-    const refusal = receipt.outcome === "refused"
-      ? new DecisionRefusedError(
-        `${saved.command.decision === "approve" ? "Approval" : "Send back"} did not apply: ${receipt.error!.message}`,
-        receipt.error!.code, { detail: receipt.error!.detail }) : null;
-    // Keep the refusal above proposal membership before refresh can unmount its card.
-    if (refusal) publish(identity, saved, refusal, false, true);
-    // A refresh failure cannot undo a confirmed terminal decision.
-    await queryClient.invalidateQueries().catch(() => undefined);
-    if (refusal) throw refusal;
-    return receipt;
-  } catch (error) {
-    // Only a validated terminal receipt can clear an operation. HTTP failures cannot.
-    if (recallReviewDecision(identity)) publish(identity, saved, error, false);
-    throw error;
-  }
+  const path = `/api/tickets/${encodeURIComponent(saved.ticketId)}/decision-operations/${encodeURIComponent(saved.operationId)}`;
+  // Only a validated terminal receipt clears a saved operation. A failed or timed-out request cannot.
+  const found = validateDecisionResponse(await fetchJson(path, { cache: "no-store", signal: AbortSignal.timeout(requestTimeoutMs) }), saved, true);
+  const receipt = found ?? validateDecisionResponse(await fetchJson(path, {
+    method: "POST", body: saved.command, cache: "no-store", signal: AbortSignal.timeout(requestTimeoutMs)
+  }), saved, false)!;
+  forget(identity);
+  const refusal = receipt.outcome === "refused"
+    ? new DecisionRefusedError(
+      `${saved.command.decision === "approve" ? "Approval" : "Send back"} did not apply: ${receipt.error!.message}`,
+      receipt.error!.code, { detail: receipt.error!.detail }) : null;
+  // Keep the refusal above proposal membership before refresh can unmount its card.
+  if (refusal) publishRefusal(identity, saved, refusal);
+  // A refresh failure cannot undo a confirmed terminal decision.
+  await queryClient.invalidateQueries().catch(() => undefined);
+  if (refusal) throw refusal;
+  return receipt;
 }
 export async function submitReviewDecision(ticketId: string, field: string, decision: ReviewDecision): Promise<DecisionReceipt> {
   const command = JSON.parse(JSON.stringify({ decision: decision.action, field, ...decision.body })) as DecisionCommand;
   const identity = decisionIdentity(ticketId, command.expected_proposal_revision);
   return locked(identity, async () => {
+    clearRefusals(ticketId, field);
     const previous = recallReviewDecision(identity);
     if (previous && canonical(previous.command) !== canonical(command)) {
       throw new Error("The previous decision is unconfirmed. Check its original note and approval choice before another decision.");
@@ -146,8 +145,13 @@ export async function recoverReviewDecision(saved: SavedDecision): Promise<void>
   await locked(identity, async () => {
     const current = recallReviewDecision(identity);
     if (current) await resolve(identity, current);
-    else { active.delete(identity); decisionRecovery.set([...active.values()]); }
   });
+}
+/** Re-check every saved decision once, with no screen. A refusal reaches its proposal; anything else waits for the next open. */
+export async function recoverSavedReviewDecisions(): Promise<void> {
+  let saved: SavedDecision[];
+  try { saved = savedReviewDecisions(); } catch { return; }
+  await Promise.allSettled(saved.map(recoverReviewDecision));
 }
 export function savedReviewDecisions(): SavedDecision[] {
   try {
