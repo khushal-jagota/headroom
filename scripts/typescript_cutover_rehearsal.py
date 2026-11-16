@@ -166,6 +166,7 @@ def install(
     from planner.environments.update_contracts import SUPPORTED_UPDATE_SCHEMA_FLOOR, UpdateAttempt
     from planner.environments.update_install import (
         installer_command,
+        require_exact_schema_frontier,
         schema_change_pending,
         write_installer,
     )
@@ -175,6 +176,8 @@ def install(
     staged = current / (".app-next-" + sha)
     if not staged.exists():
         extract_app_archive(archive, staged, receipt["archive_sha256"], sha)
+    if receipt["manifest"]["runtime_contract"]["version"] == 2:
+        require_exact_schema_frontier(current / "data/planner.db", staged)
     backup = None
     if schema_change_pending(current / "data/planner.db", staged):
         backup = run(
