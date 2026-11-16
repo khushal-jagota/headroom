@@ -298,14 +298,16 @@ struct WorkspaceView: View {
                 let destinationIDs = ids(latest)
                 let duration = motionDuration(oldIDs: oldIDs, newIDs: destinationIDs)
                 enteringIDs = Set(destinationIDs).subtracting(oldIDs); enterVisible = false
-                exitingIDs = []
+                // Removed views outlive publication while SwiftUI animates their old space.
+                // Keep them faded; restore only an exit superseded by the newest publication.
+                exitingIDs.subtract(destinationIDs)
                 withAnimation(PanelsTheme.Web.Rail.Motion.glide(duration: duration)) { publish(latest) }
                 await Task.yield()
                 guard !Task.isCancelled else { return }
                 enterVisible = true
                 let completion = enteringIDs.isEmpty ? duration : max(duration, PanelsTheme.Web.Rail.Motion.fadeDelay + PanelsTheme.Web.Rail.Motion.fadeIn)
                 try await Task.sleep(for: .seconds(completion))
-                enteringIDs = []; motionActive = false; motionTask = nil
+                exitingIDs = []; enteringIDs = []; motionActive = false; motionTask = nil
             } catch { }
         }
     }
