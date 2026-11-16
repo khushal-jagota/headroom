@@ -253,7 +253,7 @@ def test_real_vite_applications_share_only_their_generation(
                 time.sleep(0.05)
             record = preview_cli(ticket["id"], "register", "--port", str(app_port))
             apps.append((ticket, record, source))
-        # Settle this synthetic Ticket through the real writers before timing expiry.
+        # Advance this synthetic Ticket to Consequences while its preview remains eligible.
         fields = ("brief", "what_changes", "implementation")
         for field, next_field in zip(fields, (*fields[1:], "consequences"), strict=True):
             worker = {"X-Plan-Actor": "worker", "X-Plan-Ticket-ID": apps[0][0]["id"]}
@@ -271,12 +271,6 @@ def test_real_vite_applications_share_only_their_generation(
                     "next_holder": {"kind": "owner", "id": "owner"},
                 },
             )
-        api(
-            "POST",
-            f"/api/tickets/{apps[0][0]['id']}/propose",
-            headers=worker,
-            json={"body": "Synthetic browser proof complete."},
-        )
         edge_log = stack.enter_context((tmp_path / "edge.log").open("wb"))
         edge = subprocess.Popen(
             [
@@ -392,11 +386,9 @@ def test_real_vite_applications_share_only_their_generation(
         expired_at = time.monotonic()
         api(
             "POST",
-            f"/api/tickets/{apps[0][0]['id']}/accept/consequences",
-            json={
-                "next_ceiling": "done",
-                "next_holder": {"kind": "owner", "id": "owner"},
-            },
+            f"/api/tickets/{apps[0][0]['id']}/propose",
+            headers=worker,
+            json={"body": "Synthetic browser proof complete."},
         )
         api("DELETE", f"/api/tickets/{apps[1][0]['id']}")
         deadline = expired_at + 2
