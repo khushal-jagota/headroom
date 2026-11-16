@@ -10,6 +10,7 @@ import type { MetricsRead } from './readers/contracts.ts';
 import type { CollectorFactory, SamplerReply } from './sampler/contracts.ts';
 import { observe_shutdown } from '../../conversation/shutdown.ts';
 import { ShutdownDeadlineExceeded, type StopOptions } from '../../lifecycle/contracts.ts';
+import { begin_startup_phase } from '../../core/startup_diagnostics.ts';
 
 export interface MetricsRuntimeOptions {
   path: string;
@@ -72,6 +73,7 @@ export class MetricsRuntime {
       }),
     );
     try {
+      const sampler_ready = begin_startup_phase('metrics sampler');
       await new Promise<void>((resolve, reject) => {
         worker.once('error', reject);
         worker.once('exit', () =>
@@ -93,8 +95,11 @@ export class MetricsRuntime {
           }
         });
       });
+      sampler_ready();
       if (this.stopped) throw new MetricsOperationalError('VPS metrics runtime is stopped');
+      const readers_ready = begin_startup_phase('metrics readers');
       await this.reads.start();
+      readers_ready();
       if (this.stopped) throw new MetricsOperationalError('VPS metrics runtime is stopped');
       this.ready = true;
     } catch (error) {
