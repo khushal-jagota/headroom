@@ -32,7 +32,6 @@ function capture(child: ChildProcessWithoutNullStreams) {
 }
 
 const provider_source = `
-import { writeSync } from 'node:fs';
 import { ChildProcesses } from ${JSON.stringify(owner_module)};
 const children = new ChildProcesses();
 const command = 'setTimeout(() => process.exit(0), 600000)';
@@ -50,10 +49,9 @@ process.stdin.on('data', value => {
 });
 process.stdin.on('end',()=>{
   const final = Buffer.alloc(2 * 1024 * 1024, 120);
-  let written = 0;
-  while(written < final.length) written += writeSync(1, final.subarray(written));
-  writeSync(2, 'bulk-done\\n');
-  process.exit(0);
+  process.stdout.write(final,()=>{
+    process.stderr.write('bulk-done\\n',()=>process.exit(0));
+  });
 });
 setTimeout(()=>process.exit(0),600000);
 `;
@@ -145,8 +143,8 @@ test.skipIf(!admitted)(
       await expect
         .poll(() => first.output.stderr, { timeout: 5_000 })
         .toContain('separate-stderr\n');
-      // Hold the reader past the socket/pipe capacity. The provider uses
-      // synchronous writes, so inherited nonblocking descriptors cannot hide EAGAIN.
+      // Hold the reader past the socket/pipe capacity. The provider waits for
+      // its write callback before exit, as ordinary Node pipe writers require.
       first.proxy.stdout.pause();
       const before_final = first.output.stdout.length;
       first.proxy.stdin.end();
