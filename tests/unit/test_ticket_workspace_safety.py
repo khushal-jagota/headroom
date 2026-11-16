@@ -106,6 +106,36 @@ def test_managed_ticket_checkout_admission_preserves_storage_protection(
     }))
     _check_paths([plain_tree], [deployed], mounts)
 
+    # A Panels-owned independent clone has a Git directory and no linked-worktree
+    # pointer. Its dependencies still cannot share installed storage.
+    clone_owner = owner.with_name("t_clone")
+    clone_owner.mkdir()
+    clone = clone_owner / "worktree"
+    subprocess.run(["git", "clone", "--no-local", str(repository), str(clone)],
+                   check=True, capture_output=True)
+    clone_marker = clone_owner / ".panels-workspace.json"
+    clone_record = {
+        "ticket_id": clone_owner.name, "repository": None,
+        "worktree": str(clone), "checkout_kind": "clone",
+    }
+    clone_marker.write_text(json.dumps(clone_record))
+    clone_dependency = clone / ".venv"
+    clone_dependency.mkdir()
+    _check_paths([clone, clone_dependency], [deployed], mounts)
+    clone_alias = clone_dependency / "installed"
+    clone_alias.symlink_to(installed, target_is_directory=True)
+    with pytest.raises(SafetyRefusal):
+        _check_paths([clone_dependency], [deployed], mounts)
+    clone_alias.unlink()
+    clone_marker.unlink()
+    with pytest.raises(SafetyRefusal):
+        _check_paths([clone], [deployed], mounts)
+    clone_marker.write_text(json.dumps(clone_record))
+    shutil.rmtree(clone / ".git")
+    (clone / ".git").symlink_to(repository / ".git", target_is_directory=True)
+    with pytest.raises(SafetyRefusal):
+        _check_paths([clone], [deployed], mounts)
+
     # A bind mount can hide shared installed files behind an otherwise valid tree.
     with pytest.raises(SafetyRefusal):
         _check_paths(

@@ -318,7 +318,13 @@ def _managed_ticket_worktree(path: Path, roots: Sequence[Path]) -> Path | None:
             if record["ticket_id"] != owner.name or record["worktree"] != str(tree):
                 continue
             repository = record["repository"]
-            if repository is not None:
+            if record.get("checkout_kind") == "clone":
+                # Independent clones have their own Git directory, not a worktree
+                # pointer into the source repository.
+                git_directory = tree / ".git"
+                if git_directory.is_symlink() or not git_directory.is_dir():
+                    continue
+            elif repository is not None:
                 # A real linked worktree points to metadata that points back to it.
                 pointer = (tree / ".git").read_text().strip()
                 if not pointer.startswith("gitdir: "):
