@@ -48,11 +48,6 @@ from planner.core.config import (
     Config,
 )
 from planner.core.errors import ErrorCode, PlannerError
-from planner.core.owner_credential import (
-    OWNER_CREDENTIAL_COOKIE,
-    OWNER_CREDENTIAL_COOKIE_MAX_AGE_SECONDS,
-    load_or_create_owner_credential,
-)
 from planner.core.path_observer import observe_path_changes
 from planner.core.request_guidance import preserve_authored_request_examples
 from planner.core.response_compression import (
@@ -106,7 +101,6 @@ from planner.message_delivery.api import router as message_delivery_router
 from planner.navigation.delivery import create_delivery_runtime
 from planner.navigation.views.delivery import ScopedDeliveryRuntime
 from planner.notifications.api import router as notifications_router
-from planner.previews.address import PreviewAddressMiddleware
 from planner.previews.api import handle_preview_error
 from planner.previews.api import router as previews_router
 from planner.previews.contracts import PreviewError
@@ -662,7 +656,7 @@ def create_app(
     scoped_navigation = ScopedDeliveryRuntime(navigation_delivery)
     app = FastAPI(title="planner", version="2.0.0", lifespan=_configured_lifespan)
     preview_service = PreviewService(
-        config.db_path, config.preview_origin or "", panels_port=config.port
+        config.db_path, config.trusted_ingress_canonical_origin or "", panels_port=config.port
     )
     preview_transport = PreviewTransport(preview_service)
     preview_runtime = PreviewRuntime(preview_service, preview_transport)
@@ -684,7 +678,6 @@ def create_app(
     app.include_router(machine_credential_router, prefix="/api")
     uncompressed_patterns.extend(uncompressed_route_patterns(executor_router.routes))
     app.state.executor_id = config.executor_id
-    app.state.owner_credential = load_or_create_owner_credential(config.db_path)
     app.state.config = config
     app.state.clock = clock
     app.state.conn_factory = conn_factory
@@ -900,32 +893,12 @@ def create_app(
             media_type="text/event-stream",
         )
 
-    # Tailscale Serve terminates TLS, so uvicorn sees plain HTTP. The configured public
-    # origin says whether the browser reached Panels over HTTPS.
-    owner_cookie_secure = (config.trusted_ingress_canonical_origin or "").startswith("https://")
-
     @app.get("/", response_class=HTMLResponse)
     async def index() -> HTMLResponse:
-        """Serve the web app, and hand whoever loads it the owner credential cookie."""
-        response = HTMLResponse(
+        return HTMLResponse(
             content=svelte_index_html(config.app_sha),
-            headers={
-                "Cache-Control": "no-cache, must-revalidate",
-                # A page that carries the owner cookie is framed by nothing else: a
-                # preview page is same-site, so it could otherwise frame Panels.
-                "Content-Security-Policy": "frame-ancestors 'self'",
-            },
+            headers={"Cache-Control": "no-cache, must-revalidate"},
         )
-        response.set_cookie(
-            OWNER_CREDENTIAL_COOKIE,
-            app.state.owner_credential,
-            max_age=OWNER_CREDENTIAL_COOKIE_MAX_AGE_SECONDS,
-            path="/",
-            secure=owner_cookie_secure,
-            httponly=True,
-            samesite="strict",
-        )
-        return response
 
     @app.get("/service-worker.js", response_class=FileResponse)
     async def service_worker() -> FileResponse:
@@ -955,7 +928,5 @@ def create_app(
         minimum_size=1024,
         compresslevel=4,
     )
-    # Outermost: on the preview address only previews answer; the main address answers none.
-    app.add_middleware(PreviewAddressMiddleware, preview_origin=config.preview_origin)
     preserve_authored_request_examples(app)
     return app

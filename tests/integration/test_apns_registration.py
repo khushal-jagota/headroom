@@ -16,7 +16,7 @@ DEVICE = {"device_token": "0011aaff", "bundle_id": "app.panels.ios", "environmen
 ENDPOINT = "/api/notifications/apns/devices"
 
 
-def test_owner_registration_is_durable_validated_and_revocable(tmp_path: Path) -> None:
+def test_authenticated_registration_is_durable_validated_and_revocable(tmp_path: Path) -> None:
     database = str(tmp_path / "registration.db")
     with closing(connect(database)) as conn:
         create_schema(conn)
@@ -36,21 +36,15 @@ def test_owner_registration_is_durable_validated_and_revocable(tmp_path: Path) -
     app = create_app(config, build_clock(config), lambda: connect(database))
     # In-process HTTP reaches the actual routers and ingress middleware. No runtime
     # providers, server thread, Apple connection or browser host is needed.
-    # The owner is the cookie alone; the Tailscale login on its own is not the owner.
     client = TestClient(app)
-    without_owner_cookie = TestClient(app)
-    without_owner_cookie.cookies.clear()
     for headers, expected in (
         ({}, 400),
-        (OWNER_HEADERS, 400),
         ({"Tailscale-User-Login": "stranger@example.com"}, 403),
         ({"X-Plan-Actor": "chief"}, 400),
     ):
-        refused = without_owner_cookie
-        assert refused.put(ENDPOINT, json=DEVICE, headers=headers).status_code == expected
+        assert client.put(ENDPOINT, json=DEVICE, headers=headers).status_code == expected
         assert (
-            refused.request("DELETE", ENDPOINT, json=DEVICE, headers=headers).status_code
-            == expected
+            client.request("DELETE", ENDPOINT, json=DEVICE, headers=headers).status_code == expected
         )
     assert (
         client.put(

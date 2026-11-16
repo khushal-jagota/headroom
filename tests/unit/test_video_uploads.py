@@ -12,7 +12,6 @@ from types import SimpleNamespace
 import httpx
 import pytest
 from fastapi import FastAPI
-from tests.support.principals import TEST_OWNER_CREDENTIAL
 
 from planner.conversation.video_uploads import config
 from planner.conversation.video_uploads import service as service_module
@@ -159,7 +158,6 @@ def test_owner_only_raw_upload_http_boundary(
 ) -> None:
     monkeypatch.setattr(service_module, "probe_video", accept_probe)
     app = FastAPI()
-    app.state.owner_credential = TEST_OWNER_CREDENTIAL
 
     async def authorize(destination: UploadDestination) -> None:
         assert destination.id == "t_test"

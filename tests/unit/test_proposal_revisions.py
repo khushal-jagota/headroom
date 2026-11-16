@@ -118,7 +118,7 @@ def test_native_and_web_stale_decisions_preserve_replacement_and_decision_messag
     ))
     with TestClient(_app(tmp_db)) as client:
         for native in (True, False):
-            headers = {"X-Panels-iOS-Build": "6"} if native else {}
+            headers = {"X-Panels-iOS-Build": "5"} if native else {}
             for decision, suffix in (("approve", "accept/what_changes"), ("send_back", "reject")):
                 body = captured[decision] if native else {
                     **captured[decision], "expected_proposal_revision": revision,
@@ -135,7 +135,7 @@ def test_native_and_web_stale_decisions_preserve_replacement_and_decision_messag
         accepted = client.post(f"/api/tickets/{original.id}/reject", json={
             **captured["send_back"],
             "expected_proposal_revision": replacement.pending_proposal_revision,
-        }, headers={"X-Panels-iOS-Build": "6"})
+        }, headers={"X-Panels-iOS-Build": "5"})
         assert accepted.status_code == 200, accepted.text
         assert accepted.json()["pending_proposal"] is None
         saved = tmp_db.execute(

@@ -73,8 +73,8 @@ Its launcher passes them to the server:
 - `PLAN_APNS_BUNDLE_IDS`: the allowed bundle IDs, separated by commas.
 
 Use a canonical HTTPS origin and the configured Tailscale ingress. Device registration
-requires the owner credential cookie, which the app receives when it loads the web app
-page. A token or client identity header is not a login. `PUT /api/notifications/apns/devices` registers the device token, bundle ID, and
+requires the owner identity from that ingress. A token or client identity header is not
+a login. `PUT /api/notifications/apns/devices` registers the device token, bundle ID, and
 `development` or `production` environment. `DELETE` revokes the same registration even
 after the operator removes the key. Tokens never appear in adapter logs.
 

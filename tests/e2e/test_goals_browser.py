@@ -1012,8 +1012,7 @@ def test_goal_delete_confirmation_persistence_and_open_artifact_cleanup(
     page.reload()
     expect(page.get_by_role("region", name="All goals", exact=True)).to_be_visible(timeout=WAIT_MS)
     assert httpx.get(server.base + path, timeout=10).status_code == 404
-    gone = httpx.get(server.base + artifact_path, cookies=server.owner_cookies, timeout=10)
-    assert gone.status_code == 404
+    assert httpx.get(server.base + artifact_path, timeout=10).status_code == 404
     if proof := os.environ.get("PANELS_UI_PROOF_DIR"):
         page.screenshot(path=str(Path(proof) / "goal-delete-after.png"), full_page=True)
         other.screenshot(path=str(Path(proof) / "goal-delete-open-view.png"), full_page=True)

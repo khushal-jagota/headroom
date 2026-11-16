@@ -1,9 +1,12 @@
 """Truthful request identity: who is asking, before anything asks what they may do.
 
-The request boundary translates transport headers into one shared Principal. A request
-that carries the owner credential cookie is the owner, whatever else it says. Employee
-requests name the Chief, a Ticket, or a Manager. A request that does neither is
-unidentified: it stands above nothing. Header names stay private to this adapter.
+The request boundary translates transport headers into one shared Principal. Employee
+requests name the Chief, a Ticket, or a Manager. On a server behind trusted ingress, the
+live host, a request that names no agent is the owner only if Tailscale Serve vouched
+for the allowed login: that is the browser and the iPhone app. Any other such request is
+unidentified and stands above nothing. A server without trusted ingress has no Tailscale
+to vouch, so a request there that names no agent is the owner. Header names stay
+private to this adapter.
 
 Whether that principal may act on a given thing is planner.core.authority, which asks
 one question. The guards that used to live here each named their own set of principal
@@ -26,12 +29,17 @@ from planner.core.contracts import (
     principal_legacy_actor,
 )
 from planner.core.errors import ErrorCode, PlannerError
-from planner.core.owner_credential import OWNER_CREDENTIAL_COOKIE, presents_owner_credential
 
 X_PLAN_CONVERSATION_ID: Final = "X-Plan-Conversation-ID"
+PLAN_CONVERSATION_ID_SCOPE_KEY: Final = "planner.request_conversation_id"
 X_PLAN_ACTOR: Final = "X-Plan-Actor"
 X_PLAN_TICKET_ID: Final = "X-Plan-Ticket-ID"
 X_PLAN_MANAGER_ID: Final = "X-Plan-Manager-ID"
+PLAN_ACTOR_SCOPE_KEY: Final = "planner.request_actor"
+PLAN_TICKET_ID_SCOPE_KEY: Final = "planner.request_ticket_id"
+PLAN_MANAGER_ID_SCOPE_KEY: Final = "planner.request_manager_id"
+# Set by trusted ingress when Tailscale Serve vouches for the allowed login.
+AUTHENTICATED_OWNER_SCOPE_KEY: Final = "planner.authenticated_owner"
 
 
 @dataclass(frozen=True)
@@ -70,22 +78,40 @@ def _classify(
     )
 
 
+def _behind_trusted_ingress(request: Request) -> bool:
+    config = getattr(getattr(request.scope.get("app"), "state", None), "config", None)
+    return getattr(config, "trusted_ingress_provider", None) is not None
+
+
 def request_context(request: Request) -> RequestContext:
-    """The owner by cookie, else the actor and its optional truthful local Ticket claim."""
-    app = request.scope.get("app")
-    if presents_owner_credential(
-        request.cookies.get(OWNER_CREDENTIAL_COOKIE),
-        getattr(getattr(app, "state", None), "owner_credential", None),
+    """The named agent, else the owner or an unidentified caller (see the module doc)."""
+    actor = (
+        request.scope[PLAN_ACTOR_SCOPE_KEY]
+        if PLAN_ACTOR_SCOPE_KEY in request.scope
+        else request.headers.get(X_PLAN_ACTOR)
+    )
+    ticket_id = (
+        request.scope[PLAN_TICKET_ID_SCOPE_KEY]
+        if PLAN_TICKET_ID_SCOPE_KEY in request.scope
+        else request.headers.get(X_PLAN_TICKET_ID)
+    )
+    manager_id = (
+        request.scope[PLAN_MANAGER_ID_SCOPE_KEY]
+        if PLAN_MANAGER_ID_SCOPE_KEY in request.scope
+        else request.headers.get(X_PLAN_MANAGER_ID)
+    )
+    origin = _normalize(
+        request.scope.get(
+            PLAN_CONVERSATION_ID_SCOPE_KEY, request.headers.get(X_PLAN_CONVERSATION_ID)
+        )
+    )
+    if _normalize(actor) is None and (
+        request.scope.get(AUTHENTICATED_OWNER_SCOPE_KEY) is True
+        or not _behind_trusted_ingress(request)
     ):
-        return RequestContext(OWNER_PRINCIPAL)
-    classified = _classify(
-        _normalize(request.headers.get(X_PLAN_ACTOR)),
-        _normalize(request.headers.get(X_PLAN_TICKET_ID)),
-        request.headers.get(X_PLAN_MANAGER_ID),
-    )
-    return RequestContext(
-        classified.principal, _normalize(request.headers.get(X_PLAN_CONVERSATION_ID))
-    )
+        return RequestContext(OWNER_PRINCIPAL, origin)
+    classified = _classify(_normalize(actor), _normalize(ticket_id), manager_id)
+    return RequestContext(classified.principal, origin)
 
 
 def require_owner_or_chief(ctx: RequestContext) -> None:
@@ -118,3 +144,10 @@ def require_owner(ctx: RequestContext) -> None:
         "this operation is available only to the owner",
         {"actor": principal_legacy_actor(ctx.principal)},
     )
+
+
+def require_authenticated_owner(request: Request) -> None:
+    """Device registration needs the deployed access boundary's owner identity."""
+    require_owner(request_context(request))
+    if request.scope.get(AUTHENTICATED_OWNER_SCOPE_KEY) is not True:
+        raise PlannerError(ErrorCode.agent_forbidden, "authenticated owner access is required", {})

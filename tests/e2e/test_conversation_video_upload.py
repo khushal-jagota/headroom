@@ -14,7 +14,7 @@ from pathlib import Path
 
 import httpx
 from playwright.sync_api import BrowserContext, Page, Response, Route, expect
-from tests.e2e.harness import REPO_ROOT, WAIT_MS, ServerHandle
+from tests.e2e.harness import REPO_ROOT, WAIT_MS, JsonObject, ServerHandle
 from tests.e2e.test_ticket_conversation_shared_behaviors import (
     _create_ticket_conversation,
     _open_ticket_conversation,
@@ -26,6 +26,7 @@ def test_video_upload_early_send_and_native_range_playback(
     signal_server: ServerHandle,
     context_factory: Callable[[], BrowserContext],
     open_page: Callable[..., Page],
+    cli: Callable[..., JsonObject],
     tmp_path: Path,
 ) -> None:
     started = time.monotonic()
@@ -56,14 +57,11 @@ def test_video_upload_early_send_and_native_range_playback(
     conversation_id = "e2e-video-upload"
     ticket_id = _create_ticket_conversation(
         server,
+        cli,
         conversation_id=conversation_id,
         title="Automatic video attachment",
     )
-    response = httpx.post(
-        server.base + f"/api/test/signals/{conversation_id}/finish",
-        cookies=server.owner_cookies,
-        timeout=10,
-    )
+    response = httpx.post(server.base + f"/api/test/signals/{conversation_id}/finish", timeout=10)
     assert response.is_success, response.text
     context = context_factory()
     page = _open_ticket_conversation(

@@ -23,7 +23,6 @@ import aiohttp
 import httpx
 import pytest
 from fastapi import FastAPI
-from tests.support.principals import TEST_OWNER_CREDENTIAL
 
 from planner.core.clock import RealClock
 from planner.core.db import connect, create_schema
@@ -381,7 +380,6 @@ def test_operator_registration_and_replacement_refuse_worker_authority(tmp_path:
         with closing(connect(database)) as conn:
             create_schema(conn)
         app = FastAPI()
-        app.state.owner_credential = TEST_OWNER_CREDENTIAL
         app.state.conn_factory = lambda: connect(database)
         app.include_router(router, prefix="/api")
         async with httpx.AsyncClient(

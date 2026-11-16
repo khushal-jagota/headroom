@@ -34,49 +34,7 @@ change.
 `panels-live.service` binds the app to loopback port 8767 through its explicit live
 configuration. The existing Tailscale Serve route remains unchanged.
 
-The server refuses every write from a caller with no Panels identity and no owner
-credential cookie. That rule is in the application, so the unit sets no input for it.
-A unit file that still sets `PLAN_REFUSE_UNIDENTIFIED_AGENT_CALLS=1` is harmless: the
-application no longer reads that input.
-
-After the release with this change is live, the operator applies the new unit:
-
-```sh
-cp ~/Deployments/Panels/current/app/ops/panels-environments/panels-live.service ~/.config/systemd/user/ && systemctl --user daemon-reload && systemctl --user restart panels-live.service
-```
-
-After activation, confirm one ordinary `panels` command from a real SSH login.
 Worker checks use temporary databases and scratch servers, never the live database.
-
-## Preview address
-
-Worker previews have their own address: one more HTTPS port on the host's Tailscale
-name. It leads to the same server on loopback port 8767. Panels answers previews only
-there, and the main address answers none. Without this address there are no previews.
-See [docs/previews.md](../../docs/previews.md).
-
-Set it up once, as `vps`. Port 8460 is free on the live host: 443, 8443 to 8446, 9443
-and 10000 carry other routes.
-
-```sh
-sudo tailscale serve --bg --https=8460 http://127.0.0.1:8767
-tailscale serve status
-```
-
-Add the address to `~/Deployments/Panels/current/data/config.yaml`, beside the
-`trusted_ingress_*` keys. It differs from `trusted_ingress_canonical_origin` only in
-the port. Then restart the live service.
-
-```yaml
-preview_origin: https://<host>.<tailnet>.ts.net:8460
-```
-
-```sh
-systemctl --user restart panels-live.service
-```
-
-The recovery workflow restores only the main route. If the preview route is lost, run
-the `tailscale serve` line above again.
 
 ## Stall watchdog
 

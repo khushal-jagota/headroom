@@ -11,7 +11,6 @@ extension APIClient {
                     request.setValue("text/event-stream", forHTTPHeaderField: "Accept")
                     request.cachePolicy = .reloadIgnoringLocalCacheData
                     request.timeoutInterval = 120
-                    await ensureOwnerCookie()
                     let (bytes, response) = try await session.bytes(for: request)
                     try Self.validate(response)
                     // Resync after the connection is established, including reconnects.

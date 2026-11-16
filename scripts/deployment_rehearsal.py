@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import hashlib
-import http.cookies
 import json
 import os
 import re
@@ -168,18 +167,10 @@ def start() -> None:
 def seed_synthetic_state(current: Path, health_url: str) -> None:
     """Create only disposable records and excluded files on the hosted runner."""
     require_rehearsal()
-    base = health_url.removesuffix("/api/health")
-    # A project is an owner write. The owner credential is the cookie the app page sets.
-    with urllib.request.urlopen(base + "/", timeout=5) as page:
-        cookies = http.cookies.SimpleCookie()
-        for header in page.headers.get_all("Set-Cookie") or ():
-            cookies.load(header)
-    owner = cookies["panels_owner"].value
-    request = urllib.request.Request(base + "/api/projects", data=json.dumps({
+    url = health_url.removesuffix("/api/health") + "/api/projects"
+    request = urllib.request.Request(url, data=json.dumps({
         "name": "Publication rehearsal", "summary": "Synthetic upgrade sentinel",
-    }).encode(), headers={
-        "Content-Type": "application/json", "Cookie": f"panels_owner={owner}",
-    }, method="POST")
+    }).encode(), headers={"Content-Type": "application/json"}, method="POST")
     with urllib.request.urlopen(request, timeout=5) as response:
         record = json.load(response)
     gate = Path(os.environ["PANELS_GATE_DIR"])

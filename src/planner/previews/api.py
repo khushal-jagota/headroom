@@ -65,10 +65,7 @@ async def stop(request: Request) -> dict[str, Any]:
     methods=["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
 )
 async def application(request: Request, ticket_id: str, generation: str, path: str) -> Response:
-    config = request.app.state.config
-    require_preview_ingress(
-        dict(request.scope), trusted_ingress_config(config), config.preview_origin
-    )
+    require_preview_ingress(dict(request.scope), trusted_ingress_config(request.app.state.config))
     return await cast(PreviewTransport, request.app.state.preview_transport).http(
         request, ticket_id, generation
     )
@@ -79,9 +76,8 @@ async def application_socket(
     websocket: WebSocket, ticket_id: str, generation: str, path: str
 ) -> None:
     try:
-        config = websocket.app.state.config
         require_preview_ingress(
-            dict(websocket.scope), trusted_ingress_config(config), config.preview_origin
+            dict(websocket.scope), trusted_ingress_config(websocket.app.state.config)
         )
     except (PlannerError, PreviewError) as exc:
         await websocket.close(code=1008, reason=str(exc)[:120])

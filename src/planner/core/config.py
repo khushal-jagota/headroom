@@ -80,9 +80,6 @@ class Config:
     ticket_scratch_database: str | None = None
     # None preserves installed-release provisioning. Source home setup selects explicitly.
     provision_account_skills: bool | None = None
-    # The separate tailnet HTTPS address that serves Worker previews and nothing else.
-    # None: no previews.
-    preview_origin: str | None = None
 
 
 def _parse_bool(raw: object, key: str) -> bool:
@@ -259,51 +256,6 @@ def _validate_trusted_ingress(
     return provider, allowed_login, f"{parsed.scheme}://{parsed.netloc}"
 
 
-def _validate_preview_origin(
-    preview_origin: str | None,
-    *,
-    trusted_ingress_provider: str | None,
-    trusted_ingress_canonical_origin: str | None,
-) -> str | None:
-    """Previews need their own browser origin, so the value must name another address."""
-    if preview_origin is None:
-        return None
-    if trusted_ingress_provider is None:
-        raise PlannerError(
-            ErrorCode.validation, "preview_origin requires trusted ingress to be configured"
-        )
-    invalid = PlannerError(
-        ErrorCode.validation, "preview_origin must be an HTTPS origin with no path"
-    )
-    parsed = urlsplit(preview_origin)
-    try:
-        port = parsed.port
-    except ValueError as exc:
-        raise invalid from exc
-    if (
-        parsed.scheme != "https"
-        or not parsed.hostname
-        or parsed.username is not None
-        or parsed.password is not None
-        or parsed.path not in ("", "/")
-        or parsed.query
-        or parsed.fragment
-    ):
-        raise invalid
-    # Browsers send Host and Origin in lower case and without the default port.
-    netloc = parsed.hostname if port in (None, 443) else f"{parsed.hostname}:{port}"
-    origin = f"https://{netloc}"
-    if trusted_ingress_canonical_origin is not None and origin in (
-        trusted_ingress_canonical_origin.lower(),
-        trusted_ingress_canonical_origin.lower().removesuffix(":443"),
-    ):
-        raise PlannerError(
-            ErrorCode.validation,
-            "preview_origin must differ from trusted_ingress_canonical_origin",
-        )
-    return origin
-
-
 def load_config(path: str | None = None, env: Mapping[str, str] | None = None) -> Config:
     env = os.environ if env is None else env
     cfg = _read_yaml(path)
@@ -333,11 +285,6 @@ def load_config(path: str | None = None, env: Mapping[str, str] | None = None) -
         trusted_ingress_allowed_login,
         trusted_ingress_canonical_origin,
         test_mode=test_mode,
-    )
-    preview_origin = _validate_preview_origin(
-        _optional_str_value(cfg, env, "preview_origin", "PLAN_PREVIEW_ORIGIN"),
-        trusted_ingress_provider=trusted_ingress_provider,
-        trusted_ingress_canonical_origin=trusted_ingress_canonical_origin,
     )
 
     app_sha = _optional_str_value(cfg, env, "app_sha", "PLAN_APP_SHA")
@@ -416,7 +363,6 @@ def load_config(path: str | None = None, env: Mapping[str, str] | None = None) -
         trusted_ingress_provider=trusted_ingress_provider,
         trusted_ingress_allowed_login=trusted_ingress_allowed_login,
         trusted_ingress_canonical_origin=trusted_ingress_canonical_origin,
-        preview_origin=preview_origin,
         test_mode=test_mode,
         fake_now=fake_now,
         executor_id=executor_id,

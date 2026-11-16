@@ -32,8 +32,6 @@ On that home, use the owner login and run:
 panels machine join-command "Studio Mac" --home https://HOME-ORIGIN
 ```
 
-Panels refuses this command today. Registration is owner-only, and a terminal has no owner identity: only the web app and the iOS app carry the owner cookie. Neither offers registration yet, so a new machine waits for that follow-up.
-
 Use the same owner command for a Linux x86_64 machine. The executor reports its host platform after credential authentication.
 On Linux, the bootstrap selects the Linux executor archive and its systemd user service.
 Linux needs Node 22 or newer and an active systemd user manager. No native Mac tools are required.
@@ -661,4 +659,4 @@ Apple references: [file permissions and responsible code](https://developer.appl
 [designated requirements](https://developer.apple.com/documentation/technotes/tn3127-inside-code-signing-requirements),
 and [certificate types](https://developer.apple.com/help/account/certificates/certificates-overview/).
 
-_Last verified: 2026-11-16. Commands checked against source; no live Mac operation, native build, signing, installation, or consent check occurred._
+_Last verified: 2026-11-04. Commands checked against source; no live Mac operation, native build, signing, installation, or consent check occurred._

@@ -9,9 +9,7 @@ from planner.core.contracts import Principal
 
 
 def _post(server: ServerHandle, path: str, body: JsonObject) -> JsonObject:
-    response = httpx.post(
-        server.base + path, json=body, cookies=server.owner_cookies, timeout=10
-    )
+    response = httpx.post(server.base + path, json=body, timeout=10)
     assert response.is_success, response.text
     value: JsonObject = response.json()
     return value

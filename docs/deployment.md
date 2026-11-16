@@ -88,7 +88,7 @@ The first release in which the [Mac executor](executor.md) works through mailbox
 
 The installed release before this design installs through the old route: it asks GitHub to run an `adopt` job on the self-hosted runner. That job stays for one release. It checks out the release the host is running and runs that release's own installer, unchanged. This works from 5622d2a81, whose installer already accepts the new release's runtime, schema, receipt, and health answer; an older installed release refuses it before anything stops. On its first start the new server turns the old install request into a done attempt, so a Mac that the old server stopped receives its target and updates. The next release deletes the runner, the adopt job, its dispatch inputs, and that import.
 
-The deploy workflow never changes Tailscale Serve. A separate manual workflow restores the private route if it is lost. Previews use a second route, which the operator adds once by hand ([preview address](../ops/panels-environments/README.md#preview-address)).
+The deploy workflow never changes Tailscale Serve. A separate manual workflow restores the private route if it is lost.
 
 ## Decisions that shape it
 
@@ -125,4 +125,4 @@ Commands outside the guard, such as Ruff or a direct `.venv/bin` call, can still
 - `scripts/test_runtime/`: private runtime paths and early deployment refusal for Python tests.
 - `ops/panels-environments/`: user units and runner setup.
 
-_Last verified: 2026-11-15._
+_Last verified: 2026-11-13._

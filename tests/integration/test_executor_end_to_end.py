@@ -36,7 +36,6 @@ import pytest
 from tests.support.executor_catalog import SingleMachineCatalog
 from tests.support.executor_https import HttpsProxy, serve_executor_app
 from tests.support.executor_inbox import lookup_receipt
-from tests.support.principals import TEST_OWNER_CREDENTIAL
 
 from planner.conversation.backends.contracts import (
     AgentMessageCompleted,
@@ -1543,7 +1542,6 @@ async def post_owner_answer(harness: ExecutorHarness, ask: AskReference) -> dict
     from planner.conversation.api import _runtime, router
 
     app = FastAPI()
-    app.state.owner_credential = TEST_OWNER_CREDENTIAL
     app.include_router(router, prefix="/api")
     runtime = SimpleNamespace(system=harness.system, database_path=harness.endpoint.db_path)
     app.dependency_overrides[_runtime] = lambda: runtime

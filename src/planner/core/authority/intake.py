@@ -241,8 +241,6 @@ async def request_admission(connection: HTTPConnection) -> None:
     # Included FastAPI routes expose the unprefixed template. Admission needs
     # the served path, including /api, for resource and command families.
     route = request.url.path
-    if route.startswith('/dev/tickets/'):
-        return  # A Worker app's own traffic, behind the preview tailnet gate: not a command.
     writing = request.method not in ('GET', 'HEAD', 'OPTIONS')
     if not writing:
         protected = (

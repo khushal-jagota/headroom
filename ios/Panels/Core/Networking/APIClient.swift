@@ -72,7 +72,6 @@ struct APIClient: Sendable {
         var request = try self.request(try url(path, query: query))
         request.cachePolicy = .reloadIgnoringLocalCacheData
         request.timeoutInterval = 25
-        await ensureOwnerCookie()
         let (data, response) = try await session.data(for: request)
         try Self.validate(response, data: data)
         return (data, request.url!)

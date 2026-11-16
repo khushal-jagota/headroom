@@ -6,15 +6,17 @@ Khushal, Chief, Managers, and Workers all call the same routes. There is no sepa
 
 ## Who can call
 
-The server knows four kinds of caller: the **owner** (Khushal), **Chief**, a **Manager**, and a **Ticket** (its Worker). A call that is none of these is unidentified. Goals have no agent. Old goal transcripts remain stored without a goal conversation interface.
+The server knows four kinds of caller: the **owner** (Khushal), **Chief**, a **Manager**, and a **Ticket** (its Worker). A call that is none of these is unidentified. Goals have no agent. Old goal transcripts remain stored without a goal conversation interface. An agent's `panels` calls carry its identity, set by the conversation that launched it.
 
-Khushal proves that he is the owner with the **owner credential**. Panels makes one random secret the first time it starts. It keeps the secret in a file beside the database, and only this user can read the file. When the server sends the web app page, it also sets the secret as a cookie. The browser and the iOS app then send the cookie with every call. A call with the cookie is the owner, whatever else it says.
+On the live host, the owner is the caller Tailscale Serve vouches for. The browser and the iPhone app reach Headroom through Tailscale Serve, which adds Khushal's login header, so their calls are the owner. A call that names an agent is that agent.
 
-An agent's `panels` calls carry its identity, set by the conversation that launched it. Manager requests use the `manager` actor and `X-Plan-Manager-ID`. Old Sprint Item actors and identity headers do not establish authority.
+A call on the live host that names no identity and carries no login header is **unidentified**. It stands above nothing. It can read what any caller can read, and it can send a message to Chief. Every other write is refused with `agent_forbidden`. The refusal says how to fix it: an agent restores `PLAN_ACTOR`, and Khushal uses the web app or the iOS app. Chief sees such a message as from an unidentified caller, not from Khushal. A terminal with no identity, the stall watchdog, the Hermes gateway, and an agent that lost `PLAN_ACTOR` are all callers of this kind.
 
-A call with no cookie and no agent identity is **unidentified**. It stands above nothing. It can read what any caller can read, and it can send a message to Chief. Every other write is refused with `agent_forbidden`. The refusal says how to fix it: an agent restores `PLAN_ACTOR`, and Khushal uses the web app or the iOS app. Chief sees such a message as from an unidentified caller, not from Khushal. A terminal with no identity, the stall watchdog, and the Hermes gateway are all callers of this kind.
+A server without trusted ingress, such as staging, a Ticket's server, or a local checkout, has no Tailscale to vouch for anyone. A call with no identity there is the owner.
 
-The Tailscale login header does not prove the owner, because a local process can forge it. Trusted ingress still uses it to refuse other tailnet users.
+There are no other guards. A local program can fake the Tailscale login header by sending it straight to the loopback port, and the server then treats it as Khushal. Khushal accepts this. The rule catches accidents, such as an agent that lost its identity. It does not stop an agent that sets out to act as him, which could equally drive his Mac by computer use.
+
+Manager requests use the `manager` actor and `X-Plan-Manager-ID`. Old Sprint Item actors and identity headers do not establish authority.
 
 ## Position
 
@@ -47,9 +49,7 @@ Who must look at a parked proposal, the holder, is a narrower fact owned by the 
 
 ## What this is not
 
-The rule decides what a caller may do. An agent's identity is stated, and the server believes it. It is not a login system.
-
-The owner credential guards against accidents, not against an agent that sets out to cheat. Any local process that loads the web app page receives the owner cookie. Any process that runs as this user can read the secret in the data folder. Panels accepts this limit.
+The rule decides what a caller may do. It does not prove who the caller is. The browser and the command line state an identity and the server believes it. It is not a login system.
 
 Reading Tickets and Managers is open to every caller, including an unidentified one. The rule guards writes.
 
@@ -60,8 +60,8 @@ Recap requests follow the same hierarchy. The owner can request any agent. Chief
 - **One rule instead of per-route lists.** Adding a route means asking where its target sits, not writing a new list of who is allowed.
 - **Self-approval is impossible by structure.** It falls out of position, so no route can forget to forbid it.
 - **Authority cannot be handed away.** Re-parenting is reserved for the top.
-- **Agent identity is trusted, not proven.** Keeping strangers out is the host's job, not this rule's.
-- **Losing an identity never makes you the owner.** The owner holds a credential, so an agent that loses `PLAN_ACTOR` becomes unidentified, not Khushal.
+- **Identity is trusted, not proven.** Keeping strangers out is the host's job, not this rule's.
+- **Losing an identity never makes you the owner on the live host.** The owner is the caller Tailscale Serve vouches for, so an agent that loses `PLAN_ACTOR` can only read and message Chief.
 
 ## Code
 
@@ -69,6 +69,5 @@ Recap requests follow the same hierarchy. The owner can request any agent. Chief
 - `src/planner/core/authority/intake.py`: checks requests and Mac commands against the target and relation at intake.
 - `src/planner/core/authority/service.py`: supplies the database facts for the rank rule.
 - `src/planner/core/authctx.py`: turns a request into a caller, and holds the owner-only doors.
-- `src/planner/core/owner_credential.py`: makes, stores, and checks the owner credential.
 
-_Last verified: 2026-11-15._
+_Last verified: 2026-11-16._
