@@ -152,7 +152,12 @@ final class ChiefSwipeDiagnosticsTests: XCTestCase {
         toggleCapture()
         XCTAssertEqual(enabled.value as? String, "0")
         app.buttons["chief-swipe-share"].tap()
-        XCTAssertTrue(app.buttons["Copy"].waitForExistence(timeout: 8), "Share must present the native activity sheet")
+        let shareSheet = element("ShareSheet.RemoteContainerView")
+        XCTAssertTrue(shareSheet.waitForExistence(timeout: 8), "Share must present the native activity sheet")
+        let preview = shareSheet.descendants(matching: .any).matching(identifier: "LP.CaptionBar.TopCaption").firstMatch
+        XCTAssertEqual(preview.label, "ChiefSwipeLog", "The activity sheet must preview the exported diagnostic file")
+        let copy = shareSheet.descendants(matching: .any).matching(NSPredicate(format: "label == %@", "Copy")).firstMatch
+        XCTAssertTrue(copy.exists, "The native activity sheet must offer Copy for the exported file")
         capture("swipe-logger-native-share-sheet")
         let hierarchy = XCTAttachment(string: app.debugDescription)
         hierarchy.name = "swipe-logger-share-sheet-hierarchy"
