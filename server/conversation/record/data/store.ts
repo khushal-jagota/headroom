@@ -12,7 +12,17 @@ import { BackendSpawnFailed } from '../../backends/contracts.ts';
 import { read_unresolved_turns } from '../../deploy_interruptions/capture.ts';
 import * as custody from './child_custody.ts';
 import * as supervision_records from '../../../worker_supervision/records.ts';
-import { release_worker_step_claim } from '../../../tickets/data/index.ts';
+import {
+  release_worker_step_claim,
+  read_ticket,
+  automated_maintenance_suppression_reason,
+} from '../../../tickets/data/index.ts';
+import {
+  conversation_holds_an_unanswered_memory_loss,
+  new_memory_notice_message_id,
+  ticket_needs_memory_notice,
+} from '../../../runtime/worker_memory.ts';
+import { worker_step_memory_loss_prompt } from '../../../runtime/logic/worker_step_prompt.ts';
 /** Durable record primitives. Event append is completed with its projection in PR2. */
 import { randomUUID } from 'node:crypto';
 import { capture_savepoint_rollback } from '../../../core/database/index.ts';
@@ -55,6 +65,7 @@ import type {
   AcceptedRecordEvent,
   RecordCommitParticipant,
   ConversationAttentionFacts,
+  WorkerStepMemoryNote,
 } from '../contracts.ts';
 import {
   LIFECYCLE_CONTRACT_VERSION,
@@ -135,6 +146,20 @@ function composer_catalog_to_json(entries: readonly ComposerCatalogEntry[]): str
       description: entry.description,
       argument_hint: entry.argument_hint,
     })),
+  );
+}
+
+function worker_step_ticket(
+  sql: ReadSql,
+  conversation_id: string,
+  sender_message_id: string | null,
+): string | null {
+  return (
+    sql.get<{ id: string }>(
+      'SELECT t.id FROM worker_step_dispatch_intents d JOIN tickets t ON t.id=d.ticket_id ' +
+        'WHERE d.sender_message_id=? AND t.conversation_id=?',
+      [sender_message_id, conversation_id],
+    )?.id ?? null
   );
 }
 
@@ -964,20 +989,25 @@ export class ConversationStore
     }
     if (options.automatic_compaction_confirmed) {
       tx.run(
-        'UPDATE conversations SET automatically_compacted_through_sequence=latest_agent_activity_sequence,' +
-          'automatic_compaction_attempted_through_sequence=latest_agent_activity_sequence WHERE conversation_id=?',
+        'UPDATE conversations SET automatic_compaction_attempted_through_sequence=latest_agent_activity_sequence WHERE conversation_id=?',
         [conversation_id],
       );
+      const compaction = written.findLast((event) => event.kind === 'context_compacted');
+      if (compaction !== undefined) {
+        tx.run(
+          'UPDATE conversations SET automatically_compacted_through_sequence=? WHERE conversation_id=?',
+          [compaction.sequence, conversation_id],
+        );
+        if (options.working_turn_compaction_confirmed)
+          tx.run(
+            'UPDATE conversations SET working_turn_compacted_through_sequence=? WHERE conversation_id=?',
+            [compaction.sequence, conversation_id],
+          );
+      }
     } else if (options.automatic_compaction_result === 'not_compacted') {
       tx.run(
         'UPDATE conversations SET automatic_compaction_attempted_through_sequence=latest_agent_activity_sequence ' +
           'WHERE conversation_id=?',
-        [conversation_id],
-      );
-    }
-    if (options.working_turn_compaction_confirmed) {
-      tx.run(
-        'UPDATE conversations SET working_turn_compacted_through_sequence=latest_agent_activity_sequence WHERE conversation_id=?',
         [conversation_id],
       );
     }
@@ -1152,6 +1182,29 @@ export class ConversationStore
     });
   }
 
+  worker_step_memory_note(
+    conversation_id: string,
+    sender_message_ids: readonly string[],
+  ): WorkerStepMemoryNote | null {
+    return this.database.read((sql) => {
+      if (
+        automated_maintenance_suppression_reason(sql, conversation_id) !== null ||
+        !conversation_holds_an_unanswered_memory_loss(sql, conversation_id)
+      )
+        return null;
+      for (const sender_message_id of sender_message_ids) {
+        const ticket_id = worker_step_ticket(sql, conversation_id, sender_message_id);
+        if (ticket_id === null) continue;
+        return {
+          after_sender_message_id: sender_message_id,
+          sender_message_id: new_memory_notice_message_id(),
+          text: worker_step_memory_loss_prompt(read_ticket(sql, ticket_id)),
+        };
+      }
+      return null;
+    });
+  }
+
   automated_maintenance_suppression_reason(conversation_id: string): string | null {
     return this.database.read(
       (sql) =>
@@ -1216,6 +1269,24 @@ export class ConversationStore
           reason =
             this.#participants.automated_maintenance_suppression_reason?.(tx, conversation_id) ??
             null;
+        }
+        if (
+          reason === null &&
+          memory_notice &&
+          messages.some(
+            (other) =>
+              other.sender_message_id !== message.sender_message_id &&
+              worker_step_ticket(tx, conversation_id, other.sender_message_id) !== null,
+          )
+        ) {
+          reason = 'worker_memory_notice_included_in_step';
+        }
+        if (reason === null && memory_notice) {
+          const ticket = tx.get<{ id: string }>('SELECT id FROM tickets WHERE conversation_id=?', [
+            conversation_id,
+          ]);
+          if (ticket === undefined || !ticket_needs_memory_notice(tx, ticket.id))
+            reason = 'worker_memory_notice_no_longer_needed';
         }
         if (reason !== null) {
           const previous = tx.get<{ payload: string }>(

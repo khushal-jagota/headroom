@@ -52,7 +52,7 @@ Automatic admission carries the same stable machine ID as the Ticket. A rename n
 
 Decision notes use the same conversation door as separate system messages before ordinary stage openers. They preserve the actor, action, proposal, and complete note. A note does not change the stage or authorize further work. See [Review](review.md).
 
-One guarded write takes the claim, re-running every readiness check inside it, so two passes cannot both win. On a user-owned stage the same write records the opener fact. The loop then starts or reuses the Ticket's conversation and sends an opener built from the current Ticket and its saved workflow, plus a memory-loss note when the Worker was compacted mid-step. It sends in Queue mode, which waits for a free turn.
+One guarded write repeats every readiness check and takes the claim, so two passes cannot both win. On a user-owned stage, it records the opener fact. The loop starts or reuses the conversation and builds its opener from the current Ticket and saved workflow. Queue mode waits for a free turn.
 
 | Delivery fate | What happens to the claim |
 | --- | --- |

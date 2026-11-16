@@ -3,9 +3,11 @@ import { afterEach, expect, test, vi } from 'vitest';
 import type { OwnedChildProcesses, OwnedOneShotChildren } from '../lifecycle/contracts.ts';
 import type { WorkerProcess, WorkerProcessPrimitives } from '../worker_supervision/contracts.ts';
 import { WorkerSupervisionRuntime } from '../worker_supervision/runtime.ts';
+import * as records from '../worker_supervision/records.ts';
 import type { LocalChildCustodyRow } from './local_child_custody_contracts.ts';
 import { LocalChildCustody } from './child_custody.ts';
 import { BackendCommands } from './snapshot/commands.ts';
+import * as environment from './snapshot/environment.ts';
 import * as control from './worker_unit/control.ts';
 
 const runtimes: WorkerSupervisionRuntime[] = [];
@@ -115,21 +117,72 @@ test('exact Linux custody checks the host and birth before an explicit stop', as
   expect(vi.mocked(resistant.native.signal).mock.calls.map((call) => call[1])).toEqual([15, 9]);
 });
 
-test('a surviving legacy Mac timestamp stays uncertain despite a native birth mismatch', async () => {
-  const f = fixture('darwin:machine');
-  const kill = vi.spyOn(process, 'kill').mockReturnValue(true);
-  const legacy = row({ host: 'darwin:machine', birth: 'Mon Nov  2 14:00:00 2026' });
-  expect(await f.custody.retirement_row_proven(legacy)).toBe(false);
-  expect(f.native.is_absent).not.toHaveBeenCalled();
-  expect(
-    await f.custody.stop_recorded_child({ ...identity, birth: legacy.birth! }, 'darwin:machine'),
-  ).toBe(false);
-  expect(f.native.signal).not.toHaveBeenCalled();
-  expect(kill.mock.calls.every((call) => call[1] === 0)).toBe(true);
-  kill.mockImplementation(() => {
-    throw Object.assign(new Error('gone'), { code: 'ESRCH' });
-  });
-  expect(await f.custody.retirement_row_proven(legacy)).toBe(true);
+test('historical Mac custody distinguishes UTC birth reuse from unreadable evidence without signals', async () => {
+  const original = Object.getOwnPropertyDescriptor(process, 'platform')!;
+  Object.defineProperty(process, 'platform', { value: 'darwin' });
+  try {
+    vi.spyOn(environment, 'backend_io_is_test').mockReturnValue(false);
+    const f = fixture('darwin:machine', () => 10);
+    const kill = vi.spyOn(process, 'kill').mockReturnValue(true);
+    const legacy = row({ host: 'darwin:machine', birth: 'Mon Nov  2 14:00:00 2026' });
+    const recorded = { ...identity, birth: legacy.birth! };
+    const run = vi.spyOn(BackendCommands.prototype, 'run').mockResolvedValue({
+      exit_code: 0,
+      standard_output: legacy.birth!,
+      standard_error: '',
+    });
+    const options = { deadline: 15 };
+    expect(await f.custody.retirement_row_proven(legacy, options)).toBe(false);
+    expect(run).toHaveBeenLastCalledWith(['/bin/ps', '-o', 'lstart=', '-p', String(identity.pid)], {
+      timeout_seconds: 5,
+      environment_overrides: { LC_ALL: 'C', TZ: 'UTC' },
+    });
+    f.replace({
+      pid: identity.pid,
+      birth: '123:456',
+      parent: 1,
+      group: 2,
+      session: 3,
+      zombie: true,
+    });
+    expect(await f.custody.stop_recorded_child(recorded, 'darwin:machine', options)).toBe(false);
+    run.mockResolvedValue({
+      exit_code: 0,
+      standard_output: 'Tue Nov  3 14:00:00 2026',
+      standard_error: '',
+    });
+    expect(await f.custody.retirement_row_proven(legacy, options)).toBe(true);
+    expect(await f.custody.stop_recorded_child(recorded, 'darwin:machine', options)).toBe(true);
+    run.mockResolvedValue({ exit_code: 0, standard_output: '', standard_error: '' });
+    expect(await f.custody.retirement_row_proven(legacy, options)).toBe(false);
+    run.mockRejectedValue(new Error('Unreadable process birth'));
+    expect(await f.custody.retirement_row_proven(legacy, options)).toBe(false);
+    kill.mockImplementation(() => {
+      throw Object.assign(new Error('gone'), { code: 'ESRCH' });
+    });
+    expect(await f.custody.retirement_row_proven(legacy, options)).toBe(true);
+    run.mockClear();
+    expect(await f.custody.retirement_row_proven({ ...legacy, host: 'foreign' }, options)).toBe(
+      false,
+    );
+    expect(await f.custody.retirement_row_proven({ ...legacy, boot: 'old' }, options)).toBe(true);
+    expect(await f.custody.retirement_row_proven({ ...legacy, birth: '123:456' }, options)).toBe(
+      true,
+    );
+    vi.spyOn(records, 'read').mockRejectedValue(new Error('Unreadable supervision journal'));
+    expect(
+      await f.custody.retirement_row_proven(
+        { ...legacy, supervision_record: '/synthetic/journal' },
+        options,
+      ),
+    ).toBe(false);
+    expect(run).not.toHaveBeenCalled();
+    expect(f.native.is_absent).toHaveBeenCalledOnce();
+    expect(f.native.signal).not.toHaveBeenCalled();
+    expect(kill.mock.calls.every((call) => call[1] === 0)).toBe(true);
+  } finally {
+    Object.defineProperty(process, 'platform', original);
+  }
 });
 
 test('legacy units require complete retirement properties and retain the exact cleanup owner', async () => {

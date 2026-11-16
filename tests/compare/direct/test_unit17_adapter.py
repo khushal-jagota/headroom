@@ -476,14 +476,6 @@ def normalize(value: Any) -> Any:
     return walk(value)
 
 
-@pytest.mark.xfail(
-    run=False,
-    reason=(
-        "expected-open P3 (ab57822c9): "
-        "Codex compaction checkpoints record the actual event boundary rather than "
-        "turn-end activity"
-    ),
-)
 def test_unit17_adapter_real_core_parity(
     tmp_path: Path, request: pytest.FixtureRequest
 ) -> None:

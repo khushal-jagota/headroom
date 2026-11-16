@@ -146,6 +146,9 @@ test('the legacy inspector distinguishes a reused PID from unreadable ps birth o
     const identity = { process_id: 11, started: 'old' };
     run.mockResolvedValue({ exit_code: 0, standard_output: 'S old', standard_error: '' });
     expect(await inspect(identity, performance.now() / 1000 + 1)).toBe(true);
+    expect(run.mock.calls[0][1].environment_overrides).toEqual({ LC_ALL: 'C' });
+    run.mockResolvedValue({ exit_code: 0, standard_output: 'Z old', standard_error: '' });
+    expect(await inspect(identity, performance.now() / 1000 + 1)).toBe(false);
     run.mockResolvedValue({ exit_code: 0, standard_output: 'S reused', standard_error: '' });
     expect(await inspect(identity, performance.now() / 1000 + 1)).toBe(false);
     run.mockResolvedValue({ exit_code: 0, standard_output: 'S', standard_error: '' });

@@ -294,6 +294,12 @@ export type RecordCommitParticipant<T> = (
   take: () => T,
 ) => AcceptedRecordEvent<T>;
 
+export interface WorkerStepMemoryNote {
+  readonly after_sender_message_id: string;
+  readonly sender_message_id: string;
+  readonly text: string;
+}
+
 /** One append owner, synchronous source effects, and publication after successful return. */
 export interface ConversationRecordStore {
   readonly blocked_local_conversations: Set<string>;
@@ -332,6 +338,10 @@ export interface ConversationRecordStore {
   prepare_reconciliation(open_runs: ReadonlyMap<string, OpenRunTurn>): Promise<void>;
   readonly start_admission_database: AdmissionDatabase;
   automatic_start_request(identity: string, conversation_id: string): StartRequest;
+  worker_step_memory_note(
+    conversation_id: string,
+    sender_message_ids: readonly string[],
+  ): WorkerStepMemoryNote | null;
   bind_interruption_delivery(
     conversation_id: string,
     turn_number: number,

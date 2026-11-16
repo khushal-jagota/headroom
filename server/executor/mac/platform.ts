@@ -544,29 +544,84 @@ export function mac_agent_process_platform(children: OwnedOneShotChildren): Agen
   };
 }
 
-/** Only the retired aggregate receipt uses ps birth text. Modern custody uses libproc. */
+async function read_legacy_process_birth(
+  commands: BackendCommands,
+  identity: AgentProcessIdentity,
+  deadline: number,
+  clock: () => number,
+  format: 'aggregate' | 'custody',
+) {
+  if (native_platform() !== 'darwin' || backend_io_is_test())
+    throw new Error('Native legacy Mac process probes require a production Darwin host.');
+  if (
+    !Number.isSafeInteger(identity.process_id) ||
+    identity.process_id <= 0 ||
+    typeof identity.started !== 'string'
+  )
+    throw new Error('Legacy process identity is unreadable');
+  const remaining = deadline - clock();
+  if (remaining <= 0) throw new Error('Legacy process inspection deadline expired');
+  return commands.run(
+    [
+      '/bin/ps',
+      '-o',
+      format === 'custody' ? 'lstart=' : 'stat=,lstart=',
+      '-p',
+      String(identity.process_id),
+    ],
+    {
+      timeout_seconds: remaining,
+      environment_overrides: format === 'custody' ? { LC_ALL: 'C', TZ: 'UTC' } : { LC_ALL: 'C' },
+    },
+  );
+}
+
+/** The retired aggregate receipt keeps its original local-time and zombie rules. */
 export function legacy_process_inspector(children: OwnedOneShotChildren): InspectLegacyProcess {
   const commands = new BackendCommands(children);
   return async (identity, deadline) => {
-    if (native_platform() !== 'darwin' || backend_io_is_test())
-      throw new Error('Native legacy Mac process probes require a production Darwin host.');
-    if (
-      !Number.isSafeInteger(identity.process_id) ||
-      identity.process_id <= 0 ||
-      typeof identity.started !== 'string'
-    )
-      throw new Error('Legacy process identity is unreadable');
-    const remaining = deadline - monotonic_seconds();
-    if (remaining <= 0) throw new Error('Legacy process inspection deadline expired');
-    const result = await commands.run(
-      ['/bin/ps', '-o', 'stat=,lstart=', '-p', String(identity.process_id)],
-      { timeout_seconds: remaining, environment_overrides: { LC_ALL: 'C' } },
+    const result = await read_legacy_process_birth(
+      commands,
+      identity,
+      deadline,
+      monotonic_seconds,
+      'aggregate',
     );
     if (result.exit_code === 0) {
       const fields = /^(\S+)\s+(.+)$/.exec(result.standard_output.trim());
       if (fields === null || !fields[2]!.trim())
         throw new Error(`Legacy process ${identity.process_id} has unreadable birth evidence`);
       return !fields[1]!.startsWith('Z') && fields[2]!.trim() === identity.started;
+    }
+    try {
+      process.kill(identity.process_id, 0);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ESRCH') return false;
+      throw error;
+    }
+    throw new Error(`Legacy process ${identity.process_id} cannot be inspected`);
+  };
+}
+
+/** Historical conversation custody uses UTC birth text. Modern custody never calls this. */
+export function legacy_custody_process_inspector(
+  children: OwnedOneShotChildren,
+  clock: () => number = monotonic_seconds,
+): InspectLegacyProcess {
+  const commands = new BackendCommands(children);
+  return async (identity, deadline) => {
+    try {
+      const result = await read_legacy_process_birth(
+        commands,
+        identity,
+        deadline,
+        clock,
+        'custody',
+      );
+      const birth = result.standard_output.trim();
+      if (result.exit_code === 0 && birth) return birth === identity.started;
+    } catch {
+      // An unreadable birth proves nothing while the numeric PID still exists.
     }
     try {
       process.kill(identity.process_id, 0);

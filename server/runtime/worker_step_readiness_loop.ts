@@ -193,10 +193,6 @@ async function _admitted_start_ready_worker_step(
           const current_ticket = tickets_data.read_ticket(sql, ticket_id);
           return compose_worker_step_prompt(current_ticket, {
             worker_type_definition: claimed.workflow,
-            memory_was_lost: worker_memory.conversation_holds_an_unanswered_memory_loss(
-              sql,
-              claimed.conversation_id,
-            ),
           });
         });
         database.write((sql) => {

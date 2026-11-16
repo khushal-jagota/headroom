@@ -16,6 +16,8 @@ import { text_message_content } from '../message_content.ts';
 import { ContextCompacted, ToolCallStarted } from '../backends/contracts.ts';
 import { ScriptedBackendRegistry } from './scripted_registry.ts';
 import { reset_ticket_conversation } from '../../runtime/conversation_start.ts';
+import { read_ticket } from '../../tickets/data/index.ts';
+import { compose_worker_step_prompt } from '../../runtime/logic/worker_step_prompt.ts';
 import {
   MEMORY_NOTICE_MESSAGE_PREFIX,
   conversation_holds_an_unanswered_memory_loss,
@@ -76,7 +78,7 @@ export async function run(spec: Spec): Promise<unknown> {
     'conversation_view_groups',
     'conversation_view_lookups',
   ];
-  const send = async (text: string, notice = false, steer = false) => {
+  const send = async (text: string, notice = false, steer = false, wake = false) => {
     sequence++;
     return delivery_fate_json(
       await core.send(identity, text_message_content(text), {
@@ -84,7 +86,7 @@ export async function run(spec: Spec): Promise<unknown> {
         sender_message_id:
           (notice
             ? MEMORY_NOTICE_MESSAGE_PREFIX
-            : spec.case === 'memory_only' && sequence === 1
+            : wake || (spec.case === 'memory_only' && sequence === 1)
               ? 'worker_step_'
               : 'owner-') + sequence,
         mode: steer ? 'steer' : 'queue',
@@ -93,6 +95,11 @@ export async function run(spec: Spec): Promise<unknown> {
   };
   const finish = async () => {
     await registry.child(identity).finish();
+    await core.wait_until_quiescent();
+  };
+  const compact = async () => {
+    await registry.child(identity).emit(new ContextCompacted());
+    await registry.child(identity).flush_events();
     await core.wait_until_quiescent();
   };
   const sweep = async () => {
@@ -144,14 +151,17 @@ export async function run(spec: Spec): Promise<unknown> {
       await finish();
       now += 50 * 60;
       await sweep();
-      await registry.child(identity).emit(new ContextCompacted());
-      await registry.child(identity).flush_events();
-      await core.wait_until_quiescent();
+      await compact();
       await finish();
       await capture('compact-debt');
       backlog();
       await capture('backlogged-debt');
       backlog(0);
+      const stale = await send('Your context was compacted', true);
+      await capture('idle-notice-is-stale', [stale]);
+      await send('work that compacts', false, false, true);
+      await compact();
+      await finish();
       const fate = await send('Your context was compacted', true);
       await registry
         .child(identity)
@@ -171,6 +181,12 @@ export async function run(spec: Spec): Promise<unknown> {
       await sweep();
       await capture('real-work-restores-compaction', [owner]);
     } else if (['held_batch', 'steer_accepted', 'steer_uncertain'].includes(spec.case)) {
+      database.write((tx) =>
+        tx.run("UPDATE tickets SET worker_step_claim='out' WHERE id='t_worker'"),
+      );
+      await send('work that compacts', false, false, true);
+      await compact();
+      await finish();
       const first = await send('Your context was compacted', true);
       await capture('notice-started', [first]);
       let second, owner;
@@ -193,6 +209,66 @@ export async function run(spec: Spec): Promise<unknown> {
       now += 50 * 60;
       await sweep();
       await capture('joined-work-is-due');
+      if (spec.case === 'held_batch') {
+        const queue_wake = async (revision: number) => {
+          const sender_message_id = `worker_step_message_t_worker:${revision}`;
+          database.write((tx) =>
+            tx.run(
+              "INSERT INTO worker_step_dispatch_intents VALUES ('t_worker',?,?, 'dispatch_started')",
+              [revision, sender_message_id],
+            ),
+          );
+          const ticket = database.read((sql) => read_ticket(sql, 't_worker'));
+          const text = compose_worker_step_prompt(ticket, {
+            worker_type_definition: ticket.workflow,
+          }).model_text;
+          const fate = await core.send(identity, text_message_content(text), {
+            sender_label: 'Panels',
+            sender_message_id,
+          });
+          return { sender_message_id, text, fate: delivery_fate_json(fate) };
+        };
+        let stale = await send('Your context was compacted', true);
+        let wake = await queue_wake(0);
+        await queue_wake(1);
+        const first_child = registry.child(identity);
+        await registry.configure(identity, 'write_prompt', {
+          barrier: 'memory-rebind',
+          error: { name: 'NeedsRebind', message: 'fresh child' },
+        });
+        await compact();
+        const finishing = finish();
+        await first_child.wait_for_barrier('memory-rebind');
+        database.write((tx) =>
+          tx.run(
+            'UPDATE conversations SET automatically_compacted_through_sequence=0 WHERE conversation_id=?',
+            [identity],
+          ),
+        );
+        await first_child.release('memory-rebind');
+        await finishing;
+        await capture('wake-rebind-recomputed', [stale, wake.fate]);
+        checkpoints.at(-1)!.wake = { sender_message_id: wake.sender_message_id, text: wake.text };
+        checkpoints.at(-1)!.awaiting = [
+          ...(await core.sender_message_ids_awaiting_outcome(identity)),
+        ].sort();
+        stale = await send('Your context was compacted', true);
+        wake = await queue_wake(2);
+        await registry.configure(identity, 'write_prompt', {
+          error: { name: 'Error', message: 'acknowledgement lost after possible emission' },
+        });
+        await compact();
+        await finish();
+        const replay = await core.send(identity, text_message_content(wake.text), {
+          sender_label: 'Panels',
+          sender_message_id: wake.sender_message_id,
+        });
+        await capture('wake-note-uncertain', [stale, wake.fate, delivery_fate_json(replay)]);
+        checkpoints.at(-1)!.wake = { sender_message_id: wake.sender_message_id, text: wake.text };
+        checkpoints.at(-1)!.awaiting = [
+          ...(await core.sender_message_ids_awaiting_outcome(identity)),
+        ].sort();
+      }
     } else {
       await send('real work');
       if (spec.case === 'queued_backlog') {

@@ -743,6 +743,7 @@ export class SqliteProcessConversationSystem implements DeliveryServices, Conver
       automatic_notice: false,
       memory_notice_only: false,
       prompt_accepted: false,
+      prompt_write_attempted: false,
       messages: [],
       mode: PromptDeliveryMode.queue,
       shutdown_owned: false,
@@ -792,8 +793,19 @@ export class SqliteProcessConversationSystem implements DeliveryServices, Conver
           reservation.token,
         ),
       );
-      if (error instanceof PromptWriteFailed) {
-        await this.record_delivery_uncertainty(state, reservation, batch);
+      const attempted = reservation.prompt_write_attempted ? reservation.messages : batch;
+      // Python records ordinary post-write errors as possible emission, while
+      // business cancellation keeps its existing path.
+      if (
+        error instanceof PromptWriteFailed ||
+        (reservation.prompt_write_attempted && !is_shutdown_business_cancellation(error))
+      ) {
+        if (queued && !reservation.prompt_write_attempted)
+          await this.settle_automatic_ids(
+            state,
+            batch.map((message) => message.sender_message_id),
+          );
+        await this.record_delivery_uncertainty(state, reservation, attempted, batch);
         return new PromptDeliveryUncertain();
       }
       const recovery_messages = batch.filter((message) => message.recovery_references.length > 0);
@@ -830,8 +842,9 @@ export class SqliteProcessConversationSystem implements DeliveryServices, Conver
       await state.lock.run(() => {
         if (queued) {
           state.child_is_quarantined = true;
-          for (const message of [...batch].reverse())
-            state.held_prompts.unshift({ ...message, delivery_uncertain: true });
+          for (const message of [...attempted].reverse())
+            if (!message.dispatch_memory_note)
+              state.held_prompts.unshift({ ...message, delivery_uncertain: true });
           this.finish_held_deliveries(state, batch);
         }
         this.abandon_reservation(state, reservation, 'idle');
@@ -1016,6 +1029,7 @@ export class SqliteProcessConversationSystem implements DeliveryServices, Conver
     state: ConversationState,
     reservation: ReservedTurn,
     batch: readonly Message[],
+    settle_messages: readonly Message[] = batch,
   ): Promise<void> {
     await state.lock.run(async () => {
       for (const message of batch)
@@ -1036,9 +1050,10 @@ export class SqliteProcessConversationSystem implements DeliveryServices, Conver
         );
         this.note_written(state, rows);
       }
-      this.finish_held_deliveries(state, batch);
+      this.finish_held_deliveries(state, settle_messages);
       const present = new Set(state.held_prompts.map((message) => message.held_prompt_id));
       for (const message of [...batch].reverse()) {
+        if (message.dispatch_memory_note) continue;
         if (message.held_prompt_id && !present.has(message.held_prompt_id))
           state.held_prompts.unshift({ ...message, delivery_uncertain: true });
       }
@@ -1636,13 +1651,6 @@ export class SqliteProcessConversationSystem implements DeliveryServices, Conver
           ? state.record.latest_agent_activity_at
           : last.created_at,
         latest_agent_activity_sequence,
-        automatically_compacted_through_sequence: running.compaction_confirmed
-          ? latest_agent_activity_sequence
-          : state.record.automatically_compacted_through_sequence,
-        working_turn_compacted_through_sequence:
-          running.compaction_confirmed && !running.automatic_compaction
-            ? latest_agent_activity_sequence
-            : state.record.working_turn_compacted_through_sequence,
         automatic_compaction_attempted_through_sequence:
           running.compaction_confirmed || interpreted.compaction_result !== null
             ? latest_agent_activity_sequence
