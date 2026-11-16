@@ -59,6 +59,10 @@ class BackendSpawnFailed(BackendAdapterError):
     """The backend process would not spawn, so there is no live process to write to."""
 
 
+class ClaudeInitializeTimeout(BackendSpawnFailed):
+    """Claude SDK timed out before its initialize handshake completed."""
+
+
 class SessionLoadFailed(BackendAdapterError):
     """The process is alive but there is no valid bound session to write under.
 
