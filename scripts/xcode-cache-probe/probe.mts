@@ -4,6 +4,7 @@ import { mkdir, readFile, realpath, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { prepare_xcode_compilation_cache } from "../../server/executor/mac/runner/xcode_cache.ts";
 import { write_project } from "./project.mts";
+import { cache_diagnostics } from "./cache_diagnostics.mts";
 
 await mkdir(resolve(process.argv[2]!), { recursive: true });
 const root = await realpath(resolve(process.argv[2]!));
@@ -47,16 +48,14 @@ async function run(
   return { seconds: (performance.now() - started) / 1000, output };
 }
 
-async function build(
-  name: string,
-  expected: string,
-): Promise<{ seconds: number; cache_hit_lines: string[] }> {
+async function build(name: string, expected: string) {
   const checkout = join(root, name);
   const ticket = join(root, "tickets", name);
   await mkdir(ticket, { recursive: true });
   const configuration = await prepare_xcode_compilation_cache(
     join(root, "executor"),
     ticket,
+    checkout,
   );
   const args = [
     "-project",
@@ -105,12 +104,7 @@ async function build(
     throw new Error(
       `${name}: expected ${expected}, got ${actual.output.trim()}`,
     );
-  const cache_hit_lines = built.output
-    .split("\n")
-    .filter((line) =>
-      /cache.{0,30}hit|hit.{0,30}cache|replay.{0,30}cache/i.test(line),
-    );
-  const result = { seconds: built.seconds, cache_hit_lines };
+  const result = { seconds: built.seconds, ...cache_diagnostics(built.output) };
   results[name] = result;
   return result;
 }
@@ -166,9 +160,9 @@ try {
   ]);
   const failed = concurrent.find((result) => result.status === "rejected");
   if (failed?.status === "rejected") throw failed.reason;
-  if (warm.cache_hit_lines.length === 0)
+  if (warm.cache_hits.source === 0)
     throw new Error(
-      "Second checkout has no compiler cache-hit evidence. Cross-path reuse remains unproved.",
+      "Second checkout has no target Swift cache hits. SDK module hits alone do not prove source reuse.",
     );
   results.success = true;
 } catch (error) {

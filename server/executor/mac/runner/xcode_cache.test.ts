@@ -1,7 +1,7 @@
 /** Cache delivery is new: use the native start fixture through the backend factory.
  * No provider, Git process, server, or Xcode runs in this test.
  */
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { platform, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { expect, test, vi } from 'vitest';
@@ -25,7 +25,7 @@ vi.mock('../../../ticket_workspaces/filesystem.ts', async (original) => ({
 }));
 
 test('managed Mac starts deliver a shared cache through the backend without shared build products', async () => {
-  const root = await mkdtemp(join(tmpdir(), 'mac-xcode-cache-'));
+  const root = await realpath(await mkdtemp(join(tmpdir(), 'mac-xcode-cache-')));
   const paths = new ExecutorPaths(root);
   const inherited = join(root, 'native configuration.xcconfig');
   await writeFile(inherited, 'PRODUCT_NAME = NativeName\n');
@@ -111,9 +111,16 @@ test('managed Mac starts deliver a shared cache through the backend without shar
     }
     expect(starts).toBe(4);
     const texts = await Promise.all(configurations.map((path) => readFile(path, 'utf8')));
-    expect(texts[0]).toBe(texts[1]);
+    expect(texts[0]).not.toBe(texts[1]);
     expect(texts[0]).toContain(`#include "${inherited}"`);
     expect(texts[0]).toContain(`COMPILATION_CACHE_CAS_PATH = ${join(root, 'cache', 'xcode')}`);
+    expect(texts[1]).toContain(`COMPILATION_CACHE_CAS_PATH = ${join(root, 'cache', 'xcode')}`);
+    expect(texts[0]).toContain(
+      `-scanner-prefix-map "${join(paths.artifacts, 'mac-one', 'worktree')}=/^src"`,
+    );
+    expect(texts[1]).toContain(
+      `-scanner-prefix-map "${join(paths.artifacts, 'mac-two', 'worktree')}=/^src"`,
+    );
     expect(texts[0]).not.toMatch(/DERIVED_DATA|SYMROOT|OBJROOT|MODULE_CACHE/);
     await rm(join(paths.artifacts, 'mac-one'), { recursive: true });
     expect(await readFile(configurations[1]!, 'utf8')).toBe(texts[1]);
@@ -126,6 +133,11 @@ test('managed Mac starts deliver a shared cache through the backend without shar
 
 test('native configuration paths cannot inject xcconfig lines', async () => {
   await expect(
-    prepare_xcode_compilation_cache('/synthetic', '/synthetic/ticket', 'bad"\nSETTING=YES'),
+    prepare_xcode_compilation_cache(
+      '/synthetic',
+      '/synthetic/ticket',
+      '/synthetic/worktree',
+      'bad"\nSETTING=YES',
+    ),
   ).rejects.toThrow('unsupported characters');
 });

@@ -31,11 +31,12 @@ jobs:
           set -euo pipefail
           test "$RUNNER_ENVIRONMENT" = github-hosted
           xcodebuild -version
+          ls -d /Applications/Xcode*.app
           probe_root="$RUNNER_TEMP/xcode-cache-probe"
           mkdir -p "$probe_root/home" "$probe_root/tmp" "$probe_root/evidence"
           env -i PATH="$PATH" HOME="$probe_root/home" TMPDIR="$probe_root/tmp/" \
             DEVELOPER_DIR="$(xcode-select -p)" LANG=en_US.UTF-8 \
-            node scripts/xcode-cache-probe/probe.mts "$probe_root/work" "$probe_root/evidence"
+            node scripts/xcode-cache-probe/probe.mts "$probe_root/work with spaces" "$probe_root/evidence"
       - name: Capture build times and compiler evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
