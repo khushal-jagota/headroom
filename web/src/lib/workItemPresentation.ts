@@ -73,12 +73,12 @@ export function workItemTicketGroupKey(
 ): WorkItemTicketGroupKey {
   if (ticket.integrity_error) return "errored";
   if (ticket.is_backlogged) return "backlog";
-  const attention = primaryWorkAttention(ticket);
+  const attention = primaryWorkAttention({...ticket, assigned: ticket.assigned && !ticket.awaiting_agent_approval});
   if (attention !== null) return attention;
+  if (ticket.awaiting_agent_approval) return "status_awaiting_approval";
   if (ticket.blocked || ticket.ticket_status === "blocked") return "blocked";
   if (ticket.agent_state === "errored") return "errored";
   if (agentHoldsTicket(ticket)) return "agent";
-  if (ticket.awaiting_agent_approval) return "status_awaiting_approval";
   if (ticket.stage === "done") return "done";
   return "empty";
 }

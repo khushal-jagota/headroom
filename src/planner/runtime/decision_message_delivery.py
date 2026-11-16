@@ -110,6 +110,8 @@ async def deliver_ticket_decision_messages(
                             ticket_id,
                             expected_claim=ticket.worker_step_claim,
                             expected_claim_revision=ticket.worker_step_claim_revision,
+                            decision_delivery=True,
+                            decision_proposal_revision=row["proposal_revision"],
                             now=now(),
                             error_reason=f"decision delivery {status}",
                         )
@@ -127,6 +129,8 @@ async def deliver_ticket_decision_messages(
                         ticket_id,
                         expected_claim=ticket.worker_step_claim,
                         expected_claim_revision=ticket.worker_step_claim_revision,
+                        decision_delivery=True,
+                        decision_proposal_revision=row["proposal_revision"],
                         now=now(),
                         error_reason="decision delivery uncertain",
                     )
@@ -183,6 +187,8 @@ async def deliver_ticket_decision_messages(
                             ticket_id,
                             expected_claim=ticket.worker_step_claim,
                             expected_claim_revision=ticket.worker_step_claim_revision,
+                            decision_delivery=True,
+                            decision_proposal_revision=row["proposal_revision"],
                             now=now(),
                             error_reason="decision delivery uncertain",
                         )
@@ -208,6 +214,8 @@ async def deliver_ticket_decision_messages(
                         ticket_id,
                         expected_claim=ticket.worker_step_claim,
                         expected_claim_revision=ticket.worker_step_claim_revision,
+                        decision_delivery=True,
+                        decision_proposal_revision=row["proposal_revision"],
                         now=now(),
                         error_reason=f"decision delivery {status}",
                     )

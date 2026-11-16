@@ -202,3 +202,20 @@ def test_restart_uses_actual_prompt_receipt_before_rearming_lagging_outbox(
         "WHERE decision_id='receipt'"
     ).fetchone()
     assert tuple(row) == ("delivered", "conv-receipt")
+
+
+def test_historical_errored_claim_does_not_prevent_approval(tmp_db: Connection) -> None:
+    """A retained proposal remains decidable despite the historical conflicting claim."""
+    from planner.tickets.contracts import TicketStatus
+
+    ticket = _park(tmp_db)
+    tmp_db.execute("UPDATE tickets SET worker_step_claim='errored' WHERE id=?", (ticket.id,))
+    tmp_db.commit()
+    assert data.read_ticket(tmp_db, ticket.id).ticket_status is TicketStatus.awaiting_approval
+    result = data.accept_proposal(
+        tmp_db, ticket.id, field="what_changes", principal=OWNER_PRINCIPAL, now=3,
+        next_ceiling="needs_implementation", next_holder=OWNER_PRINCIPAL,
+        expected_proposal_revision=ticket.pending_proposal_revision,
+    )
+    assert result.pending_proposal is None
+    assert result.stage == "needs_implementation"

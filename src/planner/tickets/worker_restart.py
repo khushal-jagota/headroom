@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING
 
 from planner.conversation.contracts import ConversationSystem
 from planner.conversation.start_admission import explicit_start
+from planner.core.authority import Target, TargetKind, require_above
 from planner.core.contracts import Principal
 from planner.core.errors import ErrorCode, PlannerError
 from planner.core.task_settlement import run_on_worker_thread
@@ -40,13 +41,18 @@ def require_restartable(
     principal: Principal,
     ticket_id: str,
 ) -> Ticket:
-    """Return the Ticket, unless its Stage is the user's or its Mac is away."""
+    """Authorize the restart and ensure its destination can be reached."""
+    require_above(conn, principal, Target(TargetKind.ticket, ticket_id))
     ticket = tickets_data.read_ticket(conn, ticket_id)
     ownership_mode = machine.stage_ownership_mode(
         ticket.stage,
         worker_type_definition=ticket.workflow,
     )
-    if ownership_mode is not StageOwnershipMode.worker:
+    if ownership_mode is not StageOwnershipMode.worker and conn.execute(
+        "SELECT 1 FROM ticket_decision_messages WHERE ticket_id=? "
+        "AND delivery_status IN ('uncertain','refused','discarded') LIMIT 1",
+        (ticket_id,),
+    ).fetchone() is None:
         # A user-owned Stage runs its opener once per Stage entry. A restart there would
         # kill the conversation the user is in and start nothing.
         raise PlannerError(

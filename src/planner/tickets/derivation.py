@@ -57,15 +57,15 @@ class AgentState(StrEnum):
 def derive_ticket_status(stored: StoredTicketFacts) -> TicketStatus:
     """The one rule. First match wins, and the order is the order the writers produced.
 
-    A failed claim outranks everything: it is the reason no step is running. A parked
-    proposal outranks a claim, because filing one gives the claim back. A claim outranks
+    A parked proposal outranks a claim, because it remains actionable even if an older
+    delivery left the claim in error. Otherwise a failed claim outranks rest. A claim outranks
     a blocker, because a Ticket whose step is out is not resting. What is left is a
     Ticket at rest, and ``blocked`` is what rest is called while another Ticket blocks it.
     """
-    if stored.worker_step_claim is WorkerStepClaim.errored:
-        return TicketStatus.errored
     if stored.has_pending_proposal:
         return TicketStatus.awaiting_approval
+    if stored.worker_step_claim is WorkerStepClaim.errored:
+        return TicketStatus.errored
     if stored.worker_step_claim is WorkerStepClaim.out:
         return TicketStatus.agent
     if stored.has_live_blocker:
