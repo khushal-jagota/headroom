@@ -55,10 +55,12 @@ final class ReviewFinalPageTests: XCTestCase {
         XCTAssertEqual(first.first?["next_ceiling"] as? String, "needs_consequences")
         app.terminate()
 
-        // Model the worker's next proposal explicitly; approval never manufactures it.
-        try await proof(base, "consequences-review/proposal")
-        launchReview()
-        app.buttons["review.openTicket"].tap()
+        // Consequences retains its settings before the worker proposes the result.
+        app.launch()
+        let workspace = app.tabBars.buttons["Workspace"]
+        XCTAssertTrue(workspace.waitForExistence(timeout: 10)); workspace.tap()
+        let ticket = app.descendants(matching: .any).matching(identifier: "workspace-ticket-offline-1").firstMatch
+        XCTAssertTrue(ticket.waitForExistence(timeout: 8)); ticket.tap()
         let limit = app.buttons["ticket-approval-limit"]
         XCTAssertTrue(limit.waitForExistence(timeout: 8)); limit.tap()
         let picker = app.descendants(matching: .any).matching(identifier: "ticket-ceiling-picker").firstMatch
@@ -68,6 +70,13 @@ final class ReviewFinalPageTests: XCTestCase {
         capture(app, "consequences-ticket-approval-limit")
         app.buttons["Cancel"].tap()
         XCTAssertTrue(limit.waitForExistence(timeout: 5))
+        app.terminate()
+
+        // Model the worker's next proposal explicitly; approval never manufactures it.
+        try await proof(base, "consequences-review/proposal")
+        launchReview()
+        app.buttons["review.openTicket"].tap()
+        XCTAssertTrue(app.buttons["review.sendBack"].waitForExistence(timeout: 8))
         XCTAssertTrue(app.buttons["review.sendBack"].exists)
         XCTAssertTrue(app.buttons["review.approve"].exists)
         capture(app, "consequences-ticket-decision-controls")
