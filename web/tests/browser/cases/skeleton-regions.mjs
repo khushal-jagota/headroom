@@ -63,6 +63,8 @@ export async function prepare({scratchRoot}) {
     (window as any).__preview = (path: string, full = false, conversation = false) => flushSync(() => {
       previewPath = path; previewFull = full; previewConversation = conversation;
     });
+    let htmlReload = $state(0);
+    (window as any).__htmlRefresh = () => flushSync(() => htmlReload++);
     let htmlMode = $state("");
     let htmlPath = $state("site/index.html");
     (window as any).__html = (mode: string, path = "site/index.html") => flushSync(() => { htmlMode = mode; htmlPath = path; });
@@ -84,7 +86,7 @@ export async function prepare({scratchRoot}) {
   {#if checklistShown}<section data-checklist-fixture><PageChecklist block={checklist} presentation={checklistPresentation} supplementary={checklistSupplementary}/></section>{/if}
   {#if nestedShown}<section data-nested-checklists style="width:360px"><PageDocument document={nestedDocument} supplementary showHeader={false}/></section>{/if}
   {#if htmlMode}<section data-html-fixture style="height:500px">
-    {#if htmlMode === 'full'}<FileDocument target={{kind:'ticket-file',ticketId:'t_owner',path:htmlPath}} />
+    {#if htmlMode === 'full'}<FileDocument target={{kind:'ticket-file',ticketId:'t_owner',path:htmlPath}} reloadSignal={htmlReload} />
     {:else if htmlMode === 'link'}<p>See <FilePreview target={{kind:'ticket-file',ticketId:'t_owner',path:htmlPath}} /> now.</p>
     {:else}<FilePreview target={{kind:'ticket-file',ticketId:'t_owner',path:htmlPath}} mode="full" />{/if}
   </section>{/if}

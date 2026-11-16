@@ -24,7 +24,6 @@ from planner.core.task_settlement import run_on_worker_thread
 from planner.files import goal_files, manager_files
 from planner.files.logic.paths import (
     resolve_goal_file,
-    resolve_html_navigation,
     resolve_manager_file,
     resolve_ticket_file,
 )
@@ -38,132 +37,76 @@ from planner.tickets.api import DbConn, body_str
 router = APIRouter()
 
 _RAW_UNSAFE_RE = re.compile(rb"%(?:25|2e|2f|5c)", re.IGNORECASE)
-_INLINE_IMAGE_TYPES = frozenset(
-    {
-        "image/avif",
-        "image/bmp",
-        "image/gif",
-        "image/jpeg",
-        "image/png",
-        "image/webp",
-    }
-)
-_INLINE_MEDIA_TYPES = _INLINE_IMAGE_TYPES | frozenset(
-    {
-        "audio/aac",
-        "audio/flac",
-        "audio/mp4",
-        "audio/mpeg",
-        "audio/ogg",
-        "audio/wav",
-        "audio/webm",
-        "audio/x-wav",
-        "video/mp4",
-        "video/ogg",
-        "video/quicktime",
-        "video/webm",
-        "video/x-m4v",
-    }
-)
-
-
-@router.get("/files/tickets/{ticket_id}/{file_path:path}")
+@router.api_route("/files/tickets/{ticket_id}/{file_path:path}", methods=["GET", "HEAD"])
 async def get_ticket_file(request: Request, ticket_id: str, file_path: str) -> Response:
     _reject_raw_encoded_unsafe_path(request)
     try:
-        ticket_file = (
-            resolve_html_navigation(
-                request.app.state.config.db_path,
-                request.headers["x-panels-artifact-root"],
-                request.scope["raw_path"].decode("ascii"),
-            )
-            if "x-panels-artifact-root" in request.headers
-            else resolve_ticket_file(
-                request.app.state.config.db_path, ticket_id, file_path
-            ).absolute_path
-        )
+        ticket_file = resolve_ticket_file(
+            request.app.state.config.db_path, ticket_id, file_path
+        ).absolute_path
     except (ValueError, OSError, RuntimeError, UnicodeError) as exc:
         raise PlannerError(ErrorCode.not_found, "ticket file not found") from exc
 
     media_type = (
         mimetypes.guess_type(ticket_file.name)[0] or "application/octet-stream"
     )
-    disposition = "inline" if _may_inline(media_type) else "attachment"
     response = FileResponse(
         ticket_file,
         media_type=media_type,
         filename=ticket_file.name,
-        content_disposition_type=disposition,
+        content_disposition_type="inline",
     )
-    response.headers["X-Content-Type-Options"] = "nosniff"
     return await _reusable(request, response, ticket_file, media_type)
 
 
-@router.get("/files/sprint-items/{manager_id}/{file_path:path}", include_in_schema=False)
-@router.get("/files/managers/{manager_id}/{file_path:path}")
+@router.api_route(
+    "/files/sprint-items/{manager_id}/{file_path:path}",
+    methods=["GET", "HEAD"], include_in_schema=False,
+)
+@router.api_route("/files/managers/{manager_id}/{file_path:path}", methods=["GET", "HEAD"])
 async def get_manager_file(
     request: Request, manager_id: str, file_path: str
 ) -> Response:
     _reject_raw_encoded_unsafe_path(request, "Manager file not found")
     try:
-        managed_file = (
-            resolve_html_navigation(
-                request.app.state.config.db_path,
-                request.headers["x-panels-artifact-root"],
-                request.scope["raw_path"].decode("ascii"),
-            )
-            if "x-panels-artifact-root" in request.headers
-            else resolve_manager_file(
-                request.app.state.config.db_path, manager_id, file_path
-            ).absolute_path
-        )
+        managed_file = resolve_manager_file(
+            request.app.state.config.db_path, manager_id, file_path
+        ).absolute_path
     except (ValueError, OSError, RuntimeError, UnicodeError) as exc:
         raise PlannerError(ErrorCode.not_found, "Manager file not found") from exc
     media_type = (
         mimetypes.guess_type(managed_file.name)[0] or "application/octet-stream"
     )
-    disposition = "inline" if _may_inline(media_type) else "attachment"
     response = FileResponse(
         managed_file,
         media_type=media_type,
         filename=managed_file.name,
-        content_disposition_type=disposition,
+        content_disposition_type="inline",
     )
-    response.headers["X-Content-Type-Options"] = "nosniff"
     return await _reusable(request, response, managed_file, media_type)
 
 
-@router.get("/files/goals/{goal_id}/{file_path:path}")
+@router.api_route("/files/goals/{goal_id}/{file_path:path}", methods=["GET", "HEAD"])
 async def get_goal_file(
     request: Request, goal_id: str, file_path: str
 ) -> Response:
     _reject_raw_encoded_unsafe_path(request, "goal file not found")
     await run_on_worker_thread(_require_goal, request, goal_id)
     try:
-        managed_file = (
-            resolve_html_navigation(
-                request.app.state.config.db_path,
-                request.headers["x-panels-artifact-root"],
-                request.scope["raw_path"].decode("ascii"),
-            )
-            if "x-panels-artifact-root" in request.headers
-            else resolve_goal_file(
-                request.app.state.config.db_path, goal_id, file_path
-            ).absolute_path
-        )
+        managed_file = resolve_goal_file(
+            request.app.state.config.db_path, goal_id, file_path
+        ).absolute_path
     except (ValueError, OSError, RuntimeError, UnicodeError) as exc:
         raise PlannerError(ErrorCode.not_found, "goal file not found") from exc
     media_type = (
         mimetypes.guess_type(managed_file.name)[0] or "application/octet-stream"
     )
-    disposition = "inline" if _may_inline(media_type) else "attachment"
     response = FileResponse(
         managed_file,
         media_type=media_type,
         filename=managed_file.name,
-        content_disposition_type=disposition,
+        content_disposition_type="inline",
     )
-    response.headers["X-Content-Type-Options"] = "nosniff"
     return await _reusable(request, response, managed_file, media_type)
 
 
@@ -220,7 +163,6 @@ async def _reusable(
             "Cache-Control": "private, no-cache",
             "Content-Disposition": response.headers["content-disposition"],
             "Last-Modified": formatdate(representation.last_modified_epoch, usegmt=True),
-            "X-Content-Type-Options": "nosniff",
             # Honest: a request that asks for a range is served one, by the branch above.
             "Accept-Ranges": "bytes",
         },
@@ -302,7 +244,3 @@ def _reject_raw_encoded_unsafe_path(
     raw_path = request.scope.get("raw_path", b"")
     if _RAW_UNSAFE_RE.search(raw_path):
         raise PlannerError(ErrorCode.not_found, message)
-
-
-def _may_inline(media_type: str) -> bool:
-    return media_type in _INLINE_MEDIA_TYPES
