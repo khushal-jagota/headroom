@@ -5,8 +5,12 @@ import XCTest
 
 final class OwnerCookieTests: XCTestCase {
     func testBootstrapLoadsTheWebAppPageOnlyWhenTheOwnerCookieIsMissing() async throws {
-        let base = try XCTUnwrap(URL(string: "https://owner-cookie.invalid"))
-        let storage = HTTPCookieStorage()
+        // A storage made with HTTPCookieStorage() keeps nothing, so use the shared one
+        // under a host no other test uses, and remove the cookie afterwards.
+        let host = "owner-cookie-\(UUID().uuidString.lowercased()).invalid"
+        let base = try XCTUnwrap(URL(string: "https://\(host)"))
+        let storage = HTTPCookieStorage.shared
+        defer { storage.cookies(for: base)?.forEach(storage.deleteCookie) }
         let configuration = URLSessionConfiguration.ephemeral
         configuration.protocolClasses = [OwnerCookieStub.self]
         configuration.httpCookieStorage = storage
@@ -20,7 +24,7 @@ final class OwnerCookieTests: XCTestCase {
         XCTAssertNotNil(first.first?.value(forHTTPHeaderField: "X-Panels-iOS-Build"))
 
         storage.setCookie(try XCTUnwrap(HTTPCookie(properties: [
-            .name: OwnerCookieBootstrap.cookieName, .value: "x", .domain: "owner-cookie.invalid", .path: "/",
+            .name: OwnerCookieBootstrap.cookieName, .value: "x", .domain: host, .path: "/",
         ])))
         await OwnerCookieBootstrap().ensure(client, storage: storage)
         XCTAssertEqual(OwnerCookieStub.requests.withLock { $0 }.count, 1)
