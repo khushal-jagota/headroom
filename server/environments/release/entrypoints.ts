@@ -105,11 +105,13 @@ export async function launch_app(
   args: PackagedLauncherArguments,
   ambient: Readonly<Record<string, string>>,
 ): Promise<never> {
+  const root = await resolved_path(app_root);
+  if (args.operation === 'environment')
+    return execve(join(root, 'bin/panels'), [join(root, 'bin/panels'), ...args.argv], ambient);
   if (process.platform === 'darwin' && process.arch !== 'arm64')
     throw new AppValidationError('Mac home launch requires an arm64 Node runtime');
   if (process.platform === 'darwin' && args.mode === 'managed-linux')
     throw new AppValidationError('Linux managed launch is unavailable on macOS');
-  const root = await resolved_path(app_root);
   const environment = await build_app_launch_env(
     root,
     ambient,

@@ -1,5 +1,15 @@
 /** Four command boundaries, private files and owned Node witnesses; no provider or executor. */
-import { mkdir, mkdtemp, readFile, rename, rm, writeFile } from 'node:fs/promises';
+import {
+  mkdir,
+  mkdtemp,
+  readFile,
+  rename,
+  rm,
+  writeFile,
+  copyFile,
+  utimes,
+  stat,
+} from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -8,7 +18,10 @@ import { ChildProcesses } from '../lifecycle/owned_processes.ts';
 import { assert_temporary_path } from '../core/test_paths.ts';
 import { run_release_command } from './release/process.ts';
 import { build_exported_app } from './release/build.ts';
-import { validate_app_manifest } from './release/identity.ts';
+import { validate_app_manifest, digest_app_artifact } from './release/identity.ts';
+import { write_app_entrypoints } from './release/entrypoints.ts';
+import { createDatabaseFromSeed, createReadAccess } from '../core/database/index.ts';
+import type { ApplicationSchemaSeed } from '../core/database/contracts.ts';
 import { operator_commands } from './commands.ts';
 import { create_production_operator_dependencies } from './operator_dependencies.ts';
 import { prepare_environment_instance } from './registry/materialize.ts';
@@ -39,6 +52,7 @@ async function private_fixture() {
   const stops: Array<() => Promise<void>> = [];
   const environment: NodeJS.ProcessEnv = {
     PATH: process.env.PATH,
+    TMPDIR: tmpdir(),
     HOME: join(root, 'home'),
     CODEX_HOME: join(root, 'home/codex'),
     CLAUDE_CONFIG_DIR: join(root, 'home/claude'),
@@ -280,3 +294,108 @@ const result=JSON.stringify({pid:process.pid,cwd:process.cwd(),db:process.env.PL
     expect(witness.port).toBeGreaterThan(0);
   });
 }, 15_000);
+
+// Copy the real launcher entry and relay its imports to this checkout. The small
+// sealed tree exercises the generated shell wrappers without copying dependencies.
+test('installed launcher runs nightly backup and applied maintenance on private data', async () => {
+  await fixture(async (f) => {
+    const app = join(f.root, 'app');
+    const file = async (name: string, text: string, mode = 0o644) => {
+      const path = join(app, name);
+      await mkdir(join(path, '..'), { recursive: true });
+      await writeFile(path, text, { mode });
+    };
+    await file('package.json', '{"type":"module"}');
+    await file(
+      'server/environments/release/entrypoints.ts',
+      `export { launch_app } from ${JSON.stringify(module_url('./release/entrypoints.ts'))};`,
+    );
+    await file(
+      'server/core/environment.ts',
+      `export { copy_environment } from ${JSON.stringify(module_url('../core/environment.ts'))};`,
+    );
+    await file(
+      'server/cli/main.ts',
+      `#!/usr/bin/env node\nimport { main } from ${JSON.stringify(module_url('../cli/main.ts'))}; await main();`,
+      0o755,
+    );
+    await copyFile(
+      fileURLToPath(module_url('./release/launcher_main.ts')),
+      join(app, 'server/environments/release/launcher_main.ts'),
+    );
+    const revision = 'a'.repeat(40);
+    await write_app_entrypoints(
+      app,
+      revision,
+      { public_cli_entrypoint: 'server/cli/main.ts' },
+      f.execution,
+    );
+    await file(
+      'manifest.json',
+      JSON.stringify({
+        format: 'panels-app-v1',
+        app_sha: revision,
+        source_digest: 'b'.repeat(64),
+        artifact_digest: await digest_app_artifact(app),
+      }),
+    );
+    const seed = JSON.parse(
+      await readFile(new URL('../core/database/application_schema.json', import.meta.url), 'utf8'),
+    ) as ApplicationSchemaSeed;
+    const db = createDatabaseFromSeed(f.environment.PLAN_DB_PATH!, seed, () => {});
+    db.close();
+    await mkdir(join(f.root, 'skills'));
+    await writeFile(join(f.root, 'skills/proof.txt'), 'managed skill');
+    const launcher = join(app, 'bin/panels-launcher');
+    const backup = await f.command([
+      launcher,
+      'environment',
+      'backup-current',
+      '--source-db',
+      f.environment.PLAN_DB_PATH!,
+      '--backup-dir',
+      f.environment.PLAN_BACKUP_DIR!,
+      '--current-app',
+      app,
+    ]);
+    expect(backup.code).toBe(0);
+    const snapshot = backup.stdout.trim();
+    expect(JSON.parse(await readFile(join(snapshot, 'metadata.json'), 'utf8'))).toMatchObject({
+      verified: true,
+      deployed_revision: revision,
+    });
+    expect(await readFile(join(snapshot, 'files/skills/proof.txt'), 'utf8')).toBe('managed skill');
+    const snapshot_db = createReadAccess(join(snapshot, 'database.sqlite'));
+    try {
+      expect(snapshot_db.read((sql) => sql.get('SELECT version_num FROM alembic_version'))).toEqual(
+        { version_num: seed.alembicRevision },
+      );
+    } finally {
+      snapshot_db.close();
+    }
+    // The handler retains its warning-and-backup policy when installed files drift.
+    await file('changed.txt', 'drift');
+    const changed = await f.command([
+      launcher,
+      'environment',
+      'backup-current',
+      '--source-db',
+      f.environment.PLAN_DB_PATH!,
+      '--backup-dir',
+      f.environment.PLAN_BACKUP_DIR!,
+      '--current-app',
+      app,
+    ]);
+    expect(changed.code).toBe(0);
+    expect(changed.stderr).toContain('Warning: app artifact digest does not match its manifest');
+    const expired = join(f.environment.PLAN_BACKUP_DIR!, '.backup-expired');
+    await mkdir(expired);
+    await writeFile(join(expired, 'partial'), 'expired backup');
+    await utimes(expired, 0, 0);
+    const cleanup = await f.command([launcher, 'environment', 'cleanup', '--apply']);
+    expect(cleanup.code).toBe(0);
+    expect(cleanup.stdout).toContain('applied cleanup');
+    await expect(stat(expired)).rejects.toMatchObject({ code: 'ENOENT' });
+    expect((await stat(snapshot)).isDirectory()).toBe(true);
+  });
+}, 20_000);

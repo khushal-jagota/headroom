@@ -62,6 +62,7 @@ export interface ReleaseExecution {
   readonly deadline: number | null;
 }
 export type PackagedLauncherArguments =
+  | { readonly operation: 'environment'; readonly argv: readonly string[] }
   | { readonly operation: 'serve'; readonly mode: 'foreground' }
   | {
       readonly operation: 'serve';
