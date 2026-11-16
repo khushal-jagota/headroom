@@ -109,6 +109,25 @@ its text; a changed byte count, version or body identity reads it again. Image
 artifacts load their image once per successful document load, outside the view
 body. A failed reload retains the previous document and image.
 
+## Photo messages
+
+The native composer prepares each photo off the main actor when it joins the draft.
+Its attachment shows “Preparing photo…” and Send stays disabled until preparation finishes.
+Accepted photos reuse their prepared bytes; only a combined size above 3 MiB triggers another reduction.
+Restored raw drafts also prepare off the main actor before send. Newer draft edits cancel that send capture.
+HEIC becomes
+an oriented JPEG. Large images are recompressed or reduced to keep all image bytes
+within the server's existing 3 MiB message limit. Supported photos that already fit
+retain their bytes. File attachments keep their existing handling.
+
+The same preparation applies to restored editable drafts, Review replies and explicit
+retries of failed messages. It never changes an in-flight or uncertain outgoing body.
+If the server still returns HTTP 422, the phone shows a photo-specific error and keeps
+the draft. An ordinary conversation restores its cleared draft only when both saved
+composer versions still match the cleared versions. Newer edits stay intact. An explicit
+retry gets a new message identity and clears only the exact restored draft it retries.
+The server's limits and retention policy do not change.
+
 ## Typography
 
 Shared text roles in `Core/Theme/Theme.swift` follow the mobile web's weights.

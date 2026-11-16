@@ -48,11 +48,12 @@ extension APIClient {
 }
 
 @MainActor @Observable final class ReviewMessageDecision {
-    let composer = ConversationModel()
+    let composer: ConversationModel
     @ObservationIgnored private let savedWork: ((String) -> [PendingWork])?
     @ObservationIgnored private let refreshSavedWork: (String) -> Void
-    init(savedWork: ((String) -> [PendingWork])? = nil,
+    init(composer: ConversationModel = ConversationModel(), savedWork: ((String) -> [PendingWork])? = nil,
          refreshSavedWork: @escaping (String) -> Void = { _ in }) {
+        self.composer = composer
         self.savedWork = savedWork
         self.refreshSavedWork = refreshSavedWork
     }
@@ -160,18 +161,25 @@ extension APIClient {
         await settled()
         guard let api, let item, let owner = item.owner, let id = item.conversationId,
               loaded, through > 0, !historical, !busy, !pending else { return false }
+        guard !composer.preparingPhoto else { return false }
+        busy = true; defer { busy = false }
         let text = composer.draft.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty || !composer.attachments.isEmpty else { return false }
-        let content: [ConversationSend.Piece] = (text.isEmpty ? [] : [.init(text: text)]) + composer.attachments
+        let content: [ConversationSend.Piece]
+        do { content = try await composer.preparedContent() }
+        catch is CancellationError { return false }
+        catch { self.error = error.localizedDescription; return false }
+        guard !historical, self.item?.conversationId == id, self.item?.owner == owner else { return false }
         if let attempt, attempt.state == .failed {
             // Replace a terminal refusal with the current draft, retaining its read boundary.
-            guard let replacement = Outbox.shared.retry(attempt.id, api: api, content: content) else {
+            guard let replacement = await Outbox.shared.retry(attempt.id, api: api, content: content) else {
                 error = Outbox.shared.store.saveError
                 return false
             }
             attemptID = replacement
             await Outbox.shared.drain(api: api)
             refreshSavedWork(LocalStore.server(api.baseURL)); refreshAttempt()
+            if self.attempt?.state == .failed { error = self.attempt?.note }
             return accepted
         }
         let messageID = UUID().uuidString
@@ -184,6 +192,7 @@ extension APIClient {
             attemptID = messageID
             await Outbox.shared.drain(api: api)
             refreshSavedWork(LocalStore.server(api.baseURL)); refreshAttempt()
+            if attempt?.state == .failed { error = attempt?.note }
             return accepted
         } catch { self.error = error.localizedDescription; return false }
     }

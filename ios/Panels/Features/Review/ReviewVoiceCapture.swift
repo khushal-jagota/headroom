@@ -68,7 +68,7 @@ import Observation
     func transcribe(api: APIClient) async -> String? {
         guard let work else { return nil }
         phase = .transcribing
-        if work.state == .failed || work.state == .waiting || work.state == .uncertain { Outbox.shared.retry(work.id, api: api) }
+        if work.state == .failed || work.state == .waiting || work.state == .uncertain { await Outbox.shared.retry(work.id, api: api) }
         await Outbox.shared.drain(api: api)
         let current = Outbox.shared.work(LocalStore.server(api.baseURL), id: work.id)
         if current?.state == .sent { phase = .idle; self.work = nil; error = nil; return "" }

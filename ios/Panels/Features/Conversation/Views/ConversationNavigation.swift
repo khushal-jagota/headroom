@@ -353,7 +353,9 @@ struct ConversationThread: View {
                                     Text((try? AttributedString(markdown: row.text, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace), baseURL: store.baseURL)) ?? AttributedString(row.text))
                                         .textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
                                 }
-                                if !row.attachments.isEmpty { ConversationAttachmentTray(pieces: row.attachments) }
+                                if !row.attachments.isEmpty {
+                                    ConversationAttachmentTray(pieces: row.attachments, preparing: row.retryID == model.preparingOutgoingID && model.preparingOutgoingID != nil)
+                                }
                                 if let note = row.note, note != "Sent" {
                                     HStack {
                                         if note == "Waiting for connection" { Image(systemName: "clock").foregroundStyle(PanelsTheme.faint) }
@@ -366,10 +368,10 @@ struct ConversationThread: View {
                                                 Text(model.recoveryLabel(id)).padding(.horizontal, 8).padding(.vertical, 4)
                                                     .background(PanelsTheme.accentSurface, in: Capsule())
                                                     .contentShape(Rectangle().inset(by: -8))
-                                            }.disabled(model.sending)
+                                            }.disabled(model.sending || model.preparingPhoto)
                                             .confirmationDialog("The earlier result is unknown. Another attempt can send this message twice.", isPresented: Binding(get: { recoveryID == id }, set: { if !$0 { recoveryID = nil } }), titleVisibility: .visible) {
                                                 Button(model.recoveries[id]?.unknownDestination == true ? "Start a new conversation with this message" : model.recoveryLabel(id)) {
-                                                    model.recover(id, using: store.client, startNew: model.recoveries[id]?.unknownDestination == true)
+                                                    Task { await model.recover(id, using: store.client, startNew: model.recoveries[id]?.unknownDestination == true) }
                                                     recoveryID = nil
                                                 }
                                                 Button("Keep waiting", role: .cancel) { recoveryID = nil }
@@ -602,7 +604,7 @@ struct ConversationSmokeView: View {
 #endif
 
 struct ConversationCamera: UIViewControllerRepresentable {
-    let completed: (Data?) -> Void
+    let completed: (UIImage?) -> Void
     func makeCoordinator() -> Coordinator { Coordinator(completed: completed) }
     func makeUIViewController(context: Context) -> UIImagePickerController {
         let picker = UIImagePickerController()
@@ -611,11 +613,11 @@ struct ConversationCamera: UIViewControllerRepresentable {
     }
     func updateUIViewController(_ controller: UIImagePickerController, context: Context) {}
     final class Coordinator: NSObject, UIImagePickerControllerDelegate, UINavigationControllerDelegate {
-        let completed: (Data?) -> Void
-        init(completed: @escaping (Data?) -> Void) { self.completed = completed }
+        let completed: (UIImage?) -> Void
+        init(completed: @escaping (UIImage?) -> Void) { self.completed = completed }
         func imagePickerControllerDidCancel(_ picker: UIImagePickerController) { completed(nil) }
         func imagePickerController(_ picker: UIImagePickerController, didFinishPickingMediaWithInfo info: [UIImagePickerController.InfoKey: Any]) {
-            completed((info[.originalImage] as? UIImage)?.jpegData(compressionQuality: 0.85))
+            completed(info[.originalImage] as? UIImage)
         }
     }
 }
