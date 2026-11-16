@@ -66,6 +66,7 @@ def test_pytest_entrypoints_replace_deployment_paths_before_collection(tmp_path:
     for name, command in (
         ("direct", [sys.executable, "-m", "pytest"]),
         ("dev", [str(ROOT / "scripts/dev"), "pytest"]),
+        ("dev-module", [str(ROOT / "scripts/dev"), "python", "-m", "pytest"]),
     ):
         output = tmp_path / f"{name}.json"
         result = subprocess.run(
@@ -89,9 +90,9 @@ def test_pytest_entrypoints_replace_deployment_paths_before_collection(tmp_path:
         assert answer["url"] == actual["PLAN_SERVER_URL"]
         assert answer["url"] != "http://127.0.0.1:8767"
         roots.append(actual["PLAN_DB_PATH"])
-        # Both launch paths must leave the fake production database intact.
+        # All launch paths must leave the fake production database intact.
         assert database.read_bytes() == before
-    assert roots[0] != roots[1]
+    assert len(set(roots)) == len(roots)
 
 
 def test_residual_guard_refuses_deployment_aliases_and_live_url(tmp_path: Path) -> None:
