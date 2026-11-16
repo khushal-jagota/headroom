@@ -2,7 +2,7 @@ name: Python fixture regression
 
 on:
   pull_request:
-    branches: [feature/typescript-backend]
+    branches: [staging]
     paths:
       - tests/support/server_fixtures.py
       - .github/workflows/python-fixture-regression.yml

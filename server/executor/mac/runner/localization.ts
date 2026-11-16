@@ -135,7 +135,8 @@ export async function localize_start(
   let role_text = resolved.role_materials?.role_text ?? '';
   if (managed) {
     role_text +=
-      '\n\nPanels owns this Ticket workspace. ' +
+      `\n\nPanels starts you in the Ticket folder at ${artifacts}. ` +
+      'Panels owns this Ticket workspace. ' +
       `Use the supplied worktree at ${workspace}. ` +
       'Do not create or remove worktrees. Keep scratch and dependencies inside it. ' +
       `Write reviewable artifacts and evidence under ${join(artifacts, 'artifacts')}. ` +
@@ -150,7 +151,7 @@ export async function localize_start(
   }
   return new ResolvedConversationStart({
     ...resolved,
-    workspace_folder: workspace,
+    workspace_folder: managed ? artifacts : workspace,
     workspace_path_policy: WorkspacePathPolicy.absolute,
     role_materials: new ConversationRoleMaterials({
       role_text,

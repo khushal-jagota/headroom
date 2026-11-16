@@ -261,7 +261,7 @@ export function worker_resolve(
     overrides,
     workspace_folder:
       ticket.machine_id === HOME_MACHINE_ID
-        ? join(filesRoot(context(database, options).db_path, 'ticket'), ticket.id, 'worktree')
+        ? join(filesRoot(context(database, options).db_path, 'ticket'), ticket.id)
         : project_workspace,
     workspace_path_policy,
   });
@@ -283,7 +283,7 @@ export function worker_resolve(
       'A rename never changes this destination.\n[/Ticket machine]' +
       (ticket.machine_id === HOME_MACHINE_ID
         ? '\n\n[Panels-owned Ticket workspace]\n' +
-          `Panels supplies this worktree: ${values.workspace_folder}. Put reviewable output in ${join(filesRoot(context(database, options).db_path, 'ticket'), ticket.id, 'artifacts')}. ` +
+          `Panels starts you in the Ticket folder: ${values.workspace_folder}. Panels supplies this worktree: ${join(values.workspace_folder, 'worktree')}. Put reviewable output in ${join(filesRoot(context(database, options).db_path, 'ticket'), ticket.id, 'artifacts')}. ` +
           'Follow the repository setup instructions and install dependencies yourself. Use this worktree for code, dependencies, and scratch. Do not create or remove worktrees. Workers commit, push, open PRs, and merge through the approved repository route. Stop the processes you start. Panels removes the full Ticket folder seven days after the Ticket ends, unless unpublished work or a failed safety check prevents removal. This workspace instruction supersedes older instructions to create or remove your own worktree.\n[/Panels-owned Ticket workspace]'
         : ''),
   });
@@ -384,11 +384,11 @@ export async function start_ticket_conversation(
               )?.folder_path ?? null,
           );
     try {
-      const workspace = await prepare_workspace(ticket_folder, project_folder, ticket.id, {
+      await prepare_workspace(ticket_folder, project_folder, ticket.id, {
         signal: options.signal,
         panels_project: ticket.project_id === 'project_panels',
       });
-      values = { ...values, workspace_folder: workspace };
+      values = { ...values, workspace_folder: ticket_folder };
       identity = workspace_identity(ticket_folder);
     } catch (error) {
       if (options.signal?.aborted) throw new ConversationStartAborted();

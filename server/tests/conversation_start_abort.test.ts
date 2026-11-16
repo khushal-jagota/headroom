@@ -1,7 +1,8 @@
 /** Gap: observer cancellation and new-agent cleanup have different durable effects.
  * Reuse the Ticket SQLite fixture and existing fake. No provider or network host.
  */
-import { dirname } from 'node:path';
+import { dirname, join } from 'node:path';
+import { existsSync } from 'node:fs';
 import { afterEach, expect, test, vi } from 'vitest';
 import { fixture, fixture_path, create, claim, read, now } from './ticket_fixture.ts';
 import { InMemoryConversationSystem } from '../conversation/in_memory_conversation_system.ts';
@@ -92,6 +93,8 @@ test('abort of a new Ticket send preserves its source, link, and outstanding cla
   const ticket = create(db);
   claim(db, ticket.id);
   const kill = vi.spyOn(system, 'kill');
+  // Gap: filesystem preparation alone does not prove the actual launch folder or prompt paths.
+  const start = vi.spyOn(system, 'start_conversation');
   const task = send_to_ticket_conversation(system, db, ticket.id, text_message_content('opener'), {
     conversation_id: null,
     created_conversation_id: 'new_ticket',
@@ -103,6 +106,16 @@ test('abort of a new Ticket send preserves its source, link, and outstanding cla
   controller.abort();
   await expect(task).rejects.toMatchObject({ name: 'AbortError' });
   expect(kill).not.toHaveBeenCalled();
+  const folder = join(dirname(fixture_path(db)), 'files', 'tickets', ticket.id);
+  const request = start.mock.calls[0]![0];
+  expect(request.workspace_folder).toBe(folder);
+  expect(existsSync(join(folder, 'worktree'))).toBe(true);
+  expect(request.role_materials!.role_text).toContain(
+    `Panels supplies this worktree: ${join(folder, 'worktree')}.`,
+  );
+  expect(request.role_materials!.role_text).toContain(
+    `Put reviewable output in ${join(folder, 'artifacts')}.`,
+  );
   expect(read(db, ticket.id)).toMatchObject({
     conversation_id: 'new_ticket',
     worker_step_claim: 'out',

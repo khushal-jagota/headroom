@@ -2,10 +2,10 @@ name: TypeScript backend checkpoint
 
 on:
   pull_request:
-    branches: [feature/typescript-backend]
+    branches: [staging]
     types: [opened, synchronize, reopened, ready_for_review]
   push:
-    branches: [feature/typescript-backend]
+    branches: [staging]
   schedule:
     - cron: '17 */4 * * *'
   workflow_dispatch:

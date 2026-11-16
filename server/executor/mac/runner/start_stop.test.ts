@@ -1,7 +1,7 @@
 /** New gap: one native start command must own bounded retries and exact failed-child cleanup.
  * Reuse the synthetic native options; no provider, command journal, or listener starts.
  */
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, rm, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { expect, test, vi } from 'vitest';
@@ -14,6 +14,7 @@ import { Deferred } from '../../../conversation/runtime/state.ts';
 import { ExecutorPaths } from '../configuration.ts';
 import { native_fixture_options } from '../testing/runner_fixture.ts';
 import { MacNativeChildren } from './start_stop.ts';
+import { localize_start } from './localization.ts';
 import type { StartRun } from '../../wire.generated.ts';
 
 vi.mock('node:timers/promises', async (original) => ({
@@ -119,6 +120,68 @@ test('initialization retries wait for exact cleanup, stay bounded and exclude ot
       await owner.stop({ deadline: performance.now() / 1000 + 2 });
       await owner.settled();
     }
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+// Gap: native retry coverage uses an unmanaged folder and does not prove managed launch localization.
+// Reuse the synthetic native options without a provider, listener, or Git child.
+test('managed Mac launch starts in the Ticket folder and names its prepared checkout', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'mac-ticket-launch-'));
+  try {
+    const paths = new ExecutorPaths(root);
+    const reference = {
+      executor_incarnation: 'inc',
+      child_id: 'child',
+      conversation_id: 'conversation',
+    };
+    const options = native_fixture_options({
+      paths,
+      workspace_home: root,
+      native_skill_home: () => root,
+      snapshot_directory: root,
+      factory: () => () => {
+        throw new Error('No native process belongs to localization');
+      },
+      on_failure: (error) => {
+        throw error;
+      },
+    });
+    const localized = await localize_start(
+      {
+        canonical_skill_snapshot: { required_skill_names: [], sources: [] },
+        resolved_start: {
+          conversation_id: reference.conversation_id,
+          backend_key: 'codex',
+          model: 'test',
+          reasoning_effort: null,
+          access: 'full',
+          workspace_folder: '/',
+          workspace_path_policy: 'executor_default',
+          role_materials: {
+            role_text: '',
+            identity_environment_variables: [
+              ['PLAN_TICKET_ID', 't_one'],
+              ['PLAN_TICKET_WORKSPACE_MANAGED', '1'],
+            ],
+          },
+        },
+      },
+      reference,
+      'capability',
+      root,
+      { ...options, event_sink: () => ({ async report() {} }) },
+    );
+    const folder = join(paths.artifacts, 't_one');
+    expect(localized.workspace_folder).toBe(folder);
+    expect((await stat(join(folder, 'worktree'))).isDirectory()).toBe(true);
+    expect(localized.role_materials!.role_text).toContain(
+      `Use the supplied worktree at ${join(folder, 'worktree')}.`,
+    );
+    expect(localized.role_materials!.role_text).toContain(
+      `Write reviewable artifacts and evidence under ${join(folder, 'artifacts')}.`,
+    );
   } finally {
     await rm(root, { recursive: true, force: true });
   }

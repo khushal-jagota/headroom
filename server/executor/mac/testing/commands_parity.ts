@@ -173,7 +173,16 @@ async function managed_workspace_phase(): Promise<unknown> {
         return () =>
           ({
             async start() {
-              calls.push(['start', ticket, resolved.workspace_folder.slice(phase_root.length + 1)]);
+              const ticket_folder = join(paths.artifacts, ticket);
+              assert.equal(resolved.workspace_folder, ticket_folder);
+              assert.ok(existsSync(join(ticket_folder, 'worktree')));
+              // Python still starts in the checkout. Compare shared custody behavior
+              // only after proving the intentional TypeScript launch-folder difference.
+              calls.push([
+                'start',
+                ticket,
+                join(ticket_folder, 'worktree').slice(phase_root.length + 1),
+              ]);
             },
             async stop() {
               stops++;
