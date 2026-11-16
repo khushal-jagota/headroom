@@ -1,14 +1,12 @@
-import { managedHtmlBridge } from "./managedHtmlNavigation";
-import { MANAGED_ARTIFACT_PRIMARY_PRESS } from "./managedArtifactPress";
 import {
   conversationFileMediaType,
   isSafeConversationFileName
 } from "./conversation/pendingFiles";
 
 export type FilePreviewTarget =
-  | { kind: "ticket-file"; ticketId: string; path: string }
-  | { kind: "manager-file"; managerId: string; path: string }
-  | { kind: "goal-file"; goalId: string; path: string }
+  | { kind: "ticket-file"; ticketId: string; path: string; htmlSearch?: string; htmlHash?: string }
+  | { kind: "manager-file"; managerId: string; path: string; htmlSearch?: string; htmlHash?: string }
+  | { kind: "goal-file"; goalId: string; path: string; htmlSearch?: string; htmlHash?: string }
   | { kind: "conversation-file"; href: string; fileName: string }
   | { kind: "external-link"; href: string; label?: string };
 
@@ -38,7 +36,6 @@ export type ResolvedPreview = {
   displayHref?: string;
 };
 
-export const MANAGED_HTML_PREVIEW_SANDBOX = "allow-scripts";
 export const MAX_CONVERSATION_TEXT_PREVIEW_BYTES = 256 * 1024;
 
 const KIND_BY_EXTENSION = new Map<string, FilePreviewKind>([
@@ -127,7 +124,7 @@ export function resolvePreview(target: FilePreviewTarget): ResolvedPreview {
   return {
     kind: KIND_BY_EXTENSION.get(extensionFor(target.path)) || "download",
     target,
-    href: managedFileHref(target),
+    href: managedFileHref(target) + (target.htmlSearch || "") + (target.htmlHash || ""),
     label: filenameLabel(target.path),
     previewHref: previewHashHref(target)
   };
@@ -172,25 +169,6 @@ export function conversationFileTarget(
   return { kind: "conversation-file", href, fileName };
 }
 
-export function prepareManagedHtmlPreviewDocument(html: string, managedHtmlHref: string, announceArtifactPress = false, generation?: string): string {
-  const baseHref = absoluteHrefForManagedHtml(managedHtmlHref);
-  const document = parseManagedHtmlDocument(html);
-  const baseElement = document.createElement("base");
-  baseElement.setAttribute("href", baseHref);
-  document.head.insertBefore(baseElement, document.head.firstChild);
-  if (announceArtifactPress) {
-    const bridge = document.createElement("script");
-    bridge.textContent = `window.addEventListener("pointerdown", event => { if (event.isPrimary && event.button === 0) parent.postMessage(${JSON.stringify(MANAGED_ARTIFACT_PRIMARY_PRESS)}, "*"); }, true);`;
-    document.head.insertBefore(bridge, baseElement.nextSibling);
-  }
-  if (generation) {
-    const bridge = document.createElement("script");
-    bridge.textContent = managedHtmlBridge(generation);
-    document.head.insertBefore(bridge, document.head.firstChild);
-  }
-  return serializeManagedHtmlDocument(document);
-}
-
 export function markdownExpansionFor(
   resolved: ResolvedPreview,
   depth: number,
@@ -207,12 +185,18 @@ export function markdownExpansionFor(
 
 export function targetFromHref(href: string, label = ""): FilePreviewTarget {
   const ticketTarget = ticketFileTargetFromHref(href);
-  if (ticketTarget) return ticketTarget;
+  if (ticketTarget) return htmlLocation(ticketTarget, href);
   const managerTarget = managerFileTargetFromHref(href);
-  if (managerTarget) return managerTarget;
+  if (managerTarget) return htmlLocation(managerTarget, href);
   const goalTarget = goalFileTargetFromHref(href);
-  if (goalTarget) return goalTarget;
+  if (goalTarget) return htmlLocation(goalTarget, href);
   return { kind: "external-link", href, label: label || href };
+}
+
+function htmlLocation(target: ManagedFileTarget, href: string): ManagedFileTarget {
+  if (!/\.html?$/i.test(target.path)) return target;
+  const url = new URL(href, typeof window === "undefined" ? "http://planner.local" : window.location.origin);
+  return { ...target, ...(url.search ? {htmlSearch: url.search} : {}), ...(url.hash ? {htmlHash: url.hash} : {}) };
 }
 
 export function ticketFileTarget(
@@ -246,28 +230,39 @@ export function goalFileTarget(
  * and read by one pair of functions, so no address can name a file its own way.
  */
 export function previewQuery(target: ManagedFileTarget): string {
+  const suffix = (target.htmlSearch ? `&htmlSearch=${encodeURIComponent(target.htmlSearch)}` : "") +
+    (target.htmlHash ? `&htmlHash=${encodeURIComponent(target.htmlHash)}` : "");
   if (target.kind === "goal-file") {
     return (
       "source=goal" +
       `&goal=${encodeURIComponent(target.goalId)}` +
-      `&path=${encodeURIComponent(target.path)}`
+      `&path=${encodeURIComponent(target.path)}` + suffix
     );
   }
   if (target.kind === "manager-file") {
     return (
       "source=manager" +
       `&manager=${encodeURIComponent(target.managerId)}` +
-      `&path=${encodeURIComponent(target.path)}`
+      `&path=${encodeURIComponent(target.path)}` + suffix
     );
   }
   return (
     "source=ticket" +
     `&ticket=${encodeURIComponent(target.ticketId)}` +
-    `&path=${encodeURIComponent(target.path)}`
+    `&path=${encodeURIComponent(target.path)}` + suffix
   );
 }
 
 export function targetFromPreviewQuery(params: URLSearchParams): ManagedFileTarget | null {
+  const target = baseTargetFromPreviewQuery(params);
+  if (!target || !/\.html?$/i.test(target.path)) return target;
+  const search = params.get("htmlSearch") || "";
+  const hash = params.get("htmlHash") || "";
+  if ((search && !search.startsWith("?")) || (hash && !hash.startsWith("#"))) return null;
+  return { ...target, ...(search ? {htmlSearch: search} : {}), ...(hash ? {htmlHash: hash} : {}) };
+}
+
+function baseTargetFromPreviewQuery(params: URLSearchParams): ManagedFileTarget | null {
   const path = params.get("path") || "";
   if (params.get("source") === "goal") {
     return goalFileTarget(params.get("goal") || "", path);
@@ -329,19 +324,19 @@ export function goalFileHref(
   return `/files/goals/${encodeURIComponent(target.goalId)}/${encodedManagedPath(target.path)}`;
 }
 
-function goalFileTargetFromHref(href: string): FilePreviewTarget | null {
+function goalFileTargetFromHref(href: string): ManagedFileTarget | null {
   const parts = managedHrefParts(href, "/files/goals/");
   if (!parts) return null;
   return goalFileTarget(parts.entityId, parts.path);
 }
 
-function ticketFileTargetFromHref(href: string): FilePreviewTarget | null {
+function ticketFileTargetFromHref(href: string): ManagedFileTarget | null {
   const parts = managedHrefParts(href, "/files/tickets/");
   if (!parts) return null;
   return ticketFileTarget(parts.entityId, parts.path);
 }
 
-function managerFileTargetFromHref(href: string): FilePreviewTarget | null {
+function managerFileTargetFromHref(href: string): ManagedFileTarget | null {
   const parts = managedHrefParts(href, "/files/managers/") ?? managedHrefParts(href, "/files/sprint-items/");
   if (!parts) return null;
   return managerFileTarget(parts.entityId, parts.path);
@@ -400,47 +395,6 @@ function rawPathnameFromHref(href: string): string {
     return pathStart < 0 ? "/" : withoutQuery.slice(pathStart);
   }
   return withoutQuery;
-}
-
-function absoluteHrefForManagedHtml(href: string): string {
-  if (typeof window === "undefined") return href;
-  return new URL(href, window.location.href).href;
-}
-
-function parseManagedHtmlDocument(html: string): Document {
-  if (typeof DOMParser !== "undefined") {
-    return new DOMParser().parseFromString(html, "text/html");
-  }
-  if (typeof document !== "undefined" && document.implementation) {
-    const parsed = document.implementation.createHTMLDocument("");
-    parsed.open();
-    parsed.write(html);
-    parsed.close();
-    return parsed;
-  }
-  throw new Error("managed HTML preview requires a browser document parser");
-}
-
-function serializeManagedHtmlDocument(document: Document): string {
-  return `${serializeDoctype(document.doctype)}${document.documentElement.outerHTML}`;
-}
-
-function serializeDoctype(doctype: DocumentType | null): string {
-  if (!doctype) return "";
-  let serialized = `<!doctype ${doctype.name}`;
-  if (doctype.publicId) {
-    serialized += ` PUBLIC "${escapeDoctypeIdentifier(doctype.publicId)}"`;
-  } else if (doctype.systemId) {
-    serialized += " SYSTEM";
-  }
-  if (doctype.systemId) {
-    serialized += ` "${escapeDoctypeIdentifier(doctype.systemId)}"`;
-  }
-  return `${serialized}>`;
-}
-
-function escapeDoctypeIdentifier(value: string): string {
-  return value.replaceAll('"', "&quot;");
 }
 
 function extensionFor(path: string): string {

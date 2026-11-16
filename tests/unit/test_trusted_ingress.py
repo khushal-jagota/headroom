@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from sqlite3 import Connection
 from typing import Any
@@ -21,9 +22,13 @@ CANONICAL_ORIGIN = "https://panels.tailnet.ts.net"
 REMOTE = {"Tailscale-User-Login": ALLOWED_LOGIN}
 REMOTE_WRONG = {"Tailscale-User-Login": "other@example.com"}
 _REPO_ROOT = Path(__file__).resolve().parents[2]
-_VITE_CSS_ROUTE = "/_app/assets/" + next(
-    path.name for path in (_REPO_ROOT / "web" / "dist" / "assets").glob("index-*.css")
-)
+
+
+def _vite_css_route() -> str:
+    index = (_REPO_ROOT / "web" / "dist" / "index.html").read_text()
+    match = re.search(r'href="(/_app/assets/index-[^"]+\.css)"', index)
+    assert match is not None
+    return match.group(1)
 
 
 def _make_app(tmp_path: Path, *, hosted: bool = True) -> tuple[FastAPI, Path]:
@@ -192,13 +197,13 @@ def test_static_and_file_surfaces_pass_through_trusted_ingress(
     with TestClient(app) as client:
         blocked = [
             client.get("/", headers=REMOTE_WRONG),
-            client.get(_VITE_CSS_ROUTE, headers=REMOTE_WRONG),
+            client.get(_vite_css_route(), headers=REMOTE_WRONG),
             client.get("/assets/app.css", headers=REMOTE_WRONG),
             client.get("/static/favicon.ico", headers=REMOTE_WRONG),
             client.get("/files/tickets/t_file123/notes.md", headers=REMOTE_WRONG),
         ]
         allowed_root = client.get("/", headers=REMOTE)
-        allowed_app = client.get(_VITE_CSS_ROUTE, headers=REMOTE)
+        allowed_app = client.get(_vite_css_route(), headers=REMOTE)
         allowed_asset = client.get("/assets/app.css", headers=REMOTE)
         allowed_static = client.get("/static/favicon.ico", headers=REMOTE)
         allowed_ticket_file = client.get("/files/tickets/t_file123/notes.md", headers=REMOTE)
