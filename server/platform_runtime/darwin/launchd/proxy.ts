@@ -143,7 +143,8 @@ export async function run_proxy(record_path: string, command: readonly string[])
       control!.resume();
     });
     const code = await Promise.race([outcome, interrupted.promise]);
-    await Promise.race([outputs, interrupted.promise]);
+    // A detached marked descendant can retain the provider's stream descriptors.
+    // Remove the job and sweep descendants before waiting for their output EOF.
     await records.locked(record_path, monotonic_seconds() + STOP_SECONDS, async () => {
       const current = await records.read(record_path);
       current.launch_revoked = true;
@@ -155,6 +156,7 @@ export async function run_proxy(record_path: string, command: readonly string[])
       await records.write(record_path, current);
       removed = true;
     });
+    await Promise.race([outputs, interrupted.promise]);
     return code;
   } finally {
     process.off('SIGTERM', stop);

@@ -47,10 +47,17 @@ async function main(): Promise<void> {
     child.once('exit', (code, signal) => {
       children.seal();
       input!.destroy();
-      output!.destroy();
-      error!.destroy();
       const exit_code = code ?? (signal ? 128 + (constants.signals[signal] ?? 1) : 1);
-      control!.end(JSON.stringify({ code: exit_code }), () => process.exit(exit_code));
+      // Shut down the shared socket write sides after the provider exits. This
+      // delivers queued bytes before EOF even when a descendant retains a dup.
+      // Closing just this wrapper's descriptors cannot end those inherited pipes.
+      void Promise.all(
+        [output!, error!].map((socket) => new Promise<void>((resolve) => socket.end(resolve))),
+      ).then(() => {
+        output!.destroy();
+        error!.destroy();
+        control!.end(JSON.stringify({ code: exit_code }), () => process.exit(exit_code));
+      }, failure);
     });
     await new Promise<void>((resolve, reject) => {
       child.once('spawn', resolve);

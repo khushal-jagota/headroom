@@ -37,11 +37,11 @@ import { ChildProcesses } from ${JSON.stringify(owner_module)};
 const children = new ChildProcesses();
 const command = 'setTimeout(() => process.exit(0), 600000)';
 const ordinary = children.spawn(process.execPath, ['-e', command], {stdio:'ignore', detached:false});
-const detached = children.spawn(process.execPath, ['-e', command], {stdio:'ignore', detached:true});
+const detached = children.spawn(process.execPath, ['-e', command], {stdio:['ignore','inherit','inherit'], detached:true});
 const cleared_environment = {...process.env};
 delete cleared_environment.PANELS_WORKER_JOB;
 const unmarked = process.env.PLAN_NATIVE_UNMARKED === '1'
-  ? children.spawn(process.execPath, ['-e', command], {env:cleared_environment,stdio:'ignore',detached:true})
+  ? children.spawn(process.execPath, ['-e', command], {env:cleared_environment,stdio:['ignore','inherit','inherit'],detached:true})
   : null;
 await Promise.all([ordinary,detached,...(unmarked ? [unmarked] : [])].map(child => new Promise((resolve,reject) => {
   child.once('spawn',resolve); child.once('error',reject);
