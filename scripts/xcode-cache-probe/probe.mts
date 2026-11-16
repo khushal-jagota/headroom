@@ -104,7 +104,51 @@ async function build(name: string, expected: string) {
     throw new Error(
       `${name}: expected ${expected}, got ${actual.output.trim()}`,
     );
-  const result = { seconds: built.seconds, ...cache_diagnostics(built.output) };
+  const diagnostics = cache_diagnostics(built.output);
+  const cache_key_diagnostics_errors: string[] = [];
+  if (name === "cold" || name === "warm") {
+    for (const [index, entry] of diagnostics.source_cache_keys.entries()) {
+      try {
+        await run(
+          "xcrun",
+          [
+            "swift-cache-tool",
+            "-cache-tool-action",
+            "print-compile-cache-key",
+            "-cas-path",
+            join(root, "executor", "cache", "xcode", "builtin"),
+            entry.key,
+          ],
+          checkout,
+          `${name}-source-key-${index}-${entry.task}`,
+        );
+      } catch (error) {
+        cache_key_diagnostics_errors.push(String(error));
+      }
+    }
+    if (cache_key_diagnostics_errors.length > 0) {
+      for (const args of [
+        ["--find", "swift-cache-tool"],
+        ["swift-cache-tool", "-help"],
+      ]) {
+        try {
+          await run(
+            "xcrun",
+            args,
+            checkout,
+            `${name}-cache-tool-${args[0] === "--find" ? "path" : "help"}`,
+          );
+        } catch (error) {
+          cache_key_diagnostics_errors.push(String(error));
+        }
+      }
+    }
+  }
+  const result = {
+    seconds: built.seconds,
+    ...diagnostics,
+    cache_key_diagnostics_errors,
+  };
   results[name] = result;
   return result;
 }
