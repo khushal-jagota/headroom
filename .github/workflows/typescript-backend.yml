@@ -315,6 +315,7 @@ jobs:
             'tests/e2e/test_goal_holders_browser.py::test_goal_promotion_and_stable_url_share_manager_name[chromium]'
             'tests/e2e/test_goal_holders_browser.py::test_leaving_a_goal_manager_with_text_blocks_opens_each_next_page[chromium]'
             'tests/e2e/test_live_update.py::test_composing_survives_a_change_to_the_same_ticket'
+            'tests/e2e/test_live_update.py::test_chief_recap_refreshes_without_reload'
             'tests/e2e/test_ticket_file_previews.py::test_a_video_preview_shows_a_poster_then_plays_and_seeks'
             'tests/e2e/test_goals_browser.py::test_formula_expectation_projection_and_correction_reach_mounted_chart'
           )

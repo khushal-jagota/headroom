@@ -30,6 +30,8 @@ A real home provisions its managed skills in the provider account folders. One o
 
 The home provisions workspace and account skill files on awaited worker threads, so file removal does not block the event loop. Startup waits for provisioning before normal work starts.
 
+Eligible Ticket folders use directory descriptors for safe removal on Linux and Mac. Replacement directories and symlinks cannot redirect recursive removal. Unknown ownership, unpublished work, or uncertain process retirement retains the folder. Retirement retries keep the same checks and recorded scratch snapshot.
+
 Disposable tests can disable provisioning explicitly and read the existing instance's skills. Test mode alone does not suppress account provisioning.
 
 A release-installed Mac home uses an external Node 22 runtime. Its first installation and independent update LaunchAgent use native TypeScript. The installer stays outside the app that it replaces. Updates read legacy identities without a Python probe. Its jobs run only during the graphical login session.

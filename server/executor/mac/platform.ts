@@ -140,6 +140,26 @@ export function open_relative(parent: number, name: string, flags: number, mode 
     openat(parent, native_path_argument(name), flags | close_on_exec, 'int', mode),
   );
 }
+/** XNU stat.h LP64 inode64 ABI, with fcntl.h AT_SYMLINK_NOFOLLOW. */
+export function stat_darwin_entry(parent: number, name: string) {
+  require_relative_component(name);
+  if (process.platform !== 'darwin' || !['x64', 'arm64'].includes(process.arch))
+    throw new Error('Relative entry metadata requires the Darwin LP64 ABI');
+  // struct stat is 144 bytes: dev_t at 0, mode_t at 4 and ino64_t at 8.
+  const bytes = Buffer.alloc(144);
+  const symbol = process.arch === 'x64' ? 'fstatat$INODE64' : 'fstatat';
+  let fstatat = functions.get(symbol);
+  if (!fstatat) {
+    fstatat = libc().func(symbol, 'int', ['int', 'const char *', 'void *', 'int']);
+    functions.set(symbol, fstatat);
+  }
+  checked('fstatat', () => fstatat(parent, name, bytes, 0x20));
+  return {
+    dev: bytes.readUInt32LE(0),
+    ino: Number(bytes.readBigUInt64LE(8)),
+    mode: bytes.readUInt16LE(4),
+  };
+}
 export function mkdir_relative(parent: number, name: string, mode = 0o700): void {
   require_relative_component(name);
   const mode_type = native_platform() === 'darwin' ? 'uint16_t' : 'unsigned int';

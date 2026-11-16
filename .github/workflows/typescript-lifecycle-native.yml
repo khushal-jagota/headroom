@@ -120,6 +120,21 @@ jobs:
           EXECUTOR_REQUEST
           python3 -I -S -B scripts/development_safety/bootstrap.py npm --prefix server ci
           node server/environments/linux_executor/build_main.ts "$EXECUTOR_ROOT/request.json"
+          executor_runtime="$EXECUTOR_ROOT/tmp/build/runtime"
+          test -s "$executor_runtime/web/dist/index.html"
+          test ! -e "$executor_runtime/web/node_modules"
+          test ! -e "$executor_runtime/server/node_modules/@anthropic-ai/claude-agent-sdk-linux-x64-musl"
+          test -x "$executor_runtime/server/node_modules/@anthropic-ai/claude-agent-sdk-linux-x64/claude"
+          # Compare retained contributors with the removed-byte count in job.log.
+          du --apparent-size -sb "$executor_runtime"/* \
+            "$executor_runtime/server/node_modules" \
+            "$executor_runtime/agent_backends/node_modules" \
+            "$executor_runtime/web/dist" \
+            "$EXECUTOR_ROOT/tmp/build/panels-linux-executor.tar.gz" \
+            | sort -nr | tee "$EXECUTOR_EVIDENCE/payload-bytes.txt"
+          du --apparent-size -ab "$executor_runtime/server/node_modules" \
+            "$executor_runtime/agent_backends/node_modules" \
+            | sort -nr | awk 'NR<=60' | tee "$EXECUTOR_EVIDENCE/largest-paths.txt"
           LINUX_EXECUTOR
       - name: Preserve Linux executor admission evidence only
         if: always()
@@ -230,7 +245,8 @@ jobs:
           # Reuse this host for native process/socket and provider directory/lock evidence.
           python -I -S -B scripts/development_safety/bootstrap.py npm --prefix server run test -- \
             platform_runtime/worker_processes.native.test.ts lifecycle/paths.native.test.ts \
-            previews/darwin.native.test.ts skills/account.test.ts --reporter=junit \
+            previews/darwin.native.test.ts skills/account.test.ts \
+            ticket_workspaces/filesystem.test.ts --reporter=junit \
             --outputFile "$NATIVE_EVIDENCE/process-home-preview-abi.xml"
           # No web build: this registry fixture uses synthetic app roots and no UI assets.
           python -I -S -B scripts/development_safety/bootstrap.py pytest \

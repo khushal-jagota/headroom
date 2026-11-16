@@ -160,3 +160,31 @@ def test_composing_survives_a_change_to_the_same_ticket(
     assert state["text"] == RECAP_SEED + FIRST_HALF + SECOND_HALF
     assert state["scrollTop"] == scroll_top
     _assert_same_document(page)
+
+
+def test_chief_recap_refreshes_without_reload(
+    server: ServerHandle,
+    context_factory: Callable[[], BrowserContext],
+    open_page: Callable[..., Page],
+) -> None:
+    """Prove the trial failure across SSE, resource probes, and the rendered recap."""
+    recap_url = server.base + "/api/workers/chief-of-staff/recap"
+    before = "Chief recap before the external write."
+    after = "Chief recap after the external write."
+    response = httpx.put(recap_url, json={"recap": before})
+    assert response.is_success, response.text
+    page = open_page(
+        context_factory(),
+        server,
+        "#/workspace/chief-of-staff",
+        ".chief-workspace-host [data-manager-recap]",
+    )
+    recap = page.locator(".chief-workspace-host [data-manager-recap]")
+    recap.filter(has_text=before).wait_for(state="visible", timeout=WAIT_MS)
+    _mark_page(page)
+    flushes = _flushes(page)
+    response = httpx.put(recap_url, json={"recap": after})
+    assert response.is_success, response.text
+    _wait_for_flush(page, flushes)
+    recap.filter(has_text=after).wait_for(state="visible", timeout=WAIT_MS)
+    _assert_same_document(page)
