@@ -5,6 +5,8 @@ import { read_source } from './input.ts';
 import { parse_numeric_json } from '../core/http/numeric_json.ts';
 
 export const run_api_command: CommandHandler = async (invocation) => {
+  if (!invocation.values.path.startsWith('/'))
+    fail_validation(invocation, 'API path must start with /');
   let body: unknown = undefined;
   if (invocation.values.input_json != null) {
     const source = await read_source(invocation, invocation.values.input_json);

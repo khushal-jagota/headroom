@@ -337,11 +337,15 @@ async function request(
     if (!base.includes('://'))
       throw new Error("Request URL is missing an 'http://' or 'https://' protocol.");
     let url: URL;
+    let server_origin: string;
     try {
+      server_origin = new URL(base).origin;
       url = new URL(base.replace(/\/+$/, '') + path);
     } catch {
       throw new ClientConfigurationError(`Invalid Panels server URL: ${base}`);
     }
+    if (url.origin !== server_origin)
+      throw new ClientConfigurationError('API request must stay on the configured Panels server');
     if (!['http:', 'https:'].includes(url.protocol))
       throw new Error(`Request URL has an unsupported protocol '${url.protocol.slice(0, -1)}://'.`);
     for (const [key, value] of Object.entries(options.params ?? {})) {
