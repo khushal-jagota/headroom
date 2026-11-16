@@ -4,6 +4,44 @@ import UIKit
 /// One-off review tools. These methods stay outside the permanent release suite.
 /// The existing loopback host proves real SwiftUI placement, keyboard and live updates.
 final class ReviewFinalPageTests: XCTestCase {
+    /// One-off proof of the Markdown-to-view boundary that parser tests cannot establish.
+    @MainActor func testArtifactLinksOpenOnlyAfterTap() async throws {
+        continueAfterFailure = false
+        let base = try XCTUnwrap(ProcessInfo.processInfo.environment["PANELS_OFFLINE_STUB_URL"])
+        XCTAssertEqual(URL(string: base)?.host, "127.0.0.1")
+        let app = XCUIApplication()
+        app.launchArguments = ["--conversation-stub", base]
+        app.launch()
+        defer { app.terminate() }
+        let review = app.tabBars.buttons["Review"]
+        XCTAssertTrue(review.waitForExistence(timeout: 10))
+        review.tap()
+        let link = app.links["Migration verification"]
+        XCTAssertTrue(link.waitForExistence(timeout: 8), "The authored link text must remain in its paragraph")
+        let photo = app.descendants(matching: .any).matching(identifier: "inline-artifact-image").firstMatch
+        XCTAssertTrue(photo.waitForExistence(timeout: 8), "The photo exception must display a loaded image")
+        XCTAssertEqual(photo.label, "Review photo")
+        XCTAssertFalse(app.staticTexts["migration-verification.txt"].exists, "Review must not append a filename disclosure")
+        let content = app.staticTexts["Migration verification body must appear only after a tap."]
+        XCTAssertFalse(content.exists)
+        let initialReads = try await artifactReads(base)
+        XCTAssertEqual(initialReads["text"], 0, "A proposal must not fetch a linked text file automatically")
+        XCTAssertGreaterThan(initialReads["photo"] ?? 0, 0)
+        capture(app, "review-inline-txt-link-and-photo")
+
+        link.tap()
+        XCTAssertTrue(content.waitForExistence(timeout: 8), "A tap must open the existing artifact viewer")
+        let openedReads = try await artifactReads(base)
+        XCTAssertEqual(openedReads["text"], 1)
+        capture(app, "review-text-artifact-after-tap")
+    }
+
+    @MainActor private func artifactReads(_ base: String) async throws -> [String: Int] {
+        let (data, response) = try await URLSession.shared.data(from: URL(string: base + "/proof/artifact-reads")!)
+        XCTAssertEqual((response as? HTTPURLResponse)?.statusCode, 200)
+        return try XCTUnwrap(try JSONSerialization.jsonObject(with: data) as? [String: Int])
+    }
+
     @MainActor func testFinalPageChiefDraftAndSend() async throws {
         continueAfterFailure = false
         let base = try XCTUnwrap(ProcessInfo.processInfo.environment["PANELS_OFFLINE_STUB_URL"])

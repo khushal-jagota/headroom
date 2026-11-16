@@ -20,6 +20,7 @@ from urllib.parse import parse_qs, urlparse
 
 ROOT = Path(__file__).resolve().parents[2]
 DESIGN_REVIEW = os.environ.get("PANELS_DESIGN_REVIEW") == "1"
+ARTIFACT_LINKS_PROOF = os.environ.get("PANELS_ARTIFACT_LINKS_PROOF") == "1"
 REVIEW_COMPLETION = os.environ.get("PANELS_REVIEW_COMPLETION") == "1"
 REACHABILITY_SMOKE = os.environ.get("PANELS_REACHABILITY_SMOKE") == "1"
 DEVICE = os.environ.get("PANELS_OFFLINE_DEVICE") or (
@@ -381,6 +382,15 @@ def main() -> int:
         state["slow"] = False
         tickets = {"offline-1": tickets["offline-1"]}
         tickets["offline-1"]["pending_proposal"]["created_at"] = 2
+    if ARTIFACT_LINKS_PROOF:
+        state["slow"] = False
+        state["artifact_reads"] = {"text": 0, "photo": 0}
+        tickets = {"offline-1": tickets["offline-1"]}
+        tickets["offline-1"]["title"] = "Artifact links stay inline"
+        tickets["offline-1"]["pending_proposal"]["body"] = (
+            "Read [Migration verification](/files/tickets/t_8rmd1ebk/artifacts/migration-verification.txt) before approval."
+            "\n\n[Review photo](/files/tickets/t_8rmd1ebk/artifacts/review-photo.png)"
+        )
     lock = threading.RLock()
 
     def native_control_allowed() -> bool:
@@ -987,6 +997,10 @@ def main() -> int:
                             return
                     self.respond({})
                     return
+                if ARTIFACT_LINKS_PROOF and name == "artifact-reads":
+                    with lock:
+                        self.respond(state["artifact_reads"])
+                    return
                 if DESIGN_REVIEW and name == "scopes":
                     self.respond(state.get("scope_writes", []))
                     return
@@ -1312,6 +1326,24 @@ def main() -> int:
                     manager["manager"]["conversation_id"] = "stub"
                     self.respond(manager)
                     return
+            if ARTIFACT_LINKS_PROOF and path in {
+                "/files/tickets/t_8rmd1ebk/artifacts/migration-verification.txt",
+                "/files/tickets/t_8rmd1ebk/artifacts/review-photo.png",
+            }:
+                photo = path.endswith(".png")
+                with lock:
+                    state["artifact_reads"]["photo" if photo else "text"] += 1
+                content = (
+                    (ROOT / "ios/Panels/Features/Workspace/Resources/workspace-chief.png").read_bytes()
+                    if photo
+                    else b"Migration verification body must appear only after a tap."
+                )
+                self.send_response(200)
+                self.send_header("Content-Type", "image/png" if photo else "text/plain")
+                self.send_header("Content-Length", str(len(content)))
+                self.end_headers()
+                self.wfile.write(content)
+                return
             if REPLACEMENT_SMOKE and path == "/api/goals":
                 value = {
                     "goals": [],
