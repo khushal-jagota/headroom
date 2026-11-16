@@ -1,0 +1,102 @@
+name: Python to TypeScript hosted install rehearsal
+
+on:
+  push:
+    branches: [ticket/t_g2rpracg-workspace-5bb10e170aa1]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: cutover-rehearsal-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  cutover:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 100
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '22'
+      - name: Prepare disposable systemd user session
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y dbus-user-session ffmpeg patchelf binutils libtk8.6 libicu-dev pkg-config
+          sudo loginctl enable-linger "$USER"
+          sudo systemctl start "user@$(id -u).service"
+          root="$RUNNER_TEMP/typescript-cutover"
+          mkdir -p "$root"/{home/.config/systemd/user,home/.codex,home/.claude,home/.hermes,logs,data,workspace,backups,run,tmp}
+          # The real installer writes beneath its private HOME. The user's manager
+          # discovers these same units through its ordinary account search path.
+          mkdir -p "$HOME/.config/systemd/user"
+          for suffix in .service .backup.service .backup.timer; do
+            ln -s "$root/home/.config/systemd/user/panels-cutover-$GITHUB_RUN_ID$suffix" \
+              "$HOME/.config/systemd/user/panels-cutover-$GITHUB_RUN_ID$suffix"
+          done
+          node_path=$(readlink -f "$(command -v node)")
+          if [ "$node_path" != /usr/local/bin/node ]; then sudo ln -sfn "$node_path" /usr/local/bin/node; fi
+      - name: Build, install, migrate, swap and recover real releases
+        shell: bash
+        run: |
+          set -euo pipefail
+          root="$RUNNER_TEMP/typescript-cutover"
+          env -i PATH="$PATH" LANG=C.UTF-8 LC_ALL=C.UTF-8 \
+            HOME="$root/home" CODEX_HOME="$root/home/.codex" \
+            CLAUDE_CONFIG_DIR="$root/home/.claude" HERMES_HOME="$root/home/.hermes" \
+            PLAN_HERMES_HOME="$root/home/.hermes" \
+            XDG_RUNTIME_DIR="/run/user/$(id -u)" DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$(id -u)/bus" \
+            XDG_CONFIG_HOME="$root/home/.config" XDG_CACHE_HOME="$root/home/.cache" \
+            XDG_DATA_HOME="$root/data" XDG_STATE_HOME="$root/state" \
+            TMPDIR="$root/tmp" TMP="$root/tmp" TEMP="$root/tmp" \
+            PIP_CONFIG_FILE=/dev/null npm_config_cache="$root/home/.npm" \
+            CUTOVER_ROOT="$root" CUTOVER_BRIDGE_SHA=ca81dd8335f587a3d17926870d52f245dcbd6f4f \
+            RUNNER_TEMP="$RUNNER_TEMP" RUNNER_ENVIRONMENT=github-hosted \
+            GITHUB_ACTIONS=true GITHUB_WORKSPACE="$GITHUB_WORKSPACE" GITHUB_REPOSITORY="$GITHUB_REPOSITORY" GITHUB_SHA="$GITHUB_SHA" \
+            GITHUB_EVENT_NAME="$GITHUB_EVENT_NAME" GITHUB_EVENT_PATH="$GITHUB_EVENT_PATH" \
+            GITHUB_REF="$GITHUB_REF" GITHUB_WORKFLOW_REF="$GITHUB_WORKFLOW_REF" \
+            GITHUB_RUN_ID="$GITHUB_RUN_ID" GITHUB_RUN_ATTEMPT="$GITHUB_RUN_ATTEMPT" \
+            PLAN_CONFIG_PATH="$root/config.yaml" PLAN_DB_PATH="$root/data/bootstrap.db" \
+            PLAN_DATA_DIR="$root/data" PLAN_APP_ROOT="$root/app" PLAN_LOGS_DIR="$root/logs" \
+            PLAN_BACKUP_DIR="$root/backups" PLAN_WORKSPACE_ROOT="$root/workspace" \
+            PLAN_DISPATCHER_LOCK_PATH="$root/run/dispatcher.lock" PLAN_SERVER_CONTROL_SOCKET="$root/run/control.sock" \
+            PLAN_SERVER_LIFECYCLE_LEASE_PATH="$root/run/lease.lock" \
+            PLAN_SERVER_URL=http://127.0.0.1:0 PLAN_PORT=0 PLAN_TEST_MODE=1 PLAN_DISPATCH_ENABLED=false \
+            bash --noprofile --norc -euo pipefail <<'PROOF'
+          umask 077
+          exec > >(tee "$CUTOVER_ROOT/job.log") 2>&1
+          printf '{}\n' > "$PLAN_CONFIG_PATH"
+          hermes="$HOME/.hermes/hermes-agent"
+          git init "$hermes"
+          git -C "$hermes" remote add origin https://github.com/NousResearch/hermes-agent.git
+          git -C "$hermes" fetch --depth=1 origin 76d832d3857551a029c4b39c23945eb47c16fe5b
+          git -C "$hermes" checkout --detach FETCH_HEAD
+          python3 -m venv "$hermes/venv"
+          "$hermes/venv/bin/python" -m pip install --editable "$hermes[acp]"
+          export PLAN_HERMES_PYTHON="$hermes/venv/bin/python"
+          python3 -m venv .venv
+          .venv/bin/python -m pip install -r requirements.txt
+          .venv/bin/python -m pip install --editable .
+          python3 -I -S -B scripts/dev_launcher.py npm --prefix server ci
+          .venv/bin/python scripts/typescript_cutover_rehearsal.py
+          PROOF
+      - name: Preserve cutover and rollback evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: typescript-cutover-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/typescript-cutover/*.json
+            ${{ runner.temp }}/typescript-cutover/*.log
+          if-no-files-found: error
