@@ -26,7 +26,8 @@ struct ConversationComposer: View {
     @State private var picture: PhotosPickerItem?
     @State private var camera = false
     @State private var dropTargeted = false
-    @FocusState private var focused: Bool
+    @Environment(\.screenTextEntry) private var textEntry
+    @State private var inputID = UUID()
     // Unknown Mac activity changes the indicator; Stop still targets the saved turn, as on the web.
     private var stopsTurn: Bool { !reviewReply && model.status?.turnRunning == true && model.draft.isEmpty && model.attachments.isEmpty && !speech.recording }
     private var card: Bool { (!model.draft.isEmpty || !model.attachments.isEmpty) && !speech.recording && !speech.transcribing }
@@ -65,7 +66,7 @@ struct ConversationComposer: View {
             } catch { model.error = error.localizedDescription }
         }
         .onChange(of: capturingSpeech) { _, capturing in
-            if capturing { focused = false }
+            if capturing { _ = textEntry?.endEditing() }
             onCaptureChanged?(capturing)
         }
         .onChange(of: scenePhase) { _, phase in if phase != .active { speech.cancel() } }
@@ -145,6 +146,7 @@ struct ConversationComposer: View {
         .padding(.horizontal, card ? ConversationLayout.cardInset : ConversationLayout.restingInset)
         .animation(reduceMotion ? nil : ConversationLayout.shapeMotion, value: card)
         .foregroundStyle(PanelsTheme.text)
+        .screenTextEntryInteraction()
     }
     private var controls: some View {
             HStack(spacing: 0) {
@@ -169,7 +171,7 @@ struct ConversationComposer: View {
                         Button("File", systemImage: "paperclip") { importFile = true }
                         Button("Picture", systemImage: "photo") { pickPicture = true }
                         Button("Photo", systemImage: "camera") { camera = true }.disabled(!UIImagePickerController.isSourceTypeAvailable(.camera))
-                        Button("Command", systemImage: "slash.circle") { model.draft = "/"; focused = true }
+                        Button("Command", systemImage: "slash.circle") { model.draft = "/"; textEntry?.requestFocus(inputID) }
                     } label: { Image(systemName: "plus").font(.system(size: min(iconSize, 28))).frame(width: 36, height: 36).background(PanelsTheme.raised, in: Circle()).frame(width: 44, height: 44) }.accessibilityLabel("Add attachment or command")
                     if card && !reviewReply && !typeSize.isAccessibilitySize { configurationControls }
                     Spacer(minLength: 0)
@@ -188,7 +190,7 @@ struct ConversationComposer: View {
     }
 
     @ViewBuilder private var configurationControls: some View {
-        Button { focused = false; modelSheet = true } label: {
+        Button { _ = textEntry?.endEditing(); modelSheet = true } label: {
             HStack(spacing: 4) {
                 ConversationBackendMark(backend: model.backendKey ?? "codex")
                 Text(model.selectedModel?.components(separatedBy: "/").last ?? "Model").lineLimit(1)
@@ -207,11 +209,12 @@ struct ConversationComposer: View {
 
     private var field: some View {
         TextField(placeholder ?? (reviewReply ? "Reply…" : "Message"), text: $model.draft, axis: .vertical)
-            .font(PanelsTheme.TypeScale.body).lineLimit(1...5).focused($focused)
+            .font(PanelsTheme.TypeScale.body).lineLimit(1...5)
             .disabled(capturingSpeech).allowsHitTesting(!capturingSpeech)
             .accessibilityHidden(capturingSpeech)
             .textFieldStyle(.plain).accessibilityIdentifier("conversation-input")
             .modifier(ImagePaste(model: model))
+            .screenTextInput(inputID)
     }
     private func primaryAction() {
         if speech.recording { speech.stop() }
@@ -245,7 +248,7 @@ struct ConversationComposer: View {
         }
     }
     private func startVoice() {
-        focused = false
+        _ = textEntry?.endEditing()
         let prefix = model.draft
         Task { await speech.start { model.updateSpeechTranscript($0, prefix: prefix) } }
     }

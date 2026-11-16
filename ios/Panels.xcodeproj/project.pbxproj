@@ -155,6 +155,7 @@
 		C9F696AD1D9B408F44AFA6F6 /* FeedbackAPI.swift in Sources */ = {isa = PBXBuildFile; fileRef = BB95C680FF6CF50767A7CE6A /* FeedbackAPI.swift */; };
 		CAD238A379C8D5BA5A736E47 /* ReviewExternalDecisionProbeTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AD91DE6C61C4B30570D17A3F /* ReviewExternalDecisionProbeTests.swift */; };
 		CB24977CE39B76647D6B2063 /* ReviewChiefMessageTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7C3D570BE05D51AB54EBF082 /* ReviewChiefMessageTests.swift */; };
+		CC67B0C8A1DD40FB8DD67646 /* ScreenTextEntry.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9F215D411FCD7BA4A8543542 /* ScreenTextEntry.swift */; };
 		CCD30C4BFBBCDBCE7695AFE9 /* NotificationDeliveryTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 737B356E4B2DABD8765C96EE /* NotificationDeliveryTests.swift */; };
 		CF61FCBA5DF7048739A170EF /* RecapAPI.swift in Sources */ = {isa = PBXBuildFile; fileRef = 19076135E62A3ADAC15BC4E2 /* RecapAPI.swift */; };
 		D000B9EC460D6D13E7E58332 /* ReviewChiefMessageModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = B217EDE25DB3E417E0A3AEF3 /* ReviewChiefMessageModel.swift */; };
@@ -348,6 +349,7 @@
 		97E0F8A65902CBF71DA74F94 /* conversation-hermes.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "conversation-hermes.png"; sourceTree = "<group>"; };
 		98AC191805A3FDBCA1926495 /* FeedbackView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FeedbackView.swift; sourceTree = "<group>"; };
 		9B1B908D97FA9F1D565E7D44 /* TicketLifecycle.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TicketLifecycle.swift; sourceTree = "<group>"; };
+		9F215D411FCD7BA4A8543542 /* ScreenTextEntry.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScreenTextEntry.swift; sourceTree = "<group>"; };
 		A128D2A50ECBA1497DEE33CB /* GoalContracts.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GoalContracts.swift; sourceTree = "<group>"; };
 		A4947C201978999EE83C7707 /* FeedbackPresentation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FeedbackPresentation.swift; sourceTree = "<group>"; };
 		A5B65B958CE406314A52A4AB /* TicketTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TicketTests.swift; sourceTree = "<group>"; };
@@ -561,6 +563,7 @@
 				2A008FF2BE0EE350DEA44FC9 /* RingRefreshControl.swift */,
 				34B24A1AA8C73389437FE3B3 /* RingSpinner.swift */,
 				2CD280BD116D51431A92E820 /* ScreenState.swift */,
+				9F215D411FCD7BA4A8543542 /* ScreenTextEntry.swift */,
 			);
 			path = Components;
 			sourceTree = "<group>";
@@ -1425,6 +1428,7 @@
 				F3275591673B535B3CF67A2A /* RingRefreshControl.swift in Sources */,
 				393FBA5885D00171B0A48284 /* RingSpinner.swift in Sources */,
 				93E5D8990C2F3F7615FC8B01 /* ScreenState.swift in Sources */,
+				CC67B0C8A1DD40FB8DD67646 /* ScreenTextEntry.swift in Sources */,
 				62FAF4B6FD92F353A0D6AC24 /* SettingsModels.swift in Sources */,
 				73E52E7BAAFF0DC03B775860 /* SettingsView.swift in Sources */,
 				4421B3D01E0666FF976EEABD /* Theme.swift in Sources */,

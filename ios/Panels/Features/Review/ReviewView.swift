@@ -43,6 +43,10 @@ struct ReviewView: View {
     }
 
     var body: some View {
+        ScreenTextEntryScope(dismissesBackgroundTaps: true) { _ in reviewContent }
+    }
+
+    private var reviewContent: some View {
         Group {
             if savedWork.key?.server != server { Color.clear }
             else if let card = shownCard {
@@ -68,6 +72,7 @@ struct ReviewView: View {
                                 }
                                 .buttonStyle(ReviewActionStyle())
                                 .accessibilityIdentifier("review.revisitSkipped")
+                                .screenTextEntryInteraction()
                             }
                         }
                         .padding(.horizontal, ReviewStyle.gutter)
@@ -226,6 +231,7 @@ private struct ReviewCardView: View {
     let onSkip: () -> Void
     let onResolved: (ReviewItem) -> Void
     @Environment(AppStore.self) private var store
+    @Environment(\.screenTextEntry) private var textEntry
     @Environment(\.dynamicTypeSize) private var typeSize
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var sheet: ReviewSheet?
@@ -284,6 +290,7 @@ private struct ReviewCardView: View {
                             crossedThreshold = false
                         })
             }
+            .accessibilityIdentifier("review-content")
             .scrollDismissesKeyboard(.interactively)
             .scrollDisabled(leaving || messages.contains { messageStates[$0.id]?.sending == true })
             .safeAreaInset(edge: .bottom, spacing: 0) {
@@ -349,13 +356,16 @@ private struct ReviewCardView: View {
             Button("Skip") { skip(width: 12, button: true) }.disabled(skipLocked).accessibilityIdentifier("review.skip")
             if !card.ticketId.isEmpty {
                 if let openTicket {
-                    Button("Open ticket") { openTicket(card.ticketId) }.accessibilityIdentifier("review.openTicket")
+                    Button("Open ticket") {
+                        if let textEntry { textEntry.endEditingBeforeNavigation { openTicket(card.ticketId) } }
+                        else { openTicket(card.ticketId) }
+                    }.accessibilityIdentifier("review.openTicket")
                 } else {
-                    NavigationLink("Open ticket", value: AppRoute.ticket(card.ticketId)).accessibilityIdentifier("review.openTicket")
+                    ScreenTextEntryNavigationLink("Open ticket", value: AppRoute.ticket(card.ticketId)).accessibilityIdentifier("review.openTicket")
                 }
             }
         }.buttonStyle(.plain).panelsScaledFont(size: 13.5, weight: .medium)
-            .foregroundStyle(PanelsTheme.Web.secondary).frame(minHeight: 44)
+            .foregroundStyle(PanelsTheme.Web.secondary).frame(minHeight: 44).screenTextEntryInteraction()
         Text(decision?.ticket?.title ?? card.title).panelsScaledFont(size: 26, relativeTo: .title, weight: .semibold)
             .tracking(-0.26).lineSpacing(1).fixedSize(horizontal: false, vertical: true)
             .foregroundStyle(PanelsTheme.Web.strong).frame(maxWidth: .infinity, alignment: .leading)
@@ -363,7 +373,7 @@ private struct ReviewCardView: View {
             Text((try? AttributedString(markdown: recap)) ?? AttributedString(recap))
                 .panelsScaledFont(size: 14).lineSpacing(6).foregroundStyle(PanelsTheme.Web.text)
                 .frame(maxWidth: .infinity, alignment: .leading).textSelection(.enabled)
-                .accessibilityLabel("Recap").accessibilityValue(recap)
+                .accessibilityLabel("Recap").accessibilityValue(recap).screenTextEntryInteraction()
         }
         }
     }
@@ -456,7 +466,7 @@ private struct ReviewProposalSection: View {
             if decision.error != nil {
                 Button(decision.changed ? "Reload proposal" : "Try again") {
                     Task { await store.refresh(); await decision.load(item: item, api: store.client, discardDraft: decision.changed) }
-                }.disabled(decision.busy).panelsScaledFont(size: 12.5)
+                }.disabled(decision.busy).panelsScaledFont(size: 12.5).screenTextEntryInteraction()
             }
         }
         .task(id: "\(store.baseURL)|\(store.connectionSession)|\(isActive)") {
@@ -536,7 +546,7 @@ private struct ReviewDecisionDock: View {
                 Button("Retry") { Task { append(await voice.transcribe(api: api)) } }
             case .idle: EmptyView()
             }
-        }.foregroundStyle(PanelsTheme.muted)
+        }.foregroundStyle(PanelsTheme.muted).screenTextEntryInteraction()
     }
     private func append(_ transcript: String?) {
         if transcript != nil { decision.refreshVoiceDraft() }

@@ -307,10 +307,15 @@ struct PageArtifactNavigation: ViewModifier {
     let holder: GoalHolder?
     @Environment(AppStore.self) private var store
     @State private var selectedArtifact: ArtifactTarget?
+    @Environment(\.screenTextEntry) private var textEntry
     func body(content: Content) -> some View {
         content.environment(\.openURL, OpenURLAction { url in
             if ArtifactTarget.isRetiredGoalURL(url, baseURL: store.baseURL) { return .discarded }
-            if let target = ArtifactTarget.from(url, baseURL: store.baseURL) { selectedArtifact = target; return .handled }
+            if let target = ArtifactTarget.from(url, baseURL: store.baseURL) {
+                if let textEntry { textEntry.endEditingBeforeNavigation { selectedArtifact = target } }
+                else { selectedArtifact = target }
+                return .handled
+            }
             return .systemAction
         }).navigationDestination(item: $selectedArtifact) { target in
             ArtifactViewerView(owner: target.owner, path: target.path, title: target.title, conversationOwner: holder?.conversationOwner)

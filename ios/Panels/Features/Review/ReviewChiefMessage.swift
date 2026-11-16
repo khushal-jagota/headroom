@@ -19,10 +19,11 @@ struct ReviewChiefMessage: View {
                         .disabled(message.busy).accessibilityIdentifier("review.chief.checkDelivery")
                 }
                 Spacer()
-                NavigationLink("Open Chief", value: AppRoute.chief)
+                ScreenTextEntryNavigationLink("Open Chief", value: AppRoute.chief)
             }
             .font(PanelsTheme.TypeScale.small)
             .frame(minHeight: 44)
+            .screenTextEntryInteraction()
         }
         .accessibilityIdentifier("review.chief")
         .task(id: "\(store.baseURL)|\(isActive)") {

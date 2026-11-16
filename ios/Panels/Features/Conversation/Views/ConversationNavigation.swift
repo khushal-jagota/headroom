@@ -20,28 +20,36 @@ struct ConversationNavigation: ViewModifier {
     var refreshError: String?
     var retry: (() async -> Void)?
     @Environment(AppStore.self) private var store
+    var textEntry: ScreenTextEntryContext? = nil
     @State private var opened = false
     @State private var followedLink = false
     @State private var linkedConversationID: String?
     @State private var model = ConversationModel()
     @State private var speech = ConversationSpeech()
 
-    func body(content: Content) -> some View {
+    @ViewBuilder func body(content: Content) -> some View {
+        if let textEntry { navigation(content: content, textEntry: textEntry) }
+        else { ScreenTextEntryScope { textEntry in navigation(content: content, textEntry: textEntry) } }
+    }
+
+    private func navigation(content: Content, textEntry: ScreenTextEntryContext) -> some View {
         content
             .toolbar(.hidden, for: .tabBar)
             .safeAreaInset(edge: .bottom, spacing: 0) {
-                surface(isPage: false)
+                surface(isPage: false, textEntry: textEntry)
             }
             .navigationDestination(isPresented: $opened) {
-                surface(isPage: true)
-                    .toolbar(.hidden, for: .navigationBar)
-                    .toolbar(.hidden, for: .tabBar)
+                ScreenTextEntryScope(dismissesBackgroundTaps: true) { childEntry in
+                    surface(isPage: true, textEntry: childEntry)
+                        .toolbar(.hidden, for: .navigationBar)
+                        .toolbar(.hidden, for: .tabBar)
+                }
             }
             .task {
                 guard openConversationID != nil, !followedLink else { return }
                 followedLink = true
                 linkedConversationID = openConversationID
-                opened = true
+                textEntry.endEditingBeforeNavigation { opened = true }
             }
             .onChange(of: opened) { _, isOpen in
                 Haptics.light()
@@ -53,9 +61,10 @@ struct ConversationNavigation: ViewModifier {
             .onChange(of: store.baseURL) { _, _ in speech.cancel(); model = ConversationModel() }
     }
 
-    private func surface(isPage: Bool) -> some View {
+    private func surface(isPage: Bool, textEntry: ScreenTextEntryContext) -> some View {
         ConversationSurface(owner: owner, conversationID: isPage ? linkedConversationID ?? conversationID : conversationID, title: title,
-                            isPage: isPage, active: isPage || !opened, open: { opened = true },
+                            isPage: isPage, active: isPage || !opened,
+                            open: { textEntry.endEditingBeforeNavigation { opened = true } },
                             model: model, speech: speech, refreshError: refreshError, retry: retry,
                             checksCurrentConversation: isPage && linkedConversationID != nil)
     }
@@ -91,6 +100,7 @@ private struct ConversationSurface: View {
         return !currentConversationConfirmed
     }
     @State private var changingQueue = false
+    @Environment(\.screenTextEntry) private var textEntry
 
     var body: some View {
         conversation
@@ -216,7 +226,7 @@ private struct ConversationSurface: View {
     private var header: some View {
         HStack(spacing: 0) {
             if isPage {
-                AgentPageControls {
+                AgentPageControls(beforeBack: { _ = textEntry?.endEditing() }) {
                     Menu {
                         Picker("Conversation lens", selection: $model.lens) {
                             ForEach(ConversationLens.allCases, id: \.self) { lens in
@@ -263,6 +273,7 @@ private struct ConversationSurface: View {
         .foregroundStyle(PanelsTheme.faint)
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("conversation-header")
+        .screenTextEntryInteraction()
     }
 
     private var bottom: some View {
@@ -279,7 +290,7 @@ private struct ConversationSurface: View {
                                 Button { changeQueue(held, discard: true) } label: {
                                     Image(systemName: "xmark").font(.system(size: 18)).frame(width: 44, height: 44)
                                 }.accessibilityLabel("Remove queued message")
-                            }
+                            }.screenTextEntryInteraction()
                         }.font(PanelsTheme.TypeScale.small).padding(.horizontal, 12)
                             .background(PanelsTheme.recessed, in: RoundedRectangle(cornerRadius: 12))
                     }
@@ -335,7 +346,7 @@ struct ConversationThread: View {
                 LazyVStack(alignment: .leading, spacing: 20) {
                     if model.older != nil {
                         Button("Earlier messages") { Task { await model.loadOlder(using: store.client) } }
-                            .disabled(model.loadingOlder).frame(maxWidth: .infinity, minHeight: 44)
+                            .disabled(model.loadingOlder).frame(maxWidth: .infinity, minHeight: 44).screenTextEntryInteraction()
                     }
                     ForEach(model.rows) { row in
                         HStack {
@@ -345,16 +356,18 @@ struct ConversationThread: View {
                                     Text(sender).font(PanelsTheme.TypeScale.small).foregroundStyle(PanelsTheme.faint)
                                 }
                                 if row.item?.body?.reference != nil, let item = row.item, model.expandedBodies[item.key] == nil {
-                                    Button("Read message") { Task { await model.loadBody(item, using: store.client) } }
+                                    Button("Read message") { Task { await model.loadBody(item, using: store.client) } }.screenTextEntryInteraction()
                                     if let error = model.bodyErrors[item.key] {
                                         Text(error).font(PanelsTheme.TypeScale.small).foregroundStyle(PanelsTheme.error)
                                     }
                                 } else if !row.text.isEmpty {
                                     Text((try? AttributedString(markdown: row.text, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace), baseURL: store.baseURL)) ?? AttributedString(row.text))
                                         .textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
+                                        .screenTextEntryInteraction()
                                 }
                                 if !row.attachments.isEmpty {
                                     ConversationAttachmentTray(pieces: row.attachments, preparing: row.retryID == model.preparingOutgoingID && model.preparingOutgoingID != nil)
+                                        .screenTextEntryInteraction()
                                 }
                                 if let note = row.note, note != "Sent" {
                                     HStack {
@@ -377,7 +390,7 @@ struct ConversationThread: View {
                                                 Button("Keep waiting", role: .cancel) { recoveryID = nil }
                                             }
                                         }
-                                    }.font(PanelsTheme.TypeScale.small).frame(minHeight: 28)
+                                    }.font(PanelsTheme.TypeScale.small).frame(minHeight: 28).screenTextEntryInteraction()
                                 }
                             }.padding(row.own ? 12 : 0).background(row.own ? PanelsTheme.raised : .clear, in: RoundedRectangle(cornerRadius: 12))
                             if !row.own { Spacer(minLength: 0) }
@@ -471,6 +484,7 @@ struct ConversationThread: View {
                         .accessibilityValue(scrollPolicy.hasNewOutput ? "New output" : "")
                         .accessibilityHint("Scroll to the latest message")
                         .padding(.trailing, 16).padding(.bottom, 16)
+                        .screenTextEntryInteraction()
                         .transition(.opacity)
                     }
                 }
@@ -547,8 +561,8 @@ struct ConversationModelSheet: View {
 }
 
 extension View {
-    func conversationNavigation(owner: ConversationOwner, conversationID: String?, title: String = "Conversation", openConversationID: String? = nil, refreshError: String? = nil, retry: (() async -> Void)? = nil) -> some View {
-        modifier(ConversationNavigation(owner: owner, conversationID: conversationID, title: title, openConversationID: openConversationID, refreshError: refreshError, retry: retry))
+    func conversationNavigation(owner: ConversationOwner, conversationID: String?, title: String = "Conversation", openConversationID: String? = nil, refreshError: String? = nil, retry: (() async -> Void)? = nil, textEntry: ScreenTextEntryContext? = nil) -> some View {
+        modifier(ConversationNavigation(owner: owner, conversationID: conversationID, title: title, openConversationID: openConversationID, refreshError: refreshError, retry: retry, textEntry: textEntry))
     }
 }
 
