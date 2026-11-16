@@ -117,12 +117,34 @@ export async function build_native_mini_homes(base: string, execution: ReleaseEx
   await writeFile(join(source, 'server/native_probe_cli.mjs'), cli, { mode: 0o755 });
   await writeFile(join(source, 'server/native_probe_app.mjs'), app);
   await command(['git', 'init', '--template=', source]);
+  const tracked = await run_release_command(
+    ['git', 'ls-files', '-z'],
+    { cwd: repository, environment, timeout_seconds: 60 },
+    execution,
+  );
+  const pathspec = join(base, 'mini-source.pathspec');
+  await writeFile(
+    pathspec,
+    tracked.stdout +
+      'server/native_probe_cli.mjs\0server/native_probe_app.mjs\0NATIVE_PROBE_REVISION\0',
+    { flag: 'wx', mode: 0o600 },
+  );
   const builds: MacHomeBuildResult[] = [],
     phases: Record<string, unknown>[] = [];
   for (const name of ['A', 'B']) {
     const started = performance.now();
     await writeFile(join(source, 'NATIVE_PROBE_REVISION'), name + '\n');
-    await command(['git', '-C', source, 'add', '-A']);
+    // Preserve the original tracked export, including ignored domain data/ source directories.
+    await command([
+      'git',
+      '--literal-pathspecs',
+      '-C',
+      source,
+      'add',
+      '--force',
+      '--pathspec-from-file=' + pathspec,
+      '--pathspec-file-nul',
+    ]);
     await command([
       'git',
       '-C',
