@@ -59,7 +59,7 @@ jobs:
             XDG_RUNTIME_DIR="/run/user/$(id -u)" DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$(id -u)/bus" \
             XDG_CONFIG_HOME="$root/home/.config" XDG_CACHE_HOME="$root/home/.cache" \
             XDG_DATA_HOME="$root/data" XDG_STATE_HOME="$root/state" \
-            TMPDIR="$root/tmp" TMP="$root/tmp" TEMP="$root/tmp" \
+            TMPDIR="$root" TMP="$root" TEMP="$root" \
             PIP_CONFIG_FILE=/dev/null npm_config_cache="$root/home/.npm" \
             CUTOVER_ROOT="$root" CUTOVER_BRIDGE_SHA=ca81dd8335f587a3d17926870d52f245dcbd6f4f \
             RUNNER_TEMP="$RUNNER_TEMP" RUNNER_ENVIRONMENT=github-hosted \
