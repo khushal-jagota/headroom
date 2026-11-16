@@ -35,12 +35,12 @@ private struct GoalDetailContent: View {
                 GoalDocumentContent(session: session)
             }.padding(.horizontal, AgentPageLayout.gutter).padding(.bottom, 32)
         }.panelsScreen().toolbar(.hidden, for: .navigationBar)
+            .modifier(PageArtifactNavigation(holder: session.goal?.holder))
             .modifier(GoalHolderConversation(session: session, openConversationID: openConversationID))
             .screenLoadState("goal", hasContent: session.goal != nil, error: session.readError, showsRefreshError: false) { await session.refresh() }
             .panelsRefreshable { await session.refresh() }
             .task(id: "\(store.baseURL):\(scenePhase == .active)") { if scenePhase == .active { await session.follow() } }
             .environment(\.pageTicketHolder, session.goal?.holder)
-            .modifier(PageArtifactNavigation(holder: session.goal?.holder))
             .accessibilityIdentifier("goal-screen")
     }
 }

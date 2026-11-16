@@ -146,7 +146,8 @@ import Observation
         return entries(server)
     }
     @discardableResult
-    func retry(_ id: String, api: APIClient, content: [ConversationSend.Piece]? = nil, destination: OutgoingStore.Destination? = nil) -> String? {
+    func retry(_ id: String, api: APIClient, content: [ConversationSend.Piece]? = nil, destination: OutgoingStore.Destination? = nil,
+               imageWorkStarted: @escaping @Sendable () -> Void = {}) async -> String? {
         let server = LocalStore.server(api.baseURL)
         guard let work = work(server, id: id) else { return nil }
         do {
@@ -156,14 +157,31 @@ import Observation
                 return id
             }
             guard let message = work.message else { return nil }
+            let original = try store.outgoing.summary(server: server, id: id)
+            let replacementContent: [ConversationSend.Piece]
+            if work.state == .failed, content == nil {
+                replacementContent = try await ConversationImagePreparation.prepare(message.content, imageWorkStarted: imageWorkStarted)
+                guard try store.outgoing.summary(server: server, id: id) == original else { return nil }
+            } else { replacementContent = content ?? message.content }
             let nextID = UUID().uuidString
             var next = message
-            next = ConversationSend(conversationId: message.conversationId, content: content ?? message.content, mode: message.mode,
+            next = ConversationSend(conversationId: message.conversationId, content: replacementContent, mode: message.mode,
                 backendKey: message.backendKey, model: message.model, reasoningEffort: message.reasoningEffort, reasoningEffortIsSet: message.reasoningEffortIsSet,
                 senderMessageId: nextID, sentAtUnixMilliseconds: Int64(Date().timeIntervalSince1970 * 1000), ownerReadThroughSequence: message.ownerReadThroughSequence)
             let aliases = work.state == .failed ? (work.priorMessageIDs ?? []) + [id] : nil
             let replacement = PendingWork(id: nextID, created: .now, kind: .message, owner: work.owner, message: next, priorMessageIDs: aliases)
-            try store.outgoing.replace(server: server, id: id, with: replacement)
+            var capturedDraft: OutgoingStore.DraftCapture?
+            if work.state == .failed, let recovery = work.rejectedPhotoDraft {
+                let capture = try store.outgoing.captureDraft(server: server, id: recovery.id)
+                let expectedText = recovery.originalText ?? message.content.compactMap(\.text).joined(separator: "\n")
+                let savedPieces = capture.attachments.flatMap { try? JSONDecoder().decode([ConversationSend.Piece].self, from: $0.payload) }
+                if let completed = work.completed,
+                   capture.text?.updated == completed, capture.attachments?.updated == completed,
+                   capture.text?.payload == Data(expectedText.utf8), savedPieces == message.content.filter({ $0.piece != "text" }) {
+                    capturedDraft = capture
+                }
+            }
+            try store.outgoing.replace(server: server, id: id, with: replacement, capturedDraft: capturedDraft)
             if message.conversationId == nil, let destination { try store.outgoing.releaseHold(server: server, id: nextID, destination: destination) }
             Task { await drain(api: api) }
             return nextID
@@ -297,7 +315,8 @@ import Observation
             if let error = error as? APIError, error.status > 0, error.status < 500, error.status != 408, writeStarted {
                 let changed = error.status == 409 || error.isChangedProposal
                 try? store.outgoing.settle(server: server, id: id, state: changed ? .changed : .failed,
-                    note: changed ? "This changed, review again" : "Not sent · \(error.message)")
+                    note: changed ? "This changed, review again" : "Not sent · \(error.message)",
+                    restoreRejectedPhotoDraft: error.status == 422 && work.message?.content.contains(where: { $0.piece == "image" }) == true)
             } else if writeStarted {
                 try? store.outgoing.settle(server: server, id: id, state: .uncertain, note: "Delivery uncertain · check before another attempt")
             }

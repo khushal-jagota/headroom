@@ -1,14 +1,14 @@
-import { constants } from 'node:fs';
+import { constants, readFileSync, renameSync } from 'node:fs';
 import { constants as os_constants } from 'node:os';
 import { setTimeout } from 'node:timers/promises';
-import { open, mkdir, readdir, rename, unlink } from 'node:fs/promises';
+import { open, mkdir, readdir, rmdir, unlink } from 'node:fs/promises';
 import { basename, dirname, join } from 'node:path';
 import { flock } from '../../core/locks/flock.ts';
 import {
   snapshot_ticket_scratch,
   prune_ticket_scratch,
 } from '../../conversation/worker_scratch.ts';
-import { RETENTION_SECONDS } from '../contracts.ts';
+import { OWNERSHIP_FILE, RETENTION_SECONDS, WORKTREE_DIRECTORY } from '../contracts.ts';
 import type {
   CleanupResult,
   RetirementOptions,
@@ -17,6 +17,7 @@ import type {
   WorkspaceCleanupOptions,
   WorkspaceOptions,
   WorkspaceState,
+  WorkspaceMarker,
 } from '../contracts.ts';
 import {
   admit,
@@ -29,8 +30,59 @@ import {
   token,
   workspace_identity,
   write_json,
+  write_json_sync,
 } from './shared.ts';
-import { cleanup_ticket_folder, reason_to_keep } from './safety.ts';
+import {
+  cleanup_ticket_folder,
+  reason_to_keep,
+  recorded_checkout_problem,
+  workspace_ticket_owners,
+} from './safety.ts';
+
+function clear_checkout(path: string): void {
+  const marker_path = join(path, OWNERSHIP_FILE);
+  const marker = JSON.parse(readFileSync(marker_path, 'utf8')) as WorkspaceMarker;
+  for (const key of [
+    'worktree',
+    'repository',
+    'branch',
+    'preparing',
+    'initial_commit',
+    'checkout_kind',
+    'temporary',
+  ] as const)
+    delete marker[key];
+  write_json_sync(marker_path, { ...marker, workspace_id: token() });
+}
+export function detach_workspace(path: string, target: string, checkout_only: boolean): void {
+  if (!checkout_only) {
+    renameSync(path, target);
+    return;
+  }
+  renameSync(join(path, WORKTREE_DIRECTORY), join(target, WORKTREE_DIRECTORY));
+  try {
+    clear_checkout(path);
+  } catch (error) {
+    renameSync(join(target, WORKTREE_DIRECTORY), join(path, WORKTREE_DIRECTORY));
+    throw error;
+  }
+}
+async function discard_preparation(target: string, checkout_only: boolean): Promise<void> {
+  if (
+    checkout_only &&
+    (await entry_stat(target))?.isDirectory() &&
+    !(await entry_stat(join(target, WORKTREE_DIRECTORY)))
+  ) {
+    await unlink(join(target, OWNERSHIP_FILE)).catch((error: NodeJS.ErrnoException) => {
+      if (error.code !== 'ENOENT') throw error;
+    });
+    await rmdir(target);
+  }
+  const id = basename(target).split('-').at(-1)!;
+  await unlink(join(dirname(target), id + '.json')).catch((error: NodeJS.ErrnoException) => {
+    if (error.code !== 'ENOENT') throw error;
+  });
+}
 
 export async function prepare_workspace_retirement(
   path: string,
@@ -59,12 +111,17 @@ export async function prepare_workspace_retirement(
   const scratch_names = await (options.snapshot_ticket_scratch ?? snapshot_ticket_scratch)(
     state.ticket_id,
   );
+  if (options.checkout_only) {
+    await mkdir(target);
+    await write_json(join(target, OWNERSHIP_FILE), await json(join(path, OWNERSHIP_FILE)));
+  }
   await write_json(join(retired, id + '.json'), {
     source: path,
     target,
     ...state,
     ...identity,
     scratch_names,
+    checkout_only: options.checkout_only ?? false,
   });
   return { path: target };
 }
@@ -74,7 +131,14 @@ export async function retire_workspace(
   options: RetirementOptions = {},
 ): Promise<RetirementTarget> {
   const target = await prepare_workspace_retirement(path, state, options);
-  if ('path' in target) await rename(path, target.path);
+  if ('path' in target) {
+    try {
+      detach_workspace(path, target.path, options.checkout_only ?? false);
+    } catch (error) {
+      await discard_preparation(target.path, options.checkout_only ?? false);
+      throw error;
+    }
+  }
   return target;
 }
 async function remove_retired(path: string, options: WorkspaceOptions): Promise<string | null> {
@@ -88,6 +152,22 @@ async function remove_retired(path: string, options: WorkspaceOptions): Promise<
   const id = basename(path).split('-').at(-1)!,
     record = await json<RetirementRecord>(join(dirname(path), id + '.json'));
   if (record.target !== path) return 'retirement target differs from its record';
+  if (
+    record.checkout_only &&
+    (await entry_stat(record.source))?.isDirectory() &&
+    !(await entry_stat(join(record.source, WORKTREE_DIRECTORY)))
+  ) {
+    try {
+      const identity = read_workspace_identity(record.source);
+      if (
+        identity.machine_id === record.machine_id &&
+        identity.workspace_id === record.workspace_id
+      )
+        clear_checkout(record.source);
+    } catch {
+      return 'cannot recover retained Ticket folder ownership';
+    }
+  }
   const names = record.scratch_names ?? [];
   if (!Array.isArray(names) || names.some((name) => typeof name !== 'string'))
     return 'invalid retirement scratch snapshot';
@@ -182,7 +262,7 @@ async function cleanup_pass(
 ): Promise<CleanupResult> {
   const result: CleanupResult = { removed: [], skipped: [] },
     manifest: unknown[] = [],
-    eligible: string[] = [];
+    eligible: { path: string; checkout_only: boolean }[] = [];
   const active = options.active_ticket_ids ?? new Set<string>();
   for (let root of [tickets_root, ...(options.extra_roots ?? [])]) {
     root = admit(root, options);
@@ -198,19 +278,31 @@ async function cleanup_pass(
         reason = 'legacy scratch outside Ticket files requires one-time owner review';
       else if (!state) reason = 'Ticket owner or end date is unknown; owner review required';
       else if (active.has(ticket_id!) || state.ended_at === null) reason = 'Ticket is active';
-      else if (now < state.ended_at + RETENTION_SECONDS)
-        reason = 'seven-day retention period has not ended';
-      else reason = await reason_to_keep(path, states, active, options);
+      else {
+        const checkout = join(path, WORKTREE_DIRECTORY);
+        const checkout_only = now < state.ended_at + RETENTION_SECONDS;
+        reason = await recorded_checkout_problem(path, options);
+        if (!reason && checkout_only && !(await entry_stat(join(checkout, '.git'))))
+          reason = 'Ticket artifacts remain for seven days';
+        if (
+          !reason &&
+          checkout_only &&
+          (await workspace_ticket_owners(checkout, options)).some((owner) => owner !== ticket_id)
+        )
+          reason = 'mixed Ticket ownership requires owner review';
+        if (!reason)
+          reason = await reason_to_keep(checkout_only ? checkout : path, states, active, options);
+      }
       manifest.push({
         path,
         ticket_id,
         ended_at: state?.ended_at ?? null,
         eligible_at: state?.ended_at == null ? null : state.ended_at + RETENTION_SECONDS,
-        allocated_bytes: await allocated_bytes(path),
+        allocated_bytes: options.measure_size ? await allocated_bytes(path) : null,
         preservation_reason: reason,
       });
       if (reason) result.skipped.push({ path, reason });
-      else eligible.push(path);
+      else eligible.push({ path, checkout_only: now < state!.ended_at! + RETENTION_SECONDS });
     }
   }
   await write_json(join(dirname(tickets_root), 'ticket-workspaces-cleanup.json'), {
@@ -224,7 +316,7 @@ async function cleanup_pass(
   });
   result.removed.push(...retried.removed);
   result.skipped.push(...retried.skipped);
-  for (const path of eligible)
+  for (const { path, checkout_only } of eligible)
     try {
       const state = states.get(ticket_match.exec(basename(path))![1]!)!,
         identity = workspace_identity(path, { create: false });
@@ -238,11 +330,12 @@ async function cleanup_pass(
         continue;
       }
       const target = options.retire
-        ? await options.retire(path, state, identity)
+        ? await options.retire(path, state, identity, checkout_only)
         : await retire_workspace(path, state, {
             ...options,
             identity,
             retired_root: join(dirname(tickets_root), '.ticket-retired'),
+            checkout_only,
           });
       if ('reason' in target) {
         result.skipped.push({ path, reason: target.reason });
@@ -250,7 +343,7 @@ async function cleanup_pass(
       }
       const reason = await remove_retired(target.path, options);
       if (reason) result.skipped.push({ path: target.path, reason });
-      else result.removed.push(path);
+      else result.removed.push(checkout_only ? join(path, WORKTREE_DIRECTORY) : path);
     } catch (error) {
       result.skipped.push({ path, reason: `cleanup failed: ${String(error)}` });
     }

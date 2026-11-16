@@ -515,7 +515,10 @@ export class ConversationStore
     return this.#settlement.finish_writes();
   }
 
-  readonly #startup_source_proofs = new Map<string, LocalChildCustodyRow>();
+  readonly #startup_source_proofs = new Map<
+    string,
+    { row: LocalChildCustodyRow; ticket_worker: boolean }
+  >();
   readonly #settled_recorded_turns = new Map<string, TurnToken>();
   #reconciliation_prepared = false;
 
@@ -587,7 +590,10 @@ export class ConversationStore
       const proof = this.#startup_source_proofs.get(conversation_id);
       return (
         row !== undefined &&
-        (row.state === 'retired' || (proof !== undefined && custody.same(row, proof)))
+        (row.state === 'retired' ||
+          (proof !== undefined &&
+            custody.same(row, proof.row) &&
+            custody.is_ticket_conversation(sql, conversation_id) === proof.ticket_worker))
       );
     });
   }
@@ -635,21 +641,27 @@ export class ConversationStore
   ): Promise<boolean> {
     return this.#settlement.retain_recording(
       (async () => {
-        const source = this.database.read((sql) => custody.read(sql, conversation_id));
+        const { source, ticket_worker } = this.database.read((sql) => ({
+          source: custody.read(sql, conversation_id),
+          ticket_worker: custody.is_ticket_conversation(sql, conversation_id),
+        }));
         const stop = options.deadline === undefined ? undefined : { deadline: options.deadline };
         const inspector = this.#participants.local_child_custody;
         if (source === undefined) return false;
         let proven =
           source.state === 'retired' ||
-          (await inspector?.retirement_row_proven(source, stop)) === true;
+          (await inspector?.retirement_row_proven(source, stop, ticket_worker)) === true;
         const identity = custody.identity(source);
         if (!proven && !options.inspect_only && source.state === 'started' && identity !== null)
-          proven = (await inspector?.stop_recorded_child(identity, source.host, stop)) === true;
+          proven =
+            (await inspector?.stop_recorded_child(identity, source.host, stop, ticket_worker)) ===
+            true;
         if (!proven) return false;
         return this.#settlement.write_recording(() =>
           this.#write_custody((tx) => {
             if (
               !custody.same(custody.read(tx, conversation_id), source) ||
+              custody.is_ticket_conversation(tx, conversation_id) !== ticket_worker ||
               tx.get(
                 "SELECT 1 FROM conversation_lifecycle_facts WHERE conversation_id=? AND ((kind='turn' AND status IN ('intent','running','unknown')) OR (kind='attempt' AND status IN ('intent','unknown')) OR (kind='request' AND status IN ('pending','answering'))) LIMIT 1",
                 [conversation_id],
@@ -669,7 +681,10 @@ export class ConversationStore
   ): Promise<RecordedSourceSettlement | null> {
     return this.#settlement.retain_recording(
       (async () => {
-        const source = this.database.read((sql) => custody.read(sql, conversation_id));
+        const { source, ticket_worker } = this.database.read((sql) => ({
+          source: custody.read(sql, conversation_id),
+          ticket_worker: custody.is_ticket_conversation(sql, conversation_id),
+        }));
         const stop = options.deadline === undefined ? undefined : { deadline: options.deadline };
         if (source === undefined) return null;
         const inspector = this.#participants.local_child_custody;
@@ -680,7 +695,7 @@ export class ConversationStore
               ? options.inspect_only
                 ? await inspector?.inspect_supervision(source.supervision_record, undefined, stop)
                 : await inspector?.stop_supervision(source.supervision_record, undefined, stop)
-              : await inspector?.retirement_row_proven(source, stop);
+              : await inspector?.retirement_row_proven(source, stop, ticket_worker);
           if (proven !== true) return null;
           result = 'undelivered';
         } else if (source.state === 'retired') result = 'retired';
@@ -688,14 +703,18 @@ export class ConversationStore
           const identity = custody.identity(source);
           if (identity === null) return null;
           const proven = options.inspect_only
-            ? await inspector?.retirement_row_proven(source, stop)
-            : await inspector?.stop_recorded_child(identity, source.host, stop);
+            ? await inspector?.retirement_row_proven(source, stop, ticket_worker)
+            : await inspector?.stop_recorded_child(identity, source.host, stop, ticket_worker);
           if (proven !== true) return null;
           result = 'retired';
         }
         const token = await this.#settlement.write_recording(() =>
           this.#write_custody((tx) => {
-            if (!custody.same(custody.read(tx, conversation_id), source)) return null;
+            if (
+              !custody.same(custody.read(tx, conversation_id), source) ||
+              custody.is_ticket_conversation(tx, conversation_id) !== ticket_worker
+            )
+              return null;
             const occurrence = tx.get<{ turn_number: number }>(
               'SELECT turn_number FROM conversation_turn_occurrences WHERE conversation_id=? AND occurrence_id=? AND runtime_epoch=?',
               [conversation_id, source.occurrence_id, source.runtime_epoch],
@@ -759,14 +778,20 @@ export class ConversationStore
         );
         for (const turn of candidates) {
           if (open_runs.has(turn.conversation_id)) continue;
-          const source = this.database.read((sql) => custody.read(sql, turn.conversation_id));
+          const { source, ticket_worker } = this.database.read((sql) => ({
+            source: custody.read(sql, turn.conversation_id),
+            ticket_worker: custody.is_ticket_conversation(sql, turn.conversation_id),
+          }));
           if (
             source !== undefined &&
             (source.state === 'retired' ||
-              (await this.#participants.local_child_custody?.retirement_row_proven(source)) ===
-                true)
+              (await this.#participants.local_child_custody?.retirement_row_proven(
+                source,
+                undefined,
+                ticket_worker,
+              )) === true)
           )
-            this.#startup_source_proofs.set(turn.conversation_id, source);
+            this.#startup_source_proofs.set(turn.conversation_id, { row: source, ticket_worker });
         }
         this.#reconciliation_prepared = true;
       })(),
@@ -1581,7 +1606,8 @@ export class ConversationStore
       const proof = this.#startup_source_proofs.get(turn.conversation_id);
       if (
         proof === undefined ||
-        !custody.same(custody.read(tx, turn.conversation_id), proof) ||
+        !custody.same(custody.read(tx, turn.conversation_id), proof.row) ||
+        custody.is_ticket_conversation(tx, turn.conversation_id) !== proof.ticket_worker ||
         !custody.occurrence_matches(
           tx,
           turn.conversation_id,

@@ -4,7 +4,12 @@ import { OneShotChildren } from '../../../lifecycle/one_shot_children.ts';
 import { ChildProcesses } from '../../../lifecycle/owned_processes.ts';
 import { expect, it, vi } from 'vitest';
 import { ResolvedConversationStart } from '../../contracts.ts';
-import { BackendStreamEnded } from '../contracts.ts';
+import {
+  BackendStreamEnded,
+  BackendSpawnFailed,
+  ClaudeInitializationTimeout,
+  SessionLoadFailed,
+} from '../contracts.ts';
 import { ClaudeAgentSdkBackendChild } from './adapter.ts';
 import type { ClaudeSdkClient, ClaudeSdkMessage } from './query_contracts.ts';
 import { Pending } from './wire.ts';
@@ -90,5 +95,74 @@ it('clears a failed reader and disconnects once across repeated stop calls', asy
   } finally {
     native_settled.resolve();
     logged.mockRestore();
+  }
+});
+
+// A native initialization timeout precedes prompt delivery, even on resume. Other
+// connect failures retain their ordinary spawn/session classification.
+it('classifies only the native SDK initialization-timeout discriminator before resume failures', async () => {
+  const start = new ResolvedConversationStart({
+    conversation_id: 'initialize-retry',
+    backend_key: 'claude',
+    model: 'haiku',
+    reasoning_effort: null,
+    role_materials: null,
+    workspace_folder: '/synthetic/workspace',
+    workspace_path_policy: 'absolute',
+    access: 'full',
+  });
+  const unexpected = async (): Promise<never> => {
+    throw new Error('No prompt or stream before initialization');
+  };
+  for (const cursor of [null, 'retained-session']) {
+    for (const tagged of [false, true]) {
+      const error = new Error('Native initialization did not complete');
+      if (tagged) Object.assign(error, { errorClass: 'initialize_timeout' });
+      const disconnect = vi.fn(async () => {});
+      const client: ClaudeSdkClient = {
+        connect: async () => {
+          throw error;
+        },
+        get_server_info: unexpected,
+        query: unexpected,
+        receive_messages: () => {
+          throw new Error('No stream before initialization');
+        },
+        watch_user_message() {},
+        forget_user_message() {},
+        wait_for_user_message_admission: unexpected,
+        user_message_uuids_for_result: () => new Set(),
+        user_message_is_settled: () => true,
+        wait_for_user_message_settlement: unexpected,
+        interrupt_and_cancel_queued: unexpected,
+        disconnect,
+        settled: async () => {},
+      };
+      const child_processes = new ChildProcesses();
+      const child = new ClaudeAgentSdkBackendChild({
+        child_processes,
+        one_shot_children: new OneShotChildren(child_processes),
+        worker_supervision: {} as WorkerSupervisionRuntime,
+        launch: { claude_executable: '/synthetic/claude' },
+        resolved_start: start,
+        client_factory: () => client,
+        event_sink: { report: unexpected },
+        message_files: {
+          keep: unexpected,
+          read: unexpected,
+          media_type_of: async () => null,
+          path_of: () => '/synthetic/unused',
+        },
+      });
+      await expect(child.start(start, { vendor_session_cursor: cursor })).rejects.toBeInstanceOf(
+        tagged
+          ? ClaudeInitializationTimeout
+          : cursor === null
+            ? BackendSpawnFailed
+            : SessionLoadFailed,
+      );
+      await child.stop();
+      expect(disconnect).toHaveBeenCalledOnce();
+    }
   }
 });

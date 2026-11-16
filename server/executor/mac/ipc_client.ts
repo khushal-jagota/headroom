@@ -28,6 +28,9 @@ export function cli_mutation(method: string, path: string, body: unknown): [stri
   if (method === 'POST' && path === '/api/tickets')
     return ['ticket.create', { body } as JsonObject];
   const proposal = /^\/api\/tickets\/([^/]+)\/propose$/.exec(path);
+  const rejection = /^\/api\/tickets\/([^/]+)\/reject$/.exec(path);
+  if (method === 'POST' && rejection)
+    return ['ticket.send_back', { ticket_id: rejection[1], body } as JsonObject];
   const patch = /^\/api\/tickets\/([^/]+)$/.exec(path);
   if (method === 'POST' && proposal)
     return ['ticket.propose', { ticket_id: proposal[1], body } as JsonObject];

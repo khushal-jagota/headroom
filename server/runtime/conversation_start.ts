@@ -270,6 +270,7 @@ export function worker_resolve(
     identity_environment_variables: [
       ...values.role_materials.identity_environment_variables,
       ['PLAN_TICKET_WORKSPACE_MANAGED', '1'],
+      ['PLAN_TICKET_PROJECT_ID', ticket.project_id ?? ''],
     ],
     role_text:
       values.role_materials.role_text +
@@ -385,6 +386,7 @@ export async function start_ticket_conversation(
     try {
       const workspace = await prepare_workspace(ticket_folder, project_folder, ticket.id, {
         signal: options.signal,
+        panels_project: ticket.project_id === 'project_panels',
       });
       values = { ...values, workspace_folder: workspace };
       identity = workspace_identity(ticket_folder);

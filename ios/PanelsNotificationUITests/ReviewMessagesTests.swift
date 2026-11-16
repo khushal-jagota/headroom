@@ -23,6 +23,42 @@ final class ReviewMessagesTests: XCTestCase {
         XCTAssertTrue(approve.waitForExistence(timeout: 8))
         let skip = app.buttons["review.skip"]
         XCTAssertTrue(skip.waitForExistence(timeout: 8))
+        // One visible Review card owns both the decision note and its message reply.
+        let note = app.textFields["review.revision"].firstMatch
+        XCTAssertTrue(note.waitForExistence(timeout: 8))
+        note.tap(); note.typeText("Keep this decision note")
+        XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5))
+        capture(app, "review-note-keyboard-open")
+        tapReviewGutter(app)
+        XCTAssertTrue(app.keyboards.firstMatch.waitForNonExistence(timeout: 5), "An inert Review tap must end editing")
+        XCTAssertEqual(note.value as? String, "Keep this decision note")
+        let reply = app.textFields["conversation-input"].firstMatch
+        XCTAssertTrue(reply.waitForExistence(timeout: 5))
+        if !reply.isHittable { app.scrollViews["review-content"].swipeUp() }
+        reply.tap(); reply.typeText("Keep this Review reply")
+        XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5))
+        tapReviewGutter(app)
+        XCTAssertTrue(app.keyboards.firstMatch.waitForNonExistence(timeout: 5))
+        XCTAssertEqual(reply.value as? String, "Keep this Review reply")
+        XCTAssertEqual(note.value as? String, "Keep this decision note")
+        capture(app, "review-note-and-reply-keyboard-dismissed")
+        // A native artifact push must release the note before it leaves this screen.
+        let artifact = app.links.matching(NSPredicate(format: "label CONTAINS %@", "proof.html")).firstMatch
+        if !artifact.isHittable { app.scrollViews["review-content"].swipeUp() }
+        XCTAssertTrue(artifact.waitForExistence(timeout: 5))
+        note.tap()
+        XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5))
+        artifact.tap()
+        XCTAssertTrue(app.buttons["Artifact actions"].waitForExistence(timeout: 8))
+        XCTAssertTrue(app.keyboards.firstMatch.waitForNonExistence(timeout: 5))
+        XCTAssertFalse(app.textFields["conversation-input"].exists, "Review artifacts must not gain a conversation composer")
+        app.navigationBars.buttons.firstMatch.tap()
+        XCTAssertTrue(note.waitForExistence(timeout: 8))
+        XCTAssertTrue(note.isHittable)
+        XCTAssertTrue(app.keyboards.firstMatch.waitForNonExistence(timeout: 5), "Returning from an artifact must not restore the note keyboard")
+        XCTAssertEqual(note.value as? String, "Keep this decision note")
+        capture(app, "review-artifact-return-keeps-note-unfocused")
+        if !skip.isHittable { app.scrollViews["review-content"].swipeDown() }
         skip.tap()
         let historical = app.staticTexts["Historical message"]
         XCTAssertTrue(historical.waitForExistence(timeout: 8))
@@ -61,6 +97,24 @@ final class ReviewMessagesTests: XCTestCase {
         chief.tap()
         let back = app.buttons["detail-back"]
         XCTAssertTrue(back.waitForExistence(timeout: 8))
+        let parentInput = app.textFields["conversation-input"].firstMatch
+        XCTAssertTrue(parentInput.waitForExistence(timeout: 8))
+        parentInput.tap(); parentInput.typeText("Retain Chief draft without focus")
+        XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5))
+        capture(app, "chief-parent-focused-before-chat")
+        let line = app.buttons["conversation-line"]
+        XCTAssertTrue(line.waitForExistence(timeout: 5)); line.tap()
+        XCTAssertTrue(app.buttons["conversation-actions"].waitForExistence(timeout: 8))
+        // Prior parent focus alone caused restoration. Do not focus the child here.
+        XCTAssertTrue(app.keyboards.firstMatch.waitForNonExistence(timeout: 5), "The parent must release focus before the push")
+        back.tap()
+        XCTAssertTrue(line.waitForExistence(timeout: 8))
+        capture(app, "chief-parent-return-before-focus-check")
+        XCTAssertFalse(app.buttons["conversation-actions"].exists)
+        XCTAssertTrue(app.keyboards.firstMatch.waitForNonExistence(timeout: 5), "Back must not restore the retained parent's keyboard")
+        XCTAssertTrue(line.isHittable)
+        XCTAssertEqual(parentInput.value as? String, "Retain Chief draft without focus")
+        capture(app, "chief-parent-return-without-keyboard")
         back.tap()
         let review = app.tabBars.buttons["Review"]
         XCTAssertTrue(review.waitForExistence(timeout: 8))
@@ -93,5 +147,18 @@ final class ReviewMessagesTests: XCTestCase {
         let sends = writes.filter { $0["sender_message_id"] != nil }
         XCTAssertEqual(sends.count, 2)
         XCTAssertEqual((sends.last?["content"] as? [[String: Any]])?.first?["text"] as? String, "Reply kept after refusal corrected")
+    }
+
+    @MainActor private func tapReviewGutter(_ app: XCUIApplication) {
+        let scroll = app.scrollViews["review-content"]
+        XCTAssertTrue(scroll.exists)
+        scroll.coordinate(withNormalizedOffset: CGVector(dx: 0.01, dy: 0.25)).tap()
+    }
+
+    @MainActor private func capture(_ app: XCUIApplication, _ name: String) {
+        let attachment = XCTAttachment(screenshot: app.screenshot())
+        attachment.name = name
+        attachment.lifetime = .keepAlways
+        add(attachment)
     }
 }

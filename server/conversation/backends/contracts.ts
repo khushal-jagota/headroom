@@ -30,6 +30,7 @@ export interface ChildReference {
 }
 export class BackendAdapterError extends Error {}
 export class BackendSpawnFailed extends BackendAdapterError {}
+export class ClaudeInitializationTimeout extends BackendSpawnFailed {}
 export class SessionLoadFailed extends BackendAdapterError {}
 export class PromptWriteRefused extends BackendAdapterError {}
 export class PromptWriteFailed extends BackendAdapterError {}

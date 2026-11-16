@@ -100,7 +100,10 @@ async function main(): Promise<void> {
     children.seal();
     await children.settled();
   }
-  execve(executable, [executable, ...args], copy_environment(process.env));
+  const environment = copy_environment(process.env);
+  delete environment.TMUX;
+  delete environment.STY;
+  execve(executable, [executable, ...args], environment);
 }
 if (
   process.argv[1] &&

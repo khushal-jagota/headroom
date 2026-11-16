@@ -74,6 +74,7 @@ export async function createEnvironmentRuntime(
         layout: scratch_layout,
         db_path: database,
         test_mode: config.test_mode,
+        changes: context.changes,
         now_unix: () => context.clock.nowUnix(),
         assert_database_owned: context.require_runtime_ownership,
         clean_workspaces: (db, now, options) =>

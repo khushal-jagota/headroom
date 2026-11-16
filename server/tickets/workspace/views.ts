@@ -36,6 +36,11 @@ export function workspace_ticket(sql: ReadSql, ticket_id: string): WorkspaceTick
     blocked: summary.blocked,
     blocker_summary: blocker_summary_json(summary),
     employee_configuration_editable: data.employee_configuration_editable(ticket),
+    unresolved_decision_feedback: sql.all<{ decision_id: string; status: string; message: string }>(
+      'SELECT decision_id,delivery_status AS status,model_text AS message FROM ticket_decision_messages ' +
+        "WHERE ticket_id=? AND delivery_status IN ('uncertain','refused','discarded') ORDER BY created_at,rowid",
+      [ticket_id],
+    ),
   } as unknown as WorkspaceTicket;
 }
 export function field_revision(sql: ReadSql, ticket_id: string, field: string): string {

@@ -75,9 +75,10 @@ export const conversation_routes: FastifyPluginAsync<AreaServices> = async (app,
     '/tickets/:ticket_id/recheck-worker-cleanup',
     async (request) => {
       const ticket_id = request.params.ticket_id;
+      const principal = services.identity(request).principal;
       services.database.read((sql) => {
         data.read_ticket(sql, ticket_id);
-        requireAbove(sql, services.identity(request).principal, { kind: 'ticket', id: ticket_id });
+        requireAbove(sql, principal, { kind: 'ticket', id: ticket_id });
       });
       const result = await conversations(services).recheck_worker_cleanup!(ticket_id);
       return { complete: result.complete, reason: result.reason, scope: result.scope };

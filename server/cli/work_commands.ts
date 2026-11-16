@@ -8,8 +8,7 @@ import { JsonNumber, numeric_value, parse_numeric_json } from '../core/http/nume
 import { scalar_text as scalar } from './text.ts';
 import { ticket_argument } from './parser.ts';
 import { recap_preview } from '../tickets/logic/recap.ts';
-import { uuid } from './declarations.ts';
-import { shell_quote } from '../conversation/worker_unit/logic.ts';
+import { join_command, require_released_revision } from '../installation/join_command.ts';
 
 type Body = Record<string, any>;
 const quote = (value: string, slash = false): string => {
@@ -262,10 +261,17 @@ async function proposal(inv: Invocation): Promise<CommandResult> {
     fail_validation(inv, `${scalar(action)} does not accept proposal approval options`);
   if (action === 'submit' && v.expected_proposal_revision != null)
     fail_validation(inv, 'submit does not accept --expected-proposal-revision');
+  if (action !== 'revise' && (v.message != null || v.body_file != null))
+    fail_validation(inv, `${scalar(action)} does not accept revision guidance options`);
   if (action === 'submit') return submit_proposal(inv, tid);
   tid = ticket_id(inv, tid);
   if (action === 'revise') {
-    const text = await read_source(inv, '-');
+    if ((v.message == null) === (v.body_file == null))
+      fail_validation(
+        inv,
+        'revise requires exactly one of --message or --body-file (use --body-file - for stdin)',
+      );
+    const text = v.message ?? (await read_source(inv, v.body_file));
     let revision = v.expected_proposal_revision;
     if (revision == null) {
       const detail = await send(inv, 'GET', '/api/tickets', {
@@ -298,7 +304,8 @@ async function proposal(inv: Invocation): Promise<CommandResult> {
   const revision = v.expected_proposal_revision ?? detail.pending_proposal.revision;
   if (scalar(revision) !== scalar(detail.pending_proposal.revision))
     fail_validation(inv, 'the visible proposal changed; read it again before accepting');
-  if (v.ceiling == null) fail_validation(inv, 'approval requires --ceiling');
+  const final_approval = detail.workflow.advance?.[stage] === 'done';
+  if (v.ceiling == null && !final_approval) fail_validation(inv, 'approval requires --ceiling');
   if (v.kickoff_title != null) {
     if (field !== 'brief')
       fail_validation(inv, '--kickoff-title only applies while approving the brief');
@@ -307,8 +314,12 @@ async function proposal(inv: Invocation): Promise<CommandResult> {
   const payload: Body = {
     expected_proposal_revision: revision,
     decision_id: `${tid}:${scalar(revision)}:accept`,
-    next_ceiling: v.ceiling,
-    next_holder: v.holder != null ? holder(inv, v.holder) : caller_principal(inv),
+    ...(!final_approval
+      ? {
+          next_ceiling: v.ceiling,
+          next_holder: v.holder != null ? holder(inv, v.holder) : caller_principal(inv),
+        }
+      : {}),
   };
   if (v.edit_file != null) payload.edited_body = await read_source(inv, v.edit_file);
   if (v.kickoff_note_file != null) {
@@ -600,45 +611,21 @@ export async function run_work_command(inv: Invocation): Promise<CommandResult> 
       } catch (error) {
         return fail_validation(inv, error instanceof Error ? error.message : 'Invalid home origin');
       }
-      const metadata = await send(inv, 'GET', '/api/meta'),
-        revision = metadata.app_sha;
-      if (
-        typeof revision !== 'string' ||
-        revision.length !== 40 ||
-        !/^[0-9a-f]{40}$/.test(revision)
-      )
-        return fail_validation(inv, 'Install a released home before you issue a join command');
-      const grant = await send(inv, 'POST', '/api/machines', { json_body: { name: v.name } });
-      let machine_id: string;
+      const metadata = await send(inv, 'GET', '/api/meta');
+      let revision: string;
       try {
-        machine_id = uuid(String(grant.machine_id)) as string;
-      } catch {
-        return fail_validation(inv, 'The home returned an invalid machine identity');
+        revision = require_released_revision(metadata.app_sha);
+      } catch (error) {
+        return fail_validation(inv, (error as Error).message);
       }
+      const grant = await send(inv, 'POST', '/api/machines', { json_body: { name: v.name } });
       const credential = grant.credential;
-      if (
-        typeof credential !== 'string' ||
-        credential.length !== 43 ||
-        !/^[A-Za-z0-9_-]{43}$/.test(credential)
-      )
-        return fail_validation(inv, 'The home returned an invalid machine credential');
-      const route = `repos/khushal-jagota/headroom/contents/scripts/panels_install.py?ref=${revision}`;
-      const arguments_ = [
-        'join',
-        '--home',
-        home_url,
-        '--machine-id',
-        machine_id,
-        '--revision',
-        revision,
-      ];
-      const command =
-        'panels_join_script=$(mktemp) && gh api -H ' +
-        shell_quote('Accept: application/vnd.github.raw+json') +
-        ' ' +
-        shell_quote(route) +
-        ' > "$panels_join_script" && python3 "$panels_join_script" ' +
-        arguments_.map(shell_quote).join(' ');
+      let command: string;
+      try {
+        command = join_command(home_url, revision, String(grant.machine_id), credential);
+      } catch (error) {
+        return fail_validation(inv, (error as Error).message);
+      }
       return raw(
         [
           "Use this same home's trusted HTTPS origin. Check the address before you share the credential.",

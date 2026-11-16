@@ -206,3 +206,72 @@ test('machine commands preserve credential JSON and ticket destination inputs', 
     request.mockRestore();
   }
 });
+
+// Gap: API comparisons cannot observe implicit stdin reads or CLI payload omission.
+// Reuse the wire stub; explicit guidance and final approval need no connected host.
+test('proposal guidance is explicit and final approval omits onward scope', async () => {
+  const request = vi.spyOn(http, 'send').mockResolvedValue({ id: 't_cli' });
+  const stdin = vi.fn(async () => Buffer.from('Exact stdin guidance.'));
+  const env = { PLAN_SERVER_URL: 'http://127.0.0.1:19020', PLAN_ACTOR: '' };
+  try {
+    expect((await run(['ticket', 'proposal', 't_cli', 'revise'], env, stdin)).exit_code).toBe(1);
+    expect(stdin).not.toHaveBeenCalled();
+    expect(
+      (
+        await run(
+          ['ticket', 'proposal', 't_cli', 'revise', '--message', 'one', '--body-file', '-'],
+          env,
+          stdin,
+        )
+      ).exit_code,
+    ).toBe(1);
+    expect(
+      (await run(['ticket', 'proposal', 't_cli', 'submit', '--message', 'no'], env, stdin))
+        .exit_code,
+    ).toBe(1);
+    expect(
+      (
+        await run(
+          [
+            'ticket',
+            'proposal',
+            't_cli',
+            'revise',
+            '--body-file',
+            '-',
+            '--expected-proposal-revision',
+            '2',
+          ],
+          env,
+          stdin,
+        )
+      ).exit_code,
+    ).toBe(0);
+    expect(request.mock.lastCall?.[3]).toEqual({
+      json_body: {
+        message: 'Exact stdin guidance.',
+        expected_proposal_revision: 2,
+        decision_id: 't_cli:2:reject',
+      },
+    });
+    const detail = (stage: string, field: string, target: string) => ({
+      id: 't_cli',
+      stage,
+      pending_proposal: { field, revision: 2 },
+      workflow: { stages: [{ id: stage, gating_field: field }], advance: { [stage]: target } },
+    });
+    request.mockResolvedValueOnce(
+      detail('needs_implementation', 'implementation', 'needs_consequences'),
+    );
+    expect((await run(['ticket', 'proposal', 't_cli', 'accept'], env)).exit_code).toBe(1);
+    request
+      .mockResolvedValueOnce(detail('needs_consequences', 'consequences', 'done'))
+      .mockResolvedValueOnce({ id: 't_cli' });
+    expect((await run(['ticket', 'proposal', 't_cli', 'accept'], env)).exit_code).toBe(0);
+    expect(request.mock.lastCall?.[3]).toEqual({
+      json_body: { expected_proposal_revision: 2, decision_id: 't_cli:2:accept' },
+    });
+  } finally {
+    request.mockRestore();
+  }
+});

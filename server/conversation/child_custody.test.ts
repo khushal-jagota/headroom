@@ -233,3 +233,18 @@ test('an expired custody deadline and failed host evidence grant no stop authori
   expect(await f.custody.retirement_row_proven(row())).toBe(false);
   expect(f.native.signal).not.toHaveBeenCalled();
 });
+
+// An absent wrapper PID cannot prove that an unsupervised Ticket descendant ended.
+// Reuse the synthetic host snapshot to distinguish root absence from an ended boot.
+test('legacy Linux Ticket custody needs an ended boot after its root disappears', async () => {
+  const f = fixture();
+  f.replace(null);
+  expect(await f.custody.retirement_row_proven(row(), undefined, true)).toBe(false);
+  expect(await f.custody.retirement_row_proven(row())).toBe(true);
+  expect(await f.custody.stop_recorded_child(identity, 'linux:machine', undefined, true)).toBe(
+    false,
+  );
+  vi.mocked(f.native.host_boot).mockResolvedValue({ host: 'linux:machine', boot: 'next-boot' });
+  expect(await f.custody.retirement_row_proven(row(), undefined, true)).toBe(true);
+  expect(f.native.signal).not.toHaveBeenCalled();
+});

@@ -20,6 +20,8 @@ All of them run as one Unix user, the existing `vps` account. They are separated
 
 Live and staging are registered environments. Headroom validates them together: one live environment, distinct ports, and no staging root inside the live tree. Ticket servers and local checkouts are outside that registry. Their isolation is the worktree and its `PLAN_*` paths. [`AGENTS.md`](../AGENTS.md) holds the setup rules agents follow. A second isolated server on one machine is set up with [ops/runbooks/isolated-server.md](../ops/runbooks/isolated-server.md).
 
+Development checkouts reuse third-party dependencies from an account-level cache outside the installed release. Dependency inputs and compatible runtimes select each cache entry. Setup creates a local Python environment with an editable installation of that checkout. Each Node package has a local dependency directory with links to cached packages, while mutable tool output stays local. Backend CLIs still resolve current versions. A dependency change builds a new cache entry once.
+
 ## The operating-system boundary
 
 The home uses one platform contract for service identity, app-child launch, process evidence, private sockets, locks, and resource collection. The Linux adapter preserves the existing systemd and kernel operations. Shared installation paths keep explicit configuration and current defaults. Runtime selection separates the operating system, architecture, and home or executor role. Existing archive formats and integrity checks stay the same. A Mac executor archive cannot become a home release.

@@ -7,6 +7,8 @@ import { is_record } from '../core/records.ts';
 import { JsonNumber } from '../core/http/numeric_json.ts';
 import { HOME_MACHINE_ID } from '../execution_identity.ts';
 import { now_ms } from '../executor/clock.ts';
+import { validate_server_url } from '../executor/mac/configuration.ts';
+import { join_command, require_released_revision } from '../installation/join_command.ts';
 import { mac_is_present } from '../tickets/locale_configuration.ts';
 import { add_work_attention } from '../work_attention.ts';
 import type { MachineView } from './contracts.ts';
@@ -84,6 +86,39 @@ export const routes: FastifyPluginAsync<AreaServices> = async (app, services) =>
     );
     await app.executor_registry?.ensure(grant.machine_id);
     return grant;
+  });
+  app.post('/machines/join-command', async (request) => {
+    requireOwner(services.identity(request));
+    const body = request.body;
+    if (
+      !is_record(body) ||
+      body instanceof JsonNumber ||
+      Object.keys(body).length !== 1 ||
+      typeof body.name !== 'string'
+    )
+      throw new PlannerError('validation', 'A join command requires a machine name');
+    if (services.config.trusted_ingress_canonical_origin === null)
+      throw new PlannerError(
+        'validation',
+        'Set trusted_ingress_canonical_origin before you add a machine',
+      );
+    let home_url: string;
+    let revision: string;
+    try {
+      home_url = validate_server_url(services.config.trusted_ingress_canonical_origin);
+      revision = require_released_revision(services.config.app_sha);
+    } catch (error) {
+      throw new PlannerError(
+        'validation',
+        error instanceof Error ? error.message : 'Invalid join command configuration',
+      );
+    }
+    const grant = services.database.write((tx) =>
+      register_machine(tx, body.name as string, 'darwin'),
+    );
+    const command = join_command(home_url, revision, grant.machine_id, grant.credential);
+    await app.executor_registry?.ensure(grant.machine_id);
+    return { machine_id: grant.machine_id, home_url, command, credential: grant.credential };
   });
   app.post<{ Params: { machine_id: string } }>('/machines/:machine_id/credential', (request) => {
     requireOwner(services.identity(request));

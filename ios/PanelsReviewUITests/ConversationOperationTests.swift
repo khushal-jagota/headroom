@@ -2,6 +2,51 @@ import XCTest
 
 /// One-off native detail and Dynamic Type reviews. Excluded from permanent release checks.
 final class ConversationOperationTests: XCTestCase {
+    /// One-off gesture review: inert dismissal must not replace native text selection
+    /// or swallow composer controls. The existing conversation host supplies the content.
+    @MainActor func testSelectableConversationTextAndControlsKeepTheirActions() async throws {
+        continueAfterFailure = false
+        let base = try XCTUnwrap(ProcessInfo.processInfo.environment["PANELS_CONVERSATION_STUB_URL"])
+        XCTAssertEqual(URL(string: base)?.host, "127.0.0.1")
+        try await proof(base, "reset")
+        let app = XCUIApplication()
+        app.launchArguments = ["--conversation-smoke", "--conversation-stub", base]
+        app.launch()
+        defer { app.terminate() }
+        let line = app.buttons["conversation-line"]
+        XCTAssertTrue(line.waitForExistence(timeout: 8)); line.tap()
+        let prose = app.staticTexts["The plan is ready. What should I work on next?"]
+        XCTAssertTrue(prose.waitForExistence(timeout: 8))
+        let input = app.textFields["conversation-input"].firstMatch
+        XCTAssertTrue(input.waitForExistence(timeout: 5))
+        input.tap(); input.typeText("Keep this selection draft")
+        XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5))
+        XCTAssertTrue(prose.isHittable)
+        prose.tap()
+        XCTAssertTrue(app.keyboards.firstMatch.exists, "Selectable message prose is not an inert dismissal surface")
+        XCTAssertEqual(input.value as? String, "Keep this selection draft")
+        prose.press(forDuration: 1.2)
+        let copy = app.menuItems["Copy"].firstMatch
+        XCTAssertTrue(copy.waitForExistence(timeout: 5), "Message text must retain its native selection menu")
+        capture(app, "focus-review-selectable-message")
+        copy.tap()
+        XCTAssertEqual(input.value as? String, "Keep this selection draft")
+        input.tap()
+        XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5))
+        let actions = app.buttons["conversation-actions"]
+        actions.tap()
+        let full = app.buttons["Full"]
+        XCTAssertTrue(full.waitForExistence(timeout: 5)); full.tap()
+        XCTAssertEqual(actions.value as? String, "Full")
+        XCTAssertEqual(input.value as? String, "Keep this selection draft")
+        app.buttons["Add attachment or command"].tap()
+        let command = app.buttons["Command"]
+        XCTAssertTrue(command.waitForExistence(timeout: 5)); command.tap()
+        XCTAssertEqual(input.value as? String, "/")
+        XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5), "Command must still request input focus")
+        capture(app, "focus-review-command-and-input")
+    }
+
     /// One-off replacement proof through the real shell and navigation stream.
     /// Model checks cannot prove that the Chief page follows a changed server reference.
     @MainActor func testOwnerReplacementAgainstLocalStub() async throws {

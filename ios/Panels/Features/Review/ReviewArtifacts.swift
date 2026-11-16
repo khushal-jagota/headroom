@@ -6,6 +6,7 @@ struct ReviewArtifactLinks: ViewModifier {
     @Environment(AppStore.self) private var store
     @Environment(\.openURL) private var openURL
     @State private var selected: ArtifactTarget?
+    @Environment(\.screenTextEntry) private var textEntry
 
     func body(content: Content) -> some View {
         content
@@ -16,7 +17,10 @@ struct ReviewArtifactLinks: ViewModifier {
     }
     private func follow(_ url: URL) {
         if ArtifactTarget.isRetiredGoalURL(url, baseURL: store.baseURL) { return }
-        if let target = ArtifactTarget.from(url, baseURL: store.baseURL) { selected = target }
+        if let target = ArtifactTarget.from(url, baseURL: store.baseURL) {
+            if let textEntry { textEntry.endEditingBeforeNavigation { selected = target } }
+            else { selected = target }
+        }
         else { openURL(url) }
     }
 }

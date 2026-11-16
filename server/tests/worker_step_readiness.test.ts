@@ -8,9 +8,18 @@ function ready(db: ReturnType<typeof fixture>, id: string): boolean {
     is_ready_for_worker_step(sql, ticket, { worker_type_definition: ticket.workflow }),
   );
 }
+function settle_feedback(db: ReturnType<typeof fixture>, id: string): void {
+  db.write((tx) =>
+    tx.run("UPDATE ticket_decision_messages SET delivery_status='delivered' WHERE ticket_id=?", [
+      id,
+    ]),
+  );
+}
 test('user_owned_ticket_is_ready_once_per_stage_entry', () => {
   const db = fixture();
   const ticket = create(db, { worker_type: 'new_worker' });
+  expect(ready(db, ticket.id)).toBe(false);
+  settle_feedback(db, ticket.id);
   expect(ready(db, ticket.id)).toBe(true);
   db.write((tx) =>
     tx.run('INSERT INTO ticket_paired_stage_openers(ticket_id,stage,opened_at) VALUES (?,?,?)', [
@@ -26,6 +35,7 @@ test('user_owned_ticket_is_ready_once_per_stage_entry', () => {
       sql.get('SELECT 1 FROM ticket_paired_stage_openers WHERE ticket_id=?', [ticket.id]),
     ),
   ).toBeUndefined();
+  settle_feedback(db, moved.id);
   expect(ready(db, moved.id)).toBe(true);
 });
 test.each([
@@ -40,5 +50,6 @@ test.each([
     expect(ticket.pending_proposal).toBeNull();
     expect(ticket.stage).toBe('needs_stages');
   }
+  settle_feedback(db, ticket.id);
   expect(ready(db, ticket.id)).toBe(true);
 });

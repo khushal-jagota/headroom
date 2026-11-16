@@ -1,8 +1,42 @@
-import { mkdir, readdir, realpath } from 'node:fs/promises';
+import { mkdir, readdir, realpath, rename, rm } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
 import { OWNERSHIP_FILE, WORKTREE_DIRECTORY } from '../contracts.ts';
 import type { RetirementRecord, WorkspaceMarker, WorkspaceOptions } from '../contracts.ts';
-import { admit, entry_stat, git, json, workspace_identity, write_json } from './shared.ts';
+import { admit, entry_stat, git, json, token, workspace_identity, write_json } from './shared.ts';
+
+async function clone_source(
+  repository: string | null,
+  options: WorkspaceOptions,
+): Promise<[string, string | null]> {
+  if (options.panels_project) return ['https://github.com/khushal-jagota/panels.git', 'staging'];
+  const remote = await git(repository!, ['remote', 'get-url', 'origin'], options);
+  if (remote.returncode || !remote.stdout.trim())
+    throw new Error("Cannot find the Project repository's origin remote");
+  const source = remote.stdout.trim();
+  return [
+    /^(?:[a-zA-Z][a-zA-Z0-9+.-]*:\/\/|[^/]+:|\/)/.test(source)
+      ? source
+      : resolve(repository!, source),
+    null,
+  ];
+}
+async function validate_clone(
+  destination: string,
+  branch: string | null | undefined,
+  options: WorkspaceOptions,
+): Promise<void> {
+  const metadata = await entry_stat(join(destination, '.git'));
+  if (!metadata?.isDirectory() || metadata.isSymbolicLink())
+    throw new Error('Ticket workspace is not its independent Git checkout');
+  const actual = await git(destination, ['rev-parse', '--show-toplevel'], options);
+  if (actual.returncode || resolve(actual.stdout.trim()) !== destination)
+    throw new Error('Ticket workspace belongs to another repository or path');
+  if (branch != null) {
+    const current = await git(destination, ['symbolic-ref', '--short', 'HEAD'], options);
+    if (current.returncode || current.stdout.trim() !== branch)
+      throw new Error('Interrupted Ticket checkout branch changed; owner review required');
+  }
+}
 
 export async function repository_root(
   folder: string | null,
@@ -172,7 +206,30 @@ export async function prepare_workspace(
     throw new Error('Ticket workspace must not be a symlink');
   const marker = await json<WorkspaceMarker>(marker_path);
   if (marker.ticket_id !== ticket_id) throw new Error('Ticket workspace ownership does not match');
-  const selected = await repository_root(repository, options);
+  const selected =
+    !options.panels_project || (marker.worktree !== undefined && marker.checkout_kind !== 'clone')
+      ? await repository_root(repository, options)
+      : null;
+  if (marker.worktree !== undefined && marker.checkout_kind === 'clone') {
+    if (marker.worktree !== destination)
+      throw new Error('Ticket workspace path changed; owner review required');
+    if (!(await entry_stat(destination)) && marker.preparing) {
+      const temporary = join(root, marker.temporary ?? '');
+      if (dirname(temporary) !== root || !marker.temporary?.startsWith('.clone-'))
+        throw new Error('Interrupted Ticket clone ownership is invalid');
+      await validate_clone(temporary, marker.branch, options);
+      await prove_complete(temporary, options);
+      await rename(temporary, destination);
+    }
+    if (!(await entry_stat(destination))?.isDirectory())
+      throw new Error('The managed Ticket workspace is missing or incomplete');
+    await validate_clone(destination, marker.preparing ? marker.branch : null, options);
+    if (marker.preparing) await prove_complete(destination, options);
+    await mkdir(join(root, 'artifacts'), { recursive: true });
+    marker.preparing = false;
+    await write_json(marker_path, marker);
+    return destination;
+  }
   if (marker.worktree !== undefined) {
     if (marker.worktree !== destination || marker.repository !== selected)
       throw new Error('Ticket workspace repository or path changed; owner review required');
@@ -185,6 +242,40 @@ export async function prepare_workspace(
   } else {
     if (await entry_stat(destination))
       throw new Error('Ticket worktree exists without preparation ownership evidence');
+    if (options.panels_project || selected !== null) {
+      const [source, base] = await clone_source(selected, options);
+      const branch = `ticket/${ticket_id}-workspace-${identity.workspace_id.slice(0, 12)}`;
+      const temporary = join(root, `.clone-${token()}`);
+      let recorded = false;
+      try {
+        const args = ['clone', '--filter=blob:none', '--single-branch', '--no-local'];
+        if (base) args.push('--branch', base);
+        args.push('--', source, temporary);
+        const cloned = await git(root, args, options);
+        if (cloned.returncode)
+          throw new Error('Cannot clone the Project origin; check remote access and branch');
+        const switched = await git(temporary, ['switch', '-c', branch], options);
+        if (switched.returncode) throw new Error('Cannot create the Ticket branch');
+        await validate_clone(temporary, branch, options);
+        Object.assign(marker, {
+          repository: selected,
+          branch,
+          worktree: destination,
+          preparing: true,
+          checkout_kind: 'clone',
+          temporary: temporary.slice(root.length + 1),
+        });
+        await write_json(marker_path, marker);
+        recorded = true;
+        await rename(temporary, destination);
+      } finally {
+        if (!recorded && (await entry_stat(temporary))) await rm(temporary, { recursive: true });
+      }
+      await mkdir(join(root, 'artifacts'), { recursive: true });
+      marker.preparing = false;
+      await write_json(marker_path, marker);
+      return destination;
+    }
     const branch = selected
       ? `ticket/${ticket_id}-workspace-${identity.workspace_id.slice(0, 12)}`
       : null;

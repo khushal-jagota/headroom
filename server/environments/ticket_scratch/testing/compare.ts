@@ -95,10 +95,18 @@ function deferred() {
 export async function probe_scratch_runtime(request: ScratchProbeRequest) {
   const unregister = register_test_root(request.root);
   const original_timeout = globalThis.setTimeout;
+  const now_descriptor = Object.getOwnPropertyDescriptor(performance, 'now');
+  const original_now = performance.now.bind(performance);
+  let elapsed = 0;
+  Object.defineProperty(performance, 'now', {
+    configurable: true,
+    value: () => original_now() + elapsed,
+  });
   const scheduled = new Map<NodeJS.Timeout, () => void>();
   const timers: number[] = [];
   globalThis.setTimeout = ((...[callback, delay, ...args]: Parameters<typeof setTimeout>) => {
-    if (delay !== 600_000) return original_timeout(callback, delay, ...args);
+    if (delay === undefined || delay < 599_000 || delay > 600_000)
+      return original_timeout(callback, delay, ...args);
     timers.push(delay);
     const timer = original_timeout(() => {}, delay);
     scheduled.set(timer, () => callback(...args));
@@ -109,6 +117,9 @@ export async function probe_scratch_runtime(request: ScratchProbeRequest) {
     if (!next) throw new Error('no cleanup timer');
     scheduled.delete(next[0]);
     clearTimeout(next[0]);
+    // Invoking a timer must also pass its monotonic deadline. Otherwise a
+    // lifecycle-identical probe correctly keeps its periodic retry pending.
+    elapsed += 600_000;
     next[1]();
     await pause(0);
   };
@@ -144,8 +155,8 @@ export async function probe_scratch_runtime(request: ScratchProbeRequest) {
   let actual: ReturnType<typeof create_ticket_scratch_runtime> | undefined;
   try {
     runtime.start();
+    await runtime.settled();
     const before_first = seen.length;
-    await tick();
     await tick();
     const pending_timers = scheduled.size;
     const start = performance.now();
@@ -176,7 +187,6 @@ export async function probe_scratch_runtime(request: ScratchProbeRequest) {
     }
     actual = create_ticket_scratch_runtime(base);
     actual.start();
-    await tick();
     const started = performance.now();
     while ((await entry_stat(request.git_marker!)) === null) {
       if (performance.now() - started > 3000)
@@ -206,7 +216,7 @@ export async function probe_scratch_runtime(request: ScratchProbeRequest) {
       actual_retained: true,
       stop_ms,
       after_stop,
-      disabled_timers: timers.length - before_disabled - 1,
+      disabled_timers: timers.length - before_disabled,
       timer_values: timers,
       git_stop_ms,
       owned_git_reaped: reaped,
@@ -228,6 +238,8 @@ export async function probe_scratch_runtime(request: ScratchProbeRequest) {
     await actual?.settled();
     for (const timer of scheduled.keys()) clearTimeout(timer);
     globalThis.setTimeout = original_timeout;
+    if (now_descriptor) Object.defineProperty(performance, 'now', now_descriptor);
+    else Reflect.deleteProperty(performance, 'now');
     unregister();
   }
 }

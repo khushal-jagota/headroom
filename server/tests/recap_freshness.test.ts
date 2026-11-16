@@ -2,6 +2,8 @@ import { expect, test, vi } from 'vitest';
 import { OWNER } from '../core/contracts.ts';
 import type { Clock } from '../core/clock.ts';
 import type { ConversationSystem } from '../conversation/contracts.ts';
+import { update_chief_recap } from '../worker_settings/service.ts';
+import { validate_recap } from '../tickets/logic/recap.ts';
 import { update_manager } from '../managers/data.ts';
 import { request_recap, RECAP_REQUEST_MESSAGE } from '../message_delivery/recap_request.ts';
 import { send_message } from '../message_delivery/service.ts';
@@ -34,6 +36,27 @@ test('recap age survives unrelated edits and same-second stage decisions until i
   update({ recap: 'Manager scope' }, now);
   expect(update({ title: 'Changed title' }, now + 10).recap_updated_at).toBe(now);
   expect(update({ recap: '' }, now + 20).recap_updated_at).toBeNull();
+  // Gap: transport tests cannot prove all three canonical writers refuse atomically.
+  for (const recap of [
+    '🧭'.repeat(81),
+    'Review t_01234567',
+    'Build abc1234',
+    'Host 12345678-abcd-1234-abcd-123456789abc',
+  ]) {
+    expect(() => edit(db, ticket, { recap })).toThrow(
+      expect.objectContaining({ code: 'validation' }),
+    );
+    expect(() => update({ recap }, now)).toThrow(expect.objectContaining({ code: 'validation' }));
+    expect(() => update_chief_recap(db, { recap })).toThrow(
+      expect.objectContaining({ code: 'validation' }),
+    );
+  }
+  for (const recap of ['  ' + '🧭'.repeat(80) + '  ', 'defaced 12345678', 'x_t_01234567'])
+    expect(() => validate_recap(recap)).not.toThrow();
+  expect(read(db, ticket.id).recap).toBe('');
+  expect(update({ title: 'Still empty' }, now).recap).toBe('');
+  expect(update_chief_recap(db, { recap: '🧭'.repeat(80) }).recap).toBe('🧭'.repeat(80));
+  expect(update_chief_recap(db, { recap: '' }).recap).toBe('');
 });
 
 // HTTP parity proves delivered prompt content. This direct seam also proves that

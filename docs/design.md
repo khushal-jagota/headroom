@@ -29,6 +29,13 @@ Some screens add layout rules in `assets/app.css`, keyed by a `data-screen` name
 
 Goal pages use a separate page kit for checklists, charts, tables, layouts, and text. It is owned by [Goals](goals.md). This kit uses underline tabs with plain labels on Chief, Manager, and goal pages, below section headings or above standalone content.
 
+## The iPhone Workspace
+
+Workspace copies the web sidebar's cards, status marks, goal tags, paging and update rules.
+Focus is always on. The native bottom bar stays unchanged. A long press replaces web
+hover with an interactive preview sheet. Settled occupies a bounded dock below the active
+cards. The [iPhone guide](../ios/README.md#workspace-home) describes the native behavior.
+
 ## The conversation is the strictest screen
 
 Focus mode hides tool noise and Full shows the notebook. The toggle is a lens on one transcript, not two views. Both lenses show "Working for" with a live count on every running turn, whoever started it. When a turn ends, Focus keeps its head only if the owner started the turn or the turn sent him a message. The composer is recessed and shows the model and effort actually in force. Other screens borrow its rules, which makes it the best place to see a violation.

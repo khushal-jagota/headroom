@@ -5,10 +5,12 @@ import type { ReadSql } from '../database/contracts.ts';
 import { authenticate_launch_token } from '../../agent_identity/data.ts';
 
 export const IN_PROCESS_REQUEST_CONTEXT = Symbol('verified in-process request context');
+export const REQUEST_IDENTITY_READER = Symbol('request identity reader');
 export const TRUSTED_INGRESS_CONFIGURED = Symbol('trusted ingress configured');
 type IdentityRequest = FastifyRequest & {
   [TRUSTED_INGRESS_CONFIGURED]?: boolean;
   authenticatedOwner?: boolean;
+  [REQUEST_IDENTITY_READER]?: () => RequestContext;
 };
 export function requestContext(request: FastifyRequest, sql?: ReadSql): RequestContext {
   const identityRequest = request as IdentityRequest;
@@ -18,6 +20,8 @@ export function requestContext(request: FastifyRequest, sql?: ReadSql): RequestC
     }
   )[IN_PROCESS_REQUEST_CONTEXT];
   if (internal) return internal;
+  if (!sql && identityRequest[REQUEST_IDENTITY_READER])
+    return identityRequest[REQUEST_IDENTITY_READER]();
   const unidentified: RequestContext = {
     principal: { kind: 'unidentified', id: 'unidentified' },
     conversationId: null,

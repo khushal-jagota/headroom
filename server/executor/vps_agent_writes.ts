@@ -27,7 +27,11 @@ import {
   result_json,
 } from '../message_delivery/routes.ts';
 import { ENTRIES } from '../membership/collections.ts';
-import { write_create_ticket, write_patch_ticket } from '../tickets/routes.ts';
+import {
+  write_create_ticket,
+  write_patch_ticket,
+  write_reject_ticket_proposal,
+} from '../tickets/routes.ts';
 import { file_current_proposal } from '../tickets/data/index.ts';
 import { ticket_json } from '../tickets/views.ts';
 import { notify_review_transfers } from '../tickets/review_transfer.ts';
@@ -63,6 +67,9 @@ export function write_ticket_mutation(
     params = {};
   } else if (write.operation === 'ticket.propose') {
     route += '/propose';
+    method = 'POST';
+  } else if (write.operation === 'ticket.send_back') {
+    route += '/reject';
     method = 'POST';
   } else if (write.operation === 'ticket.block' || write.operation === 'ticket.unblock') {
     route = '/api/collections/{collection}/{container_id}/{member_id}';
@@ -113,6 +120,8 @@ export function write_ticket_mutation(
       clock.nowUnix(),
       review_transfer_notices,
     ) as Json;
+  if (write.operation === 'ticket.send_back')
+    return write_reject_ticket_proposal(tx, ticket_id, body, principal, clock.nowUnix()) as Json;
   throw new PlannerError('validation', 'unsupported transactional executor mutation');
 }
 export class AgentWrites {

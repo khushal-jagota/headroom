@@ -61,8 +61,8 @@ test('cleanup recheck refuses absent evidence and delegates only matching histor
   const save = (value: unknown) =>
     f.database.write((tx) =>
       tx.run(
-        'INSERT INTO mac_executor_presence(machine_id,lease_json,last_lease_at_ms) VALUES(?,?,100000) ON CONFLICT(machine_id) DO UPDATE SET lease_json=excluded.lease_json',
-        [ORIGINAL_MAC_MACHINE_ID, JSON.stringify(value)],
+        'INSERT INTO mac_executor_presence(machine_id,executor_incarnation,lease_json,last_lease_at_ms) VALUES(?,?,?,100000) ON CONFLICT(machine_id) DO UPDATE SET lease_json=excluded.lease_json',
+        [ORIGINAL_MAC_MACHINE_ID, lease.identity.executor_incarnation, JSON.stringify(value)],
       ),
     );
   save(lease);
@@ -96,6 +96,17 @@ test('cleanup recheck refuses absent evidence and delegates only matching histor
   f.core.configure_worker_cleanup_recheck(recheck);
   expect((await f.core.recheck_worker_cleanup(ticket.id)).complete).toBe(false);
   expect(recheck).toHaveBeenCalledExactlyOnceWith(source, ticket.id);
+  // A successful answer about the old assignment cannot prove a replacement source.
+  recheck.mockImplementation(async () => {
+    f.database.write((tx) =>
+      tx.run('UPDATE tickets SET machine_id=? WHERE id=?', [HOME_MACHINE_ID, ticket.id]),
+    );
+    return { complete: true, reason: 'Old source ended', scope: 'fixture' };
+  });
+  expect(await f.core.recheck_worker_cleanup(ticket.id)).toMatchObject({
+    complete: false,
+    reason: 'The Worker source changed during cleanup inspection',
+  });
   expect(f.children).toHaveLength(0);
   await f.core.shutdown({ deadline: performance.now() / 1000 + SHUTDOWN_GRACE_SECONDS });
 });
@@ -733,5 +744,41 @@ test('a settled report rejection still refuses the later update write cut', asyn
   f.core.cancel_update();
   expect(await f.core.prepare_update('now')).toBe(true);
   f.core.cancel_update();
+  await f.core.shutdown({ deadline: performance.now() / 1000 + SHUTDOWN_GRACE_SECONDS });
+});
+
+// The old core stays cached after unlink. Its lock must fence a send admitted during
+// the finish callback; an HTTP restart response cannot expose this interleaving.
+test('restart holds source proof through unlink and fences the old prompt queue', async () => {
+  const f = setup();
+  const ticket = create(f.database);
+  await f.start();
+  f.database.write((tx) =>
+    tx.run('UPDATE tickets SET conversation_id=? WHERE id=?', ['core', ticket.id]),
+  );
+  await f.send();
+  const writes = vi.spyOn(f.children[0], 'write_prompt');
+  const finishing = new Deferred<void>();
+  const release = new Deferred<void>();
+  const restarted = f.core.kill_for_restart('core', ticket.id, async (check) => {
+    expect(f.core.conversations.get('core')!.lock.locked).toBe(true);
+    finishing.resolve();
+    await release.promise;
+    f.database.write((tx) => {
+      check?.(tx);
+      tx.run('UPDATE tickets SET conversation_id=NULL WHERE id=?', [ticket.id]);
+    });
+  });
+  await finishing.promise;
+  const late = f.send('must not run', 'late').then(
+    () => null,
+    (error) => error as Error,
+  );
+  release.resolve();
+  await restarted;
+  expect(await late).toMatchObject({ message: 'This Worker conversation was restarted' });
+  expect(f.core.conversations.get('core')!.held_prompts).toHaveLength(0);
+  expect(f.children).toHaveLength(1);
+  expect(writes).not.toHaveBeenCalled();
   await f.core.shutdown({ deadline: performance.now() / 1000 + SHUTDOWN_GRACE_SECONDS });
 });

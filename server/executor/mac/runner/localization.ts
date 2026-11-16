@@ -117,6 +117,7 @@ export async function localize_start(
           : workspace;
       workspace = await prepare_workspace(artifacts, repository, ticket_id, {
         git_execution: options.workspace_git,
+        panels_project: identity.get('PLAN_TICKET_PROJECT_ID') === 'project_panels',
       });
     }
   } catch (error) {

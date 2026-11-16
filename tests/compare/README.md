@@ -8,10 +8,8 @@ Source-row sort keys retain known normalized identities and use generic placehol
 
 Retained proofs, staging reasons, and package counts: [P2](expected_open/P2.md), [P3](expected_open/P3.md), [P4](expected_open/P4.md), [P5](expected_open/P5.md), [P6](expected_open/P6.md), [P7](expected_open/P7.md).
 
-The frozen-staging merge checkpoint uses [exact strict expected failures](expected_open/checkpoint.json).
-The private launch-token port closes its authentication cases without expected failures.
-[Temporary catch-up gaps](expected_open/catch-up.md) belong to the second parity PR.
-These cases still execute. An unexpected pass fails the gate until its entry is removed.
+The catch-up and private launch-token ports close the frozen-staging checkpoint gaps.
+The retained cases now run without expected-failure marks.
 
 The connected executor update cases use Python only as the existing HTTPS publication
 and receipt host. Their native Linux archive comes from the shared TypeScript

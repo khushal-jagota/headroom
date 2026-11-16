@@ -78,11 +78,11 @@ There is no immutable spec. `SPEC.md` was a starting point and has been retired:
   built in, so a copy points `pytest` at that tree's source and checks this source
   against that tree's pinned dependency versions. `git worktree move` breaks a
   virtualenv the same way. After a move, delete `.venv` and build it again.
-- Use guarded commands for dependency setup, npm, pytest, and mypy:
+- Use the launcher for dependency setup, npm, pytest, and mypy:
 
   ```sh
   scripts/dev npm --prefix web ci
-  scripts/dev npm --prefix agent_backends ci
+  scripts/dev npm --prefix agent_backends install
   scripts/dev npm --prefix web run check
   scripts/dev pytest tests/unit/test_instrument.py
   scripts/dev mypy scripts/tree_environment.py
@@ -90,23 +90,15 @@ There is no immutable spec. `SPEC.md` was a starting point and has been retired:
   scripts/dev .venv/bin/mypy scripts/tree_environment.py
   ```
 
-  These launchers check deployment sharing before the requested tool starts.
+  `scripts/dev` launches tools without a filesystem safety scan.
   Setup requires absent `.venv` and Node dependency directories and never deletes them.
-  Every web script also checks before its dependency executable starts.
-  No flag or environment variable bypasses the guard. If dependencies share deployed
-  storage, report the unsafe workspace so that Panels can replace it. Do not delete through
-  an unresolved link or mount. If valid independent dependencies receive a false refusal,
-  fix the detector and add a regression check. If evidence is unavailable, restore the
-  evidence or fix its acquisition before retry. See `docs/deployment.md` for diagnostics.
+  Keep dependencies separate from the installed deployment.
 - `mypy` with this tree's config and `pytest` under `tests/` use one source path
   check. The imported `planner` package must resolve inside this checkout's `src`.
   If it resolves elsewhere, reinstall this checkout with `.venv/bin/python -m pip install --editable .`.
   Keep development dependencies and runtime state independent of the deployment.
-  The separate development safety launcher checks deployment sharing before tools start.
-  Direct invocations outside guarded entry points can still write into the deployment.
   General prevention and race-free filesystem containment remain uncommissioned.
   Development and verification run in independent worktrees, never the installed tree.
-  Startup checks do not contain running processes or prevent later writes.
   The artifact digest detects damage after a write. Do not add cache exclusions.
   If a write reaches the installed tree, report it and leave it in place. Do not clean it.
   Repository review or merge does not install enforcement into the deployed release.
@@ -118,11 +110,13 @@ There is no immutable spec. `SPEC.md` was a starting point and has been retired:
   paths or live server URLs. Keep the explicit non-live `PLAN_SERVER_URL` default:
   unsetting it restores the CLI's live-server fallback. Server fixtures replace it
   with their allocated server URL. Original launch evidence stays with containment checks.
-- Node dependency trees under `web/` and `agent_backends/` may be reused when their
-  manifests and locks match and their storage is independent of the deployment.
-  Matching lockfiles never permit deployed storage. Detach safe development-owned
-  trees before installing or changing dependencies.
-  This never covers `.venv`.
+- `scripts/dev setup` reuses third-party dependencies from a shared development cache.
+  The default cache uses the account home, even when `HOME` is private. Set
+  `PANELS_DEPENDENCY_CACHE` for a separate test cache. Keep a stable cache across Worker setups.
+  Python environments and editable source installations remain local to each checkout.
+  Node dependency roots remain local, with links to cached packages and local tool caches.
+  Use `scripts/dev npm` for dependency changes so it can detach cached links before npm writes.
+  Never use the installed release as a dependency cache.
 - When testing, browsing, computer use, exploration, or other active work needs
   running services, survey current port use, select available ports, start the
   services, and stop them when that active work is finished. If a port is taken during

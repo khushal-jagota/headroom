@@ -20,28 +20,36 @@ struct ConversationNavigation: ViewModifier {
     var refreshError: String?
     var retry: (() async -> Void)?
     @Environment(AppStore.self) private var store
+    var textEntry: ScreenTextEntryContext? = nil
     @State private var opened = false
     @State private var followedLink = false
     @State private var linkedConversationID: String?
     @State private var model = ConversationModel()
     @State private var speech = ConversationSpeech()
 
-    func body(content: Content) -> some View {
+    @ViewBuilder func body(content: Content) -> some View {
+        if let textEntry { navigation(content: content, textEntry: textEntry) }
+        else { ScreenTextEntryScope { textEntry in navigation(content: content, textEntry: textEntry) } }
+    }
+
+    private func navigation(content: Content, textEntry: ScreenTextEntryContext) -> some View {
         content
             .toolbar(.hidden, for: .tabBar)
             .safeAreaInset(edge: .bottom, spacing: 0) {
-                surface(isPage: false)
+                surface(isPage: false, textEntry: textEntry)
             }
             .navigationDestination(isPresented: $opened) {
-                surface(isPage: true)
-                    .toolbar(.hidden, for: .navigationBar)
-                    .toolbar(.hidden, for: .tabBar)
+                ScreenTextEntryScope { childEntry in
+                    surface(isPage: true, textEntry: childEntry)
+                        .toolbar(.hidden, for: .navigationBar)
+                        .toolbar(.hidden, for: .tabBar)
+                }
             }
             .task {
                 guard openConversationID != nil, !followedLink else { return }
                 followedLink = true
                 linkedConversationID = openConversationID
-                opened = true
+                textEntry.endEditingBeforeNavigation { opened = true }
             }
             .onChange(of: opened) { _, isOpen in
                 Haptics.light()
@@ -53,9 +61,10 @@ struct ConversationNavigation: ViewModifier {
             .onChange(of: store.baseURL) { _, _ in speech.cancel(); model = ConversationModel() }
     }
 
-    private func surface(isPage: Bool) -> some View {
+    private func surface(isPage: Bool, textEntry: ScreenTextEntryContext) -> some View {
         ConversationSurface(owner: owner, conversationID: isPage ? linkedConversationID ?? conversationID : conversationID, title: title,
-                            isPage: isPage, active: isPage || !opened, open: { opened = true },
+                            isPage: isPage, active: isPage || !opened,
+                            open: { textEntry.endEditingBeforeNavigation { opened = true } },
                             model: model, speech: speech, refreshError: refreshError, retry: retry,
                             checksCurrentConversation: isPage && linkedConversationID != nil)
     }
@@ -91,6 +100,7 @@ private struct ConversationSurface: View {
         return !currentConversationConfirmed
     }
     @State private var changingQueue = false
+    @Environment(\.screenTextEntry) private var textEntry
 
     var body: some View {
         conversation
@@ -216,7 +226,7 @@ private struct ConversationSurface: View {
     private var header: some View {
         HStack(spacing: 0) {
             if isPage {
-                AgentPageControls {
+                AgentPageControls(beforeBack: { textEntry?.endEditing() }) {
                     Menu {
                         Picker("Conversation lens", selection: $model.lens) {
                             ForEach(ConversationLens.allCases, id: \.self) { lens in
@@ -325,6 +335,7 @@ struct ConversationThread: View {
         model.visibleReadBoundary(rowIDs: visibleRowIDs, active: active && appeared)
     }
     @Environment(AppStore.self) private var store
+    @Environment(\.screenTextEntry) private var textEntry
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var scrollPolicy = ConversationScrollPolicy()
     @State private var position = ScrollPosition(edge: .bottom)
@@ -352,8 +363,11 @@ struct ConversationThread: View {
                                 } else if !row.text.isEmpty {
                                     Text((try? AttributedString(markdown: row.text, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace), baseURL: store.baseURL)) ?? AttributedString(row.text))
                                         .textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
+                                    ArtifactInlineMediaPreviews(source: row.text, baseURL: store.baseURL)
                                 }
-                                if !row.attachments.isEmpty { ConversationAttachmentTray(pieces: row.attachments) }
+                                if !row.attachments.isEmpty {
+                                    ConversationAttachmentTray(pieces: row.attachments, preparing: row.retryID == model.preparingOutgoingID && model.preparingOutgoingID != nil)
+                                }
                                 if let note = row.note, note != "Sent" {
                                     HStack {
                                         if note == "Waiting for connection" { Image(systemName: "clock").foregroundStyle(PanelsTheme.faint) }
@@ -366,10 +380,10 @@ struct ConversationThread: View {
                                                 Text(model.recoveryLabel(id)).padding(.horizontal, 8).padding(.vertical, 4)
                                                     .background(PanelsTheme.accentSurface, in: Capsule())
                                                     .contentShape(Rectangle().inset(by: -8))
-                                            }.disabled(model.sending)
+                                            }.disabled(model.sending || model.preparingPhoto)
                                             .confirmationDialog("The earlier result is unknown. Another attempt can send this message twice.", isPresented: Binding(get: { recoveryID == id }, set: { if !$0 { recoveryID = nil } }), titleVisibility: .visible) {
                                                 Button(model.recoveries[id]?.unknownDestination == true ? "Start a new conversation with this message" : model.recoveryLabel(id)) {
-                                                    model.recover(id, using: store.client, startNew: model.recoveries[id]?.unknownDestination == true)
+                                                    Task { await model.recover(id, using: store.client, startNew: model.recoveries[id]?.unknownDestination == true) }
                                                     recoveryID = nil
                                                 }
                                                 Button("Keep waiting", role: .cancel) { recoveryID = nil }
@@ -407,6 +421,7 @@ struct ConversationThread: View {
             }
             .defaultScrollAnchor(.bottom, for: .initialOffset)
             .defaultScrollAnchor(scrollPolicy.shouldFollowContent ? .bottom : .top, for: .sizeChanges)
+            .gesture(TapGesture().onEnded { textEntry?.endEditing() })
             .scrollDismissesKeyboard(.interactively)
             .scrollPosition($position)
             .onScrollPhaseChange { old, phase, context in
@@ -545,8 +560,8 @@ struct ConversationModelSheet: View {
 }
 
 extension View {
-    func conversationNavigation(owner: ConversationOwner, conversationID: String?, title: String = "Conversation", openConversationID: String? = nil, refreshError: String? = nil, retry: (() async -> Void)? = nil) -> some View {
-        modifier(ConversationNavigation(owner: owner, conversationID: conversationID, title: title, openConversationID: openConversationID, refreshError: refreshError, retry: retry))
+    func conversationNavigation(owner: ConversationOwner, conversationID: String?, title: String = "Conversation", openConversationID: String? = nil, refreshError: String? = nil, retry: (() async -> Void)? = nil, textEntry: ScreenTextEntryContext? = nil) -> some View {
+        modifier(ConversationNavigation(owner: owner, conversationID: conversationID, title: title, openConversationID: openConversationID, refreshError: refreshError, retry: retry, textEntry: textEntry))
     }
 }
 
@@ -602,7 +617,7 @@ struct ConversationSmokeView: View {
 #endif
 
 struct ConversationCamera: UIViewControllerRepresentable {
-    let completed: (Data?) -> Void
+    let completed: (UIImage?) -> Void
     func makeCoordinator() -> Coordinator { Coordinator(completed: completed) }
     func makeUIViewController(context: Context) -> UIImagePickerController {
         let picker = UIImagePickerController()
@@ -611,11 +626,11 @@ struct ConversationCamera: UIViewControllerRepresentable {
     }
     func updateUIViewController(_ controller: UIImagePickerController, context: Context) {}
     final class Coordinator: NSObject, UIImagePickerControllerDelegate, UINavigationControllerDelegate {
-        let completed: (Data?) -> Void
-        init(completed: @escaping (Data?) -> Void) { self.completed = completed }
+        let completed: (UIImage?) -> Void
+        init(completed: @escaping (UIImage?) -> Void) { self.completed = completed }
         func imagePickerControllerDidCancel(_ picker: UIImagePickerController) { completed(nil) }
         func imagePickerController(_ picker: UIImagePickerController, didFinishPickingMediaWithInfo info: [UIImagePickerController.InfoKey: Any]) {
-            completed((info[.originalImage] as? UIImage)?.jpegData(compressionQuality: 0.85))
+            completed(info[.originalImage] as? UIImage)
         }
     }
 }

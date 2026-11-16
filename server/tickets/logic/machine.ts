@@ -50,12 +50,13 @@ export function resolve_next_ceiling(
     worker_type_definition: WorkflowDefinition;
   },
 ): string {
+  if (stage_definition(d, new_stage).is_terminal) return new_stage;
   if (next_ceiling === null)
     throw new PlannerError('scope_missing', 'accept requires the onward ceiling', {
       missing: ['next_ceiling'],
     });
   if (next_ceiling === 'none') return new_stage;
-  if (!d.stages.some((s) => s.id === next_ceiling))
+  if (!d.stages.some((s) => s.id === next_ceiling && !s.is_terminal))
     throw new PlannerError('scope_invalid', 'unknown next_ceiling', { next_ceiling });
   if (stage_index(d, next_ceiling) < stage_index(d, new_stage))
     throw new PlannerError('scope_invalid', 'next_ceiling must be at or beyond the new stage', {
@@ -79,7 +80,7 @@ export function stage_ownership_mode(
   return s.ownership_mode;
 }
 export function resolve_ceiling(d: WorkflowDefinition, raw: string): string {
-  if (d.stages.some((s) => s.id === raw)) return raw;
+  if (d.stages.some((s) => s.id === raw && !s.is_terminal)) return raw;
   const gate = d.stages.find((s) => s.gating_field === raw);
   if (gate) return gate.id;
   throw new PlannerError('scope_invalid', 'unknown ceiling', { ceiling: raw });
@@ -94,10 +95,22 @@ export function validate_ticket_position(
   allow_historical_terminal_ceiling = false,
 ): void {
   const s = stage_definition(d, stage);
-  if (allow_historical_terminal_ceiling && s.is_terminal) return;
-  if (!d.stages.some((s) => s.id === ceiling))
+  if (s.is_terminal && (allow_historical_terminal_ceiling || ceiling === stage)) return;
+  if (!d.stages.some((s) => s.id === ceiling && !s.is_terminal))
     throw new PlannerError('scope_invalid', "ceiling outside the type's range", {
       workflow: d.label,
       ceiling,
     });
+}
+export function completion_follows(stage: string, definition: WorkflowDefinition): boolean {
+  const target = advance_target(definition, stage);
+  return target !== null && stage_definition(definition, target).is_terminal;
+}
+export function consequences_follows(stage: string, definition: WorkflowDefinition): boolean {
+  const target = advance_target(definition, stage);
+  return (
+    target !== null &&
+    gating_field(definition, target) === 'consequences' &&
+    completion_follows(target, definition)
+  );
 }

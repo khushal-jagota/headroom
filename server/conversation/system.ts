@@ -1,5 +1,6 @@
 import { conversation_link_lock } from '../runtime/conversation_start.ts';
 import { PlannerError } from '../core/contracts.ts';
+import type { ReadSql, TransactionSql } from '../core/database/contracts.ts';
 import type {
   WorkspaceIdentity,
   RetirementTarget,
@@ -471,6 +472,8 @@ export class SqliteProcessConversationSystem implements DeliveryServices, Conver
         const state = this.conversation_state(conversation_id);
         if (!state) return new PromptDeliveryRefused({ refusal_reason: R.no_such_conversation });
         await this.ensure_local_custody(state);
+        if (state.restart_retired)
+          throw new PlannerError('retry_later', 'This Worker conversation was restarted');
         if (this.workspace_is_retiring(state))
           throw new Error('Ticket workspace admission is closed for retirement.');
         return own_settlement(
@@ -680,6 +683,8 @@ export class SqliteProcessConversationSystem implements DeliveryServices, Conver
   }
   async queue(state: ConversationState, message: Message): Promise<PromptDeliveryFate> {
     const admission = await state.lock.run(async () => {
+      if (state.restart_retired)
+        throw new PlannerError('retry_later', 'This Worker conversation was restarted');
       if (
         state.being_killed ||
         state.child_is_quarantined ||
@@ -1136,7 +1141,7 @@ export class SqliteProcessConversationSystem implements DeliveryServices, Conver
     );
   }
   schedule_drain(state: ConversationState): void {
-    if (this.shutting_down) return;
+    if (this.shutting_down || state.restart_retired) return;
     this.deferred_start_conversations.delete(state.record.conversation_id);
     this.mark_eligible_held(state);
     void own_settlement(state, this.drain_held_prompts(state)).catch((error) =>
@@ -1147,7 +1152,7 @@ export class SqliteProcessConversationSystem implements DeliveryServices, Conver
     );
   }
   async drain_held_prompts(state: ConversationState): Promise<void> {
-    if (this.shutting_down) return;
+    if (this.shutting_down || state.restart_retired) return;
     await this.ensure_local_custody(state);
     if (
       this.workspace_is_retiring(state) ||
@@ -1160,6 +1165,7 @@ export class SqliteProcessConversationSystem implements DeliveryServices, Conver
       return;
     }
     const taken = await state.lock.run(() => {
+      if (state.restart_retired) return false;
       if (
         state.being_killed ||
         state.child_is_quarantined ||
@@ -1732,6 +1738,20 @@ export class SqliteProcessConversationSystem implements DeliveryServices, Conver
       await own_settlement(state, controls.kill(this, state));
     }
   }
+  async kill_for_restart(
+    conversation_id: string,
+    ticket_id: string,
+    finish: Parameters<ConversationSystem['kill_for_restart']>[2],
+  ): Promise<void> {
+    const state = this.conversation_state(conversation_id);
+    if (!state) {
+      await finish(null);
+      return;
+    }
+    await this.ensure_local_custody(state);
+    this.deferred_start_conversations.delete(conversation_id);
+    await own_settlement(state, controls.kill(this, state, { ticket_id, finish }));
+  }
   configure_worker_cleanup_recheck(
     callback: (source: ChildReference, ticket_id: string) => Promise<CleanupResult>,
   ): void {
@@ -1739,49 +1759,57 @@ export class SqliteProcessConversationSystem implements DeliveryServices, Conver
   }
   async recheck_worker_cleanup(ticket_id: string): Promise<CleanupResult> {
     this.require_runtime_ownership();
-    const ticket = this.options.store.start_admission_database.read((sql) => {
-      const row = sql.get<{ machine_id: string; conversation_id: string | null }>(
-        'SELECT machine_id,conversation_id FROM tickets WHERE id=?',
-        [ticket_id],
-      );
-      if (row === undefined) return null;
-      const local_ids = sql
-        .all<{ conversation_id: string }>(
-          'SELECT w.conversation_id FROM ticket_workspace_conversations w JOIN conversation_child_custody c USING(conversation_id) WHERE w.ticket_id=?',
+    const read = () =>
+      this.options.store.start_admission_database.read((sql) => {
+        const row = sql.get<{ machine_id: string; conversation_id: string | null }>(
+          'SELECT machine_id,conversation_id FROM tickets WHERE id=?',
           [ticket_id],
-        )
-        .map((item) => item.conversation_id);
-      const presence = sql.get<{ lease_json: string | null; last_lease_at_ms: number | null }>(
-        'SELECT lease_json,last_lease_at_ms FROM mac_executor_presence WHERE machine_id=?',
-        [row.machine_id],
-      );
-      let lease: WireValue<'LeaseRequest'> | null = null;
-      let fresh = false;
-      if (presence?.lease_json !== null && presence?.lease_json !== undefined) {
-        try {
-          lease = decode_json(presence.lease_json, 'LeaseRequest');
-          fresh =
-            lease.identity.protocol_version === PROTOCOL_VERSION &&
-            presence.last_lease_at_ms !== null &&
-            Math.floor(this.unix_time_now() * 1000) - presence.last_lease_at_ms <=
-              LEASE_CONTINUITY_SECONDS * 1000;
-        } catch {
-          /* Invalid lease evidence cannot prove cleanup. */
+        );
+        if (row === undefined) return null;
+        const local_ids = sql
+          .all<{ conversation_id: string }>(
+            'SELECT w.conversation_id FROM ticket_workspace_conversations w JOIN conversation_child_custody c USING(conversation_id) WHERE w.ticket_id=?',
+            [ticket_id],
+          )
+          .map((item) => item.conversation_id);
+        const presence = sql.get<{
+          lease_json: string | null;
+          last_lease_at_ms: number | null;
+          executor_incarnation: string;
+        }>(
+          'SELECT lease_json,last_lease_at_ms,executor_incarnation FROM mac_executor_presence WHERE machine_id=?',
+          [row.machine_id],
+        );
+        let lease: WireValue<'LeaseRequest'> | null = null;
+        let fresh = false;
+        if (presence?.lease_json !== null && presence?.lease_json !== undefined) {
+          try {
+            lease = decode_json(presence.lease_json, 'LeaseRequest');
+            fresh =
+              lease.cleanup_uncertainties !== undefined &&
+              lease.identity.protocol_version === PROTOCOL_VERSION &&
+              lease.identity.executor_incarnation === presence.executor_incarnation &&
+              presence.last_lease_at_ms !== null &&
+              Math.floor(this.unix_time_now() * 1000) - presence.last_lease_at_ms <=
+                LEASE_CONTINUITY_SECONDS * 1000;
+          } catch {
+            /* Invalid lease evidence cannot prove cleanup. */
+          }
         }
-      }
-      const uncertain = new Set(
-        (lease?.cleanup_uncertainties ?? [])
-          .filter((item) => item.ticket_id === ticket_id)
-          .map((item) => item.conversation_id),
-      );
-      const historical = sql
-        .all<{ executor_incarnation: string; child_id: string; conversation_id: string }>(
-          "SELECT executor_incarnation,child_id,conversation_id FROM executor_child_assignments WHERE principal_kind='ticket' AND principal_id=?",
-          [ticket_id],
-        )
-        .filter((item) => uncertain.has(item.conversation_id) || uncertain.has(''));
-      return { ...row, local_ids, historical, fresh: fresh && uncertain.size === 0 };
-    });
+        const uncertain = new Set(
+          (lease?.cleanup_uncertainties ?? [])
+            .filter((item) => item.ticket_id === ticket_id)
+            .map((item) => item.conversation_id),
+        );
+        const historical = sql
+          .all<{ executor_incarnation: string; child_id: string; conversation_id: string }>(
+            "SELECT executor_incarnation,child_id,conversation_id FROM executor_child_assignments WHERE principal_kind='ticket' AND principal_id=?",
+            [ticket_id],
+          )
+          .filter((item) => uncertain.has(item.conversation_id) || uncertain.has(''));
+        return { ...row, local_ids, historical, fresh: fresh && uncertain.size === 0 };
+      });
+    const ticket = read();
     if (ticket === null) return cleanup_result(false, 'The Ticket is unavailable');
     if (ticket.machine_id !== HOME_MACHINE_ID) {
       const state =
@@ -1794,19 +1822,49 @@ export class SqliteProcessConversationSystem implements DeliveryServices, Conver
         JSON.stringify([item.executor_incarnation, item.child_id, item.conversation_id]);
       const sources = new Map(ticket.historical.map((item) => [source_key(item), item]));
       if (source !== null) sources.set(source_key(source), source);
-      if (sources.size === 0)
+      if (sources.size === 0) {
+        const current = read();
+        const current_source =
+          state === null
+            ? null
+            : (this.retained_run(state)?.reference ?? state.retained_child_reference);
+        if (
+          !current ||
+          current.machine_id !== ticket.machine_id ||
+          current.conversation_id !== ticket.conversation_id ||
+          current.historical.length ||
+          current_source !== null
+        )
+          return cleanup_result(false, 'The Worker source changed during cleanup inspection');
         return cleanup_result(
-          ticket.fresh,
-          ticket.fresh
+          ticket.fresh && current.fresh,
+          ticket.fresh && current.fresh
             ? 'No retained Worker source needs cleanup'
             : 'Fresh executor cleanup evidence is unavailable',
         );
+      }
       if (this.worker_cleanup_recheck === null)
         return cleanup_result(false, 'The executor cleanup checker is unavailable');
       for (const recorded of sources.values()) {
         const result = await this.worker_cleanup_recheck(recorded, ticket_id);
         if (!result.complete) return result;
       }
+      const current = read();
+      const current_source =
+        state === null
+          ? null
+          : (this.retained_run(state)?.reference ?? state.retained_child_reference);
+      const historical = new Set(ticket.historical.map(source_key));
+      if (
+        !current ||
+        current.machine_id !== ticket.machine_id ||
+        current.conversation_id !== ticket.conversation_id ||
+        !isDeepStrictEqual(current_source, source) ||
+        current.historical.some((item) => !historical.has(source_key(item)))
+      )
+        return cleanup_result(false, 'The Worker source changed during cleanup inspection');
+      if (!current.fresh)
+        return cleanup_result(false, 'Fresh executor cleanup evidence is unavailable');
       return cleanup_result(true, 'Recorded Worker cleanup is complete');
     }
     const ids = new Set(ticket.local_ids);
@@ -1863,7 +1921,10 @@ export class SqliteProcessConversationSystem implements DeliveryServices, Conver
         this.start_admission.reject(this.options.store.start_admission_database, token),
       );
   }
-  async confirm_killed_source(state: ConversationState): Promise<void> {
+  async confirm_killed_source(
+    state: ConversationState,
+    restart?: { ticket_id: string; finish: Parameters<ConversationSystem['kill_for_restart']>[2] },
+  ): Promise<void> {
     const id = state.record.conversation_id;
     if (this.options.store.blocked_local_conversations.has(id)) {
       const settlement = await this.options.store.settle_recorded_source(id);
@@ -1880,20 +1941,106 @@ export class SqliteProcessConversationSystem implements DeliveryServices, Conver
       !state.local_child_retirement_proven &&
       (await this.options.store.has_recorded_source(id))
     ) {
-      if (!(await this.options.store.retire_idle_recorded_source(id)))
+      if (
+        !(await this.options.store.recorded_source_retirement_proven(id)) &&
+        !(await this.options.store.retire_idle_recorded_source(id))
+      )
         throw new PlannerError(
           'retry_later',
           'The recorded Worker cleanup is not proven. Recheck Worker cleanup.',
         );
       state.local_child_retirement_proven = true;
     }
-    const remote_receipt = this.retained_run(state)?.retirement_confirmed === true;
-    await state.lock.run(() => {
+    let check_cleanup: ((sql: TransactionSql) => void) | null = null;
+    const inspected_remote = this.retained_run(state);
+    let remote_inspected = false;
+    if (restart) {
+      const capture = (sql: ReadSql, require_fresh: boolean) => {
+        const ticket = sql.get<{ machine_id: string; conversation_id: string | null }>(
+          'SELECT machine_id,conversation_id FROM tickets WHERE id=?',
+          [restart.ticket_id],
+        );
+        if (!ticket || ticket.conversation_id !== id)
+          throw new PlannerError('retry_later', 'The Worker source changed');
+        const presence = sql.get<{
+          executor_incarnation: string;
+          lease_json: string | null;
+          last_lease_at_ms: number | null;
+        }>(
+          'SELECT executor_incarnation,lease_json,last_lease_at_ms FROM mac_executor_presence WHERE machine_id=?',
+          [ticket.machine_id],
+        );
+        if (require_fresh) {
+          let fresh = false;
+          try {
+            const lease =
+              presence?.lease_json == null
+                ? null
+                : decode_json(presence.lease_json, 'LeaseRequest');
+            fresh =
+              lease !== null &&
+              lease.cleanup_uncertainties !== undefined &&
+              lease.identity.protocol_version === PROTOCOL_VERSION &&
+              lease.identity.executor_incarnation === presence?.executor_incarnation &&
+              presence.last_lease_at_ms !== null &&
+              Math.floor(this.unix_time_now() * 1000) - presence.last_lease_at_ms <=
+                LEASE_CONTINUITY_SECONDS * 1000 &&
+              !(lease.cleanup_uncertainties ?? []).some(
+                (item) => item.ticket_id === restart.ticket_id,
+              );
+          } catch {
+            /* Invalid evidence cannot prove remote cleanup. */
+          }
+          if (!fresh)
+            throw new PlannerError('retry_later', 'Fresh executor cleanup evidence is unavailable');
+        }
+        return {
+          machine_id: ticket.machine_id,
+          incarnation: presence?.executor_incarnation ?? null,
+          assignments: sql.all(
+            "SELECT executor_incarnation,child_id,conversation_id,closed_at_ms FROM executor_child_assignments WHERE principal_kind='ticket' AND principal_id=? ORDER BY executor_incarnation,child_id",
+            [restart.ticket_id],
+          ),
+          run:
+            sql.get(
+              'SELECT executor_incarnation,child_id,stop_state FROM mac_runs WHERE conversation_id=?',
+              [id],
+            ) ?? null,
+        };
+      };
+      const before = this.options.store.start_admission_database.read((sql) => capture(sql, false));
+      if (before.machine_id !== HOME_MACHINE_ID) {
+        const result = await this.recheck_worker_cleanup(restart.ticket_id);
+        if (!result.complete) throw new PlannerError('retry_later', result.reason);
+        remote_inspected = true;
+        const inspected = this.options.store.start_admission_database.read((sql) =>
+          capture(sql, true),
+        );
+        if (!isDeepStrictEqual(before, inspected))
+          throw new PlannerError(
+            'retry_later',
+            'The Worker source changed during cleanup inspection',
+          );
+        check_cleanup = (sql) => {
+          if (!isDeepStrictEqual(capture(sql, true), inspected))
+            throw new PlannerError(
+              'retry_later',
+              'The Worker source changed during cleanup inspection',
+            );
+        };
+      }
+    }
+    await state.lock.run(async () => {
+      const retained = this.retained_run(state);
+      const remote_receipt = retained?.retirement_confirmed === true;
       if (
         state.child !== null ||
         state.retained_child_reference !== null ||
         state.child_is_quarantined ||
         (state.retirement_task !== null && state.retiring_child !== null) ||
+        (retained !== null && retained !== undefined && !remote_receipt) ||
+        (remote_inspected && retained !== inspected_remote) ||
+        (restart !== undefined && state.held_prompts.length > 0) ||
         !(
           remote_receipt ||
           state.local_child_retirement_proven ||
@@ -1904,6 +2051,22 @@ export class SqliteProcessConversationSystem implements DeliveryServices, Conver
           'retry_later',
           'The old Worker is not proven ended. Recheck Worker cleanup.',
         );
+      if (restart) {
+        try {
+          await restart.finish(check_cleanup);
+        } catch (error) {
+          const linked = this.options.store.start_admission_database.read(
+            (sql) =>
+              sql.get('SELECT 1 FROM tickets WHERE id=? AND conversation_id=?', [
+                restart.ticket_id,
+                id,
+              ]) !== undefined,
+          );
+          if (!linked) state.restart_retired = true;
+          throw error;
+        }
+        state.restart_retired = true;
+      }
     });
   }
   async promote_held_prompt(

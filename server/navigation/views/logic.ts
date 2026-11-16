@@ -11,7 +11,6 @@ export const GROUPS = [
   'errored',
   'backlog',
   'agent',
-  'waiting_to_closeout',
   'status_awaiting_approval',
   'empty',
   'blocked',
@@ -84,8 +83,6 @@ export function group(value: Fact, attention: Fact | null, rail: boolean): strin
   if (!working && (value.ticket_status === 'errored' || (failed && value.stage !== 'done')))
     return 'errored';
   if (value.ticket_status === 'agent' || working) return 'agent';
-  if (value.gating_field === 'consequences' && value.ticket_status === 'empty')
-    return 'waiting_to_closeout';
   if (parked && !owner) return 'status_awaiting_approval';
   if (value.stage === 'done') return 'done';
   return 'empty';

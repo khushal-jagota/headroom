@@ -12,6 +12,7 @@ import type { MacCommandWork } from './command_contracts.ts';
 import type { MacNativeChildrenContract, MacRunningChild } from './contracts.ts';
 import type { MacRunnerContract, MacRunnerOptions } from './lifecycle_contracts.ts';
 import type { MacSourceWorkContract } from './retirement_contracts.ts';
+import { RetainedWorkspaceReporter } from '../../../ticket_workspaces/reporting.ts';
 
 export function same_workspace(
   left: WorkspaceIdentity | null,
@@ -36,10 +37,12 @@ export interface MacWorkspaceCleanupDependencies extends Pick<
   readonly sources: Pick<MacSourceWorkContract, 'count' | 'failed'>;
   readonly commands: Pick<MacCommandWork, 'records'>;
   readonly stop_and_publish: MacRunnerContract['stop_and_publish'];
+  readonly cleanup_refused: (ticket_id: string) => boolean;
 }
 
 export class MacWorkspaceCleanup {
   private readonly dependencies: MacWorkspaceCleanupDependencies;
+  private readonly reporter = new RetainedWorkspaceReporter();
   constructor(dependencies: MacWorkspaceCleanupDependencies) {
     this.dependencies = dependencies;
   }
@@ -65,6 +68,7 @@ export class MacWorkspaceCleanup {
     workspace: WorkspaceIdentity,
     replay: boolean,
   ): Promise<boolean> {
+    if (this.dependencies.cleanup_refused(state.ticket_id)) return false;
     const children = this.dependencies.native_children
       .retained_children()
       .filter(
@@ -75,7 +79,9 @@ export class MacWorkspaceCleanup {
     const grant = replay
       ? this.dependencies.retirement_is_committed
       : this.dependencies.retire_workspace;
-    if (!(await grant(state, workspace))) return false;
+    let granted = await grant(state, workspace);
+    if (replay && !granted) granted = await this.dependencies.retire_workspace(state, workspace);
+    if (!granted) return false;
     if (children.some((child) => this.busy(child))) return false;
     for (const child of children) {
       const result = await this.dependencies.stop_and_publish({
@@ -108,7 +114,7 @@ export class MacWorkspaceCleanup {
         ),
         retirement_is_committed: (state, workspace) =>
           workspace_lock.run(() => this.authorize(state, workspace, true)),
-        retire: (path, state, workspace) =>
+        retire: (path, state, workspace, checkout_only) =>
           workspace_lock.run(async () => {
             if (!same_workspace(workspace_identity(path), workspace))
               return { reason: 'workspace ownership changed' };
@@ -118,11 +124,11 @@ export class MacWorkspaceCleanup {
               git_execution: workspace_git,
               identity: workspace,
               retired_root: join(dirname(paths.artifacts), '.ticket-retired'),
+              checkout_only,
             });
           }),
       },
     );
-    for (const entry of result.skipped)
-      console.warn('Ticket workspace retained path=%s reason=%s', entry.path, entry.reason);
+    this.reporter.report(result.skipped);
   }
 }

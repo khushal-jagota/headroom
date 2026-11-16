@@ -195,7 +195,21 @@ test.skipIf(!['linux', 'darwin'].includes(process.platform))(
     const primary = admit(join(root, 'primary'));
     renameSync(checkout, primary);
     await command(primary, ['push', 'origin', 'HEAD:refs/heads/published']);
-    const managed = await prepare_workspace(path, primary, ticket, options);
+    // Retained linked worktrees still resume and remove their exact registration.
+    const managed = join(path, 'worktree');
+    await command(primary, ['worktree', 'add', '-b', `ticket/${ticket}`, managed]);
+    writeFileSync(
+      join(path, '.panels-workspace.json'),
+      JSON.stringify({
+        ...workspace_identity(path),
+        ticket_id: ticket,
+        repository: primary,
+        branch: `ticket/${ticket}`,
+        worktree: managed,
+        preparing: false,
+      }),
+    );
+    expect(await prepare_workspace(path, primary, ticket, options)).toBe(managed);
     const other = admit(join(root, 'unrelated')),
       locked = admit(join(root, 'locked'));
     await command(primary, ['worktree', 'add', '-b', 'unrelated', other]);
@@ -211,6 +225,49 @@ test.skipIf(!['linux', 'darwin'].includes(process.platform))(
     expect(readFileSync(join(other, 'tracked.txt'), 'utf8')).toBe('published');
     expect(readFileSync(join(locked, 'tracked.txt'), 'utf8')).toBe('published');
     await command(primary, ['fsck', '--no-dangling']);
+  },
+);
+
+// Gap: linked-worktree safety does not prove independent clone custody or checkout-only detach.
+test.skipIf(!['linux', 'darwin'].includes(process.platform))(
+  'independent clones retire their checkout before artifacts and retain their original source',
+  async () => {
+    const remote = join(root, 'origin.git'),
+      project = join(root, 'project');
+    mkdirSync(remote);
+    mkdirSync(project);
+    await command(remote, ['init', '--bare']);
+    await command(remote, ['symbolic-ref', 'HEAD', 'refs/heads/main']);
+    await command(project, ['init', '-b', 'main']);
+    await command(project, ['config', 'user.email', 'proof@example.test']);
+    await command(project, ['config', 'user.name', 'Synthetic proof']);
+    writeFileSync(join(project, 'tracked.txt'), 'published');
+    await command(project, ['add', '.']);
+    await command(project, ['commit', '-m', 'published']);
+    await command(project, ['remote', 'add', 'origin', remote]);
+    await command(project, ['push', 'origin', 'main']);
+    const path = folder(),
+      checkout = await prepare_workspace(path, project, ticket, options);
+    expect(lstatSync(join(checkout, '.git')).isDirectory()).toBe(true);
+    expect(await command(checkout, ['remote', 'get-url', 'origin'])).toBe(remote);
+    expect(await prepare_workspace(path, project, ticket, options)).toBe(checkout);
+    const marker = read_workspace_identity(path);
+    writeFileSync(join(path, 'artifacts', 'keep.txt'), 'review evidence');
+    const states = new Map([[ticket, { ticket_id: ticket, ended_at: 0, deleted: false }]]);
+    const retired = await cleanup_local_workspaces(dirname(path), states, 1, options);
+    expect(retired.removed).toContain(checkout);
+    expect(existsSync(checkout)).toBe(false);
+    expect(readFileSync(join(path, 'artifacts', 'keep.txt'), 'utf8')).toBe('review evidence');
+    expect(read_workspace_identity(path).workspace_id).not.toBe(marker.workspace_id);
+    expect(readFileSync(join(project, 'tracked.txt'), 'utf8')).toBe('published');
+    const expired = await cleanup_local_workspaces(
+      dirname(path),
+      states,
+      RETENTION_SECONDS,
+      options,
+    );
+    expect(expired.removed).toContain(path);
+    expect(existsSync(path)).toBe(false);
   },
 );
 

@@ -1,7 +1,22 @@
 import XCTest
+import CoreGraphics
+import ImageIO
+import UniformTypeIdentifiers
 @testable import Panels
 
 @MainActor final class ConversationTests: XCTestCase {
+    func testPreviewStatusDecodesPendingRequestsElapsedStartAndBackgroundWork() throws {
+        let json = #"{"authority":"current","turn_running":false,"rest":{"plan_progress":{},"latest_turn":{"started_at_unix_milliseconds":1234}},"pending_permission":{"kind":"permission","request_id":"p","row_key":"row","source_sequence":1},"pending_user_input":{"kind":"user_input","request_id":"u","row_key":"input","source_sequence":2},"background_tasks":[{"task_id":"task","task_description":"Build"}]}"#
+        let status = try APIClient.decoder().decode(ConversationStatus.self, from: Data(json.utf8))
+        XCTAssertEqual(status.pendingPermission?.requestId, "p")
+        XCTAssertEqual(status.pendingUserInput?.requestId, "u")
+        XCTAssertEqual(status.rest.latestTurn?.startedAtUnixMilliseconds, 1234)
+        XCTAssertTrue(status.hasBackgroundTaskAfterTheTurn)
+        let runningJSON = json.replacingOccurrences(of: #""turn_running":false"#, with: #""turn_running":true"#)
+        let running = try APIClient.decoder().decode(ConversationStatus.self, from: Data(runningJSON.utf8))
+        XCTAssertFalse(running.hasBackgroundTaskAfterTheTurn, "A task during its live turn does not count as work after the turn")
+    }
+
     func testRemoteAnswerEvidenceDoesNotClaimApplicationWhilePending() throws {
         for (fate, text) in [("saved", "delivery to Mac is pending"), ("applied", "applied on Mac"), ("unconfirmed", "Application is unconfirmed")] {
             let json = "{\"kind\":\"permission_ask\",\"title\":\"Approve command\",\"state\":\"answered\",\"answer_fate\":\"\(fate)\"}"
@@ -285,7 +300,11 @@ import XCTest
         let configuration = URLSessionConfiguration.ephemeral
         configuration.protocolClasses = [ConversationRequestStub.self]
         let api = APIClient(baseURL: URL(string: "https://conversation.invalid")!, session: URLSession(configuration: configuration))
-        let message = ConversationSend(conversationId: "conv_1", content: [.init(text: "Hello")], senderMessageId: "message-1", sentAtUnixMilliseconds: 123)
+        let content = try await ConversationImagePreparation.prepare([
+            .init(text: "Hello"),
+            .init(piece: "image", data: try Self.heicPhoto().base64EncodedString(), mediaType: "image/heic", fileName: "Picture.heic")
+        ])
+        let message = ConversationSend(conversationId: "conv_1", content: content, senderMessageId: "message-1", sentAtUnixMilliseconds: 123)
         let delivery = try await api.sendConversation(.manager("si_1"), message: message)
         XCTAssertEqual(delivery.fate, "queued")
         let request = try XCTUnwrap(ConversationRequestStub.request)
@@ -300,7 +319,166 @@ import XCTest
         XCTAssertEqual(json["sender_message_id"] as? String, "message-1")
         XCTAssertEqual(json["mode"] as? String, "steer")
         XCTAssertEqual(json["sent_at_unix_milliseconds"] as? Int, 123)
-        XCTAssertEqual((json["content"] as? [[String: String]])?.first, ["piece": "text", "text": "Hello"])
+        let sent = try XCTUnwrap(json["content"] as? [[String: String]])
+        XCTAssertEqual(sent.first, ["piece": "text", "text": "Hello"])
+        XCTAssertEqual(sent.last?["media_type"], "image/jpeg")
+        XCTAssertEqual(sent.last?["file_name"], "Picture.jpg")
+        XCTAssertEqual(sent.last?["data"], content.last?.data)
+        XCTAssertNil(sent.last?["mediaType"])
+    }
+
+    func testHEICPhotoBecomesReadableJPEGBeforeItJoinsTheMessage() async throws {
+        let source = try Self.heicPhoto()
+        let model = ConversationModel()
+        let attached1 = await model.attach(source, type: .heic, fileName: "Picture.heic")
+        XCTAssertTrue(attached1)
+        let picture = try XCTUnwrap(model.attachments.first)
+        XCTAssertEqual(picture.mediaType, "image/jpeg")
+        XCTAssertEqual(picture.fileName, "Picture.jpg")
+        XCTAssertNotEqual(picture.data, source.base64EncodedString())
+        _ = try Self.readJPEG(picture)
+        model.draft = "Keep these words with the prepared photo"
+        let prepared = model.attachments
+        let attached2 = await model.attach(Data("not a photo".utf8), type: .heic, fileName: "Corrupt.heic")
+        XCTAssertFalse(attached2)
+        XCTAssertEqual(model.draft, "Keep these words with the prepared photo")
+        XCTAssertEqual(model.attachments, prepared)
+        XCTAssertTrue(model.error?.lowercased().contains("photo") == true)
+    }
+
+    func testOversizedJPEGAndMultiplePhotosFitTheSharedImageBudget() async throws {
+        let original = try Self.jpegPhoto(size: 2048)
+        let limit = 3 * 1024 * 1024
+        XCTAssertGreaterThan(original.count, limit, "The source must exercise actual JPEG compression, not padding")
+        let model = ConversationModel()
+        let attached3 = await model.attach(original, type: .jpeg, fileName: "Large.jpg")
+        XCTAssertTrue(attached3)
+        let first = try XCTUnwrap(model.attachments.first)
+        XCTAssertLessThanOrEqual(try XCTUnwrap(Data(base64Encoded: try XCTUnwrap(first.data))).count, limit)
+        _ = try Self.readJPEG(first)
+
+        let attached4 = await model.attach(original, type: .jpeg, fileName: "Another.jpg")
+        XCTAssertTrue(attached4)
+        XCTAssertEqual(model.attachments.count, 2)
+        let bytes = try model.attachments.map { piece in
+            _ = try Self.readJPEG(piece)
+            return try XCTUnwrap(Data(base64Encoded: try XCTUnwrap(piece.data))).count
+        }
+        XCTAssertLessThanOrEqual(bytes.reduce(0, +), limit, "The server limits the whole message, not each photo")
+    }
+
+    func testNormalJPEGPhotoKeepsItsBytesAndFilename() async throws {
+        let original = try Self.jpegPhoto(size: 16)
+        let model = ConversationModel()
+        let attached5 = await model.attach(original, type: .jpeg, fileName: "Normal.jpg")
+        XCTAssertTrue(attached5)
+        let picture = try XCTUnwrap(model.attachments.first)
+        XCTAssertEqual(picture.data, original.base64EncodedString())
+        XCTAssertEqual(picture.mediaType, "image/jpeg")
+        XCTAssertEqual(picture.fileName, "Normal.jpg")
+        _ = try Self.readJPEG(picture)
+    }
+
+    func testPhotoPreparationRunsOffMainActorAndAcceptedPhotosAreNotPreparedAgain() async throws {
+        let probe = PhotoPreparationProbe()
+        let model = ConversationModel(imageWorkStarted: { probe.observe() })
+        let photo = try Self.heicPhoto()
+        let attachment = Task {
+            await model.attachPhoto(fileName: "Picture.heic") {
+                XCTAssertFalse(Thread.isMainThread, "Camera encoding must use the same background intake boundary")
+                return photo
+            }
+        }
+        await fulfillment(of: [probe.started], timeout: 3)
+        defer { probe.release() }
+        XCTAssertTrue(model.preparingPhoto)
+        XCTAssertEqual(Array(model.preparingPhotos.values), ["Picture.heic"])
+        model.draft = "The main actor remains available"
+        let service = ConversationStub(fate: "queued")
+        let sentDuringPreparation = await model.send(to: .chief, using: service)
+        XCTAssertFalse(sentDuringPreparation)
+        let callsDuringPreparation = await service.calls
+        XCTAssertEqual(callsDuringPreparation, 0)
+        probe.release()
+        let attached = await attachment.value
+        XCTAssertTrue(attached)
+        XCTAssertFalse(model.preparingPhoto)
+        XCTAssertFalse(probe.usedMainThread)
+        XCTAssertEqual(probe.count, 1)
+        let second = await model.attach(try Self.jpegPhoto(size: 16), type: .jpeg, fileName: "Normal.jpg")
+        XCTAssertTrue(second)
+        XCTAssertEqual(probe.count, 2, "Adding a photo must not decode the accepted first photo again")
+        _ = try await model.preparedContent()
+        _ = try await model.preparedContent()
+        XCTAssertEqual(probe.count, 2, "Send capture must reuse accepted photo preparation")
+        XCTAssertEqual(model.draft, "The main actor remains available")
+    }
+
+    func testRestoredPhotoPreparationCannotSendAfterDraftOrDestinationChanges() async throws {
+        for change in ["draft", "destination"] {
+            let probe = PhotoPreparationProbe()
+            let model = ConversationModel(imageWorkStarted: { probe.observe() })
+            model.conversationID = "original"
+            model.attachments = [.init(piece: "image", data: try Self.heicPhoto().base64EncodedString(),
+                mediaType: "image/heic", fileName: "Restored.heic")]
+            model.draft = "Original"
+            let original = model.attachments
+            let service = ConversationStub(fate: "queued")
+            let send = Task { await model.send(to: .chief, using: service) }
+            await fulfillment(of: [probe.started], timeout: 3)
+            defer { probe.release() }
+            XCTAssertTrue(model.preparingPhoto)
+            if change == "draft" { model.draft = "New words" }
+            else { model.selectConversation("new-destination") }
+            probe.release()
+            let accepted = await send.value
+            XCTAssertFalse(accepted)
+            XCTAssertEqual(model.draft, change == "draft" ? "New words" : "Original")
+            if change == "draft" { XCTAssertEqual(model.attachments, original) }
+            XCTAssertFalse(model.preparingPhoto)
+            let calls = await service.calls
+            XCTAssertEqual(calls, 0)
+        }
+    }
+
+    private static func heicPhoto() throws -> Data {
+        #if SWIFT_PACKAGE
+        let url = Bundle.module.url(forResource: "photo", withExtension: "heic", subdirectory: "Fixtures")
+        #else
+        let url = Bundle(for: Self.self).url(forResource: "photo", withExtension: "heic")
+        #endif
+        return try Data(contentsOf: XCTUnwrap(url))
+    }
+
+    /// Real deterministic pixel noise prevents a flat-color JPEG from missing the size boundary.
+    private static func jpegPhoto(size: Int) throws -> Data {
+        var pixels = [UInt32](repeating: 0, count: size * size)
+        var noise: UInt32 = 0x6a09e667
+        for index in pixels.indices {
+            noise ^= noise << 13; noise ^= noise >> 17; noise ^= noise << 5
+            pixels[index] = noise
+        }
+        let data = pixels.withUnsafeBytes { Data($0) }
+        let provider = try XCTUnwrap(CGDataProvider(data: data as CFData))
+        let image = try XCTUnwrap(CGImage(width: size, height: size, bitsPerComponent: 8, bitsPerPixel: 32,
+            bytesPerRow: size * 4, space: CGColorSpaceCreateDeviceRGB(),
+            bitmapInfo: CGBitmapInfo(rawValue: CGImageAlphaInfo.noneSkipLast.rawValue),
+            provider: provider, decode: nil, shouldInterpolate: false, intent: .defaultIntent))
+        let encoded = NSMutableData()
+        let destination = try XCTUnwrap(CGImageDestinationCreateWithData(encoded as CFMutableData, UTType.jpeg.identifier as CFString, 1, nil))
+        CGImageDestinationAddImage(destination, image, [kCGImageDestinationLossyCompressionQuality: 1] as CFDictionary)
+        XCTAssertTrue(CGImageDestinationFinalize(destination))
+        return encoded as Data
+    }
+
+    private static func readJPEG(_ piece: ConversationSend.Piece) throws -> CGImage {
+        let data = try XCTUnwrap(Data(base64Encoded: try XCTUnwrap(piece.data)))
+        let source = try XCTUnwrap(CGImageSourceCreateWithData(data as CFData, nil))
+        XCTAssertEqual(try XCTUnwrap(CGImageSourceGetType(source)) as String, UTType.jpeg.identifier)
+        let image = try XCTUnwrap(CGImageSourceCreateImageAtIndex(source, 0, nil))
+        XCTAssertGreaterThan(image.width, 0)
+        XCTAssertGreaterThan(image.height, 0)
+        return image
     }
     func testQueueKeepsOneVisualIdentityThroughDeliveryAndLatestLine() async throws {
         let model = ConversationModel()
@@ -1011,4 +1189,27 @@ private final class ConversationRequestStub: URLProtocol, @unchecked Sendable {
         client?.urlProtocolDidFinishLoading(self)
     }
     override func stopLoading() {}
+}
+
+/// Blocks only the first real image operation; the main actor can keep editing and sending guards can run.
+final class PhotoPreparationProbe: @unchecked Sendable {
+    let started = XCTestExpectation(description: "Detached image operation started")
+    private let lock = NSLock()
+    private let gate = DispatchSemaphore(value: 0)
+    private var observations = 0
+    private var mainThread = false
+    var count: Int { lock.withLock { observations } }
+    var usedMainThread: Bool { lock.withLock { mainThread } }
+    func observe() {
+        let first = lock.withLock {
+            observations += 1
+            mainThread = mainThread || Thread.isMainThread
+            return observations == 1
+        }
+        if first {
+            started.fulfill()
+            if !Thread.isMainThread { gate.wait() }
+        }
+    }
+    func release() { gate.signal() }
 }

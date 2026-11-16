@@ -1354,6 +1354,10 @@ export function create_commands(environment: NodeJS.ProcessEnv = {}): CliCommand
     option('kickoff_note_file', '--kickoff-note-file <TEXT>', text, {
       description: 'Edited Kickoff note, or - for stdin.',
     }),
+    option('message', '--message <TEXT>', text, { description: 'Revision guidance for revise.' }),
+    option('body_file', '--body-file <TEXT>', text, {
+      description: 'Revision guidance file for revise, or - for stdin.',
+    }),
     option('expected_proposal_revision', '--expected-proposal-revision <INTEGER>', integer(1), {
       description:
         'The revision of the proposal you inspected. Omission pins the command-time read.',

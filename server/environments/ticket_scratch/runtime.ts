@@ -1,8 +1,10 @@
 import type { ScratchRuntime, ScratchRuntimeOptions } from './contracts.ts';
 import { CLEANUP_INTERVAL_SECONDS } from './configuration.ts';
 import { observe_shutdown } from '../../conversation/shutdown.ts';
+import { createReadAccess } from '../../core/database/index.ts';
+import { RetainedWorkspaceReporter } from '../../ticket_workspaces/reporting.ts';
 
-/** Independent of readiness/dispatch, with Python's initial ten-minute wait. */
+/** Lifecycle changes wake cleanup; unrelated writes retain the periodic deadline. */
 export function create_ticket_scratch_runtime(options: ScratchRuntimeOptions): ScratchRuntime {
   const controller = new AbortController();
   let timer: NodeJS.Timeout | undefined;
@@ -10,36 +12,73 @@ export function create_ticket_scratch_runtime(options: ScratchRuntimeOptions): S
   let started = false;
   let closing: Promise<void> | undefined;
   let shutdown_settlement: Promise<void> | undefined;
+  let unsubscribe: (() => void) | undefined;
+  let previous: string | undefined;
+  let retry_at = 0;
+  let dirty = false;
+  const reporter = new RetainedWorkspaceReporter();
   const schedule = () => {
     if (controller.signal.aborted) return;
-    timer = setTimeout(() => {
-      timer = undefined;
-      flight = Promise.resolve()
-        .then(async () => {
-          controller.signal.throwIfAborted();
-          options.assert_database_owned();
-          const result = await options.clean_workspaces(options.db_path, options.now_unix(), {
-            signal: controller.signal,
-          });
-          if (controller.signal.aborted) return;
-          for (const item of result.skipped)
-            console.warn(`Ticket scratch kept: ${item.path} (${item.reason})`);
-        })
-        .catch((error: unknown) => {
-          if (!controller.signal.aborted) console.error('Ticket scratch cleanup failed', error);
-        })
-        .finally(() => {
-          flight = undefined;
-          schedule();
-        });
-    }, CLEANUP_INTERVAL_SECONDS * 1000);
+    clearTimeout(timer);
+    timer = setTimeout(wake, Math.max(0, retry_at - performance.now()));
     timer.unref();
+  };
+  const wake = () => {
+    if (controller.signal.aborted) return;
+    if (flight) {
+      dirty = true;
+      return;
+    }
+    clearTimeout(timer);
+    timer = undefined;
+    flight = Promise.resolve()
+      .then(async () => {
+        controller.signal.throwIfAborted();
+        options.assert_database_owned();
+        const reader = createReadAccess(options.db_path);
+        let snapshot: string;
+        try {
+          snapshot = reader.read((sql) =>
+            JSON.stringify(
+              sql.all(
+                'SELECT ticket_id,ended_at,deleted FROM ticket_workspace_lifecycle WHERE ended_at IS NOT NULL ORDER BY ticket_id',
+              ),
+            ),
+          );
+        } finally {
+          reader.close();
+        }
+        if (snapshot === previous && performance.now() < retry_at) return;
+        retry_at = performance.now() + CLEANUP_INTERVAL_SECONDS * 1000;
+        const result = await options.clean_workspaces(options.db_path, options.now_unix(), {
+          signal: controller.signal,
+        });
+        if (controller.signal.aborted) return;
+        reporter.report(result.skipped);
+        previous = snapshot;
+      })
+      .catch((error: unknown) => {
+        if (!controller.signal.aborted) {
+          console.error('Ticket scratch cleanup failed', error);
+          retry_at = performance.now() + CLEANUP_INTERVAL_SECONDS * 1000;
+        }
+      })
+      .finally(() => {
+        flight = undefined;
+        if (dirty) {
+          dirty = false;
+          wake();
+        } else schedule();
+      });
   };
   return {
     start() {
       if (started || closing) throw new Error('Ticket scratch runtime already started or stopped');
       started = true;
-      if (!options.test_mode) schedule();
+      if (!options.test_mode) {
+        unsubscribe = options.changes?.subscribe(wake);
+        wake();
+      }
     },
     close(stop) {
       if (closing) return closing;
@@ -51,6 +90,7 @@ export function create_ticket_scratch_runtime(options: ScratchRuntimeOptions): S
         ['ticket scratch'],
       );
       controller.abort();
+      unsubscribe?.();
       clearTimeout(timer);
       timer = undefined;
       return closing;

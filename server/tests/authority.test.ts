@@ -14,9 +14,12 @@ import { createDatabase } from '../core/database/index.ts';
 import { registerArea } from '../core/authority/register.ts';
 import { conversation_routes } from '../tickets/conversation_routes.ts';
 import { decision_routes } from '../tickets/decision_routes.ts';
-import { PlannerError } from '../core/contracts.ts';
+import { installCompatibility } from '../core/http/compatibility.ts';
+import { installMiddleware } from '../core/http/middleware.ts';
 import { loadConfig } from '../core/config.ts';
 import { buildClock } from '../core/clock.ts';
+import { send_message, sender_label } from '../message_delivery/service.ts';
+import { PromptDeliveryStarted, type ConversationSystem } from '../conversation/contracts.ts';
 // Distinct risk: a new area can bypass rank admission or lose matched parameter names.
 // Inject exercises Fastify's real plugin/hook boundary without a second server host.
 test('registered area applies rank admission for owner, Worker, Manager, and Chief', async () => {
@@ -30,15 +33,13 @@ c=sqlite3.connect(sys.argv[1]);c.executescript("CREATE TABLE managers(id TEXT PR
   ]);
   const db = createDatabase(path),
     app = Fastify();
-  app.setErrorHandler((error, _, reply) => {
-    if (error instanceof PlannerError) reply.code(error.statusCode).send(error.toPayload());
-    else reply.send(error);
-  });
+  installCompatibility(app);
   const config = loadConfig(undefined, {
     PLAN_DB_PATH: path,
     PLAN_TEST_MODE: '1',
     PLAN_FAKE_NOW: '2026-11-11T10:00:00+00:00',
   });
+  installMiddleware(app, config);
   registerArea(
     app,
     {
@@ -48,6 +49,11 @@ c=sqlite3.connect(sys.argv[1]);c.executescript("CREATE TABLE managers(id TEXT PR
           principal: services.identity(request).principal,
         }));
         scope.post('/projects', async () => ({ ok: true }));
+        scope.get('/identity-proof', async (request) => services.identity(request));
+        scope.post('/measures/read', async () => ({ ok: true }));
+        scope.post('/datasets/read', async () => ({ ok: true }));
+        scope.post('/messages/send', async (request) => services.identity(request));
+        scope.get('/updates/identity-proof', async (request) => services.identity(request));
         await scope.register(conversation_routes, services);
         await scope.register(decision_routes, services);
       },
@@ -170,6 +176,120 @@ c=sqlite3.connect(sys.argv[1]);c.executescript("CREATE TABLE managers(id TEXT PR
       expect(response.statusCode).toBe(400);
       expect(response.json().error.code).toBe('agent_forbidden');
     }
+    // The same mounted admission host now exercises the hosted configuration.
+    // Existing rank cases do not prove that an unnamed hosted request is nobody.
+    config.trusted_ingress_provider = 'tailscale';
+    config.trusted_ingress_allowed_login = 'owner@example.test';
+    config.trusted_ingress_canonical_origin = 'https://panels.example';
+    const unidentified = { kind: 'unidentified' as const, id: 'unidentified' };
+    const context = { principal: unidentified, conversationId: null };
+    expect(sender_label(context)).toBe('Unidentified caller');
+    const conversations = {} as ConversationSystem;
+    await expect(
+      send_message(
+        conversations,
+        db,
+        buildClock(config),
+        context,
+        { kind: 'owner', id: 'owner' },
+        'Help',
+      ),
+    ).rejects.toMatchObject({ code: 'validation', message: 'unsupported message principal kind' });
+    // A cached admission exercises the service exception without another host or a provider.
+    const chief_recipient = { kind: 'chief' as const, id: 'chief' };
+    const prior = {
+      recipient: chief_recipient,
+      conversation_id: null,
+      fate: new PromptDeliveryStarted(),
+    };
+    expect(
+      await send_message(
+        conversations,
+        db,
+        buildClock(config),
+        context,
+        chief_recipient,
+        'Help',
+        'queue',
+        {
+          admission: { preflight: async () => prior, finish() {}, abort_before_dispatch() {} },
+        },
+      ),
+    ).toBe(prior);
+    expect((await app.inject('/api/identity-proof')).json().principal).toEqual(unidentified);
+    const refused = await app.inject({ method: 'POST', url: '/api/projects', payload: {} });
+    expect(refused.statusCode).toBe(400);
+    expect(refused.json().error.code).toBe('agent_forbidden');
+    for (const url of ['/api/measures/read', '/api/datasets/read'])
+      expect((await app.inject({ method: 'POST', url, payload: {} })).statusCode).toBe(200);
+    const chief_message = await app.inject({
+      method: 'POST',
+      url: '/api/messages/send',
+      payload: { target: { kind: 'chief', id: 'chief' }, message: 'Help' },
+    });
+    expect(chief_message.statusCode).toBe(200);
+    expect(chief_message.json().principal).toEqual(unidentified);
+    const foreign_message = await app.inject({
+      method: 'POST',
+      url: '/api/messages/send',
+      payload: { target: { kind: 'ticket', id: 't' }, message: 'Help' },
+    });
+    expect(foreign_message.statusCode).toBe(400);
+    expect(foreign_message.json().error.code).toBe('agent_forbidden');
+    const malformed = {
+      method: 'POST' as const,
+      url: '/api/messages/send',
+      headers: { 'content-type': 'application/json' },
+      payload: '{',
+    };
+    expect((await app.inject(malformed)).json().error.code).toBe('agent_forbidden');
+    const authenticated_malformed = await app.inject({
+      ...malformed,
+      headers: { ...malformed.headers, ...managerHeaders },
+    });
+    expect(authenticated_malformed.statusCode).toBe(422);
+    expect(authenticated_malformed.json().detail[0].type).toBe('json_invalid');
+    const invalid_malformed = await app.inject({
+      ...malformed,
+      headers: { ...malformed.headers, authorization: 'Bearer invalid' },
+    });
+    expect(invalid_malformed.statusCode).toBe(400);
+    expect(invalid_malformed.json().error.code).toBe('agent_forbidden');
+    const named = await app.inject({
+      url: '/api/identity-proof',
+      headers: {
+        ...managerHeaders,
+        'x-plan-actor': 'chief',
+        'x-plan-conversation-id': 'spoofed',
+      },
+    });
+    expect(named.json()).toEqual({
+      principal: { kind: 'manager', id: 'm' },
+      conversationId: 'c_manager',
+    });
+    const owner_headers = {
+      'tailscale-user-login': 'owner@example.test',
+      'x-plan-actor': 'manager',
+      'x-plan-manager-id': 'm',
+      'x-plan-conversation-id': 'spoofed',
+    };
+    const trusted_owner = await app.inject({ url: '/api/identity-proof', headers: owner_headers });
+    expect(trusted_owner.json()).toEqual({
+      principal: { kind: 'owner', id: 'owner' },
+      conversationId: null,
+    });
+    // Owner ingress wins legacy role claims on update routes too.
+    const update = await app.inject({ url: '/api/updates/identity-proof', headers: owner_headers });
+    expect(update.json()).toEqual({
+      principal: { kind: 'owner', id: 'owner' },
+      conversationId: null,
+    });
+    const owner_malformed = await app.inject({
+      ...malformed,
+      headers: { ...malformed.headers, 'tailscale-user-login': 'owner@example.test' },
+    });
+    expect(owner_malformed.statusCode).toBe(422);
+    expect(owner_malformed.json().detail[0].type).toBe('json_invalid');
     // Register the real conversation plugin: the retired endpoint must stay absent.
     for (const headers of [{}, { 'x-plan-actor': 'worker', 'x-plan-ticket-id': 't' }])
       expect(

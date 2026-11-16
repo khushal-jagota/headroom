@@ -27,8 +27,36 @@ import type { Json } from './views.ts';
 import { notify_review_transfers } from './review_transfer.ts';
 import { workspace_ticket, workspace_field } from './workspace/views.ts';
 import { decision_routes } from './decision_routes.ts';
-import { parse_next_ceiling } from './logic/admission.ts';
 import { add_work_attention, read_running_conversation_count } from '../work_attention.ts';
+
+export function write_reject_ticket_proposal(
+  tx: TransactionSql,
+  ticket_id: string,
+  raw: Record<string, unknown>,
+  principal: Principal,
+  now: number,
+) {
+  const message = body_opt_str(raw, 'message'),
+    decision_id = body_opt_str(raw, 'decision_id');
+  const revision = raw.expected_proposal_revision ?? null;
+  if (
+    revision !== null &&
+    (typeof revision !== 'number' || !Number.isInteger(revision) || revision <= 0)
+  )
+    throw new PlannerError('validation', 'expected_proposal_revision must be a positive integer');
+  if (raw.message != null && revision === null)
+    throw new PlannerError('validation', 'a decision note requires expected_proposal_revision');
+  return ticket_json(
+    data.reject_proposal(tx, ticket_id, {
+      message,
+      decision_id,
+      expected_proposal_revision: revision as number | null,
+      principal,
+      now,
+    }),
+    now,
+  );
+}
 
 export function body_str(body: Json, key: string, fallback = ''): string {
   const raw = key in body ? body[key] : fallback;
@@ -527,8 +555,9 @@ export const routes: FastifyPluginAsync<AreaServices> = async (app, services) =>
         field = request.params.field;
       const definition = services.database.read((sql) => data.read_ticket(sql, id).workflow);
       validate_field(definition, field);
-      const next_ceiling = parse_next_ceiling(next, definition),
-        next_holder = required_principal(raw.next_holder, 'next_holder'),
+      const next_ceiling = next,
+        next_holder =
+          raw.next_holder == null ? null : required_principal(raw.next_holder, 'next_holder'),
         now = services.clock.nowUnix();
       return services.database.write((tx) =>
         ticket_json(
@@ -551,30 +580,14 @@ export const routes: FastifyPluginAsync<AreaServices> = async (app, services) =>
     '/tickets/:ticket_id/reject',
     async (request, reply) => {
       if (!dictionaryBody(request.body, reply)) return;
-      const raw = request.body;
-      const message = body_opt_str(raw, 'message'),
-        decision_id = body_opt_str(raw, 'decision_id');
-      const revision = raw.expected_proposal_revision ?? null;
-      if (
-        revision !== null &&
-        (typeof revision !== 'number' || !Number.isInteger(revision) || revision <= 0)
-      )
-        throw new PlannerError(
-          'validation',
-          'expected_proposal_revision must be a positive integer',
-        );
-      if (raw.message != null && revision === null)
-        throw new PlannerError('validation', 'a decision note requires expected_proposal_revision');
-      const now = services.clock.nowUnix();
+      const now = services.clock.nowUnix(),
+        raw = request.body;
       return services.database.write((tx) =>
-        ticket_json(
-          data.reject_proposal(tx, request.params.ticket_id, {
-            message,
-            decision_id,
-            expected_proposal_revision: revision as number | null,
-            principal: services.identity(request).principal,
-            now,
-          }),
+        write_reject_ticket_proposal(
+          tx,
+          request.params.ticket_id,
+          raw,
+          services.identity(request).principal,
           now,
         ),
       );

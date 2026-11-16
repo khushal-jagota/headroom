@@ -84,7 +84,13 @@ export function decide_accept(
   const target = machine.advance_target(o.worker_type_definition, ticket.stage);
   if (target === null) throw new PlannerError('validation', 'stage has no advance target');
   const ceiling = machine.resolve_next_ceiling(target, o.next_ceiling, o);
-  if (o.next_holder === null)
+  const next_holder =
+    o.next_holder ??
+    (machine.completion_follows(ticket.stage, o.worker_type_definition) ||
+    machine.consequences_follows(ticket.stage, o.worker_type_definition)
+      ? ticket.ceiling_holder
+      : null);
+  if (next_holder === null)
     throw new PlannerError('scope_missing', 'approval requires the holder for the next ceiling', {
       missing: ['next_holder'],
     });
@@ -93,7 +99,7 @@ export function decide_accept(
     o.field,
     o.edited_body ?? proposal.body,
     ceiling,
-    o.next_holder,
+    next_holder,
     o.worker_type_definition,
     o.approval,
   );
