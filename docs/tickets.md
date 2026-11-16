@@ -22,14 +22,11 @@ A recap is 80 characters at most. The server refuses a recap that names an inter
 Worker files a proposal for the current stage
                     │
              proposal resolver
-          ┌─────────┴──────────┐
-     Consequences         decision stage
-          │                    │
- verified report settles   ceiling decides
-          │                 │         │
-         Done           auto-settle   review
-                            │         │
-                         next stage ◄─┘
+                 ceiling decides
+                  │         │
+             auto-settle   review
+                  │         │
+                  next stage
 ```
 
 
@@ -37,15 +34,15 @@ A proposal waits briefly for a busy database before it changes the record. If th
 
 Only the Ticket's own Worker files proposals. Khushal, Chief, and Managers decide them, and never write them. The proposal resolver is the only writer that makes stage text canonical and moves a stage. Each approval moves one stage.
 
-Earlier approvals name the next ceiling and holder. Approval of the last decision authorizes Consequences through Done without another reviewer choice. The Worker performs the authorized follow-through, verifies it, and submits its report. The resolver settles that report automatically and finishes the Ticket.
+Approvals name the next ceiling and holder. The Worker performs authorized follow-through in Consequences and submits a verified report. The ceiling holder reviews the report, and acceptance moves the Ticket to Done.
 
-By default a new Ticket's ceiling is on Brief and its holder is whoever created it. The Brief then waits for that person, and their approval sets the first real ceiling. A creator can set a later decision ceiling up front, but never Consequences or Done.
+By default a new Ticket's ceiling is on Brief and its holder is whoever created it. The Brief then waits for that person, and their approval sets the first real ceiling. A creator can set a later decision ceiling up front, including Consequences, but never Done.
 
 On a collaborative stage, the person can also complete the gate directly, without a Worker proposal. That uses the same resolver and still moves one stage. A reply typed into the conversation never decides a proposal. Approval and Send back enforce any supplied proposal revision in the same write as the decision. Protected decision receipts retain an exact command and its outcome for the Ticket's lifetime. Repeating that command returns its saved result, even after the Ticket advances.
 
 The browser and iPhone use protected decisions on Review and Ticket pages. The older accept and reject routes remain available to the CLI and existing callers through the same proposal writers. Those routes do not provide receipt recovery.
 
-Each settled stage remembers who approved it: a named person or agent, or auto-accepted when it settled below the ceiling or completed Consequences. Editing the text clears that approval.
+Each settled stage remembers who approved it: a named person or agent, or auto-accepted when it settled below the ceiling. Editing the text clears that approval.
 
 ## Ceiling, holder, and assignment
 

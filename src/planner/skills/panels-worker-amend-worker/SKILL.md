@@ -90,4 +90,4 @@ Bring the repository in line through the ordinary branch and staging route. This
 
 A seeding pass on a fresh deploy does not apply your amendment: seeding declines a table that already holds rows. Only the explicit write does it.
 
-A good Consequences is short and verified: what changed, what the live store reports now, who ran the write, and what repository work finished. Submit the report with `panels worker propose`. It settles and finishes the Ticket without another approval. If authorized follow-through cannot finish, request help instead of reporting completion.
+A good Consequences is short and verified: what changed, what the live store reports now, who ran the write, and what repository work finished. Submit the report with `panels worker propose`. The ceiling holder reviews it before the Ticket reaches Done. If authorized follow-through cannot finish, request help instead of reporting completion.

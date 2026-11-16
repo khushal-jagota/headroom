@@ -1112,6 +1112,8 @@ def create_ticket(
             manager_kind=manager_kind,
             manager_id=manager_id,
         )
+        if stated_ceiling is not None:
+            admission.validate_creation_ceiling(stated_ceiling)
         ceiling = (
             default_ceiling
             if stated_ceiling is None

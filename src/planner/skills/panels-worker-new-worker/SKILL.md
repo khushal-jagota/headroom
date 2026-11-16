@@ -77,7 +77,7 @@ Read the record back with `panels worker-type show <type>`. Confirm that creatio
 
 Update the repository seed through the ordinary branch route for fresh installations. Existing Tickets keep their saved workflows when a preset changes.
 
-Record what was saved, what the live store reports, and the completed repository work. Submit the verified report with `panels worker propose`. It settles and finishes the Ticket without another approval. If the approved work cannot finish, request help and preserve the actual result.
+Record what was saved, what the live store reports, and the completed repository work. Submit the verified report with `panels worker propose`. The ceiling holder reviews it before the Ticket reaches Done. If the approved work cannot finish, request help and preserve the actual result.
 
 ### Working disciplines
 

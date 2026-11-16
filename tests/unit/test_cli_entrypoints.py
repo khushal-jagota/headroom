@@ -392,7 +392,8 @@ def test_final_proposal_accept_omits_onward_scope_but_earlier_gate_requires_it(
     """
     posts: list[dict[str, Any]] = []
     record: dict[str, Any] = {
-        "id": "t_final", "stage": "review", "pending_proposal": {"field": "result", "revision": 7},
+        "id": "t_final", "stage": "land",
+        "pending_proposal": {"field": "consequences", "revision": 7},
         "workflow": {
             "stages": [
                 {"id": "brief", "gating_field": "brief"},
@@ -408,7 +409,7 @@ def test_final_proposal_accept_omits_onward_scope_but_earlier_gate_requires_it(
         if method == "GET":
             assert path == "/api/tickets"
             return record
-        assert (method, path) == ("POST", "/api/tickets/t_final/accept/result")
+        assert (method, path) == ("POST", "/api/tickets/t_final/accept/consequences")
         posts.append(kwargs["json_body"])
         return {"id": "t_final"}
 
@@ -418,8 +419,8 @@ def test_final_proposal_accept_omits_onward_scope_but_earlier_gate_requires_it(
     assert accepted.exit_code == 0, accepted.output
     assert posts == [{"expected_proposal_revision": 7, "decision_id": "t_final:7:accept"}]
 
-    record["stage"] = "brief"
-    record["pending_proposal"] = {"field": "brief", "revision": 8}
+    record["stage"] = "review"
+    record["pending_proposal"] = {"field": "result", "revision": 8}
     refused = runner.invoke(cli_main.main, ["ticket", "proposal", "t_final", "accept", "--json"])
     assert refused.exit_code != 0
     assert "approval requires --ceiling" in refused.output

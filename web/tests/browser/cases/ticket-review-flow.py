@@ -1202,7 +1202,7 @@ def run(browser, urls):
     leash.get_by_role("listbox").press("Enter")
     expect(leash.get_by_role("listbox")).to_have_attribute("aria-label", "Who holds the ceiling")
     expect(leash.locator('[data-ceiling-part="ceiling"] .picker-rail-row-detail')).to_have_text(
-        "Done"
+        "Success"
     )
     leash.get_by_role("listbox").press("Escape")
     expect(leash.get_by_role("listbox")).to_have_count(0)
@@ -1236,7 +1236,7 @@ def run(browser, urls):
     expect(leash.get_by_role("listbox")).to_have_count(0)
     wait_for_write(lambda: len(ceiling_writes) == 2)
     assert ceiling_writes[-1] == {
-        "ceiling": "done",
+        "ceiling": "needs_success_condition",
         "ceiling_holder": {"kind": "chief", "id": "chief"},
     }, ceiling_writes
     drive("window.__batch()")
@@ -1265,7 +1265,7 @@ def run(browser, urls):
     assert len(ceiling_writes) == 3, ceiling_writes
     assert (
         leash.locator("[data-scope-ceiling]").get_attribute("aria-label")
-        == "Approved until Done, then User reviews"
+        == "Approved until Success, then User reviews"
     )
     leash.locator("[data-scope-ceiling]").click()
     page.locator(".ticket-title").click()

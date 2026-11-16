@@ -69,7 +69,7 @@ import XCTest
         LocalStore.shared.saveDraft("An old proposal edit", server: "https://review.invalid", id: identity + ":edit")
         let decision = ReviewDecision()
         await decision.load(item: item, api: api)
-        XCTAssertEqual(decision.approvalStages.map(\.id), decision.manifest?.stages.map(\.id) ?? [])
+        XCTAssertEqual(decision.approvalStages.map(\.id), decision.manifest?.stages.filter { $0.id != "done" }.map(\.id) ?? [])
         XCTAssertEqual(decision.nextStage, "needs_implementation")
         let accepted = await decision.approve(api: api, ceiling: "needs_implementation", holder: Principal(kind: "owner", id: "owner"))
         XCTAssertTrue(accepted)
