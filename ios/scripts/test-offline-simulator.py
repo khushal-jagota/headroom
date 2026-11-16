@@ -1224,7 +1224,7 @@ def main() -> int:
                     )
                 )
                 return
-            if TABLE_SCROLL_SMOKE and path == "/api/goals":
+            if TABLE_SCROLL_SMOKE and not state.get("workspace_fixture") and path == "/api/goals":
                 self.respond(dict(
                     goals=[], status_date="2026-11-04", next_refresh_at=time.time() + 3600
                 ))
