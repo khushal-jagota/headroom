@@ -81,13 +81,17 @@ def build_v1(root: Path, sha: str, name: str) -> tuple[Path, dict[str, Any]]:
 
 def fixture(current: Path, url: str, root: Path, service: str) -> dict[str, Any]:
     """Copy a baseline-created synthetic database, never stamp an old revision."""
-    project = api(url.removesuffix("/health") + "/projects", {"name": "Cutover fixture"})
+    project = api(
+        url.removesuffix("/health") + "/projects",
+        {"name": "Cutover fixture", "summary": "Synthetic hosted migration proof"},
+    )
     ids = []
     for title in ("Unfinished Consequences fixture", "Done fixture"):
         record = api(
             url.removesuffix("/health") + "/tickets",
             {
                 "title": title,
+                "brief": "Synthetic fixture. Never dispatch this Ticket.",
                 "project_id": project["id"],
                 "worker_type": "coding",
                 "ceiling": "needs_brief",
