@@ -2271,7 +2271,19 @@ async def _presence_phases(source: _Source, node: Any, paired: Any, paths: list[
     await p("contact")
     before = await paired(dict(op="snapshot"))
     began = time.perf_counter()
-    await asyncio.sleep(10.05)
+
+    def contact_flushed(path: Path) -> bool:
+        with closing(sqlite3.connect(f"{path.as_uri()}?mode=ro", uri=True)) as connection:
+            row = connection.execute(
+                "SELECT last_contact_at_ms FROM mac_executor_presence WHERE machine_id=?",
+                (ORIGINAL_MAC_MACHINE_ID,),
+            ).fetchone()
+            return bool(row == (NOW + 7,))
+
+    # Each timer owns a separate flush. Compare only after both durable writes settle.
+    async with asyncio.timeout(20):
+        while not all(contact_flushed(path) for path in paths):
+            await asyncio.sleep(0.02)
     contact_seconds = time.perf_counter() - began
     assert (await state())["record"]["last_contact_at_ms"] == NOW + 7
     assert await paired(dict(op="snapshot")) == before
@@ -2518,7 +2530,18 @@ async def _presence_phases(source: _Source, node: Any, paired: Any, paths: list[
     await p("mode", mode="fail_contact")
     await clock(source.now + 1)
     await p("contact")
-    await asyncio.sleep(10.05)
+    # The failure path also waits for actual completion rather than a timer margin.
+    assert source.presence is not None
+    async with asyncio.timeout(20):
+        while True:
+            flush = source.presence._contact_flush
+            candidate_attempts = await node(dict(op="presence", method="callbacks"))
+            if (
+                flush is not None and flush.done()
+                and candidate_attempts["value"][-1:] == [["contact_failure"]]
+            ):
+                break
+            await asyncio.sleep(0.02)
     assert source.presence is not None and source.presence._contact_flush is not None
     assert isinstance(source.presence._contact_flush.exception(), OSError)
     candidate_attempts = await node(dict(op="presence", method="callbacks"))
