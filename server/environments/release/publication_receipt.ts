@@ -45,11 +45,14 @@ import {
   require_publication_run,
 } from './publication_identity.ts';
 import type { PublicationSourceRun } from './publication_contracts.ts';
+import { mac_home_receipt_options, validate_mac_home_receipt } from './mac_home_receipt.ts';
+import type { MacHomeReceipt, MacHomeReceiptOptions } from './mac_home_receipt.ts';
 
 export type PublicationReceipt = Omit<PublishedUpdate, 'proof_artifact_id' | 'mac'> & {
   readonly mac: PublishedMacUpdate;
+  readonly mac_home?: MacHomeReceipt;
 };
-export interface PublicationReceiptOptions {
+export interface PublicationReceiptOptions extends Partial<MacHomeReceiptOptions> {
   readonly source_root: string;
   readonly linux_artifact_zip: string;
   readonly linux_build_artifact_zip: string;
@@ -161,6 +164,7 @@ export async function write_publication_receipt(
   ]);
   const artifact_id = integer(Number(publication_id(options.artifact_id, 'artifact ID'))),
     mac_artifact_id = integer(Number(publication_id(options.mac_artifact_id, 'Mac artifact ID')));
+  const mac_home_options = mac_home_receipt_options({ ...options });
   publication_id(options.linux_build_artifact_id, 'Linux evidence artifact ID');
   const linux_executor_fields = [
     options.linux_executor_artifact_zip,
@@ -205,6 +209,20 @@ export async function write_publication_receipt(
         name: 'panels-publication-build',
       },
       { path: options.mac_artifact_zip, id: options.mac_artifact_id, name: 'panels-mac-runtime' },
+      ...(mac_home_options
+        ? [
+            {
+              path: mac_home_options.mac_home_artifact_zip,
+              id: mac_home_options.mac_home_artifact_id,
+              name: 'panels-mac-home',
+            },
+            {
+              path: mac_home_options.mac_home_build_artifact_zip,
+              id: mac_home_options.mac_home_build_artifact_id,
+              name: 'panels-mac-home-build',
+            },
+          ]
+        : []),
       ...(has_linux_executor
         ? [
             {
@@ -408,6 +426,18 @@ export async function write_publication_receipt(
         execution,
       );
     }
+    let mac_home: MacHomeReceipt | undefined;
+    if (mac_home_options) {
+      const home_work = join(work, 'mac-home');
+      await mkdir(home_work, { mode: 0o700 });
+      mac_home = await validate_mac_home_receipt(
+        mac_home_options,
+        source_run,
+        home_work,
+        execution,
+        member,
+      );
+    }
     const ios_review = await check_head_review(source, source_run.source_sha, execution);
     for (const artifact of artifacts)
       if ((await sha256_file(artifact.path)) !== artifact.sha256)
@@ -420,6 +450,7 @@ export async function write_publication_receipt(
       manifest: actual_manifest,
       archive_sha256,
       mac: published_mac,
+      ...(mac_home ? { mac_home } : {}),
       ...(published_linux_executor ? { linux_executor: published_linux_executor } : {}),
       schema_floor: SUPPORTED_UPDATE_SCHEMA_FLOOR,
       expires_at: new Date(Date.now() + UPDATE_ARTIFACT_RETENTION_DAYS * 86_400_000).toISOString(),

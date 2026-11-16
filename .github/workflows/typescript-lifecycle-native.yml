@@ -153,14 +153,14 @@ jobs:
           native_evidence="$RUNNER_TEMP/lifecycle-native-evidence"
           native_tmp=$(mktemp -d "/tmp/p21-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.XXXXXX")
           native_tmp=$(cd "$native_tmp" && pwd -P)
-          trap 'rm -rf -- "$native_tmp"' EXIT
+          trap 'native_exit=$?; if [ "$native_exit" -eq 0 ]; then rm -rf -- "$native_tmp"; fi' EXIT
           mkdir -p "$native_root"/{home/.codex,home/.claude,home/.hermes,config,cache,data,state,runtime,logs,backups,workspace,files,tickets,app} "$native_evidence"
           printf '{}\n' > "$native_root/config.yaml"
           native_revision=$(git rev-parse HEAD)
           # Scrub before pip's editable build, npm lifecycle scripts, or any repository launcher.
           env -i PATH="$PATH" LANG=en_US.UTF-8 LC_ALL=en_US.UTF-8 \
             GITHUB_ACTIONS=true GITHUB_WORKSPACE="$GITHUB_WORKSPACE" \
-            GITHUB_RUN_ID="$GITHUB_RUN_ID" MAC_SOURCE_REVISION="$native_revision" \
+            GITHUB_RUN_ID="$GITHUB_RUN_ID" GITHUB_RUN_ATTEMPT="$GITHUB_RUN_ATTEMPT" MAC_SOURCE_REVISION="$native_revision" \
             HOME="$native_root/home" \
             CODEX_HOME="$native_root/home/.codex" CLAUDE_CONFIG_DIR="$native_root/home/.claude" \
             HERMES_HOME="$native_root/home/.hermes" PLAN_HERMES_HOME="$native_root/home/.hermes" \
@@ -183,15 +183,39 @@ jobs:
             PLAN_SERVER_LIFECYCLE_LEASE_PATH="$native_tmp/lifecycle.lock" \
             PLAN_SERVER_URL=http://127.0.0.1:0 PLAN_PORT=0 \
             PLAN_DISPATCH_ENABLED=false PLAN_TEST_MODE=1 \
-            NATIVE_EVIDENCE="$native_evidence" \
+            NATIVE_EVIDENCE="$native_evidence" PANELS_NATIVE_HOME_TEST=1 \
             bash --noprofile --norc -euo pipefail <<'NATIVE' 2>&1 | tee "$native_evidence/job.log"
-          trap 'native_status=$?; printf "seconds=%s\nexit_code=%s\n" "$SECONDS" "$native_status" > "$NATIVE_EVIDENCE/job-time.txt"' EXIT
+          native_finish() {
+            local native_status=$?
+            trap - EXIT
+            set +e
+            if [[ -n "${home_output:-}" && -n "${home_evidence:-}" ]]; then
+              for proof in admission.json mac-home-build.json boot-proof.json; do
+                if [[ -f "$home_output/$proof" ]]; then
+                  cp "$home_output/$proof" "$home_evidence/$proof"
+                fi
+              done
+              for log in boot.stdout.log boot.stderr.log; do
+                if [[ -f "$home_output/proof-work/$log" ]]; then
+                  cp "$home_output/proof-work/$log" "$home_evidence/$log"
+                fi
+              done
+              for log in boot.phase.log boot.supervisor.stdout.log boot.supervisor.stderr.log; do
+                if [[ -f "$home_output/proof-work/$log" ]]; then
+                  cp "$home_output/proof-work/$log" "$home_evidence/$log"
+                fi
+              done
+            fi
+            printf 'seconds=%s\nexit_code=%s\n' "$SECONDS" "$native_status" > "$NATIVE_EVIDENCE/job-time.txt"
+            exit "$native_status"
+          }
+          trap native_finish EXIT
           node -e '
             const fs = require("node:fs"), os = require("node:os");
             fs.writeFileSync(process.env.NATIVE_EVIDENCE + "/platform.json", JSON.stringify({
               platform: process.platform, architecture: process.arch, node: process.version,
               executable: process.execPath, os_release: os.release(),
-              boundary: "Existing registry/archive sequences, Worker libproc identity and signals, home APP custody and control socket restart, and owned preview listener/connection with native resource samples. No browser, provider, executor or service.",
+              boundary: "Existing registry/archive sequences, Worker identity, home APP custody, preview/metrics ABI, and first-home installation against owned synthetic LaunchAgents. No browser, provider, executor or live installation.",
               hosted_cost: "OPEN until this job completes; each existing case and job elapsed time are preserved separately."
             }, null, 2) + "\n");
             if (process.platform !== "darwin" || process.arch !== "arm64")
@@ -334,6 +358,31 @@ jobs:
               exit 1
             fi
           done
+          # Build the home from separate production inputs, then prove the sealed archive after relocation.
+          home_inputs="$TMPDIR/mac-home-inputs"
+          home_output="$TMPDIR/mac-home-output"
+          home_evidence="$NATIVE_EVIDENCE/mac-home"
+          mkdir -p "$home_inputs" "$home_evidence"
+          git archive --format=tar "$MAC_SOURCE_REVISION" | tar -xf - -C "$home_inputs"
+          NODE_ENV=production python -I -S -B "$home_inputs/scripts/development_safety/bootstrap.py" npm --prefix server ci
+          NODE_ENV=production python -I -S -B "$home_inputs/scripts/development_safety/bootstrap.py" npm --prefix agent_backends install
+          python -I -S -B "$home_inputs/scripts/development_safety/bootstrap.py" npm --prefix web ci
+          python -I -S -B "$home_inputs/scripts/development_safety/bootstrap.py" npm --prefix web run build
+          python -I -S -B scripts/development_safety/bootstrap.py check-node server
+          node server/environments/release/mac_home_main.ts \
+            --source "$GITHUB_WORKSPACE" --revision "$MAC_SOURCE_REVISION" --output "$home_output" \
+            --node-modules "$home_inputs/server/node_modules" \
+            --agent-backends "$home_inputs/agent_backends" --web-dist "$home_inputs/web/dist" \
+            --public-cli-entrypoint server/cli/main.ts \
+            > "$home_evidence/build.json" 2> "$home_evidence/build.stderr.log"
+          # The canonical producer CLI retires its app path, admits the archive, and proves clean foreground boot.
+          cp "$home_output"/*.json "$home_evidence/"
+          cp "$home_output/panels-app.tar.gz" "$home_evidence/panels-app.tar.gz"
+          export MAC_HOME_BUILD_METADATA="$home_output/mac-home-build.json"
+          export MAC_HOME_PRODUCTION_INPUTS="$home_inputs"
+          python -I -S -B scripts/development_safety/bootstrap.py npm --prefix server run test -- \
+            installation/home.native.test.ts --reporter=junit \
+            --outputFile "$NATIVE_EVIDENCE/first-home-darwin.xml"
           NATIVE
       - name: Preserve native ABI evidence
         if: always()

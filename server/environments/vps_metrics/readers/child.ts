@@ -5,6 +5,7 @@ import { Store } from '../data/store.ts';
 import { encode } from '../codec.ts';
 import { MetricsOperationalError } from '../contracts.ts';
 import { error_wire } from '../errors.ts';
+import { begin_startup_phase } from '../../../core/startup_diagnostics.ts';
 import type { ReadAccess } from '../../../core/database/contracts.ts';
 import type {
   ReadJob,
@@ -44,10 +45,14 @@ process.once('message', async (boot: ReaderBoot) => {
   }
   let reads: ReadAccess | undefined;
   try {
+    const watchdog_ready = begin_startup_phase('metrics reader watchdog');
     await handshake('ready');
+    watchdog_ready();
     // READY precedes SQLite open so parent death also bounds connection startup.
+    const database_ready = begin_startup_phase('metrics reader database');
     reads = createReadAccess(boot.path, { busyTimeoutMs: 500 });
     const store = new Store(boot.path, boot.config);
+    database_ready();
     let active = false;
     process.on('message', async (job: ReadJob) => {
       if (job.type !== 'read' || job.incarnation !== boot.incarnation) return;

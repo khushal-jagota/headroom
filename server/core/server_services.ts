@@ -1,5 +1,6 @@
 import { dirname, join } from 'node:path';
 import { publish_worker_skills } from '../worker_settings/startup.ts';
+import { begin_startup_phase } from './startup_diagnostics.ts';
 import { UpdateBarrier } from '../environments/update_barrier.ts';
 import type { FastifyInstance, FastifyListenOptions } from 'fastify';
 import { createAreasRuntime } from '../areas.ts';
@@ -371,6 +372,7 @@ export class ServerServices {
         : (options.testAreas ?? []);
     this.assert_startup_open();
     const background = this.create_background(testContext, environments);
+    const application_ready = begin_startup_phase('HTTP composition');
     const app = await createApp(config, {
       own_app: (created) => {
         this.app.own(created);
@@ -423,6 +425,7 @@ export class ServerServices {
       updateBarrier: this.update_barrier,
       executor,
     });
+    application_ready();
     this.app.own(app);
     this.assert_startup_open();
     if (executor) {
@@ -433,7 +436,9 @@ export class ServerServices {
       (destination) =>
         destination === HOME_MACHINE_ID || executor?.is_present(destination) === true,
     );
+    const routes_ready = begin_startup_phase('HTTP routes');
     await app.ready();
+    routes_ready();
     this.assert_startup_open();
     return { app, background };
   }
@@ -497,9 +502,15 @@ export class ServerServices {
   }
 
   async setup(): Promise<string> {
+    const record_ready = begin_startup_phase('record');
     const { context, integrity_issues } = await this.create_record();
+    record_ready();
+    const conversation_ready = begin_startup_phase('conversation');
     const conversation = this.create_conversation(context);
+    conversation_ready();
+    const environments_ready = begin_startup_phase('environment composition');
     const environments = await this.create_environments(conversation.testContext);
+    environments_ready();
     this.assert_startup_open();
     const { app, background } = await this.create_http(context, conversation, environments);
     this.assert_startup_open();
@@ -516,30 +527,44 @@ export class ServerServices {
       if (normal_starting) return normal_starting;
       normal_starting = Promise.resolve().then(async () => {
         if (this.lifetime.isClosing()) return;
+        const skills_ready = begin_startup_phase('skills');
         await publish_worker_skills(this.config);
+        skills_ready();
+        const executor_ready = begin_startup_phase('executor');
         await this.executor.value?.start();
+        executor_ready();
         this.assert_startup_open();
         this.areas.startRecordReplay(conversation.core?.workspace_admission);
         this.assert_startup_open();
+        const navigation_ready = begin_startup_phase('navigation');
         await this.areas.startNavigationServices();
+        navigation_ready();
         this.assert_startup_open();
         this.start_recovery(context, conversation, integrity_issues);
         this.environmentsStarting = Promise.resolve().then(() => {
           if (!this.lifetime.isClosing()) return environments?.start();
         });
+        const environments_started = begin_startup_phase('environment services');
         await this.environmentsStarting;
+        environments_started();
         this.assert_startup_open();
         if (conversation.core && !this.config.test_mode) {
+          const janitor_ready = begin_startup_phase('idle child janitor');
           await conversation.core.start_idle_child_janitor();
+          janitor_ready();
           this.assert_startup_open();
         }
+        const background_ready = begin_startup_phase('background services');
         await background.start();
+        background_ready();
         this.assert_startup_open();
         normal_started = true;
       });
       return normal_starting;
     };
+    const previews_ready = begin_startup_phase('previews');
     await this.areas.startPreviewServices();
+    previews_ready();
     this.assert_startup_open();
     if (!startup_frozen) await release_normal_work();
     let next_probe = 0;
@@ -571,11 +596,16 @@ export class ServerServices {
     }, 250);
     this.normal_work_timer.unref();
     const inherited = process.env.PLAN_SERVER_LISTENER_FD;
+    const listening = begin_startup_phase('HTTP listener');
     if (inherited !== undefined) {
       const fd = Number(inherited);
       if (!Number.isInteger(fd) || fd < 0) throw new Error('invalid PLAN_SERVER_LISTENER_FD');
-      return app.listen({ fd } as FastifyListenOptions & { fd: number });
+      const address = await app.listen({ fd } as FastifyListenOptions & { fd: number });
+      listening();
+      return address;
     }
-    return app.listen({ host: '127.0.0.1', port: this.config.port });
+    const address = await app.listen({ host: '127.0.0.1', port: this.config.port });
+    listening();
+    return address;
   }
 }

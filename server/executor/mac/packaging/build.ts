@@ -37,7 +37,7 @@ export interface MacPackageOptions {
   readonly server_url: string;
   readonly backend_path: string;
 }
-async function macho_arm64(path: string, executable = false): Promise<void> {
+export async function macho_arm64(path: string, executable = false): Promise<void> {
   const info = await lstat(path);
   if (!info.isFile() || (executable && !(info.mode & 0o111)))
     throw new Error(`Required native file is not regular/executable: ${path}`);
@@ -55,7 +55,7 @@ async function macho_arm64(path: string, executable = false): Promise<void> {
     await file.close();
   }
 }
-async function paths(root: string): Promise<string[]> {
+export async function paths(root: string): Promise<string[]> {
   const result: string[] = [];
   for (const entry of await readdir(root, { withFileTypes: true })) {
     const path = join(root, entry.name);
@@ -64,7 +64,7 @@ async function paths(root: string): Promise<string[]> {
   }
   return result;
 }
-async function node_version(root: string): Promise<string> {
+export async function node_version(root: string): Promise<string> {
   const header = await readFile(join(root, 'include/node/node_version.h'), 'utf8');
   const numbers = ['MAJOR', 'MINOR', 'PATCH'].map((name) =>
     Number(new RegExp(`NODE_${name}_VERSION\\s+(\\d+)`).exec(header)?.[1] ?? NaN),

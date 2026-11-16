@@ -25,6 +25,10 @@ import ts from 'typescript';
 import { inside } from '../../files/logic/paths.ts';
 import { ChildProcesses } from '../../lifecycle/owned_processes.ts';
 import {
+  VIEW_PROTOCOL_VERSION,
+  VIEW_PROJECTION_VERSION,
+} from '../../conversation/views/contracts.ts';
+import {
   copy_installer_runtime,
   parse_installer_file_manifest,
   write_installer_file_manifest,
@@ -33,7 +37,14 @@ import {
   INSTALLER_ENTRY,
   INSTALLER_RECIPE_PATH,
   INSTALLER_SOURCE_FILES,
+  DARWIN_HOME_INSTALLER_SOURCE_FILES,
+  DARWIN_HOME_INSTALLER_PACKAGE_ROOTS,
+  DARWIN_HOME_INSTALLER_KOFFI_OPTIONAL_ROOT,
 } from './installer_bundle_configuration.ts';
+import { MAC_HOME } from './contracts.ts';
+import { compose_mac_home_payload } from './mac_home_payload.ts';
+import { MAC_HOME_REQUIRED_FILES } from './mac_home_configuration.ts';
+import { migration_frontier, read_migration_graph } from './migrations.ts';
 import {
   GLIBC_LIBRARIES,
   SUPPORTED_CPU_FEATURES,
@@ -49,9 +60,11 @@ import {
 it('keeps the frozen payload complete for static installer and trusted admission imports', () => {
   const checkout = fileURLToPath(new URL('../../../', import.meta.url));
   const require = createRequire(join(checkout, 'server/package.json'));
-  const frozen = new Set<string>(INSTALLER_SOURCE_FILES),
+  const linux = new Set<string>(INSTALLER_SOURCE_FILES),
+    darwin = new Set<string>(DARWIN_HOME_INSTALLER_SOURCE_FILES),
     seen = new Set<string>();
-  const packages = new Set<string>([...INSTALLER_PACKAGE_ROOTS, INSTALLER_KOFFI_OPTIONAL_ROOT]);
+  let frozen = linux,
+    packages = new Set<string>([...INSTALLER_PACKAGE_ROOTS, INSTALLER_KOFFI_OPTIONAL_ROOT]);
   function visit(name: string): void {
     if (seen.has(name)) return;
     seen.add(name);
@@ -63,12 +76,23 @@ it('keeps the frozen payload complete for static installer and trusted admission
       ts.ScriptTarget.Latest,
       true,
     );
-    function dependency(specifier: string): void {
+    const deferred_requires = new Set<string>();
+    function dependency(specifier: string, deferred = false): void {
       if (isBuiltin(specifier)) return;
       if (specifier.startsWith('.')) {
         const path = resolve(dirname(absolute), specifier);
         inside(checkout, path);
-        visit(relative(checkout, path).split(sep).join('/'));
+        const dependency_name = relative(checkout, path).split(sep).join('/');
+        const darwin_only = darwin.has(dependency_name) && !linux.has(dependency_name);
+        assert(
+          frozen.has(dependency_name) || (deferred && darwin_only),
+          'unknown platform import: ' + dependency_name,
+        );
+        assert(
+          !darwin_only || deferred || !linux.has(name),
+          'common source eagerly imports Darwin-only source: ' + dependency_name,
+        );
+        if (frozen.has(dependency_name)) visit(dependency_name);
       } else {
         const package_name = specifier
           .split('/')
@@ -83,7 +107,16 @@ it('keeps the frozen payload complete for static installer and trusted admission
       }
     }
     function walk(node: ts.Node): void {
-      if (ts.isImportDeclaration(node)) {
+      if (
+        ts.isVariableDeclaration(node) &&
+        ts.isIdentifier(node.name) &&
+        node.initializer &&
+        ts.isCallExpression(node.initializer) &&
+        ts.isIdentifier(node.initializer.expression) &&
+        node.initializer.expression.text === 'createRequire'
+      ) {
+        deferred_requires.add(node.name.text);
+      } else if (ts.isImportDeclaration(node)) {
         const clause = node.importClause;
         const only_types =
           clause?.isTypeOnly ||
@@ -112,7 +145,15 @@ it('keeps the frozen payload complete for static installer and trusted admission
         node.arguments[0] &&
         ts.isStringLiteralLike(node.arguments[0])
       ) {
-        dependency(node.arguments[0].text);
+        dependency(node.arguments[0].text, true);
+      } else if (
+        ts.isCallExpression(node) &&
+        ts.isIdentifier(node.expression) &&
+        deferred_requires.has(node.expression.text) &&
+        node.arguments[0] &&
+        ts.isStringLiteralLike(node.arguments[0])
+      ) {
+        dependency(node.arguments[0].text, true);
       } else if (
         ts.isNewExpression(node) &&
         ts.isIdentifier(node.expression) &&
@@ -138,10 +179,20 @@ it('keeps the frozen payload complete for static installer and trusted admission
     }
     walk(source);
   }
-  visit(INSTALLER_ENTRY);
-  visit('server/environments/release/admission.ts');
-  assert(seen.has('server/core/path_containment.ts'));
-  assert.deepEqual([...seen].filter((name) => !frozen.has(name)).sort(), []);
+  for (const platform of ['linux', 'darwin']) {
+    frozen = platform === 'linux' ? linux : darwin;
+    packages = new Set<string>(
+      platform === 'linux'
+        ? [...INSTALLER_PACKAGE_ROOTS, INSTALLER_KOFFI_OPTIONAL_ROOT]
+        : [...DARWIN_HOME_INSTALLER_PACKAGE_ROOTS, DARWIN_HOME_INSTALLER_KOFFI_OPTIONAL_ROOT],
+    );
+    seen.clear();
+    visit(INSTALLER_ENTRY);
+    visit('server/environments/release/admission.ts');
+    if (platform === 'darwin') visit('server/environments/updates/darwin/launch.ts');
+    assert(seen.has('server/core/path_containment.ts'));
+    assert.deepEqual([...seen].filter((name) => !frozen.has(name)).sort(), []);
+  }
 });
 
 it('copies a complete selected closure once and refuses changed source or an application-owned Node', async () => {
@@ -239,6 +290,81 @@ it('copies a complete selected closure once and refuses changed source or an app
       signal: controller.signal,
       deadline: performance.now() / 1000 + 10,
     };
+    // Recipe parsers cannot prove that the producer copies the graph's bound source data.
+    // Reuse this filesystem lifetime to exercise its real pre-native composition phase.
+    const checkout = fileURLToPath(new URL('../../../', import.meta.url));
+    const payload = join(root, 'payload'),
+      modules = join(root, 'payload-modules'),
+      providers = join(root, 'payload-providers'),
+      web = join(root, 'payload-web');
+    const put = (path: string, bytes: string) => {
+      mkdirSync(dirname(path), { recursive: true });
+      writeFileSync(path, bytes);
+    };
+    const dependencies = JSON.parse(readFileSync(join(checkout, 'server/package.json'), 'utf8'))
+      .dependencies as Record<string, string>;
+    for (const [name, version] of Object.entries(dependencies))
+      put(join(modules, name, 'package.json'), JSON.stringify({ name, version }));
+    const sqlite = join(checkout, 'server/node_modules/better-sqlite3');
+    const package_bytes: Record<string, string> = {
+      '.package-lock.json': '{"packages":{}}',
+      'better-sqlite3/package.json': readFileSync(join(sqlite, 'package.json'), 'utf8'),
+      'better-sqlite3/lib/index.js': readFileSync(join(sqlite, 'lib/index.js'), 'utf8'),
+      'better-sqlite3/lib/binding.js': readFileSync(join(sqlite, 'lib/binding.js'), 'utf8'),
+      'better-sqlite3/LICENSE': 'retained SQLite license\n',
+      'better-sqlite3/prebuilds/darwin-arm64.node': 'copy-only arm64 bytes',
+      'better-sqlite3/prebuilds/darwin-x64.node': 'copy-only x64 bytes',
+      'better-sqlite3/prebuilds/linux-x64.node': 'copy-only Linux bytes',
+      'better-sqlite3/prebuilds/win32-x64.node': 'copy-only Windows bytes',
+    };
+    for (const [name, bytes] of Object.entries(package_bytes)) put(join(modules, name), bytes);
+    put(join(providers, 'package.json'), '{"name":"provider-copy-fixture"}');
+    for (const name of ['@anthropic-ai/claude-code', '@openai/codex'])
+      put(join(providers, 'node_modules', name, 'package.json'), JSON.stringify({ name }));
+    put(join(web, 'index.html'), '<!doctype html>copied web input');
+    const original_graph = await read_migration_graph(checkout);
+    const schema_path = 'server/core/database/application_schema.json';
+    const schema_bytes = readFileSync(join(checkout, schema_path));
+    const payload_began = performance.now();
+    await compose_mac_home_payload(
+      {
+        exported_source: checkout,
+        app: payload,
+        production_node_modules: modules,
+        agent_backends_root: providers,
+        web_dist: web,
+      },
+      execution,
+    );
+    assert.deepEqual(await read_migration_graph(payload), original_graph);
+    assert.deepEqual(readFileSync(join(payload, schema_path)), schema_bytes);
+    assert.deepEqual(
+      [...migration_frontier(original_graph)],
+      [JSON.parse(schema_bytes.toString()).alembicRevision],
+    );
+    for (const name of MAC_HOME_REQUIRED_FILES.filter((name) => name !== INSTALLER_RECIPE_PATH))
+      assert(lstatSync(join(payload, name)).isFile(), 'composed payload lacks ' + name);
+    for (const name of [
+      'src/planner/skills/panels/SKILL.md',
+      'src/planner/worker_types/shipped_worker_types.json',
+      'web/src/lib/conversation/view/contracts.ts',
+      'pyproject.toml',
+    ])
+      assert.deepEqual(readFileSync(join(payload, name)), readFileSync(join(checkout, name)));
+    for (const [name, bytes] of Object.entries(package_bytes)) {
+      assert.equal(readFileSync(join(modules, name), 'utf8'), bytes, 'copy changed its input');
+      if (name === 'better-sqlite3/prebuilds/darwin-x64.node')
+        assert(!existsSync(join(payload, 'server/node_modules', name)));
+      else assert.equal(readFileSync(join(payload, 'server/node_modules', name), 'utf8'), bytes);
+    }
+    assert.deepEqual(await read_migration_graph(checkout), original_graph);
+    assert.deepEqual(readFileSync(join(checkout, schema_path)), schema_bytes);
+    console.log(
+      JSON.stringify({
+        proof: 'actual home payload composition and bound migration source',
+        seconds: (performance.now() - payload_began) / 1000,
+      }),
+    );
     await write_installer_file_manifest(app, 'a'.repeat(40), execution);
     const recipe = parse_installer_file_manifest(
       JSON.parse(readFileSync(join(app, INSTALLER_RECIPE_PATH), 'utf8')),
@@ -345,9 +471,98 @@ it('copies a complete selected closure once and refuses changed source or an app
     );
     assert(!existsSync(join(data, 'update-installer-alias')));
 
+    // Reuse this copy lifetime for Darwin's distinct inventory and synchronous pure-ESM decoder.
+    // These native bytes remain structural. The hosted package proves the real Darwin ABI.
+    const mac_app = join(current, '.app-next-' + 'd'.repeat(40));
+    const mac_write = (name: string, content: string) => {
+      mkdirSync(dirname(join(mac_app, name)), { recursive: true });
+      writeFileSync(join(mac_app, name), content);
+    };
+    for (const name of DARWIN_HOME_INSTALLER_SOURCE_FILES) {
+      mkdirSync(dirname(join(mac_app, name)), { recursive: true });
+      cpSync(join(checkout, name), join(mac_app, name));
+    }
+    for (const name of ['koffi', 'yaml']) {
+      mac_write('server/node_modules/' + name + '/package.json', '{"name":"' + name + '"}');
+      mac_write('server/node_modules/' + name + '/LICENSE', name + ' fixture license\n');
+    }
+    mac_write('server/node_modules/koffi/addon.node', 'structural Mac addon');
+    mac_write('runtime/lib/libfixture.dylib', 'structural Mac provider');
+    const mac_record = (path: string, bytes: string, providers: Record<string, string>) => ({
+      path,
+      sha256: hash(bytes),
+      format: 'Mach-O',
+      active: true,
+      architectures: ['arm64'],
+      minimum_macos: ['15.0'],
+      rpaths: ['@loader_path'],
+      providers,
+    });
+    const mac_inventory = JSON.stringify({
+      version: 2,
+      system: 'darwin',
+      architecture: 'arm64',
+      role: 'home',
+      node_major: 22,
+      native_files: [
+        mac_record('server/node_modules/koffi/addon.node', 'structural Mac addon', {
+          '@rpath/libfixture.dylib': 'runtime/lib/libfixture.dylib',
+        }),
+        mac_record('runtime/lib/libfixture.dylib', 'structural Mac provider', {
+          '/usr/lib/libSystem.B.dylib': 'host:/usr/lib/libSystem.B.dylib',
+        }),
+      ],
+    });
+    const mac_contract = {
+      version: 2,
+      system: 'darwin',
+      architecture: 'arm64',
+      role: 'home',
+      minimum_os: '15.0',
+      node_major: 22,
+      minimum_node_version: '22.18.0',
+      inventory_sha256: hash(mac_inventory),
+      external_libraries: ['/usr/lib/', '/System/Library/'],
+    };
+    mac_write('runtime/inventory.json', mac_inventory);
+    mac_write('runtime/contract.json', JSON.stringify(mac_contract));
+    mac_write(
+      'manifest.json',
+      JSON.stringify({
+        format: 'panels-app-v1',
+        app_sha: 'a'.repeat(40),
+        source_digest: 'b'.repeat(64),
+        artifact_digest: 'c'.repeat(64),
+        runtime_contract: mac_contract,
+      }),
+    );
+    await write_installer_file_manifest(mac_app, 'a'.repeat(40), execution);
+    const mac_recipe = parse_installer_file_manifest(
+      JSON.parse(readFileSync(join(mac_app, INSTALLER_RECIPE_PATH), 'utf8')),
+      MAC_HOME,
+    );
+    assert(mac_recipe.files.some((entry) => entry.path === 'runtime/lib/libfixture.dylib'));
+    assert(!mac_recipe.files.some((entry) => entry.path.includes('koffi-linux-x64')));
+    const mac_command = copy_installer_runtime(
+      mac_app,
+      { ...request, attempt_id: 'darwin' },
+      controller.signal,
+    );
+    assert.equal(
+      readFileSync(
+        join(data, 'update-installer-darwin/runtime/runtime/lib/libfixture.dylib'),
+        'utf8',
+      ),
+      'structural Mac provider',
+    );
+    const mac_decoder = join(
+      data,
+      'update-installer-darwin/runtime/server/environments/release/mac_home_inventory.ts',
+    );
+    renameSync(mac_app, join(current, 'retired-Mac-source'));
+
     // Real source/dependency import coverage is separate from the structural inventory fixture.
     // No inventory or native-admission result is fabricated for this import-only tree.
-    const checkout = fileURLToPath(new URL('../../../', import.meta.url));
     const import_source = join(root, 'import-source'),
       loaded = join(root, 'import-copy');
     for (const path of INSTALLER_SOURCE_FILES) {
@@ -418,7 +633,7 @@ it('copies a complete selected closure once and refuses changed source or an app
       return child;
     }) as ChildProcesses['spawn'];
     const bootstrap =
-      "import{pathToFileURL}from'node:url';const[admission,entry,request]=process.argv.slice(1);await import(pathToFileURL(admission).href);process.argv=[process.execPath,entry,request];await import(pathToFileURL(entry).href);";
+      "import{pathToFileURL}from'node:url';import{createRequire}from'node:module';const[admission,entry,request,mac,view,protocol,projection]=process.argv.slice(1);await import(pathToFileURL(admission).href);if(typeof createRequire(import.meta.url)(mac).parse_mac_home_inventory!=='function')throw Error('copied Mac decoder missing');const versions=await import(pathToFileURL(view).href);if(versions.VIEW_PROTOCOL_VERSION!==Number(protocol)||versions.VIEW_PROJECTION_VERSION!==Number(projection))throw Error('copied conversation view protocol differs');process.argv=[process.execPath,entry,request];await import(pathToFileURL(entry).href);";
     const started = performance.now();
     const result = await run_release_command(
       [
@@ -429,6 +644,10 @@ it('copies a complete selected closure once and refuses changed source or an app
         join(loaded, 'server/environments/release/admission.ts'),
         join(loaded, INSTALLER_ENTRY),
         invalid_request,
+        mac_decoder,
+        join(payload, 'server/conversation/views/contracts.ts'),
+        String(VIEW_PROTOCOL_VERSION),
+        String(VIEW_PROJECTION_VERSION),
       ],
       { timeout_seconds: null, environment, allow_nonzero: true },
       execution,
@@ -443,7 +662,8 @@ it('copies a complete selected closure once and refuses changed source or an app
     assert.equal(closes, 1);
     console.log(
       JSON.stringify({
-        proof: 'copied installer and trusted admission imports only',
+        proof:
+          'copied Linux installer, trusted admission, Darwin inventory decoder, and home shared protocol imports',
         spawns,
         closes,
         seconds: (performance.now() - started) / 1000,

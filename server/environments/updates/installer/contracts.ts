@@ -27,6 +27,10 @@ export type CaptureOutcome =
   | { readonly kind: 'returned'; readonly returncode: number }
   | { readonly kind: 'unavailable'; readonly detail: string };
 export interface InstallerEffects {
+  validate_service?(): Promise<void>;
+  recover_unchanged?(sha: string): Promise<boolean>;
+  finish_success?(): Promise<string | null>;
+  finish_rollback?(): Promise<string | null>;
   service(action: 'stop' | 'start'): Promise<void>;
   capture(): Promise<CaptureOutcome>;
   restore(snapshot: string, lifetime_lock_fd?: number): Promise<void>;

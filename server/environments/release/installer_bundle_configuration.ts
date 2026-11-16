@@ -59,3 +59,33 @@ export const INSTALLER_PACKAGE_ROOTS = [
   'server/node_modules/yaml',
 ] as const;
 export const INSTALLER_KOFFI_OPTIONAL_ROOT = 'server/node_modules/@koromix/koffi-linux-x64';
+
+/** Darwin additions never change the selected Linux installer bytes. */
+export const DARWIN_HOME_INSTALLER_SOURCE_FILES = [
+  ...INSTALLER_SOURCE_FILES,
+  'server/environments/release/logic/darwin_host.ts',
+  'server/environments/release/mac_home_inventory.ts',
+  'server/environments/release/mac_home_configuration.ts',
+  'server/environments/release/installer_bundle.ts',
+  'server/environments/release/installer_bundle_configuration.ts',
+  'server/conversation/record/message_files.ts',
+  'server/files/logic/paths.ts',
+  'server/executor/mac/packaging/configuration.ts',
+  'server/environments/updates/darwin/contracts.ts',
+  'server/environments/updates/darwin/configuration.ts',
+  'server/environments/updates/darwin/identity.ts',
+  'server/environments/updates/darwin/jobs.ts',
+  'server/environments/updates/darwin/service.ts',
+  'server/environments/updates/darwin/launch.ts',
+  'server/environments/updates/darwin/logic/launchd.ts',
+  'server/executor/mac/platform.ts',
+  'server/environments/linux_executor/logic/paths.ts',
+  'server/environments/linux_executor/configuration.ts',
+  'server/executor/configuration.ts',
+  'server/executor/protocol_errors.ts',
+  'server/conversation/snapshot/commands.ts',
+  'server/conversation/snapshot/environment.ts',
+] as const;
+export const DARWIN_HOME_INSTALLER_PACKAGE_ROOTS = [...INSTALLER_PACKAGE_ROOTS] as const;
+export const DARWIN_HOME_INSTALLER_KOFFI_OPTIONAL_ROOT =
+  'server/node_modules/@koromix/koffi-darwin-arm64';

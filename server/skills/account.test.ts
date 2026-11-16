@@ -96,6 +96,8 @@ test('startup honors provider homes and provisioning choice in test mode, and a 
     PLAN_DB_PATH: join(parent, 'db'),
     PLAN_PROVISION_ACCOUNT_SKILLS: 'true',
   });
+  config.workspace_root = join(root, 'workspace');
+  mkdirSync(config.workspace_root);
   expect(config.provision_account_skills).toBe(true);
   expect(() =>
     loadConfig(join(root, 'absent.yaml'), { PLAN_PROVISION_ACCOUNT_SKILLS: 'bad' }),

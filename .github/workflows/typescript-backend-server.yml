@@ -61,6 +61,42 @@ jobs:
           scripts/dev check-node server
           cd server
           node node_modules/vitest/vitest.mjs run
+      - name: Prepare the disposable native home service manager
+        if: matrix.node == '22' && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
+        run: |
+          test "$RUNNER_ENVIRONMENT" = github-hosted
+          sudo apt-get update
+          sudo apt-get install -y dbus-user-session
+          sudo loginctl enable-linger "$USER"
+          sudo systemctl start "user@$(id -u).service"
+          XDG_RUNTIME_DIR="/run/user/$(id -u)" \
+            DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$(id -u)/bus" \
+            systemctl --user start dbus.service
+      - name: Prove first-home installation against native systemd
+        if: matrix.node == '22' && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
+        run: |
+          set -euo pipefail
+          umask 077
+          native_root="$RUNNER_TEMP/first-home-native"
+          mkdir -p "$native_root"/{home/codex,home/claude,home/hermes,tmp,evidence}
+          env -i PATH="$PATH" LANG=C.UTF-8 \
+            GITHUB_ACTIONS=true GITHUB_WORKSPACE="$GITHUB_WORKSPACE" \
+            HOME="$native_root/home" TMPDIR="$native_root/tmp" \
+            CODEX_HOME="$native_root/home/codex" CLAUDE_CONFIG_DIR="$native_root/home/claude" \
+            PLAN_HERMES_HOME="$native_root/home/hermes" HERMES_HOME="$native_root/home/hermes" \
+            XDG_RUNTIME_DIR="/run/user/$(id -u)" \
+            DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$(id -u)/bus" \
+            PLAN_SERVER_URL=http://127.0.0.1:1 PLAN_TEST_MODE=1 \
+            PANELS_NATIVE_HOME_TEST=1 NATIVE_EVIDENCE="$native_root/evidence" \
+            scripts/dev npm --prefix server run test -- installation/home.native.test.ts \
+              --reporter=junit --outputFile "$native_root/evidence/first-home.xml"
+      - name: Preserve native home service evidence
+        if: always() && matrix.node == '22' && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: first-home-native-linux-node-22
+          path: ${{ runner.temp }}/first-home-native/evidence
+          if-no-files-found: warn
 
   linux-enrollment:
     name: Real Linux enrollment (pinned protocol 26)

@@ -38,6 +38,7 @@ export function provision_native_backend_skills(
 const libc = koffi.load(process.platform === 'darwin' ? '/usr/lib/libSystem.B.dylib' : 'libc.so.6');
 const mkdirat = libc.func('int mkdirat(int dirfd, const char *path, unsigned int mode)');
 const openat = libc.func('int openat(int dirfd, const char *path, int flags, ...)');
+const native_close = libc.func('int close(int fd)');
 const symlinkat = libc.func('int symlinkat(const char *target, int dirfd, const char *path)');
 const readlinkat = libc.func(
   'long readlinkat(int dirfd, const char *path, _Out_ void *buffer, size_t size)',
@@ -94,7 +95,8 @@ export function provision_workspace_skills(
           if (symlinkat(source, parentFd, 'skills') !== 0) throw operationError('symlinkat');
         } else if (current !== source) throw conflict(target);
       } finally {
-        closeSync(parentFd);
+        // close can consume the descriptor on EINTR. Never retry a reused number.
+        if (native_close(parentFd) !== 0) throw operationError('close');
       }
     } finally {
       closeSync(workspaceFd);

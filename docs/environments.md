@@ -30,9 +30,13 @@ A real home provisions its managed skills in the provider account folders. One o
 
 The home provisions workspace and account skill files on awaited worker threads, so file removal does not block the event loop. Startup waits for provisioning before normal work starts.
 
-The disposable test option disables provisioning and can read the existing instance's skills. That exception is for tests only.
+Disposable tests can disable provisioning explicitly and read the existing instance's skills. Test mode alone does not suppress account provisioning.
 
-A release-installed Mac home updates through an independent LaunchAgent. Its installer and external Python remain outside the app that it replaces. A failed health trial returns to the previous app and snapshot record. This rollback can discard later record writes. It does not prove preservation of active work. The Mac home uses native process evidence for local previews and metrics. Its jobs run only during the graphical login session. Other POSIX source servers retain their existing foreground lifecycle. The Mac executor remains separate. Linux checks do not prove Mac behavior.
+A release-installed Mac home uses an external Node 22 runtime. Its first installation and independent update LaunchAgent use native TypeScript. The installer stays outside the app that it replaces. Updates read legacy identities without a Python probe. Its jobs run only during the graphical login session.
+
+A failed health trial returns to the previous app and snapshot record. This rollback can discard later record writes and does not prove preservation of active work. Native process evidence supports local previews and metrics. The Mac executor remains separate. Linux checks do not prove Mac behavior.
+
+Mac home publication requires a hosted Apple Silicon build and proof of the sealed archive. The proof admits its native dependencies, starts the real home, checks readiness, and confirms a clean stop. Publication binds the uploaded archive and proof to the same source revision and workflow attempt. The home archive contains the server, provider packages, web assets, and installation recipe. The host supplies Node. The Mac executor archive has a separate identity and cannot substitute for it.
 
 Worker supervision is one subsystem for home and executor processes. It uses exact identities and durable custody for bounded shutdown and scoped cleanup proof. Unknown cleanup retains a fence. Linux Workers share the home service resource domain, but the adapter removes its protected OOM score before the backend starts. Delegated cgroup v2 child groups keep each Linux Worker and its descendants inside a separate cleanup boundary. Unsupported hosts retain a cleanup fence. Separate Worker units and slices do not apply.
 
@@ -95,8 +99,9 @@ Renaming the account, moving host state, or changing Tailscale Serve is operator
 - `src/planner/core/config.py`: configuration and `PLAN_*` overrides. `src/planner/skill_sources.py`: the workspace skills link.
 - `src/planner/server_lifecycle/`: who may stop a server.
 - `server/lifecycle/`, `server/skills/account.ts`, and `server/environments/vps_status/`: TypeScript home custody, account publication, and cleanup.
+- `server/installation/` and `server/environments/release/mac_home*.ts`: native first-home installation and sealed Mac home publication.
 - `ops/panels-environments/`: user units, timers, and the host wrapper.
 
 Named execution destinations and physical workspace identity are separate. A Ticket’s `machine_id` selects home execution or the original executor. `WorkspaceIdentity.machine_id` identifies one local physical data tree. Workspace registration binds its folder to the conversation on that destination. A display edit never rotates either identity.
 
-_Last verified: 2026-11-13._
+_Last verified: 2026-11-15._
