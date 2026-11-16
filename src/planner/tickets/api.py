@@ -1108,9 +1108,6 @@ def accept_field(
     _ticket, worker_type_definition = _ticket_and_worker_type_definition(conn, ticket_id)
     _validate_field(worker_type_definition, field)
     now = clk.now_unix()
-    next_ceiling = admission.parse_next_ceiling(
-        body["next_ceiling"], worker_type_definition, current_stage=_ticket.stage
-    )
     ticket = tickets_data.accept_proposal(
         conn,
         ticket_id,
@@ -1118,7 +1115,7 @@ def accept_field(
         principal=ctx.principal,
         now=now,
         edited_body=body["edited_body"],
-        next_ceiling=next_ceiling,
+        next_ceiling=body["next_ceiling"],
         expected_proposal_revision=body["expected_proposal_revision"],
         message=body["message"],
         decision_id=body["decision_id"],

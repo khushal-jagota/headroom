@@ -1,8 +1,11 @@
-import type { NavigationReviewItem, ReviewHistoryKey } from '../navigation/contracts';
+import type { NavigationReviewItem, NavigationReviewProposalItem, ReviewHistoryKey } from '../navigation/contracts';
 
 /** Only the unfinished pass belongs to the visit. Fresh navigation data owns eligibility. */
 export type ReviewVisit = {
   artifactHref: string;
+  /** The proposal that was on screen when the artifact was opened, so the artifact page can
+   *  show that proposal's decision area. Null when the card on screen was not a proposal. */
+  proposal: NavigationReviewProposalItem | null;
   anchor: string | null;
   skipped: Record<string, boolean>;
   skippedHistory: ReviewHistoryKey[];
@@ -16,6 +19,10 @@ export type ReviewVisit = {
 const visits = new WeakMap<object, ReviewVisit>();
 export function rememberReviewVisit(application: object, visit: ReviewVisit): void {
   visits.set(application, visit);
+}
+/** The visit while the artifact page is up. Review takes it back when it returns. */
+export function peekReviewVisit(application: object): ReviewVisit | undefined {
+  return visits.get(application);
 }
 export function takeReviewVisit(application: object): ReviewVisit | undefined {
   const visit = visits.get(application);

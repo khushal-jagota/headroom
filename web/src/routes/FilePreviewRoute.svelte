@@ -12,7 +12,9 @@
   import type { ManagedFileTarget } from "../lib/filePreview";
   import { targetFromPreviewQuery, previewHashHref } from "../lib/filePreview";
   import { mutateJson } from "../lib/mutate";
-  import { reviewReturnHref } from "../lib/review/visit";
+  import ReviewProposalCard from "../components/ReviewProposalCard.svelte";
+  import { peekReviewVisit, reviewReturnHref } from "../lib/review/visit";
+  import { reviewProposalIdentity } from "../lib/navigation/presentation";
   import { navigationApplication } from "../lib/navigation/application.svelte";
 
   import type { ConversationState } from "../lib/conversation/conversationState";
@@ -60,6 +62,12 @@
     }
   });
   let identity = $derived(target ? previewHashHref(target) : "");
+  // An artifact opened from a proposal in Review answers to that proposal: its decision area
+  // takes the place of the Worker chat, whichever Ticket owns the file.
+  let reviewedProposal = $derived(target && navigation ? (() => {
+    const visit = peekReviewVisit(navigation);
+    return visit?.artifactHref === previewHashHref(target) ? visit.proposal : null;
+  })() : null);
   $effect(() => { identity; shownFile = target; conversationState = "rest"; sentConversationId = null; });
   onMount(() => { void readBackends().then(value => backends = value).catch(() => undefined); });
 
@@ -94,7 +102,18 @@
     <ManagerFrame openedFile={shownFile} onOpenFile={changeFile} bind:conversationState>
       <p>{owner?.title ?? "Artifact"}</p>
       {#snippet conversation()}
-        {#if owner && !ownerError}
+        {#if reviewedProposal && navigation}
+          {@const visit = peekReviewVisit(navigation)}
+          {@const proposalKey = reviewProposalIdentity(reviewedProposal)}
+          {#key proposalKey}
+            <ReviewProposalCard identity={reviewedProposal} embedded ticketId={reviewedProposal.ticket_id} field={reviewedProposal.field}
+              title={reviewedProposal.title} onResolved={close}
+              initialRevisionDraft={visit?.proposalDraft?.identity === proposalKey ? visit.proposalDraft.text : ""}
+              initialEditedBody={visit?.proposalDraft?.identity === proposalKey ? visit.proposalDraft.editedBody : undefined}
+              onRevisionDraftChange={text => { if (visit) visit.proposalDraft = { identity: proposalKey, text, editedBody: visit.proposalDraft?.identity === proposalKey ? visit.proposalDraft.editedBody : undefined }; }}
+              onEditedBodyChange={editedBody => { if (visit) visit.proposalDraft = { identity: proposalKey, text: visit.proposalDraft?.identity === proposalKey ? visit.proposalDraft.text : "", editedBody }; }} />
+          {/key}
+        {:else if owner && !ownerError}
           {#key identity}
             <LiveConversation bind:conversationState conversationId={sentConversationId ?? owner.conversationId}
               persistenceKey={`owner:${owner.kind}:${owner.id}`} uploadOwner={{kind: owner.kind, id: owner.id}}
