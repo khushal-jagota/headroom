@@ -687,6 +687,6 @@ export interface ManualWriteReceipt {
 }
 
 export interface Principal {
-  kind: "owner" | "chief" | "manager" | "goal" | "ticket";
+  kind: "owner" | "chief" | "manager" | "goal" | "ticket" | "unidentified";
   id: string;
 }
