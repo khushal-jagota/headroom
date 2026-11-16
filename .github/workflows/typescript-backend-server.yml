@@ -16,12 +16,12 @@ jobs:
   server:
     runs-on: ubuntu-24.04
     strategy:
-      # Pull requests and pushes to the branch run only Node 22. The scheduled
-      # run (against feature/typescript-backend) and manual runs run both
-      # versions. The matrix itself shrinks, so no skipped entries
+      # Pull requests, pushes and manual acceptance run only Node 22. The scheduled
+      # run (against feature/typescript-backend) keeps both versions.
+      # The matrix itself shrinks, so no skipped entries
       # are left pending.
       matrix:
-        node: ${{ fromJSON((github.event_name == 'pull_request' || github.event_name == 'push') && '["22"]' || '["22", "24"]') }}
+        node: ${{ fromJSON((github.event_name == 'pull_request' || github.event_name == 'push' || github.event_name == 'workflow_dispatch') && '["22"]' || '["22", "24"]') }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
@@ -61,3 +61,80 @@ jobs:
           scripts/dev check-node server
           cd server
           node node_modules/vitest/vitest.mjs run
+
+  linux-enrollment:
+    name: Real Linux enrollment (pinned protocol 26)
+    # This pinned acceptance is explicit; routine changes do not rerun identical product bytes.
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: e0bbb4cc49cc701d9f28c13e3a24b57fcad6c6ce
+          path: product
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '22'
+      - name: Prepare the disposable native service manager
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$RUNNER_ENVIRONMENT" = github-hosted
+          sudo apt-get update
+          sudo apt-get install -y dbus-user-session patchelf binutils libicu-dev pkg-config
+          sudo loginctl enable-linger "$USER"
+          sudo systemctl start "user@$(id -u).service"
+          XDG_RUNTIME_DIR="/run/user/$(id -u)" \
+            DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$(id -u)/bus" \
+            systemctl --user start dbus.service
+          enrollment_node=$(node -p 'require("node:fs").realpathSync(process.execPath)')
+          if [ "$enrollment_node" != /usr/local/bin/node ]; then sudo ln -sfn "$enrollment_node" /usr/local/bin/node; fi
+      - name: Prove real private enrollment and verified cleanup
+        shell: bash
+        run: |
+          set -euo pipefail
+          umask 077
+          proof_root=$(mktemp -d "$RUNNER_TEMP/enrollment-bootstrap.XXXXXX")
+          proof_evidence="$RUNNER_TEMP/linux-enrollment-evidence"
+          mkdir -p "$proof_evidence" "$proof_root"/{home/codex,home/claude,home/hermes,config,cache,data,state,run,tmp,logs,backups,workspace,files,scratch,app}
+          printf '{}\n' > "$proof_root/config.yaml"
+          harness_revision=$(git rev-parse HEAD)
+          env -i PATH="$PATH" LANG=C.UTF-8 LC_ALL=C.UTF-8 \
+            GITHUB_ACTIONS=true RUNNER_ENVIRONMENT="$RUNNER_ENVIRONMENT" \
+            GITHUB_WORKSPACE="$GITHUB_WORKSPACE/product" HARNESS_REVISION="$harness_revision" \
+            HOME="$proof_root/home" CODEX_HOME="$proof_root/home/codex" \
+            CLAUDE_CONFIG_DIR="$proof_root/home/claude" HERMES_HOME="$proof_root/home/hermes" PLAN_HERMES_HOME="$proof_root/home/hermes" \
+            XDG_CONFIG_HOME="$proof_root/config" XDG_CACHE_HOME="$proof_root/cache" XDG_DATA_HOME="$proof_root/data" XDG_STATE_HOME="$proof_root/state" \
+            XDG_RUNTIME_DIR="/run/user/$(id -u)" DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$(id -u)/bus" \
+            TMPDIR="$proof_root/tmp" TMP="$proof_root/tmp" TEMP="$proof_root/tmp" \
+            npm_config_cache="$proof_root/cache/npm" PIP_CONFIG_FILE=/dev/null \
+            PLAN_CONFIG_PATH="$proof_root/config.yaml" PLAN_DB_PATH="$proof_root/data/planner.sqlite" \
+            PLAN_DATA_DIR="$proof_root/data" PLAN_APP_ROOT="$proof_root/app" \
+            PLAN_LOGS_DIR="$proof_root/logs" PLAN_BACKUP_DIR="$proof_root/backups" PLAN_WORKSPACE_ROOT="$proof_root/workspace" \
+            PLAN_TICKET_FILES_DIR="$proof_root/files" PLAN_TICKET_SCRATCH_ROOT="$proof_root/scratch" \
+            PLAN_TICKET_SCRATCH_DATABASE="$proof_root/data/planner.sqlite" PLAN_CREDENTIAL_KEY_PATH="$proof_root/data/key" \
+            PLAN_DISPATCHER_LOCK_PATH="$proof_root/run/dispatcher.lock" PLAN_SERVER_CONTROL_SOCKET="$proof_root/run/control.sock" \
+            PLAN_SERVER_LIFECYCLE_LEASE_PATH="$proof_root/run/lifecycle.lock" \
+            PLAN_SERVER_URL=http://127.0.0.1:0 PLAN_PORT=0 PLAN_TEST_MODE=1 PLAN_DISPATCH_ENABLED=false \
+            PROOF_EVIDENCE="$proof_evidence" \
+            bash --noprofile --norc -euo pipefail <<'ENROLLMENT' 2>&1 | tee "$proof_evidence/job.log"
+          cd "$GITHUB_WORKSPACE"
+          scripts/dev setup
+          .venv/bin/python ../tests/support/hosted_linux_enrollment.py "$GITHUB_WORKSPACE" "$PROOF_EVIDENCE"
+          ENROLLMENT
+          rm -rf -- "$proof_root"
+      - name: Preserve enrollment evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: linux-enrollment-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/linux-enrollment-evidence
+          if-no-files-found: error
