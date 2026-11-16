@@ -113,7 +113,7 @@ test('managed Mac starts deliver a shared cache through the backend without shar
     const texts = await Promise.all(configurations.map((path) => readFile(path, 'utf8')));
     expect(texts[0]).toBe(texts[1]);
     expect(texts[0]).toContain(`#include "${inherited}"`);
-    expect(texts[0]).toContain(`COMPILATION_CACHE_CAS_PATH = "${join(root, 'cache', 'xcode')}"`);
+    expect(texts[0]).toContain(`COMPILATION_CACHE_CAS_PATH = ${join(root, 'cache', 'xcode')}`);
     expect(texts[0]).not.toMatch(/DERIVED_DATA|SYMROOT|OBJROOT|MODULE_CACHE/);
     await rm(join(paths.artifacts, 'mac-one'), { recursive: true });
     expect(await readFile(configurations[1]!, 'utf8')).toBe(texts[1]);

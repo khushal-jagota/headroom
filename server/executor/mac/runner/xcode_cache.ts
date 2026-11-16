@@ -25,9 +25,11 @@ export async function prepare_xcode_compilation_cache(
   const text =
     inherited +
     'COMPILATION_CACHE_ENABLE_CACHING = YES\n' +
-    `COMPILATION_CACHE_CAS_PATH = "${cache}"\n` +
+    `COMPILATION_CACHE_CAS_PATH = ${cache}\n` +
     'SWIFT_ENABLE_PREFIX_MAPPING = YES\n' +
-    'CLANG_ENABLE_PREFIX_MAPPING = YES\n';
+    'CLANG_ENABLE_PREFIX_MAPPING = YES\n' +
+    'SWIFT_ENABLE_PROJECT_PREFIX_MAPPING = YES\n' +
+    'CLANG_ENABLE_PROJECT_PREFIX_MAPPING = YES\n';
   await mkdir(cache, { recursive: true });
   await mkdir(ticket_directory, { recursive: true });
   const temporary = `${configuration}.${randomUUID()}.tmp`;

@@ -39,7 +39,7 @@ ${id(6)} = {isa = XCConfigurationList; buildConfigurations = (${id(9)}); default
 ${id(7)} = {isa = XCConfigurationList; buildConfigurations = (${id(10)}); defaultConfigurationIsVisible = 0; defaultConfigurationName = Debug;};
 ${id(8)} = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (${source_names.map((_, index) => id(200 + index)).join(",")}); runOnlyForDeploymentPostprocessing = 0;};
 ${id(9)} = {isa = XCBuildConfiguration; buildSettings = {SDKROOT = macosx; MACOSX_DEPLOYMENT_TARGET = 15.0;}; name = Debug;};
-${id(10)} = {isa = XCBuildConfiguration; buildSettings = {PRODUCT_NAME = "$(TARGET_NAME)"; SWIFT_VERSION = 5.0; SWIFT_OPTIMIZATION_LEVEL = "-Onone"; SWIFT_COMPILATION_MODE = singlefile; CODE_SIGNING_ALLOWED = NO;}; name = Debug;};
+${id(10)} = {isa = XCBuildConfiguration; buildSettings = {PRODUCT_NAME = "$(TARGET_NAME)"; SWIFT_VERSION = 5.0; SWIFT_OPTIMIZATION_LEVEL = "-Onone"; SWIFT_COMPILATION_MODE = singlefile; ONLY_ACTIVE_ARCH = YES; CODE_SIGNING_ALLOWED = NO;}; name = Debug;};
 }; rootObject = ${id(1)};
 }
 `,
