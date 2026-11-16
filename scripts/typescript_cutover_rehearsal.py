@@ -102,9 +102,14 @@ def fixture(current: Path, url: str, root: Path, service: str) -> dict[str, Any]
     database = current / "data/planner.db"
     with sqlite3.connect(database) as connection:
         connection.execute(
-            "UPDATE tickets SET stage='needs_consequences',ceiling='done' WHERE id=?", (ids[0],)
+            "UPDATE tickets SET stage='needs_consequences',ceiling='done',"
+            "pending_proposal=NULL WHERE id=?",
+            (ids[0],),
         )
-        connection.execute("UPDATE tickets SET stage='done',ceiling='done' WHERE id=?", (ids[1],))
+        connection.execute(
+            "UPDATE tickets SET stage='done',ceiling='done',pending_proposal=NULL WHERE id=?",
+            (ids[1],),
+        )
         connection.commit()
         with sqlite3.connect(root / "fixture.db") as destination:
             connection.backup(destination)
@@ -117,6 +122,7 @@ def schema(database: Path, ids: dict[str, Any]) -> dict[str, Any]:
             "SELECT value FROM navigation_records WHERE kind='ticket' AND id=?",
             (ids["unfinished"],),
         ).fetchone()
+        navigation_value = None if navigation is None else json.loads(navigation[0])
         return {
             "head": connection.execute("SELECT version_num FROM alembic_version").fetchall(),
             "agent_launch_tokens": bool(
@@ -128,9 +134,10 @@ def schema(database: Path, ids: dict[str, Any]) -> dict[str, Any]:
                 "SELECT id,stage,ceiling FROM tickets WHERE id IN (?,?) ORDER BY id",
                 (ids["unfinished"], ids["done"]),
             ).fetchall(),
+            "navigation_value": navigation_value,
             "navigation_ceiling": None
-            if navigation is None
-            else json.loads(navigation[0])["ceiling"],
+            if navigation_value is None
+            else navigation_value.get("ceiling"),
             "project": connection.execute(
                 "SELECT id,name FROM projects WHERE id=?", (ids["project"],)
             ).fetchone(),
