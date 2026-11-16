@@ -2,13 +2,12 @@
 
 from __future__ import annotations
 
-import hashlib
 import json
 import os
 import re
-import shutil
 import signal
 import subprocess
+import tempfile
 import time
 from pathlib import Path
 from typing import Any
@@ -24,9 +23,8 @@ _REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
 def test_staging_runs_on_demand_with_dynamic_port_and_persistent_state(
     tmp_path: Path,
 ) -> None:
-    digest = hashlib.sha1(str(tmp_path).encode("utf-8")).hexdigest()[:8]
-    environment_root = Path(os.environ.get("TMPDIR", "/tmp")) / f"se-{os.getpid()}-{digest}"
-    shutil.rmtree(environment_root, ignore_errors=True)
+    short_root = tempfile.TemporaryDirectory(prefix="se-", dir=Path("/tmp").resolve())
+    environment_root = Path(short_root.name)
     repository = _REPOSITORY_ROOT
     log_path = tmp_path / "staging.log"
 
@@ -86,7 +84,7 @@ def test_staging_runs_on_demand_with_dynamic_port_and_persistent_state(
         for candidate in (locals().get("first"), locals().get("second")):
             if isinstance(candidate, subprocess.Popen):
                 _terminate(candidate)
-        shutil.rmtree(environment_root, ignore_errors=True)
+        short_root.cleanup()
 
 
 def _start_staging(

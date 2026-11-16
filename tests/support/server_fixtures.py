@@ -7,6 +7,7 @@ import os
 import socket
 import subprocess
 import sys
+import tempfile
 import time
 from collections.abc import Callable, Iterator, Mapping
 from contextlib import closing
@@ -83,14 +84,17 @@ def _log_tail(log_path: Path, n: int = 40) -> str:
 
 
 def _stop_server(handle: ServerHandle) -> None:
-    if handle.proc.poll() is not None:
-        return
-    handle.proc.terminate()
     try:
-        handle.proc.wait(timeout=5)
-    except subprocess.TimeoutExpired:
-        handle.proc.kill()
-        handle.proc.wait()
+        if handle.proc.poll() is None:
+            handle.proc.terminate()
+            try:
+                handle.proc.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                handle.proc.kill()
+                handle.proc.wait()
+    finally:
+        if handle.socket_directory is not None:
+            handle.socket_directory.cleanup()
 
 
 def _adopt_the_worker_types_the_server_runs_on(db_path: Path) -> None:
@@ -137,11 +141,13 @@ def _start_server(
         if seed_db is not None:
             seed_db(db_path)
 
+    socket_directory = tempfile.TemporaryDirectory(prefix="ps-", dir=Path("/tmp").resolve())
     listener = _bind_loopback_listener(0 if port is None else port)
     try:
         port = int(listener.getsockname()[1])
         base = f"http://127.0.0.1:{port}"
         env = _scrubbed_env(srvdir)
+        env["PLAN_SERVER_CONTROL_SOCKET"] = str(Path(socket_directory.name) / "control.sock")
         env.update(
             {
                 "PLAN_TEST_MODE": "1",
@@ -207,6 +213,7 @@ def _start_server(
         log_path=log_path,
         port=port,
         control_socket_path=control_socket_path,
+        socket_directory=socket_directory,
     )
 
     try:

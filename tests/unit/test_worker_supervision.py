@@ -1343,7 +1343,7 @@ def test_unobserved_detached_children_end_without_killing_other_workers(
         import tempfile
 
         # screen stores a Unix socket here, so keep the path below AF_UNIX limits.
-        screen_dir = Path(tempfile.mkdtemp(prefix="ps-"))
+        screen_dir = Path(tempfile.mkdtemp(prefix="ps-", dir=Path("/tmp").resolve()))
         environment = dict(
             os.environ, PLAN_WORKER_PROCESS_ROOT=str(tmp_path), SCREENDIR=str(screen_dir)
         )
