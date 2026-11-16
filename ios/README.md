@@ -111,7 +111,11 @@ body. A failed reload retains the previous document and image.
 
 ## Photo messages
 
-The native composer prepares photos before it saves an outgoing message. HEIC becomes
+The native composer prepares each photo off the main actor when it joins the draft.
+Its attachment shows “Preparing photo…” and Send stays disabled until preparation finishes.
+Accepted photos reuse their prepared bytes; only a combined size above 3 MiB triggers another reduction.
+Restored raw drafts also prepare off the main actor before send. Newer draft edits cancel that send capture.
+HEIC becomes
 an oriented JPEG. Large images are recompressed or reduced to keep all image bytes
 within the server's existing 3 MiB message limit. Supported photos that already fit
 retain their bytes. File attachments keep their existing handling.

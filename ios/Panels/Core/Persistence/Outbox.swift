@@ -146,7 +146,8 @@ import Observation
         return entries(server)
     }
     @discardableResult
-    func retry(_ id: String, api: APIClient, content: [ConversationSend.Piece]? = nil, destination: OutgoingStore.Destination? = nil) -> String? {
+    func retry(_ id: String, api: APIClient, content: [ConversationSend.Piece]? = nil, destination: OutgoingStore.Destination? = nil,
+               imageWorkStarted: @escaping @Sendable () -> Void = {}) async -> String? {
         let server = LocalStore.server(api.baseURL)
         guard let work = work(server, id: id) else { return nil }
         do {
@@ -156,9 +157,12 @@ import Observation
                 return id
             }
             guard let message = work.message else { return nil }
-            let replacementContent = work.state == .failed
-                ? try ConversationImagePreparation.prepare(content ?? message.content)
-                : content ?? message.content
+            let original = try store.outgoing.summary(server: server, id: id)
+            let replacementContent: [ConversationSend.Piece]
+            if work.state == .failed, content == nil {
+                replacementContent = try await ConversationImagePreparation.prepare(message.content, imageWorkStarted: imageWorkStarted)
+                guard try store.outgoing.summary(server: server, id: id) == original else { return nil }
+            } else { replacementContent = content ?? message.content }
             let nextID = UUID().uuidString
             var next = message
             next = ConversationSend(conversationId: message.conversationId, content: replacementContent, mode: message.mode,

@@ -20,15 +20,32 @@ enum ConversationImagePreparation {
             }
         }
     }
-    static func prepare(_ pieces: [ConversationSend.Piece]) throws -> [ConversationSend.Piece] {
+    /// The observer lets the host test pin the executor boundary around actual image work.
+    nonisolated static func prepare(_ pieces: [ConversationSend.Piece], alreadyPrepared: [ConversationSend.Piece] = [],
+                                    imageWorkStarted: @escaping @Sendable () -> Void = {}) async throws -> [ConversationSend.Piece] {
+        try await Task.detached(priority: .userInitiated) {
+            try prepareImages(pieces, alreadyPrepared: alreadyPrepared, imageWorkStarted: imageWorkStarted)
+        }.value
+    }
+    private nonisolated static func prepareImages(_ pieces: [ConversationSend.Piece], alreadyPrepared: [ConversationSend.Piece],
+                                                  imageWorkStarted: @Sendable () -> Void) throws -> [ConversationSend.Piece] {
         let indices = pieces.indices.filter { pieces[$0].piece == "image" }
         guard !indices.isEmpty else { return pieces }
         var result = pieces
         var sources: [Int: CGImageSource] = [:]
         var bytes: [Int: Data] = [:]
+        var sizes: [Int: Int] = [:]
         for index in indices {
-            guard let encoded = pieces[index].data, let data = Data(base64Encoded: encoded),
-                  let source = CGImageSourceCreateWithData(data as CFData, nil),
+            guard let encoded = pieces[index].data else { throw Failure.unreadable }
+            if alreadyPrepared.contains(pieces[index]) {
+                sizes[index] = encoded.utf8.count / 4 * 3 - (encoded.hasSuffix("==") ? 2 : encoded.hasSuffix("=") ? 1 : 0)
+                continue
+            }
+            guard let data = Data(base64Encoded: encoded) else { throw Failure.unreadable }
+            bytes[index] = data
+            sizes[index] = data.count
+            imageWorkStarted()
+            guard let source = CGImageSourceCreateWithData(data as CFData, nil),
                   CGImageSourceGetCount(source) > 0,
                   thumbnail(source, side: validationDimension) != nil else { throw Failure.unreadable }
             sources[index] = source
@@ -40,15 +57,19 @@ enum ConversationImagePreparation {
             } else {
                 let converted = try jpeg(source, budget: maximumImageBytes)
                 bytes[index] = converted
+                sizes[index] = converted.count
                 result[index] = jpegPiece(pieces[index], data: converted)
             }
         }
-        if bytes.values.reduce(0, { $0 + $1.count }) > maximumImageBytes {
+        if sizes.values.reduce(0, +) > maximumImageBytes {
             // A fixed share bounds the whole message and needs no quality-allocation policy.
             let budget = maximumImageBytes / indices.count
             guard budget > 0 else { throw Failure.cannotFit }
-            for index in indices where bytes[index]!.count > budget {
-                let data = try jpeg(sources[index]!, budget: budget)
+            for index in indices where sizes[index]! > budget {
+                imageWorkStarted()
+                guard let original = bytes[index] ?? pieces[index].data.flatMap({ Data(base64Encoded: $0) }),
+                      let source = sources[index] ?? CGImageSourceCreateWithData(original as CFData, nil) else { throw Failure.unreadable }
+                let data = try jpeg(source, budget: budget)
                 result[index] = jpegPiece(pieces[index], data: data)
             }
         }

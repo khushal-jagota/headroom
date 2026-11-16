@@ -162,6 +162,31 @@ import XCTest
         let sent = await decision.send()
         XCTAssertFalse(sent)
         XCTAssertTrue(ReviewMessageProtocol.state.bodies.isEmpty)
+
+        // The address can become historical while a restored photo prepares off actor.
+        let probe = PhotoPreparationProbe()
+        let active = ReviewMessageDecision(composer: ConversationModel(imageWorkStarted: { probe.observe() }))
+        await active.load(item: item(), api: api)
+        active.composer.draft = "Keep the reply when this address changes"
+        #if SWIFT_PACKAGE
+        let fixture = Bundle.module.url(forResource: "photo", withExtension: "heic", subdirectory: "Fixtures")
+        #else
+        let fixture = Bundle(for: Self.self).url(forResource: "photo", withExtension: "heic")
+        #endif
+        active.composer.attachments = [.init(piece: "image", data: try Data(contentsOf: XCTUnwrap(fixture)).base64EncodedString(),
+            mediaType: "image/heic", fileName: "Restored.heic")]
+        let pending = Task { await active.send() }
+        await fulfillment(of: [probe.started], timeout: 3)
+        defer { probe.release() }
+        XCTAssertTrue(active.busy)
+        active.updateAddressCurrent(false)
+        probe.release()
+        let acceptedAfterAddressChange = await pending.value
+        XCTAssertFalse(acceptedAfterAddressChange)
+        XCTAssertTrue(ReviewMessageProtocol.state.bodies.isEmpty)
+        XCTAssertNil(active.attemptID)
+        XCTAssertEqual(active.composer.draft, "Keep the reply when this address changes")
+        XCTAssertEqual(active.composer.attachments.count, 1)
     }
     func testReplacementUpdatesAuthorityWithoutChangingDisplayedRunOrDraft() async throws {
         let api = makeAPI()

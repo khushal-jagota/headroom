@@ -470,7 +470,7 @@ import XCTest
         XCTAssertEqual(try resumed.summary(server: "a", id: "replacement")?.state, "waiting")
     }
 
-    func testOutgoingStorageFaultClearsOnlyAfterCommitAndCorruptBytesNeedExplicitRemoval() throws {
+    func testOutgoingStorageFaultClearsOnlyAfterCommitAndCorruptBytesNeedExplicitRemoval() async throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: directory) }
         var fail = false
@@ -483,13 +483,15 @@ import XCTest
         let voice = PendingWork(id: "already-sending-voice", created: .now, kind: .voice, state: .sending, audioFile: "voice.m4a")
         try outgoing.saveEncoded(Outbox.encode(voice), server: voiceServer, id: voice.id)
         let outbox = Outbox(store: store)
-        XCTAssertNil(outbox.retry(voice.id, api: voiceAPI), "A racing voice retry is a logical rejection")
+        let racingRetry = await outbox.retry(voice.id, api: voiceAPI)
+        XCTAssertNil(racingRetry, "A racing voice retry is a logical rejection")
         outbox.sendHeld("missing", api: voiceAPI, destination: .newConversation)
         XCTAssertNil(store.outgoingError)
         XCTAssertNil(store.saveError, "Action boundaries do not relabel a logical rejection as storage failure")
         try outgoing.settle(server: voiceServer, id: voice.id, state: .uncertain, note: "Unknown")
         fail = true
-        XCTAssertNil(outbox.retry(voice.id, api: voiceAPI))
+        let failedRetry = await outbox.retry(voice.id, api: voiceAPI)
+        XCTAssertNil(failedRetry)
         XCTAssertNotNil(store.outgoingError)
         XCTAssertEqual(store.saveError, store.outgoingError, "Action catch preserves storage callback ownership of the error lifetime")
         XCTAssertThrowsError(try outgoing.enqueue(pending("retry", conversation: "c"), server: "a"))
@@ -569,7 +571,8 @@ import XCTest
         XCTAssertEqual(restoredCapture.attachments?.updated, failed.completed)
         XCTAssertEqual(try reopened.record(server: server, kind: "outbox", id: original.id)?.payload, originalBytes)
         OfflineProtocol.state.messageStatus = 200
-        let nextID = try XCTUnwrap(outbox.retry(original.id, api: api))
+        let retried = await outbox.retry(original.id, api: api)
+        let nextID = try XCTUnwrap(retried)
         XCTAssertNotEqual(nextID, original.id)
         XCTAssertEqual(outbox.work(server, id: nextID)?.priorMessageIDs, [original.id])
         XCTAssertEqual(store.draft(server: server, id: "photo-draft"), "")
@@ -585,7 +588,8 @@ import XCTest
         let newerCapture = try store.outgoing.captureDraft(server: server, id: "photo-newer-draft")
         XCTAssertNotEqual(newerCapture.text?.updated, outbox.work(server, id: newerOriginal.id)?.completed)
         OfflineProtocol.state.messageStatus = 200
-        let newerRetry = try XCTUnwrap(outbox.retry(newerOriginal.id, api: api))
+        let newerRetried = await outbox.retry(newerOriginal.id, api: api)
+        let newerRetry = try XCTUnwrap(newerRetried)
         XCTAssertNil(outbox.work(server, id: newerRetry)?.rejectedPhotoDraft)
         XCTAssertEqual(try store.outgoing.captureDraft(server: server, id: "photo-newer-draft"), newerCapture)
         await outbox.drain(api: api)
@@ -625,7 +629,8 @@ import XCTest
                 message: ConversationSend(conversationId: id, content: [photo], senderMessageId: id, sentAtUnixMilliseconds: 123))
             try outbox.save(work, server: server)
             let before = try store.record(server: server, kind: "outbox", id: id)?.payload
-            let replacementID = try XCTUnwrap(outbox.retry(id, api: api))
+            let retried = await outbox.retry(id, api: api)
+            let replacementID = try XCTUnwrap(retried)
             let replacement = try XCTUnwrap(outbox.work(server, id: replacementID)?.message?.content.first)
             if state == .failed {
                 XCTAssertEqual(replacement.mediaType, "image/jpeg")
@@ -683,11 +688,27 @@ import XCTest
             XCTAssertEqual(model.draft, newerEdit ? "" : "  Deferred photo  ")
             XCTAssertEqual(model.attachments, newerEdit ? [] : [tinyPhoto])
             if !newerEdit {
-                let recreated = ConversationModel()
+                let probe = PhotoPreparationProbe()
+                let recreated = ConversationModel(imageWorkStarted: { probe.observe() })
                 recreated.conversationID = "conversation"
                 recreated.restore(owner: .chief, api: api)
                 XCTAssertEqual(recreated.draft, model.draft)
                 XCTAssertEqual(recreated.attachments, model.attachments)
+                let retry = Task { await recreated.retry(identity, to: .chief, using: api) }
+                await fulfillment(of: [probe.started], timeout: 3)
+                defer { probe.release() }
+                XCTAssertEqual(recreated.preparingOutgoingID, identity)
+                XCTAssertTrue(recreated.preparingPhoto)
+                await recreated.retry(identity, to: .chief, using: api)
+                let prematureSend = await recreated.send(to: .chief, using: api)
+                XCTAssertFalse(prematureSend)
+                probe.release()
+                await retry.value
+                XCTAssertNil(recreated.preparingOutgoingID)
+                XCTAssertFalse(recreated.preparingPhoto)
+                XCTAssertFalse(probe.usedMainThread)
+                XCTAssertEqual(try LocalStore.shared.outgoing.summaries(server: server, owner: .chief).count, 2,
+                    "A second retry tap during preparation must not create another outgoing identity")
             }
             OfflineProtocol.state.messageStatus = 200
         }
