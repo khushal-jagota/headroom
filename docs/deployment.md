@@ -99,19 +99,13 @@ The deploy workflow never changes Tailscale Serve. A separate manual workflow re
 - Data is restorable only until the new app is proven.
 - Every attempt ends, and nothing waits for the Mac.
 
-## When `scripts/dev` refuses
+## Development checkouts
 
-Development worktrees must never share dependency storage with the installed app, because a shared `node_modules` or `.venv` can write into the deployed tree and break its integrity proof. `scripts/dev` guards setup, npm, pytest, and mypy before the tool starts. No flag turns it off.
+Development dependencies and runtime state stay separate from the installed app. `scripts/dev` launches setup and development tools without a filesystem safety scan.
 
-Python tests also replace inherited runtime paths with private scratch storage. The shared pytest setup and Python browser runners apply this rule before application imports. They refuse remaining deployment paths and live server URLs. Each process gets separate storage, and server fixtures select their own local server. An explicit test URL prevents the CLI from falling back to the live server. Original launch evidence remains available to the existing containment checks.
+Python tests replace inherited runtime paths with private scratch storage before application imports. They refuse remaining deployment paths and live server URLs. Each process gets separate storage, and server fixtures select their own local server. An explicit test URL prevents the CLI from falling back to the live server.
 
-A refusal prints the command and one of two findings: shared deployment storage detected, or dependency safety could not be established. It names the path examined, what it resolved to, the protected deployment path, and the signal used.
-
-- **The sharing is real.** Make a fresh worktree and run `scripts/dev setup`. Do not delete dependencies through an unresolved link or mount.
-- **Independent dependencies were refused.** Fix the detector and add a regression check.
-- **Evidence was missing.** Restore it, then retry.
-
-Commands outside the guard, such as Ruff or a direct `.venv/bin` call, can still write into the deployed tree. The archive digest shows the damage afterwards; it does not prevent it. If a write reaches the installed tree, leave it in place and report it. Never clean the installed tree to force an install through.
+The archive digest detects damage after a write. If a write reaches the installed tree, leave it in place and report it. Never clean the installed tree to force an install through.
 
 ## Code
 
@@ -121,8 +115,8 @@ Commands outside the guard, such as Ruff or a direct `.venv/bin` call, can still
 - `src/planner/platform_runtime/`: shared contracts and selection, with Linux native packaging, contract validation, and service operations. `src/planner/environments/runtime_admission.py` and `scripts/runtime_target_proof.py` coordinate runtime proof.
 - `src/planner/environments/mac_updates.py`: the Mac target and its progress.
 - `web/src/components/UpdateActions.svelte`, `web/src/lib/updates/`: the card.
-- `scripts/dev`, `scripts/development_safety/`: the worktree guard.
+- `scripts/dev`, `scripts/dev_launcher.py`: setup and development commands.
 - `scripts/test_runtime/`: private runtime paths and early deployment refusal for Python tests.
 - `ops/panels-environments/`: user units and runner setup.
 
-_Last verified: 2026-11-13._
+_Last verified: 2026-11-16._
