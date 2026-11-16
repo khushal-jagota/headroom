@@ -1,0 +1,45 @@
+name: Xcode compilation cache
+on:
+  pull_request:
+    branches: [feature/typescript-backend]
+    paths:
+      - server/executor/mac/runner/xcode_cache.ts
+      - server/executor/mac/runner/localization.ts
+      - scripts/xcode-cache-probe/**
+      - .github/workflows/xcode-compilation-cache.yml
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: xcode-cache-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+jobs:
+  cross-checkout:
+    name: Xcode cross-checkout cache and concurrent builds
+    runs-on: macos-26
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '22'
+      - name: Prove cache reuse through production configuration
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$RUNNER_ENVIRONMENT" = github-hosted
+          xcodebuild -version
+          probe_root="$RUNNER_TEMP/xcode-cache-probe"
+          mkdir -p "$probe_root/home" "$probe_root/tmp" "$probe_root/evidence"
+          env -i PATH="$PATH" HOME="$probe_root/home" TMPDIR="$probe_root/tmp/" \
+            DEVELOPER_DIR="$(xcode-select -p)" LANG=en_US.UTF-8 \
+            node scripts/xcode-cache-probe/probe.mts "$probe_root/work" "$probe_root/evidence"
+      - name: Capture build times and compiler evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: xcode-cache-proof
+          path: ${{ runner.temp }}/xcode-cache-probe/evidence
+          if-no-files-found: error

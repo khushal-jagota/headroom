@@ -4,5 +4,5 @@
     "types": ["node"],
     "typeRoots": ["../server/node_modules/@types"]
   },
-  "include": ["dev_setup*.mts"]
+  "include": ["dev_setup*.mts", "xcode-cache-probe/**/*.mts"]
 }

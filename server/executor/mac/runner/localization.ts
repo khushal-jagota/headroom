@@ -1,6 +1,8 @@
 /** Resolve existing native workspaces and replace only the VPS transport identity. */
 import { stat } from 'node:fs/promises';
 import { isAbsolute, join } from 'node:path';
+import { platform } from 'node:os';
+import { prepare_xcode_compilation_cache } from './xcode_cache.ts';
 import { path_is_within } from '../../../core/path_containment.ts';
 import { resolve_path_sync } from '../../../core/path_resolution.ts';
 import { inspect } from 'node:util';
@@ -34,6 +36,7 @@ const removed_environment = [
   EXECUTOR_CAPABILITY_ENV,
   'PLAN_TICKET_FILES_DIR',
   NATIVE_SKILLS_DIR_ENV,
+  'XCODE_XCCONFIG_FILE',
 ];
 function safe_relative(value: string): string {
   if (
@@ -125,6 +128,16 @@ export async function localize_start(
     throw new BackendSpawnFailed(`Mac Ticket worktree unavailable: ${workspace_failure(error)}`);
   }
   for (const name of removed_environment) identity.delete(name);
+  if (managed && platform() === 'darwin') {
+    identity.set(
+      'XCODE_XCCONFIG_FILE',
+      await prepare_xcode_compilation_cache(
+        options.paths.root,
+        artifacts,
+        process.env.XCODE_XCCONFIG_FILE,
+      ),
+    );
+  }
   identity.set(EXECUTOR_CHILD_ID_ENV, reference.child_id);
   identity.set(EXECUTOR_CAPABILITY_ENV, capability);
   identity.set(EXECUTOR_ROOT_ENV, options.paths.root);
