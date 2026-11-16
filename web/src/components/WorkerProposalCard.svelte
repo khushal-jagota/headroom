@@ -6,7 +6,7 @@
   import ErrorLine from "./ErrorLine.svelte";
   import ComposerField from "./conversation/ComposerField.svelte";
   import { advanceTargetFor, finalApprovalFor, fieldLabelFor, preferredScopeCeilingFor, type Lifecycle } from "../lib/lifecycle";
-  import { decisionIdentity, decisionRecovery, DecisionRefusedError, recallReviewDecision, submitReviewDecision } from "../lib/review/decision";
+  import { decisionIdentity, decisionRefusals, DecisionRefusedError, recallReviewDecision, submitReviewDecision } from "../lib/review/decision";
   import type { PendingTicketProposal, Principal } from "../lib/types";
 
   let { ticketId, proposal, lifecycle, stage, ceiling, holder, manager, onAccept, onScope, onReturn, canReturn = true, returnUnavailableReason = "No existing Worker conversation to send a revision to.", disabled = false, revisionEditor, revisionText = $bindable(""), holdDecisions = false, initialEditedBody, onEditedBodyChange, contextRow, utilityActions }: {
@@ -41,8 +41,7 @@
   let resolved = $state(false);
   let error = $state<unknown>(null);
   // A refusal names the Ticket and field, so it survives replacement of the reviewed revision.
-  let terminalRefusal = $derived($decisionRecovery.filter(entry => entry.terminal
-    && entry.saved.ticketId === ticketId && entry.saved.command.field === proposal.field).slice(-1)[0]?.error);
+  let terminalRefusal = $derived($decisionRefusals.filter(entry => entry.saved.ticketId === ticketId && entry.saved.command.field === proposal.field).slice(-1)[0]?.error);
   let visibleError = $derived(error ?? terminalRefusal);
   let lastKey: string | null = null;
   let newStage = $derived(advanceTargetFor(lifecycle, stage, ""));
