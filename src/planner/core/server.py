@@ -665,11 +665,6 @@ def create_app(
     app.state.preview_transport = preview_transport
     app.state.video_uploads = video_uploads
     app.state.navigation_delivery = navigation_delivery
-    from planner.core.artifact_origin import ArtifactOriginMiddleware
-
-    app.add_middleware(ArtifactOriginMiddleware, origin=config.artifact_origin,
-                       canonical_origin=config.artifact_panels_origin,
-                       require_ingress=config.trusted_ingress_provider is not None)
     app.add_middleware(ConversationSendBodyLimitMiddleware)
     app.add_middleware(
         UnidentifiedAgentCallsMiddleware, enabled=config.refuse_unidentified_agent_calls
@@ -824,10 +819,6 @@ def create_app(
     )
     include_router(conversation_views_router, prefix="/api/conversation")
     include_router(recorded_usage_router, prefix="/api/conversation")
-
-    @app.get("/api/artifact-origin")
-    def artifact_origin() -> dict[str, str | None]:
-        return {"origin": config.artifact_origin}
 
     @app.get("/api/meta")
     async def meta() -> dict[str, Any]:

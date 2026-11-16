@@ -462,7 +462,7 @@ it is absent at zero. Chief has no artifact catalog. Folders expand in place too
 retain their actual file owner, including links to files on another ticket.
 
 The inline list reads on expansion and when the owner's file count changes, with paging and a search
-field for larger catalogs. When the separate artifact origin is configured, HTML runs in a persistent WKWebView with relative file assets and ordinary page navigation. Otherwise, the original sandboxed viewer remains available. HTML previews offer Phone width and Fit
+field for larger catalogs. HTML runs from its Panels URL in a persistent WKWebView with relative file assets and ordinary page navigation. HTML previews offer Phone width and Fit
 desktop. Fit desktop scales a 1024-point canvas into the available width; pinch
 zoom lets the reader inspect a fixed-width design without changing its styles. Folder sections show five files before
 expanding, with image thumbnails and Open/Share/Copy link context menus.

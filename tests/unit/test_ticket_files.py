@@ -14,7 +14,6 @@ from planner.core.clock import build_clock
 from planner.core.config import load_config
 from planner.core.contracts import OWNER_PRINCIPAL
 from planner.core.db import connect, create_schema
-from planner.core.errors import PlannerError
 from planner.core.server import create_app
 from planner.files import api
 from planner.files.contracts import ManagerFile
@@ -23,9 +22,7 @@ from planner.files.logic.paths import resolve_goal_file, resolve_manager_file
 from planner.tickets.data import create_ticket
 
 
-def _make_app(
-    tmp_path: Path, artifact_origin: str | None = None, *, hosted: bool = False,
-) -> tuple[FastAPI, Path]:
+def _make_app(tmp_path: Path) -> tuple[FastAPI, Path]:
     db_path = tmp_path / "data" / "planning-test.db"
     db_path.parent.mkdir(parents=True)
     boot = connect(str(db_path))
@@ -36,14 +33,6 @@ def _make_app(
         env={
             "PLAN_TEST_MODE": "1",
             "PLAN_DB_PATH": str(db_path),
-            **({"PLAN_ARTIFACT_ORIGIN": artifact_origin} if artifact_origin else {}),
-            **({"PLAN_ARTIFACT_PANELS_ORIGIN": "http://testserver"}
-               if artifact_origin and not hosted else {}),
-            **({
-                "PLAN_TRUSTED_INGRESS_PROVIDER": "tailscale",
-                "PLAN_TRUSTED_INGRESS_ALLOWED_LOGIN": "owner@example.com",
-                "PLAN_TRUSTED_INGRESS_CANONICAL_ORIGIN": "https://panels.example",
-            } if hosted else {}),
         },
     )
     clock = build_clock(config)
@@ -98,8 +87,18 @@ def test_manager_files_use_an_isolated_root_and_route(tmp_path: Path) -> None:
             assert confined.status_code == 200 and confined.text == "<p>HTML</p>"
 
     assert response.status_code == 200 and response.text == "brief"
-    assert response.headers["x-content-type-options"] == "nosniff"
     assert missing.status_code == 404
+
+
+def test_html_and_linked_assets_are_served_inline(tmp_path: Path) -> None:
+    app, db_path = _make_app(tmp_path)
+    _ticket_file(db_path, b"<script src='app.js'></script>", "page.html")
+    _ticket_file(db_path, b"document.body.textContent = 'ready'", "app.js")
+    with TestClient(app) as client:
+        for name in ("page.html", "app.js"):
+            response = client.get(f"/files/tickets/t_reuse01/{name}")
+            assert response.status_code == 200
+            assert response.headers["content-disposition"].startswith("inline")
 
 
 @pytest.mark.parametrize("kind", ["manager", "goal"])
@@ -145,49 +144,6 @@ def _ticket_file(db_path: Path, body: bytes, name: str = "notes.md") -> Path:
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_bytes(body)
     return target
-
-
-def test_artifact_origin_serves_files_but_not_owner_commands(tmp_path: Path) -> None:
-    """A page can load its assets, but cannot use either host to issue owner writes."""
-    app, db_path = _make_app(tmp_path, "http://artifact.test:9001")
-    _ticket_file(db_path, b"<p>page</p>", "index.html")
-    with TestClient(app) as client:
-        url = "/files/tickets/t_reuse01/index.html"
-        original = client.get(url)
-        artifact = client.get(url, headers={"host": "artifact.test:9001"})
-        assert original.headers["content-disposition"].startswith("attachment")
-        assert artifact.headers["content-disposition"].startswith("inline")
-        assert artifact.text == original.text
-        assert client.get("/api/health", headers={"host": "artifact.test:9001"}).status_code == 403
-        assert client.post(url, headers={"host": "artifact.test:9001"}).status_code == 403
-        cross_origin = client.post("/api/anything", headers={"origin": "http://artifact.test:9001"})
-        assert cross_origin.status_code == 403
-        cross_site_read = client.get("/api/health", headers={"sec-fetch-site": "same-site"})
-        assert cross_site_read.status_code == 403
-        assert client.get("/api/artifact-origin").json() == {"origin": "http://artifact.test:9001"}
-
-
-def test_hosted_artifact_origin_requires_trusted_owner(tmp_path: Path) -> None:
-    app, db_path = _make_app(tmp_path, "https://artifacts.example:8443", hosted=True)
-    _ticket_file(db_path, b"page", "index.html")
-    with TestClient(app) as client:
-        path = "/files/tickets/t_reuse01/index.html"
-        headers = {"host": "artifacts.example:8443"}
-        assert client.get(path, headers=headers).status_code == 403
-        other = client.get(path, headers={**headers, "tailscale-user-login": "other"})
-        assert other.status_code == 403
-        owner = client.get(path, headers={**headers, "tailscale-user-login": "owner@example.com"})
-        assert owner.status_code == 200
-        assert owner.headers["content-disposition"].startswith("inline")
-
-
-@pytest.mark.parametrize("origin", ["https://panels.example:8443", "https://other.example:443"])
-def test_artifact_origin_rejects_shared_host_and_default_port(origin: str) -> None:
-    with pytest.raises(PlannerError):
-        load_config(env={
-            "PLAN_ARTIFACT_ORIGIN": origin,
-            "PLAN_ARTIFACT_PANELS_ORIGIN": "https://panels.example",
-        })
 
 
 
@@ -303,80 +259,6 @@ def test_the_tag_always_describes_the_bytes_that_were_sent(
         assert revalidated.status_code == 304
 
 
-def test_html_navigation_confines_resolved_paths_without_changing_delivery(tmp_path: Path) -> None:
-    """A sibling reached through a symlink must not enter the preview sandbox."""
-    app, db_path = _make_app(tmp_path)
-    index = _ticket_file(db_path, b"index", "artifact/index.html")
-    child = _ticket_file(db_path, b"child", "artifact/child.html")
-    outside = _ticket_file(db_path, b"private sibling", "outside.html")
-    (index.parent / "escape.html").symlink_to(outside)
-    (index.parent / "inside.html").symlink_to(child)
-    (index.parent / "nested").symlink_to(index.parent, target_is_directory=True)
-    root_href = "/files/tickets/t_reuse01/artifact/index.html"
-    headers = {"X-Panels-Artifact-Root": root_href}
-    with TestClient(app) as client:
-        ordinary = client.get(root_href)
-        confined = client.get(root_href, headers=headers)
-        valid = client.get("/files/tickets/t_reuse01/artifact/inside.html", headers=headers)
-        nested = client.get("/files/tickets/t_reuse01/artifact/nested/child.html", headers=headers)
-        missing = client.get("/files/tickets/t_reuse01/artifact/missing.html", headers=headers)
-        escaped = client.get("/files/tickets/t_reuse01/artifact/escape.html", headers=headers)
-        sibling = client.get("/files/tickets/t_reuse01/outside.html", headers=headers)
-    assert all(answer.status_code == 200 for answer in (ordinary, confined, valid, nested))
-    assert ordinary.content == confined.content == b"index"
-    assert valid.content == nested.content == b"child"
-    for name in ("content-disposition", "x-content-type-options", "cache-control", "etag"):
-        assert ordinary.headers[name] == confined.headers[name]
-    assert missing.status_code == escaped.status_code == sibling.status_code == 404
-    assert missing.json() == escaped.json() == sibling.json()
-    assert str(tmp_path) not in escaped.text
-
-
-def test_html_navigation_resolves_symlinked_artifact_root_before_comparison(tmp_path: Path) -> None:
-    """The lexical artifact alias is permitted only inside its resolved directory."""
-    app, db_path = _make_app(tmp_path)
-    index = _ticket_file(db_path, b"index", "actual/index.html")
-    _ticket_file(db_path, b"child", "actual/child.html")
-    outside = _ticket_file(db_path, b"outside", "sibling/outside.html")
-    owner_root = index.parent.parent
-    (owner_root / "alias").symlink_to(index.parent, target_is_directory=True)
-    (index.parent / "escape.html").symlink_to(outside)
-    # A root document symlink cannot silently redefine the artifact directory.
-    (index.parent / "bad-root.html").symlink_to(outside)
-    headers = {"X-Panels-Artifact-Root": "/files/tickets/t_reuse01/alias/index.html"}
-    with TestClient(app) as client:
-        valid = client.get("/files/tickets/t_reuse01/alias/child.html", headers=headers)
-        escaped = client.get("/files/tickets/t_reuse01/alias/escape.html", headers=headers)
-        bad_root = client.get("/files/tickets/t_reuse01/actual/child.html", headers={
-            "X-Panels-Artifact-Root": "/files/tickets/t_reuse01/actual/bad-root.html",
-        })
-    assert valid.status_code == 200 and valid.content == b"child"
-    assert escaped.status_code == bad_root.status_code == 404
-
-
-def test_html_navigation_rejects_untrusted_root_descriptors(tmp_path: Path) -> None:
-    """Headers are untrusted too, including encoded traversal and URL authorities."""
-    app, db_path = _make_app(tmp_path)
-    _ticket_file(db_path, b"index", "artifact/index.html")
-    target = "/files/tickets/t_reuse01/artifact/index.html"
-    unsafe_roots = [
-        "https://outside.test" + target, "//outside.test" + target,
-        target + "?query=yes", target + "#fragment", target.replace("/artifact/", "/artifact/../"),
-        target.replace("/artifact/", "/artifact/%2e%2e/"),
-        target.replace("/artifact/", "/artifact%2f"), target.replace("/artifact/", "/artifact%5c"),
-        target.replace("/artifact/", "/artifact/%252e%252e/"),
-        target.replace("/artifact/", "/artifact\\"),
-        target.replace("t_reuse01", "t_other"),
-        target.replace("tickets", "managers"),
-    ]
-    with TestClient(app) as client:
-        absent = client.get("/files/tickets/t_reuse01/artifact/absent.html")
-        for root in unsafe_roots:
-            response = client.get(target, headers={"X-Panels-Artifact-Root": root})
-            assert response.status_code == 404, root
-            assert response.json() == absent.json(), root
-
-
 def _create_goal(client: TestClient, holder_id: str | None = None) -> str:
     result = client.post(
         "/api/goals", json={"title": "Files", "project_id": "project_other", "kind": "binary",
@@ -456,7 +338,7 @@ def test_goal_file_and_catalog_authority_precedes_access_and_conditional_respons
             assert client.put(url, json={"content": "private"}, headers=headers).status_code == 200
 
 
-def test_goal_files_reject_traversal_and_symlink_escapes_and_confine_html_navigation(
+def test_goal_files_reject_traversal_and_symlink_escapes(
     tmp_path: Path,
 ) -> None:
     app, db_path = _make_app(tmp_path)
@@ -485,18 +367,8 @@ def test_goal_files_reject_traversal_and_symlink_escapes_and_confine_html_naviga
         assert not (outside / "new").exists()
         assert client.delete(prefix + "escape/secret.html").status_code == 400
         assert (outside / "secret.html").read_text() == "secret"
-        headers = {"X-Panels-Artifact-Root": prefix + "artifacts/site/index.html"}
-        ordinary = client.get(prefix + "artifacts/site/next.html")
-        confined = client.get(prefix + "artifacts/site/next.html", headers=headers)
-        assert confined.status_code == 200 and confined.content == ordinary.content
-        for key in ("etag", "cache-control", "content-disposition", "x-content-type-options"):
-            assert confined.headers[key] == ordinary.headers[key]
-        for path in ("outside.html", "artifacts/site/escape.html"):
-            assert client.get(prefix + path, headers=headers).status_code == 404
-        other = _create_goal(client)
-        other_url = f"/files/goals/{other}/artifacts/site/next.html"
-        assert client.put(other_url, json={"content": "another goal"}).status_code == 200
-        assert client.get(other_url, headers=headers).status_code == 404
+        assert client.get(prefix + "outside.html").status_code == 200
+        assert client.get(prefix + "artifacts/site/escape.html").status_code == 404
 
 
 def test_ticket_checkout_is_private_through_routes_aliases_and_catalog(tmp_path: Path) -> None:

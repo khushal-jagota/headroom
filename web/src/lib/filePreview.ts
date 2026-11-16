@@ -1,5 +1,3 @@
-import { managedHtmlBridge } from "./managedHtmlNavigation";
-import { MANAGED_ARTIFACT_PRIMARY_PRESS } from "./managedArtifactPress";
 import {
   conversationFileMediaType,
   isSafeConversationFileName
@@ -38,7 +36,6 @@ export type ResolvedPreview = {
   displayHref?: string;
 };
 
-export const MANAGED_HTML_PREVIEW_SANDBOX = "allow-scripts";
 export const MAX_CONVERSATION_TEXT_PREVIEW_BYTES = 256 * 1024;
 
 const KIND_BY_EXTENSION = new Map<string, FilePreviewKind>([
@@ -170,25 +167,6 @@ export function conversationFileTarget(
     return null;
   }
   return { kind: "conversation-file", href, fileName };
-}
-
-export function prepareManagedHtmlPreviewDocument(html: string, managedHtmlHref: string, announceArtifactPress = false, generation?: string): string {
-  const baseHref = absoluteHrefForManagedHtml(managedHtmlHref);
-  const document = parseManagedHtmlDocument(html);
-  const baseElement = document.createElement("base");
-  baseElement.setAttribute("href", baseHref);
-  document.head.insertBefore(baseElement, document.head.firstChild);
-  if (announceArtifactPress) {
-    const bridge = document.createElement("script");
-    bridge.textContent = `window.addEventListener("pointerdown", event => { if (event.isPrimary && event.button === 0) parent.postMessage(${JSON.stringify(MANAGED_ARTIFACT_PRIMARY_PRESS)}, "*"); }, true);`;
-    document.head.insertBefore(bridge, baseElement.nextSibling);
-  }
-  if (generation) {
-    const bridge = document.createElement("script");
-    bridge.textContent = managedHtmlBridge(generation);
-    document.head.insertBefore(bridge, document.head.firstChild);
-  }
-  return serializeManagedHtmlDocument(document);
 }
 
 export function markdownExpansionFor(
@@ -417,47 +395,6 @@ function rawPathnameFromHref(href: string): string {
     return pathStart < 0 ? "/" : withoutQuery.slice(pathStart);
   }
   return withoutQuery;
-}
-
-function absoluteHrefForManagedHtml(href: string): string {
-  if (typeof window === "undefined") return href;
-  return new URL(href, window.location.href).href;
-}
-
-function parseManagedHtmlDocument(html: string): Document {
-  if (typeof DOMParser !== "undefined") {
-    return new DOMParser().parseFromString(html, "text/html");
-  }
-  if (typeof document !== "undefined" && document.implementation) {
-    const parsed = document.implementation.createHTMLDocument("");
-    parsed.open();
-    parsed.write(html);
-    parsed.close();
-    return parsed;
-  }
-  throw new Error("managed HTML preview requires a browser document parser");
-}
-
-function serializeManagedHtmlDocument(document: Document): string {
-  return `${serializeDoctype(document.doctype)}${document.documentElement.outerHTML}`;
-}
-
-function serializeDoctype(doctype: DocumentType | null): string {
-  if (!doctype) return "";
-  let serialized = `<!doctype ${doctype.name}`;
-  if (doctype.publicId) {
-    serialized += ` PUBLIC "${escapeDoctypeIdentifier(doctype.publicId)}"`;
-  } else if (doctype.systemId) {
-    serialized += " SYSTEM";
-  }
-  if (doctype.systemId) {
-    serialized += ` "${escapeDoctypeIdentifier(doctype.systemId)}"`;
-  }
-  return `${serialized}>`;
-}
-
-function escapeDoctypeIdentifier(value: string): string {
-  return value.replaceAll('"', "&quot;");
 }
 
 function extensionFor(path: string): string {

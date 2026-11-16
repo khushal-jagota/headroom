@@ -20,31 +20,6 @@ extension APIClient {
         return try url("/files/\(collection)/\(target.owner.id)/\(target.path)")
     }
 
-    struct ArtifactOrigin: Decodable, Sendable { let origin: String? }
-
-    func artifactPreviewURL(_ target: ArtifactTarget) async throws -> URL? {
-        let result: ArtifactOrigin = try await get("/api/artifact-origin")
-        guard let origin = result.origin else { return nil }
-        guard let base = URL(string: origin),
-              let scheme = base.scheme?.lowercased(), ["http", "https"].contains(scheme),
-              base.host != nil, base.user == nil, base.password == nil,
-              base.query == nil, base.fragment == nil, ["", "/"].contains(base.path),
-              !(base.scheme?.lowercased() == baseURL.scheme?.lowercased() &&
-                base.host?.lowercased() == baseURL.host?.lowercased() &&
-                (base.port ?? (base.scheme?.lowercased() == "https" ? 443 : 80)) ==
-                (baseURL.port ?? (baseURL.scheme?.lowercased() == "https" ? 443 : 80))) else {
-            throw APIError(status: 0, message: "The separate artifact origin is unavailable.")
-        }
-        let source = try artifactURL(target)
-        guard var destination = URLComponents(url: base, resolvingAgainstBaseURL: false),
-              let original = URLComponents(url: source, resolvingAgainstBaseURL: false) else {
-            throw APIError(status: 0, message: "The artifact URL is invalid.")
-        }
-        destination.percentEncodedPath = original.percentEncodedPath
-        guard let url = destination.url else { throw APIError(status: 0, message: "The artifact URL is invalid.") }
-        return url
-    }
-
     func artifactDocument(_ target: ArtifactTarget) async throws -> ArtifactDocument {
         let remoteURL = try artifactURL(target)
         var request = try self.request(remoteURL)
@@ -60,7 +35,7 @@ extension APIClient {
         do {
             try FileManager.default.moveItem(at: download, to: localURL)
             var text: String?
-            if [.html, .markdown, .text].contains(target.kind) {
+            if [.markdown, .text].contains(target.kind) {
                 let size = try localURL.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0
                 // Large source files remain shareable without allocating an unbounded text view.
                 if target.kind == .text {

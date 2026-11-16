@@ -1,15 +1,17 @@
 import SwiftUI
 import WebKit
 
-/// Loads managed HTML from the separate artifact origin, with ordinary browser navigation.
+/// Loads managed HTML from its Panels URL with ordinary browser navigation.
 struct ArtifactWebView: UIViewRepresentable {
     let url: URL
     var desktopPreview = false
     let failed: (String) -> Void
     let ready: () -> Void
     let reload: () -> Void
+    let navigated: (URL) -> Void
+    let openExternal: (URL) -> Void
 
-    func makeCoordinator() -> Coordinator { Coordinator(failed: failed, ready: ready, reload: reload) }
+    func makeCoordinator() -> Coordinator { Coordinator(failed: failed, ready: ready, reload: reload, navigated: navigated, openExternal: openExternal) }
     func makeUIView(context: Context) -> ArtifactWebContainer {
         let configuration = WKWebViewConfiguration()
         configuration.preferences.javaScriptCanOpenWindowsAutomatically = true
@@ -18,6 +20,7 @@ struct ArtifactWebView: UIViewRepresentable {
         view.backgroundColor = .clear
         view.scrollView.backgroundColor = .clear
         view.navigationDelegate = context.coordinator
+        context.coordinator.observeNavigation(in: view)
         view.uiDelegate = context.coordinator
         view.scrollView.alwaysBounceVertical = true
         let refresh = UIRefreshControl()
@@ -35,18 +38,35 @@ struct ArtifactWebView: UIViewRepresentable {
 
     final class Coordinator: NSObject, WKNavigationDelegate, WKUIDelegate, WKDownloadDelegate {
         var url: URL?
+        weak var mainView: WKWebView?
+        private var urlObservation: NSKeyValueObservation?
+        func observeNavigation(in view: WKWebView) {
+            mainView = view
+            urlObservation = view.observe(\.url, options: [.new]) { [weak self] _, change in
+                guard let url = change.newValue ?? nil else { return }
+                Task { @MainActor [weak self] in self?.navigated(url) }
+            }
+        }
         private var downloads: [ObjectIdentifier: URL] = [:]
         private weak var hostView: WKWebView?
         let failed: (String) -> Void
         let ready: () -> Void
         let reload: () -> Void
+        let navigated: (URL) -> Void
+        let openExternal: (URL) -> Void
         @objc func refresh(_ control: UIRefreshControl) { reload(); control.endRefreshing() }
-        init(failed: @escaping (String) -> Void, ready: @escaping () -> Void, reload: @escaping () -> Void) {
-            self.failed = failed; self.ready = ready; self.reload = reload
+        init(failed: @escaping (String) -> Void, ready: @escaping () -> Void, reload: @escaping () -> Void, navigated: @escaping (URL) -> Void, openExternal: @escaping (URL) -> Void) {
+            self.failed = failed; self.ready = ready; self.reload = reload; self.navigated = navigated; self.openExternal = openExternal
         }
         func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction,
                      decisionHandler: @escaping @MainActor @Sendable (WKNavigationActionPolicy) -> Void) {
-            decisionHandler(navigationAction.shouldPerformDownload ? .download : .allow)
+            if let url = navigationAction.request.url,
+               ["mailto", "tel"].contains(url.scheme?.lowercased() ?? "") {
+                openExternal(url)
+                decisionHandler(.cancel)
+            } else {
+                decisionHandler(navigationAction.shouldPerformDownload ? .download : .allow)
+            }
         }
         func webView(_ webView: WKWebView, decidePolicyFor navigationResponse: WKNavigationResponse,
                      decisionHandler: @escaping @MainActor @Sendable (WKNavigationResponsePolicy) -> Void) {
@@ -131,7 +151,10 @@ struct ArtifactWebView: UIViewRepresentable {
         func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
             if (error as NSError).code != NSURLErrorCancelled { failed(error.localizedDescription) }
         }
-        func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) { ready() }
+        func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+            if webView === mainView, let url = webView.url { navigated(url) }
+            ready()
+        }
         func webViewWebContentProcessDidTerminate(_ webView: WKWebView) { failed("The preview stopped. Try loading it again.") }
     }
 }
@@ -169,115 +192,4 @@ final class ArtifactWebContainer: UIView {
         webView.layer.position = .zero
         webView.transform = CGAffineTransform(scaleX: scale, y: scale)
     }
-}
-import SwiftUI
-import WebKit
-
-/// As on the web, scripts run in an opaque-origin sandbox, never in the Panels origin.
-struct LegacyArtifactWebView: UIViewRepresentable {
-    let source: String
-    let url: URL
-    var desktopPreview = false
-    let openLink: (URL) -> Void
-    let failed: (String) -> Void
-    let ready: () -> Void
-    let reload: () -> Void
-
-    func makeCoordinator() -> Coordinator { Coordinator(openLink: openLink, failed: failed, ready: ready, reload: reload) }
-    func makeUIView(context: Context) -> WKWebView {
-        let configuration = WKWebViewConfiguration()
-        configuration.websiteDataStore = .nonPersistent()
-        let view = WKWebView(frame: .zero, configuration: configuration)
-        view.isOpaque = false
-        view.backgroundColor = .clear
-        view.scrollView.backgroundColor = .clear
-        view.navigationDelegate = context.coordinator
-        view.uiDelegate = context.coordinator
-        view.isInspectable = false
-        view.scrollView.alwaysBounceVertical = true
-        let refresh = UIRefreshControl()
-        refresh.addTarget(context.coordinator, action: #selector(Coordinator.refresh(_:)), for: .valueChanged)
-        view.scrollView.refreshControl = refresh
-        return view
-    }
-    func updateUIView(_ view: WKWebView, context: Context) {
-        guard context.coordinator.source != source || context.coordinator.desktopPreview != desktopPreview else { return }
-        context.coordinator.source = source
-        context.coordinator.desktopPreview = desktopPreview
-        // JSON encoding keeps arbitrary artifact source out of the host's script syntax.
-        let sourceJSON = Self.literal(source)
-        let baseJSON = Self.literal(url.absoluteString)
-        let html = """
-        <!doctype html><html><head><meta name="viewport" content="width=device-width, initial-scale=1">
-        <meta http-equiv="Content-Security-Policy" content="default-src https: http: data: blob: 'unsafe-inline' 'unsafe-eval'; connect-src 'none'; form-action 'none'; object-src 'none'">
-        <style>html,body{margin:0;width:100%;height:100%;background:#151515}iframe{border:0;width:100%;height:100%;display:block;background:white}</style>
-        </head><body><iframe id="document" sandbox="allow-scripts" title="Artifact"></iframe>
-        <script>
-        const frame = document.getElementById('document');
-        const desktopWidth = \(desktopPreview ? String(ArtifactPreviewLayout.desktopWidth) : "null");
-        function fitPreview() {
-          if (desktopWidth === null) return;
-          const scale = Math.min(1, window.innerWidth / desktopWidth);
-          frame.style.width = desktopWidth + 'px';
-          frame.style.height = (window.innerHeight / scale) + 'px';
-          frame.style.transformOrigin = 'top left';
-          frame.style.transform = 'scale(' + scale + ')';
-          document.body.style.overflow = 'hidden';
-        }
-        window.addEventListener('resize', fitPreview);
-        fitPreview();
-        const documentSource = new DOMParser().parseFromString(\(sourceJSON), 'text/html');
-        documentSource.querySelectorAll('base').forEach(node => node.remove());
-        const base = documentSource.createElement('base'); base.href = \(baseJSON);
-        documentSource.head.prepend(base);
-        const links = documentSource.createElement('script');
-        links.textContent = `document.addEventListener('click', event => {
-          const anchor = event.target.closest?.('a[href]');
-          if (!anchor) return;
-          anchor.removeAttribute('target');
-          const href = anchor.getAttribute('href');
-          if (href.startsWith('#') && !href.startsWith('#/preview?')) {
-            event.preventDefault();
-            try { document.getElementById(decodeURIComponent(href.slice(1)))?.scrollIntoView(); } catch (_) {}
-          }
-        }, true);`;
-        documentSource.body.append(links);
-        document.getElementById('document').srcdoc = '<!doctype html>' + documentSource.documentElement.outerHTML;
-        </script></body></html>
-        """
-        view.loadHTMLString(html, baseURL: nil)
-    }
-    private static func literal(_ text: String) -> String {
-        let data = try! JSONEncoder().encode(text)
-        return String(decoding: data, as: UTF8.self).replacingOccurrences(of: "<", with: "\\u003c")
-    }
-    final class Coordinator: NSObject, WKNavigationDelegate, WKUIDelegate {
-        var source: String?
-        var desktopPreview = false
-        let openLink: (URL) -> Void
-        let failed: (String) -> Void
-        let ready: () -> Void
-        let reload: () -> Void
-        @objc func refresh(_ control: UIRefreshControl) { reload(); control.endRefreshing() }
-        init(openLink: @escaping (URL) -> Void, failed: @escaping (String) -> Void, ready: @escaping () -> Void, reload: @escaping () -> Void) { self.openLink = openLink; self.failed = failed; self.ready = ready; self.reload = reload }
-        func webView(_ webView: WKWebView, decidePolicyFor action: WKNavigationAction) async -> WKNavigationActionPolicy {
-            if action.navigationType == .linkActivated, let url = action.request.url {
-                if url.scheme == "about" { return .allow }
-                openLink(url); return .cancel
-            }
-            // The document may run local interactions; navigation cannot turn it into an API client.
-            if let scheme = action.request.url?.scheme, ["http", "https"].contains(scheme) {
-                return .cancel
-            } else { return .allow }
-        }
-        func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
-            if (error as NSError).code != NSURLErrorCancelled { failed(error.localizedDescription) }
-        }
-        func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) { ready() }
-        func webViewWebContentProcessDidTerminate(_ webView: WKWebView) { failed("The preview stopped. Try loading it again.") }
-    }
-}
-
-private enum ArtifactPreviewLayout {
-    static let desktopWidth = 1024
 }

@@ -90,21 +90,6 @@ The installed release before this design installs through the old route: it asks
 
 The deploy workflow never changes Tailscale Serve. A separate manual workflow restores the private route if it is lost.
 
-HTML artifacts can use a separate file-only origin. Set `PLAN_ARTIFACT_ORIGIN` to its
-HTTP or HTTPS origin with an explicit non-default port, and route that host and port to Panels.
-Hosted installations require a hostname distinct from the Panels hostname, because
-cookies can be shared across ports on the same host.
-Use a separate cookie site, or keep Panels cookies host-only. Sibling hostnames can
-still share cookies scoped to their parent domain. Panels currently uses trusted
-ingress identity rather than a browser session cookie.
-Without trusted ingress, set `PLAN_ARTIFACT_PANELS_ORIGIN` to the browser's Panels
-origin. It must use a different hostname from the artifact origin.
-The operator must provision the HTTPS route and preserve the requested Host and trusted
-Tailscale identity headers. The artifact origin accepts only managed file reads. The
-ordinary Panels origin continues to offer HTML as a download. If this origin is not
-configured, the existing artifact viewer remains in use. A local setup also needs a
-second listener or proxy on a different port. A release does not create either route.
-
 ## Decisions that shape it
 
 - Build once, prove those bytes, install the same bytes.

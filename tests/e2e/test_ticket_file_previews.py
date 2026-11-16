@@ -26,7 +26,7 @@ WAIT_MS = 10_000
 
 
 def _prove_dock_artifact_retention(page: Page, label: str, evidence: str | None) -> None:
-    """Production hosts must retain sandbox state while conversation covers it."""
+    """Production hosts retain page state while conversation covers it."""
     artifact = page.locator("[data-ticket-artifact]")
     iframe = artifact.locator("iframe[data-file-preview-html]")
     frame = artifact.frame_locator("iframe[data-file-preview-html]")
@@ -162,9 +162,9 @@ def test_html_artifact_interacts_loads_sibling_assets_and_refreshes_in_place(
     open_page: Callable[..., Page],
     cli: Callable[..., JsonObject],
 ) -> None:
-    """The real sandbox resolves managed assets and refreshes over its Ticket.
+    """The real browser resolves managed assets and refreshes over its Ticket.
 
-    Mock DOM preparation and API bytes cannot prove browser sandbox execution,
+    Mock DOM preparation and API bytes cannot prove browser execution,
     sibling URL resolution, child navigation, or changed content in the open frame.
     The same browser and server exercise both hosts against the shipped bundle.
     """
@@ -283,7 +283,7 @@ def test_html_artifact_interacts_loads_sibling_assets_and_refreshes_in_place(
     iframe = artifact.locator("iframe[data-file-preview-html]")
     frame = artifact.frame_locator("iframe[data-file-preview-html]")
     frame.get_by_role("heading", name="Initial artifact").wait_for(timeout=WAIT_MS)
-    assert iframe.get_attribute("sandbox") == "allow-scripts"
+    assert iframe.get_attribute("sandbox") is None
     assert (
         frame.locator("h1").evaluate("node => getComputedStyle(node).color") == "rgb(13, 71, 161)"
     )
@@ -299,8 +299,14 @@ def test_html_artifact_interacts_loads_sibling_assets_and_refreshes_in_place(
     )
     frame.get_by_role("button", name="Try interaction").click(timeout=WAIT_MS)
     frame.get_by_role("button", name="Clicked").wait_for(timeout=WAIT_MS)
+    result = frame.locator("body").evaluate("""async () => {
+        localStorage.setItem('artifact-proof', 'saved');
+        const response = await fetch('/api/meta');
+        return {stored: localStorage.getItem('artifact-proof'), status: response.status};
+    }""")
+    assert result == {"stored": "saved", "status": 200}
 
-    # The browser, production route, served file and sandbox must agree on identity.
+    # The browser, production route, served file and browser must agree on identity.
     # A fixture-only DOM check cannot prove this connected retention boundary.
     for width, height, layout in ((1440, 1000, "desktop"), (390, 844, "mobile")):
         page.set_viewport_size({"width": width, "height": height})
@@ -319,86 +325,27 @@ def test_html_artifact_interacts_loads_sibling_assets_and_refreshes_in_place(
         assert page.url == artifact_address
     assert html_requests == requests_before_actions
 
-    # These headers still force raw HTML to download, including navigable children.
     child_response = context.request.get(
         f"{server.base}/files/tickets/{ticket_id}/previews/nested/child.html"
     )
     assert child_response.status == 200
-    assert child_response.headers["content-disposition"].startswith("attachment;")
-    assert child_response.headers["x-content-type-options"] == "nosniff"
-
+    assert child_response.headers["content-disposition"].startswith("inline;")
     frame.get_by_role("link", name="Open child").click(timeout=WAIT_MS)
     frame.get_by_role("heading", name="Child artifact", exact=True).wait_for(timeout=WAIT_MS)
-    expect(frame.locator("body")).to_have_attribute("data-parent-access", "denied", timeout=WAIT_MS)
-    assert page.evaluate("window.__artifactCompromised") is None
-    assert iframe.get_attribute("sandbox") == "allow-scripts"
-    assert page.url == artifact_address
-    if evidence:
-        page.screenshot(path=str(Path(evidence) / "artifact-child.png"), full_page=True)
-
+    expect(frame.locator("body")).to_have_attribute("data-parent-access", "allowed")
+    assert page.evaluate("window.__artifactCompromised") is True
     frame.get_by_role("link", name="Jump to detail").click(timeout=WAIT_MS)
     expect(frame.locator("#detail")).to_be_in_viewport(timeout=WAIT_MS)
-    artifact.locator("[data-html-back]").click(timeout=WAIT_MS)
-    frame.get_by_role("heading", name="Child artifact", exact=True).wait_for(timeout=WAIT_MS)
-    artifact.locator("[data-html-back]").click(timeout=WAIT_MS)
-    frame.get_by_role("heading", name="Initial artifact").wait_for(timeout=WAIT_MS)
-    frame.get_by_role("link", name="Open child").click(timeout=WAIT_MS)
-    frame.get_by_role("heading", name="Child artifact", exact=True).wait_for(timeout=WAIT_MS)
-
-    successful_child_src = iframe.get_attribute("src")
-    for link, expected_notice in (
-        ("Outside directory", "This link cannot be opened in the artifact viewer."),
-        ("Symlink escape", "file fetch failed: 404"),
-    ):
-        requests_before_rejection = list(html_requests)
-        frame.get_by_role("link", name=link).click(timeout=WAIT_MS)
-        notice = artifact.locator("[data-html-navigation-notice]")
-        expect(notice).to_have_text(expected_notice, timeout=WAIT_MS)
-        if link == "Outside directory":
-            assert html_requests == requests_before_rejection
-        else:
-            assert html_requests == requests_before_rejection + [
-                f"{server.base}/files/tickets/{ticket_id}/previews/escape.html"
-            ]
-        assert iframe.get_attribute("src") == successful_child_src
-        assert artifact.locator("[data-visible-content-failed]").count() == 0
-        assert frame.locator("[data-html-navigation-notice]").count() == 0
-        assert frame.get_by_role("heading", name="Child artifact", exact=True).is_visible()
-        assert frame.get_by_role("heading", name="Secret symlink bytes").count() == 0
-        assert page.url == artifact_address
-    if evidence:
-        page.screenshot(path=str(Path(evidence) / "artifact-parent-rejection.png"), full_page=True)
-
-    confined_headers = {
-        "X-Panels-Artifact-Root": f"/files/tickets/{ticket_id}/previews/index.html"
-    }
-    rejected = context.request.get(
-        f"{server.base}/files/tickets/{ticket_id}/previews/escape.html", headers=confined_headers
-    )
-    missing = context.request.get(
-        f"{server.base}/files/tickets/{ticket_id}/previews/missing.html", headers=confined_headers
-    )
-    assert rejected.status == missing.status == 404
-    assert rejected.body() == missing.body()
-    assert b"Secret symlink bytes" not in rejected.body()
-    assert str(outside).encode() not in rejected.body()
-
-    child.write_text("<h1>Refreshed child</h1>", encoding="utf-8")
-    artifact.locator("[data-ticket-artifact-refresh]").click(timeout=WAIT_MS)
-    frame.get_by_role("heading", name="Refreshed child").wait_for(timeout=WAIT_MS)
-    assert page.url == artifact_address
-    artifact.locator("[data-html-back]").click(timeout=WAIT_MS)
-    frame.get_by_role("heading", name="Initial artifact").wait_for(timeout=WAIT_MS)
+    frame.get_by_role("link", name="Outside directory").click(timeout=WAIT_MS)
+    frame.get_by_role("heading", name="HTML File").wait_for(timeout=WAIT_MS)
 
     document.write_text("<h1>Refreshed artifact</h1>", encoding="utf-8")
     artifact.locator("[data-ticket-artifact-refresh]").click(timeout=WAIT_MS)
     frame.get_by_role("heading", name="Refreshed artifact").wait_for(timeout=WAIT_MS)
-    assert page.url == artifact_address
     assert page.evaluate("window.__artifactInPlaceMarker") == "kept"
     assert page.locator(ticket_selector).count() == 1
     assert artifact.is_visible()
 
-    # A shared preview address uses the same navigation in the same browser context.
     document.write_text(
         '<h1>Standalone index</h1><a href="nested/child.html">Open child</a>', encoding="utf-8"
     )
@@ -409,10 +356,8 @@ def test_html_artifact_interacts_loads_sibling_assets_and_refreshes_in_place(
     standalone_frame = standalone.frame_locator("iframe[data-file-preview-html]")
     standalone_frame.get_by_role("heading", name="Standalone index").wait_for(timeout=WAIT_MS)
     standalone_frame.get_by_role("link", name="Open child").click(timeout=WAIT_MS)
-    standalone_frame.get_by_role("heading", name="Refreshed child").wait_for(timeout=WAIT_MS)
-    standalone.locator("[data-html-back]").click(timeout=WAIT_MS)
-    standalone_frame.get_by_role("heading", name="Standalone index").wait_for(timeout=WAIT_MS)
-    assert standalone.locator("iframe").get_attribute("sandbox") == "allow-scripts"
+    standalone_frame.get_by_role("heading", name="Child artifact").wait_for(timeout=WAIT_MS)
+    assert standalone.locator("iframe").get_attribute("sandbox") is None
 
     page.goto(f"{server.base}/#/review")
     page.locator('[data-screen="review"] [data-review-empty]').wait_for(timeout=WAIT_MS)
@@ -575,48 +520,3 @@ def test_a_video_preview_shows_a_poster_then_plays_and_seeks(
     played = video.evaluate("node => [node.currentTime, node.duration, node.readyState]")
     assert played[0] >= 1.9, played
     assert played[1] > 2.5, played
-
-
-def test_isolated_artifact_origin_allows_page_features_but_blocks_panels_writes(
-    server_factory: Callable[..., ServerHandle],
-    context_factory: Callable[[], BrowserContext],
-    cli: Callable[..., JsonObject],
-) -> None:
-    """Real origins prove browser storage, fetch, and form boundaries together."""
-    started = time.monotonic()
-    def env(base: str) -> dict[str, str]:
-        return {
-            "PLAN_ARTIFACT_ORIGIN": f"http://localhost:{int(base.rsplit(":", 1)[1])}",
-            "PLAN_ARTIFACT_PANELS_ORIGIN": base,
-        }
-    server = server_factory(trusted_ingress_env=env)
-    ticket = cli(server, "ticket", "create", "--input-json", "-", stdin=json.dumps({
-        "worker_type": "coding", "title": "Artifact origin example", "brief": "Example",
-        "manager": {"kind": "chief", "id": "chief"},
-    }), settle_brief=True)["id"]
-    root = server.db_path.parent / "files" / "tickets" / ticket / "artifacts"
-    root.mkdir(parents=True)
-    (root / "data.txt").write_text("network works")
-    (root / "demo.html").write_text('''<!doctype html><title>Artifact origin example</title>
-      <h1>Artifact page</h1><p id="network">waiting</p><p id="storage">waiting</p>
-      <form id="attack" method="post" target="receipt" action="''' + server.base + '''/api/tickets">
-      <button>Send to Panels</button></form>
-      <iframe name="receipt"></iframe><script>
-      document.querySelector('#storage').textContent=localStorage.getItem('proof') || 'empty';
-      localStorage.setItem('proof','storage works');
-      fetch('data.txt').then(r=>r.text()).then(t=>document.querySelector('#network').textContent=t);
-      </script>''')
-    context = context_factory()
-    page = context.new_page()
-    page.goto(f"{server.base}/#/preview?source=ticket&ticket={ticket}&path=artifacts%2Fdemo.html")
-    frame = page.frame_locator('iframe[data-file-preview-html]')
-    expect(frame.locator('#network')).to_have_text('network works', timeout=20000)
-    expect(frame.locator('#storage')).to_have_text('empty')
-    page.reload()
-    expect(frame.locator('#storage')).to_have_text('storage works', timeout=20000)
-    with page.expect_response(
-        lambda r: r.url == server.base + '/api/tickets' and r.request.method == 'POST'
-    ) as response:
-        frame.locator('button').click()
-    assert response.value.status == 403
-    print(f'ARTIFACT_ORIGIN_BROWSER_SECONDS={time.monotonic()-started:.2f}')

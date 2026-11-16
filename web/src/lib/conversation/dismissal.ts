@@ -1,4 +1,4 @@
-import { MANAGED_ARTIFACT_PRIMARY_PRESS, type RegisterManagedArtifactFrame } from "../managedArtifactPress";
+import type { RegisterManagedArtifactFrame } from "../managedArtifactPress";
 import { COMPACT_LAYOUT_MEDIA_QUERY } from "../compactLayout";
 import { visualViewportClientRect } from "../keyboardViewport";
 
@@ -35,32 +35,39 @@ function visibleArtifactFrame(frame: HTMLIFrameElement, host: HTMLElement): bool
 /** One surface owns both outside pointer origins and its explicitly registered artifact. */
 export function createConversationDismissal(dismiss: () => void) {
   let host: HTMLElement | null = null;
-  const frames = new Set<HTMLIFrameElement>();
+  const registrations = new Set<() => void>();
   const registerArtifactFrame: RegisterManagedArtifactFrame = frame => {
-    frames.add(frame);
-    return () => frames.delete(frame);
+    let current: Document | null = null;
+    function press(event: PointerEvent) {
+      if (event.isPrimary && event.button === 0 && host && visibleArtifactFrame(frame, host)) dismiss();
+    }
+    function attach() {
+      current?.removeEventListener("pointerdown", press, { capture: true });
+      // Navigated pages can be cross-origin. The browser denies access to their document.
+      current = frame.contentDocument;
+      current?.addEventListener("pointerdown", press, { capture: true });
+    }
+    frame.addEventListener("load", attach);
+    attach();
+    function unregister() {
+      frame.removeEventListener("load", attach);
+      current?.removeEventListener("pointerdown", press, { capture: true });
+      current = null;
+      registrations.delete(unregister);
+    }
+    registrations.add(unregister);
+    return unregister;
   };
   function outsidePress(event: PointerEvent): void {
     if (isPrimaryPressOutsideConversation(event)) dismiss();
   }
-  function artifactPress(event: MessageEvent): void {
-    if (event.data !== MANAGED_ARTIFACT_PRIMARY_PRESS || !host) return;
-    for (const frame of frames) {
-      if (event.source === frame.contentWindow && visibleArtifactFrame(frame, host)) {
-        dismiss();
-        return;
-      }
-    }
-  }
   function surface(element: HTMLElement) {
     host = element;
     element.addEventListener("pointerdown", outsidePress, true);
-    window.addEventListener("message", artifactPress);
     return { destroy() {
       element.removeEventListener("pointerdown", outsidePress, true);
-      window.removeEventListener("message", artifactPress);
       host = null;
-      frames.clear();
+      for (const unregister of registrations) unregister();
     } };
   }
   return { surface, registerArtifactFrame };
