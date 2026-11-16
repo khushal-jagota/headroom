@@ -322,7 +322,6 @@
       <div class="ticket-page" use:conversationDock use:dismissOutsideConversation>
       <div class="ticket-reading">
       <main class="ticket-doc">
-        <DecisionFeedbackDelivery ticket={detail} />
         <header bind:this={mastheadElement} class="ticket-head" data-ticket-masthead-id={masthead.id} data-ticket-locale={masthead.locale}>
           <!-- Every page has one line above its title: where it lives, then its own facts.
                Under the title there is only the recap. -->
@@ -393,6 +392,7 @@
               {/each}
             </div>
           {/if}
+          <DecisionFeedbackDelivery ticket={detail} />
           {#if headerError}<ErrorLine error={headerError} />{/if}
         </header>
 
