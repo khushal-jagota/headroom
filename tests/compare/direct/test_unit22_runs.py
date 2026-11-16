@@ -73,6 +73,7 @@ from planner.executor.vps_runs import MacRuns
 from planner.machines.contracts import HOME_MACHINE_ID, ORIGINAL_MAC_MACHINE_ID
 from planner.ticket_workspaces.contracts import RETENTION_SECONDS, WorkspaceIdentity, WorkspaceState
 from planner.tickets.api import write_create_ticket
+from planner.worker_supervision.contracts import CleanupResult
 
 ROOT = Path(__file__).resolve().parents[3]
 NOW = 1760000000000
@@ -822,7 +823,33 @@ def _machine_runs_exchange(
     )
     assert run.returncode == 0, run.stderr
     actual = json.loads(run.stdout)
-    assert actual == expected
+    # PR 1038 gives TypeScript Mac Workers launchd custody. Frozen Python still
+    # describes session/birth custody. Pin each native explanation independently,
+    # then compare every cleanup fact and all other evidence without that text.
+    candidate_scope = actual.pop("cleanup_scope")
+    assert "Mac Worker liveness depends only on the exact launchd job." in candidate_scope
+    assert "exact PANELS_WORKER_JOB marker" in candidate_scope
+    assert "Processes without that marker can survive and never fence restart." in candidate_scope
+    cleanup_cases = {
+        "wrong_ticket", "missing_source", "mailbox_refused", "unreachable",
+        "refused", "incomplete", "no_result", "blocked", "recent", "expired",
+    }
+    comparable = []
+    for value, scope in (
+        (cast(dict[str, Any], expected), CleanupResult(False, "").scope),
+        (actual, candidate_scope),
+    ):
+        cleanup = value["cleanup"]
+        assert {key for key, result in cleanup.items()
+                if isinstance(result, dict) and "scope" in result} == cleanup_cases
+        for key in cleanup_cases:
+            assert cleanup[key]["scope"] == scope
+        comparable.append({**value, "cleanup": {
+            **cleanup,
+            **{key: {field: item for field, item in cleanup[key].items() if field != "scope"}
+               for key in cleanup_cases},
+        }})
+    assert comparable[0] == comparable[1]
     assert actual["unchanged"] and actual["recovered"] == [False, False]
     assert actual["refused"] == [["agent_forbidden"] * 3 + ["BackendSpawnFailed"]] * 2
     assert actual["replaced"][0]["unresolved"] == []

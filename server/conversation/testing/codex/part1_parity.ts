@@ -75,19 +75,30 @@ export async function run_part1_parity(spec: StartupSpec): Promise<unknown> {
           environment: { ...environment },
           working_directory,
         });
-        const supervisor = Object.assign(Object.create(WorkerSupervisor.prototype) as Supervisor, {
-          path: `${item.directory}/record.json`,
-          working_directory,
-          environment: { ...environment, PLAN_WORKER_PROCESS_ROOT: item.directory },
-          cancel_unspawned: async () => {
-            calls.push({ operation: 'cancel-unspawned' });
+        // Keep the real private runtime slot used by argv(), while fencing all
+        // lifecycle operations below before any custody or native launch occurs.
+        const supervisor = Object.assign(
+          Reflect.construct(WorkerSupervisor, [
+            environment,
+            working_directory,
+            item.directory,
+            `${item.directory}/record.json`,
+            runtime,
+          ]) as Supervisor,
+          {
+            path: `${item.directory}/record.json`,
+            working_directory,
+            environment: { ...environment, PLAN_WORKER_PROCESS_ROOT: item.directory },
+            cancel_unspawned: async () => {
+              calls.push({ operation: 'cancel-unspawned' });
+            },
+            stop: async () => {
+              calls.push({ operation: 'supervisor-stop' });
+              return { complete: true, reason: 'no child', scope: 'synthetic' };
+            },
+            settled: async () => {},
           },
-          stop: async () => {
-            calls.push({ operation: 'supervisor-stop' });
-            return { complete: true, reason: 'no child', scope: 'synthetic' };
-          },
-          settled: async () => {},
-        });
+        );
         Object.defineProperty(supervisor, 'shutdown_settled', { value: Promise.resolve() });
         return supervisor;
       };
