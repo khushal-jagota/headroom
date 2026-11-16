@@ -4,7 +4,7 @@
   import type { HistoryOwnerKind } from "../../lib/catalogs/history";
   /** One composer and viewport survive movement between the reserved dock and full conversation. */
   import type {ConversationViewReader,ViewReaderAnchor} from '../../lib/conversation/view/reader.svelte';
-  import {progressFor,restFor} from '../../lib/conversation/view/presentation';
+  import {happened,progressFor,restFor} from '../../lib/conversation/view/presentation';
   import { tick, setContext, type Snippet } from "svelte";
   import { COMPACT_LAYOUT_MEDIA_QUERY } from "../../lib/compactLayout";
   import { CREDENTIAL_REQUEST_READ_ONLY, CREDENTIAL_REQUEST_DRAFTS, type CredentialRequestDrafts } from '../../lib/conversation/credentialRequest.svelte';
@@ -21,8 +21,8 @@
     keyTogglesConversationLens,
     type ConversationLens
   } from "../../lib/conversation/lens";
-  import { dockPreviewText, latestUnreadReply } from "../../lib/conversation/dockPresentation";
-  import { restLineFrom } from "../../lib/conversation/restLine";
+  import { dockFeedbackFor, dockPreviewText, latestUnreadReply } from "../../lib/conversation/dockPresentation";
+  import { restLineFrom, whatThisRowSays } from "../../lib/conversation/restLine";
   import { taskProgressFrom } from "../../lib/conversation/taskProgress";
   import type { TranscriptRow } from "../../lib/conversation/transcript";
   import { hasBackgroundTaskAfterTheTurn } from "../../lib/conversation/transcript";
@@ -280,12 +280,10 @@
     : latestUnreadReply(rows, ownerReadThroughSequence)));
   let dockFeedback = $derived.by(() => {
     if (userInput) return "Waiting for you";
-    if (restLine?.waiting || restLine?.marks.failed) return restLine.text;
+    if (restLine?.waiting) return restLine.text;
     const latest = reader?.status?.rest.latest_happened ?? rows.at(-1);
-    if (latest?.kind === "turn_ended" && latest.ending === "completed") return null;
-    const kind = latest?.kind;
-    return kind && ["prompt_refused", "prompt_uncertain", "prompt_discarded", "turn_stopped", "turn_ended"].includes(kind)
-      ? restLine?.text ?? null : null;
+    const said = reader?.status ? happened(reader.status.rest.latest_happened, ownSenderLabel ?? "") : latest ? whatThisRowSays(latest as TranscriptRow, ownSenderLabel ?? "") : null;
+    return dockFeedbackFor(latest ?? null, said);
   });
   let activityKnown = $derived(!activityUncertain && (reader ? typeof reader.status?.turn_running === "boolean" : true));
 
