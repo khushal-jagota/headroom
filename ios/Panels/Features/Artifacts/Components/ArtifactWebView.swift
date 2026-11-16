@@ -45,11 +45,11 @@ struct ArtifactWebView: UIViewRepresentable {
             self.failed = failed; self.ready = ready; self.reload = reload
         }
         func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction,
-                     decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
+                     decisionHandler: @escaping @MainActor @Sendable (WKNavigationActionPolicy) -> Void) {
             decisionHandler(navigationAction.shouldPerformDownload ? .download : .allow)
         }
         func webView(_ webView: WKWebView, decidePolicyFor navigationResponse: WKNavigationResponse,
-                     decisionHandler: @escaping (WKNavigationResponsePolicy) -> Void) {
+                     decisionHandler: @escaping @MainActor @Sendable (WKNavigationResponsePolicy) -> Void) {
             decisionHandler(navigationResponse.canShowMIMEType ? .allow : .download)
         }
         func webView(_ webView: WKWebView, navigationResponse: WKNavigationResponse, didBecome download: WKDownload) {
@@ -61,7 +61,7 @@ struct ArtifactWebView: UIViewRepresentable {
             download.delegate = self
         }
         func download(_ download: WKDownload, decideDestinationUsing response: URLResponse,
-                      suggestedFilename: String, completionHandler: @escaping (URL?) -> Void) {
+                      suggestedFilename: String, completionHandler: @escaping @MainActor @Sendable (URL?) -> Void) {
             let folder = FileManager.default.temporaryDirectory.appendingPathComponent("artifact-download-\(UUID().uuidString)", isDirectory: true)
             do {
                 try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
@@ -101,14 +101,14 @@ struct ArtifactWebView: UIViewRepresentable {
             presenter(for: webView)?.dismiss(animated: true)
         }
         func webView(_ webView: WKWebView, runJavaScriptAlertPanelWithMessage message: String,
-                     initiatedByFrame frame: WKFrameInfo, completionHandler: @escaping () -> Void) {
+                     initiatedByFrame frame: WKFrameInfo, completionHandler: @escaping @MainActor @Sendable () -> Void) {
             guard let presenter = presenter(for: webView) else { completionHandler(); return }
             let alert = UIAlertController(title: nil, message: message, preferredStyle: .alert)
             alert.addAction(UIAlertAction(title: "OK", style: .default) { _ in completionHandler() })
             presenter.present(alert, animated: true)
         }
         func webView(_ webView: WKWebView, runJavaScriptConfirmPanelWithMessage message: String,
-                     initiatedByFrame frame: WKFrameInfo, completionHandler: @escaping (Bool) -> Void) {
+                     initiatedByFrame frame: WKFrameInfo, completionHandler: @escaping @MainActor @Sendable (Bool) -> Void) {
             guard let presenter = presenter(for: webView) else { completionHandler(false); return }
             let alert = UIAlertController(title: nil, message: message, preferredStyle: .alert)
             alert.addAction(UIAlertAction(title: "Cancel", style: .cancel) { _ in completionHandler(false) })
@@ -117,7 +117,7 @@ struct ArtifactWebView: UIViewRepresentable {
         }
         func webView(_ webView: WKWebView, runJavaScriptTextInputPanelWithPrompt prompt: String,
                      defaultText: String?, initiatedByFrame frame: WKFrameInfo,
-                     completionHandler: @escaping (String?) -> Void) {
+                     completionHandler: @escaping @MainActor @Sendable (String?) -> Void) {
             guard let presenter = presenter(for: webView) else { completionHandler(nil); return }
             let alert = UIAlertController(title: nil, message: prompt, preferredStyle: .alert)
             alert.addTextField { $0.text = defaultText }
